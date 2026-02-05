@@ -8,7 +8,8 @@ Design principles (matching paths parallel_progress.py):
 - Resource gauges for time and cost budgets
 - Compact current activity with relevant details only
 
-Display layout: SCORE → INGEST (matching actual workers)
+Display layout: WORKERS → PROGRESS → ACTIVITY → RESOURCES
+- WORKERS: Live worker status showing counts by task and state
 - SCORE: Content-aware LLM scoring (fetches content, scores with LLM)
 - INGEST: Chunk and embed high-value pages (score >= 0.5)
 
@@ -36,6 +37,10 @@ from imas_codex.discovery.base.progress import (
     format_time,
     make_bar,
     make_resource_gauge,
+)
+from imas_codex.discovery.base.supervision import (
+    SupervisedWorkerGroup,
+    WorkerState,
 )
 
 if TYPE_CHECKING:
@@ -97,6 +102,9 @@ class ProgressState:
     # Mode flags
     scan_only: bool = False
     score_only: bool = False
+
+    # Worker group for status tracking
+    worker_group: SupervisedWorkerGroup | None = None
 
     # Counts from graph (total pages for progress denominator)
     total_pages: int = 0  # All wiki pages in graph for this facility
@@ -300,6 +308,89 @@ class WikiProgressDisplay:
             header.append(focus_line.center(self.WIDTH - 4), style="italic dim")
 
         return header
+
+    def _build_worker_section(self) -> Text:
+        """Build worker status section showing counts by task and state.
+
+        Format:
+          WORKERS  scan:0  score:2 (1 active, 1 backing off)  ingest:1  artifact:1
+        """
+        section = Text()
+        section.append("  WORKERS", style="bold green")
+
+        wg = self.state.worker_group
+        if not wg:
+            section.append("  no status available", style="dim italic")
+            return section
+
+        # Group workers by task type
+        task_groups: dict[str, list[tuple[str, WorkerState]]] = {
+            "scan": [],
+            "score": [],
+            "ingest": [],
+            "artifact": [],
+        }
+
+        for name, status in wg.workers.items():
+            # Determine task type from worker name
+            if "scan" in name:
+                task_groups["scan"].append((name, status.state))
+            elif "score" in name:
+                task_groups["score"].append((name, status.state))
+            elif "ingest" in name:
+                task_groups["ingest"].append((name, status.state))
+            elif "artifact" in name:
+                task_groups["artifact"].append((name, status.state))
+
+        # Display each task group
+        for task, workers in task_groups.items():
+            if not workers and task == "scan" and self.state.score_only:
+                continue  # Skip scan in score-only mode
+            if (
+                not workers
+                and task in ("score", "ingest", "artifact")
+                and self.state.scan_only
+            ):
+                continue  # Skip scoring workers in scan-only mode
+
+            count = len(workers)
+            if count == 0:
+                section.append(f"  {task}:0", style="dim")
+                continue
+
+            # Count by state
+            state_counts = {}
+            for _, state in workers:
+                state_counts[state] = state_counts.get(state, 0) + 1
+
+            # Determine overall style based on states
+            if state_counts.get(WorkerState.FAILED, 0) > 0:
+                style = "red"
+            elif state_counts.get(WorkerState.BACKING_OFF, 0) > 0:
+                style = "yellow"
+            elif state_counts.get(WorkerState.RUNNING, 0) > 0:
+                style = "green"
+            else:
+                style = "dim"
+
+            section.append(f"  {task}:{count}", style=style)
+
+            # Add state breakdown if not all running
+            running = state_counts.get(WorkerState.RUNNING, 0)
+            backing_off = state_counts.get(WorkerState.BACKING_OFF, 0)
+            failed = state_counts.get(WorkerState.FAILED, 0)
+
+            if backing_off > 0 or failed > 0:
+                parts = []
+                if running > 0:
+                    parts.append(f"{running} active")
+                if backing_off > 0:
+                    parts.append(f"{backing_off} backoff")
+                if failed > 0:
+                    parts.append(f"{failed} failed")
+                section.append(f" ({', '.join(parts)})", style="dim")
+
+        return section
 
     def _build_progress_section(self) -> Text:
         """Build the main progress bars for SCORE and INGEST.
@@ -634,6 +725,8 @@ class WikiProgressDisplay:
         sections = [
             self._build_header(),
             Text("─" * (self.WIDTH - 4), style="dim"),
+            self._build_worker_section(),
+            Text("─" * (self.WIDTH - 4), style="dim"),
             self._build_progress_section(),
             Text("─" * (self.WIDTH - 4), style="dim"),
             self._build_activity_section(),
@@ -863,6 +956,11 @@ class WikiProgressDisplay:
         self.state.pending_score = pending_score
         self.state.pending_ingest = pending_ingest
         self.state.accumulated_cost = accumulated_cost
+        self._refresh()
+
+    def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
+        """Update worker status from supervised worker group."""
+        self.state.worker_group = worker_group
         self._refresh()
 
     def print_summary(self) -> None:

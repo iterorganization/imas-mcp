@@ -4,6 +4,7 @@ Provides:
 - Facility configuration management
 - Parallel command execution
 - Progress display utilities
+- Worker supervision with crash recovery
 """
 
 from imas_codex.discovery.base.executor import CommandResult, ParallelExecutor
@@ -36,6 +37,19 @@ from imas_codex.discovery.base.progress import (
     make_bar,
     make_gradient_bar,
     make_resource_gauge,
+)
+from imas_codex.discovery.base.supervision import (
+    DEFAULT_INITIAL_BACKOFF,
+    DEFAULT_MAX_BACKOFF,
+    DEFAULT_MAX_RESTARTS,
+    OrphanRecoveryResult,
+    SupervisedWorkerGroup,
+    WorkerState,
+    WorkerStatus,
+    is_infrastructure_error,
+    make_orphan_recovery_query,
+    release_orphaned_claims_generic,
+    supervised_worker,
 )
 
 __all__ = [
@@ -70,4 +84,16 @@ __all__ = [
     "build_header",
     "build_resource_section",
     "build_worker_row",
+    # Supervision
+    "supervised_worker",
+    "is_infrastructure_error",
+    "WorkerState",
+    "WorkerStatus",
+    "SupervisedWorkerGroup",
+    "OrphanRecoveryResult",
+    "make_orphan_recovery_query",
+    "release_orphaned_claims_generic",
+    "DEFAULT_MAX_RESTARTS",
+    "DEFAULT_INITIAL_BACKOFF",
+    "DEFAULT_MAX_BACKOFF",
 ]

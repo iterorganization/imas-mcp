@@ -10,6 +10,11 @@ Architecture:
 - Workers claim pages by setting claimed_at, release by clearing it
 - Orphan recovery: pages with claimed_at > 5 min old are reclaimed
 
+Resilience:
+- Supervised workers with automatic restart on crash (via base.supervision)
+- Exponential backoff on infrastructure errors (Neo4j, network)
+- Graceful degradation when services are temporarily unavailable
+
 Workflow (after bulk discovery):
 1. SCORE: Fetch content + LLM scoring in single pass → sets score, updates to 'scored'
 2. INGEST: Chunk and embed high-value pages (score >= 0.5) → updates to 'ingested'
@@ -26,6 +31,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.progress import WorkerStats
+from imas_codex.discovery.base.supervision import (
+    SupervisedWorkerGroup,
+    supervised_worker,
+)
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import WikiArtifactStatus, WikiPageStatus
 
@@ -609,6 +618,74 @@ def _release_claimed_pages(page_ids: list[str]) -> None:
             len(page_ids),
             e,
         )
+
+
+def release_orphaned_claims(facility: str) -> dict[str, int]:
+    """Release all orphaned claims for a facility.
+
+    Orphaned claims occur when a worker crashes without releasing its claimed
+    pages. This function finds all pages with claimed_at older than the timeout
+    and clears the claim.
+
+    This is automatically called by the claim functions (they skip old claims),
+    but can also be called explicitly to recover from stuck state.
+
+    Args:
+        facility: Facility ID
+
+    Returns:
+        Dict with counts: {"released": N, "pages": [...]}
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    try:
+        with GraphClient() as gc:
+            # Release stale page claims
+            result = gc.query(
+                """
+                MATCH (wp:WikiPage {facility_id: $facility})
+                WHERE wp.claimed_at IS NOT NULL
+                  AND wp.claimed_at < datetime() - duration($cutoff)
+                SET wp.claimed_at = null
+                RETURN wp.id AS id, wp.status AS status
+                """,
+                facility=facility,
+                cutoff=cutoff,
+            )
+            pages = list(result)
+
+            # Release stale artifact claims
+            result = gc.query(
+                """
+                MATCH (wa:WikiArtifact {facility_id: $facility})
+                WHERE wa.claimed_at IS NOT NULL
+                  AND wa.claimed_at < datetime() - duration($cutoff)
+                SET wa.claimed_at = null
+                RETURN wa.id AS id, wa.status AS status
+                """,
+                facility=facility,
+                cutoff=cutoff,
+            )
+            artifacts = list(result)
+
+            total = len(pages) + len(artifacts)
+            if total > 0:
+                logger.info(
+                    "Released %d orphaned claims (%d pages, %d artifacts) for %s",
+                    total,
+                    len(pages),
+                    len(artifacts),
+                    facility,
+                )
+
+            return {
+                "released_pages": len(pages),
+                "released_artifacts": len(artifacts),
+                "page_ids": [p["id"] for p in pages],
+                "artifact_ids": [a["id"] for a in artifacts],
+            }
+    except Exception as e:
+        logger.warning("Could not release orphaned claims: %s", e)
+        return {"released_pages": 0, "released_artifacts": 0, "error": str(e)}
 
 
 # =============================================================================
@@ -2442,6 +2519,7 @@ async def run_parallel_wiki_discovery(
     on_score_progress: Callable | None = None,
     on_ingest_progress: Callable | None = None,
     on_artifact_progress: Callable | None = None,
+    on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
 ) -> dict[str, Any]:
     """Run parallel wiki discovery with async workers.
 
@@ -2455,6 +2533,8 @@ async def run_parallel_wiki_discovery(
         ingest_artifacts: If True (default), start artifact worker to
             download and ingest PDF artifacts discovered during scanning.
         on_artifact_progress: Progress callback for artifact worker.
+        on_worker_status: Callback for worker status changes. Called with
+            SupervisedWorkerGroup for live status display.
 
     Returns:
         Dict with discovery statistics
@@ -2478,6 +2558,9 @@ async def run_parallel_wiki_discovery(
         max_depth=max_depth,
         focus=focus,
     )
+
+    # Create worker group for status tracking
+    worker_group = SupervisedWorkerGroup()
 
     # Bulk discovery: use Special:AllPages to find all pages instantly
     # This replaces the slow scan phase for MediaWiki sites
@@ -2525,45 +2608,115 @@ async def run_parallel_wiki_discovery(
     # Create portal page if not exists (may already exist from bulk discovery)
     _seed_portal_page(facility, portal_page, base_url, site_type)
 
-    # Start workers (simplified: score + ingest only)
-    workers = []
-
+    # Start supervised workers with status tracking
     if not score_only:
         # Skip scan workers if bulk discovery was used
         if not bulk_discover or bulk_discovered == 0:
-            for _ in range(num_scan_workers):
-                workers.append(
-                    asyncio.create_task(scan_worker(state, on_scan_progress))
+            for i in range(num_scan_workers):
+                worker_name = f"scan_worker_{i}"
+                status = worker_group.create_status(worker_name)
+                worker_group.add_task(
+                    asyncio.create_task(
+                        supervised_worker(
+                            scan_worker,
+                            worker_name,
+                            state,
+                            state.should_stop_scanning,
+                            on_progress=on_scan_progress,
+                            status_tracker=status,
+                        )
+                    )
                 )
 
     if not scan_only:
-        for _ in range(num_score_workers):
-            workers.append(asyncio.create_task(score_worker(state, on_score_progress)))
-        workers.append(asyncio.create_task(ingest_worker(state, on_ingest_progress)))
+        for i in range(num_score_workers):
+            worker_name = f"score_worker_{i}"
+            status = worker_group.create_status(worker_name)
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        score_worker,
+                        worker_name,
+                        state,
+                        state.should_stop_scoring,
+                        on_progress=on_score_progress,
+                        status_tracker=status,
+                    )
+                )
+            )
+
+        ingest_status = worker_group.create_status("ingest_worker")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    ingest_worker,
+                    "ingest_worker",
+                    state,
+                    state.should_stop_ingesting,
+                    on_progress=on_ingest_progress,
+                    status_tracker=ingest_status,
+                )
+            )
+        )
 
         # Artifact worker runs by default to ingest PDFs discovered during scanning
         if ingest_artifacts:
-            workers.append(
-                asyncio.create_task(artifact_worker(state, on_artifact_progress))
+            artifact_status = worker_group.create_status("artifact_worker")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        artifact_worker,
+                        "artifact_worker",
+                        state,
+                        state.should_stop_artifact_worker,
+                        on_progress=on_artifact_progress,
+                        status_tracker=artifact_status,
+                    )
+                )
             )
 
     logger.info(
-        f"Started {len(workers)} workers: score_only={score_only}, scan_only={scan_only}, "
+        f"Started {worker_group.get_active_count()} workers: "
+        f"score_only={score_only}, scan_only={scan_only}, "
         f"ingest_artifacts={ingest_artifacts}"
     )
 
-    # Wait for termination condition
+    # Wait for termination condition with periodic orphan recovery
+    orphan_check_interval = 60  # Check every 60 seconds
+    last_orphan_check = time.time()
+    status_update_interval = 0.5  # Update status every 0.5 seconds
+    last_status_update = time.time()
+
     while not state.should_stop():
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.25)
+
+        # Update worker status for display
+        if (
+            on_worker_status
+            and time.time() - last_status_update > status_update_interval
+        ):
+            on_worker_status(worker_group)
+            last_status_update = time.time()
+
+        # Periodically release orphaned claims (from crashed workers)
+        if time.time() - last_orphan_check > orphan_check_interval:
+            try:
+                released = release_orphaned_claims(facility)
+                if released.get("released_pages", 0) or released.get(
+                    "released_artifacts", 0
+                ):
+                    logger.info(
+                        "Recovered %d orphaned page claims, %d artifact claims",
+                        released.get("released_pages", 0),
+                        released.get("released_artifacts", 0),
+                    )
+            except Exception as e:
+                logger.debug("Orphan recovery check failed: %s", e)
+            last_orphan_check = time.time()
 
     # Stop workers
     state.stop_requested = True
-    for worker in workers:
-        worker.cancel()
-        try:
-            await worker
-        except asyncio.CancelledError:
-            pass
+    await worker_group.cancel_all()
 
     elapsed = time.time() - start_time
 

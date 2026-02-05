@@ -1530,6 +1530,9 @@ def discover_wiki(
                             ]
                         display.update_artifact(msg, stats, result_dicts)
 
+                    def on_worker_status(worker_group):
+                        display.update_worker_status(worker_group)
+
                     try:
                         result = await run_parallel_wiki_discovery(
                             facility=_facility,
@@ -1552,6 +1555,7 @@ def discover_wiki(
                             on_score_progress=on_score,
                             on_ingest_progress=on_ingest,
                             on_artifact_progress=on_artifact,
+                            on_worker_status=on_worker_status,
                         )
                     finally:
                         refresh_task.cancel()
