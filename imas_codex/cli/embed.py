@@ -15,14 +15,14 @@ def embed():
 
     \b
     Commands:
-      backfill     Add embeddings to nodes missing them
+      update       Add embeddings to nodes missing them
       indexes      Show or create vector indexes
       status       Show embedding coverage statistics
     """
     pass
 
 
-@embed.command("backfill")
+@embed.command("update")
 @click.option(
     "--label",
     "-l",
@@ -31,7 +31,7 @@ def embed():
         ["FacilitySignal", "FacilityPath", "TreeNode", "WikiArtifact"],
         case_sensitive=True,
     ),
-    help="Node label to backfill embeddings for",
+    help="Node label to update embeddings for",
 )
 @click.option(
     "--facility",
@@ -54,14 +54,14 @@ def embed():
     help="Show what would be embedded without making changes",
 )
 @click.option("--no-rich", is_flag=True, help="Disable rich output")
-def backfill(
+def update(
     label: str,
     facility: str | None,
     batch_size: int,
     dry_run: bool,
     no_rich: bool,
 ) -> None:
-    """Backfill description embeddings for existing nodes.
+    """Update description embeddings for nodes.
 
     Finds nodes with description but no description_embedding and
     generates embeddings in batches.
@@ -69,13 +69,13 @@ def backfill(
     \b
     Examples:
         # Dry run to see what would be embedded
-        imas-codex embed backfill --label FacilitySignal --dry-run
+        imas-codex embed update --label FacilitySignal --dry-run
 
-        # Backfill all FacilitySignal nodes
-        imas-codex embed backfill --label FacilitySignal
+        # Update all FacilitySignal nodes
+        imas-codex embed update --label FacilitySignal
 
-        # Backfill only TCV signals
-        imas-codex embed backfill --label FacilitySignal --facility tcv
+        # Update only TCV signals
+        imas-codex embed update --label FacilitySignal --facility tcv
     """
     from imas_codex.embeddings.description import embed_descriptions_batch
     from imas_codex.graph.client import GraphClient
@@ -118,7 +118,7 @@ def backfill(
         total = result[0]["total"] if result else 0
 
         if total == 0:
-            msg = f"No {label} nodes need embedding backfill"
+            msg = f"No {label} nodes need embedding update"
             if facility:
                 msg += f" (facility={facility})"
             if console:
@@ -137,7 +137,7 @@ def backfill(
             return
 
         if console:
-            console.print(f"Backfilling {total} {label} descriptions{facility_msg}...")
+            console.print(f"Updating {total} {label} embeddings{facility_msg}...")
 
         processed = 0
 
@@ -183,7 +183,7 @@ def backfill(
                 processed += len(items)
                 click.echo(f"Embedded {processed}/{total} {label}")
 
-        msg = f"Backfilled {processed} {label} description embeddings"
+        msg = f"Updated {processed} {label} description embeddings"
         if console:
             console.print(f"[green]{msg}[/green]")
         else:
@@ -285,7 +285,7 @@ def status(no_rich: bool) -> None:
                         "total": r["total"],
                         "with_desc": r["with_desc"],
                         "with_emb": r["with_emb"],
-                        "needs_backfill": r["with_desc"] - r["with_emb"],
+                        "needs_update": r["with_desc"] - r["with_emb"],
                     }
                 )
 
@@ -297,10 +297,10 @@ def status(no_rich: bool) -> None:
         table.add_column("Total", justify="right")
         table.add_column("Has Description", justify="right")
         table.add_column("Has Embedding", justify="right")
-        table.add_column("Needs Backfill", justify="right")
+        table.add_column("Needs Update", justify="right")
 
         for s in stats:
-            needs = s["needs_backfill"]
+            needs = s["needs_update"]
             needs_str = f"[yellow]{needs}[/yellow]" if needs > 0 else str(needs)
             table.add_row(
                 s["label"],
@@ -315,5 +315,5 @@ def status(no_rich: bool) -> None:
         for s in stats:
             click.echo(
                 f"  {s['label']}: {s['with_emb']}/{s['with_desc']} embedded "
-                f"({s['needs_backfill']} need backfill)"
+                f"({s['needs_update']} need update)"
             )
