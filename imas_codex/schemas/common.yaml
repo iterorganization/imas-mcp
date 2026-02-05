@@ -62,21 +62,15 @@ enums:
   PathStatus:
     description: >-
       Lifecycle status for facility path discovery.
-      Transient states (scanning, scoring, expanding) have fallback states for orphan recovery.
-      Progress is graph-derived: check file_count, dir_count, interest_score.
+      Uses claimed_at timestamp for transient worker coordination.
+      No transient states - workers claim by setting claimed_at, not by changing status.
     permissible_values:
       discovered:
         description: Path found, awaiting enumeration
-      scanning:
-        description: Scanner worker active (fallback to discovered on timeout)
       scanned:
         description: Enumerated (file_count, dir_count set), awaiting LLM score
-      scoring:
-        description: Scorer worker active (fallback to scanned on timeout)
       scored:
         description: LLM scored (may have been rescored if high-value)
-      expanding:
-        description: Expander worker active (fallback to scored on timeout)
       skipped:
         description: Intentionally not processed (low-score, excluded, empty)
       failed:

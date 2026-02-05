@@ -152,40 +152,45 @@ class DiscoveryState:
         return False
 
 
+# Claim timeout for orphan recovery (same as wiki/signals)
+CLAIM_TIMEOUT_SECONDS = 600  # 10 minutes
+
+
 def has_pending_work(facility: str) -> bool:
     """Check if there's pending work in the graph.
 
     Returns True if any of:
-    - Discovered paths awaiting first scan
-    - Paths currently being scanned (listing) or scored (scoring)
-    - Listed paths awaiting scoring
+    - Discovered paths awaiting first scan (unclaimed or expired claim)
+    - Scanned paths awaiting scoring (unclaimed or expired claim)
     - Scored paths with should_expand=true that haven't been expanded yet
     - Scored paths with should_enrich=true that haven't been enriched yet
     - Enriched paths that haven't been rescored yet
     """
     from imas_codex.graph import GraphClient
 
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.status = $discovered
-               OR p.status = $scanning
-               OR p.status = $scoring
-               OR (p.status = $scanned AND p.score IS NULL)
+            WHERE (p.status = $discovered AND p.score IS NULL
+                   AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff)))
+               OR (p.status = $scanned AND p.score IS NULL
+                   AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff)))
                OR (p.status = $scored AND p.should_expand = true
-                   AND p.expanded_at IS NULL)
+                   AND p.expanded_at IS NULL
+                   AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff)))
                OR (p.status = $scored AND p.should_enrich = true
-                   AND (p.is_enriched IS NULL OR p.is_enriched = false))
+                   AND (p.is_enriched IS NULL OR p.is_enriched = false)
+                   AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff)))
                OR (p.is_enriched = true AND p.rescored_at IS NULL)
             RETURN count(p) AS pending
             """,
             facility=facility,
             discovered=PathStatus.discovered.value,
-            scanning=PathStatus.scanning.value,
-            scoring=PathStatus.scoring.value,
             scanned=PathStatus.scanned.value,
             scored=PathStatus.scored.value,
+            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -195,70 +200,38 @@ def has_pending_work(facility: str) -> bool:
 # ============================================================================
 
 
-def reset_transient_paths(facility: str, *, silent: bool = False) -> dict[str, int]:
-    """Reset ALL paths in transient states (scanning, scoring) on CLI startup.
+def reset_orphaned_claims(facility: str, *, silent: bool = False) -> int:
+    """Reset all claimed_at timestamps on CLI startup.
 
-    Since only one CLI process runs per facility at a time, any paths in
-    transient states are orphans from a previous crashed/killed process.
-    Reset them immediately without waiting for timeout.
-
-    For scanning paths:
-    - If score IS NULL (first scan): reset to 'discovered'
-    - If score IS NOT NULL (expansion): reset to 'scored'
-
-    For scoring paths:
-    - Reset to 'scanned'
+    Since only one CLI process runs per facility at a time, any claimed
+    paths are orphans from a previous crashed/killed process.
+    Clear claimed_at immediately without waiting for timeout.
 
     Args:
         facility: Facility identifier
         silent: If True, suppress logging (caller will log)
 
     Returns:
-        Dict with counts: scanning_reset, scoring_reset
+        Number of paths with claims cleared
     """
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
-        # Reset listing paths: first-scan → discovered, expansion → scored
-        listing_result = gc.query(
+        result = gc.query(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
-            WHERE p.status = $scanning
-            WITH p, CASE WHEN p.score IS NULL THEN $discovered ELSE $scored END AS new_status
-            SET p.status = new_status, p.claimed_at = null
+            WHERE p.claimed_at IS NOT NULL
+            SET p.claimed_at = null
             RETURN count(p) AS reset_count
             """,
             facility=facility,
-            scanning=PathStatus.scanning.value,
-            discovered=PathStatus.discovered.value,
-            scored=PathStatus.scored.value,
         )
-        listing_reset = listing_result[0]["reset_count"] if listing_result else 0
+        reset_count = result[0]["reset_count"] if result else 0
 
-        # Reset scoring paths → listed
-        scoring_result = gc.query(
-            """
-            MATCH (p:FacilityPath {facility_id: $facility})
-            WHERE p.status = $scoring
-            SET p.status = $scanned, p.claimed_at = null
-            RETURN count(p) AS reset_count
-            """,
-            facility=facility,
-            scoring=PathStatus.scoring.value,
-            scanned=PathStatus.scanned.value,
-        )
-        scoring_reset = scoring_result[0]["reset_count"] if scoring_result else 0
+    if reset_count and not silent:
+        logger.info(f"Reset {reset_count} orphaned claims on startup")
 
-    if (listing_reset or scoring_reset) and not silent:
-        logger.info(
-            f"Reset transient paths on startup: {listing_reset} listing, "
-            f"{scoring_reset} scoring"
-        )
-
-    return {
-        "listing_reset": listing_reset,
-        "scoring_reset": scoring_reset,
-    }
+    return reset_count
 
 
 # ============================================================================
@@ -274,7 +247,7 @@ def claim_paths_for_scanning(
     Claims only unscored discovered paths (first scan, enumerate only).
     Expansion is handled by separate expand_worker.
 
-    Uses atomic status transition: discovered → listing
+    Uses claimed_at timestamp for coordination (no status change during claim).
 
     Args:
         facility: Facility ID
@@ -288,21 +261,23 @@ def claim_paths_for_scanning(
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         # Claim unscored discovered paths (breadth-first by depth)
         result = gc.query(
             f"""
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE p.status = $discovered AND p.score IS NULL
+              AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
-            SET p.status = $scanning, p.claimed_at = datetime()
+            SET p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth, false AS is_expanding
             """,
             facility=facility,
             limit=limit,
             discovered=PathStatus.discovered.value,
-            scanning=PathStatus.scanning.value,
+            cutoff=cutoff,
             root_filter=root_filter or [],
         )
         return list(result)
@@ -316,7 +291,7 @@ def claim_paths_for_expanding(
     Claims paths with should_expand=true that haven't been expanded yet.
     These are scored high-value directories that need child enumeration.
 
-    Uses atomic status transition: scored → listing
+    Uses claimed_at timestamp for coordination (no status change during claim).
 
     Args:
         facility: Facility ID
@@ -330,6 +305,7 @@ def claim_paths_for_expanding(
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         # Claim expansion paths (score-descending for valuable first)
         result = gc.query(
@@ -338,15 +314,16 @@ def claim_paths_for_expanding(
             WHERE p.status = $scored
               AND p.should_expand = true
               AND p.expanded_at IS NULL
+              AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
             WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
-            SET p.status = $scanning, p.claimed_at = datetime()
+            SET p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
             """,
             facility=facility,
             limit=limit,
             scored=PathStatus.scored.value,
-            scanning=PathStatus.scanning.value,
+            cutoff=cutoff,
             root_filter=root_filter or [],
         )
         return list(result)
@@ -355,9 +332,9 @@ def claim_paths_for_expanding(
 def claim_paths_for_scoring(
     facility: str, limit: int = 25, root_filter: list[str] | None = None
 ) -> list[dict[str, Any]]:
-    """Atomically claim listed paths for scoring.
+    """Atomically claim scanned paths for scoring.
 
-    Uses atomic status transition: listed → scoring
+    Uses claimed_at timestamp for coordination (no status change during claim).
     Returns paths that this worker now owns.
 
     Args:
@@ -372,14 +349,16 @@ def claim_paths_for_scoring(
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             f"""
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE p.status = $scanned AND p.score IS NULL
+              AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
-            SET p.status = $scoring, p.claimed_at = datetime()
+            SET p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
@@ -390,7 +369,7 @@ def claim_paths_for_scoring(
             facility=facility,
             limit=limit,
             scanned=PathStatus.scanned.value,
-            scoring=PathStatus.scoring.value,
+            cutoff=cutoff,
             root_filter=root_filter or [],
         )
         return list(result)
@@ -1161,55 +1140,34 @@ async def score_worker(
 
 
 def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
-    """Revert paths from scoring back to scanned on error."""
+    """Release claimed paths on error by clearing claimed_at."""
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
         gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.path IN $paths AND p.status = $scoring
-            SET p.status = $scanned, p.claimed_at = null
+            WHERE p.path IN $paths
+            SET p.claimed_at = null
             """,
             facility=facility,
             paths=paths,
-            scoring=PathStatus.scoring.value,
-            scanned=PathStatus.scanned.value,
         )
 
 
 def _revert_listing_claim(facility: str, paths: list[str]) -> None:
-    """Revert paths from listing back to their pre-claim state on transient error.
-
-    For first-scan paths (score IS NULL): revert to 'discovered'
-    For expansion paths (score IS NOT NULL): revert to 'scored'
-    """
+    """Release claimed paths on error by clearing claimed_at."""
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
-        # Revert first-scan paths to discovered
         gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.path IN $paths AND p.status = $scanning AND p.score IS NULL
-            SET p.status = $discovered, p.claimed_at = null
+            WHERE p.path IN $paths
+            SET p.claimed_at = null
             """,
             facility=facility,
             paths=paths,
-            scanning=PathStatus.scanning.value,
-            discovered=PathStatus.discovered.value,
-        )
-        # Revert expansion paths to scored
-        gc.query(
-            """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.path IN $paths AND p.status = $scanning AND p.score IS NOT NULL
-            SET p.status = $scored, p.claimed_at = null
-            """,
-            facility=facility,
-            paths=paths,
-            scanning=PathStatus.scanning.value,
-            scored=PathStatus.scored.value,
         )
 
 
@@ -1792,8 +1750,8 @@ async def run_parallel_discovery(
         logger.error(f"SSH preflight failed: {ssh_message}")
         raise ConnectionError(f"Cannot connect to facility {facility}: {ssh_message}")
 
-    # Reset any transient paths from previous runs (single CLI per facility)
-    reset_transient_paths(facility)
+    # Reset any orphaned claims from previous runs (single CLI per facility)
+    reset_orphaned_claims(facility)
 
     # Ensure we have paths to discover
     stats = get_discovery_stats(facility)
@@ -1894,13 +1852,10 @@ async def run_parallel_discovery(
             await monitor_task
         except asyncio.CancelledError:
             pass
-        # Graceful shutdown: reset any in-progress paths for next run
-        reset_counts = reset_transient_paths(facility, silent=True)
-        if reset_counts["listing_reset"] or reset_counts["scoring_reset"]:
-            logger.info(
-                f"Shutdown cleanup: {reset_counts['listing_reset']} listing, "
-                f"{reset_counts['scoring_reset']} scoring paths reset"
-            )
+        # Graceful shutdown: reset any in-progress claims for next run
+        reset_count = reset_orphaned_claims(facility, silent=True)
+        if reset_count:
+            logger.info(f"Shutdown cleanup: {reset_count} claimed paths reset")
 
     # Auto-normalize scores after scoring completes
     if state.score_stats.processed > 0:

@@ -91,6 +91,17 @@ from imas_codex.graph.models import PathStatus
 # Use: PathStatus.discovered.value, PathStatus.scanned.value, etc.
 ```
 
+### Graph State Pattern
+
+**Key principle**: Status enums represent durable states only. Transient worker coordination
+uses the `claimed_at` timestamp property:
+
+- **Claim**: Worker atomically sets `claimed_at = datetime()` on unclaimed/expired paths
+- **Complete**: Worker updates status AND clears `claimed_at = null`
+- **Orphan recovery**: Expired claims (`claimed_at < now - 10min`) become reclaimable
+
+This pattern is consistent across all discovery pipelines (paths, wiki, signals).
+
 ### Score-Gated Expansion
 
 Children are only created for paths that score highly. This prevents graph pollution
@@ -126,24 +137,22 @@ from low-value directories:
 
 ### States
 
-| State | Type | Description |
-|-------|------|-------------|
-| `discovered` | Long-lived | Path found, awaiting enumeration |
-| `scanning` | Transient | Scanner worker active (fallback → discovered/scored) |
-| `scanned` | Long-lived | Enumerated with file/dir counts, awaiting score |
-| `scoring` | Transient | Scorer worker active (fallback → scanned) |
-| `scored` | Terminal | LLM scored, may be re-claimed for expansion |
-| `skipped` | Terminal | Low value (score < 0.2) |
-| `excluded` | Terminal | Matched exclusion pattern |
-| `stale` | Long-lived | Path may have changed, needs re-discovery |
+| State | Description |
+|-------|-------------|
+| `discovered` | Path found, awaiting enumeration |
+| `scanned` | Enumerated with file/dir counts, awaiting score |
+| `scored` | LLM scored, may be re-claimed for expansion |
+| `skipped` | Low value (score < 0.2) or excluded |
+| `failed` | Error during processing |
+| `stale` | Path may have changed, needs re-discovery |
 
-### State Transitions
+### State Transitions with Claimed-At Coordination
 
 ```
                             SCAN WORKER
      ┌──────────────────────────────────────────────────────────┐
      │                                                          │
-     │  Claims:                                                 │
+     │  Claims (sets claimed_at, status unchanged):             │
      │    1. status='discovered' AND score IS NULL (first scan) │
      │    2. status='scored' AND should_expand=true (expansion) │
      │                                                          │
@@ -155,15 +164,16 @@ from low-value directories:
          │                     │                     │
     First Scan            Expansion              Error
          │                     │                     │
-      scanned               scored                 skipped
-   (no children)     (children created)
+      scanned            (stays scored)           skipped
+   (no children)       (children created)
          │
          ▼
    ┌─────────────────────────────────────────────────────────────┐
    │                       SCORE WORKER                          │
    │                                                             │
-   │  Claims: status='scanned' AND score IS NULL                 │
+   │  Claims (sets claimed_at): status='scanned', score IS NULL  │
    │  Result: Sets score, should_expand → status='scored'        │
+   │          Clears claimed_at on completion                    │
    │                                                             │
    │  If should_expand=true:                                     │
    │    → Path becomes eligible for expansion scan               │
@@ -174,26 +184,26 @@ from low-value directories:
 
 ### Orphan Recovery
 
-Transient states (`scanning`, `scoring`) have timeouts. When a worker crashes, orphaned
-paths are recovered at next discovery run:
+Orphan recovery is built into the claim queries via timeout check. If a worker crashes,
+its claimed paths automatically become available when `claimed_at` expires (10 min):
 
 ```cypher
--- Reset orphaned first-scan paths (score IS NULL)
-MATCH (p:FacilityPath {status: 'scanning'})
-WHERE p.claimed_at < datetime() - duration('PT10M')
-  AND p.score IS NULL
-SET p.status = 'discovered', p.claimed_at = null
+-- Claim query includes timeout check (paths with expired claims are re-claimable)
+MATCH (p:FacilityPath {status: 'discovered'})
+WHERE p.claimed_at IS NULL 
+   OR p.claimed_at < datetime() - duration('PT600S')
+SET p.claimed_at = datetime()
+RETURN p.id, p.path
+```
 
--- Reset orphaned expansion paths (score IS NOT NULL)
-MATCH (p:FacilityPath {status: 'scanning'})
-WHERE p.claimed_at < datetime() - duration('PT10M')
-  AND p.score IS NOT NULL
-SET p.status = 'scored', p.claimed_at = null
+On CLI startup, all orphaned claims are cleared immediately since only one CLI process
+runs per facility:
 
--- Reset orphaned scoring states
-MATCH (p:FacilityPath {status: 'scoring'})  
-WHERE p.claimed_at < datetime() - duration('PT10M')
-SET p.status = 'scanned', p.claimed_at = null
+```cypher
+-- Reset all orphaned claims
+MATCH (p:FacilityPath {facility_id: $facility})
+WHERE p.claimed_at IS NOT NULL
+SET p.claimed_at = null
 ```
 
 ## CLI Options

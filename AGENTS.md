@@ -56,6 +56,17 @@ data = {"id": "...", "status": "discovered"}  # No type checking!
 
 Schema changes are additive only in the graph. Add properties, never rename or remove.
 
+## Graph State Machine
+
+Status enums represent **durable states only**. No transient states like `scanning`, `scoring`, or `ingesting`.
+
+**Worker coordination pattern:**
+- Claim: set `claimed_at = datetime()`, status unchanged
+- Complete: update status to next state, clear `claimed_at = null`
+- Orphan recovery: expired claims (`claimed_at < now - timeout`) become reclaimable
+
+This applies to all discovery pipelines: paths, wiki, signals. The claim query includes a timeout check, making orphan recovery automatic.
+
 ## LLM Prompts
 
 Prompts live in `imas_codex/agentic/prompts/` using Jinja2 templates with schema injection.

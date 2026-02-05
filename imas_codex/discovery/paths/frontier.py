@@ -260,7 +260,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
 
     Returns:
         Dict with counts: total, discovered, scanned, scored, skipped, excluded,
-        max_depth, scanning, scoring
+        max_depth, claimed (paths with active claims)
     """
     from imas_codex.graph import GraphClient
 
@@ -271,21 +271,18 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             RETURN
                 count(p) AS total,
                 sum(CASE WHEN p.status = $discovered THEN 1 ELSE 0 END) AS discovered,
-                sum(CASE WHEN p.status = $scanning THEN 1 ELSE 0 END) AS scanning,
                 sum(CASE WHEN p.status = $scanned THEN 1 ELSE 0 END) AS scanned,
-                sum(CASE WHEN p.status = $scoring THEN 1 ELSE 0 END) AS scoring,
                 sum(CASE WHEN p.status = $scored THEN 1 ELSE 0 END) AS scored,
                 sum(CASE WHEN p.status = $skipped THEN 1 ELSE 0 END) AS skipped,
                 sum(CASE WHEN p.terminal_reason = $excluded_reason THEN 1 ELSE 0 END) AS excluded,
+                sum(CASE WHEN p.claimed_at IS NOT NULL THEN 1 ELSE 0 END) AS claimed,
                 sum(CASE WHEN p.status = $scored AND p.should_expand = true AND p.expanded_at IS NULL THEN 1 ELSE 0 END) AS expansion_ready,
                 sum(CASE WHEN p.status = $scored AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 max(coalesce(p.depth, 0)) AS max_depth
             """,
             facility=facility,
             discovered=PathStatus.discovered.value,
-            scanning=PathStatus.scanning.value,
             scanned=PathStatus.scanned.value,
-            scoring=PathStatus.scoring.value,
             scored=PathStatus.scored.value,
             skipped=PathStatus.skipped.value,
             excluded_reason=TerminalReason.excluded.value,
@@ -295,12 +292,11 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             return {
                 "total": result[0]["total"],
                 "discovered": result[0]["discovered"],
-                "scanning": result[0]["scanning"],
                 "scanned": result[0]["scanned"],
-                "scoring": result[0]["scoring"],
                 "scored": result[0]["scored"],
                 "skipped": result[0]["skipped"],
                 "excluded": result[0]["excluded"],
+                "claimed": result[0]["claimed"],
                 "expansion_ready": result[0]["expansion_ready"],
                 "enrichment_ready": result[0]["enrichment_ready"],
                 "max_depth": result[0]["max_depth"] or 0,
@@ -309,12 +305,11 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
         return {
             "total": 0,
             "discovered": 0,
-            "scanning": 0,
             "scanned": 0,
-            "scoring": 0,
             "scored": 0,
             "skipped": 0,
             "excluded": 0,
+            "claimed": 0,
             "expansion_ready": 0,
             "enrichment_ready": 0,
             "max_depth": 0,
@@ -1129,6 +1124,7 @@ def mark_paths_scored(
                 """
                 MATCH (p:FacilityPath {id: $id})
                 SET p.status = $scored,
+                    p.claimed_at = null,
                     p.scored_at = $now,
                     p.score = $score,
                     p.score_modeling_code = $score_modeling_code,
@@ -1690,13 +1686,14 @@ async def persist_scan_results(
                     )
 
     with GraphClient() as gc:
-        # Batch update first-scan paths (listing → listed)
+        # Batch update first-scan paths (discovered → scanned)
         if first_scan_updates:
             gc.query(
                 """
                 UNWIND $items AS item
                 MATCH (p:FacilityPath {id: item.id})
                 SET p.status = item.status,
+                    p.claimed_at = null,
                     p.listed_at = item.listed_at,
                     p.skip_reason = item.skip_reason,
                     p.total_files = item.total_files,
@@ -1713,13 +1710,14 @@ async def persist_scan_results(
                 items=first_scan_updates,
             )
 
-        # Batch update expansion paths (listing → scored, keep existing score)
+        # Batch update expansion paths (scored stays scored, mark expanded)
         if expansion_updates:
             gc.query(
                 """
                 UNWIND $items AS item
                 MATCH (p:FacilityPath {id: item.id})
                 SET p.status = item.status,
+                    p.claimed_at = null,
                     p.expanded_at = item.expanded_at,
                     p.listed_at = item.listed_at,
                     p.total_files = item.total_files,
