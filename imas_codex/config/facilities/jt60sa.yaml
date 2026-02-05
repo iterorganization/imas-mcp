@@ -20,21 +20,32 @@ data_systems:
   - uda      # UDA available via modules
 
 # Wiki/documentation sites
-# JT60SA uses TWiki hosted internally on nakasvr23
-# Access requires SSH tunnel - content is mixed Japanese/English
+# JT60SA has two documentation resources:
+# 1. Static TWiki export (code manuals) - direct HTTP via VPN
+# 2. Server documentation pages - direct HTTP via VPN
 wiki_sites:
-  - url: http://nakasvr23.iferc.org/twiki
-    portal_page: Main/WebHome
-    site_type: twiki
+  # Primary: Static TWiki export containing analysis code documentation
+  # TOPICS, EDAS, SLICE, OFMC, ACCOME code manuals
+  - url: https://nakasvr23.iferc.org/twiki_html
+    portal_page: WebHome.html
+    site_type: twiki_static
     auth_type: none
-    requires_ssh: true
     description: >-
-      JT-60SA TWiki - primary internal documentation.
-      Contains 6700+ topics in Japanese and English.
-      Accessible via SSH to nakasvr23.
+      JT-60SA analysis code documentation (static TWiki export).
+      Contains TOPICS, EDAS, SLICE, equilibrium codes.
+      Mixed Japanese/English content. Accessible via VPN.
     languages:
       - ja
       - en
+  # Secondary: Server landing page with usage guides
+  - url: https://nakasvr23.iferc.org
+    portal_page: index.html
+    site_type: static_html
+    auth_type: none
+    description: >-
+      JT-60SA data analysis server documentation.
+      Hardware specs, login procedures, batch job usage.
+      Accessible via VPN.
 
 # User info discovery configuration
 user_info:
