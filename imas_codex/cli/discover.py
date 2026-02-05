@@ -937,14 +937,14 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
 @click.option(
     "--domain",
     "-d",
-    type=click.Choice(["paths", "wiki", "all"]),
+    type=click.Choice(["paths", "wiki", "signals", "all"]),
     default="all",
     help="Which discovery domain to clear (default: all)",
 )
 @click.option(
     "--cascade",
     is_flag=True,
-    help="Also delete related nodes (SourceFile, FacilityUser for paths)",
+    help="Also delete related nodes (SourceFile, FacilityUser for paths; epochs for signals)",
 )
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> None:
@@ -954,13 +954,19 @@ def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> No
     Domains:
       - paths: FacilityPath nodes (filesystem discovery)
       - wiki: WikiPage nodes (documentation discovery)
-      - all: Both paths and wiki
+      - signals: FacilitySignal + TreeModelVersion nodes (data discovery)
+      - all: All discovery domains
 
-    Use --cascade to also delete derived data like SourceFile and FacilityUser.
+    Use --cascade to also delete derived data like SourceFile, FacilityUser,
+    and epoch checkpoints.
     """
     from functools import partial
 
     from imas_codex.discovery import clear_facility_paths, get_discovery_stats
+    from imas_codex.discovery.data import (
+        clear_facility_signals,
+        get_data_discovery_stats,
+    )
     from imas_codex.discovery.wiki import clear_facility_wiki, get_wiki_stats
 
     try:
@@ -980,6 +986,14 @@ def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> No
             if total > 0:
                 items_to_clear.append(("wiki pages", total, clear_facility_wiki))
 
+        if domain in ("signals", "all"):
+            signal_stats = get_data_discovery_stats(facility)
+            total = signal_stats.get("total", 0)
+            if total > 0:
+                # signals always cascade to epochs (it's required for clean state)
+                clear_func = partial(clear_facility_signals, cascade=True)
+                items_to_clear.append(("signals + epochs", total, clear_func))
+
         if not items_to_clear:
             click.echo(f"No {domain} data to clear for {facility}")
             return
@@ -996,8 +1010,19 @@ def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> No
 
         # Execute deletions
         for name, _, clear_func in items_to_clear:
-            deleted = clear_func(facility)
-            click.echo(f"✓ Deleted {deleted} {name} for {facility}")
+            result = clear_func(facility)
+            # Handle dict return (signals) vs int return (paths, wiki)
+            if isinstance(result, dict):
+                parts = []
+                if result.get("signals_deleted"):
+                    parts.append(f"{result['signals_deleted']} signals")
+                if result.get("epochs_deleted"):
+                    parts.append(f"{result['epochs_deleted']} epochs")
+                if result.get("checkpoints_deleted"):
+                    parts.append(f"{result['checkpoints_deleted']} checkpoints")
+                click.echo(f"✓ Deleted {', '.join(parts)} for {facility}")
+            else:
+                click.echo(f"✓ Deleted {result} {name} for {facility}")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

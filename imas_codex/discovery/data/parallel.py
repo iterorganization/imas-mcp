@@ -271,6 +271,86 @@ def reset_transient_signals(facility: str, silent: bool = False) -> dict[str, in
         return {"released": 0}
 
 
+def clear_facility_signals(
+    facility: str,
+    batch_size: int = 1000,
+    cascade: bool = True,
+) -> dict[str, int]:
+    """Clear all signal discovery data for a facility.
+
+    Deletes FacilitySignal nodes, TreeModelVersion (epoch) nodes,
+    and clears epoch checkpoint files.
+
+    Args:
+        facility: Facility ID
+        batch_size: Nodes to delete per batch
+        cascade: If True (default), also delete TreeModelVersion epochs
+
+    Returns:
+        Dict with counts: signals_deleted, epochs_deleted, checkpoints_deleted
+    """
+    results = {"signals_deleted": 0, "epochs_deleted": 0, "checkpoints_deleted": 0}
+
+    try:
+        with GraphClient() as gc:
+            # Delete FacilitySignal nodes in batches
+            while True:
+                result = gc.query(
+                    """
+                    MATCH (s:FacilitySignal {facility_id: $facility})
+                    WITH s LIMIT $batch_size
+                    DETACH DELETE s
+                    RETURN count(s) AS deleted
+                    """,
+                    facility=facility,
+                    batch_size=batch_size,
+                )
+                deleted = result[0]["deleted"] if result else 0
+                results["signals_deleted"] += deleted
+                if deleted < batch_size:
+                    break
+
+            if cascade:
+                # Delete TreeModelVersion (epoch) nodes in batches
+                while True:
+                    result = gc.query(
+                        """
+                        MATCH (v:TreeModelVersion {facility_id: $facility})
+                        WITH v LIMIT $batch_size
+                        DETACH DELETE v
+                        RETURN count(v) AS deleted
+                        """,
+                        facility=facility,
+                        batch_size=batch_size,
+                    )
+                    deleted = result[0]["deleted"] if result else 0
+                    results["epochs_deleted"] += deleted
+                    if deleted < batch_size:
+                        break
+
+        # Clear epoch checkpoint files
+        checkpoint_dir = get_checkpoint_dir()
+        for checkpoint_file in checkpoint_dir.glob(f"{facility}_*_epochs.json"):
+            try:
+                checkpoint_file.unlink()
+                results["checkpoints_deleted"] += 1
+            except Exception as e:
+                logger.warning("Could not delete checkpoint %s: %s", checkpoint_file, e)
+
+        logger.info(
+            "Cleared signals for %s: %d signals, %d epochs, %d checkpoints",
+            facility,
+            results["signals_deleted"],
+            results["epochs_deleted"],
+            results["checkpoints_deleted"],
+        )
+        return results
+
+    except Exception as e:
+        logger.error("Failed to clear facility signals: %s", e)
+        raise
+
+
 # =============================================================================
 # Signal Claim/Release
 # =============================================================================

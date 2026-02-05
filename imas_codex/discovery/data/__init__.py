@@ -28,12 +28,14 @@ Usage:
 """
 
 from imas_codex.discovery.data.parallel import (
+    clear_facility_signals,
     get_data_discovery_stats,
     reset_transient_signals,
     run_parallel_data_discovery,
 )
 
 __all__ = [
+    "clear_facility_signals",
     "get_data_discovery_stats",
     "reset_transient_signals",
     "run_parallel_data_discovery",
