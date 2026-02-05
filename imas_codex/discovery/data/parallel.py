@@ -812,7 +812,10 @@ async def scan_worker(
     Uses batch_discovery.discover_epochs_optimized() for efficient epoch detection.
     Idempotent: skips trees that already have epochs unless force=True.
     """
-    from imas_codex.mdsplus.batch_discovery import discover_epochs_optimized
+    from imas_codex.mdsplus.batch_discovery import (
+        EpochProgress,
+        discover_epochs_optimized,
+    )
 
     access_method_id = f"{state.facility}:mdsplus:tree"
 
@@ -875,9 +878,57 @@ async def scan_worker(
                         tree_name,
                     )
 
+            # Create epoch progress callback that bridges to main progress
+            # This callback is called from the thread running discover_epochs_optimized
+            # Use factory function to capture tree_name at creation time
+            def make_epoch_callback(tree: str):
+                def epoch_progress_callback(progress: EpochProgress) -> None:
+                    """Report epoch detection progress to display."""
+                    if not on_progress:
+                        return
+
+                    if progress.phase == "coarse":
+                        pct = (
+                            int(100 * progress.shots_scanned / progress.total_shots)
+                            if progress.total_shots > 0
+                            else 0
+                        )
+                        detail = f"coarse {pct}% shot {progress.current_shot}"
+                    elif progress.phase == "refine":
+                        detail = (
+                            f"refine {progress.boundaries_refined}/"
+                            f"{progress.boundaries_found}"
+                        )
+                    else:
+                        detail = f"building {progress.boundaries_found} epochs"
+
+                    on_progress(
+                        f"epoch detection: {detail}",
+                        state.discover_stats,
+                        [
+                            {
+                                "tree_name": tree,
+                                "node_path": detail,
+                                "epoch_progress": {
+                                    "phase": progress.phase,
+                                    "current_shot": progress.current_shot,
+                                    "shots_scanned": progress.shots_scanned,
+                                    "total_shots": progress.total_shots,
+                                    "boundaries_found": progress.boundaries_found,
+                                    "boundaries_refined": progress.boundaries_refined,
+                                },
+                            }
+                        ],
+                    )
+
+                return epoch_progress_callback
+
+            epoch_callback = make_epoch_callback(tree_name)
+
             # Discover epochs using optimized batch discovery
             try:
                 with GraphClient() as gc:
+                    # Run discover_epochs_optimized with progress callback
                     epochs, structures = await asyncio.to_thread(
                         discover_epochs_optimized,
                         state.facility,
@@ -885,6 +936,7 @@ async def scan_worker(
                         start_shot=start_shot,
                         end_shot=state.reference_shot,
                         client=gc if existing_epochs else None,
+                        on_progress=epoch_callback,
                     )
             except Exception as e:
                 logger.error(

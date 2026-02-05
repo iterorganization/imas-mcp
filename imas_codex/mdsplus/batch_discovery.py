@@ -10,12 +10,30 @@ Key optimizations:
 import json
 import logging
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from imas_codex.graph import GraphClient
+
+
+@dataclass
+class EpochProgress:
+    """Progress information during epoch detection."""
+
+    tree_name: str
+    phase: str  # "coarse", "refine", "build"
+    current_shot: int | None = None
+    start_shot: int | None = None
+    end_shot: int | None = None
+    shots_scanned: int = 0
+    total_shots: int = 0  # Estimated total shots to scan
+    boundaries_found: int = 0
+    boundaries_refined: int = 0
+    epochs_built: int = 0
+
 
 logger = logging.getLogger(__name__)
 
@@ -310,6 +328,7 @@ def discover_epochs_optimized(
     coarse_step: int = 1000,
     checkpoint_path: Path | None = None,
     client: "GraphClient | None" = None,
+    on_progress: Callable[[EpochProgress], None] | None = None,
 ) -> tuple[list[dict], dict[int, list[str]]]:
     """Discover structural epochs using optimized batch + binary search.
 
@@ -321,6 +340,7 @@ def discover_epochs_optimized(
         coarse_step: Step for initial coarse scan
         checkpoint_path: Path to save/load checkpoint
         client: Optional GraphClient for incremental mode
+        on_progress: Optional callback for progress updates
 
     Returns:
         Tuple of (epochs, representative_structures) where:
@@ -387,17 +407,24 @@ def discover_epochs_optimized(
             coarse_step=coarse_step,
         )
 
+    # Calculate total shots for progress estimation
+    total_range = max(1, end_shot - start_shot)
+
     # Phase 1: Coarse scan with batching
     if checkpoint.phase == "coarse":
         logger.info(
             f"Phase 1: Coarse scan from {end_shot} to {start_shot} (step={coarse_step})"
         )
-        checkpoint = _coarse_scan(discovery, checkpoint, checkpoint_path)
+        checkpoint = _coarse_scan(
+            discovery, checkpoint, checkpoint_path, tree_name, total_range, on_progress
+        )
 
     # Phase 2: Binary search refinement
     if checkpoint.phase == "refine":
         logger.info(f"Phase 2: Refining {len(checkpoint.boundaries)} boundaries")
-        checkpoint = _refine_boundaries(discovery, checkpoint, checkpoint_path)
+        checkpoint = _refine_boundaries(
+            discovery, checkpoint, checkpoint_path, tree_name, on_progress
+        )
 
     # In incremental mode, check if first scanned shot matches existing epoch
     # If so, no new epochs - just an extension of the current epoch
@@ -448,6 +475,9 @@ def _coarse_scan(
     discovery: BatchDiscovery,
     checkpoint: DiscoveryCheckpoint,
     checkpoint_path: Path | None,
+    tree_name: str,
+    total_range: int,
+    on_progress: Callable[[EpochProgress], None] | None,
 ) -> DiscoveryCheckpoint:
     """Phase 1: Coarse scan to find approximate boundaries."""
     shots_to_scan = list(
@@ -457,9 +487,12 @@ def _coarse_scan(
             -checkpoint.coarse_step,
         )
     )
+    total_shots_to_scan = len(shots_to_scan)
 
     # Process in batches
     batch_size = discovery.batch_size
+    shots_scanned = 0
+
     for i in range(0, len(shots_to_scan), batch_size):
         batch = shots_to_scan[i : i + batch_size]
         logger.info(f"Scanning shots {batch[0]} to {batch[-1]}...")
@@ -472,6 +505,24 @@ def _coarse_scan(
                 checkpoint.structures[shot] = info
 
         checkpoint.current_shot = batch[-1]
+        shots_scanned += len(batch)
+
+        # Report progress
+        if on_progress:
+            on_progress(
+                EpochProgress(
+                    tree_name=tree_name,
+                    phase="coarse",
+                    current_shot=batch[-1],
+                    start_shot=checkpoint.start_shot,
+                    end_shot=shots_to_scan[0]
+                    if shots_to_scan
+                    else checkpoint.current_shot,
+                    shots_scanned=shots_scanned,
+                    total_shots=total_shots_to_scan,
+                    boundaries_found=len(checkpoint.boundaries),
+                )
+            )
 
         # Save checkpoint periodically
         if checkpoint_path and i % (batch_size * 5) == 0:
@@ -500,11 +551,27 @@ def _refine_boundaries(
     discovery: BatchDiscovery,
     checkpoint: DiscoveryCheckpoint,
     checkpoint_path: Path | None,
+    tree_name: str,
+    on_progress: Callable[[EpochProgress], None] | None,
 ) -> DiscoveryCheckpoint:
     """Phase 2: Binary search to find exact boundaries."""
-    for low_shot, high_shot in checkpoint.boundaries:
+    total_boundaries = len(checkpoint.boundaries)
+
+    for idx, (low_shot, high_shot) in enumerate(checkpoint.boundaries):
         low_fp = checkpoint.structures[low_shot][1]
         high_fp = checkpoint.structures[high_shot][1]
+
+        # Report progress before refinement
+        if on_progress:
+            on_progress(
+                EpochProgress(
+                    tree_name=tree_name,
+                    phase="refine",
+                    current_shot=low_shot,
+                    boundaries_found=total_boundaries,
+                    boundaries_refined=idx,
+                )
+            )
 
         boundary = discovery.binary_search_boundary(
             low_shot, high_shot, low_fp, high_fp
@@ -516,6 +583,17 @@ def _refine_boundaries(
 
         if checkpoint_path:
             checkpoint.save(checkpoint_path)
+
+    # Final refine progress
+    if on_progress:
+        on_progress(
+            EpochProgress(
+                tree_name=tree_name,
+                phase="refine",
+                boundaries_found=total_boundaries,
+                boundaries_refined=len(checkpoint.refined_boundaries),
+            )
+        )
 
     checkpoint.refined_boundaries.sort()
     checkpoint.phase = "build"

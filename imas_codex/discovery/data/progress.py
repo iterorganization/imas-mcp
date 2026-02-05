@@ -56,6 +56,13 @@ class ScanItem:
     tree_name: str | None = None
     node_path: str | None = None
     signals_in_tree: int = 0  # Count of signals discovered in current tree
+    # Epoch detection progress
+    epoch_phase: str | None = None  # "coarse", "refine", "build"
+    epoch_current_shot: int | None = None
+    epoch_shots_scanned: int = 0
+    epoch_total_shots: int = 0
+    epoch_boundaries_found: int = 0
+    epoch_boundaries_refined: int = 0
 
 
 @dataclass
@@ -397,13 +404,38 @@ class DataProgressDisplay:
         scan = self.state.current_scan
         section.append("  SCAN   ", style="bold blue")
         if scan:
-            path = scan.node_path or scan.signal_id
-            section.append(clip_text(path, content_width - 9), style="white")
+            # First line: show epoch phase or path
+            if scan.epoch_phase:
+                # Show epoch detection progress
+                if scan.epoch_phase == "coarse":
+                    pct = (
+                        int(100 * scan.epoch_shots_scanned / scan.epoch_total_shots)
+                        if scan.epoch_total_shots > 0
+                        else 0
+                    )
+                    status = f"coarse scan {pct}% ({scan.epoch_shots_scanned}/{scan.epoch_total_shots} shots)"
+                    if scan.epoch_current_shot:
+                        status += f" at shot {scan.epoch_current_shot}"
+                elif scan.epoch_phase == "refine":
+                    status = (
+                        f"refining boundary {scan.epoch_boundaries_refined + 1}/"
+                        f"{scan.epoch_boundaries_found}"
+                    )
+                else:
+                    status = f"building {scan.epoch_boundaries_found} epochs"
+                section.append(status, style="cyan")
+            else:
+                path = scan.node_path or scan.signal_id
+                section.append(clip_text(path, content_width - 9), style="white")
             section.append("\n")
-            # Second line: tree name and signal count
+            # Second line: tree name, boundaries found, signal count
             section.append("          ", style="dim")  # Align with content
             if scan.tree_name:
                 section.append(f"tree={scan.tree_name}  ", style="cyan")
+            if scan.epoch_phase and scan.epoch_boundaries_found > 0:
+                section.append(
+                    f"{scan.epoch_boundaries_found} epochs detected  ", style="yellow"
+                )
             if scan.signals_in_tree > 0:
                 section.append(
                     f"{scan.signals_in_tree:,} signals discovered", style="dim"
@@ -590,11 +622,19 @@ class DataProgressDisplay:
     def tick(self) -> None:
         """Drain streaming queues for smooth display."""
         if item := self.state.scan_queue.pop():
+            # Extract epoch progress if present
+            epoch_progress = item.get("epoch_progress", {})
             self.state.current_scan = ScanItem(
                 signal_id=item.get("signal_id", ""),
                 tree_name=item.get("tree_name"),
                 node_path=item.get("node_path"),
                 signals_in_tree=item.get("signals_in_tree", 0),
+                epoch_phase=epoch_progress.get("phase"),
+                epoch_current_shot=epoch_progress.get("current_shot"),
+                epoch_shots_scanned=epoch_progress.get("shots_scanned", 0),
+                epoch_total_shots=epoch_progress.get("total_shots", 0),
+                epoch_boundaries_found=epoch_progress.get("boundaries_found", 0),
+                epoch_boundaries_refined=epoch_progress.get("boundaries_refined", 0),
             )
             # Track current tree for idle display
             if item.get("tree_name"):
@@ -632,7 +672,7 @@ class DataProgressDisplay:
         if current_tree:
             self.state.current_tree = current_tree
 
-        if "scanning" in message.lower():
+        if "scanning" in message.lower() or "epoch" in message.lower():
             self.state.scan_processing = True
         else:
             self.state.scan_processing = False
@@ -651,6 +691,7 @@ class DataProgressDisplay:
                     "tree_name": r.get("tree_name"),
                     "node_path": r.get("node_path"),
                     "signals_in_tree": tree_counts.get(r.get("tree_name", ""), 0),
+                    "epoch_progress": r.get("epoch_progress"),  # Include epoch progress
                 }
                 for r in results
             ]

@@ -34,6 +34,7 @@ Usage:
 from imas_codex.mdsplus.batch_discovery import (
     BatchDiscovery,
     DiscoveryCheckpoint,
+    EpochProgress,
     discover_epochs_optimized,
     refine_boundaries,
 )
@@ -59,6 +60,7 @@ from imas_codex.mdsplus.metadata import (
 __all__ = [
     "BatchDiscovery",
     "DiscoveryCheckpoint",
+    "EpochProgress",
     "TreeDiscovery",
     "cleanup_legacy_nodes",
     "compute_canonical_path",
