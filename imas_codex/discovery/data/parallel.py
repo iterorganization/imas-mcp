@@ -16,7 +16,7 @@ Resilience:
 - Graceful degradation when services are temporarily unavailable
 
 Workflow:
-1. DISCOVER: Enumerate signals from data sources (MDSplus trees, TDI functions)
+1. SCAN: Enumerate signals from data sources (MDSplus trees, TDI functions)
 2. ENRICH: LLM classification of physics_domain, description generation
 3. VALIDATE: Test data access with example_shot, verify units/sign conventions
 """
@@ -63,6 +63,7 @@ class DataDiscoveryState:
     # Data source configuration
     tree_names: list[str] = field(default_factory=list)
     reference_shot: int | None = None
+    tdi_path: str | None = None
 
     # Limits
     cost_limit: float = 10.0
@@ -641,20 +642,106 @@ def ingest_discovered_signals(signals: list[dict]) -> int:
 # =============================================================================
 
 
-async def discover_worker(
+async def scan_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
-    """Worker that discovers signals from data sources."""
-    while not state.should_stop_discovering():
-        # For now, discovery is done in bulk at startup
-        # This worker handles incremental/continuous discovery
-        state.discover_idle_count += 1
+    """Worker that scans data sources for signals.
 
+    Iterates through configured trees and TDI paths, streaming discoveries.
+    """
+    access_method_id = f"{state.facility}:mdsplus:tree"
+
+    # Scan MDSplus trees
+    if state.tree_names and state.reference_shot:
+        for tree_name in state.tree_names:
+            if state.should_stop_discovering():
+                break
+
+            if on_progress:
+                on_progress(
+                    f"scanning {tree_name}",
+                    state.discover_stats,
+                    [{"tree_name": tree_name, "node_path": "connecting..."}],
+                )
+
+            # Discover signals from this tree
+            signals = await asyncio.to_thread(
+                discover_mdsplus_signals,
+                state.facility,
+                state.ssh_host,
+                tree_name,
+                state.reference_shot,
+                access_method_id,
+            )
+
+            if signals:
+                # Ingest to graph
+                count = await asyncio.to_thread(ingest_discovered_signals, signals)
+                state.discover_stats.processed += count
+
+                # Stream progress with tree context
+                if on_progress:
+                    results = [
+                        {
+                            "id": s["id"],
+                            "tree_name": tree_name,
+                            "node_path": s.get("node_path", ""),
+                            "signals_in_tree": count,
+                        }
+                        for s in signals[:20]  # Send sample for display
+                    ]
+                    on_progress(
+                        f"discovered {count} from {tree_name}",
+                        state.discover_stats,
+                        results,
+                    )
+
+            # Small delay between trees for display
+            await asyncio.sleep(0.1)
+
+    # Scan TDI functions (if configured)
+    if state.tdi_path and not state.should_stop_discovering():
         if on_progress:
-            on_progress("idle", state.discover_stats)
+            on_progress(
+                f"scanning TDI {state.tdi_path}",
+                state.discover_stats,
+                [{"tree_name": "TDI", "node_path": state.tdi_path}],
+            )
 
-        await asyncio.sleep(2.0)
+        signals = await asyncio.to_thread(
+            discover_tdi_signals,
+            state.facility,
+            state.ssh_host,
+            state.tdi_path,
+            access_method_id,
+        )
+
+        if signals:
+            count = await asyncio.to_thread(ingest_discovered_signals, signals)
+            state.discover_stats.processed += count
+
+            if on_progress:
+                results = [
+                    {
+                        "id": s["id"],
+                        "tree_name": "TDI",
+                        "node_path": s.get("accessor", ""),
+                        "signals_in_tree": count,
+                    }
+                    for s in signals[:20]
+                ]
+                on_progress(
+                    f"discovered {count} TDI signals",
+                    state.discover_stats,
+                    results,
+                )
+
+    # Mark scan as complete
+    state.discover_idle_count = 100  # Signal scan is fully done
+
+    if on_progress:
+        on_progress("scan complete", state.discover_stats)
 
 
 async def enrich_worker(
@@ -935,6 +1022,7 @@ async def run_parallel_data_discovery(
         ssh_host=ssh_host,
         tree_names=tree_names or [],
         reference_shot=reference_shot,
+        tdi_path=tdi_path,
         cost_limit=cost_limit,
         signal_limit=signal_limit,
         focus=focus,
@@ -943,61 +1031,42 @@ async def run_parallel_data_discovery(
     # Create worker group
     worker_group = SupervisedWorkerGroup()
 
-    # Bulk discovery phase (if not enrich_only)
-    bulk_discovered = 0
+    # Start scan worker (unless enrich_only)
     if not enrich_only:
-        # Get or create access method for MDSplus trees
-        access_method_id = f"{facility}:mdsplus:tree"
-
-        # Discover from MDSplus trees
-        if tree_names and reference_shot:
-            for tree_name in tree_names:
-                logger.info("Discovering signals from %s:%s...", facility, tree_name)
-                signals = await asyncio.to_thread(
-                    discover_mdsplus_signals,
-                    facility,
-                    ssh_host,
-                    tree_name,
-                    reference_shot,
-                    access_method_id,
+        worker_name = "scan_worker_0"
+        status = worker_group.create_status(worker_name)
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    scan_worker,
+                    worker_name,
+                    state,
+                    state.should_stop_discovering,
+                    on_progress=on_discover_progress,
+                    status_tracker=status,
                 )
-                if signals:
-                    count = await asyncio.to_thread(ingest_discovered_signals, signals)
-                    bulk_discovered += count
-                    state.discover_stats.processed += count
-
-                    if on_discover_progress:
-                        on_discover_progress(
-                            f"discovered {count} from {tree_name}",
-                            state.discover_stats,
-                            signals[:10],
-                        )
-
-        # Discover from TDI functions
-        if tdi_path:
-            logger.info("Discovering TDI signals from %s...", tdi_path)
-            signals = await asyncio.to_thread(
-                discover_tdi_signals,
-                facility,
-                ssh_host,
-                tdi_path,
-                access_method_id,
             )
-            if signals:
-                count = await asyncio.to_thread(ingest_discovered_signals, signals)
-                bulk_discovered += count
-                state.discover_stats.processed += count
-
-                if on_discover_progress:
-                    on_discover_progress(
-                        f"discovered {count} TDI signals",
-                        state.discover_stats,
-                        signals[:10],
-                    )
+        )
 
     if discover_only:
+        # Report worker status
+        if on_worker_status:
+            on_worker_status(worker_group)
+
+        # Wait for scan worker to complete
+        try:
+            while state.discover_idle_count < 100:
+                if on_worker_status:
+                    on_worker_status(worker_group)
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            logger.info("Discovery cancelled")
+        finally:
+            state.stop_requested = True
+            await worker_group.cancel_all()
+
         return {
-            "discovered": bulk_discovered,
+            "discovered": state.discover_stats.processed,
             "enriched": 0,
             "validated": 0,
             "cost": 0.0,

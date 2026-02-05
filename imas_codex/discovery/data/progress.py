@@ -8,7 +8,7 @@ Design principles (matching wiki and paths progress displays):
 - Minimal visual clutter (no emojis, thin progress bars)
 
 Display layout: WORKERS → PROGRESS → ACTIVITY → RESOURCES
-- DISCOVER: MDSplus tree traversal, TDI introspection
+- SCAN: MDSplus tree traversal, TDI introspection
 - ENRICH: LLM classification of physics domain, description
 - VALIDATE: Test data access, verify units/sign
 
