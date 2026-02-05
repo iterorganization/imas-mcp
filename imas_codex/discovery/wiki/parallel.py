@@ -1264,10 +1264,10 @@ def bulk_discover_artifacts(
     artifacts = adapter.bulk_discover_artifacts(facility, base_url, on_progress)
 
     if not artifacts:
-        logger.info("No artifacts discovered via API")
+        logger.info("No artifacts discovered")
         return 0
 
-    logger.info(f"Discovered {len(artifacts)} artifacts via API")
+    logger.info(f"Discovered {len(artifacts)} artifacts")
 
     # Create artifact nodes in graph
     created = 0

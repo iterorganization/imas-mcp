@@ -228,6 +228,14 @@ class MediaWikiAdapter(WikiAdapter):
         if not self.wiki_client:
             return []
 
+        # Ensure client is authenticated before using session
+        if hasattr(self.wiki_client, "authenticate"):
+            try:
+                self.wiki_client.authenticate()
+            except Exception as e:
+                logger.warning(f"Failed to authenticate wiki client: {e}")
+                return []
+
         pages: list[DiscoveredPage] = []
         index_url = f"{base_url}/index.php?title=Special:AllPages"
 
@@ -354,11 +362,14 @@ class MediaWikiAdapter(WikiAdapter):
     ) -> list[DiscoveredArtifact]:
         """Discover artifacts via SSH using MediaWiki API."""
         import json
+        from urllib.parse import urlparse
 
         artifacts: list[DiscoveredArtifact] = []
 
-        # MediaWiki API endpoint
-        api_url = f"{base_url}/api.php"
+        # MediaWiki API endpoint - derive from base URL
+        # base_url might be https://spcwiki.epfl.ch/wiki, but API is at https://spcwiki.epfl.ch/api.php
+        parsed = urlparse(base_url)
+        api_url = f"{parsed.scheme}://{parsed.netloc}/api.php"
         params = (
             "action=query&list=allimages&ailimit=500&aiprop=url|size|mime&format=json"
         )
@@ -419,14 +430,48 @@ class MediaWikiAdapter(WikiAdapter):
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> list[DiscoveredArtifact]:
-        """Discover artifacts via HTTP with Tequila auth."""
+        """Discover artifacts via HTTP with Tequila auth.
+
+        Tries MediaWiki API first, falls back to HTML scraping of Special:ListFiles
+        for older MediaWiki versions that don't support list=allimages API.
+        """
         if not self.wiki_client:
+            logger.warning("No wiki_client provided for artifact discovery")
             return []
 
+        # Ensure client is authenticated before using session
+        if hasattr(self.wiki_client, "authenticate"):
+            try:
+                logger.info("Authenticating wiki client for artifact discovery...")
+                self.wiki_client.authenticate()
+                logger.info("Wiki client authenticated successfully")
+            except Exception as e:
+                logger.warning(f"Failed to authenticate wiki client: {e}")
+                return []
+
+        # Try API first
+        artifacts = self._discover_artifacts_via_api(facility, base_url, on_progress)
+        if artifacts:
+            return artifacts
+
+        # API didn't work, fall back to HTML scraping
+        logger.info(
+            "API unavailable, falling back to HTML scraping of Special:ListFiles"
+        )
+        return self._discover_artifacts_via_html(facility, base_url, on_progress)
+
+    def _discover_artifacts_via_api(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Discover artifacts via MediaWiki API (list=allimages)."""
         artifacts: list[DiscoveredArtifact] = []
 
-        # MediaWiki API endpoint
+        # MediaWiki API endpoint - use wiki path (common for proxied wikis)
         api_url = f"{base_url}/api.php"
+
         params = {
             "action": "query",
             "list": "allimages",
@@ -443,10 +488,26 @@ class MediaWikiAdapter(WikiAdapter):
                 params["aicontinue"] = continue_token
 
             try:
+                logger.debug(f"Requesting artifacts from {api_url}")
                 response = self.wiki_client.session.get(
                     api_url, params=params, verify=False, timeout=60
                 )
+                logger.debug(
+                    f"Response status: {response.status_code}, URL: {response.url}"
+                )
                 if response.status_code != 200:
+                    logger.warning(f"Non-200 response: {response.status_code}")
+                    break
+
+                # Check if response is HTML (auth redirect) instead of JSON
+                content_type = response.headers.get("content-type", "")
+                if "text/html" in content_type:
+                    logger.warning(
+                        f"Got HTML instead of JSON - auth may have failed. URL: {response.url}"
+                    )
+                    logger.debug(
+                        f"Response content (first 500 chars): {response.text[:500]}"
+                    )
                     break
 
                 data = response.json()
@@ -493,6 +554,98 @@ class MediaWikiAdapter(WikiAdapter):
             size_bytes=size,
             mime_type=mime,
         )
+
+    def _discover_artifacts_via_html(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Discover artifacts by scraping Special:ListFiles page.
+
+        Fallback for older MediaWiki installations (< 1.17) that don't support
+        the list=allimages API action.
+        """
+        from urllib.parse import unquote, urljoin
+
+        artifacts: list[DiscoveredArtifact] = []
+        seen_filenames: set[str] = set()
+
+        # Start with Special:ListFiles
+        list_url = f"{base_url}/Special:ListFiles"
+        batch = 0
+        max_batches = 100  # Prevent infinite loops
+
+        while list_url and batch < max_batches:
+            try:
+                response = self.wiki_client.session.get(
+                    list_url, verify=False, timeout=60
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        f"Non-200 response from Special:ListFiles: {response.status_code}"
+                    )
+                    break
+
+                html = response.text
+
+                # Extract file info from File: page links
+                # Pattern: href="/wiki/File:Filename.ext"
+                file_pattern = re.compile(r'href="[^"]*File:([^"]+)"')
+                for match in file_pattern.finditer(html):
+                    filename = unquote(match.group(1))
+                    if filename in seen_filenames:
+                        continue
+                    seen_filenames.add(filename)
+
+                    # Find corresponding image URL
+                    # Pattern: href="/wiki/images/X/XX/Filename.ext"
+                    img_pattern = re.compile(
+                        rf'href="([^"]*images/[^"]*{re.escape(filename)})"',
+                        re.IGNORECASE,
+                    )
+                    img_match = img_pattern.search(html)
+                    if img_match:
+                        img_path = img_match.group(1)
+                        url = urljoin(base_url, img_path)
+                    else:
+                        # Construct URL from base (common MediaWiki pattern)
+                        url = f"{base_url}/File:{filename}"
+
+                    artifact = DiscoveredArtifact(
+                        filename=filename,
+                        url=url,
+                        artifact_type=self._get_artifact_type(filename),
+                    )
+                    artifacts.append(artifact)
+
+                batch += 1
+                if on_progress:
+                    on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
+
+                # Find next page link (offset parameter)
+                # Pattern: href="/wiki/index.php?title=Special:ListFiles&amp;offset=..."
+                next_pattern = re.compile(
+                    r'href="([^"]*Special:ListFiles[^"]*offset=[^"]+)"'
+                )
+                next_match = next_pattern.search(html)
+                if next_match:
+                    next_path = next_match.group(1).replace("&amp;", "&")
+                    # Check if this is the "next" link (not "previous")
+                    # The page shows 50 per page, so check if we'd move forward
+                    if "dir=prev" not in next_path:
+                        list_url = urljoin(base_url, next_path)
+                    else:
+                        break
+                else:
+                    break
+
+            except Exception as e:
+                logger.warning(f"Error scraping Special:ListFiles: {e}")
+                break
+
+        logger.info(f"Discovered {len(artifacts)} artifacts via HTML scraping")
+        return artifacts
 
     def _get_artifact_type(self, filename: str, mime: str | None = None) -> str:
         """Get artifact type from filename extension or MIME type."""

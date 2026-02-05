@@ -176,6 +176,11 @@ class MediaWikiClient:
 
         return self._session
 
+    @property
+    def session(self) -> requests.Session:
+        """Public access to the authenticated session."""
+        return self._get_session()
+
     def _rate_limit(self) -> None:
         """Apply rate limiting between requests."""
         elapsed = time.time() - self._last_request_time
