@@ -565,11 +565,40 @@ class DataProgressDisplay:
             section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
             section.append("\n")
 
-        # STATS row - show TEC (total eventually consistent) counts
+            # TOTAL row - progress toward estimated total cost (ETC)
+            # Cost accumulates from enrichment, so estimate based on signals remaining
+            total_cost = self.state.accumulated_cost + self.state.run_cost
+            signals_enriched = self.state.run_enriched
+            signals_remaining = self.state.pending_enrich + self.state.pending_validate
+
+            # Compute ETC (Estimated Total Cost)
+            etc = total_cost
+            if signals_enriched > 0 and signals_remaining > 0:
+                cost_per_signal = self.state.run_cost / signals_enriched
+                etc = total_cost + (cost_per_signal * signals_remaining)
+
+            if total_cost > 0 or signals_remaining > 0:
+                section.append("  TOTAL ", style="bold white")
+                # Progress bar shows current cost toward ETC
+                if etc > 0:
+                    section.append_text(
+                        make_resource_gauge(total_cost, etc, self.GAUGE_WIDTH)
+                    )
+                else:
+                    section.append("│", style="dim")
+                    section.append("━" * self.GAUGE_WIDTH, style="white")
+                    section.append("│", style="dim")
+
+                section.append(f"  ${total_cost:.2f}", style="bold")
+                # Show ETC (dynamic estimate)
+                if etc > total_cost:
+                    section.append(f"  ETC ${etc:.2f}", style="dim")
+                section.append("\n")
+
+        # STATS row - show counts and pending work
         total = self.state.total_signals
         enriched = self.state.signals_enriched + self.state.signals_validated
         validated = self.state.signals_validated
-        pending_discovery = self.state.signals_discovered  # Awaiting enrichment
 
         section.append("  STATS ", style="bold magenta")
         section.append(f"discovered={total}", style="blue")
@@ -585,14 +614,7 @@ class DataProgressDisplay:
         if pending_parts:
             section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
-        # TOTAL line - summary like paths/wiki displays
-        section.append("\n")
-        tec_complete = validated
-        tec_in_progress = enriched - validated + pending_discovery
-        section.append("  TOTAL ", style="bold white")
-        section.append(f"TEC={total}", style="bold")
-        section.append(f"  complete={tec_complete}", style="green")
-        section.append(f"  in_progress={tec_in_progress}", style="yellow")
+        # Failed/skipped last
         if self.state.signals_failed > 0:
             section.append(f"  failed={self.state.signals_failed}", style="red")
         if self.state.signals_skipped > 0:
@@ -881,20 +903,12 @@ class DataProgressDisplay:
             summary.append(f"  {self.state.validate_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # TOTAL line - TEC summary
-        tec_complete = validated
-        tec_in_progress = enriched - validated + self.state.signals_discovered
-        summary.append("  TOTAL  ", style="bold white")
-        summary.append(f"TEC={total:,}", style="bold")
-        summary.append(f"  complete={tec_complete:,}", style="green")
-        summary.append(f"  in_progress={tec_in_progress:,}", style="yellow")
-        if self.state.signals_failed > 0:
-            summary.append(f"  failed={self.state.signals_failed:,}", style="red")
-        summary.append("\n")
-
         # USAGE stats
+        total_cost = self.state.accumulated_cost + self.state.run_cost
         summary.append("  USAGE ", style="bold cyan")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
-        summary.append(f"  total_cost=${self.state.run_cost:.2f}", style="yellow")
+        summary.append(f"  cost=${self.state.run_cost:.2f}", style="yellow")
+        if self.state.accumulated_cost > 0:
+            summary.append(f"  total=${total_cost:.2f}", style="dim")
 
         return summary
