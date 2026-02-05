@@ -2173,6 +2173,7 @@ async def _fetch_artifact_preview(
 
 def _extract_pdf_preview(content: bytes) -> str:
     """Extract text preview from PDF bytes."""
+    import logging
     import tempfile
     from pathlib import Path
 
@@ -2185,8 +2186,18 @@ def _extract_pdf_preview(content: bytes) -> str:
             temp_path = Path(f.name)
 
         try:
-            reader = PDFReader()
-            documents = reader.load_data(temp_path)
+            # Suppress pypdf's verbose internal warnings about corrupt PDF objects
+            # These are benign warnings about non-critical PDF structure issues
+            pypdf_logger = logging.getLogger("pypdf")
+            original_level = pypdf_logger.level
+            pypdf_logger.setLevel(logging.ERROR)
+
+            try:
+                reader = PDFReader()
+                documents = reader.load_data(temp_path)
+            finally:
+                pypdf_logger.setLevel(original_level)
+
             if documents:
                 # Get first 2000 chars from first pages
                 text = "\n".join(doc.text for doc in documents[:3] if doc.text)
@@ -2494,7 +2505,9 @@ async def artifact_score_worker(
     # Semaphore to limit concurrent artifact downloads
     fetch_semaphore = asyncio.Semaphore(5)
 
-    async def fetch_preview_for_artifact(artifact: dict, max_size_mb: float = 5.0) -> dict:
+    async def fetch_preview_for_artifact(
+        artifact: dict, max_size_mb: float = 5.0
+    ) -> dict:
         """Fetch content preview for a single artifact."""
         max_size_bytes = int(max_size_mb * 1024 * 1024)
 
@@ -2511,7 +2524,7 @@ async def artifact_score_worker(
                         "filename": artifact.get("filename", ""),
                         "artifact_type": artifact_type,
                         "preview_text": "",
-                        "fetch_error": f"File too large: {size_bytes / (1024*1024):.1f} MB",
+                        "fetch_error": f"File too large: {size_bytes / (1024 * 1024):.1f} MB",
                         "defer": True,
                     }
 
@@ -2560,7 +2573,9 @@ async def artifact_score_worker(
         state.artifact_idle_count = 0
 
         if on_progress:
-            on_progress(f"fetching {len(artifacts)} artifact previews", artifact_score_stats)
+            on_progress(
+                f"fetching {len(artifacts)} artifact previews", artifact_score_stats
+            )
 
         # Fetch content previews in parallel
         fetch_tasks = [fetch_preview_for_artifact(a) for a in artifacts]
