@@ -2043,7 +2043,7 @@ def discover_signals(
                         display.update_enrich(msg, stats, results)
 
                     def on_check(msg, stats, results=None):
-                        display.update_validate(msg, stats, results)
+                        display.update_check(msg, stats, results)
 
                     def on_worker_status(worker_group):
                         display.update_worker_status(worker_group)
