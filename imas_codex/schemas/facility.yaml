@@ -1527,6 +1527,11 @@ classes:
         - MEASURES -> StandardName (cross-facility semantic linking)
         - MAPS_TO_IMAS -> IMASPath (IMAS data dictionary mapping)
       
+      Lifecycle relationships (tree epoch tracking):
+        - INTRODUCED_IN -> TreeModelVersion (epoch when signal first appeared)
+        - REMOVED_IN -> TreeModelVersion (epoch when signal disappeared)
+        - CHECKED_VIA -> DataAccessNode (validated data access path)
+      
       Signal discovery automation strategy:
         Each data system requires bespoke discovery:
         - MDSplus: mdsvalue("$SHOTNAME"), tree traversal via getnci/treeNodeWild

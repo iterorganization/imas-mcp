@@ -541,15 +541,16 @@ def ingest_epochs(epochs: list[dict]) -> int:
     """Ingest TreeModelVersion nodes to the graph.
 
     Uses MERGE to ensure idempotency - existing epochs are updated, not duplicated.
-    Does not reset status of any linked nodes.
+    Also processes removed_paths to create REMOVED_IN relationships for existing signals.
     """
     if not epochs:
         return 0
 
     try:
         with GraphClient() as gc:
-            # Clean epochs for ingestion (remove temporary fields)
+            # Clean epochs for ingestion (remove temporary fields but keep removed_paths)
             clean_epochs = []
+            epochs_with_removed = []  # For signal removal tracking
             for e in epochs:
                 clean = {
                     "id": e["id"],
@@ -567,6 +568,17 @@ def ingest_epochs(epochs: list[dict]) -> int:
                 if e.get("predecessor"):
                     clean["predecessor"] = e["predecessor"]
                 clean_epochs.append(clean)
+
+                # Track epochs that have removed paths for signal linking
+                removed_paths = e.get("removed_paths", [])
+                if removed_paths:
+                    epochs_with_removed.append(
+                        {
+                            "epoch_id": e["id"],
+                            "facility_id": e["facility_id"],
+                            "removed_paths": removed_paths,
+                        }
+                    )
 
             gc.query(
                 """
@@ -595,6 +607,22 @@ def ingest_epochs(epochs: list[dict]) -> int:
                 """,
                 epochs=clean_epochs,
             )
+
+            # Create REMOVED_IN relationships for signals whose paths were removed
+            # This links existing FacilitySignals to the epoch where they disappeared
+            for epoch_data in epochs_with_removed:
+                gc.query(
+                    """
+                    UNWIND $removed_paths AS path
+                    MATCH (s:FacilitySignal {facility_id: $facility_id})
+                    WHERE s.node_path = path
+                    MATCH (v:TreeModelVersion {id: $epoch_id})
+                    MERGE (s)-[:REMOVED_IN]->(v)
+                    """,
+                    removed_paths=epoch_data["removed_paths"],
+                    facility_id=epoch_data["facility_id"],
+                    epoch_id=epoch_data["epoch_id"],
+                )
 
         return len(epochs)
     except Exception as e:
