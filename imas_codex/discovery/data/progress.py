@@ -340,26 +340,44 @@ class DataProgressDisplay:
         return section
 
     def _build_progress_section(self) -> Text:
-        """Build the main progress bars."""
+        """Build the main progress bars.
+
+        Progress semantics:
+        - SCAN: Shows total signals discovered. Progress bar fills as scan completes.
+        - ENRICH: Shows enriched count relative to total signals discovered.
+        - VALIDATE: Shows validated count relative to enriched signals.
+
+        Note: total_signals is the high water mark (all signals ever discovered),
+        not the current count in 'discovered' status which decreases as signals
+        are enriched.
+        """
         section = Text()
         bar_width = self.BAR_WIDTH
 
-        # SCAN row
-        scan_total = max(self.state.total_signals, self.state.signals_discovered, 1)
-        discovered = self.state.signals_discovered
+        # Total signals in graph is our TEC (total eventually consistent)
+        total = max(self.state.total_signals, 1)
+        enriched = self.state.signals_enriched + self.state.signals_validated
+        validated = self.state.signals_validated
+
+        # SCAN row - shows total signals discovered
+        # Progress = (enriched + validated) / total when scan is done,
+        # or scan progress during active scanning
         section.append("  SCAN    ", style="bold blue")
-        ratio = min(discovered / scan_total, 1.0) if scan_total > 0 else 0
+        if self.state.scan_processing or self.state.signals_discovered > 0:
+            # Active scan or scan pending - show actual discovered signals
+            ratio = 1.0 if self.state.total_signals > 0 else 0
+        else:
+            # Scan complete - show full bar
+            ratio = 1.0
         section.append(make_bar(ratio, bar_width), style="blue")
-        section.append(f" {discovered:>6,}", style="bold")
+        section.append(f" {total:>6,}", style="bold")
         section.append("     ", style="dim")  # No percentage for scanning
         if self.state.discover_rate and self.state.discover_rate > 0:
             section.append(f" {self.state.discover_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # ENRICH row
-        enrich_total = max(self.state.signals_discovered, 1)
-        enriched = self.state.signals_enriched + self.state.signals_validated
-        enrich_pct = enriched / enrich_total * 100 if enrich_total > 0 else 0
+        # ENRICH row - shows enriched progress relative to total discovered
+        enrich_pct = enriched / total * 100 if total > 0 else 0
 
         if self.state.discover_only:
             section.append("  ENRICH  ", style="dim")
@@ -367,7 +385,7 @@ class DataProgressDisplay:
             section.append("   disabled", style="dim italic")
         else:
             section.append("  ENRICH  ", style="bold green")
-            ratio = min(enriched / enrich_total, 1.0) if enrich_total > 0 else 0
+            ratio = min(enriched / total, 1.0) if total > 0 else 0
             section.append(make_bar(ratio, bar_width), style="green")
             section.append(f" {enriched:>6,}", style="bold")
             section.append(f" {enrich_pct:>3.0f}%", style="cyan")
@@ -375,10 +393,10 @@ class DataProgressDisplay:
                 section.append(f" {self.state.enrich_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # VALIDATE row
-        validate_total = max(enriched, 1)
-        validated = self.state.signals_validated
-        validate_pct = validated / validate_total * 100 if validate_total > 0 else 0
+        # VALIDATE row - shows validated relative to enriched
+        # Denominator is (enriched + validated) = signals that passed enrichment
+        validate_denom = max(enriched, 1)
+        validate_pct = validated / validate_denom * 100 if validate_denom > 0 else 0
 
         if self.state.discover_only or self.state.enrich_only:
             section.append("  VALIDATE", style="dim")
@@ -386,7 +404,7 @@ class DataProgressDisplay:
             section.append(" disabled", style="dim italic")
         else:
             section.append("  VALIDATE", style="bold magenta")
-            ratio = min(validated / validate_total, 1.0) if validate_total > 0 else 0
+            ratio = min(validated / validate_denom, 1.0) if validate_denom > 0 else 0
             section.append(make_bar(ratio, bar_width), style="magenta")
             section.append(f" {validated:>6,}", style="bold")
             section.append(f" {validate_pct:>3.0f}%", style="cyan")
@@ -547,18 +565,18 @@ class DataProgressDisplay:
             section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
             section.append("\n")
 
-        # STATS row
-        section.append("  STATS ", style="bold magenta")
-        section.append(
-            f"discovered={self.state.signals_discovered}",
-            style="blue",
-        )
-        section.append(
-            f"  enriched={self.state.signals_enriched + self.state.signals_validated}",
-            style="green",
-        )
-        section.append(f"  validated={self.state.signals_validated}", style="magenta")
+        # STATS row - show TEC (total eventually consistent) counts
+        total = self.state.total_signals
+        enriched = self.state.signals_enriched + self.state.signals_validated
+        validated = self.state.signals_validated
+        pending_discovery = self.state.signals_discovered  # Awaiting enrichment
 
+        section.append("  STATS ", style="bold magenta")
+        section.append(f"discovered={total}", style="blue")
+        section.append(f"  enriched={enriched}", style="green")
+        section.append(f"  validated={validated}", style="magenta")
+
+        # Show pending work counts
         pending_parts = []
         if self.state.pending_enrich > 0:
             pending_parts.append(f"enrich:{self.state.pending_enrich}")
@@ -566,6 +584,19 @@ class DataProgressDisplay:
             pending_parts.append(f"validate:{self.state.pending_validate}")
         if pending_parts:
             section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
+
+        # TOTAL line - summary like paths/wiki displays
+        section.append("\n")
+        tec_complete = validated
+        tec_in_progress = enriched - validated + pending_discovery
+        section.append("  TOTAL ", style="bold white")
+        section.append(f"TEC={total}", style="bold")
+        section.append(f"  complete={tec_complete}", style="green")
+        section.append(f"  in_progress={tec_in_progress}", style="yellow")
+        if self.state.signals_failed > 0:
+            section.append(f"  failed={self.state.signals_failed}", style="red")
+        if self.state.signals_skipped > 0:
+            section.append(f"  skipped={self.state.signals_skipped}", style="dim")
 
         return section
 
@@ -822,17 +853,20 @@ class DataProgressDisplay:
         """Build final summary text."""
         summary = Text()
 
+        total = self.state.total_signals
+        enriched = self.state.signals_enriched + self.state.signals_validated
+        validated = self.state.signals_validated
+
         # SCAN stats
         summary.append("  SCAN   ", style="bold blue")
-        summary.append(f"discovered={self.state.signals_discovered:,}", style="blue")
+        summary.append(f"discovered={total:,}", style="blue")
         if self.state.discover_rate:
             summary.append(f"  {self.state.discover_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # ENRICH stats
-        total_enriched = self.state.signals_enriched + self.state.signals_validated
         summary.append("  ENRICH ", style="bold green")
-        summary.append(f"enriched={total_enriched:,}", style="green")
+        summary.append(f"enriched={enriched:,}", style="green")
         summary.append(f"  skipped={self.state.signals_skipped:,}", style="yellow")
         summary.append(f"  cost=${self.state.run_cost:.3f}", style="yellow")
         if self.state.enrich_rate:
@@ -841,14 +875,25 @@ class DataProgressDisplay:
 
         # VALIDATE stats
         summary.append("  VALIDATE", style="bold magenta")
-        summary.append(f" validated={self.state.signals_validated:,}", style="magenta")
+        summary.append(f" validated={validated:,}", style="magenta")
         summary.append(f"  failed={self.state.signals_failed:,}", style="red")
         if self.state.validate_rate:
             summary.append(f"  {self.state.validate_rate:.1f}/s", style="dim")
         summary.append("\n")
 
+        # TOTAL line - TEC summary
+        tec_complete = validated
+        tec_in_progress = enriched - validated + self.state.signals_discovered
+        summary.append("  TOTAL  ", style="bold white")
+        summary.append(f"TEC={total:,}", style="bold")
+        summary.append(f"  complete={tec_complete:,}", style="green")
+        summary.append(f"  in_progress={tec_in_progress:,}", style="yellow")
+        if self.state.signals_failed > 0:
+            summary.append(f"  failed={self.state.signals_failed:,}", style="red")
+        summary.append("\n")
+
         # USAGE stats
-        summary.append("  USAGE ", style="bold white")
+        summary.append("  USAGE ", style="bold cyan")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
         summary.append(f"  total_cost=${self.state.run_cost:.2f}", style="yellow")
 
