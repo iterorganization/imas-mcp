@@ -674,6 +674,19 @@ def _provide_wiki_scoring_schema() -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _provide_artifact_scoring_schema() -> dict[str, Any]:
+    """Provide ArtifactScoreBatch Pydantic schema for LLM prompts."""
+    from imas_codex.discovery.wiki.models import ArtifactScoreBatch, ArtifactScoreResult
+
+    return {
+        "artifact_scoring_schema_example": get_pydantic_schema_json(ArtifactScoreBatch),
+        "artifact_scoring_schema_fields": get_pydantic_schema_description(
+            ArtifactScoreResult
+        ),
+    }
+
+
 # Registry mapping schema_needs names to provider functions
 _SCHEMA_PROVIDERS: dict[str, Any] = {
     "path_purposes": _provide_path_purposes,
@@ -688,6 +701,7 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "wiki_page_purposes": _provide_wiki_page_purposes,
     "wiki_score_dimensions": _provide_wiki_score_dimensions,
     "wiki_scoring_schema": _provide_wiki_scoring_schema,
+    "artifact_scoring_schema": _provide_artifact_scoring_schema,
 }
 
 # Default schema needs per prompt (when not specified in frontmatter)
@@ -708,6 +722,12 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "wiki_page_purposes",
         "wiki_score_dimensions",
         "wiki_scoring_schema",
+        "physics_domains",
+    ],
+    "wiki/artifact-scorer": [
+        "wiki_page_purposes",
+        "wiki_score_dimensions",
+        "artifact_scoring_schema",
         "physics_domains",
     ],
 }

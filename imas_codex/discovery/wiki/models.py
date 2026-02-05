@@ -24,6 +24,11 @@ __all__ = [
     "WikiScoreBatch",
     "ScoredWikiPage",
     "ScoredWikiBatch",
+    # Artifact scoring
+    "ArtifactScoreResult",
+    "ArtifactScoreBatch",
+    "grounded_artifact_score",
+    "ScoredArtifact",
 ]
 
 
@@ -376,3 +381,229 @@ class ScoredWikiBatch:
     def ingested_count(self) -> int:
         """Number of pages marked for ingestion."""
         return sum(1 for p in self.scored_pages if p.should_ingest)
+
+
+# ============================================================================
+# Artifact Scoring Pydantic Models (LLM Structured Output)
+# ============================================================================
+
+
+class ArtifactScoreResult(BaseModel):
+    """LLM scoring result for a single wiki artifact.
+
+    This Pydantic model is passed to LiteLLM's response_format parameter
+    to ensure structured, parseable output from the LLM.
+
+    Uses same scoring dimensions as WikiScoreResult for consistency.
+    """
+
+    id: str = Field(description="The artifact ID (echo from input)")
+
+    artifact_purpose: WikiPagePurpose = Field(
+        description="Classification: data_source, diagnostic, code, calibration, "
+        "data_access, physics_analysis, experimental_procedure, tutorial, "
+        "reference, administrative, personal, other"
+    )
+
+    description: str = Field(
+        description="Concise description of artifact contents (1-2 sentences, max 150 chars)"
+    )
+
+    # Per-dimension scores (0.0-1.0 each) - same as WikiScoreResult
+    score_data_documentation: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Signal tables, node lists, shot databases (0.0-1.0)",
+    )
+    score_physics_content: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Physics explanations, methodology, theory (0.0-1.0)",
+    )
+    score_code_documentation: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Software docs, API references, usage guides (0.0-1.0)",
+    )
+    score_data_access: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="MDSplus paths, TDI expressions, access methods (0.0-1.0)",
+    )
+    score_calibration: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Calibration info, conversion factors, sensor specs (0.0-1.0)",
+    )
+    score_imas_relevance: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="IMAS integration, IDS references, mapping hints (0.0-1.0)",
+    )
+
+    reasoning: str = Field(
+        default="",
+        description="Brief explanation for the score (max 80 chars)",
+    )
+
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Searchable keywords (max 5)",
+    )
+
+    physics_domain: PhysicsDomain = Field(
+        default=PhysicsDomain.GENERAL,
+        description="Primary physics domain (use 'general' if no clear domain)",
+    )
+
+    should_ingest: bool = Field(
+        description="Whether to download full content and create embeddings"
+    )
+
+    skip_reason: str = Field(
+        default="",
+        description="Why not to ingest (if should_ingest=false)",
+    )
+
+
+class ArtifactScoreBatch(BaseModel):
+    """Batch of artifact scoring results from LLM.
+
+    This is the top-level model passed to LiteLLM's response_format.
+    """
+
+    results: list[ArtifactScoreResult] = Field(
+        description="List of scoring results, one per input artifact, in order"
+    )
+
+
+def grounded_artifact_score(
+    scores: dict[str, float],
+    purpose: WikiPagePurpose,
+) -> float:
+    """Compute combined score from per-dimension scores for artifacts.
+
+    Uses same logic as grounded_wiki_score for consistency.
+    MAX of per-dimension scores with purpose-based multipliers.
+
+    Args:
+        scores: Dict of per-dimension scores
+        purpose: Classified purpose
+
+    Returns:
+        Combined score (0.0-1.0)
+    """
+    # Reuse the same logic as wiki scoring
+    return grounded_wiki_score(scores, purpose)
+
+
+@dataclass
+class ScoredArtifact:
+    """Result of LLM scoring for a single wiki artifact.
+
+    Runtime dataclass containing per-dimension scores and ingestion decision.
+    """
+
+    id: str
+    """Artifact ID (facility:filename)."""
+
+    artifact_purpose: WikiPagePurpose
+    """Classified purpose of the artifact."""
+
+    description: str
+    """One-sentence description of the artifact's contents."""
+
+    # Per-dimension scores (0.0-1.0 each)
+    score_data_documentation: float = 0.0
+    score_physics_content: float = 0.0
+    score_code_documentation: float = 0.0
+    score_data_access: float = 0.0
+    score_calibration: float = 0.0
+    score_imas_relevance: float = 0.0
+
+    score: float = 0.0
+    """Combined score computed by grounded scoring function."""
+
+    reasoning: str = ""
+    """Brief explanation for the score."""
+
+    keywords: list[str] = field(default_factory=list)
+    """Searchable keywords for this artifact (max 5)."""
+
+    physics_domain: PhysicsDomain | None = None
+    """Primary physics domain."""
+
+    should_ingest: bool = False
+    """Whether to download full content and ingest."""
+
+    skip_reason: str | None = None
+    """Why this artifact should not be ingested."""
+
+    score_cost: float = 0.0
+    """LLM cost in USD for scoring this artifact (batch cost / batch size)."""
+
+    @classmethod
+    def from_llm_result(
+        cls,
+        result: ArtifactScoreResult,
+        cost_per_artifact: float = 0.0,
+    ) -> ScoredArtifact:
+        """Create from LLM structured output result."""
+        scores = {
+            "score_data_documentation": result.score_data_documentation,
+            "score_physics_content": result.score_physics_content,
+            "score_code_documentation": result.score_code_documentation,
+            "score_data_access": result.score_data_access,
+            "score_calibration": result.score_calibration,
+            "score_imas_relevance": result.score_imas_relevance,
+        }
+
+        combined = grounded_artifact_score(scores, result.artifact_purpose)
+
+        return cls(
+            id=result.id,
+            artifact_purpose=result.artifact_purpose,
+            description=result.description[:150],
+            score_data_documentation=result.score_data_documentation,
+            score_physics_content=result.score_physics_content,
+            score_code_documentation=result.score_code_documentation,
+            score_data_access=result.score_data_access,
+            score_calibration=result.score_calibration,
+            score_imas_relevance=result.score_imas_relevance,
+            score=combined,
+            reasoning=result.reasoning[:80],
+            keywords=result.keywords[:5],
+            physics_domain=result.physics_domain,
+            should_ingest=result.should_ingest,
+            skip_reason=result.skip_reason or None,
+            score_cost=cost_per_artifact,
+        )
+
+    def to_graph_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for graph persistence."""
+        return {
+            "id": self.id,
+            "artifact_purpose": self.artifact_purpose.value,
+            "description": self.description,
+            "score_data_documentation": self.score_data_documentation,
+            "score_physics_content": self.score_physics_content,
+            "score_code_documentation": self.score_code_documentation,
+            "score_data_access": self.score_data_access,
+            "score_calibration": self.score_calibration,
+            "score_imas_relevance": self.score_imas_relevance,
+            "score": self.score,
+            "reasoning": self.reasoning,
+            "keywords": self.keywords,
+            "physics_domain": self.physics_domain.value
+            if self.physics_domain
+            else None,
+            "should_ingest": self.should_ingest,
+            "skip_reason": self.skip_reason,
+            "score_cost": self.score_cost,
+        }
