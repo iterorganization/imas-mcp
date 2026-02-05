@@ -169,7 +169,7 @@ Before ANY operation that modifies or deletes graph nodes:
 
 ### Vector Indexes for Embeddings
 
-When adding embeddings to graph nodes, you **MUST** create a vector index:
+When adding embeddings to graph nodes, you must create a vector index:
 
 - Embeddings are stored as regular node properties
 - Without an index, `db.index.vector.queryNodes()` fails
