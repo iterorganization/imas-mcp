@@ -617,21 +617,52 @@ def get_latest_epoch_shot(facility: str, tree_name: str) -> int | None:
         return None
 
 
-def ingest_epochs(epochs: list[dict]) -> int:
-    """Ingest TreeModelVersion nodes to the graph.
+def ingest_epochs(
+    epochs: list[dict],
+    access_method_id: str | None = None,
+    reference_shot: int | None = None,
+) -> dict[str, int]:
+    """Ingest epochs with symmetric signal lifecycle tracking.
 
-    Uses MERGE to ensure idempotency - existing epochs are updated, not duplicated.
-    Also processes removed_paths to create REMOVED_IN relationships for existing signals.
+    Creates TreeModelVersion nodes and FacilitySignal nodes with proper
+    INTRODUCED_IN/REMOVED_IN relationships. Processes epochs in version order
+    to maintain temporal consistency.
+
+    Symmetric pattern:
+    - added_paths → Create signal + INTRODUCED_IN edge to this epoch
+    - removed_paths → Create REMOVED_IN edge to this epoch
+
+    Args:
+        epochs: List of epoch dicts from discover_epochs_optimized()
+        access_method_id: Optional AccessMethod ID for signal creation
+        reference_shot: Optional reference shot for signal metadata
+
+    Returns:
+        Dict with counts: epochs, signals_created, introduced_edges, removed_edges
     """
     if not epochs:
-        return 0
+        return {
+            "epochs": 0,
+            "signals_created": 0,
+            "introduced_edges": 0,
+            "removed_edges": 0,
+        }
+
+    # Sort epochs by version to process in temporal order
+    sorted_epochs = sorted(epochs, key=lambda e: e["version"])
+
+    results = {
+        "epochs": 0,
+        "signals_created": 0,
+        "introduced_edges": 0,
+        "removed_edges": 0,
+    }
 
     try:
         with GraphClient() as gc:
-            # Clean epochs for ingestion (remove temporary fields but keep removed_paths)
+            # Phase 1: Create all TreeModelVersion nodes
             clean_epochs = []
-            epochs_with_removed = []  # For signal removal tracking
-            for e in epochs:
+            for e in sorted_epochs:
                 clean = {
                     "id": e["id"],
                     "tree_name": e["tree_name"],
@@ -649,17 +680,6 @@ def ingest_epochs(epochs: list[dict]) -> int:
                     clean["predecessor"] = e["predecessor"]
                 clean_epochs.append(clean)
 
-                # Track epochs that have removed paths for signal linking
-                removed_paths = e.get("removed_paths", [])
-                if removed_paths:
-                    epochs_with_removed.append(
-                        {
-                            "epoch_id": e["id"],
-                            "facility_id": e["facility_id"],
-                            "removed_paths": removed_paths,
-                        }
-                    )
-
             gc.query(
                 """
                 UNWIND $epochs AS ep
@@ -675,8 +695,9 @@ def ingest_epochs(epochs: list[dict]) -> int:
                 """,
                 epochs=clean_epochs,
             )
+            results["epochs"] = len(clean_epochs)
 
-            # Create predecessor relationships
+            # Phase 2: Create predecessor relationships
             gc.query(
                 """
                 UNWIND $epochs AS ep
@@ -688,67 +709,87 @@ def ingest_epochs(epochs: list[dict]) -> int:
                 epochs=clean_epochs,
             )
 
-            # Create REMOVED_IN relationships for signals whose paths were removed
-            # This links existing FacilitySignals to the epoch where they disappeared
-            for epoch_data in epochs_with_removed:
-                gc.query(
-                    """
-                    UNWIND $removed_paths AS path
-                    MATCH (s:FacilitySignal {facility_id: $facility_id})
-                    WHERE s.node_path = path
-                    MATCH (v:TreeModelVersion {id: $epoch_id})
-                    MERGE (s)-[:REMOVED_IN]->(v)
-                    """,
-                    removed_paths=epoch_data["removed_paths"],
-                    facility_id=epoch_data["facility_id"],
-                    epoch_id=epoch_data["epoch_id"],
-                )
+            # Phase 3: Process signal lifecycle (in version order for proper sequencing)
+            for epoch in sorted_epochs:
+                epoch_id = epoch["id"]
+                facility_id = epoch["facility_id"]
+                tree_name = epoch["tree_name"]
+                added_paths = epoch.get("added_paths", [])
+                removed_paths = epoch.get("removed_paths", [])
 
-        return len(epochs)
+                # Create signals from added_paths with INTRODUCED_IN edge
+                if added_paths:
+                    signals = []
+                    for path in added_paths:
+                        name = path.split(":")[-1].split(".")[-1]
+                        signal_id = f"{facility_id}:general/{tree_name}/{name.lower()}"
+                        signals.append(
+                            {
+                                "id": signal_id,
+                                "facility_id": facility_id,
+                                "physics_domain": "general",
+                                "name": name,
+                                "accessor": f"data({path})",
+                                "access_method": access_method_id
+                                or f"{facility_id}:mdsplus:tree",
+                                "tree_name": tree_name,
+                                "node_path": path,
+                                "units": "",
+                                "status": FacilitySignalStatus.discovered.value,
+                                "discovery_source": "epoch_detection",
+                                "example_shot": reference_shot or epoch["first_shot"],
+                                "epoch_id": epoch_id,
+                            }
+                        )
+
+                    # Create signals and INTRODUCED_IN edges atomically
+                    result = gc.query(
+                        """
+                        UNWIND $signals AS sig
+                        MERGE (s:FacilitySignal {id: sig.id})
+                        ON CREATE SET s += sig,
+                                      s.discovered_at = datetime()
+                        ON MATCH SET s.claimed_at = null
+                        WITH s, sig
+                        MATCH (v:TreeModelVersion {id: sig.epoch_id})
+                        MERGE (s)-[:INTRODUCED_IN]->(v)
+                        RETURN count(s) AS created
+                        """,
+                        signals=signals,
+                    )
+                    results["signals_created"] += len(signals)
+                    results["introduced_edges"] += len(signals)
+
+                # Create REMOVED_IN edges for removed_paths
+                if removed_paths:
+                    result = gc.query(
+                        """
+                        UNWIND $paths AS path
+                        MATCH (s:FacilitySignal {facility_id: $facility_id})
+                        WHERE s.node_path = path
+                        MATCH (v:TreeModelVersion {id: $epoch_id})
+                        WHERE NOT (s)-[:REMOVED_IN]->(:TreeModelVersion)
+                        MERGE (s)-[:REMOVED_IN]->(v)
+                        RETURN count(*) AS removed
+                        """,
+                        paths=removed_paths,
+                        facility_id=facility_id,
+                        epoch_id=epoch_id,
+                    )
+                    results["removed_edges"] += result[0]["removed"] if result else 0
+
+        logger.info(
+            "Ingested %d epochs: %d signals created, %d INTRODUCED_IN, %d REMOVED_IN",
+            results["epochs"],
+            results["signals_created"],
+            results["introduced_edges"],
+            results["removed_edges"],
+        )
+        return results
+
     except Exception as e:
         logger.error("Failed to ingest epochs: %s", e)
-        return 0
-
-
-def create_signals_from_epoch(
-    facility: str,
-    tree_name: str,
-    epoch_id: str,
-    paths: list[str],
-    access_method_id: str,
-    reference_shot: int,
-) -> list[dict]:
-    """Create signal dicts from epoch paths for ingestion.
-
-    Creates signals with epoch linkage for applicability tracking.
-    """
-    signals = []
-    for path in paths:
-        # Extract node name from path
-        name = path.split(":")[-1].split(".")[-1]
-
-        # Generate signal ID
-        signal_id = f"{facility}:general/{tree_name}/{name.lower()}"
-
-        signals.append(
-            {
-                "id": signal_id,
-                "facility_id": facility,
-                "physics_domain": "general",  # Will be enriched
-                "name": name,
-                "accessor": f"data({path})",
-                "access_method": access_method_id,
-                "tree_name": tree_name,
-                "node_path": path,
-                "units": "",  # Will be discovered during validation
-                "status": FacilitySignalStatus.discovered.value,
-                "discovery_source": "epoch_detection",
-                "example_shot": reference_shot,
-                "epoch_id": epoch_id,
-            }
-        )
-
-    return signals
+        return results
 
 
 # =============================================================================
@@ -1147,14 +1188,44 @@ async def scan_worker(
                     )
                 continue
 
-            # Ingest epochs to graph
-            epoch_count = await asyncio.to_thread(ingest_epochs, epochs)
+            # Ingest epochs with symmetric signal lifecycle tracking
+            # Creates signals from added_paths + INTRODUCED_IN edges
+            # Creates REMOVED_IN edges for removed_paths
+            ingest_result = await asyncio.to_thread(
+                ingest_epochs,
+                epochs,
+                access_method_id,
+                state.reference_shot,
+            )
+            state.discover_stats.processed += ingest_result["signals_created"]
+
             logger.info(
-                "Ingested %d epochs for %s:%s", epoch_count, state.facility, tree_name
+                "Ingested %d epochs for %s:%s: %d signals, %d introduced, %d removed",
+                ingest_result["epochs"],
+                state.facility,
+                tree_name,
+                ingest_result["signals_created"],
+                ingest_result["introduced_edges"],
+                ingest_result["removed_edges"],
             )
 
+            if on_progress:
+                on_progress(
+                    f"discovered {ingest_result['signals_created']} from {tree_name} "
+                    f"({ingest_result['epochs']} epochs)",
+                    state.discover_stats,
+                    [
+                        {
+                            "tree_name": tree_name,
+                            "node_path": f"{ingest_result['signals_created']} signals",
+                            "epochs": ingest_result["epochs"],
+                            "introduced": ingest_result["introduced_edges"],
+                            "removed": ingest_result["removed_edges"],
+                        }
+                    ],
+                )
+
             # Clean up checkpoint file after successful ingestion
-            # (next run will skip via graph-based idempotency check)
             if checkpoint_path.exists():
                 try:
                     checkpoint_path.unlink()
@@ -1162,54 +1233,6 @@ async def scan_worker(
                     logger.debug(
                         "Could not remove checkpoint %s: %s", checkpoint_path, e
                     )
-
-            # Create signals from the latest epoch's structure
-            # Use the most recent epoch for signal discovery
-            latest_epoch = max(epochs, key=lambda e: e["first_shot"])
-            latest_shot = latest_epoch["first_shot"]
-            latest_paths = structures.get(latest_shot, [])
-
-            if latest_paths:
-                if on_progress:
-                    on_progress(
-                        f"creating signals from {tree_name}",
-                        state.discover_stats,
-                        [
-                            {
-                                "tree_name": tree_name,
-                                "node_path": f"{len(latest_paths)} paths",
-                            }
-                        ],
-                    )
-
-                signals = create_signals_from_epoch(
-                    state.facility,
-                    tree_name,
-                    latest_epoch["id"],
-                    latest_paths,
-                    access_method_id,
-                    state.reference_shot,
-                )
-
-                if signals:
-                    count = await asyncio.to_thread(ingest_discovered_signals, signals)
-                    state.discover_stats.processed += count
-
-                    if on_progress:
-                        results = [
-                            {
-                                "id": s["id"],
-                                "tree_name": tree_name,
-                                "node_path": s.get("node_path", ""),
-                                "signals_in_tree": count,
-                            }
-                            for s in signals[:20]
-                        ]
-                        on_progress(
-                            f"discovered {count} from {tree_name} ({len(epochs)} epochs)",
-                            state.discover_stats,
-                            results,
-                        )
 
             await asyncio.sleep(0.1)
 
