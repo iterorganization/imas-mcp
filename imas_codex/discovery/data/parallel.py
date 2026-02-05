@@ -65,6 +65,9 @@ class DataDiscoveryState:
     reference_shot: int | None = None
     tdi_path: str | None = None
 
+    # Flags
+    force: bool = False  # Re-scan trees even if epochs exist
+
     # Limits
     cost_limit: float = 10.0
     signal_limit: int | None = None
@@ -420,6 +423,164 @@ def release_signal_claim(signal_id: str) -> None:
 
 
 # =============================================================================
+# Epoch Detection Queries
+# =============================================================================
+
+
+def get_tree_epochs(facility: str, tree_name: str) -> list[dict]:
+    """Get existing epochs for a tree from the graph.
+
+    Returns list of epoch dicts with id, version, first_shot, last_shot.
+    Empty list if no epochs exist.
+    """
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (v:TreeModelVersion {facility_id: $facility, tree_name: $tree})
+                RETURN v.id AS id, v.version AS version,
+                       v.first_shot AS first_shot, v.last_shot AS last_shot,
+                       v.node_count AS node_count
+                ORDER BY v.version
+                """,
+                facility=facility,
+                tree=tree_name,
+            )
+            return list(result) if result else []
+    except Exception as e:
+        logger.warning("Could not get epochs for %s:%s: %s", facility, tree_name, e)
+        return []
+
+
+def get_latest_epoch_shot(facility: str, tree_name: str) -> int | None:
+    """Get the first_shot of the latest epoch for incremental scanning."""
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (v:TreeModelVersion {facility_id: $facility, tree_name: $tree})
+                RETURN max(v.first_shot) AS latest_shot
+                """,
+                facility=facility,
+                tree=tree_name,
+            )
+            return (
+                result[0]["latest_shot"]
+                if result and result[0]["latest_shot"]
+                else None
+            )
+    except Exception as e:
+        logger.warning("Could not get latest epoch shot: %s", e)
+        return None
+
+
+def ingest_epochs(epochs: list[dict]) -> int:
+    """Ingest TreeModelVersion nodes to the graph.
+
+    Uses MERGE to ensure idempotency - existing epochs are updated, not duplicated.
+    Does not reset status of any linked nodes.
+    """
+    if not epochs:
+        return 0
+
+    try:
+        with GraphClient() as gc:
+            # Clean epochs for ingestion (remove temporary fields)
+            clean_epochs = []
+            for e in epochs:
+                clean = {
+                    "id": e["id"],
+                    "tree_name": e["tree_name"],
+                    "facility_id": e["facility_id"],
+                    "version": e["version"],
+                    "first_shot": e["first_shot"],
+                    "last_shot": e.get("last_shot"),
+                    "node_count": e.get("node_count", 0),
+                    "nodes_added": e.get("nodes_added", 0),
+                    "nodes_removed": e.get("nodes_removed", 0),
+                    "added_subtrees": e.get("added_subtrees", []),
+                    "removed_subtrees": e.get("removed_subtrees", []),
+                }
+                if e.get("predecessor"):
+                    clean["predecessor"] = e["predecessor"]
+                clean_epochs.append(clean)
+
+            gc.query(
+                """
+                UNWIND $epochs AS ep
+                MERGE (v:TreeModelVersion {id: ep.id})
+                ON CREATE SET v += ep,
+                              v.discovery_date = datetime()
+                ON MATCH SET v.node_count = ep.node_count,
+                             v.last_shot = ep.last_shot,
+                             v.nodes_added = ep.nodes_added,
+                             v.nodes_removed = ep.nodes_removed,
+                             v.added_subtrees = ep.added_subtrees,
+                             v.removed_subtrees = ep.removed_subtrees
+                """,
+                epochs=clean_epochs,
+            )
+
+            # Create predecessor relationships
+            gc.query(
+                """
+                UNWIND $epochs AS ep
+                WITH ep WHERE ep.predecessor IS NOT NULL
+                MATCH (v:TreeModelVersion {id: ep.id})
+                MATCH (pred:TreeModelVersion {id: ep.predecessor})
+                MERGE (v)-[:PRECEDED_BY]->(pred)
+                """,
+                epochs=clean_epochs,
+            )
+
+        return len(epochs)
+    except Exception as e:
+        logger.error("Failed to ingest epochs: %s", e)
+        return 0
+
+
+def create_signals_from_epoch(
+    facility: str,
+    tree_name: str,
+    epoch_id: str,
+    paths: list[str],
+    access_method_id: str,
+    reference_shot: int,
+) -> list[dict]:
+    """Create signal dicts from epoch paths for ingestion.
+
+    Creates signals with epoch linkage for applicability tracking.
+    """
+    signals = []
+    for path in paths:
+        # Extract node name from path
+        name = path.split(":")[-1].split(".")[-1]
+
+        # Generate signal ID
+        signal_id = f"{facility}:general/{tree_name}/{name.lower()}"
+
+        signals.append(
+            {
+                "id": signal_id,
+                "facility_id": facility,
+                "physics_domain": "general",  # Will be enriched
+                "name": name,
+                "accessor": f"data({path})",
+                "access_method": access_method_id,
+                "tree_name": tree_name,
+                "node_path": path,
+                "units": "",  # Will be discovered during validation
+                "status": FacilitySignalStatus.discovered.value,
+                "discovery_source": "epoch_detection",
+                "example_shot": reference_shot,
+                "epoch_id": epoch_id,
+            }
+        )
+
+    return signals
+
+
+# =============================================================================
 # MDSplus Discovery
 # =============================================================================
 
@@ -646,58 +807,163 @@ async def scan_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
-    """Worker that scans data sources for signals.
+    """Worker that scans data sources for signals with epoch detection.
 
-    Iterates through configured trees and TDI paths, streaming discoveries.
+    Uses batch_discovery.discover_epochs_optimized() for efficient epoch detection.
+    Idempotent: skips trees that already have epochs unless force=True.
     """
+    from imas_codex.mdsplus.batch_discovery import discover_epochs_optimized
+
     access_method_id = f"{state.facility}:mdsplus:tree"
 
-    # Scan MDSplus trees
+    # Scan MDSplus trees with epoch detection
     if state.tree_names and state.reference_shot:
         for tree_name in state.tree_names:
             if state.should_stop_discovering():
                 break
 
-            if on_progress:
-                on_progress(
-                    f"scanning {tree_name}",
-                    state.discover_stats,
-                    [{"tree_name": tree_name, "node_path": "connecting..."}],
-                )
-
-            # Discover signals from this tree
-            signals = await asyncio.to_thread(
-                discover_mdsplus_signals,
-                state.facility,
-                state.ssh_host,
-                tree_name,
-                state.reference_shot,
-                access_method_id,
+            # Check idempotency - skip if epochs already exist
+            existing_epochs = await asyncio.to_thread(
+                get_tree_epochs, state.facility, tree_name
             )
 
-            if signals:
-                # Ingest to graph
-                count = await asyncio.to_thread(ingest_discovered_signals, signals)
-                state.discover_stats.processed += count
-
-                # Stream progress with tree context
+            if existing_epochs and not state.force:
+                # Tree already scanned - skip
+                epoch_count = len(existing_epochs)
+                total_nodes = sum(e.get("node_count", 0) for e in existing_epochs)
+                logger.info(
+                    "Skipping %s:%s - already has %d epochs (%d nodes). "
+                    "Use --force to re-scan.",
+                    state.facility,
+                    tree_name,
+                    epoch_count,
+                    total_nodes,
+                )
                 if on_progress:
-                    results = [
-                        {
-                            "id": s["id"],
-                            "tree_name": tree_name,
-                            "node_path": s.get("node_path", ""),
-                            "signals_in_tree": count,
-                        }
-                        for s in signals[:20]  # Send sample for display
-                    ]
                     on_progress(
-                        f"discovered {count} from {tree_name}",
+                        f"skipped {tree_name} (already scanned)",
                         state.discover_stats,
-                        results,
+                        [
+                            {
+                                "tree_name": tree_name,
+                                "node_path": f"{epoch_count} epochs exist",
+                            }
+                        ],
+                    )
+                continue
+
+            if on_progress:
+                mode = "re-scanning" if existing_epochs else "scanning"
+                on_progress(
+                    f"{mode} {tree_name}",
+                    state.discover_stats,
+                    [{"tree_name": tree_name, "node_path": "detecting epochs..."}],
+                )
+
+            # Get incremental start shot if updating existing epochs
+            start_shot = None
+            if existing_epochs and state.force:
+                latest = await asyncio.to_thread(
+                    get_latest_epoch_shot, state.facility, tree_name
+                )
+                if latest:
+                    start_shot = latest
+                    logger.info(
+                        "Incremental scan from shot %d for %s:%s",
+                        start_shot,
+                        state.facility,
+                        tree_name,
                     )
 
-            # Small delay between trees for display
+            # Discover epochs using optimized batch discovery
+            try:
+                with GraphClient() as gc:
+                    epochs, structures = await asyncio.to_thread(
+                        discover_epochs_optimized,
+                        state.facility,
+                        tree_name,
+                        start_shot=start_shot,
+                        end_shot=state.reference_shot,
+                        client=gc if existing_epochs else None,
+                    )
+            except Exception as e:
+                logger.error(
+                    "Epoch detection failed for %s:%s: %s", state.facility, tree_name, e
+                )
+                if on_progress:
+                    on_progress(
+                        f"epoch detection failed for {tree_name}",
+                        state.discover_stats,
+                        [{"tree_name": tree_name, "node_path": str(e)[:50]}],
+                    )
+                continue
+
+            if not epochs:
+                logger.info(
+                    "No new epochs discovered for %s:%s", state.facility, tree_name
+                )
+                if on_progress:
+                    on_progress(
+                        f"no new epochs for {tree_name}",
+                        state.discover_stats,
+                        [{"tree_name": tree_name, "node_path": "structure unchanged"}],
+                    )
+                continue
+
+            # Ingest epochs to graph
+            epoch_count = await asyncio.to_thread(ingest_epochs, epochs)
+            logger.info(
+                "Ingested %d epochs for %s:%s", epoch_count, state.facility, tree_name
+            )
+
+            # Create signals from the latest epoch's structure
+            # Use the most recent epoch for signal discovery
+            latest_epoch = max(epochs, key=lambda e: e["first_shot"])
+            latest_shot = latest_epoch["first_shot"]
+            latest_paths = structures.get(latest_shot, [])
+
+            if latest_paths:
+                if on_progress:
+                    on_progress(
+                        f"creating signals from {tree_name}",
+                        state.discover_stats,
+                        [
+                            {
+                                "tree_name": tree_name,
+                                "node_path": f"{len(latest_paths)} paths",
+                            }
+                        ],
+                    )
+
+                signals = create_signals_from_epoch(
+                    state.facility,
+                    tree_name,
+                    latest_epoch["id"],
+                    latest_paths,
+                    access_method_id,
+                    state.reference_shot,
+                )
+
+                if signals:
+                    count = await asyncio.to_thread(ingest_discovered_signals, signals)
+                    state.discover_stats.processed += count
+
+                    if on_progress:
+                        results = [
+                            {
+                                "id": s["id"],
+                                "tree_name": tree_name,
+                                "node_path": s.get("node_path", ""),
+                                "signals_in_tree": count,
+                            }
+                            for s in signals[:20]
+                        ]
+                        on_progress(
+                            f"discovered {count} from {tree_name} ({len(epochs)} epochs)",
+                            state.discover_stats,
+                            results,
+                        )
+
             await asyncio.sleep(0.1)
 
     # Scan TDI functions (if configured)
@@ -979,6 +1245,7 @@ async def run_parallel_data_discovery(
     num_validate_workers: int = 1,
     discover_only: bool = False,
     enrich_only: bool = False,
+    force: bool = False,
     on_discover_progress: Callable | None = None,
     on_enrich_progress: Callable | None = None,
     on_validate_progress: Callable | None = None,
@@ -999,6 +1266,7 @@ async def run_parallel_data_discovery(
         num_validate_workers: Number of validate workers
         discover_only: Only discover, don't enrich
         enrich_only: Only enrich discovered signals
+        force: Re-scan trees even if epochs exist (merges, doesn't reset)
         on_*_progress: Progress callbacks
 
     Returns:
@@ -1023,6 +1291,7 @@ async def run_parallel_data_discovery(
         tree_names=tree_names or [],
         reference_shot=reference_shot,
         tdi_path=tdi_path,
+        force=force,
         cost_limit=cost_limit,
         signal_limit=signal_limit,
         focus=focus,

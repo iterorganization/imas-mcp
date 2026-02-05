@@ -1791,6 +1791,12 @@ def discover_wiki(
     help="Number of parallel validate workers (default: 1)",
 )
 @click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-scan trees even if epochs already exist in graph (merges, doesn't reset)",
+)
+@click.option(
     "--no-rich",
     is_flag=True,
     default=False,
@@ -1808,26 +1814,38 @@ def discover_signals(
     enrich_only: bool,
     enrich_workers: int,
     validate_workers: int,
+    force: bool,
     no_rich: bool,
 ) -> None:
     """Discover and document facility data signals.
 
-    Walks MDSplus trees, TDI functions, and other data definitions to discover
-    signals, then uses LLM to classify physics domains and generate descriptions.
+    Walks MDSplus trees with epoch detection to find structural versions,
+    then creates signals from the current tree structure. Uses LLM to
+    classify physics domains and generate descriptions.
+
+    Epoch detection uses batched SSH queries (50 shots/batch) and binary
+    search to efficiently identify when tree structure changed. Each epoch
+    (TreeModelVersion) records the shot range where that structure was active.
+
+    \b
+    Idempotency:
+      - Trees with existing epochs are skipped (use --force to re-scan)
+      - Re-scanning merges new epochs, doesn't reset existing signal status
+      - Signals use MERGE for safe re-ingestion
 
     \b
     Pipeline stages:
-      SCAN: Enumerate signals from data sources (MDSplus trees, TDI functions)
+      SCAN: Detect epochs, enumerate signals from data sources
       ENRICH: LLM classification of physics_domain, description generation
       VALIDATE: Test data access with example_shot, verify units
 
     \b
     Examples:
-      # Discover signals from MDSplus tree
+      # Discover signals from MDSplus tree (with epoch detection)
       imas-codex discover signals tcv --tree results --shot 84469
 
-      # Discover TDI function signals
-      imas-codex discover signals tcv --tdi-path /home/tdi/epfl
+      # Re-scan tree to find new epochs (incremental from last known)
+      imas-codex discover signals tcv --tree results --shot 84469 --force
 
       # Scan only, no LLM enrichment
       imas-codex discover signals tcv --tree results --shot 84469 --scan-only
@@ -1941,6 +1959,8 @@ def discover_signals(
         worker_parts.append(f"{enrich_workers} enrich")
         worker_parts.append(f"{validate_workers} validate")
     log_print(f"Workers: {', '.join(worker_parts)}")
+    if force:
+        log_print("[yellow]Force mode: re-scanning all trees[/yellow]")
 
     try:
 
@@ -2019,6 +2039,7 @@ def discover_signals(
                             num_validate_workers=validate_workers,
                             discover_only=scan_only,
                             enrich_only=enrich_only,
+                            force=force,
                             on_discover_progress=on_discover,
                             on_enrich_progress=on_enrich,
                             on_validate_progress=on_validate,
@@ -2071,6 +2092,7 @@ def discover_signals(
                     num_validate_workers=validate_workers,
                     discover_only=scan_only,
                     enrich_only=enrich_only,
+                    force=force,
                     on_discover_progress=log_on_discover,
                     on_enrich_progress=log_on_enrich,
                     on_validate_progress=log_on_validate,
