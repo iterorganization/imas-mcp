@@ -24,8 +24,8 @@ def discover():
     \b
     Discovery Pipeline:
       paths              Scan and score directory structure
-        code             Find source files in scored paths
-        data             Find MDSplus trees, HDF5, IMAS DBs
+      code               Find source files in scored paths
+      signals            Discover MDSplus trees and data signals
       wiki               Crawl and score wiki documentation
 
     \b
@@ -1724,7 +1724,7 @@ def discover_wiki(
     log_print("\n[green]Documentation discovery complete.[/green]")
 
 
-@discover.command("data")
+@discover.command("signals")
 @click.argument("facility")
 @click.option(
     "--cost-limit",
@@ -1767,10 +1767,10 @@ def discover_wiki(
     help="Focus on specific physics domain (e.g., 'equilibrium')",
 )
 @click.option(
-    "--discover-only",
+    "--scan-only",
     is_flag=True,
     default=False,
-    help="Only discover signals, skip LLM enrichment",
+    help="Only scan signals, skip LLM enrichment",
 )
 @click.option(
     "--enrich-only",
@@ -1796,7 +1796,7 @@ def discover_wiki(
     default=False,
     help="Use logging output instead of rich progress display",
 )
-def discover_data(
+def discover_signals(
     facility: str,
     cost_limit: float,
     signal_limit: int | None,
@@ -1804,7 +1804,7 @@ def discover_data(
     shot: int | None,
     tdi_path: str | None,
     focus: str | None,
-    discover_only: bool,
+    scan_only: bool,
     enrich_only: bool,
     enrich_workers: int,
     validate_workers: int,
@@ -1817,23 +1817,23 @@ def discover_data(
 
     \b
     Pipeline stages:
-      DISCOVER: Enumerate signals from data sources (MDSplus trees, TDI functions)
+      SCAN: Enumerate signals from data sources (MDSplus trees, TDI functions)
       ENRICH: LLM classification of physics_domain, description generation
       VALIDATE: Test data access with example_shot, verify units
 
     \b
     Examples:
       # Discover signals from MDSplus tree
-      imas-codex discover data tcv --tree results --shot 84469
+      imas-codex discover signals tcv --tree results --shot 84469
 
       # Discover TDI function signals
-      imas-codex discover data tcv --tdi-path /home/tdi/epfl
+      imas-codex discover signals tcv --tdi-path /home/tdi/epfl
 
-      # Discover only, no LLM enrichment
-      imas-codex discover data tcv --tree results --shot 84469 --discover-only
+      # Scan only, no LLM enrichment
+      imas-codex discover signals tcv --tree results --shot 84469 --scan-only
 
       # Enrich already-discovered signals
-      imas-codex discover data tcv --enrich-only -c 5.0
+      imas-codex discover signals tcv --enrich-only -c 5.0
     """
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.data import (
@@ -1921,7 +1921,7 @@ def discover_data(
         )
 
     # Display configuration
-    if not discover_only:
+    if not scan_only:
         log_print(f"Cost limit: ${cost_limit:.2f}")
     if signal_limit:
         log_print(f"Signal limit: {signal_limit}")
@@ -1936,8 +1936,8 @@ def discover_data(
 
     worker_parts = []
     if not enrich_only:
-        worker_parts.append("1 discover")
-    if not discover_only:
+        worker_parts.append("1 scan")
+    if not scan_only:
         worker_parts.append(f"{enrich_workers} enrich")
         worker_parts.append(f"{validate_workers} validate")
     log_print(f"Workers: {', '.join(worker_parts)}")
@@ -1954,7 +1954,7 @@ def discover_data(
                     signal_limit=signal_limit,
                     focus=focus or "",
                     console=console,
-                    discover_only=discover_only,
+                    discover_only=scan_only,
                     enrich_only=enrich_only,
                 ) as display:
                     # Periodic graph state refresh
@@ -2017,7 +2017,7 @@ def discover_data(
                             focus=focus,
                             num_enrich_workers=enrich_workers,
                             num_validate_workers=validate_workers,
-                            discover_only=discover_only,
+                            discover_only=scan_only,
                             enrich_only=enrich_only,
                             on_discover_progress=on_discover,
                             on_enrich_progress=on_enrich,
@@ -2043,9 +2043,7 @@ def discover_data(
                 # Non-rich mode: logging only
                 def log_on_discover(msg, stats, results=None):
                     if msg != "idle":
-                        data_logger.info(
-                            f"DISCOVER: {msg} (processed={stats.processed})"
-                        )
+                        data_logger.info(f"SCAN: {msg} (processed={stats.processed})")
 
                 def log_on_enrich(msg, stats, results=None):
                     if msg != "idle":
@@ -2071,7 +2069,7 @@ def discover_data(
                     focus=focus,
                     num_enrich_workers=enrich_workers,
                     num_validate_workers=validate_workers,
-                    discover_only=discover_only,
+                    discover_only=scan_only,
                     enrich_only=enrich_only,
                     on_discover_progress=log_on_discover,
                     on_enrich_progress=log_on_enrich,

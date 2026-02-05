@@ -49,12 +49,13 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class DiscoverItem:
-    """Current discover activity."""
+class ScanItem:
+    """Current scan activity."""
 
     signal_id: str
     tree_name: str | None = None
     node_path: str | None = None
+    signals_in_tree: int = 0  # Count of signals discovered in current tree
 
 
 @dataclass
@@ -74,6 +75,7 @@ class ValidateItem:
     shot: int | None = None
     success: bool | None = None
     error: str | None = None
+    physics_domain: str | None = None  # For display on second line
 
 
 # =============================================================================
@@ -122,15 +124,16 @@ class DataProgressState:
     accumulated_cost: float = 0.0
 
     # Current items
-    current_discover: DiscoverItem | None = None
+    current_scan: ScanItem | None = None
     current_enrich: EnrichItem | None = None
     current_validate: ValidateItem | None = None
-    discover_processing: bool = False
+    scan_processing: bool = False
+    current_tree: str | None = None  # Currently scanning tree
     enrich_processing: bool = False
     validate_processing: bool = False
 
     # Streaming queues
-    discover_queue: StreamQueue = field(
+    scan_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=2.0, max_rate=5.0, min_display_time=0.3
         )
@@ -200,26 +203,28 @@ class DataProgressState:
 
 
 class DataProgressDisplay:
-    """Clean progress display for parallel data discovery.
+    """Clean progress display for parallel signal discovery.
 
     Layout (100 chars wide):
     ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │                               TCV Data Signal Discovery                                          │
+    │                               TCV Signal Discovery                                               │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  WORKERS  discover:1  enrich:2 (1 active)  validate:1                                            │
+    │  WORKERS  scan:1 (running)  enrich:2 (1 active)  validate:1                                      │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  DISCVR ━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────    388        77.1/s             │
-    │  ENRICH ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────     136  35%   0.3/s              │
-    │  VALIDTE━━━━━━━━──────────────────────────────────────────────      25  18%   0.1/s              │
+    │  SCAN   ━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────   2944        83.4/s             │
+    │  ENRICH ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────       5   0%    0.0/s             │
+    │  VALIDATE━━━━━━━━─────────────────────────────────────────────       0   0%    0.0/s             │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  DISCVR results:LIUQE:I_P                                                                        │
+    │  SCAN   \\HYBRID::PID_I                                                                          │
+    │          tree=hybrid  2944 signals discovered                                                    │
     │  ENRICH tcv:equilibrium/plasma_current                                                           │
-    │    equilibrium  Main plasma current from LIUQE equilibrium code                                  │
-    │  VALIDTE shot=84469 success                                                                      │
+    │          equilibrium  Main plasma current from LIUQE equilibrium code                            │
+    │  VALIDATE shot=85000 testing...                                                                  │
+    │          tcv:equilibrium/elongation                                                              │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  TIME   │━━━━━━━━━━━━━━━━━━━━━━│  7m     ETA 2h 15m                                              │
-    │  COST   │━━━━━━━━━━━━━━━━━━━━━━│  $0.04 / $0.10                                                  │
-    │  STATS  discovered=388  enriched=136  validated=25  pending=[enrich:252 validate:111]            │
+    │  TIME   │━━━━━━━━━━━━━━━━━━━━━━│  6m 50s                                                         │
+    │  COST   │━━━━━━━━│             │  $0.00 / $0.20                                                   │
+    │  STATS  discovered=2944  enriched=5  validated=0  pending=[enrich:2944 validate:5]               │
     └──────────────────────────────────────────────────────────────────────────────────────────────────┘
     """
 
@@ -252,9 +257,9 @@ class DataProgressDisplay:
         """Build centered header with facility and focus."""
         header = Text()
 
-        title = f"{self.state.facility.upper()} Data Signal Discovery"
+        title = f"{self.state.facility.upper()} Signal Discovery"
         if self.state.discover_only:
-            title += " (DISCOVER ONLY)"
+            title += " (SCAN ONLY)"
         elif self.state.enrich_only:
             title += " (ENRICH ONLY)"
         header.append(title.center(self.WIDTH - 4), style="bold cyan")
@@ -277,14 +282,14 @@ class DataProgressDisplay:
             return section
 
         task_groups: dict[str, list[tuple[str, WorkerState]]] = {
-            "discover": [],
+            "scan": [],
             "enrich": [],
             "validate": [],
         }
 
         for name, status in wg.workers.items():
-            if "discover" in name:
-                task_groups["discover"].append((name, status.state))
+            if "discover" in name or "scan" in name:
+                task_groups["scan"].append((name, status.state))
             elif "enrich" in name:
                 task_groups["enrich"].append((name, status.state))
             elif "validate" in name:
@@ -332,14 +337,14 @@ class DataProgressDisplay:
         section = Text()
         bar_width = self.BAR_WIDTH
 
-        # DISCOVER row
-        discover_total = max(self.state.total_signals, self.state.signals_discovered, 1)
+        # SCAN row
+        scan_total = max(self.state.total_signals, self.state.signals_discovered, 1)
         discovered = self.state.signals_discovered
-        section.append("  DISCVR ", style="bold blue")
-        ratio = min(discovered / discover_total, 1.0) if discover_total > 0 else 0
+        section.append("  SCAN   ", style="bold blue")
+        ratio = min(discovered / scan_total, 1.0) if scan_total > 0 else 0
         section.append(make_bar(ratio, bar_width), style="blue")
         section.append(f" {discovered:>6,}", style="bold")
-        section.append("     ", style="dim")  # No percentage for discovery
+        section.append("     ", style="dim")  # No percentage for scanning
         if self.state.discover_rate and self.state.discover_rate > 0:
             section.append(f" {self.state.discover_rate:>5.1f}/s", style="dim")
         section.append("\n")
@@ -369,11 +374,11 @@ class DataProgressDisplay:
         validate_pct = validated / validate_total * 100 if validate_total > 0 else 0
 
         if self.state.discover_only or self.state.enrich_only:
-            section.append("  VALIDTE", style="dim")
+            section.append("  VALIDATE", style="dim")
             section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
+            section.append("   disabled", style="dim italic")
         else:
-            section.append("  VALIDTE", style="bold magenta")
+            section.append("  VALIDATE", style="bold magenta")
             ratio = min(validated / validate_total, 1.0) if validate_total > 0 else 0
             section.append(make_bar(ratio, bar_width), style="magenta")
             section.append(f" {validated:>6,}", style="bold")
@@ -384,23 +389,38 @@ class DataProgressDisplay:
         return section
 
     def _build_activity_section(self) -> Text:
-        """Build the current activity section."""
+        """Build the current activity section with two lines per streamer."""
         section = Text()
         content_width = self.WIDTH - 6
 
-        # DISCOVER section
-        discover = self.state.current_discover
-        section.append("  DISCVR ", style="bold blue")
-        if discover:
-            path = discover.node_path or discover.signal_id
+        # SCAN section (2 lines)
+        scan = self.state.current_scan
+        section.append("  SCAN   ", style="bold blue")
+        if scan:
+            path = scan.node_path or scan.signal_id
             section.append(clip_text(path, content_width - 9), style="white")
-        elif self.state.discover_processing:
+            section.append("\n")
+            # Second line: tree name and signal count
+            section.append("          ", style="dim")  # Align with content
+            if scan.tree_name:
+                section.append(f"tree={scan.tree_name}  ", style="cyan")
+            if scan.signals_in_tree > 0:
+                section.append(
+                    f"{scan.signals_in_tree:,} signals discovered", style="dim"
+                )
+        elif self.state.scan_processing:
             section.append("scanning...", style="cyan italic")
+            section.append("\n")
+            section.append("          ", style="dim")
+            if self.state.current_tree:
+                section.append(f"tree={self.state.current_tree}", style="cyan")
         else:
             section.append("idle", style="dim italic")
+            section.append("\n")
+            section.append("          ", style="dim")
         section.append("\n")
 
-        # ENRICH section
+        # ENRICH section (2 lines)
         if not self.state.discover_only:
             enrich = self.state.current_enrich
             section.append("  ENRICH ", style="bold green")
@@ -409,12 +429,12 @@ class DataProgressDisplay:
                     clip_text(enrich.signal_id, content_width - 9), style="white"
                 )
                 section.append("\n")
-                section.append("    ", style="dim")
+                section.append("          ", style="dim")  # Align with content
                 if enrich.physics_domain:
                     section.append(f"{enrich.physics_domain}  ", style="cyan")
                 if enrich.description:
                     desc = clean_text(enrich.description)
-                    used = 4 + (
+                    used = 10 + (
                         len(enrich.physics_domain) + 2 if enrich.physics_domain else 0
                     )
                     section.append(
@@ -422,16 +442,18 @@ class DataProgressDisplay:
                     )
             elif self.state.enrich_processing:
                 section.append("classifying...", style="cyan italic")
-                section.append("\n    ", style="dim")
+                section.append("\n")
+                section.append("          ", style="dim")
             else:
                 section.append("idle", style="dim italic")
-                section.append("\n    ", style="dim")
+                section.append("\n")
+                section.append("          ", style="dim")
             section.append("\n")
 
-        # VALIDATE section
+        # VALIDATE section (2 lines)
         if not self.state.discover_only and not self.state.enrich_only:
             validate = self.state.current_validate
-            section.append("  VALIDTE", style="bold magenta")
+            section.append("  VALIDATE", style="bold magenta")
             if validate:
                 shot_str = f" shot={validate.shot}" if validate.shot else ""
                 if validate.success is True:
@@ -441,10 +463,20 @@ class DataProgressDisplay:
                     section.append(f"{shot_str} {err}", style="red")
                 else:
                     section.append(f"{shot_str} testing...", style="cyan italic")
+                section.append("\n")
+                # Second line: signal ID
+                section.append("          ", style="dim")
+                section.append(
+                    clip_text(validate.signal_id, content_width - 10), style="dim"
+                )
             elif self.state.validate_processing:
                 section.append(" testing...", style="cyan italic")
+                section.append("\n")
+                section.append("          ", style="dim")
             else:
                 section.append(" idle", style="dim italic")
+                section.append("\n")
+                section.append("          ", style="dim")
 
         return section
 
@@ -557,12 +589,16 @@ class DataProgressDisplay:
 
     def tick(self) -> None:
         """Drain streaming queues for smooth display."""
-        if item := self.state.discover_queue.pop():
-            self.state.current_discover = DiscoverItem(
+        if item := self.state.scan_queue.pop():
+            self.state.current_scan = ScanItem(
                 signal_id=item.get("signal_id", ""),
                 tree_name=item.get("tree_name"),
                 node_path=item.get("node_path"),
+                signals_in_tree=item.get("signals_in_tree", 0),
             )
+            # Track current tree for idle display
+            if item.get("tree_name"):
+                self.state.current_tree = item.get("tree_name")
 
         if item := self.state.enrich_queue.pop():
             self.state.current_enrich = EnrichItem(
@@ -577,39 +613,62 @@ class DataProgressDisplay:
                 shot=item.get("shot"),
                 success=item.get("success"),
                 error=item.get("error"),
+                physics_domain=item.get("physics_domain"),
             )
 
         self._refresh()
 
+    def update_scan(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+        current_tree: str | None = None,
+    ) -> None:
+        """Update scan worker state."""
+        self.state.run_discovered = stats.processed
+        self.state.discover_rate = stats.rate
+
+        if current_tree:
+            self.state.current_tree = current_tree
+
+        if "scanning" in message.lower():
+            self.state.scan_processing = True
+        else:
+            self.state.scan_processing = False
+
+        if results:
+            # Get signal count for this tree from results
+            tree_counts: dict[str, int] = {}
+            for r in results:
+                tree = r.get("tree_name")
+                if tree:
+                    tree_counts[tree] = tree_counts.get(tree, 0) + 1
+
+            items = [
+                {
+                    "signal_id": r.get("id", ""),
+                    "tree_name": r.get("tree_name"),
+                    "node_path": r.get("node_path"),
+                    "signals_in_tree": tree_counts.get(r.get("tree_name", ""), 0),
+                }
+                for r in results
+            ]
+            max_rate = 5.0
+            display_rate = min(stats.rate, max_rate) if stats.rate else 2.0
+            self.state.scan_queue.add(items, display_rate)
+
+        self._refresh()
+
+    # Backward compatibility alias
     def update_discover(
         self,
         message: str,
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update discover worker state."""
-        self.state.run_discovered = stats.processed
-        self.state.discover_rate = stats.rate
-
-        if "scanning" in message.lower():
-            self.state.discover_processing = True
-        else:
-            self.state.discover_processing = False
-
-        if results:
-            items = [
-                {
-                    "signal_id": r.get("id", ""),
-                    "tree_name": r.get("tree_name"),
-                    "node_path": r.get("node_path"),
-                }
-                for r in results
-            ]
-            max_rate = 5.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 2.0
-            self.state.discover_queue.add(items, display_rate)
-
-        self._refresh()
+        """Alias for update_scan for backward compatibility."""
+        self.update_scan(message, stats, results)
 
     def update_enrich(
         self,
@@ -664,6 +723,7 @@ class DataProgressDisplay:
                     "shot": r.get("shot"),
                     "success": r.get("success"),
                     "error": r.get("error"),
+                    "physics_domain": r.get("physics_domain"),
                 }
                 for r in results
             ]
@@ -709,7 +769,7 @@ class DataProgressDisplay:
         self.console.print(
             Panel(
                 self._build_summary(),
-                title=f"{self.state.facility.upper()} Data Discovery Complete",
+                title=f"{self.state.facility.upper()} Signal Discovery Complete",
                 border_style="green",
                 width=self.WIDTH,
             )
@@ -719,8 +779,8 @@ class DataProgressDisplay:
         """Build final summary text."""
         summary = Text()
 
-        # DISCOVER stats
-        summary.append("  DISCVR ", style="bold blue")
+        # SCAN stats
+        summary.append("  SCAN   ", style="bold blue")
         summary.append(f"discovered={self.state.signals_discovered:,}", style="blue")
         if self.state.discover_rate:
             summary.append(f"  {self.state.discover_rate:.1f}/s", style="dim")
@@ -737,8 +797,8 @@ class DataProgressDisplay:
         summary.append("\n")
 
         # VALIDATE stats
-        summary.append("  VALIDTE", style="bold magenta")
-        summary.append(f"  validated={self.state.signals_validated:,}", style="magenta")
+        summary.append("  VALIDATE", style="bold magenta")
+        summary.append(f" validated={self.state.signals_validated:,}", style="magenta")
         summary.append(f"  failed={self.state.signals_failed:,}", style="red")
         if self.state.validate_rate:
             summary.append(f"  {self.state.validate_rate:.1f}/s", style="dim")
