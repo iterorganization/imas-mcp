@@ -55,6 +55,7 @@ def register_commands() -> None:
     from imas_codex.cli.clusters import clusters
     from imas_codex.cli.data import data
     from imas_codex.cli.discover import discover
+    from imas_codex.cli.embed import embed
     from imas_codex.cli.enrich import enrich
     from imas_codex.cli.facilities import facilities
     from imas_codex.cli.hosts import hosts
@@ -69,6 +70,7 @@ def register_commands() -> None:
     main.add_command(serve)
     main.add_command(data)
     main.add_command(discover)
+    main.add_command(embed)
     main.add_command(imas)
     main.add_command(clusters)
     main.add_command(enrich)

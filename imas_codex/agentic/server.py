@@ -235,10 +235,17 @@ def _init_repl() -> dict[str, Any]:
             k: Number of results to return
 
         Available indexes:
+            Document content:
             - imas_path_embedding: IMAS Data Dictionary paths (61k)
             - code_chunk_embedding: Code examples (8.5k chunks)
             - wiki_chunk_embedding: Wiki documentation (25k chunks)
             - cluster_centroid: Semantic clusters
+
+            Description metadata:
+            - facility_signal_desc_embedding: Signal descriptions
+            - facility_path_desc_embedding: Path descriptions
+            - tree_node_desc_embedding: TreeNode descriptions
+            - wiki_artifact_desc_embedding: Artifact descriptions
 
         Returns:
             List of {node: ..., score: float} dicts

@@ -209,6 +209,70 @@ gc.query(f"""
 - `cluster_centroid`: IMASSemanticCluster centroids
 - `code_chunk_embedding`: CodeChunk nodes
 - `wiki_chunk_embedding`: WikiChunk nodes
+- `facility_signal_desc_embedding`: FacilitySignal descriptions
+- `facility_path_desc_embedding`: FacilityPath descriptions
+- `tree_node_desc_embedding`: TreeNode descriptions
+- `wiki_artifact_desc_embedding`: WikiArtifact descriptions
+
+## Semantic Search & Graph RAG
+
+The knowledge graph supports semantic search via vector embeddings on both **document chunks** (wiki pages, code) and **descriptive metadata** (signal descriptions, path descriptions). Use these together for effective retrieval-augmented generation.
+
+### Querying Embeddings
+
+Use `semantic_search(text, index, k)` in the python REPL:
+
+```python
+# Find signals by physics meaning (searches LLM-generated descriptions)
+results = semantic_search("plasma current measurement", index="facility_signal_desc_embedding", k=10)
+
+# Find documentation about a concept (searches wiki content)
+chunks = semantic_search("COCOS sign conventions", index="wiki_chunk_embedding", k=5)
+```
+
+### Graph RAG Pattern
+
+Combine vector similarity with link traversal for richer context:
+
+1. **Vector search** - Find semantically relevant entry points
+2. **Link traversal** - Expand via graph relationships
+3. **Context assembly** - Gather connected information for LLM
+
+Example - find signals and their access methods:
+```python
+results = query("""
+    CALL db.index.vector.queryNodes('facility_signal_desc_embedding', 5, $embedding)
+    YIELD node AS signal, score
+    MATCH (signal)-[:ACCESS_METHOD]->(am:AccessMethod)
+    OPTIONAL MATCH (signal)-[:MAPS_TO_IMAS]->(imas:IMASPath)
+    RETURN signal.id, signal.description, am.template_python, 
+           collect(imas.id) AS imas_paths, score
+    ORDER BY score DESC
+""", embedding=embed("electron density profile"))
+```
+
+### Strategy Selection
+
+**Use document embeddings** (`wiki_chunk_embedding`, `code_chunk_embedding`) when:
+- Searching for specific technical content or procedures
+- Finding code examples with implementation details
+- Locating documentation sections
+
+**Use description embeddings** (`*_desc_embedding`) when:
+- Searching for concepts across many items (signals, paths)
+- Finding resources by physics meaning rather than exact wording
+- Exploring what a facility offers for a given topic
+
+**Combine both** when building comprehensive context for LLM tasks.
+
+### Link Traversal After Vector Search
+
+| From | Relationship | To | Use |
+|------|--------------|-----|-----|
+| FacilitySignal | ACCESS_METHOD | AccessMethod | Get code templates |
+| FacilitySignal | MAPS_TO_IMAS | IMASPath | Canonical mapping |
+| WikiChunk | HAS_CHUNK← | WikiPage | Parent page context |
+| FacilityPath | FACILITY_ID | Facility | Facility context |
 
 ### Token Cost Optimization
 

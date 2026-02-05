@@ -712,6 +712,10 @@ classes:
         range: integer
       description:
         description: Human-readable description of what this path contains
+      description_embedding:
+        description: Vector embedding of description for semantic search
+        multivalued: true
+        range: float
       discovered_at:
         description: When this path was first discovered
         range: datetime
@@ -1269,6 +1273,10 @@ classes:
         range: Unit
       description:
         description: Node description
+      description_embedding:
+        description: Vector embedding of description for semantic search
+        multivalued: true
+        range: float
       physics_domain:
         description: Physics domain for categorization and filtering
       example_shot:
@@ -1630,6 +1638,10 @@ classes:
         range: AccessMethod
       description:
         description: What this signal measures (physics description)
+      description_embedding:
+        description: Vector embedding of description for semantic search
+        multivalued: true
+        range: float
       units:
         description: >-
           Physical units of the signal data. Extracted from MDSplus node.units,
@@ -2519,6 +2531,10 @@ classes:
         range: WikiPageType
       description:
         description: Concise description of artifact contents (1-2 sentences)
+      description_embedding:
+        description: Vector embedding of description for semantic search
+        multivalued: true
+        range: float
       reasoning:
         description: Brief explanation for the score assignment (max 80 chars)
       preview_text:

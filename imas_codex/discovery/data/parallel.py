@@ -37,6 +37,7 @@ from imas_codex.discovery.base.supervision import (
     SupervisedWorkerGroup,
     supervised_worker,
 )
+from imas_codex.embeddings.description import embed_descriptions_batch
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import FacilitySignalStatus
 from imas_codex.remote.executor import run_python_script
@@ -430,12 +431,13 @@ def claim_signals_for_check(
 def mark_signals_enriched(
     signals: list[dict],
 ) -> int:
-    """Mark signals as enriched with LLM-generated metadata.
+    """Mark signals as enriched with LLM-generated metadata and embeddings.
 
     Expected signal dict keys:
     - id: signal ID
     - physics_domain: physics domain value
     - description: physics description
+    - description_embedding: vector embedding (optional, from embed_descriptions_batch)
     - name: human-readable name
     - diagnostic: diagnostic system name (optional)
     - analysis_code: analysis code name (optional)
@@ -453,6 +455,9 @@ def mark_signals_enriched(
                 SET s.status = $enriched,
                     s.physics_domain = sig.physics_domain,
                     s.description = sig.description,
+                    s.description_embedding = CASE WHEN sig.description_embedding IS NOT NULL
+                                                   THEN sig.description_embedding
+                                                   ELSE s.description_embedding END,
                     s.name = sig.name,
                     s.diagnostic = CASE WHEN sig.diagnostic IS NOT NULL AND sig.diagnostic <> ''
                                         THEN sig.diagnostic ELSE s.diagnostic END,
@@ -1478,6 +1483,11 @@ async def enrich_worker(
                 cost = (input_tokens * 0.10 + output_tokens * 0.40) / 1_000_000
 
             state.enrich_stats.cost += cost
+
+        # Batch embed descriptions before graph update
+        # This maintains batch efficiency - one embedding call, one graph call
+        if enriched:
+            enriched = await asyncio.to_thread(embed_descriptions_batch, enriched)
 
         # Update graph
         if enriched:

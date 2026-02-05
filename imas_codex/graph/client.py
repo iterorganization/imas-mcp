@@ -114,38 +114,64 @@ class GraphClient:
     def ensure_vector_indexes(self) -> None:
         """Create vector indexes for semantic search if they don't exist.
 
-        Creates a vector index on CodeChunk.embedding for similarity search.
+        Creates vector indexes on:
+        - CodeChunk.embedding - code semantic search
+        - FacilitySignal.description_embedding - signal description search
+        - FacilityPath.description_embedding - path description search
+        - TreeNode.description_embedding - tree node description search
+        - WikiArtifact.description_embedding - artifact description search
+
         Requires Neo4j 5.x+ with vector index support.
         """
-        # Check if vector index exists
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Index configurations: (index_name, label, property)
+        vector_indexes = [
+            ("code_chunk_embedding", "CodeChunk", "embedding"),
+            (
+                "facility_signal_desc_embedding",
+                "FacilitySignal",
+                "description_embedding",
+            ),
+            ("facility_path_desc_embedding", "FacilityPath", "description_embedding"),
+            ("tree_node_desc_embedding", "TreeNode", "description_embedding"),
+            ("wiki_artifact_desc_embedding", "WikiArtifact", "description_embedding"),
+        ]
+
+        dim = get_embedding_dimension()
+
         with self.session() as sess:
+            # Get existing indexes
             result = sess.run(
-                "SHOW INDEXES YIELD name WHERE name = 'code_chunk_embedding' RETURN name"
+                "SHOW INDEXES YIELD name WHERE name IN $names RETURN name",
+                names=[idx[0] for idx in vector_indexes],
             )
-            if result.single():
-                return  # Index already exists
+            existing = {record["name"] for record in result}
 
-            # Create vector index for CodeChunk embeddings
-            # Dimension is determined by configured embedding model
-            dim = get_embedding_dimension()
-            try:
-                sess.run(f"""
-                    CREATE VECTOR INDEX code_chunk_embedding IF NOT EXISTS
-                    FOR (c:CodeChunk) ON c.embedding
-                    OPTIONS {{
-                        indexConfig: {{
-                            `vector.dimensions`: {dim},
-                            `vector.similarity_function`: 'cosine'
+            for index_name, label, prop in vector_indexes:
+                if index_name in existing:
+                    continue  # Index already exists
+
+                try:
+                    sess.run(f"""
+                        CREATE VECTOR INDEX {index_name} IF NOT EXISTS
+                        FOR (n:{label}) ON n.{prop}
+                        OPTIONS {{
+                            indexConfig: {{
+                                `vector.dimensions`: {dim},
+                                `vector.similarity_function`: 'cosine'
+                            }}
                         }}
-                    }}
-                """)
-            except Exception as e:
-                # Vector indexes may not be available in all Neo4j editions
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    f"Failed to create vector index (may require Neo4j 5.x+): {e}"
-                )
+                    """)
+                    logger.debug(f"Created vector index: {index_name}")
+                except Exception as e:
+                    # Vector indexes may not be available in all Neo4j editions
+                    logger.warning(
+                        f"Failed to create vector index {index_name} "
+                        f"(may require Neo4j 5.x+): {e}"
+                    )
 
     def drop_all(self) -> int:
         """Delete all nodes and relationships.
