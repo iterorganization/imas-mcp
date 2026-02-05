@@ -49,8 +49,8 @@ logger = logging.getLogger(__name__)
 # Session TTL for wiki: 24 hours (Tequila sessions last ~8 hours)
 MEDIAWIKI_SESSION_TTL = 24 * 60 * 60
 
-# Request timeout
-DEFAULT_TIMEOUT = 30
+# Request timeout - increased from 30s to 60s for large wiki pages
+DEFAULT_TIMEOUT = 60
 
 # Rate limiting: minimum seconds between requests
 RATE_LIMIT_DELAY = 0.3

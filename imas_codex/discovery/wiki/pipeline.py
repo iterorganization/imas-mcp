@@ -751,6 +751,8 @@ class WikiIngestionPipeline:
                     p.status = 'ingested',
                     p.content_hash = $hash,
                     p.last_scraped = datetime(),
+                    p.ingested_at = datetime(),
+                    p.claimed_at = null,
                     p.chunk_count = $chunk_count,
                     p.mdsplus_paths_found = $mdsplus_paths,
                     p.imas_paths_found = $imas_paths,
@@ -1497,7 +1499,8 @@ class WikiArtifactPipeline:
                     MATCH (wa:WikiArtifact {id: $id})
                     SET wa.status = 'ingested',
                         wa.chunk_count = $chunks,
-                        wa.ingested_at = datetime()
+                        wa.ingested_at = datetime(),
+                        wa.claimed_at = null
                     """,
                     id=artifact_id,
                     chunks=len(nodes),
@@ -1844,7 +1847,8 @@ class WikiArtifactPipeline:
                 MATCH (wa:WikiArtifact {id: $id})
                 SET wa.status = 'ingested',
                     wa.chunk_count = $chunks,
-                    wa.ingested_at = datetime()
+                    wa.ingested_at = datetime(),
+                    wa.claimed_at = null
                 """,
                 id=artifact_id,
                 chunks=len(nodes),

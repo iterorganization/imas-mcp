@@ -248,30 +248,24 @@ SUPPORTED_ARTIFACT_TYPES = {"pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", 
 
 
 def has_pending_artifact_work(facility: str) -> bool:
-    """Check if there are pending artifacts for scoring or ingestion.
+    """Check if there are pending artifacts for ingestion.
 
-    Work exists if there are:
-    - discovered artifacts awaiting scoring (artifact_type in SUPPORTED_ARTIFACT_TYPES)
-    - scored artifacts with score >= 0.5 awaiting ingest
-    Both must have claimed_at null or expired.
+    Artifacts are ready for ingestion when:
+    - status = 'discovered' AND artifact_type in SUPPORTED_ARTIFACT_TYPES
+    - claimed_at is null or expired
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
-            WHERE (wa.status = $discovered
-                   AND wa.artifact_type IN $types
-                   AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff)))
-               OR (wa.status = $scored
-                   AND wa.score >= 0.5
-                   AND wa.artifact_type IN $types
-                   AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff)))
+            WHERE wa.status = $discovered
+              AND wa.artifact_type IN $types
+              AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
             discovered=WikiArtifactStatus.discovered.value,
-            scored=WikiArtifactStatus.scored.value,
             types=list(SUPPORTED_ARTIFACT_TYPES),
             cutoff=cutoff,
         )
@@ -372,31 +366,6 @@ def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, i
 
     if not silent and reset_count > 0:
         logger.info(f"Reset {reset_count} orphaned wiki pages on startup")
-
-    return {"orphan_reset": reset_count}
-
-
-def reset_transient_artifacts(facility: str, *, silent: bool = False) -> dict[str, int]:
-    """Reset claimed_at on all wiki artifacts on CLI startup.
-
-    Since only one CLI process runs per facility at a time, any artifacts with
-    claimed_at set are orphans from a previous crashed/killed process.
-    Simply clear claimed_at to make them reclaimable.
-    """
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
-            WHERE wa.claimed_at IS NOT NULL
-            SET wa.claimed_at = null
-            RETURN count(wa) AS reset_count
-            """,
-            facility=facility,
-        )
-        reset_count = result[0]["reset_count"] if result else 0
-
-    if not silent and reset_count > 0:
-        logger.info(f"Reset {reset_count} orphaned wiki artifacts on startup")
 
     return {"orphan_reset": reset_count}
 
@@ -776,15 +745,14 @@ def release_orphaned_claims(facility: str) -> dict[str, int]:
 
 def claim_artifacts_for_ingesting(
     facility: str,
-    min_score: float = 0.5,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Claim scored artifacts for ingestion.
+    """Claim discovered artifacts for ingestion.
 
-    Claims artifacts with status='scored' and score >= min_score.
+    Claims artifacts with status='discovered' and supported artifact_type.
     Supported types: pdf, docx, pptx, xlsx, ipynb.
 
-    Workflow: scored + score >= min_score + unclaimed → set claimed_at
+    Workflow: discovered + supported_type + unclaimed → set claimed_at
     After ingest: update status to 'ingested'.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
@@ -792,22 +760,21 @@ def claim_artifacts_for_ingesting(
         result = gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
-            WHERE wa.status = $scored
-              AND wa.score >= $min_score
+            WHERE wa.status = $discovered
               AND wa.artifact_type IN $types
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
             WITH wa
-            ORDER BY wa.score DESC, wa.in_degree DESC
+            ORDER BY wa.discovered_at ASC
             LIMIT $limit
-            SET wa.claimed_at = datetime()
+            SET wa.claimed_at = datetime(),
+                wa.status = $ingesting
             RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
-                   wa.artifact_type AS artifact_type, wa.score AS score,
-                   wa.description AS description, wa.physics_domain AS physics_domain
+                   wa.artifact_type AS artifact_type
             """,
             facility=facility,
-            scored=WikiArtifactStatus.scored.value,
-            min_score=min_score,
+            discovered=WikiArtifactStatus.discovered.value,
+            ingesting=WikiArtifactStatus.ingesting.value,
             types=list(SUPPORTED_ARTIFACT_TYPES),
             cutoff=cutoff,
             limit=limit,
@@ -897,193 +864,6 @@ def mark_artifact_deferred(artifact_id: str, reason: str) -> None:
             artifact_id,
             e,
         )
-
-
-def mark_artifact_skipped(artifact_id: str, reason: str) -> None:
-    """Mark an artifact as skipped (low value, not worth processing)."""
-    try:
-        with GraphClient() as gc:
-            gc.query(
-                """
-                MATCH (wa:WikiArtifact {id: $id})
-                SET wa.status = $skipped,
-                    wa.skip_reason = $reason,
-                    wa.claimed_at = null
-                """,
-                id=artifact_id,
-                skipped=WikiArtifactStatus.skipped.value,
-                reason=reason,
-            )
-    except Exception as e:
-        logger.warning(
-            "Could not mark artifact %s as skipped (Neo4j unavailable): %s",
-            artifact_id,
-            e,
-        )
-
-
-# =============================================================================
-# Artifact Scoring Functions
-# =============================================================================
-
-
-def has_pending_artifact_score_work(facility: str) -> bool:
-    """Check if there are discovered artifacts awaiting scoring.
-
-    Artifacts are ready for scoring when:
-    - status = 'discovered' AND artifact_type in SUPPORTED_ARTIFACT_TYPES
-    - claimed_at is null or expired
-    """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
-            WHERE wa.status = $discovered
-              AND wa.artifact_type IN $types
-              AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
-            RETURN count(wa) > 0 AS has_work
-            """,
-            facility=facility,
-            discovered=WikiArtifactStatus.discovered.value,
-            types=list(SUPPORTED_ARTIFACT_TYPES),
-            cutoff=cutoff,
-        )
-        return result[0]["has_work"] if result else False
-
-
-def claim_artifacts_for_scoring(
-    facility: str,
-    limit: int = 10,
-) -> list[dict[str, Any]]:
-    """Claim discovered artifacts for content-aware scoring.
-
-    Workflow: discovered + supported_type + unclaimed → set claimed_at
-    Score worker fetches content preview and scores with LLM.
-    After scoring: update status to 'scored' and set score field.
-    """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
-            WHERE wa.status = $discovered
-              AND wa.artifact_type IN $types
-              AND (wa.claimed_at IS NULL
-                   OR wa.claimed_at < datetime() - duration($cutoff))
-            WITH wa
-            ORDER BY wa.in_degree DESC, wa.discovered_at ASC
-            LIMIT $limit
-            SET wa.claimed_at = datetime()
-            RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
-                   wa.artifact_type AS artifact_type, wa.in_degree AS in_degree
-            """,
-            facility=facility,
-            discovered=WikiArtifactStatus.discovered.value,
-            types=list(SUPPORTED_ARTIFACT_TYPES),
-            cutoff=cutoff,
-            limit=limit,
-        )
-        return list(result)
-
-
-def mark_artifacts_scored(
-    facility: str,
-    results: list[dict[str, Any]],
-) -> int:
-    """Mark artifacts as scored with score data.
-
-    Uses batched UNWIND for O(1) graph operations.
-    Sets status to 'scored' for artifacts with should_ingest=true,
-    'skipped' for artifacts with should_ingest=false.
-    """
-    if not results:
-        return 0
-
-    # Split into ingest vs skip
-    to_score = []
-    to_skip = []
-    for r in results:
-        if r.get("id"):
-            if r.get("should_ingest", False):
-                to_score.append(r)
-            else:
-                to_skip.append(r)
-
-    count = 0
-
-    if to_score:
-        with GraphClient() as gc:
-            gc.query(
-                """
-                UNWIND $batch AS item
-                MATCH (wa:WikiArtifact {id: item.id})
-                SET wa.status = $scored,
-                    wa.score = item.score,
-                    wa.artifact_purpose = item.artifact_purpose,
-                    wa.description = item.description,
-                    wa.reasoning = item.reasoning,
-                    wa.preview_text = item.preview_text,
-                    wa.keywords = item.keywords,
-                    wa.physics_domain = item.physics_domain,
-                    wa.should_ingest = item.should_ingest,
-                    wa.score_data_documentation = item.score_data_documentation,
-                    wa.score_physics_content = item.score_physics_content,
-                    wa.score_code_documentation = item.score_code_documentation,
-                    wa.score_data_access = item.score_data_access,
-                    wa.score_calibration = item.score_calibration,
-                    wa.score_imas_relevance = item.score_imas_relevance,
-                    wa.scored_at = datetime(),
-                    wa.claimed_at = null
-                """,
-                batch=to_score,
-                scored=WikiArtifactStatus.scored.value,
-            )
-        count += len(to_score)
-
-    if to_skip:
-        with GraphClient() as gc:
-            gc.query(
-                """
-                UNWIND $batch AS item
-                MATCH (wa:WikiArtifact {id: item.id})
-                SET wa.status = $skipped,
-                    wa.score = item.score,
-                    wa.artifact_purpose = item.artifact_purpose,
-                    wa.description = item.description,
-                    wa.reasoning = item.reasoning,
-                    wa.skip_reason = item.skip_reason,
-                    wa.scored_at = datetime(),
-                    wa.claimed_at = null
-                """,
-                batch=to_skip,
-                skipped=WikiArtifactStatus.skipped.value,
-            )
-        count += len(to_skip)
-
-    return count
-
-
-def _release_claimed_artifacts(artifact_ids: list[str]) -> None:
-    """Release claimed artifacts by clearing claimed_at.
-
-    Used when scoring fails and artifacts should be reclaimed later.
-    """
-    if not artifact_ids:
-        return
-
-    try:
-        with GraphClient() as gc:
-            gc.query(
-                """
-                UNWIND $ids AS artifact_id
-                MATCH (wa:WikiArtifact {id: artifact_id})
-                SET wa.claimed_at = null
-                """,
-                ids=artifact_ids,
-            )
-    except Exception as e:
-        logger.warning("Failed to release claimed artifacts: %s", e)
 
 
 # =============================================================================
@@ -2121,541 +1901,23 @@ async def ingest_worker(
             )
 
 
-# =============================================================================
-# Artifact Scoring Worker
-# =============================================================================
-
-
-async def _fetch_artifact_preview(
-    url: str,
-    artifact_type: str,
-    facility: str,
-    max_preview_kb: int = 100,
-) -> str:
-    """Fetch artifact content preview for scoring.
-
-    Downloads first max_preview_kb KB and extracts text for scoring.
-    Returns empty string on failure.
-    """
-    from imas_codex.discovery.wiki.pipeline import fetch_artifact_content
-
-    try:
-        # Download artifact content
-        _, content = await fetch_artifact_content(url, facility=facility)
-
-        if not content:
-            return ""
-
-        # Truncate to max_preview_kb for efficiency
-        max_bytes = max_preview_kb * 1024
-        content_preview = content[:max_bytes] if len(content) > max_bytes else content
-
-        # Extract text based on artifact type
-        if artifact_type.lower() == "pdf":
-            return _extract_pdf_preview(content_preview)
-        elif artifact_type.lower() in ("docx", "doc"):
-            return _extract_docx_preview(content_preview)
-        elif artifact_type.lower() in ("pptx", "ppt"):
-            return _extract_pptx_preview(content_preview)
-        elif artifact_type.lower() == "ipynb":
-            return _extract_notebook_preview(content_preview)
-        else:
-            # Fallback: try to decode as text
-            try:
-                return content_preview.decode("utf-8", errors="ignore")[:2000]
-            except Exception:
-                return ""
-
-    except Exception as e:
-        logger.debug("Failed to fetch preview for %s: %s", url, e)
-        return ""
-
-
-def _extract_pdf_preview(content: bytes) -> str:
-    """Extract text preview from PDF bytes."""
-    import logging
-    import tempfile
-    from pathlib import Path
-
-    try:
-        from llama_index.readers.file import PDFReader
-
-        # Write to temp file for PDFReader
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            f.write(content)
-            temp_path = Path(f.name)
-
-        try:
-            # Suppress pypdf's verbose internal warnings about corrupt PDF objects
-            # These are benign warnings about non-critical PDF structure issues
-            pypdf_logger = logging.getLogger("pypdf")
-            original_level = pypdf_logger.level
-            pypdf_logger.setLevel(logging.ERROR)
-
-            try:
-                reader = PDFReader()
-                documents = reader.load_data(temp_path)
-            finally:
-                pypdf_logger.setLevel(original_level)
-
-            if documents:
-                # Get first 2000 chars from first pages
-                text = "\n".join(doc.text for doc in documents[:3] if doc.text)
-                return text[:2000]
-        finally:
-            temp_path.unlink(missing_ok=True)
-
-    except Exception as e:
-        logger.debug("PDF preview extraction failed: %s", e)
-
-    return ""
-
-
-def _extract_docx_preview(content: bytes) -> str:
-    """Extract text preview from DOCX bytes."""
-    import io
-    import zipfile
-
-    try:
-        # DOCX is a zip file with document.xml
-        with zipfile.ZipFile(io.BytesIO(content)) as zf:
-            if "word/document.xml" in zf.namelist():
-                xml_content = zf.read("word/document.xml").decode("utf-8")
-                # Simple text extraction (strip XML tags)
-                import re
-
-                text = re.sub(r"<[^>]+>", " ", xml_content)
-                text = re.sub(r"\s+", " ", text).strip()
-                return text[:2000]
-    except Exception as e:
-        logger.debug("DOCX preview extraction failed: %s", e)
-
-    return ""
-
-
-def _extract_pptx_preview(content: bytes) -> str:
-    """Extract text preview from PPTX bytes."""
-    import io
-    import zipfile
-
-    try:
-        texts = []
-        with zipfile.ZipFile(io.BytesIO(content)) as zf:
-            # PPTX slides are in ppt/slides/slide*.xml
-            for name in sorted(zf.namelist()):
-                if name.startswith("ppt/slides/slide") and name.endswith(".xml"):
-                    xml_content = zf.read(name).decode("utf-8")
-                    import re
-
-                    text = re.sub(r"<[^>]+>", " ", xml_content)
-                    text = re.sub(r"\s+", " ", text).strip()
-                    texts.append(text)
-                    if len("\n".join(texts)) > 2000:
-                        break
-        return "\n".join(texts)[:2000]
-    except Exception as e:
-        logger.debug("PPTX preview extraction failed: %s", e)
-
-    return ""
-
-
-def _extract_notebook_preview(content: bytes) -> str:
-    """Extract text preview from Jupyter notebook bytes."""
-    import json
-
-    try:
-        notebook = json.loads(content.decode("utf-8"))
-        texts = []
-        for cell in notebook.get("cells", []):
-            cell_type = cell.get("cell_type", "")
-            source = "".join(cell.get("source", []))
-            if cell_type == "markdown":
-                texts.append(source)
-            elif cell_type == "code":
-                texts.append(f"```\n{source}\n```")
-            if len("\n".join(texts)) > 2000:
-                break
-        return "\n".join(texts)[:2000]
-    except Exception as e:
-        logger.debug("Notebook preview extraction failed: %s", e)
-
-    return ""
-
-
-async def _score_artifacts_batch(
-    artifacts: list[dict[str, Any]],
-    model: str,
-    focus: str | None = None,
-) -> tuple[list[dict[str, Any]], float]:
-    """Score a batch of artifacts using LLM with structured output.
-
-    Uses litellm.acompletion with ArtifactScoreBatch Pydantic model.
-
-    Args:
-        artifacts: List of artifact dicts with id, filename, preview_text, etc.
-        model: Model identifier from get_model_for_task()
-        focus: Optional focus area for scoring
-
-    Returns:
-        (results, cost) tuple where cost is actual LLM cost from OpenRouter.
-    """
-    import os
-    import re
-
-    import litellm
-
-    from imas_codex.agentic.prompt_loader import render_prompt
-    from imas_codex.discovery.wiki.models import (
-        ArtifactScoreBatch,
-        grounded_artifact_score,
-    )
-
-    # Get API key
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "OPENROUTER_API_KEY environment variable not set. "
-            "Set it in .env or export it."
-        )
-
-    # Ensure OpenRouter prefix
-    model_id = model
-    if not model_id.startswith("openrouter/"):
-        model_id = f"openrouter/{model_id}"
-
-    # Build system prompt using dynamic template with schema injection
-    context: dict[str, Any] = {}
-    if focus:
-        context["focus"] = focus
-
-    system_prompt = render_prompt("wiki/artifact-scorer", context)
-
-    # Build user prompt with artifact content
-    lines = [
-        f"Score these {len(artifacts)} wiki artifacts based on their content.",
-        "(Use the content preview to evaluate value for IMAS knowledge graph.)\n",
-    ]
-
-    for i, a in enumerate(artifacts, 1):
-        lines.append(f"\n## Artifact {i}")
-        lines.append(f"ID: {a['id']}")
-        lines.append(f"Filename: {a.get('filename', 'unknown')}")
-        lines.append(f"Type: {a.get('artifact_type', 'unknown')}")
-
-        preview = a.get("preview_text") or ""
-        if preview:
-            lines.append(f"Content Preview:\n{preview[:1500]}")
-        else:
-            lines.append("Content Preview: (could not extract text)")
-
-    lines.append(
-        "\n\nReturn results for each artifact in order. "
-        "The response format is enforced by the schema."
-    )
-
-    user_prompt = "\n".join(lines)
-
-    # Retry loop for rate limiting and JSON parsing errors
-    max_retries = 3
-    retry_base_delay = 2.0
-    last_error = None
-    total_cost = 0.0
-
-    for attempt in range(max_retries):
-        try:
-            response = await litellm.acompletion(
-                model=model_id,
-                api_key=api_key,
-                response_format=ArtifactScoreBatch,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.3,
-                max_tokens=32000,
-            )
-
-            # Extract actual cost from OpenRouter response
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
-
-            if (
-                hasattr(response, "_hidden_params")
-                and "response_cost" in response._hidden_params
-            ):
-                cost = response._hidden_params["response_cost"]
-            else:
-                # Fallback: estimate
-                cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
-
-            total_cost += cost
-
-            # Parse response using Pydantic structured output
-            content = response.choices[0].message.content
-            if not content:
-                logger.warning("LLM returned empty response, returning empty results")
-                return [], total_cost
-
-            # Sanitize: remove control characters
-            content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
-            content = content.encode("utf-8", errors="surrogateescape").decode(
-                "utf-8", errors="replace"
-            )
-
-            batch = ArtifactScoreBatch.model_validate_json(content)
-            llm_results = batch.results
-            break
-
-        except Exception as e:
-            last_error = e
-            error_msg = str(e).lower()
-
-            is_retryable = any(
-                x in error_msg
-                for x in [
-                    "overloaded",
-                    "rate",
-                    "429",
-                    "503",
-                    "timeout",
-                    "eof",
-                    "json",
-                    "truncated",
-                    "validation",
-                ]
-            )
-
-            if is_retryable and attempt < max_retries - 1:
-                delay = retry_base_delay * (2**attempt)
-                logger.warning(
-                    "LLM error (attempt %d/%d): %s. Retrying in %.1fs...",
-                    attempt + 1,
-                    max_retries,
-                    str(e)[:100],
-                    delay,
-                )
-                await asyncio.sleep(delay)
-            else:
-                logger.error(
-                    "LLM validation error for batch of %d artifacts: %s. "
-                    "Artifacts will be released for retry.",
-                    len(artifacts),
-                    e,
-                )
-                raise ValueError(f"LLM response validation failed: {e}") from e
-    else:
-        raise last_error  # type: ignore[misc]
-
-    # Convert to result dicts, computing combined scores
-    cost_per_artifact = total_cost / len(artifacts) if artifacts else 0.0
-    results = []
-
-    for r in llm_results[: len(artifacts)]:
-        scores = {
-            "score_data_documentation": r.score_data_documentation,
-            "score_physics_content": r.score_physics_content,
-            "score_code_documentation": r.score_code_documentation,
-            "score_data_access": r.score_data_access,
-            "score_calibration": r.score_calibration,
-            "score_imas_relevance": r.score_imas_relevance,
-        }
-
-        combined_score = grounded_artifact_score(scores, r.artifact_purpose)
-
-        results.append(
-            {
-                "id": r.id,
-                "score": combined_score,
-                "artifact_purpose": r.artifact_purpose.value,
-                "description": r.description[:150],
-                "reasoning": r.reasoning[:80],
-                "keywords": r.keywords[:5],
-                "physics_domain": r.physics_domain.value if r.physics_domain else None,
-                "should_ingest": r.should_ingest,
-                "skip_reason": r.skip_reason or None,
-                "score_data_documentation": r.score_data_documentation,
-                "score_physics_content": r.score_physics_content,
-                "score_code_documentation": r.score_code_documentation,
-                "score_data_access": r.score_data_access,
-                "score_calibration": r.score_calibration,
-                "score_imas_relevance": r.score_imas_relevance,
-                "score_cost": cost_per_artifact,
-            }
-        )
-
-    return results, total_cost
-
-
-async def artifact_score_worker(
-    state: WikiDiscoveryState,
-    on_progress: Callable | None = None,
-) -> None:
-    """Artifact score worker: Content-aware LLM scoring for artifacts.
-
-    Transitions: discovered → scored
-
-    Fetches artifact content preview, then scores with LLM.
-    Uses centralized LLM access via get_model_for_task().
-    """
-    from imas_codex.agentic.agents import get_model_for_task
-    from imas_codex.discovery.wiki.pipeline import fetch_artifact_size
-
-    logger.info("artifact_score_worker started")
-
-    # Semaphore to limit concurrent artifact downloads
-    fetch_semaphore = asyncio.Semaphore(5)
-
-    async def fetch_preview_for_artifact(
-        artifact: dict, max_size_mb: float = 5.0
-    ) -> dict:
-        """Fetch content preview for a single artifact."""
-        max_size_bytes = int(max_size_mb * 1024 * 1024)
-
-        async with fetch_semaphore:
-            url = artifact.get("url", "")
-            artifact_type = artifact.get("artifact_type", "unknown")
-
-            try:
-                # Check size first
-                size_bytes = fetch_artifact_size(url, facility=state.facility)
-                if size_bytes is not None and size_bytes > max_size_bytes:
-                    return {
-                        "id": artifact["id"],
-                        "filename": artifact.get("filename", ""),
-                        "artifact_type": artifact_type,
-                        "preview_text": "",
-                        "fetch_error": f"File too large: {size_bytes / (1024 * 1024):.1f} MB",
-                        "defer": True,
-                    }
-
-                preview = await _fetch_artifact_preview(
-                    url, artifact_type, state.facility
-                )
-                return {
-                    "id": artifact["id"],
-                    "filename": artifact.get("filename", ""),
-                    "artifact_type": artifact_type,
-                    "preview_text": preview,
-                    "fetch_error": None,
-                    "defer": False,
-                }
-            except Exception as e:
-                logger.debug("Failed to fetch preview for %s: %s", url, e)
-                return {
-                    "id": artifact["id"],
-                    "filename": artifact.get("filename", ""),
-                    "artifact_type": artifact_type,
-                    "preview_text": "",
-                    "fetch_error": str(e),
-                    "defer": False,
-                }
-
-    # Track artifact scoring stats separately
-    artifact_score_stats = WorkerStats()
-
-    while not state.should_stop_artifact_worker():
-        # Check cost limits (use main state budget)
-        if state.budget_exhausted:
-            logger.info("Artifact scoring paused: cost limit reached")
-            await asyncio.sleep(5.0)
-            continue
-
-        # Claim artifacts for scoring
-        artifacts = claim_artifacts_for_scoring(state.facility, limit=10)
-
-        if not artifacts:
-            state.artifact_idle_count += 1
-            if on_progress:
-                on_progress("idle (scoring)", artifact_score_stats)
-            await asyncio.sleep(1.0)
-            continue
-
-        state.artifact_idle_count = 0
-
-        if on_progress:
-            on_progress(
-                f"fetching {len(artifacts)} artifact previews", artifact_score_stats
-            )
-
-        # Fetch content previews in parallel
-        fetch_tasks = [fetch_preview_for_artifact(a) for a in artifacts]
-        artifacts_with_content = await asyncio.gather(*fetch_tasks)
-
-        # Handle deferred artifacts (too large)
-        to_score = []
-        for a in artifacts_with_content:
-            if a.get("defer"):
-                mark_artifact_deferred(a["id"], a.get("fetch_error", "Too large"))
-            else:
-                to_score.append(a)
-
-        if not to_score:
-            continue
-
-        if on_progress:
-            on_progress(f"scoring {len(to_score)} artifacts", artifact_score_stats)
-
-        try:
-            # Score batch with LLM
-            model = get_model_for_task("discovery")
-            results, cost = await _score_artifacts_batch(to_score, model, state.focus)
-
-            # Add preview_text to results for persistence
-            for r in results:
-                matching = next((a for a in to_score if a["id"] == r["id"]), {})
-                r["preview_text"] = matching.get("preview_text", "")[:500]
-
-            mark_artifacts_scored(state.facility, results)
-            artifact_score_stats.processed += len(results)
-            artifact_score_stats.cost += cost
-            state.score_stats.cost += cost  # Add to main cost tracker
-
-            if on_progress:
-                on_progress(
-                    f"scored {len(results)} artifacts",
-                    artifact_score_stats,
-                    results=results,
-                )
-
-        except ValueError as e:
-            logger.warning(
-                "LLM validation error for batch of %d artifacts: %s. Releasing.",
-                len(to_score),
-                e,
-            )
-            artifact_score_stats.errors = getattr(artifact_score_stats, "errors", 0) + 1
-            _release_claimed_artifacts([a["id"] for a in to_score])
-            continue
-        except Exception as e:
-            logger.error("Error in artifact scoring batch: %s", e)
-            for a in to_score:
-                mark_artifact_failed(a["id"], str(e))
-
-
-# =============================================================================
-# Artifact Ingest Worker
-# =============================================================================
-
-
 async def artifact_worker(
     state: WikiDiscoveryState,
     on_progress: Callable | None = None,
     max_size_mb: float = 5.0,
-    min_score: float = 0.5,
 ) -> None:
-    """Artifact ingest worker: Download and ingest scored wiki artifacts.
+    """Artifact worker: Download and ingest wiki artifacts.
 
-    Transitions: scored → ingested
+    Transitions: discovered → ingesting → ingested
 
-    Claims scored artifacts with score >= min_score, downloads full content,
-    parses it, and creates embeddings.
-    Artifacts that fail download/parsing are marked as failed.
+    Claims discovered artifacts with supported types (pdf, docx, pptx, xlsx, ipynb),
+    downloads content, and extracts text.
+    Unsupported artifact types are marked as deferred.
 
     Args:
         state: Shared discovery state
         on_progress: Progress callback (msg, stats, results=None)
         max_size_mb: Maximum artifact size in MB
-        min_score: Minimum score threshold for ingestion
     """
     from imas_codex.discovery.wiki.pipeline import (
         WikiArtifactPipeline,
@@ -2671,15 +1933,13 @@ async def artifact_worker(
     )
 
     while not state.should_stop_artifact_worker():
-        # Claim scored artifacts with high enough score
-        artifacts = claim_artifacts_for_ingesting(
-            state.facility, min_score=min_score, limit=8
-        )
+        # Increased batch size from 3 to 8 for better throughput
+        artifacts = claim_artifacts_for_ingesting(state.facility, limit=8)
 
         if not artifacts:
             state.artifact_idle_count += 1
             if on_progress:
-                on_progress("idle (ingesting)", state.artifact_stats)
+                on_progress("idle", state.artifact_stats)
             await asyncio.sleep(1.0)
             continue
 
@@ -2696,7 +1956,7 @@ async def artifact_worker(
             filename = artifact.get("filename", "unknown")
 
             try:
-                # Check size before downloading (may have changed since scoring)
+                # Check size before downloading
                 size_bytes = fetch_artifact_size(url, facility=state.facility)
 
                 if size_bytes is not None and size_bytes > max_size_bytes:
@@ -3549,7 +2809,6 @@ async def run_parallel_wiki_discovery(
 
     # Reset orphans from previous runs
     reset_transient_pages(facility)
-    reset_transient_artifacts(facility)
 
     # Initialize state with auth info
     state = WikiDiscoveryState(
@@ -3696,27 +2955,8 @@ async def run_parallel_wiki_discovery(
                 )
             )
 
-        # Artifact workers run by default to score and ingest artifacts
-        # discovered during scanning. Two phases:
-        # 1. artifact_score_worker: discovered → scored (LLM scoring)
-        # 2. artifact_worker: scored → ingested (download + parse + embed)
+        # Artifact worker runs by default to ingest PDFs discovered during scanning
         if ingest_artifacts:
-            # Artifact scoring worker
-            artifact_score_status = worker_group.create_status("artifact_score_worker")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        artifact_score_worker,
-                        "artifact_score_worker",
-                        state,
-                        state.should_stop_artifact_worker,
-                        on_progress=on_artifact_progress,
-                        status_tracker=artifact_score_status,
-                    )
-                )
-            )
-
-            # Artifact ingest worker
             artifact_status = worker_group.create_status("artifact_worker")
             worker_group.add_task(
                 asyncio.create_task(
