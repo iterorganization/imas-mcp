@@ -739,6 +739,8 @@ def tunnel_service(action: str, host: str) -> None:
         port = get_embed_server_port()
 
         # autossh service with auto-reconnection
+        # NOTE: ControlMaster=no prevents using existing SSH multiplex sockets
+        # This ensures the tunnel has its own dedicated connection
         service_content = f"""[Unit]
 Description=IMAS Codex SSH Tunnel (autossh to {host})
 After=network-online.target
@@ -748,7 +750,7 @@ Wants=network-online.target
 Type=simple
 Environment="AUTOSSH_GATETIME=0"
 Environment="AUTOSSH_POLL=60"
-ExecStart={autossh} -M 0 -N -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" -L {port}:127.0.0.1:{port} {host}
+ExecStart={autossh} -M 0 -N -o "ControlMaster=no" -o "ControlPath=none" -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" -L {port}:127.0.0.1:{port} {host}
 ExecStop=/bin/kill $MAINPID
 Restart=always
 RestartSec=10

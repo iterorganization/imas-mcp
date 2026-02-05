@@ -1217,42 +1217,74 @@ def discover_wiki(
             backend = EmbeddingBackend.LOCAL
 
         if backend == EmbeddingBackend.REMOTE:
+            import socket
+            import subprocess
+            import time
+
             from imas_codex.embeddings.client import RemoteEmbeddingClient
 
             remote_url = get_embed_remote_url()
             client = RemoteEmbeddingClient(remote_url)
-            if not client.is_available():
-                # Try to auto-start SSH tunnel (relies on LocalForward in ~/.ssh/config)
-                log_print("[dim]Starting SSH tunnel to iter...[/dim]")
-                import subprocess
 
+            # Use longer timeout for initial check (server may be cold)
+            if not client.is_available(timeout=15.0):
+                # Check if tunnel port is already listening (autossh may be active)
+                tunnel_port = 18765
+                port_in_use = False
                 try:
-                    subprocess.run(
-                        ["ssh", "-f", "-N", "-o", "ExitOnForwardFailure=yes", "iter"],
-                        timeout=10,
-                        check=True,
-                        capture_output=True,
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(1)
+                        result = s.connect_ex(("127.0.0.1", tunnel_port))
+                        port_in_use = result == 0
+                except OSError:
+                    pass
+
+                if not port_in_use:
+                    # Try to auto-start SSH tunnel
+                    log_print("[dim]Starting SSH tunnel to iter...[/dim]")
+                    try:
+                        subprocess.run(
+                            [
+                                "ssh",
+                                "-f",
+                                "-N",
+                                "-o",
+                                "ExitOnForwardFailure=yes",
+                                "-L",
+                                f"{tunnel_port}:127.0.0.1:{tunnel_port}",
+                                "iter",
+                            ],
+                            timeout=10,
+                            check=True,
+                            capture_output=True,
+                        )
+                        # Give tunnel a moment to establish
+                        time.sleep(1.0)
+                        log_print("[green]SSH tunnel established[/green]")
+                    except (
+                        subprocess.TimeoutExpired,
+                        subprocess.CalledProcessError,
+                    ) as e:
+                        log_print(f"[yellow]SSH tunnel start failed: {e}[/yellow]")
+                else:
+                    log_print(
+                        "[dim]Tunnel port active, waiting for server response...[/dim]"
                     )
-                    # Give server a moment to bind
-                    import time
+                    # Give more time if tunnel is up but server is slow
+                    time.sleep(2.0)
 
-                    time.sleep(0.5)
-                except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-                    log_print(f"[yellow]SSH tunnel start failed: {e}[/yellow]")
-
-                # Re-check after tunnel attempt
-                if not client.is_available():
+                # Re-check with longer timeout after tunnel attempt
+                if not client.is_available(timeout=15.0):
                     log_print(
                         f"[red]Remote embedding server not available at {remote_url}[/red]"
                     )
                     log_print(
                         "[yellow]Start SSH tunnel manually:[/yellow]\n"
-                        "  ssh -f -N iter\n\n"
-                        "[dim]Requires LocalForward 18765 127.0.0.1:18765 in ~/.ssh/config[/dim]\n"
+                        "  ssh -f -N -L 18765:127.0.0.1:18765 iter\n\n"
                         "[dim]Or use --scan-only / --score-only to skip embedding[/dim]"
                     )
                     raise SystemExit(1)
-                log_print("[green]SSH tunnel established[/green]")
+
             log_print(
                 f"[dim]Embedding server: {remote_url} ({client.get_info().model})[/dim]"
             )
