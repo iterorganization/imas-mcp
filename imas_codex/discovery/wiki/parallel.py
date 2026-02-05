@@ -66,6 +66,11 @@ class WikiDiscoveryState:
     auth_type: str | None = None  # tequila, session, ssh_proxy, or None
     credential_service: str | None = None  # Keyring service for credentials
 
+    # Shared MediaWiki client for Tequila auth (avoids re-auth per page)
+    # Initialized lazily on first use, shared across all workers
+    _wiki_client: Any = field(default=None, repr=False)
+    _wiki_client_lock: Any = field(default=None, repr=False)
+
     # Limits
     cost_limit: float = 10.0
     page_limit: int | None = None
@@ -191,6 +196,51 @@ class WikiDiscoveryState:
         ):
             return True
         return False
+
+    def get_wiki_client(self):
+        """Get shared MediaWikiClient for Tequila auth.
+
+        Lazily initializes a thread-safe shared client that persists
+        session cookies across all page fetches. This avoids re-authentication
+        for every page, which can cause redirect loops when session is near-expiry.
+        """
+        if self._wiki_client is None:
+            import threading
+
+            from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+
+            if self._wiki_client_lock is None:
+                self._wiki_client_lock = threading.Lock()
+
+            with self._wiki_client_lock:
+                if self._wiki_client is None:
+                    self._wiki_client = MediaWikiClient(
+                        base_url=self.base_url,
+                        credential_service=self.credential_service
+                        or f"{self.facility}-wiki",
+                        verify_ssl=False,
+                    )
+                    # Pre-authenticate to warm up session
+                    try:
+                        self._wiki_client.authenticate()
+                        logger.info(
+                            "Initialized shared MediaWiki client with Tequila auth"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to pre-authenticate MediaWiki client: %s", e
+                        )
+
+        return self._wiki_client
+
+    def close_wiki_client(self):
+        """Close the shared wiki client."""
+        if self._wiki_client is not None:
+            try:
+                self._wiki_client.close()
+            except Exception:
+                pass
+            self._wiki_client = None
 
 
 # Artifact types we can extract text from

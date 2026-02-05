@@ -1357,12 +1357,12 @@ def discover_wiki(
             should_bulk_discover = False
 
         # Display worker configuration (above the progress panel)
+        # Note: With bulk discovery, scan workers aren't used - show actual workers
         worker_parts = []
-        if not score_only:
-            worker_parts.append("1 scan")
         if not scan_only:
             worker_parts.append("1 score")
             worker_parts.append("1 ingest")
+            worker_parts.append("1 artifact")
         log_print(f"Workers: {', '.join(worker_parts)}")
         if not scan_only:
             log_print(f"Cost limit: ${cost_limit:.2f}")

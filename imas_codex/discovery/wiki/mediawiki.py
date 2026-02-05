@@ -336,6 +336,43 @@ class MediaWikiClient:
         except TequilaAuthError as e:
             logger.error("Tequila authentication failed: %s", e)
             return False
+        except requests.TooManyRedirects:
+            # Redirect loop during auth - clear corrupted cookies and retry
+            logger.warning(
+                "Redirect loop during authentication - clearing cookies and retrying"
+            )
+            session.cookies.clear()
+            self._creds.delete_session(self.credential_service)
+            # Retry authentication once with fresh session
+            try:
+                response = session.get(
+                    self.base_url,
+                    timeout=self.timeout,
+                    verify=self.verify_ssl,
+                    allow_redirects=True,
+                )
+                if self._is_tequila_redirect(response):
+                    response = self._perform_tequila_login(
+                        login_page_html=response.text,
+                        login_url=response.url,
+                        username=username,
+                        password=password,
+                    )
+                    if not self._is_tequila_redirect(response):
+                        cookie_dict = {
+                            cookie.name: cookie.value for cookie in session.cookies
+                        }
+                        self._creds.set_session(
+                            self.credential_service,
+                            cookie_dict,
+                            ttl=MEDIAWIKI_SESSION_TTL,
+                        )
+                        self._authenticated = True
+                        logger.info("Re-authenticated successfully after redirect loop")
+                        return True
+            except Exception as retry_e:
+                logger.error("Retry after redirect loop failed: %s", retry_e)
+            return False
         except requests.RequestException as e:
             logger.error("Request failed during authentication: %s", e)
             return False
@@ -410,6 +447,50 @@ class MediaWikiClient:
                 logger.debug("Page not found: %s", page_name)
             else:
                 logger.error("HTTP error fetching %s: %s", page_name, e)
+            return None
+        except requests.TooManyRedirects:
+            # Redirect loop - session cookies are likely corrupt
+            # Clear cookies and force re-authentication on next request
+            logger.warning(
+                "Redirect loop for %s - clearing session and retrying", page_name
+            )
+            self._authenticated = False
+            session.cookies.clear()
+            # Clear cached session from keyring
+            self._creds.delete_session(self.credential_service)
+            # Retry once with fresh auth
+            if self.authenticate(force=True):
+                try:
+                    response = session.get(
+                        url,
+                        timeout=self.timeout,
+                        verify=self.verify_ssl,
+                        allow_redirects=True,
+                    )
+                    if not self._is_tequila_redirect(response):
+                        response.raise_for_status()
+                        title_match = re.search(
+                            r"<title>([^<]+)</title>", response.text
+                        )
+                        title = (
+                            title_match.group(1).replace(" - SPCwiki", "")
+                            if title_match
+                            else page_name
+                        )
+                        text_content = re.sub(r"<[^>]+>", " ", response.text)
+                        text_content = re.sub(r"\s+", " ", text_content)
+                        return MediaWikiPage(
+                            title=title,
+                            url=url,
+                            content_html=response.text,
+                            content_text=text_content,
+                        )
+                except Exception as retry_e:
+                    logger.error(
+                        "Retry after redirect loop failed for %s: %s",
+                        page_name,
+                        retry_e,
+                    )
             return None
         except requests.RequestException as e:
             logger.error("Request failed for %s: %s", page_name, e)

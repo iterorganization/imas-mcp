@@ -329,6 +329,11 @@ class SupervisedWorkerGroup:
     _workers: dict[str, WorkerStatus] = field(default_factory=dict)
     _tasks: list[asyncio.Task] = field(default_factory=list)
 
+    @property
+    def workers(self) -> dict[str, WorkerStatus]:
+        """Access to worker status dict for display."""
+        return self._workers
+
     def create_status(self, name: str) -> WorkerStatus:
         """Create and register a worker status tracker."""
         status = WorkerStatus(name=name)
