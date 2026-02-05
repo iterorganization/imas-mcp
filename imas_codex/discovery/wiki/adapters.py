@@ -570,11 +570,12 @@ class MediaWikiAdapter(WikiAdapter):
 
         artifacts: list[DiscoveredArtifact] = []
         seen_filenames: set[str] = set()
+        seen_offsets: set[str] = set()
 
         # Start with Special:ListFiles
         list_url = f"{base_url}/Special:ListFiles"
         batch = 0
-        max_batches = 100  # Prevent infinite loops
+        max_batches = 500  # Allow more batches for large wikis
 
         while list_url and batch < max_batches:
             try:
@@ -623,20 +624,19 @@ class MediaWikiAdapter(WikiAdapter):
                 if on_progress:
                     on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
 
-                # Find next page link (offset parameter)
-                # Pattern: href="/wiki/index.php?title=Special:ListFiles&amp;offset=..."
-                next_pattern = re.compile(
-                    r'href="([^"]*Special:ListFiles[^"]*offset=[^"]+)"'
+                # Find all offset links and pick one we haven't visited
+                # Pattern: offset=TIMESTAMP (timestamps are numeric)
+                offset_pattern = re.compile(
+                    r'href="[^"]*Special:ListFiles[^"]*offset=(\d+)[^"]*"'
                 )
-                next_match = next_pattern.search(html)
-                if next_match:
-                    next_path = next_match.group(1).replace("&amp;", "&")
-                    # Check if this is the "next" link (not "previous")
-                    # The page shows 50 per page, so check if we'd move forward
-                    if "dir=prev" not in next_path:
-                        list_url = urljoin(base_url, next_path)
-                    else:
-                        break
+                all_offsets = set(offset_pattern.findall(html))
+                new_offsets = all_offsets - seen_offsets
+                seen_offsets.update(all_offsets)
+
+                if new_offsets:
+                    # Pick the lowest (oldest) offset to traverse chronologically
+                    next_offset = min(new_offsets)
+                    list_url = f"{base_url}/index.php?title=Special:ListFiles&offset={next_offset}"
                 else:
                     break
 
