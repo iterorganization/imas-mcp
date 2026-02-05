@@ -1248,42 +1248,39 @@ def fetch_artifact_size(
 ) -> int | None:
     """Fetch artifact file size via HTTP HEAD request.
 
-    Uses SSH to fetch Content-Length header without downloading content.
+    Uses the transfer module for SSH-proxied or direct HTTP access.
 
     Args:
-        url: Full URL to artifact (will be URL-decoded)
-        facility: SSH host alias
+        url: Full URL to artifact
+        facility: SSH host alias (None for direct HTTP)
         timeout: Timeout in seconds
 
     Returns:
         File size in bytes, or None if size cannot be determined
     """
-    import subprocess
+    import asyncio
 
-    decoded_url = _decode_url(url)
-    cmd = f'curl -skI "{decoded_url}" 2>/dev/null | grep -i content-length | head -1'
+    from imas_codex.discovery.base.transfer import TransferClient
+
+    async def _get_size():
+        async with TransferClient(ssh_host=facility) as client:
+            return await client.get_size(url, timeout=timeout)
+
+    # Run async in sync context
     try:
-        result = subprocess.run(
-            ["ssh", facility, cmd],
-            capture_output=True,
-            timeout=timeout,
-            text=True,
-        )
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Already in async context - create a task
+            import concurrent.futures
 
-        if result.returncode == 0 and result.stdout:
-            # Parse "Content-Length: 12345"
-            for line in result.stdout.strip().split("\n"):
-                if "content-length" in line.lower():
-                    parts = line.split(":")
-                    if len(parts) == 2:
-                        try:
-                            return int(parts[1].strip())
-                        except ValueError:
-                            pass
-    except subprocess.TimeoutExpired:
-        logger.warning("Timeout fetching size for %s", url)
-
-    return None
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, _get_size())
+                return future.result(timeout=timeout + 5)
+        else:
+            return asyncio.run(_get_size())
+    except Exception as e:
+        logger.debug("Error getting artifact size: %s", e)
+        return None
 
 
 async def fetch_artifact_content(
@@ -1291,49 +1288,35 @@ async def fetch_artifact_content(
     facility: str = "tcv",
     timeout: int = 120,
 ) -> tuple[str, bytes]:
-    """Fetch artifact content via SSH.
+    """Fetch artifact content with validation.
+
+    Uses the transfer module for SSH-proxied or direct HTTP access.
+    Validates content type matches expected file extension.
 
     Args:
-        url: Full URL to artifact (will be URL-decoded)
-        facility: SSH host alias
+        url: Full URL to artifact
+        facility: SSH host alias (None for direct HTTP)
         timeout: Timeout in seconds
 
     Returns:
         Tuple of (content_type, raw_bytes)
+
+    Raises:
+        RuntimeError: If download fails
+        ValueError: If content doesn't match expected type
     """
-    import subprocess
+    from imas_codex.discovery.base.transfer import TransferClient
 
-    # Decode URL-encoded paths
-    decoded_url = _decode_url(url)
-
-    # Fetch via SSH with SSL verification disabled
-    cmd = f'curl -skL -o /dev/stdout "{decoded_url}"'
-    result = subprocess.run(
-        ["ssh", facility, cmd],
-        capture_output=True,
-        timeout=timeout,
-    )
-
-    if result.returncode != 0:
-        raise RuntimeError(f"Failed to fetch {url}: {result.stderr.decode()}")
-
-    # Determine content type from URL extension
+    # Get expected type from URL extension
     ext = url.rsplit(".", 1)[-1].lower()
-    content_types = {
-        "pdf": "application/pdf",
-        "ppt": "application/vnd.ms-powerpoint",
-        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "doc": "application/msword",
-        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xls": "application/vnd.ms-excel",
-        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "png": "image/png",
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-        "gif": "image/gif",
-    }
 
-    return content_types.get(ext, "application/octet-stream"), result.stdout
+    async with TransferClient(ssh_host=facility) as client:
+        result = await client.download(url, timeout=timeout, expected_type=ext)
+
+    if not result.success:
+        raise RuntimeError(f"Failed to fetch {url}: {result.error}")
+
+    return result.content_type or "application/octet-stream", result.content
 
 
 class WikiArtifactPipeline:

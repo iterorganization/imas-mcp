@@ -600,6 +600,7 @@ class MediaWikiAdapter(WikiAdapter):
 
                     # Find corresponding image URL
                     # Pattern: href="/wiki/images/X/XX/Filename.ext"
+                    # This is the ACTUAL file URL, not the File: page
                     img_pattern = re.compile(
                         rf'href="([^"]*images/[^"]*{re.escape(filename)})"',
                         re.IGNORECASE,
@@ -609,8 +610,13 @@ class MediaWikiAdapter(WikiAdapter):
                         img_path = img_match.group(1)
                         url = urljoin(base_url, img_path)
                     else:
-                        # Construct URL from base (common MediaWiki pattern)
-                        url = f"{base_url}/File:{filename}"
+                        # Skip this artifact - we couldn't find the actual file URL
+                        # The File: prefix URL is just a description page, not the file
+                        logger.debug(
+                            "Skipping artifact %s: could not find images/ URL",
+                            filename,
+                        )
+                        continue
 
                     artifact = DiscoveredArtifact(
                         filename=filename,

@@ -5,6 +5,7 @@ Provides:
 - Parallel command execution
 - Progress display utilities
 - Worker supervision with crash recovery
+- Remote file transfer utilities (HTTP, SSH)
 """
 
 from imas_codex.discovery.base.executor import CommandResult, ParallelExecutor
@@ -51,6 +52,17 @@ from imas_codex.discovery.base.supervision import (
     release_orphaned_claims_generic,
     supervised_worker,
 )
+from imas_codex.discovery.base.transfer import (
+    HTTPBackend,
+    SSHCurlBackend,
+    SSHFileBackend,
+    TransferBackend,
+    TransferClient,
+    TransferResult,
+    detect_content_type,
+    download_with_size_check,
+    temp_file_context,
+)
 
 __all__ = [
     # Facility
@@ -96,4 +108,14 @@ __all__ = [
     "DEFAULT_MAX_RESTARTS",
     "DEFAULT_INITIAL_BACKOFF",
     "DEFAULT_MAX_BACKOFF",
+    # Transfer
+    "TransferClient",
+    "TransferResult",
+    "TransferBackend",
+    "SSHCurlBackend",
+    "SSHFileBackend",
+    "HTTPBackend",
+    "detect_content_type",
+    "download_with_size_check",
+    "temp_file_context",
 ]

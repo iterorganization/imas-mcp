@@ -2123,6 +2123,11 @@ def extract_artifacts_from_html(html: str, base_url: str) -> list[tuple[str, str
         if link.startswith(("#", "javascript:", "mailto:")):
             continue
 
+        # Skip MediaWiki File: description pages - these are NOT the actual files
+        # The actual file URLs contain /images/ or /uploads/
+        if "/File:" in link or "File:" in link.split("/")[-1]:
+            continue
+
         # Check if it's an artifact
         if _is_artifact(link):
             # Resolve relative URLs
