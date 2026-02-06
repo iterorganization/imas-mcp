@@ -180,10 +180,16 @@ class ProgressState:
     def elapsed(self) -> float:
         return time.time() - self.start_time
 
+    # Artifact pending counts (from graph refresh)
+    pending_artifact_score: int = 0  # discovered artifacts awaiting scoring
+    pending_artifact_ingest: int = 0  # scored artifacts awaiting ingestion
+
     @property
     def run_cost(self) -> float:
-        """Total cost for this run (score + ingest)."""
-        return self._run_score_cost + self._run_ingest_cost
+        """Total cost for this run (page score + ingest + artifact score)."""
+        return (
+            self._run_score_cost + self._run_ingest_cost + self._run_artifact_score_cost
+        )
 
     @property
     def cost_fraction(self) -> float:
@@ -212,39 +218,75 @@ class ProgressState:
 
     @property
     def cost_per_page(self) -> float | None:
-        """Average cost per scored page."""
+        """Average LLM cost per scored page (page scoring only)."""
         if self.run_scored > 0:
-            return self.run_cost / self.run_scored
+            return self._run_score_cost / self.run_scored
+        return None
+
+    @property
+    def cost_per_artifact_score(self) -> float | None:
+        """Average LLM cost per scored artifact."""
+        if self.run_artifacts_scored > 0:
+            return self._run_artifact_score_cost / self.run_artifacts_scored
         return None
 
     @property
     def eta_seconds(self) -> float | None:
         """Estimated time to termination based on limits.
 
-        Priority order:
-        1. Cost limit: if budget set, estimate time to exhaust budget
-        2. Page limit: if --max-pages set, estimate time to process that many
-        3. Full work: estimate time to complete all remaining scoring
+        For limit-based runs (cost or page limit), estimate time to hit limit.
+        For unconstrained runs, estimate from the slowest worker group:
+        the terminal time is max(score_eta, ingest_eta, artifact_score_eta,
+        artifact_ingest_eta) since workers run in parallel.
         """
-        # Try cost-based ETA first (if we have cost data)
+        # Priority 1: Cost limit - time to exhaust budget
         if self.run_cost > 0 and self.cost_limit > 0:
             cost_rate = self.run_cost / self.elapsed if self.elapsed > 0 else 0
             if cost_rate > 0:
                 remaining_budget = self.cost_limit - self.run_cost
                 return max(0, remaining_budget / cost_rate)
 
-        # Try page-limit-based ETA (if --max-pages set)
+        # Priority 2: Page limit
         if self.page_limit is not None and self.page_limit > 0:
             if self.run_scored > 0 and self.elapsed > 0:
                 rate = self.run_scored / self.elapsed
                 remaining = self.page_limit - self.run_scored
                 return max(0, remaining / rate) if rate > 0 else None
 
-        # Fall back to work-based ETA (all pending pages)
-        if not self.score_rate or self.score_rate <= 0:
-            return None
-        remaining = self.pending_score
-        return remaining / self.score_rate if remaining > 0 else 0
+        # Priority 3: Work-based ETA from slowest worker group
+        # Each worker group has its own remaining work and processing rate.
+        # Terminal time = max of all worker ETAs (parallel pipeline).
+        worker_etas: list[float] = []
+
+        # Page scoring ETA
+        if self.pending_score > 0 and self.score_rate and self.score_rate > 0:
+            worker_etas.append(self.pending_score / self.score_rate)
+
+        # Page ingestion ETA (scored pages above threshold)
+        if self.pending_ingest > 0 and self.ingest_rate and self.ingest_rate > 0:
+            worker_etas.append(self.pending_ingest / self.ingest_rate)
+
+        # Artifact scoring ETA
+        if (
+            self.pending_artifact_score > 0
+            and self.artifact_score_rate
+            and self.artifact_score_rate > 0
+        ):
+            worker_etas.append(self.pending_artifact_score / self.artifact_score_rate)
+
+        # Artifact ingestion ETA
+        if (
+            self.pending_artifact_ingest > 0
+            and self.artifact_rate
+            and self.artifact_rate > 0
+        ):
+            worker_etas.append(self.pending_artifact_ingest / self.artifact_rate)
+
+        if worker_etas:
+            return max(worker_etas)
+
+        # No rate data yet - can't estimate
+        return None
 
 
 # =============================================================================
@@ -772,15 +814,23 @@ class WikiProgressDisplay:
             section.append("\n")
 
             # TOTAL row - cumulative cost with ETC (Estimated Total Cost)
+            # ETC predicts cost to complete all pending score work:
+            #   remaining page score cost + remaining artifact score cost
             total_facility_cost = self.state.accumulated_cost + self.state.run_cost
-            if total_facility_cost > 0 or self.state.pending_score > 0:
+            has_pending = (
+                self.state.pending_score > 0 or self.state.pending_artifact_score > 0
+            )
+            if total_facility_cost > 0 or has_pending:
                 section.append("  TOTAL   ", style="bold white")
 
-                # Calculate ETC based on cost per page
-                cpp = self.state.cost_per_page
+                # Predict remaining cost from per-item rates
                 etc = total_facility_cost
+                cpp = self.state.cost_per_page
                 if cpp and cpp > 0 and self.state.pending_score > 0:
-                    etc = total_facility_cost + (self.state.pending_score * cpp)
+                    etc += self.state.pending_score * cpp
+                cpa = self.state.cost_per_artifact_score
+                if cpa and cpa > 0 and self.state.pending_artifact_score > 0:
+                    etc += self.state.pending_artifact_score * cpa
 
                 if etc > 0:
                     section.append_text(
@@ -809,6 +859,10 @@ class WikiProgressDisplay:
             pending_parts.append(f"score:{self.state.pending_score}")
         if self.state.pending_ingest > 0:
             pending_parts.append(f"ingest:{self.state.pending_ingest}")
+        if self.state.pending_artifact_score > 0:
+            pending_parts.append(f"art_score:{self.state.pending_artifact_score}")
+        if self.state.pending_artifact_ingest > 0:
+            pending_parts.append(f"art_ingest:{self.state.pending_artifact_ingest}")
         if pending_parts:
             section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
@@ -1117,6 +1171,8 @@ class WikiProgressDisplay:
         pages_skipped: int = 0,
         pending_score: int = 0,
         pending_ingest: int = 0,
+        pending_artifact_score: int = 0,
+        pending_artifact_ingest: int = 0,
         accumulated_cost: float = 0.0,
         **kwargs,  # Ignore extra args for compatibility
     ) -> None:
@@ -1128,6 +1184,8 @@ class WikiProgressDisplay:
         self.state.pages_skipped = pages_skipped
         self.state.pending_score = pending_score
         self.state.pending_ingest = pending_ingest
+        self.state.pending_artifact_score = pending_artifact_score
+        self.state.pending_artifact_ingest = pending_artifact_ingest
         self.state.accumulated_cost = accumulated_cost
         self._refresh()
 

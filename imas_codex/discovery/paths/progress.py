@@ -183,20 +183,32 @@ class ProgressState:
 
     @property
     def cost_per_path(self) -> float | None:
-        """Average cost per scored path."""
+        """Average LLM cost per initially scored path (excludes rescore cost)."""
         if self.run_scored > 0:
-            return self.run_cost / self.run_scored
+            return self._run_score_cost / self.run_scored
         return None
 
     @property
     def estimated_total_cost(self) -> float | None:
-        """Estimated total cost based on current rate."""
+        """Estimated total cost based on current rate.
+
+        Predicts cost for all remaining LLM work:
+        - pending_score paths at cost_per_path rate (initial scoring)
+        - pending_rescore paths at rescore cost rate
+        """
         cpp = self.cost_per_path
-        if cpp is not None and self.total > 0:
-            # Estimate: paths remaining * cost per path + current cost
-            remaining = self.frontier_size
-            return self.run_cost + (remaining * cpp)
-        return None
+        if cpp is None:
+            return None
+
+        remaining_score_cost = (self.pending_scan + self.pending_score) * cpp
+
+        # Rescore cost rate (separate from initial scoring)
+        remaining_rescore_cost = 0.0
+        if self.run_rescored > 0 and self._run_rescore_cost > 0:
+            cost_per_rescore = self._run_rescore_cost / self.run_rescored
+            remaining_rescore_cost = self.pending_rescore * cost_per_rescore
+
+        return self.run_cost + remaining_score_cost + remaining_rescore_cost
 
     @property
     def run_cost(self) -> float:
@@ -245,7 +257,8 @@ class ProgressState:
         Priority order:
         1. Cost limit: if -c flag set, estimate time to exhaust budget
         2. Path limit: if -l flag set, estimate time to process that many paths
-        3. Full work: estimate time to complete all remaining work
+        3. Full work: max of all worker ETAs (parallel pipeline)
+           Terminal time = slowest worker group since they run concurrently.
         """
         # Try cost-based ETA first (if we have cost data)
         if self.run_cost > 0 and self.cost_limit > 0:
@@ -262,11 +275,38 @@ class ProgressState:
                 remaining = self.path_limit - self.run_scored
                 return max(0, remaining / rate) if rate > 0 else None
 
-        # Fall back to work-based ETA
-        if not self.score_rate or self.score_rate <= 0:
-            return None
-        remaining = self.pending_scan + self.pending_score + self.pending_expand
-        return remaining / self.score_rate if remaining > 0 else 0
+        # Fall back to work-based ETA from slowest worker group.
+        # Each worker group has its own remaining work and processing rate.
+        # Terminal time = max of all worker ETAs (parallel pipeline).
+        worker_etas: list[float] = []
+
+        # Scan + expand pipeline: pending_scan paths at combined scan+expand rate
+        combined_scan_rate = sum(r for r in [self.scan_rate, self.expand_rate] if r)
+        if self.pending_scan > 0 and combined_scan_rate > 0:
+            worker_etas.append(self.pending_scan / combined_scan_rate)
+
+        # Score pipeline: pending_score paths at combined score+rescore rate
+        combined_score_rate = sum(r for r in [self.score_rate, self.rescore_rate] if r)
+        if self.pending_score > 0 and combined_score_rate > 0:
+            worker_etas.append(self.pending_score / combined_score_rate)
+
+        # Expand pipeline: pending_expand at expand rate
+        if self.pending_expand > 0 and self.expand_rate and self.expand_rate > 0:
+            worker_etas.append(self.pending_expand / self.expand_rate)
+
+        # Enrich pipeline: pending_enrich at enrich rate
+        if self.pending_enrich > 0 and self.enrich_rate and self.enrich_rate > 0:
+            worker_etas.append(self.pending_enrich / self.enrich_rate)
+
+        # Rescore pipeline: pending_rescore at rescore rate
+        if self.pending_rescore > 0 and self.rescore_rate and self.rescore_rate > 0:
+            worker_etas.append(self.pending_rescore / self.rescore_rate)
+
+        if worker_etas:
+            return max(worker_etas)
+
+        # No rate data yet - can't estimate
+        return None
 
 
 # ============================================================================
@@ -685,18 +725,20 @@ class ParallelProgressDisplay:
             if total_facility_cost > 0 or self.state.pending_score > 0:
                 section.append("  TOTAL   ", style="bold white")
                 # Dynamic ETC based on cost per path and remaining work
-                paths_remaining = self.state.pending_scan + self.state.pending_score
+                # Include both score and rescore pending work
                 cpp = self.state.cost_per_path
                 etc = total_facility_cost  # Estimated Total Cost
-                if cpp and cpp > 0 and paths_remaining > 0:
-                    etc = total_facility_cost + (paths_remaining * cpp)
-                elif self.state.scanned > 0 and self.state.run_scored > 0:
-                    # Fallback: estimate from scanned paths ratio
-                    etc = (
-                        total_facility_cost
-                        * (self.state.scanned + self.state.scored)
-                        / max(self.state.scored, 1)
+                if cpp and cpp > 0:
+                    pending_score_paths = (
+                        self.state.pending_scan + self.state.pending_score
                     )
+                    etc += pending_score_paths * cpp
+                # Add rescore cost estimate
+                if self.state.run_rescored > 0 and self.state._run_rescore_cost > 0:
+                    cost_per_rescore = (
+                        self.state._run_rescore_cost / self.state.run_rescored
+                    )
+                    etc += self.state.pending_rescore * cost_per_rescore
 
                 # Progress bar shows current cost toward ETC
                 if etc > 0:

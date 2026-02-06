@@ -4182,16 +4182,36 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             else 0.0
         )
 
-        # Add artifact stats
+        # Add artifact stats (total + pending counts per worker)
         artifact_result = gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
-            RETURN count(*) AS total_artifacts
+            WITH wa.status AS status, wa.score AS score,
+                 wa.artifact_type AS atype
+            RETURN status, score, atype, count(*) AS cnt
             """,
             facility=facility,
         )
-        stats["total_artifacts"] = (
-            artifact_result[0]["total_artifacts"] if artifact_result else 0
-        )
+        total_artifacts = 0
+        pending_artifact_score = 0
+        pending_artifact_ingest = 0
+        supported = list(SUPPORTED_ARTIFACT_TYPES)
+        for r in artifact_result:
+            total_artifacts += r["cnt"]
+            st = r["status"]
+            atype = r["atype"]
+            if st == WikiArtifactStatus.discovered.value and atype in supported:
+                pending_artifact_score += r["cnt"]
+            elif (
+                st == WikiArtifactStatus.scored.value
+                and atype in supported
+                and r["score"] is not None
+                and r["score"] >= 0.5
+            ):
+                pending_artifact_ingest += r["cnt"]
+
+        stats["total_artifacts"] = total_artifacts
+        stats["pending_artifact_score"] = pending_artifact_score
+        stats["pending_artifact_ingest"] = pending_artifact_ingest
 
         return stats

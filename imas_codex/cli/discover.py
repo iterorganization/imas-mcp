@@ -1612,6 +1612,12 @@ def discover_wiki(
                                         "pending_score", stats.get("scanned", 0)
                                     ),
                                     pending_ingest=stats.get("pending_ingest", 0),
+                                    pending_artifact_score=stats.get(
+                                        "pending_artifact_score", 0
+                                    ),
+                                    pending_artifact_ingest=stats.get(
+                                        "pending_artifact_ingest", 0
+                                    ),
                                     accumulated_cost=stats.get("accumulated_cost", 0.0),
                                 )
                             except asyncio.CancelledError:
