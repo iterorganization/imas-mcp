@@ -80,11 +80,15 @@ class IngestItem:
 
 @dataclass
 class ArtifactItem:
-    """Current artifact ingestion activity."""
+    """Current artifact activity (score or ingest)."""
 
     filename: str
     artifact_type: str
+    score: float | None = None
+    physics_domain: str | None = None
+    description: str = ""
     chunk_count: int = 0
+    is_score: bool = False  # True if scoring, False if ingesting
 
 
 # =============================================================================
@@ -129,8 +133,12 @@ class ProgressState:
 
     # Artifact stats
     artifacts_ingested: int = 0
+    artifacts_scored: int = 0
     run_artifacts: int = 0
+    run_artifacts_scored: int = 0
     artifact_rate: float | None = None
+    artifact_score_rate: float | None = None
+    _run_artifact_score_cost: float = 0.0
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
@@ -155,6 +163,11 @@ class ProgressState:
         )
     )
     artifact_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.3, max_rate=1.0, min_display_time=0.5
+        )
+    )
+    artifact_score_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.3, max_rate=1.0, min_display_time=0.5
         )
@@ -356,14 +369,16 @@ class WikiProgressDisplay:
 
         for name, status in wg.workers.items():
             # Determine task type from worker name
-            if "scan" in name:
+            # Check "artifact" before "score"/"ingest" since artifact workers
+            # may contain those substrings (e.g. artifact_score_worker)
+            if "artifact" in name:
+                task_groups["artifact"].append((name, status.state))
+            elif "scan" in name:
                 task_groups["scan"].append((name, status.state))
             elif "score" in name:
                 task_groups["score"].append((name, status.state))
             elif "ingest" in name:
                 task_groups["ingest"].append((name, status.state))
-            elif "artifact" in name:
-                task_groups["artifact"].append((name, status.state))
 
         # Display each task group
         for task, workers in task_groups.items():
@@ -474,12 +489,18 @@ class WikiProgressDisplay:
             section.append("    disabled", style="dim italic")
         else:
             section.append("  ARTFCT  ", style="bold yellow")
-            # Artifacts don't have a total, just show count
+            # Artifacts don't have a total, just show scored→ingested count
             section.append("─" * bar_width, style="dim")
-            section.append(f" {self.state.run_artifacts:>6,}", style="bold")
+            scored = self.state.run_artifacts_scored
+            ingested = self.state.run_artifacts
+            if scored > 0:
+                section.append(f" {scored:>3,}→{ingested:<3,}", style="bold")
+            else:
+                section.append(f" {ingested:>6,}", style="bold")
             section.append("     ", style="dim")  # No percentage for artifacts
-            if self.state.artifact_rate and self.state.artifact_rate > 0:
-                section.append(f" {self.state.artifact_rate:>5.1f}/s", style="dim")
+            rate = self.state.artifact_score_rate or self.state.artifact_rate
+            if rate and rate > 0:
+                section.append(f" {rate:>5.1f}/s", style="dim")
 
         return section
 
@@ -632,13 +653,13 @@ class WikiProgressDisplay:
                 section.append(" ...", style="dim italic")
                 section.append("\n    ", style="dim")
 
-        # ARTIFACT section - single line showing filename with extension
+        # ARTIFACT section - 2 lines: filename, then score + domain + description
         artifact = self.state.current_artifact
         if not self.state.scan_only:
             section.append("\n")
             section.append("  ARTFCT", style="bold yellow")
             if artifact:
-                # Show filename.ext (chunks) format
+                # Line 1: Artifact filename
                 title_width = content_width - 9  # 9 = "  ARTFCT "
                 display_name = artifact.filename
                 if artifact.chunk_count > 0:
@@ -651,18 +672,58 @@ class WikiProgressDisplay:
                 section.append(
                     " " + self._clip_title(display_name, title_width), style="white"
                 )
+                section.append("\n")
+
+                # Line 2: Score, physics domain, description
+                section.append("    ", style="dim")
+                score_str = ""
+                if artifact.score is not None:
+                    if artifact.score >= 0.7:
+                        style = "bold green"
+                    elif artifact.score >= 0.4:
+                        style = "yellow"
+                    else:
+                        style = "red"
+                    score_str = f"{artifact.score:.2f}"
+                    section.append(f"{score_str}  ", style=style)
+
+                domain_str = ""
+                if artifact.physics_domain:
+                    domain_str = artifact.physics_domain
+                    section.append(f"{domain_str}  ", style="cyan")
+
+                if artifact.description:
+                    desc = clean_text(artifact.description)
+                    used = (
+                        4
+                        + (len(score_str) + 2 if score_str else 0)
+                        + (len(domain_str) + 2 if domain_str else 0)
+                    )
+                    desc_width = content_width - used
+                    section.append(
+                        clip_text(desc, max(10, desc_width)), style="italic dim"
+                    )
             elif self.state.artifact_processing:
                 section.append(" processing...", style="cyan italic")
-            elif not self.state.artifact_queue.is_empty():
-                # Items in queue but not yet popped - show waiting state
-                queued = len(self.state.artifact_queue)
+                section.append("\n    ", style="dim")
+            elif (
+                not self.state.artifact_queue.is_empty()
+                or not self.state.artifact_score_queue.is_empty()
+            ):
+                queued = len(self.state.artifact_queue) + len(
+                    self.state.artifact_score_queue
+                )
                 section.append(f" streaming {queued} items...", style="cyan italic")
+                section.append("\n    ", style="dim")
             elif should_show_idle(
-                self.state.artifact_processing, self.state.artifact_queue
+                self.state.artifact_processing,
+                self.state.artifact_queue,
             ):
                 section.append(" idle", style="dim italic")
+                section.append("\n    ", style="dim")
             else:
                 section.append(" ...", style="dim italic")
+                section.append("\n    ", style="dim")
 
         return section
 
@@ -840,12 +901,26 @@ class WikiProgressDisplay:
                 chunk_count=item.get("chunk_count", 0),
             )
 
-        # Pop from artifact queue
-        if item := self.state.artifact_queue.pop():
+        # Pop from artifact score queue (priority over ingest queue)
+        if item := self.state.artifact_score_queue.pop():
             self.state.current_artifact = ArtifactItem(
                 filename=item.get("filename", ""),
                 artifact_type=item.get("artifact_type", ""),
+                score=item.get("score"),
+                physics_domain=item.get("physics_domain"),
+                description=item.get("description", ""),
+                is_score=True,
+            )
+        # Pop from artifact ingest queue
+        elif item := self.state.artifact_queue.pop():
+            self.state.current_artifact = ArtifactItem(
+                filename=item.get("filename", ""),
+                artifact_type=item.get("artifact_type", ""),
+                score=item.get("score"),
+                physics_domain=item.get("physics_domain"),
+                description=item.get("description", ""),
                 chunk_count=item.get("chunk_count", 0),
+                is_score=False,
             )
 
         self._refresh()
@@ -980,12 +1055,56 @@ class WikiProgressDisplay:
                     {
                         "filename": r.get("filename", "unknown"),
                         "artifact_type": r.get("artifact_type", ""),
+                        "score": r.get("score"),
+                        "physics_domain": r.get("physics_domain"),
+                        "description": r.get("description", ""),
                         "chunk_count": r.get("chunk_count", 0),
                     }
                 )
             max_display_rate = 1.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 0.5
             self.state.artifact_queue.add(items, display_rate)
+
+        self._refresh()
+
+    def update_artifact_score(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update artifact score worker state."""
+        self.state.run_artifacts_scored = stats.processed
+        self.state.artifact_score_rate = stats.rate
+        self.state._run_artifact_score_cost = stats.cost
+
+        # Track processing state
+        if "waiting" in message.lower() or message == "idle":
+            self.state.artifact_processing = False
+        elif "scoring" in message.lower() or "extracting" in message.lower():
+            self.state.artifact_processing = True
+        elif "scored" in message.lower() and results:
+            self.state.artifact_processing = (
+                not self.state.artifact_score_queue.is_empty()
+            )
+        else:
+            self.state.artifact_processing = False
+
+        # Queue results for streaming
+        if results:
+            items = [
+                {
+                    "filename": r.get("filename", "unknown"),
+                    "artifact_type": r.get("artifact_type", ""),
+                    "score": r.get("score"),
+                    "physics_domain": r.get("physics_domain"),
+                    "description": r.get("description", ""),
+                }
+                for r in results
+            ]
+            max_display_rate = 1.0
+            display_rate = min(stats.rate, max_display_rate) if stats.rate else 0.5
+            self.state.artifact_score_queue.add(items, display_rate)
 
         self._refresh()
 

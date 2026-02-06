@@ -1686,11 +1686,29 @@ def discover_wiki(
                                 {
                                     "filename": r.get("filename", "unknown"),
                                     "artifact_type": r.get("artifact_type", ""),
+                                    "score": r.get("score"),
+                                    "physics_domain": r.get("physics_domain"),
+                                    "description": r.get("description", ""),
                                     "chunk_count": r.get("chunk_count", 0),
                                 }
                                 for r in results[:5]
                             ]
                         display.update_artifact(msg, stats, result_dicts)
+
+                    def on_artifact_score(msg, stats, results=None):
+                        result_dicts = None
+                        if results:
+                            result_dicts = [
+                                {
+                                    "filename": r.get("filename", "unknown"),
+                                    "artifact_type": r.get("artifact_type", ""),
+                                    "score": r.get("score"),
+                                    "physics_domain": r.get("physics_domain"),
+                                    "description": r.get("description", ""),
+                                }
+                                for r in results[:5]
+                            ]
+                        display.update_artifact_score(msg, stats, result_dicts)
 
                     def on_worker_status(worker_group):
                         display.update_worker_status(worker_group)
@@ -1718,6 +1736,7 @@ def discover_wiki(
                             on_score_progress=on_score,
                             on_ingest_progress=on_ingest,
                             on_artifact_progress=on_artifact,
+                            on_artifact_score_progress=on_artifact_score,
                             on_worker_status=on_worker_status,
                         )
                     finally:
