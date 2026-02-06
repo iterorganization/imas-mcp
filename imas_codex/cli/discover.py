@@ -1823,23 +1823,10 @@ def discover_wiki(
     help="Maximum signals to enrich (for debugging)",
 )
 @click.option(
-    "--tree",
-    "-t",
-    multiple=True,
-    help="MDSplus tree name(s) to scan",
-)
-@click.option(
-    "--shot",
-    "-s",
-    type=int,
-    default=None,
-    help="Reference shot number for tree traversal",
-)
-@click.option(
     "--tdi-path",
     type=str,
     default=None,
-    help="Path to TDI function files",
+    help="Override TDI function directory (default: from facility config)",
 )
 @click.option(
     "--focus",
@@ -1873,12 +1860,6 @@ def discover_wiki(
     help="Number of parallel check workers (default: 1)",
 )
 @click.option(
-    "--force",
-    is_flag=True,
-    default=False,
-    help="Re-scan trees even if epochs already exist in graph (merges, doesn't reset)",
-)
-@click.option(
     "--no-rich",
     is_flag=True,
     default=False,
@@ -1888,52 +1869,39 @@ def discover_signals(
     facility: str,
     cost_limit: float,
     signal_limit: int | None,
-    tree: tuple[str, ...],
-    shot: int | None,
     tdi_path: str | None,
     focus: str | None,
     scan_only: bool,
     enrich_only: bool,
     enrich_workers: int,
     check_workers: int,
-    force: bool,
     no_rich: bool,
 ) -> None:
     """Discover and document facility data signals.
 
-    Walks MDSplus trees with epoch detection to find structural versions,
-    then creates signals from the current tree structure. Uses LLM to
-    classify physics domains and generate descriptions.
-
-    Epoch detection uses batched SSH queries (50 shots/batch) and binary
-    search to efficiently identify when tree structure changed. Each epoch
-    (TreeModelVersion) records the shot range where that structure was active.
-
-    \b
-    Idempotency:
-      - Trees with existing epochs are skipped (use --force to re-scan)
-      - Re-scanning merges new epochs, doesn't reset existing signal status
-      - Signals use MERGE for safe re-ingestion
+    Scans TDI function files (.fun) to discover physics-level data accessors.
+    TDI functions are the primary data access layer, abstracting over raw
+    MDSplus paths with built-in versioning and source selection.
 
     \b
     Pipeline stages:
-      SCAN: Detect epochs, enumerate signals from data sources
-      ENRICH: LLM classification of physics_domain, description generation
-      CHECK: Test data access with example_shot, verify units
+      SCAN: Parse TDI .fun files, extract quantities, create signals
+      ENRICH: LLM classification with .fun source code context
+      CHECK: Test TDI accessor execution against reference shot
 
     \b
     Examples:
-      # Discover signals from MDSplus tree (with epoch detection)
-      imas-codex discover signals tcv --tree results --shot 84469
-
-      # Re-scan tree to find new epochs (incremental from last known)
-      imas-codex discover signals tcv --tree results --shot 84469 --force
+      # Full discovery pipeline (scan + enrich + check)
+      imas-codex discover signals tcv
 
       # Scan only, no LLM enrichment
-      imas-codex discover signals tcv --tree results --shot 84469 --scan-only
+      imas-codex discover signals tcv --scan-only
 
       # Enrich already-discovered signals
       imas-codex discover signals tcv --enrich-only -c 5.0
+
+      # Override TDI path
+      imas-codex discover signals tcv --tdi-path /usr/local/CRPP/tdi/tcv
     """
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.data import (
@@ -1975,36 +1943,27 @@ def discover_signals(
         log_print(f"[red]Error loading facility config: {e}[/red]")
         raise SystemExit(1) from e
 
-    # Validate inputs
-    tree_names = list(tree) if tree else []
+    # Get facility data source config
+    data_sources = config.get("data_sources", {})
+    tdi_config = data_sources.get("tdi", {})
 
-    if not enrich_only and not tree_names and not tdi_path:
-        # Try to get tree names from facility config
-        data_sources = config.get("data_sources", {})
-        mdsplus_config = data_sources.get("mdsplus", {})
-        default_trees = mdsplus_config.get("trees", [])
-        if default_trees:
-            tree_names = default_trees
-            log_print(f"[dim]Using trees from config: {', '.join(tree_names)}[/dim]")
-        else:
-            log_print(
-                "[yellow]No data sources specified. Use --tree or --tdi-path.[/yellow]"
-            )
-            log_print("Or configure data_sources.mdsplus.trees in the facility config.")
-            raise SystemExit(1)
+    # Auto-configure TDI path from facility config (unless CLI override)
+    if not enrich_only and not tdi_path:
+        tdi_primary = tdi_config.get("primary_path")
+        if tdi_primary:
+            tdi_path = tdi_primary
+            log_print(f"[dim]Using TDI path from config: {tdi_path}[/dim]")
 
-    if not enrich_only and tree_names and not shot:
-        # Try to get reference shot from config
-        data_sources = config.get("data_sources", {})
-        mdsplus_config = data_sources.get("mdsplus", {})
-        shot = mdsplus_config.get("reference_shot")
-        if shot:
-            log_print(f"[dim]Using reference shot from config: {shot}[/dim]")
-        else:
-            log_print(
-                "[yellow]No reference shot specified. Use --shot for MDSplus discovery.[/yellow]"
-            )
-            raise SystemExit(1)
+    # Get reference shot from TDI config
+    reference_shot = tdi_config.get("reference_shot")
+
+    # Require TDI path for scan
+    if not enrich_only and not tdi_path:
+        log_print(
+            "[yellow]No TDI path specified. Use --tdi-path or configure "
+            "data_sources.tdi.primary_path in facility config.[/yellow]"
+        )
+        raise SystemExit(1)
 
     # Reset orphaned claims
     log_print(f"[bold]Starting data discovery for {facility.upper()}[/bold]")
@@ -2025,10 +1984,8 @@ def discover_signals(
         log_print(f"Cost limit: ${cost_limit:.2f}")
     if signal_limit:
         log_print(f"Signal limit: {signal_limit}")
-    if tree_names:
-        log_print(f"Trees: {', '.join(tree_names)}")
-    if shot:
-        log_print(f"Reference shot: {shot}")
+    if reference_shot:
+        log_print(f"Reference shot: {reference_shot}")
     if tdi_path:
         log_print(f"TDI path: {tdi_path}")
     if focus:
@@ -2041,8 +1998,6 @@ def discover_signals(
         worker_parts.append(f"{enrich_workers} enrich")
         worker_parts.append(f"{check_workers} check")
     log_print(f"Workers: {', '.join(worker_parts)}")
-    if force:
-        log_print("[yellow]Force mode: re-scanning all trees[/yellow]")
 
     try:
 
@@ -2112,9 +2067,8 @@ def discover_signals(
                         result = await run_parallel_data_discovery(
                             facility=facility,
                             ssh_host=ssh_host,
-                            tree_names=tree_names,
                             tdi_path=tdi_path,
-                            reference_shot=shot,
+                            reference_shot=reference_shot,
                             cost_limit=cost_limit,
                             signal_limit=signal_limit,
                             focus=focus,
@@ -2122,7 +2076,6 @@ def discover_signals(
                             num_check_workers=check_workers,
                             discover_only=scan_only,
                             enrich_only=enrich_only,
-                            force=force,
                             on_discover_progress=on_discover,
                             on_enrich_progress=on_enrich,
                             on_check_progress=on_check,
@@ -2163,9 +2116,8 @@ def discover_signals(
                 result = await run_parallel_data_discovery(
                     facility=facility,
                     ssh_host=ssh_host,
-                    tree_names=tree_names,
                     tdi_path=tdi_path,
-                    reference_shot=shot,
+                    reference_shot=reference_shot,
                     cost_limit=cost_limit,
                     signal_limit=signal_limit,
                     focus=focus,
@@ -2173,7 +2125,6 @@ def discover_signals(
                     num_check_workers=check_workers,
                     discover_only=scan_only,
                     enrich_only=enrich_only,
-                    force=force,
                     on_discover_progress=log_on_discover,
                     on_enrich_progress=log_on_enrich,
                     on_check_progress=log_on_check,

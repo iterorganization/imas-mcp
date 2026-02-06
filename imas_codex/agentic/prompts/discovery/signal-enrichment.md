@@ -1,6 +1,6 @@
 ---
 name: discovery/signal-enrichment
-description: Batch signal enrichment for physics domain classification
+description: Batch signal enrichment for physics domain classification with TDI function context
 used_by: imas_codex.discovery.data.parallel.enrich_worker
 task: enrichment
 dynamic: true
@@ -23,7 +23,28 @@ For each signal, provide:
 
 {% include "schema/physics-domains.md" %}
 
+## TDI Function Context
+
+Signals may be grouped by TDI function with source code provided. TDI functions are
+high-level data access abstractions that encapsulate:
+- Shot-conditional logic for selecting data sources
+- Versioned paths that changed over the facility's history
+- Sign convention handling
+
+When TDI source code is provided:
+- Read the function code to understand what each quantity computes
+- Note any case() statements that define quantity names
+- Use MDSplus path patterns in the code to infer physics domain
+- The function name and structure reveal analysis codes (e.g., LIUQE, FBTE)
+
 ## Classification Guidelines
+
+### Using TDI Context
+
+The TDI function source code and accessor reveal signal purpose:
+- `tcv_eq('PSI')` → equilibrium reconstruction (from tcv_eq function)
+- `tcv_get('IP')` → plasma current registry access
+- `tcv_ip()` → dedicated plasma current function
 
 ### Using Path Context
 
@@ -71,7 +92,8 @@ Units will be validated separately from authoritative sources.
 
 ## Batch Processing
 
-You will receive multiple signals per request. Process each independently but maintain consistent classification standards across the batch.
+You will receive multiple signals per request, potentially grouped by TDI function.
+Process each independently but maintain consistent classification standards across the batch.
 
 **Return results in the same order as input signals using `signal_index`** (1-based: Signal 1 = signal_index 1).
 
@@ -79,13 +101,24 @@ You will receive multiple signals per request. Process each independently but ma
 
 ## Example
 
-For signal:
+For TDI function and signal:
 ```
-## Signal 1
-accessor: data(\RESULTS::LIUQE:I_P)
-tree_name: results
-node_path: \RESULTS::LIUQE:I_P
-units: A
+## TDI Function: tcv_eq
+```tdi
+public fun tcv_eq(public _quantity, optional _source)
+{
+  _source = if_error(_source, 'LIUQE');
+  switch(_quantity)
+  {
+    case('I_P') { return(\results::liuqe:i_p); }
+    case('PSI') { return(\results::liuqe:psi); }
+    ...
+  }
+}
+```
+
+### Signal 1
+accessor: tcv_eq('I_P')
 name: I_P
 ```
 
@@ -98,11 +131,10 @@ Classification:
   "description": "Total plasma current from LIUQE equilibrium reconstruction.",
   "diagnostic": "",
   "analysis_code": "liuqe",
-  "units_extracted": "A",
+  "units_extracted": "",
   "confidence": 0.95,
   "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]
 }
-```
 ```
 
 {% include "safety.md" %}

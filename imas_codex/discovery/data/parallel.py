@@ -73,12 +73,8 @@ class DataDiscoveryState:
     ssh_host: str | None = None
 
     # Data source configuration
-    tree_names: list[str] = field(default_factory=list)
     reference_shot: int | None = None
     tdi_path: str | None = None
-
-    # Flags
-    force: bool = False  # Re-scan trees even if epochs exist
 
     # Limits
     cost_limit: float = 10.0
@@ -188,11 +184,7 @@ def has_pending_enrich_work(facility: str) -> bool:
 
 
 def has_pending_check_work(facility: str) -> bool:
-    """Check if there are epoch-aware signals awaiting check.
-
-    Only counts signals with defined epochs (epoch_id IS NOT NULL) since
-    the check worker requires epoch context to determine valid shot ranges.
-    """
+    """Check if there are enriched signals awaiting check."""
     try:
         with GraphClient() as gc:
             result = gc.query(
@@ -200,7 +192,6 @@ def has_pending_check_work(facility: str) -> bool:
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $enriched
                   AND s.claimed_at IS NULL
-                  AND s.epoch_id IS NOT NULL
                 RETURN count(s) > 0 AS has_work
                 """,
                 facility=facility,
@@ -230,7 +221,7 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
                     sum(CASE WHEN s.status = $skipped THEN 1 ELSE 0 END) AS skipped,
                     sum(CASE WHEN s.status = $failed THEN 1 ELSE 0 END) AS failed,
                     sum(CASE WHEN s.status = $discovered AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_enrich,
-                    sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL AND s.epoch_id IS NOT NULL THEN 1 ELSE 0 END) AS pending_check,
+                    sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_check,
                     sum(coalesce(s.enrichment_cost, 0)) AS accumulated_cost
                 """,
                 facility=facility,
@@ -365,7 +356,10 @@ def claim_signals_for_enrichment(
     facility: str,
     batch_size: int = 10,
 ) -> list[dict]:
-    """Claim a batch of discovered signals for enrichment."""
+    """Claim a batch of discovered signals for enrichment.
+
+    Returns signals sorted by tdi_function to enable batching by function.
+    """
     try:
         with GraphClient() as gc:
             result = gc.query(
@@ -373,10 +367,11 @@ def claim_signals_for_enrichment(
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $discovered
                   AND s.claimed_at IS NULL
-                WITH s LIMIT $batch_size
+                WITH s ORDER BY s.tdi_function, s.id LIMIT $batch_size
                 SET s.claimed_at = datetime()
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
-                       s.node_path AS node_path, s.units AS units, s.name AS name
+                       s.node_path AS node_path, s.units AS units, s.name AS name,
+                       s.tdi_function AS tdi_function
                 """,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
@@ -391,42 +386,42 @@ def claim_signals_for_enrichment(
 def claim_signals_for_check(
     facility: str,
     batch_size: int = 5,
+    reference_shot: int | None = None,
 ) -> list[dict]:
     """Claim a batch of enriched signals for check.
 
-    Only claims signals that have a defined epoch (TreeModelVersion), using a shot
-    from within the epoch's valid range. This ensures we only check signals against
-    shots where they are known to exist.
+    Uses reference_shot from config for TDI-based checking.
     """
     try:
         with GraphClient() as gc:
             result = gc.query(
                 """
-                // Only claim signals with defined epochs
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $enriched
                   AND s.claimed_at IS NULL
-                  AND s.epoch_id IS NOT NULL
-                // Join to TreeModelVersion to get valid shot range
-                MATCH (v:TreeModelVersion {id: s.epoch_id})
-                WITH s, v LIMIT $batch_size
+                WITH s LIMIT $batch_size
                 SET s.claimed_at = datetime()
-                // Derive access_method ID if signal has tree_name (MDSplus)
-                WITH s, v,
-                     CASE WHEN s.tree_name IS NOT NULL
+                // Derive access_method ID based on signal type
+                WITH s,
+                     CASE WHEN s.tdi_function IS NOT NULL
+                          THEN $facility + ':tdi:functions'
+                          WHEN s.tree_name IS NOT NULL
                           THEN $facility + ':mdsplus:tree_tdi'
                           ELSE null END AS derived_access_method
-                // Use first_shot from epoch (guaranteed valid)
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
-                       v.first_shot AS check_shot, s.epoch_id AS epoch_id,
-                       s.physics_domain AS physics_domain,
+                       s.physics_domain AS physics_domain, s.tdi_function AS tdi_function,
                        COALESCE(s.access_method, derived_access_method) AS access_method
                 """,
                 facility=facility,
                 enriched=FacilitySignalStatus.enriched.value,
                 batch_size=batch_size,
             )
-            return list(result) if result else []
+            # Add reference_shot to each result
+            signals = list(result) if result else []
+            if reference_shot:
+                for sig in signals:
+                    sig["check_shot"] = reference_shot
+            return signals
     except Exception as e:
         logger.warning("Could not claim signals for check: %s", e)
         return []
@@ -932,8 +927,13 @@ def discover_tdi_signals(
 ) -> list[dict]:
     """Discover signals from TDI function files via SSH.
 
-    Parses .fun files to extract case() statements which define
-    available quantities.
+    Uses the extract_tdi_functions.py script for proper parsing of .fun files.
+    Extracts function metadata, supported quantities, and classifies physics domains.
+
+    TDI functions like tcv_get() and tcv_eq() provide:
+    - Physics-level abstraction over raw MDSplus paths
+    - Built-in versioning and source selection
+    - Sign convention handling
 
     Args:
         facility: Facility ID
@@ -944,55 +944,81 @@ def discover_tdi_signals(
     Returns:
         List of signal dicts ready for graph insertion
     """
-    import re
+    # Run the extraction script synchronously (will be called in to_thread)
+    import asyncio
 
-    # List .fun files
+    from imas_codex.discovery.data.tdi import (
+        build_signal_id,
+        build_tdi_accessor,
+        classify_tdi_quantity,
+        extract_tdi_functions,
+    )
+
     try:
-        result = subprocess.run(
-            ["ssh", ssh_host, f"find {tdi_path} -name '*.fun' -type f 2>/dev/null"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=True,
+        functions = asyncio.get_event_loop().run_until_complete(
+            extract_tdi_functions(ssh_host, tdi_path)
         )
-        files = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
-    except Exception as e:
-        logger.error("Failed to list TDI files: %s", e)
-        return []
+    except RuntimeError:
+        # No event loop running, create a new one
+        functions = asyncio.run(extract_tdi_functions(ssh_host, tdi_path))
+
+    # Source selector values to skip (not actual quantities)
+    SOURCE_SELECTORS = {
+        "FBTE",
+        "FBTE.M",
+        "LIUQE",
+        "LIUQE.M",
+        "LIUQE2",
+        "LIUQE.M2",
+        "LIUQE.M3",
+        "LIUQE3",
+        "FLAT",
+        "FLAT.M",
+        "RAMP",
+        "RAMP.M",
+        "RUNS",
+        "RUNS.M",
+        "MAGNETICS",
+        "PCS",
+    }
 
     signals = []
-    for filepath in files:
-        func_name = filepath.rsplit("/", 1)[-1].replace(".fun", "")
+    seen_accessors: set[str] = set()
 
-        try:
-            result = subprocess.run(
-                ["ssh", ssh_host, f"cat '{filepath}'"],
-                capture_output=True,
-                timeout=30,
-                check=True,
-            )
-            content = result.stdout.decode("latin-1", errors="replace")
-        except Exception:
+    for func in functions:
+        # Skip internal functions
+        if func.name.startswith("_"):
             continue
 
-        # Extract case() quantities
-        pattern = r'case\s*\(\s*["\']([A-Z_0-9]+)["\']\s*\)'
-        quantities = sorted(set(re.findall(pattern, content, re.IGNORECASE)))
+        for q in func.quantities:
+            qty_name = q["name"]
 
-        for qty in quantities:
-            qty_upper = qty.upper()
-            signal_id = f"{facility}:general/{func_name}/{qty_upper.lower()}"
+            # Skip source selectors
+            if qty_name in SOURCE_SELECTORS:
+                continue
+
+            # Build accessor and deduplicate
+            accessor = build_tdi_accessor(func.name, qty_name)
+            if accessor in seen_accessors:
+                continue
+            seen_accessors.add(accessor)
+
+            # Classify physics domain
+            physics_domain = classify_tdi_quantity(qty_name, func.name)
+
+            # Build signal ID
+            signal_id = build_signal_id(facility, physics_domain, qty_name)
 
             signals.append(
                 {
                     "id": signal_id,
                     "facility_id": facility,
-                    "physics_domain": "general",  # Will be enriched
-                    "name": qty_upper,
-                    "accessor": f"{func_name}('{qty_upper}')",
+                    "physics_domain": physics_domain.value,
+                    "name": qty_name,
+                    "accessor": accessor,
                     "access_method": access_method_id,
-                    "tdi_function": func_name,
-                    "tdi_quantity": qty_upper,
+                    "tdi_function": func.name,
+                    "tdi_quantity": qty_name,
                     "status": FacilitySignalStatus.discovered.value,
                     "discovery_source": "tdi_introspection",
                 }
@@ -1042,216 +1068,19 @@ async def scan_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
-    """Worker that scans data sources for signals with epoch detection.
+    """Worker that scans TDI function files for signals.
 
-    Uses batch_discovery.discover_epochs_optimized() for efficient epoch detection.
-    Idempotent: skips trees that already have epochs unless force=True.
+    Discovers signals from TDI .fun files, creates TDIFunction nodes
+    for LLM enrichment context.
     """
-    from imas_codex.mdsplus.batch_discovery import (
-        EpochProgress,
-        discover_epochs_optimized,
+    from imas_codex.discovery.data.tdi import (
+        create_tdi_access_method,
+        discover_tdi_signals,
+        ingest_tdi_functions,
+        ingest_tdi_signals,
     )
 
-    access_method_id = f"{state.facility}:mdsplus:tree_tdi"
-
-    # Scan MDSplus trees with epoch detection
-    if state.tree_names and state.reference_shot:
-        for tree_name in state.tree_names:
-            if state.should_stop_discovering():
-                break
-
-            # Check idempotency - skip if epochs already exist
-            existing_epochs = await asyncio.to_thread(
-                get_tree_epochs, state.facility, tree_name
-            )
-
-            if existing_epochs and not state.force:
-                # Tree already scanned - skip
-                epoch_count = len(existing_epochs)
-                total_nodes = sum(e.get("node_count", 0) for e in existing_epochs)
-                logger.info(
-                    "Skipping %s:%s - already has %d epochs (%d nodes). "
-                    "Use --force to re-scan.",
-                    state.facility,
-                    tree_name,
-                    epoch_count,
-                    total_nodes,
-                )
-                if on_progress:
-                    on_progress(
-                        f"skipped {tree_name} (already scanned)",
-                        state.discover_stats,
-                        [
-                            {
-                                "tree_name": tree_name,
-                                "node_path": f"{epoch_count} epochs exist",
-                            }
-                        ],
-                    )
-                continue
-
-            if on_progress:
-                mode = "re-scanning" if existing_epochs else "scanning"
-                on_progress(
-                    f"{mode} {tree_name}",
-                    state.discover_stats,
-                    [{"tree_name": tree_name, "node_path": "detecting epochs..."}],
-                )
-
-            # Get incremental start shot if updating existing epochs
-            start_shot = None
-            if existing_epochs and state.force:
-                latest = await asyncio.to_thread(
-                    get_latest_epoch_shot, state.facility, tree_name
-                )
-                if latest:
-                    start_shot = latest
-                    logger.info(
-                        "Incremental scan from shot %d for %s:%s",
-                        start_shot,
-                        state.facility,
-                        tree_name,
-                    )
-
-            # Create epoch progress callback that bridges to main progress
-            # This callback is called from the thread running discover_epochs_optimized
-            # Use factory function to capture tree_name at creation time
-            def make_epoch_callback(tree: str):
-                def epoch_progress_callback(progress: EpochProgress) -> None:
-                    """Report epoch detection progress to display."""
-                    if not on_progress:
-                        return
-
-                    if progress.phase == "coarse":
-                        pct = (
-                            int(100 * progress.shots_scanned / progress.total_shots)
-                            if progress.total_shots > 0
-                            else 0
-                        )
-                        detail = f"coarse {pct}% shot {progress.current_shot}"
-                    elif progress.phase == "refine":
-                        detail = (
-                            f"refine {progress.boundaries_refined}/"
-                            f"{progress.boundaries_found}"
-                        )
-                    else:
-                        detail = f"building {progress.boundaries_found} epochs"
-
-                    on_progress(
-                        f"epoch detection: {detail}",
-                        state.discover_stats,
-                        [
-                            {
-                                "tree_name": tree,
-                                "node_path": detail,
-                                "epoch_progress": {
-                                    "phase": progress.phase,
-                                    "current_shot": progress.current_shot,
-                                    "shots_scanned": progress.shots_scanned,
-                                    "total_shots": progress.total_shots,
-                                    "boundaries_found": progress.boundaries_found,
-                                    "boundaries_refined": progress.boundaries_refined,
-                                },
-                            }
-                        ],
-                    )
-
-                return epoch_progress_callback
-
-            epoch_callback = make_epoch_callback(tree_name)
-
-            # Create checkpoint path for resumable epoch discovery
-            checkpoint_path = (
-                get_checkpoint_dir() / f"{state.facility}_{tree_name}_epochs.json"
-            )
-
-            # Discover epochs using optimized batch discovery
-            try:
-                with GraphClient() as gc:
-                    # Run discover_epochs_optimized with progress callback
-                    epochs, structures = await asyncio.to_thread(
-                        discover_epochs_optimized,
-                        state.facility,
-                        tree_name,
-                        start_shot=start_shot,
-                        end_shot=state.reference_shot,
-                        checkpoint_path=checkpoint_path,
-                        client=gc if existing_epochs else None,
-                        on_progress=epoch_callback,
-                    )
-            except Exception as e:
-                logger.error(
-                    "Epoch detection failed for %s:%s: %s", state.facility, tree_name, e
-                )
-                if on_progress:
-                    on_progress(
-                        f"epoch detection failed for {tree_name}",
-                        state.discover_stats,
-                        [{"tree_name": tree_name, "node_path": str(e)[:50]}],
-                    )
-                continue
-
-            if not epochs:
-                logger.info(
-                    "No new epochs discovered for %s:%s", state.facility, tree_name
-                )
-                if on_progress:
-                    on_progress(
-                        f"no new epochs for {tree_name}",
-                        state.discover_stats,
-                        [{"tree_name": tree_name, "node_path": "structure unchanged"}],
-                    )
-                continue
-
-            # Ingest epochs with symmetric signal lifecycle tracking
-            # Creates signals from added_paths + INTRODUCED_IN edges
-            # Creates REMOVED_IN edges for removed_paths
-            ingest_result = await asyncio.to_thread(
-                ingest_epochs,
-                epochs,
-                access_method_id,
-                state.reference_shot,
-            )
-            state.discover_stats.processed += ingest_result["signals_created"]
-
-            logger.info(
-                "Ingested %d epochs for %s:%s: %d signals, %d introduced, %d removed",
-                ingest_result["epochs"],
-                state.facility,
-                tree_name,
-                ingest_result["signals_created"],
-                ingest_result["introduced_edges"],
-                ingest_result["removed_edges"],
-            )
-
-            if on_progress:
-                on_progress(
-                    f"discovered {ingest_result['signals_created']} from {tree_name} "
-                    f"({ingest_result['epochs']} epochs)",
-                    state.discover_stats,
-                    [
-                        {
-                            "tree_name": tree_name,
-                            "node_path": f"{ingest_result['signals_created']} signals",
-                            "epochs": ingest_result["epochs"],
-                            "introduced": ingest_result["introduced_edges"],
-                            "removed": ingest_result["removed_edges"],
-                        }
-                    ],
-                )
-
-            # Clean up checkpoint file after successful ingestion
-            if checkpoint_path.exists():
-                try:
-                    checkpoint_path.unlink()
-                except Exception as e:
-                    logger.debug(
-                        "Could not remove checkpoint %s: %s", checkpoint_path, e
-                    )
-
-            await asyncio.sleep(0.1)
-
-    # Scan TDI functions (if configured)
+    # Scan TDI functions (primary data source)
     if state.tdi_path and not state.should_stop_discovering():
         if on_progress:
             on_progress(
@@ -1260,32 +1089,60 @@ async def scan_worker(
                 [{"tree_name": "TDI", "node_path": state.tdi_path}],
             )
 
-        signals = await asyncio.to_thread(
-            discover_tdi_signals,
-            state.facility,
-            state.ssh_host,
-            state.tdi_path,
-            access_method_id,
-        )
+        try:
+            with GraphClient() as gc:
+                # Create/verify TDI access method
+                am = await create_tdi_access_method(gc, state.facility)
 
-        if signals:
-            count = await asyncio.to_thread(ingest_discovered_signals, signals)
-            state.discover_stats.processed += count
+                # Discover signals and extract TDI function metadata
+                signals, functions = await discover_tdi_signals(
+                    facility=state.facility,
+                    ssh_host=state.ssh_host,
+                    tdi_path=state.tdi_path,
+                    access_method_id=am.id,
+                )
 
+                if signals:
+                    # Ingest TDI functions (stores source_code for LLM enrichment)
+                    if functions:
+                        func_count = await ingest_tdi_functions(
+                            gc, state.facility, functions
+                        )
+                        logger.info("Ingested %d TDI functions", func_count)
+
+                    # Ingest signals
+                    count = await ingest_tdi_signals(gc, signals)
+                    state.discover_stats.processed += count
+
+                    if on_progress:
+                        results = [
+                            {
+                                "id": s.id,
+                                "tree_name": "TDI",
+                                "node_path": s.accessor,
+                                "signals_in_tree": count,
+                            }
+                            for s in signals[:20]
+                        ]
+                        on_progress(
+                            f"discovered {count} TDI signals ({len(functions)} functions)",
+                            state.discover_stats,
+                            results,
+                        )
+                else:
+                    logger.info("No TDI signals discovered from %s", state.tdi_path)
+                    if on_progress:
+                        on_progress(
+                            "no TDI signals found",
+                            state.discover_stats,
+                        )
+
+        except Exception as e:
+            logger.error("TDI discovery failed: %s", e)
             if on_progress:
-                results = [
-                    {
-                        "id": s["id"],
-                        "tree_name": "TDI",
-                        "node_path": s.get("accessor", ""),
-                        "signals_in_tree": count,
-                    }
-                    for s in signals[:20]
-                ]
                 on_progress(
-                    f"discovered {count} TDI signals",
+                    f"TDI discovery failed: {e}",
                     state.discover_stats,
-                    results,
                 )
 
     # Mark scan as complete
@@ -1306,11 +1163,12 @@ async def enrich_worker(
 ) -> None:
     """Worker that enriches signals with LLM classification.
 
-    Uses batch processing for efficiency - processes 100 signals per LLM call.
+    Groups signals by TDI function and includes function source code as context.
     Uses Jinja2 prompt template with schema-injected physics domains.
     Uses centralized LLM access via get_model_for_task() with OpenRouter.
     """
     import os
+    from collections import defaultdict
 
     import litellm
 
@@ -1338,14 +1196,41 @@ async def enrich_worker(
     # Render system prompt once (contains physics domains from schema)
     system_prompt = render_prompt("discovery/signal-enrichment")
 
+    # Cache for TDI function source code
+    tdi_source_cache: dict[str, str] = {}
+
+    async def get_tdi_source(func_name: str) -> str:
+        """Fetch TDI function source code from graph (cached)."""
+        if func_name in tdi_source_cache:
+            return tdi_source_cache[func_name]
+
+        try:
+            with GraphClient() as gc:
+                result = gc.query(
+                    """
+                    MATCH (f:TDIFunction {facility_id: $facility, name: $func_name})
+                    RETURN f.source_code AS source_code
+                    """,
+                    facility=state.facility,
+                    func_name=func_name,
+                )
+                if result and result[0]["source_code"]:
+                    source = result[0]["source_code"]
+                    tdi_source_cache[func_name] = source
+                    return source
+        except Exception as e:
+            logger.debug("Could not fetch TDI source for %s: %s", func_name, e)
+
+        tdi_source_cache[func_name] = ""
+        return ""
+
     while not state.should_stop_enriching():
-        # Claim batch of signals
-        # Batch size 25 balances throughput vs LLM reliability
-        # Larger batches can cause truncation with complex MDSplus paths
+        # Claim batch of signals (sorted by tdi_function)
+        # Batch size 50 - signals grouped by function so one source code per group
         signals = await asyncio.to_thread(
             claim_signals_for_enrichment,
             state.facility,
-            batch_size=25,
+            batch_size=50,
         )
 
         if not signals:
@@ -1360,18 +1245,45 @@ async def enrich_worker(
         if on_progress:
             on_progress("enriching batch", state.enrich_stats)
 
-        # Build user prompt with all signals
+        # Group signals by TDI function for efficient source code inclusion
+        func_groups: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+        for i, signal in enumerate(signals):
+            func_name = signal.get("tdi_function") or "_none_"
+            func_groups[func_name].append((i, signal))
+
+        # Build user prompt with function source code context
         user_lines = [
             f"Classify these {len(signals)} signals.\n",
             "Return results in the same order using signal_index (1-based).\n",
         ]
-        for i, signal in enumerate(signals, 1):
-            user_lines.append(f"\n## Signal {i}")
-            user_lines.append(f"tree_name: {signal.get('tree_name', 'unknown')}")
-            user_lines.append(f"node_path: {signal.get('node_path', 'unknown')}")
-            user_lines.append(f"accessor: {signal['accessor']}")
-            user_lines.append(f"units: {signal.get('units', '')}")
-            user_lines.append(f"name: {signal.get('name', 'unknown')}")
+
+        # For each function group, include source code once then list signals
+        signal_index = 0
+        for func_name, indexed_signals in func_groups.items():
+            if func_name != "_none_":
+                # Fetch function source code
+                source_code = await get_tdi_source(func_name)
+                if source_code:
+                    # Truncate very long source files (>8000 chars)
+                    if len(source_code) > 8000:
+                        source_code = source_code[:8000] + "\n... (truncated)"
+                    user_lines.append(f"\n## TDI Function: {func_name}")
+                    user_lines.append("```tdi")
+                    user_lines.append(source_code)
+                    user_lines.append("```")
+                    user_lines.append("\nSignals from this function:")
+
+            for _, signal in indexed_signals:
+                signal_index += 1
+                user_lines.append(f"\n### Signal {signal_index}")
+                user_lines.append(f"accessor: {signal['accessor']}")
+                user_lines.append(f"name: {signal.get('name', 'unknown')}")
+                if signal.get("units"):
+                    user_lines.append(f"units: {signal['units']}")
+                if signal.get("tree_name"):
+                    user_lines.append(f"tree_name: {signal['tree_name']}")
+                if signal.get("node_path"):
+                    user_lines.append(f"node_path: {signal['node_path']}")
 
         user_prompt = "\n".join(user_lines)
 
@@ -1381,7 +1293,7 @@ async def enrich_worker(
         for attempt in range(_ENRICH_MAX_RETRIES):
             try:
                 # Call LLM with structured output for batch
-                # max_tokens=32000 supports up to ~200 signals per batch
+                # max_tokens=32000 supports large batches
                 response = await litellm.acompletion(
                     model=model_id,
                     api_key=api_key,
@@ -1511,18 +1423,19 @@ async def check_worker(
     """Worker that checks signals by testing data access.
 
     Uses highly batched SSH execution with grouping by (tree, shot) to minimize
-    MDSplus tree open overhead. Processes 100+ signals per SSH call.
+    MDSplus tree open overhead. Uses reference_shot from config for TDI signals.
     """
     # Large batch size - signals are grouped by tree/shot on the remote side
     # so we can efficiently check many signals with minimal tree opens
     BATCH_SIZE = 100
 
     while not state.should_stop_checking():
-        # Claim batch of signals (only those with defined epochs)
+        # Claim batch of signals with reference_shot
         signals = await asyncio.to_thread(
             claim_signals_for_check,
             state.facility,
             batch_size=BATCH_SIZE,
+            reference_shot=state.reference_shot,
         )
 
         if not signals:
@@ -1538,27 +1451,32 @@ async def check_worker(
             on_progress(f"checking {len(signals)} signals", state.check_stats)
 
         # Prepare batch for remote check script
-        # Each signal comes with check_shot from its epoch (guaranteed valid)
         # Build map of signal ID -> access_method for CHECKED_VIA relationship
         batch_input = []
         signal_access_methods: dict[str, str | None] = {}
         for signal in signals:
-            # Use epoch-derived check_shot (from TreeModelVersion.first_shot)
-            shot = signal.get("check_shot")
+            # Use reference_shot from config
+            shot = signal.get("check_shot") or state.reference_shot
             if not shot:
-                # Should not happen with epoch-aware query, but be defensive
-                logger.warning("Signal %s has no check_shot", signal["id"])
+                logger.warning(
+                    "Signal %s has no check_shot and no reference_shot", signal["id"]
+                )
                 await asyncio.to_thread(release_signal_claim, signal["id"])
                 continue
 
             signal_id = signal["id"]
             signal_access_methods[signal_id] = signal.get("access_method")
 
+            # TDI signals use tcv_shot tree
+            tree_name = signal.get("tree_name")
+            if signal.get("tdi_function") and not tree_name:
+                tree_name = "tcv_shot"
+
             batch_input.append(
                 {
                     "id": signal_id,
                     "accessor": signal["accessor"],
-                    "tree_name": signal.get("tree_name", "results"),
+                    "tree_name": tree_name or "tcv_shot",
                     "shot": shot,
                 }
             )
@@ -1707,7 +1625,6 @@ async def check_worker(
 async def run_parallel_data_discovery(
     facility: str,
     ssh_host: str | None = None,
-    tree_names: list[str] | None = None,
     tdi_path: str | None = None,
     reference_shot: int | None = None,
     cost_limit: float = 10.0,
@@ -1717,7 +1634,6 @@ async def run_parallel_data_discovery(
     num_check_workers: int = 1,
     discover_only: bool = False,
     enrich_only: bool = False,
-    force: bool = False,
     on_discover_progress: Callable | None = None,
     on_enrich_progress: Callable | None = None,
     on_check_progress: Callable | None = None,
@@ -1725,12 +1641,14 @@ async def run_parallel_data_discovery(
 ) -> dict[str, Any]:
     """Run parallel data discovery with async workers.
 
+    Discovers signals from TDI function files, enriches with LLM classification,
+    and validates data access.
+
     Args:
         facility: Facility ID (e.g., "tcv")
         ssh_host: SSH host for remote discovery
-        tree_names: MDSplus tree names to discover
         tdi_path: Path to TDI function directory
-        reference_shot: Reference shot for discovery/validation
+        reference_shot: Reference shot for validation
         cost_limit: Maximum LLM cost in USD
         signal_limit: Maximum signals to process
         focus: Focus area for discovery
@@ -1738,7 +1656,6 @@ async def run_parallel_data_discovery(
         num_check_workers: Number of check workers
         discover_only: Only discover, don't enrich
         enrich_only: Only enrich discovered signals
-        force: Re-scan trees even if epochs exist (merges, doesn't reset)
         on_*_progress: Progress callbacks
 
     Returns:
@@ -1760,10 +1677,8 @@ async def run_parallel_data_discovery(
     state = DataDiscoveryState(
         facility=facility,
         ssh_host=ssh_host,
-        tree_names=tree_names or [],
         reference_shot=reference_shot,
         tdi_path=tdi_path,
-        force=force,
         cost_limit=cost_limit,
         signal_limit=signal_limit,
         focus=focus,
