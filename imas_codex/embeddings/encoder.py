@@ -5,12 +5,8 @@ Supports multiple embedding backends:
 - remote: Connects to GPU server via HTTP (typically through SSH tunnel)
 - openrouter: Uses OpenRouter API for cloud embeddings
 
-Fallback for remote backend:
-1. Remote GPU server (primary)
-2. OpenRouter API (fallback - costs tracked)
-
-Remote retry: When using OpenRouter fallback, periodically retries remote
-server (every 60s) to recover when SSH tunnel reconnects.
+No fallback between backends - if the selected backend fails, errors are raised.
+The remote client has built-in retry logic for transient connection failures.
 """
 
 import hashlib
@@ -47,16 +43,10 @@ class EmbeddingBackendError(Exception):
 class Encoder:
     """Load a sentence transformer model and produce embeddings with optional caching.
 
-    For remote backend, transparently falls back through:
-    1. Remote GPU server (primary)
-    2. OpenRouter API (fallback)
-
-    When using OpenRouter fallback, periodically retries remote (every 60s)
-    to recover when SSH tunnel reconnects.
+    No fallback between backends - if the selected backend is unavailable,
+    errors are raised. The remote client has built-in retry logic for
+    transient connection failures.
     """
-
-    # Retry remote every 60 seconds when in fallback mode
-    REMOTE_RETRY_INTERVAL_SECONDS = 60
 
     def __init__(
         self,
@@ -73,10 +63,9 @@ class Encoder:
         self._openrouter_client: OpenRouterEmbeddingClient | None = None
         self._backend_validated: bool = False
         self._fallback_warned: bool = False
-        self._using_fallback: bool = False  # Using OpenRouter
-        self._last_remote_check: float = 0.0  # Timestamp of last remote check
+        self._using_fallback: bool = False
 
-        # Cost tracking for OpenRouter fallback
+        # Cost tracking for OpenRouter backend
         self.cost_tracker = cost_tracker or EmbeddingCostTracker()
 
         # Initialize based on backend selection
@@ -95,10 +84,7 @@ class Encoder:
                     "Set IMAS_CODEX_EMBED_REMOTE_URL or embed-remote-url in pyproject.toml."
                 )
             self._remote_client = RemoteEmbeddingClient(self.config.remote_url)
-            # Initialize OpenRouter client as fallback (lazy validation)
-            self._openrouter_client = OpenRouterEmbeddingClient(
-                model_name=self.config.model_name or "Qwen/Qwen3-Embedding-0.6B"
-            )
+            # No OpenRouter fallback - remote backend should retry remote only.
             # Validate remote on first use (lazy)
         elif backend == EmbeddingBackend.OPENROUTER:
             # Direct OpenRouter mode (no remote fallback)
@@ -116,50 +102,23 @@ class Encoder:
     def _validate_remote_backend(self) -> None:
         """Validate remote backend is available and model matches.
 
-        For remote backend, falls back to OpenRouter if unavailable.
-        Periodically retries remote when in fallback mode.
+        No fallback to OpenRouter - if remote is unavailable, raises error.
+        The remote client has its own retry logic for transient failures.
         """
-        current_time = time.time()
-
-        # If using fallback, check if we should retry remote
-        if self._using_fallback:
-            time_since_check = current_time - self._last_remote_check
-            if time_since_check >= self.REMOTE_RETRY_INTERVAL_SECONDS:
-                self._last_remote_check = current_time
-                if self._remote_client and self._remote_client.is_available():
-                    # Remote is back! Recover from fallback
-                    self.logger.info(
-                        "Remote embedding server recovered. Switching back from OpenRouter."
-                    )
-                    self._using_fallback = False
-                    self._backend_validated = True
-                    return
-            # Still in fallback mode
-            return
-
         if self._backend_validated:
             return
-
-        self._last_remote_check = current_time
 
         if not self._remote_client:
             raise EmbeddingBackendError("Remote client not initialized")
 
         if not self._remote_client.is_available():
-            # Try OpenRouter fallback
-            if self._try_openrouter_fallback():
-                return
             raise EmbeddingBackendError(
-                f"Remote embedding server not available at {self.config.remote_url} "
-                "and OpenRouter fallback not configured. "
-                "Set OPENROUTER_API_KEY or ensure SSH tunnel is active."
+                f"Remote embedding server not available at {self.config.remote_url}. "
+                "Ensure SSH tunnel is active: ssh -f -N -L 18765:127.0.0.1:18765 iter"
             )
 
         info = self._remote_client.get_info()
         if not info:
-            # Server responded but no valid info - try fallback
-            if self._try_openrouter_fallback():
-                return
             raise EmbeddingBackendError(
                 "Failed to get remote server info. Server may be misconfigured."
             )
@@ -177,6 +136,9 @@ class Encoder:
 
     def _try_openrouter_fallback(self) -> bool:
         """Attempt to use OpenRouter as fallback for remote backend.
+
+        Deprecated: No longer used for REMOTE backend.
+        Only returns True for explicitly configured OPENROUTER backend.
 
         Returns:
             True if fallback is available and configured
@@ -293,20 +255,16 @@ class Encoder:
         if backend == EmbeddingBackend.REMOTE:
             self._validate_remote_backend()
 
-            # Check if using fallback (set by _validate_remote_backend)
-            if self._using_fallback:
-                return self._embed_via_openrouter(texts)
-
             try:
                 return self._remote_client.embed(  # type: ignore[union-attr]
                     texts, normalize=self.config.normalize_embeddings
                 )
             except (ConnectionError, RuntimeError) as e:
-                # Try fallback on connection failure during embedding
-                if self._try_openrouter_fallback():
-                    return self._embed_via_openrouter(texts)
+                # No fallback to OpenRouter - raise directly.
+                # Remote client already has retry logic for transient failures.
                 raise EmbeddingBackendError(
-                    f"Remote embedding failed: {e}. Check SSH tunnel."
+                    f"Remote embedding failed: {e}. Check SSH tunnel: "
+                    "ssh -f -N -L 18765:127.0.0.1:18765 iter"
                 ) from e
 
         elif backend == EmbeddingBackend.OPENROUTER:
@@ -352,10 +310,6 @@ class Encoder:
         if backend == EmbeddingBackend.REMOTE:
             self._validate_remote_backend()
 
-            # Check if using fallback (set by _validate_remote_backend)
-            if self._using_fallback:
-                return self._embed_via_openrouter_with_result(texts)
-
             try:
                 embeddings = self._remote_client.embed(  # type: ignore[union-attr]
                     texts, normalize=self.config.normalize_embeddings
@@ -370,11 +324,11 @@ class Encoder:
                     source="remote",
                 )
             except (ConnectionError, RuntimeError) as e:
-                # Try fallback on connection failure during embedding
-                if self._try_openrouter_fallback():
-                    return self._embed_via_openrouter_with_result(texts)
+                # No fallback to OpenRouter - raise directly.
+                # Remote client already has retry logic for transient failures.
                 raise EmbeddingBackendError(
-                    f"Remote embedding failed: {e}. Check SSH tunnel."
+                    f"Remote embedding failed: {e}. Check SSH tunnel: "
+                    "ssh -f -N -L 18765:127.0.0.1:18765 iter"
                 ) from e
 
         elif backend == EmbeddingBackend.OPENROUTER:
@@ -533,19 +487,6 @@ class Encoder:
         if backend == EmbeddingBackend.REMOTE:
             self._validate_remote_backend()
 
-            # Check if using fallback (set by _validate_remote_backend)
-            if self._using_fallback:
-                self.logger.debug(
-                    f"Generating embeddings via OpenRouter for {len(texts)} texts..."
-                )
-                embeddings = self._embed_via_openrouter(texts)
-                if self.config.use_half_precision:
-                    embeddings = embeddings.astype(np.float16)
-                self.logger.debug(
-                    f"Generated embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}"
-                )
-                return embeddings
-
             try:
                 self.logger.debug(
                     f"Generating embeddings remotely for {len(texts)} texts..."
@@ -560,17 +501,11 @@ class Encoder:
                 )
                 return embeddings
             except (ConnectionError, RuntimeError) as e:
-                # Try fallback on connection failure
-                if self._try_openrouter_fallback():
-                    self.logger.debug(
-                        f"Retrying via OpenRouter for {len(texts)} texts..."
-                    )
-                    embeddings = self._embed_via_openrouter(texts)
-                    if self.config.use_half_precision:
-                        embeddings = embeddings.astype(np.float16)
-                    return embeddings
+                # No fallback to OpenRouter - raise directly.
+                # Remote client already has retry logic for transient failures.
                 raise EmbeddingBackendError(
-                    f"Remote embedding failed: {e}. Check SSH tunnel."
+                    f"Remote embedding failed: {e}. Check SSH tunnel: "
+                    "ssh -f -N -L 18765:127.0.0.1:18765 iter"
                 ) from e
 
         elif backend == EmbeddingBackend.OPENROUTER:

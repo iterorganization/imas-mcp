@@ -2678,18 +2678,28 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
         if b"%PDF" not in content_bytes[:1024]:
             return ""
         try:
+            import logging as _logging
+
             import pypdf
 
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
                 f.write(content_bytes)
                 temp_path = Path(f.name)
             try:
-                reader = pypdf.PdfReader(temp_path)
-                text_parts = []
-                for page in reader.pages[:5]:  # First 5 pages
-                    text = page.extract_text()
-                    if text:
-                        text_parts.append(text)
+                # Suppress pypdf's verbose warnings about corrupt PDF objects
+                # (e.g. "Ignoring wrong pointing object") which are benign
+                pypdf_logger = _logging.getLogger("pypdf")
+                original_level = pypdf_logger.level
+                pypdf_logger.setLevel(_logging.ERROR)
+                try:
+                    reader = pypdf.PdfReader(temp_path)
+                    text_parts = []
+                    for page in reader.pages[:5]:  # First 5 pages
+                        text = page.extract_text()
+                        if text:
+                            text_parts.append(text)
+                finally:
+                    pypdf_logger.setLevel(original_level)
                 return "\n\n".join(text_parts)
             finally:
                 temp_path.unlink(missing_ok=True)

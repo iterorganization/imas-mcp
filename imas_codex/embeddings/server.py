@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI):
     start = time.time()
 
     # Import here to avoid circular imports
-    from imas_codex.embeddings.config import EncoderConfig
+    from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
     from imas_codex.embeddings.encoder import Encoder
     from imas_codex.settings import get_imas_embedding_model
 
@@ -93,6 +93,10 @@ async def lifespan(app: FastAPI):
     config = EncoderConfig(
         model_name=model_name,
         device="cuda" if _cuda_available() else "cpu",
+        # CRITICAL: Server must always use LOCAL backend (its own GPU).
+        # Without this, it reads pyproject.toml which may say "remote"
+        # causing the server to try calling itself via HTTP.
+        backend=EmbeddingBackend.LOCAL,
         normalize_embeddings=True,
         use_rich=False,
     )
