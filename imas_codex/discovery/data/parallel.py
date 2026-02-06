@@ -746,7 +746,7 @@ def ingest_epochs(
                                 "name": name,
                                 "accessor": f"data({path})",
                                 "access_method": access_method_id
-                                or f"{facility_id}:mdsplus:tree",
+                                or f"{facility_id}:mdsplus:tree_tdi",
                                 "tree_name": tree_name,
                                 "node_path": path,
                                 "units": "",
@@ -1052,7 +1052,7 @@ async def scan_worker(
         discover_epochs_optimized,
     )
 
-    access_method_id = f"{state.facility}:mdsplus:tree"
+    access_method_id = f"{state.facility}:mdsplus:tree_tdi"
 
     # Scan MDSplus trees with epoch detection
     if state.tree_names and state.reference_shot:
