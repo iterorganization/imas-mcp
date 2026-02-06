@@ -212,7 +212,11 @@ def has_pending_check_work(facility: str) -> bool:
 
 
 def get_data_discovery_stats(facility: str) -> dict[str, Any]:
-    """Get current discovery statistics from graph."""
+    """Get current discovery statistics from graph.
+
+    Returns counts of signals by status, pending work, and accumulated
+    enrichment cost for historical tracking across runs.
+    """
     try:
         with GraphClient() as gc:
             result = gc.query(
@@ -226,7 +230,8 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
                     sum(CASE WHEN s.status = $skipped THEN 1 ELSE 0 END) AS skipped,
                     sum(CASE WHEN s.status = $failed THEN 1 ELSE 0 END) AS failed,
                     sum(CASE WHEN s.status = $discovered AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_enrich,
-                    sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_check
+                    sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL AND s.epoch_id IS NOT NULL THEN 1 ELSE 0 END) AS pending_check,
+                    sum(coalesce(s.enrichment_cost, 0)) AS accumulated_cost
                 """,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
@@ -429,6 +434,7 @@ def claim_signals_for_check(
 
 def mark_signals_enriched(
     signals: list[dict],
+    batch_cost: float = 0.0,
 ) -> int:
     """Mark signals as enriched with LLM-generated metadata.
 
@@ -440,9 +446,16 @@ def mark_signals_enriched(
     - diagnostic: diagnostic system name (optional)
     - analysis_code: analysis code name (optional)
     - keywords: searchable keywords (optional)
+
+    Args:
+        signals: List of signal enrichment results
+        batch_cost: Total LLM cost for this batch (distributed across signals)
     """
     if not signals:
         return 0
+
+    # Calculate per-signal cost
+    per_signal_cost = batch_cost / len(signals) if batch_cost > 0 else 0.0
 
     try:
         with GraphClient() as gc:
@@ -460,11 +473,13 @@ def mark_signals_enriched(
                                            THEN sig.analysis_code ELSE s.analysis_code END,
                     s.keywords = CASE WHEN sig.keywords IS NOT NULL
                                       THEN sig.keywords ELSE s.keywords END,
+                    s.enrichment_cost = $per_signal_cost,
                     s.enriched_at = datetime(),
                     s.claimed_at = null
                 """,
                 signals=signals,
                 enriched=FacilitySignalStatus.enriched.value,
+                per_signal_cost=per_signal_cost,
             )
         return len(signals)
     except Exception as e:
@@ -1464,6 +1479,7 @@ async def enrich_worker(
                 await asyncio.to_thread(release_signal_claim, signal["id"])
 
         # Track cost
+        batch_cost = 0.0
         if hasattr(response, "usage"):
             input_tokens = response.usage.prompt_tokens
             output_tokens = response.usage.completion_tokens
@@ -1472,16 +1488,16 @@ async def enrich_worker(
                 hasattr(response, "_hidden_params")
                 and "response_cost" in response._hidden_params
             ):
-                cost = response._hidden_params["response_cost"]
+                batch_cost = response._hidden_params["response_cost"]
             else:
                 # Fallback: Gemini Flash rates via OpenRouter ($0.10/$0.40 per 1M tokens)
-                cost = (input_tokens * 0.10 + output_tokens * 0.40) / 1_000_000
+                batch_cost = (input_tokens * 0.10 + output_tokens * 0.40) / 1_000_000
 
-            state.enrich_stats.cost += cost
+            state.enrich_stats.cost += batch_cost
 
-        # Update graph
+        # Update graph with enrichment cost for historical tracking
         if enriched:
-            await asyncio.to_thread(mark_signals_enriched, enriched)
+            await asyncio.to_thread(mark_signals_enriched, enriched, batch_cost)
             state.enrich_stats.processed += len(enriched)
 
             if on_progress:
@@ -1494,15 +1510,19 @@ async def check_worker(
 ) -> None:
     """Worker that checks signals by testing data access.
 
-    Uses batched SSH execution via run_python_script() to check multiple
-    signals in a single SSH call, significantly reducing connection overhead.
+    Uses highly batched SSH execution with grouping by (tree, shot) to minimize
+    MDSplus tree open overhead. Processes 100+ signals per SSH call.
     """
+    # Large batch size - signals are grouped by tree/shot on the remote side
+    # so we can efficiently check many signals with minimal tree opens
+    BATCH_SIZE = 100
+
     while not state.should_stop_checking():
         # Claim batch of signals (only those with defined epochs)
         signals = await asyncio.to_thread(
             claim_signals_for_check,
             state.facility,
-            batch_size=10,  # Increased batch size - now truly batched
+            batch_size=BATCH_SIZE,
         )
 
         if not signals:
@@ -1515,11 +1535,11 @@ async def check_worker(
         state.check_idle_count = 0
 
         if on_progress:
-            on_progress("checking batch", state.check_stats)
+            on_progress(f"checking {len(signals)} signals", state.check_stats)
 
         # Prepare batch for remote check script
         # Each signal comes with check_shot from its epoch (guaranteed valid)
-        # Also build a map of signal ID -> access_method for CHECKED_VIA relationship
+        # Build map of signal ID -> access_method for CHECKED_VIA relationship
         batch_input = []
         signal_access_methods: dict[str, str | None] = {}
         for signal in signals:
@@ -1546,22 +1566,68 @@ async def check_worker(
         if not batch_input:
             continue
 
-        # Execute batched check via remote script (single SSH call)
+        # Execute batched check via optimized remote script (single SSH call)
+        # The script groups signals by tree/shot for efficient processing
         checked = []
         failed = []
         try:
+            # Use batched script with 30s timeout per tree/shot group
             output = await asyncio.to_thread(
                 run_python_script,
-                "check_signals.py",
-                {"signals": batch_input, "timeout_per_signal": 10},
+                "check_signals_batch.py",
+                {"signals": batch_input, "timeout_per_group": 30},
                 ssh_host=state.ssh_host,
-                timeout=30 + len(batch_input) * 10,  # Scale timeout with batch size
+                timeout=60 + len(batch_input),  # Base + 1s per signal
             )
 
-            # Parse results
+            # Parse results - handle empty output gracefully
+            if not output or not output.strip():
+                logger.warning(
+                    "Check script returned empty output for %d signals",
+                    len(batch_input),
+                )
+                for sig in batch_input:
+                    await asyncio.to_thread(release_signal_claim, sig["id"])
+                continue
+
             try:
-                response = json.loads(output.split("\n")[0])  # First line is JSON
+                # Find JSON in output (may have stderr mixed in)
+                json_line = None
+                for line in output.split("\n"):
+                    line = line.strip()
+                    if line.startswith("{"):
+                        json_line = line
+                        break
+
+                if not json_line:
+                    logger.warning(
+                        "No JSON found in check output: %s",
+                        output[:200] if output else "(empty)",
+                    )
+                    for sig in batch_input:
+                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                    continue
+
+                response = json.loads(json_line)
+
+                # Check for script-level error
+                if "error" in response and not response.get("results"):
+                    logger.warning("Check script error: %s", response["error"])
+                    for sig in batch_input:
+                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                    continue
+
                 results = response.get("results", [])
+                stats = response.get("stats", {})
+
+                if stats:
+                    logger.debug(
+                        "Check batch: %d signals in %d groups, %d success, %d failed",
+                        stats.get("total", 0),
+                        stats.get("groups", 0),
+                        stats.get("success", 0),
+                        stats.get("failed", 0),
+                    )
 
                 for result in results:
                     signal_id = result.get("id")
@@ -1583,17 +1649,25 @@ async def check_worker(
                         )
 
             except (json.JSONDecodeError, KeyError) as e:
-                logger.warning("Failed to parse check response: %s", e)
-                # Release all claims on parse error
+                logger.warning(
+                    "Failed to parse check response (%s): %s",
+                    e,
+                    output[:200] if output else "(empty)",
+                )
                 for sig in batch_input:
                     await asyncio.to_thread(release_signal_claim, sig["id"])
                 continue
 
         except subprocess.CalledProcessError as e:
+            stderr = e.stderr[:200] if e.stderr else str(e)
+            logger.warning("Check script failed (exit %d): %s", e.returncode, stderr)
+            for sig in batch_input:
+                await asyncio.to_thread(release_signal_claim, sig["id"])
+            continue
+        except subprocess.TimeoutExpired:
             logger.warning(
-                "Check script failed: %s", e.stderr[:200] if e.stderr else str(e)
+                "Check script timed out for batch of %d signals", len(batch_input)
             )
-            # Release all claims on script error
             for sig in batch_input:
                 await asyncio.to_thread(release_signal_claim, sig["id"])
             continue

@@ -185,23 +185,43 @@ class DataProgressState:
 
     @property
     def eta_seconds(self) -> float | None:
-        """Estimated time to termination."""
-        if self.run_cost > 0 and self.cost_limit > 0:
-            cost_rate = self.run_cost / self.elapsed if self.elapsed > 0 else 0
+        """Estimated time to termination.
+
+        Returns the maximum ETA across all active worker pipelines:
+        - Enrich ETA: based on pending_enrich / enrich_rate
+        - Check ETA: based on pending_check / check_rate
+        - Cost ETA: based on remaining budget / cost rate
+
+        The actual completion time is bounded by the slowest pipeline.
+        """
+        etas = []
+
+        # Cost-based ETA (if we have cost tracking)
+        if self.run_cost > 0 and self.cost_limit > 0 and self.elapsed > 0:
+            cost_rate = self.run_cost / self.elapsed
             if cost_rate > 0:
                 remaining_budget = self.cost_limit - self.run_cost
-                return max(0, remaining_budget / cost_rate)
+                if remaining_budget > 0:
+                    etas.append(remaining_budget / cost_rate)
 
+        # Signal limit ETA
         if self.signal_limit is not None and self.signal_limit > 0:
             if self.run_enriched > 0 and self.elapsed > 0:
                 rate = self.run_enriched / self.elapsed
                 remaining = self.signal_limit - self.run_enriched
-                return max(0, remaining / rate) if rate > 0 else None
+                if rate > 0 and remaining > 0:
+                    etas.append(remaining / rate)
 
-        if not self.enrich_rate or self.enrich_rate <= 0:
-            return None
-        remaining = self.pending_enrich
-        return remaining / self.enrich_rate if remaining > 0 else 0
+        # Enrich ETA (pipeline bottleneck)
+        if self.enrich_rate and self.enrich_rate > 0 and self.pending_enrich > 0:
+            etas.append(self.pending_enrich / self.enrich_rate)
+
+        # Check ETA (pipeline bottleneck)
+        if self.check_rate and self.check_rate > 0 and self.pending_check > 0:
+            etas.append(self.pending_check / self.check_rate)
+
+        # Return the maximum (slowest pipeline determines completion)
+        return max(etas) if etas else None
 
 
 # =============================================================================

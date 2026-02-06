@@ -2017,7 +2017,7 @@ def discover_signals(
             f"[dim]Existing signals: {stats.get('total', 0)} "
             f"(discovered={stats.get('discovered', 0)}, "
             f"enriched={stats.get('enriched', 0)}, "
-            f"checked={stats.get('validated', 0)})[/dim]"
+            f"checked={stats.get('checked', 0)})[/dim]"
         )
 
     # Display configuration
@@ -2068,11 +2068,14 @@ def discover_signals(
                                     total_signals=graph_stats.get("total", 0),
                                     signals_discovered=graph_stats.get("discovered", 0),
                                     signals_enriched=graph_stats.get("enriched", 0),
-                                    signals_checked=graph_stats.get("validated", 0),
+                                    signals_checked=graph_stats.get("checked", 0),
                                     signals_skipped=graph_stats.get("skipped", 0),
                                     signals_failed=graph_stats.get("failed", 0),
                                     pending_enrich=graph_stats.get("pending_enrich", 0),
                                     pending_check=graph_stats.get("pending_check", 0),
+                                    accumulated_cost=graph_stats.get(
+                                        "accumulated_cost", 0.0
+                                    ),
                                 )
                             except asyncio.CancelledError:
                                 raise
@@ -2184,7 +2187,7 @@ def discover_signals(
             data_logger.info(
                 f"Discovery complete: discovered={result.get('discovered', 0)}, "
                 f"enriched={result.get('enriched', 0)}, "
-                f"checked={result.get('validated', 0)}, "
+                f"checked={result.get('checked', 0)}, "
                 f"cost=${result.get('cost', 0):.3f}, "
                 f"elapsed={result.get('elapsed_seconds', 0):.1f}s"
             )
