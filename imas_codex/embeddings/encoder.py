@@ -108,6 +108,9 @@ class Encoder:
 
         No fallback to OpenRouter - if remote is unavailable, raises error.
         The remote client has its own retry logic for transient failures.
+
+        Retries the health check up to 3 times with backoff to handle
+        transient timeouts when the server is under heavy load.
         """
         if self._backend_validated:
             return
@@ -115,9 +118,21 @@ class Encoder:
         if not self._remote_client:
             raise EmbeddingBackendError("Remote client not initialized")
 
-        if not self._remote_client.is_available():
+        # Retry health check with increasing timeout under load
+        last_error = None
+        for attempt in range(3):
+            timeout = 5.0 + attempt * 5.0  # 5s, 10s, 15s
+            if self._remote_client.is_available(timeout=timeout):
+                break
+            last_error = (
+                f"Health check timed out (attempt {attempt + 1}/3, timeout={timeout}s)"
+            )
+            if attempt < 2:
+                time.sleep(1.0 + attempt)
+        else:
             raise EmbeddingBackendError(
                 f"Remote embedding server not available at {self.config.remote_url}. "
+                f"{last_error}. "
                 "Ensure SSH tunnel is active: ssh -f -N -L 18765:127.0.0.1:18765 iter"
             )
 
