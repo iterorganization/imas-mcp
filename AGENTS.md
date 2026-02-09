@@ -209,9 +209,9 @@ Combine vector similarity with link traversal for richer context:
 results = query("""
     CALL db.index.vector.queryNodes('facility_signal_desc_embedding', 5, $embedding)
     YIELD node AS signal, score
-    MATCH (signal)-[:ACCESS_METHOD]->(am:AccessMethod)
+    MATCH (signal)-[:DATA_ACCESS]->(da:DataAccess)
     OPTIONAL MATCH (signal)-[:MAPS_TO_IMAS]->(imas:IMASPath)
-    RETURN signal.id, signal.description, am.template_python,
+    RETURN signal.id, signal.description, da.template_python,
            collect(imas.id) AS imas_paths, score
     ORDER BY score DESC
 """, embedding=embed("electron density profile"))
@@ -221,7 +221,7 @@ results = query("""
 
 | From | Relationship | To |
 |------|--------------|-----|
-| FacilitySignal | ACCESS_METHOD | AccessMethod |
+| FacilitySignal | DATA_ACCESS | DataAccess |
 | FacilitySignal | MAPS_TO_IMAS | IMASPath |
 | WikiChunk | HAS_CHUNK← | WikiPage |
 | FacilityPath | FACILITY_ID | Facility |

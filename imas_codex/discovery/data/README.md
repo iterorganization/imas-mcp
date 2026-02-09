@@ -195,7 +195,7 @@ Phase 4: MDSplus Checking
 - Claiming batches of 10 enriched signals
 - Executing check_signals.py via SSH
 - Recording shape, dtype on success
-- Creating CHECKED_VIA relationships to AccessMethod
+- Creating CHECKED_VIA relationships to DataAccess
 
 Summary:
 - Epochs created: N
@@ -248,7 +248,7 @@ Summary:
 (epoch_v3)-[:PRECEDED_BY]->(epoch_v2)
 
 // Access verification
-(signal)-[:CHECKED_VIA]->(access_method)
+(signal)-[:CHECKED_VIA]->(data_access)
 ```
 
 ## Module Structure

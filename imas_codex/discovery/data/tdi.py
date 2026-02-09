@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import (
-    AccessMethod,
+    DataAccess,
     FacilitySignal,
     FacilitySignalStatus,
     PhysicsDomain,
@@ -205,7 +205,7 @@ async def discover_tdi_signals(
     facility: str,
     ssh_host: str,
     tdi_path: str,
-    access_method_id: str | None = None,
+    data_access_id: str | None = None,
     filter_functions: list[str] | None = None,
 ) -> tuple[list[FacilitySignal], list[TDIFunctionMeta]]:
     """Discover signals from TDI functions.
@@ -214,7 +214,7 @@ async def discover_tdi_signals(
         facility: Facility ID (e.g., "tcv")
         ssh_host: SSH host alias
         tdi_path: Path to TDI function directory
-        access_method_id: AccessMethod to link signals to (default: facility:tdi:functions)
+        data_access_id: DataAccess to link signals to (default: facility:tdi:functions)
         filter_functions: Only process these function names (e.g., ["t"])
 
     Returns:
@@ -229,9 +229,9 @@ async def discover_tdi_signals(
     if filter_functions:
         functions = [f for f in functions if f.name in filter_functions]
 
-    # Default access method
-    if not access_method_id:
-        access_method_id = f"{facility}:tdi:functions"
+    # Default data access
+    if not data_access_id:
+        data_access_id = f"{facility}:tdi:functions"
 
     # Build signals from quantities
     signals: list[FacilitySignal] = []
@@ -287,7 +287,7 @@ async def discover_tdi_signals(
                 facility_id=facility,
                 physics_domain=physics_domain,
                 accessor=accessor,
-                access_method=access_method_id,
+                data_access=data_access_id,
                 tdi_function=func.name,
                 tdi_quantity=quantity_name,
                 discovery_source="tdi_introspection",
@@ -303,27 +303,27 @@ async def discover_tdi_signals(
     return signals, functions_with_signals
 
 
-async def create_tdi_access_method(
+async def create_tdi_data_access(
     gc: GraphClient,
     facility: str,
-) -> AccessMethod:
-    """Create or get the TDI access method for a facility.
+) -> DataAccess:
+    """Create or get the TDI data access node for a facility.
 
-    This creates a generic TDI access method that works with any TDI function.
+    This creates a generic TDI data access that works with any TDI function.
     The accessor field on FacilitySignal contains the full TDI call.
     """
     am_id = f"{facility}:tdi:functions"
 
     # Check if already exists
     existing = gc.query(
-        "MATCH (am:AccessMethod {id: $id}) RETURN am",
+        "MATCH (da:DataAccess {id: $id}) RETURN da",
         id=am_id,
     )
     if existing:
-        return AccessMethod(**existing[0]["am"])
+        return DataAccess(**existing[0]["da"])
 
-    # Create new access method
-    am = AccessMethod(
+    # Create new data access node
+    am = DataAccess(
         id=am_id,
         facility_id=facility,
         name="TDI Function Access",
@@ -356,8 +356,8 @@ tree.close()
 
     # Insert via GraphClient using proper signature
     props = am.model_dump(exclude_none=True, by_alias=True)
-    gc.create_node("AccessMethod", am_id, props)
-    logger.info("Created TDI access method: %s", am_id)
+    gc.create_node("DataAccess", am_id, props)
+    logger.info("Created TDI data access: %s", am_id)
 
     return am
 
@@ -453,15 +453,15 @@ async def run_tdi_discovery(
     """
     gc = GraphClient()
 
-    # Create access method
-    am = await create_tdi_access_method(gc, facility)
+    # Create data access node
+    am = await create_tdi_data_access(gc, facility)
 
     # Discover signals
     signals = await discover_tdi_signals(
         facility=facility,
         ssh_host=ssh_host,
         tdi_path=tdi_path,
-        access_method_id=am.id,
+        data_access_id=am.id,
         filter_functions=filter_functions,
     )
 

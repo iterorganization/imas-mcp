@@ -273,7 +273,7 @@ def clear_facility_signals(
 ) -> dict[str, int]:
     """Clear all signal discovery data for a facility.
 
-    Deletes FacilitySignal nodes, AccessMethod nodes, TreeModelVersion
+    Deletes FacilitySignal nodes, DataAccess nodes, TreeModelVersion
     (epoch) nodes, and clears epoch checkpoint files. Always cascades.
 
     Args:
@@ -281,12 +281,12 @@ def clear_facility_signals(
         batch_size: Nodes to delete per batch
 
     Returns:
-        Dict with counts: signals_deleted, access_methods_deleted,
+        Dict with counts: signals_deleted, data_access_deleted,
         epochs_deleted, checkpoints_deleted
     """
     results = {
         "signals_deleted": 0,
-        "access_methods_deleted": 0,
+        "data_access_deleted": 0,
         "epochs_deleted": 0,
         "checkpoints_deleted": 0,
     }
@@ -310,17 +310,17 @@ def clear_facility_signals(
                 if deleted < batch_size:
                     break
 
-            # Delete orphaned AccessMethod nodes for this facility
+            # Delete orphaned DataAccess nodes for this facility
             result = gc.query(
                 """
-                MATCH (am:AccessMethod {facility_id: $facility})
-                WHERE NOT EXISTS { MATCH (am)<-[:ACCESS_METHOD]-() }
-                DETACH DELETE am
-                RETURN count(am) AS deleted
+                MATCH (da:DataAccess {facility_id: $facility})
+                WHERE NOT EXISTS { MATCH (da)<-[:DATA_ACCESS]-() }
+                DETACH DELETE da
+                RETURN count(da) AS deleted
                 """,
                 facility=facility,
             )
-            results["access_methods_deleted"] = result[0]["deleted"] if result else 0
+            results["data_access_deleted"] = result[0]["deleted"] if result else 0
 
             # Delete TreeModelVersion (epoch) nodes in batches
             while True:
@@ -349,10 +349,10 @@ def clear_facility_signals(
                 logger.warning("Could not delete checkpoint %s: %s", checkpoint_file, e)
 
         logger.info(
-            "Cleared signals for %s: %d signals, %d access_methods, %d epochs, %d checkpoints",
+            "Cleared signals for %s: %d signals, %d data_access, %d epochs, %d checkpoints",
             facility,
             results["signals_deleted"],
-            results["access_methods_deleted"],
+            results["data_access_deleted"],
             results["epochs_deleted"],
             results["checkpoints_deleted"],
         )
@@ -417,16 +417,16 @@ def claim_signals_for_check(
                   AND s.claimed_at IS NULL
                 WITH s LIMIT $batch_size
                 SET s.claimed_at = datetime()
-                // Derive access_method ID based on signal type
+                // Derive data_access ID based on signal type
                 WITH s,
                      CASE WHEN s.tdi_function IS NOT NULL
                           THEN $facility + ':tdi:functions'
                           WHEN s.tree_name IS NOT NULL
                           THEN $facility + ':mdsplus:tree_tdi'
-                          ELSE null END AS derived_access_method
+                          ELSE null END AS derived_data_access
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
                        s.physics_domain AS physics_domain, s.tdi_function AS tdi_function,
-                       COALESCE(s.access_method, derived_access_method) AS access_method
+                       COALESCE(s.data_access, derived_data_access) AS data_access
                 """,
                 facility=facility,
                 enriched=FacilitySignalStatus.enriched.value,
@@ -501,15 +501,15 @@ def mark_signals_enriched(
 def mark_signals_checked(
     signals: list[dict],
 ) -> int:
-    """Mark signals as checked and create CHECKED_VIA relationship to AccessMethod.
+    """Mark signals as checked and create CHECKED_VIA relationship to DataAccess.
 
-    Creates a CHECKED_VIA relationship from each FacilitySignal to its AccessMethod,
-    indicating that the accessor was tested and works with this access method.
-    This leaves checked signals linked to verified working data access methods.
+    Creates a CHECKED_VIA relationship from each FacilitySignal to its DataAccess,
+    indicating that the accessor was tested and works with this data access node.
+    This leaves checked signals linked to verified working data access nodes.
 
     Expected signal dict keys:
     - id: signal ID
-    - access_method: AccessMethod ID (optional, creates CHECKED_VIA if present)
+    - data_access: DataAccess ID (optional, creates CHECKED_VIA if present)
     """
     if not signals:
         return 0
@@ -525,9 +525,9 @@ def mark_signals_checked(
                     s.checked_at = datetime(),
                     s.claimed_at = null
                 WITH s, sig
-                WHERE sig.access_method IS NOT NULL
-                MATCH (am:AccessMethod {id: sig.access_method})
-                MERGE (s)-[:CHECKED_VIA]->(am)
+                WHERE sig.data_access IS NOT NULL
+                MATCH (da:DataAccess {id: sig.data_access})
+                MERGE (s)-[:CHECKED_VIA]->(da)
                 """,
                 signals=signals,
                 checked=FacilitySignalStatus.checked.value,
@@ -645,7 +645,7 @@ def get_latest_epoch_shot(facility: str, tree_name: str) -> int | None:
 
 def ingest_epochs(
     epochs: list[dict],
-    access_method_id: str | None = None,
+    data_access_id: str | None = None,
     reference_shot: int | None = None,
 ) -> dict[str, int]:
     """Ingest epochs with symmetric signal lifecycle tracking.
@@ -660,7 +660,7 @@ def ingest_epochs(
 
     Args:
         epochs: List of epoch dicts from discover_epochs_optimized()
-        access_method_id: Optional AccessMethod ID for signal creation
+        data_access_id: Optional DataAccess ID for signal creation
         reference_shot: Optional reference shot for signal metadata
 
     Returns:
@@ -756,7 +756,7 @@ def ingest_epochs(
                                 "physics_domain": "general",
                                 "name": name,
                                 "accessor": f"data({path})",
-                                "access_method": access_method_id
+                                "data_access": data_access_id
                                 or f"{facility_id}:mdsplus:tree_tdi",
                                 "tree_name": tree_name,
                                 "node_path": path,
@@ -828,7 +828,7 @@ def discover_mdsplus_signals(
     ssh_host: str,
     tree_name: str,
     shot: int,
-    access_method_id: str,
+    data_access_id: str,
 ) -> list[dict]:
     """Discover signals from an MDSplus tree via SSH.
 
@@ -837,7 +837,7 @@ def discover_mdsplus_signals(
         ssh_host: SSH host for remote access
         tree_name: MDSplus tree name
         shot: Reference shot number
-        access_method_id: ID of AccessMethod for this tree
+        data_access_id: ID of DataAccess for this tree
 
     Returns:
         List of signal dicts ready for graph insertion
@@ -921,7 +921,7 @@ print(json.dumps(signals))
                 "physics_domain": "general",  # Will be enriched
                 "name": name,
                 "accessor": f"data({path})",
-                "access_method": access_method_id,
+                "data_access": data_access_id,
                 "tree_name": tree_name,
                 "node_path": path,
                 "units": raw.get("units", ""),
@@ -939,7 +939,7 @@ def discover_tdi_signals(
     facility: str,
     ssh_host: str,
     tdi_path: str,
-    access_method_id: str,
+    data_access_id: str,
 ) -> list[dict]:
     """Discover signals from TDI function files via SSH.
 
@@ -955,7 +955,7 @@ def discover_tdi_signals(
         facility: Facility ID
         ssh_host: SSH host for remote access
         tdi_path: Path to TDI function directory
-        access_method_id: ID of AccessMethod for TDI access
+        data_access_id: ID of DataAccess for TDI access
 
     Returns:
         List of signal dicts ready for graph insertion
@@ -1032,7 +1032,7 @@ def discover_tdi_signals(
                     "physics_domain": physics_domain.value,
                     "name": qty_name,
                     "accessor": accessor,
-                    "access_method": access_method_id,
+                    "data_access": data_access_id,
                     "tdi_function": func.name,
                     "tdi_quantity": qty_name,
                     "status": FacilitySignalStatus.discovered.value,
@@ -1090,7 +1090,7 @@ async def scan_worker(
     for LLM enrichment context.
     """
     from imas_codex.discovery.data.tdi import (
-        create_tdi_access_method,
+        create_tdi_data_access,
         discover_tdi_signals,
         ingest_tdi_functions,
         ingest_tdi_signals,
@@ -1108,14 +1108,14 @@ async def scan_worker(
         try:
             with GraphClient() as gc:
                 # Create/verify TDI access method
-                am = await create_tdi_access_method(gc, state.facility)
+                am = await create_tdi_data_access(gc, state.facility)
 
                 # Discover signals and extract TDI function metadata
                 signals, functions = await discover_tdi_signals(
                     facility=state.facility,
                     ssh_host=state.ssh_host,
                     tdi_path=state.tdi_path,
-                    access_method_id=am.id,
+                    data_access_id=am.id,
                 )
 
                 if signals:
@@ -1467,9 +1467,9 @@ async def check_worker(
             on_progress(f"checking {len(signals)} signals", state.check_stats)
 
         # Prepare batch for remote check script
-        # Build map of signal ID -> access_method for CHECKED_VIA relationship
+        # Build map of signal ID -> data_access for CHECKED_VIA relationship
         batch_input = []
-        signal_access_methods: dict[str, str | None] = {}
+        signal_data_access: dict[str, str | None] = {}
         for signal in signals:
             # Use reference_shot from config
             shot = signal.get("check_shot") or state.reference_shot
@@ -1481,7 +1481,7 @@ async def check_worker(
                 continue
 
             signal_id = signal["id"]
-            signal_access_methods[signal_id] = signal.get("access_method")
+            signal_data_access[signal_id] = signal.get("data_access")
 
             # TDI signals use tcv_shot tree
             tree_name = signal.get("tree_name")
@@ -1571,7 +1571,7 @@ async def check_worker(
                                 "id": signal_id,
                                 "shape": result.get("shape"),
                                 "dtype": result.get("dtype"),
-                                "access_method": signal_access_methods.get(signal_id),
+                                "data_access": signal_data_access.get(signal_id),
                             }
                         )
                     else:

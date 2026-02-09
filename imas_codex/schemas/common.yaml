@@ -220,7 +220,7 @@ enums:
       enriched:
         description: LLM enrichment complete - physics_domain classified, description generated
       checked:
-        description: Data access tested successfully - creates CHECKED_VIA link to AccessMethod
+        description: Data access tested successfully - creates CHECKED_VIA link to DataAccess
       skipped:
         description: Filtered out (duplicate, internal node, or low value)
       failed:
