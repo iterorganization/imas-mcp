@@ -21,8 +21,8 @@ data_systems:
 
 # Wiki/documentation sites
 # JT60SA documentation is hosted on nakasvr23 behind IFERC VPN.
-# The TWiki static export is the primary documentation source,
-# with the server landing page providing additional system docs.
+# Site 0: TWiki static export - analysis code documentation (TOPICS, EDAS, SLICE, etc.)
+# Site 1: Server landing page - hardware, software, login, batch jobs, compilers
 wiki_sites:
   - url: https://nakasvr23.iferc.org/twiki_html
     portal_page: WebHome.html
@@ -37,11 +37,20 @@ wiki_sites:
     languages:
       - ja
       - en
-    # Additional pages from the server landing site to include in this crawl
-    additional_urls:
-      - url: https://nakasvr23.iferc.org
-        portal_page: index.html
-        description: Server landing page - hardware, login, batch jobs, compilers
+
+  - url: https://nakasvr23.iferc.org
+    portal_page: index-en.html
+    site_type: static_html
+    access_method: vpn
+    auth_type: none
+    ssh_available: true
+    description: >-
+      JT-60SA data analysis server (nakasvr23) system documentation.
+      Hardware specs, software list, login procedures, batch job usage,
+      compiler configuration, file system layout. Bilingual (JP/EN).
+    languages:
+      - ja
+      - en
 
 # User info discovery configuration
 user_info:

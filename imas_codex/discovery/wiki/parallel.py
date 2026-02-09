@@ -3104,7 +3104,8 @@ def _create_discovered_pages(
                         name_with_web = name
                     url = f"{base_url}/bin/view/{name_with_web}"
                 elif site_type == "confluence":
-                    url = f"{base_url}/pages/viewpage.action?pageId={name}"
+                    # name is a page title; use display URL format
+                    url = f"{base_url}/display/{urllib.parse.quote(name, safe='/')}"
                 else:
                     # MediaWiki - use index.php format for consistency
                     url = f"{base_url}/index.php?title={urllib.parse.quote(name, safe='')}"
@@ -4156,7 +4157,8 @@ def _seed_portal_page(
             portal_page = f"Main/{portal_page}"
         url = f"{base_url}/bin/view/{portal_page}"
     elif site_type == "confluence":
-        url = f"{base_url}/pages/viewpage.action?pageId={portal_page}"
+        # portal_page is a space key (e.g. "IMP"), not a numeric page ID
+        url = f"{base_url}/spaces/{portal_page}/overview"
     else:
         url = f"{base_url}/{urllib.parse.quote(portal_page, safe='/')}"
 
