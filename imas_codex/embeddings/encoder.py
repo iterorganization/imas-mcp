@@ -833,9 +833,17 @@ class Encoder:
         memory from ~32GB to ~16GB for 8B parameter models.
         """
         ST = self._import_sentence_transformers()
-        # Load in model's native dtype (e.g., bfloat16) to halve memory.
-        # Critical for fitting large models (8B+) on 16GB GPUs like P100.
-        model_kwargs = {"torch_dtype": "auto"}
+        # Load in half precision to halve memory. Use float16 (not bfloat16)
+        # since older GPUs like P100 (compute capability 6.0) don't support
+        # bfloat16 natively — torch_dtype="auto" would load bf16 per model
+        # config, causing a silent fallback to CPU.
+        model_kwargs: dict = {}
+        if self.config.device and "cuda" in self.config.device:
+            import torch
+
+            model_kwargs["torch_dtype"] = torch.float16
+        else:
+            model_kwargs["torch_dtype"] = "auto"
         try:
             cache_folder = str(self._get_cache_directory() / "models")
 
