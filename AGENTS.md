@@ -313,6 +313,15 @@ git merge --no-ff $WORKTREE_HEAD -m "merge: worktree changes for <description>"
 git push origin main
 ```
 
+### Parallel Agents
+
+Multiple agents may be working on this repository simultaneously. Assume another agent could be editing files or committing right now.
+
+- **Only stage files you modified** — never `git add -A` or `git add .`
+- **Never `git checkout` or `git restore` files you didn't change** — this silently discards another agent's work
+- **Pull before push** if push is rejected: `git pull --rebase origin main && git push origin main`
+- **Avoid broad formatting runs** (`ruff format .`) unless you are the only agent active — prefer formatting only your changed files
+
 ### Session Completion
 
 **MANDATORY** after any file modifications: commit and push before responding to the user.
