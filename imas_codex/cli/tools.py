@@ -38,12 +38,15 @@ def tools_list() -> None:
 
     table = Table(title="Available Development Tools")
     table.add_column("Name", style="cyan")
+    table.add_column("Binary", style="white")
+    table.add_column("Version", style="white")
     table.add_column("Description", style="white")
     table.add_column("Required", style="yellow")
 
     for _key, tool in sorted(config.all_tools.items()):
         required = "✓" if tool.required else ""
-        table.add_row(tool.name, tool.purpose, required)
+        version = tool.releases.version or "-"
+        table.add_row(tool.name, tool.binary, version, tool.purpose, required)
 
     console.print(table)
 
@@ -444,3 +447,169 @@ def tools_install(
             console.print(f"  Activate venv: source {DEFAULT_VENV_PATH}/bin/activate")
 
     console.print()
+
+
+@tools.command("update")
+@click.argument("target", default="local")
+@click.option(
+    "--tool", "tool_name", default=None, help="Update only this specific tool"
+)
+@click.option(
+    "--all", "update_all", is_flag=True, help="Update all tools, not just outdated ones"
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would be updated without installing"
+)
+def tools_update(
+    target: str,
+    tool_name: str | None,
+    update_all: bool,
+    dry_run: bool,
+) -> None:
+    """Update outdated tools on a target.
+
+    Compares installed versions against configured versions in
+    fast_tools.yaml and upgrades any that are behind.
+
+    TARGET can be 'local' or a facility name (e.g., 'tcv', 'iter', 'jet').
+
+    \b
+    Examples:
+      imas-codex tools update local           # Update outdated tools locally
+      imas-codex tools update jet             # Update outdated tools on JET
+      imas-codex tools update iter --tool gh  # Update just gh on ITER
+      imas-codex tools update local --all     # Force-update all installed tools
+      imas-codex tools update jet --dry-run   # Show what would be updated
+    """
+    from imas_codex.remote.tools import (
+        check_outdated_tools,
+        check_tool,
+        install_tool,
+        load_fast_tools,
+    )
+
+    facility = None if target == "local" else target
+    config = load_fast_tools()
+
+    console.print(f"\n[bold]Checking tools on {target}...[/bold]\n")
+
+    # Single tool mode
+    if tool_name:
+        tool = config.get_tool(tool_name)
+        if not tool:
+            console.print(f"[red]Unknown tool: {tool_name}[/red]")
+            raise SystemExit(1)
+
+        status = check_tool(tool_name, facility=facility)
+        if not status.get("available"):
+            console.print(
+                f"  {tool_name} is not installed. Use 'tools install' instead."
+            )
+            raise SystemExit(1)
+
+        installed = status.get("version", "?")
+        configured = tool.releases.version
+
+        if not update_all and installed == configured:
+            console.print(f"  [green]✓[/green] {tool_name}: {installed} (up to date)")
+            console.print()
+            return
+
+        console.print(f"  {tool_name}: {installed} → {configured}")
+
+        if dry_run:
+            console.print("\n[dim][DRY RUN] No changes made.[/dim]\n")
+            return
+
+        spinner = Spinner("dots", text=f"Updating {tool_name}...")
+        with Live(spinner, console=console, transient=True):
+            result = install_tool(tool_name, facility=facility, force=True)
+
+        if result.get("success"):
+            new_version = result.get("version", configured)
+            console.print(
+                f"  [green]✓[/green] {tool_name}: {installed} → {new_version}"
+            )
+        else:
+            console.print(
+                f"  [red]✗[/red] {tool_name}: {result.get('error', 'update failed')}"
+            )
+            raise SystemExit(1)
+
+        console.print()
+        return
+
+    # Multi-tool mode: find outdated tools
+    if update_all:
+        # Force-update all installed non-system tools
+        to_update = []
+        for key, tool in config.all_tools.items():
+            if tool.system_only or not tool.releases.version:
+                continue
+            status = check_tool(key, facility=facility)
+            if status.get("available"):
+                to_update.append(
+                    {
+                        "key": key,
+                        "name": tool.name,
+                        "installed": status.get("version", "?"),
+                        "configured": tool.releases.version,
+                        "required": tool.required,
+                    }
+                )
+    else:
+        to_update = check_outdated_tools(facility=facility)
+
+    if not to_update:
+        console.print("[green]All tools are up to date.[/green]\n")
+        return
+
+    # Display what will be updated
+    table = Table(title="Tools to Update")
+    table.add_column("Tool", style="cyan")
+    table.add_column("Installed", style="yellow")
+    table.add_column("Available", style="green")
+    table.add_column("Required", style="white")
+
+    for item in to_update:
+        required = "✓" if item["required"] else ""
+        table.add_row(item["key"], item["installed"], item["configured"], required)
+
+    console.print(table)
+
+    if dry_run:
+        console.print("\n[dim][DRY RUN] No changes made.[/dim]\n")
+        return
+
+    console.print()
+
+    # Perform updates
+    updated = 0
+    failed = 0
+    for item in to_update:
+        key = item["key"]
+        spinner = Spinner("dots", text=f"Updating {key}...")
+        with Live(spinner, console=console, transient=True):
+            result = install_tool(key, facility=facility, force=True)
+
+        if result.get("success"):
+            new_version = result.get("version", item["configured"])
+            console.print(
+                f"  [green]✓[/green] {key}: {item['installed']} → {new_version}"
+            )
+            updated += 1
+        else:
+            console.print(
+                f"  [red]✗[/red] {key}: {result.get('error', 'update failed')}"
+            )
+            failed += 1
+
+    console.print()
+    if failed:
+        console.print(
+            f"[bold yellow]Updated {updated}/{len(to_update)} tools "
+            f"({failed} failed)[/bold yellow]\n"
+        )
+        raise SystemExit(1)
+    else:
+        console.print(f"[bold green]✓ Updated {updated} tool(s)[/bold green]\n")

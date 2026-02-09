@@ -905,3 +905,50 @@ def install_all_tools(
             on_progress(key, result)
 
     return results
+
+
+def check_outdated_tools(
+    facility: str | None = None,
+) -> list[dict[str, Any]]:
+    """Find tools that are installed but older than the configured version.
+
+    Compares the installed version of each tool against the version
+    specified in fast_tools.yaml. System-only tools are skipped.
+
+    Args:
+        facility: Facility ID (None = local)
+
+    Returns:
+        List of dicts with tool key, installed version, configured version
+    """
+    config = load_fast_tools()
+    outdated = []
+
+    for key, tool in config.all_tools.items():
+        if tool.system_only:
+            continue
+        if not tool.releases.version:
+            continue
+
+        status = check_tool(key, facility=facility)
+        if not status.get("available"):
+            continue
+
+        installed_version = status.get("version", "")
+        configured_version = tool.releases.version
+
+        if (
+            installed_version
+            and compare_versions(installed_version, configured_version) < 0
+        ):
+            outdated.append(
+                {
+                    "key": key,
+                    "name": tool.name,
+                    "installed": installed_version,
+                    "configured": configured_version,
+                    "required": tool.required,
+                }
+            )
+
+    return outdated
