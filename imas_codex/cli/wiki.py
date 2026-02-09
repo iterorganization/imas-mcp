@@ -18,9 +18,14 @@ def wiki():
     """Manage wiki sites and sessions.
 
     \b
+    Status:
+      status              Show wiki discovery statistics for a facility
+
+    \b
     Site Operations:
       sites               List configured wiki sites for a facility
       test                Test connectivity to a wiki site
+      clear               Clear all wiki data for a facility
       session             Manage cached sessions
 
     For credential management, use: imas-codex credentials
@@ -255,6 +260,122 @@ def wiki_clear(facility: str, force: bool) -> None:
     if result.get("artifacts_deleted"):
         deleted_parts.append(f"{result['artifacts_deleted']:,} artifacts")
     console.print(f"[green]✓ Deleted {', '.join(deleted_parts)} for {facility}[/green]")
+
+
+@wiki.command("status")
+@click.argument("facility")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def wiki_status(facility: str, as_json: bool) -> None:
+    """Show wiki discovery statistics for a facility.
+
+    Displays status of wiki pages including scan, score, and ingest progress.
+
+    \b
+    Examples:
+      imas-codex wiki status jet
+      imas-codex wiki status tcv --json
+    """
+    import json as json_module
+
+    from imas_codex.discovery.wiki import get_wiki_discovery_stats, get_wiki_stats
+    from imas_codex.graph import GraphClient
+
+    try:
+        wiki_stats = get_wiki_discovery_stats(facility)
+        link_stats = get_wiki_stats(facility)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    total = wiki_stats.get("total", 0)
+
+    if as_json:
+        output = {
+            "facility": facility,
+            "pages": {
+                "total": total,
+                "discovered": wiki_stats.get("discovered", 0),
+                "scanned": wiki_stats.get("scanned", 0),
+                "scored": wiki_stats.get("scored", 0),
+                "ingested": wiki_stats.get("ingested", 0),
+                "skipped": wiki_stats.get("skipped", 0),
+                "failed": wiki_stats.get("failed", 0),
+            },
+            "pending": {
+                "score": wiki_stats.get("pending_score", 0),
+                "ingest": wiki_stats.get("pending_ingest", 0),
+            },
+            "cost": {
+                "accumulated": wiki_stats.get("accumulated_cost", 0.0),
+            },
+            "links": link_stats,
+        }
+        click.echo(json_module.dumps(output, indent=2))
+        return
+
+    if total == 0:
+        console.print(f"[yellow]No wiki pages found for {facility}[/yellow]")
+        console.print("\nRun wiki discovery: imas-codex discover wiki <facility>")
+        return
+
+    # Header
+    console.print(f"\n[bold]Wiki Discovery: {facility}[/bold]")
+    console.print(f"Total pages: {total:,}")
+
+    # Status breakdown
+    discovered = wiki_stats.get("discovered", 0)
+    scanned = wiki_stats.get("scanned", 0)
+    scored = wiki_stats.get("scored", 0)
+    ingested = wiki_stats.get("ingested", 0)
+    skipped = wiki_stats.get("skipped", 0)
+    failed = wiki_stats.get("failed", 0)
+
+    console.print(f"├─ Discovered: {discovered:,} ({discovered / total * 100:.1f}%)")
+    console.print(f"├─ Scanned:    {scanned:,} ({scanned / total * 100:.1f}%)")
+    console.print(f"├─ Scored:     {scored:,} ({scored / total * 100:.1f}%)")
+    console.print(f"├─ Ingested:   {ingested:,} ({ingested / total * 100:.1f}%)")
+    console.print(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
+    console.print(f"└─ Failed:     {failed:,} ({failed / total * 100:.1f}%)")
+
+    # Pending work
+    pending_score = wiki_stats.get("pending_score", 0)
+    pending_ingest = wiki_stats.get("pending_ingest", 0)
+    if pending_score > 0 or pending_ingest > 0:
+        console.print("\n[bold]Pending Work:[/bold]")
+        console.print(f"  Score queue:  {pending_score:,} pages")
+        console.print(f"  Ingest queue: {pending_ingest:,} pages")
+
+    # Cost tracking
+    accumulated_cost = wiki_stats.get("accumulated_cost", 0.0)
+    console.print("\n[bold]Cost:[/bold]")
+    console.print(f"  Accumulated: ${accumulated_cost:.2f}")
+
+    # Artifact stats (if available)
+    with GraphClient() as gc:
+        artifact_result = gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $f})
+            RETURN wa.status AS status, count(*) AS cnt
+            """,
+            f=facility,
+        )
+
+    if artifact_result:
+        console.print("\n[bold]Artifacts:[/bold]")
+        artifact_total = sum(r["cnt"] for r in artifact_result)
+        console.print(f"  Total: {artifact_total:,}")
+        for r in artifact_result:
+            if r["cnt"] > 0:
+                console.print(f"  {r['status']}: {r['cnt']:,}")
+
+    # Links
+    if link_stats.get("chunks", 0) > 0:
+        console.print("\n[bold]Knowledge Graph Links:[/bold]")
+        console.print(f"  Chunks: {link_stats['chunks']:,}")
+        if link_stats.get("tree_nodes_linked", 0) > 0:
+            console.print(f"  → TreeNodes linked: {link_stats['tree_nodes_linked']:,}")
+        if link_stats.get("imas_paths_linked", 0) > 0:
+            console.print(f"  → IMASPaths linked: {link_stats['imas_paths_linked']:,}")
 
 
 @wiki.group()

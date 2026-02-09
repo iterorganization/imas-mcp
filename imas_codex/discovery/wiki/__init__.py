@@ -34,6 +34,7 @@ from imas_codex.discovery.wiki.monitor import (
     WikiProgressMonitor,
 )
 from imas_codex.discovery.wiki.parallel import (
+    get_wiki_discovery_stats,
     release_orphaned_claims,
     run_parallel_wiki_discovery,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "ScanProgressMonitor",
     "WikiProgressDisplay",
     # Parallel discovery
+    "get_wiki_discovery_stats",
     "release_orphaned_claims",
     "run_parallel_wiki_discovery",
     # Ingestion pipeline

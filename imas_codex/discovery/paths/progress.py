@@ -1281,3 +1281,26 @@ def print_discovery_status(
             output(f"  [{p['score']:.2f}] {p['path']}")
         if len(high_value) > 5:
             output(f"  ... and {len(high_value) - 5} more")
+
+    # Wiki stats (if any wiki pages exist for this facility)
+    try:
+        from imas_codex.discovery.wiki import get_wiki_discovery_stats
+
+        wiki_stats = get_wiki_discovery_stats(facility)
+        wiki_total = wiki_stats.get("total", 0)
+        if wiki_total > 0:
+            output("\n[bold]Wiki Discovery:[/bold]")
+            wiki_scanned = wiki_stats.get("scanned", 0)
+            wiki_scored = wiki_stats.get("scored", 0)
+            wiki_ingested = wiki_stats.get("ingested", 0)
+            wiki_skipped = wiki_stats.get("skipped", 0)
+            wiki_cost = wiki_stats.get("accumulated_cost", 0.0)
+
+            output(f"Total pages: {wiki_total:,}")
+            output(f"├─ Scanned:   {wiki_scanned:,}")
+            output(f"├─ Scored:    {wiki_scored:,}")
+            output(f"├─ Ingested:  {wiki_ingested:,}")
+            output(f"└─ Skipped:   {wiki_skipped:,}")
+            output(f"Accumulated cost: ${wiki_cost:.2f}")
+    except Exception:
+        pass  # Wiki stats unavailable, skip silently
