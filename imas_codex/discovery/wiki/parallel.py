@@ -50,6 +50,126 @@ logger = logging.getLogger(__name__)
 # Claim timeout - pages claimed longer than this are reclaimed
 CLAIM_TIMEOUT_SECONDS = 300  # 5 minutes
 
+
+# =============================================================================
+# Shared Graph Helpers — single source of truth for wiki node creation
+# =============================================================================
+
+
+def _bulk_create_wiki_pages(
+    gc: GraphClient,
+    facility: str,
+    batch_data: list[dict],
+    *,
+    batch_size: int = 500,
+    on_progress: Callable | None = None,
+) -> int:
+    """Create WikiPage nodes with FACILITY_ID relationship in batches.
+
+    Every WikiPage gets a [:FACILITY_ID]->(:Facility) relationship at creation
+    time, not deferred to ingestion.
+
+    Args:
+        gc: Open GraphClient
+        facility: Facility ID
+        batch_data: List of dicts with id, title, url keys
+        batch_size: Nodes per batch
+        on_progress: Optional progress callback
+
+    Returns:
+        Number of pages created/updated
+    """
+    created = 0
+    total = len(batch_data)
+    for i in range(0, total, batch_size):
+        batch = batch_data[i : i + batch_size]
+        result = gc.query(
+            """
+            UNWIND $pages AS page
+            MERGE (wp:WikiPage {id: page.id})
+            ON CREATE SET wp.title = page.title,
+                          wp.url = page.url,
+                          wp.facility_id = $facility,
+                          wp.status = $scanned,
+                          wp.link_depth = 1,
+                          wp.discovered_at = datetime(),
+                          wp.bulk_discovered = true
+            ON MATCH SET wp.bulk_discovered = true
+            WITH wp
+            MATCH (f:Facility {id: $facility})
+            MERGE (wp)-[:FACILITY_ID]->(f)
+            RETURN count(wp) AS count
+            """,
+            pages=batch,
+            facility=facility,
+            scanned=WikiPageStatus.scanned.value,
+        )
+        if result:
+            created += result[0]["count"]
+
+        if on_progress:
+            on_progress(f"creating pages ({i + len(batch)}/{total})", None)
+
+    return created
+
+
+def _bulk_create_wiki_artifacts(
+    gc: GraphClient,
+    facility: str,
+    batch_data: list[dict],
+    *,
+    batch_size: int = 100,
+    on_progress: Callable | None = None,
+) -> int:
+    """Create WikiArtifact nodes with FACILITY_ID relationship in batches.
+
+    Args:
+        gc: Open GraphClient
+        facility: Facility ID
+        batch_data: List of dicts with id, filename, url, artifact_type,
+                    and optionally size_bytes, mime_type
+        batch_size: Nodes per batch
+        on_progress: Optional progress callback
+
+    Returns:
+        Number of artifacts created/updated
+    """
+    created = 0
+    total = len(batch_data)
+    for i in range(0, total, batch_size):
+        batch = batch_data[i : i + batch_size]
+        result = gc.query(
+            """
+            UNWIND $artifacts AS a
+            MERGE (wa:WikiArtifact {id: a.id})
+            ON CREATE SET wa.facility_id = $facility,
+                          wa.filename = a.filename,
+                          wa.url = a.url,
+                          wa.artifact_type = a.artifact_type,
+                          wa.size_bytes = a.size_bytes,
+                          wa.mime_type = a.mime_type,
+                          wa.status = $discovered,
+                          wa.discovered_at = datetime(),
+                          wa.bulk_discovered = true
+            ON MATCH SET wa.bulk_discovered = true
+            WITH wa
+            MATCH (f:Facility {id: $facility})
+            MERGE (wa)-[:FACILITY_ID]->(f)
+            RETURN count(wa) AS count
+            """,
+            artifacts=batch,
+            facility=facility,
+            discovered=WikiArtifactStatus.discovered.value,
+        )
+        if result:
+            created += result[0]["count"]
+
+        if on_progress:
+            on_progress(f"created {i + len(batch)}/{total} artifacts", None)
+
+    return created
+
+
 # Retry configuration for Neo4j transient errors (deadlocks)
 MAX_RETRY_ATTEMPTS = 5
 RETRY_BASE_DELAY = 0.1  # seconds
@@ -1483,37 +1603,10 @@ def bulk_discover_all_pages_mediawiki(
             }
         )
 
-    # Insert in batches of 500 for efficiency
-    batch_size = 500
-    created = 0
     with GraphClient() as gc:
-        for i in range(0, len(batch_data), batch_size):
-            batch = batch_data[i : i + batch_size]
-            result = gc.query(
-                """
-                UNWIND $pages AS page
-                MERGE (wp:WikiPage {id: page.id})
-                ON CREATE SET wp.title = page.title,
-                              wp.url = page.url,
-                              wp.facility_id = $facility,
-                              wp.status = $scanned,
-                              wp.link_depth = 1,
-                              wp.discovered_at = datetime(),
-                              wp.bulk_discovered = true
-                ON MATCH SET wp.bulk_discovered = true
-                RETURN count(wp) AS count
-                """,
-                pages=batch,
-                facility=facility,
-                scanned=WikiPageStatus.scanned.value,
-            )
-            if result:
-                created += result[0]["count"]
-
-            if on_progress:
-                on_progress(
-                    f"creating pages ({i + len(batch)}/{len(batch_data)})", None
-                )
+        created = _bulk_create_wiki_pages(
+            gc, facility, batch_data, on_progress=on_progress
+        )
 
     logger.info(f"Created/updated {created} pages in graph (scanned status)")
     if on_progress:
@@ -1656,37 +1749,10 @@ def bulk_discover_all_pages_http(
                 }
             )
 
-        # Insert in batches of 500 for efficiency
-        batch_size = 500
-        created = 0
         with GraphClient() as gc:
-            for i in range(0, len(batch_data), batch_size):
-                batch = batch_data[i : i + batch_size]
-                result = gc.query(
-                    """
-                    UNWIND $pages AS page
-                    MERGE (wp:WikiPage {id: page.id})
-                    ON CREATE SET wp.title = page.title,
-                                  wp.url = page.url,
-                                  wp.facility_id = $facility,
-                                  wp.status = $scanned,
-                                  wp.link_depth = 1,
-                                  wp.discovered_at = datetime(),
-                                  wp.bulk_discovered = true
-                    ON MATCH SET wp.bulk_discovered = true
-                    RETURN count(wp) AS count
-                    """,
-                    pages=batch,
-                    facility=facility,
-                    scanned=WikiPageStatus.scanned.value,
-                )
-                if result:
-                    created += result[0]["count"]
-
-                if on_progress:
-                    on_progress(
-                        f"creating pages ({i + len(batch)}/{len(batch_data)})", None
-                    )
+            created = _bulk_create_wiki_pages(
+                gc, facility, batch_data, on_progress=on_progress
+            )
 
         logger.info(f"Created/updated {created} pages in graph (scanned status)")
         if on_progress:
@@ -1808,36 +1874,10 @@ def bulk_discover_all_pages_keycloak(
                 }
             )
 
-        batch_size = 500
-        created = 0
         with GraphClient() as gc:
-            for i in range(0, len(batch_data), batch_size):
-                batch = batch_data[i : i + batch_size]
-                result = gc.query(
-                    """
-                    UNWIND $pages AS page
-                    MERGE (wp:WikiPage {id: page.id})
-                    ON CREATE SET wp.title = page.title,
-                                  wp.url = page.url,
-                                  wp.facility_id = $facility,
-                                  wp.status = $scanned,
-                                  wp.link_depth = 1,
-                                  wp.discovered_at = datetime(),
-                                  wp.bulk_discovered = true
-                    ON MATCH SET wp.bulk_discovered = true
-                    RETURN count(wp) AS count
-                    """,
-                    pages=batch,
-                    facility=facility,
-                    scanned=WikiPageStatus.scanned.value,
-                )
-                if result:
-                    created += result[0]["count"]
-
-                if on_progress:
-                    on_progress(
-                        f"creating pages ({i + len(batch)}/{len(batch_data)})", None
-                    )
+            created = _bulk_create_wiki_pages(
+                gc, facility, batch_data, on_progress=on_progress
+            )
 
         logger.info("Created/updated %d pages in graph (scanned status)", created)
         if on_progress:
@@ -1983,36 +2023,10 @@ def bulk_discover_all_pages_basic_auth(
                 }
             )
 
-        batch_size = 500
-        created = 0
         with GraphClient() as gc:
-            for i in range(0, len(batch_data), batch_size):
-                batch = batch_data[i : i + batch_size]
-                result = gc.query(
-                    """
-                    UNWIND $pages AS page
-                    MERGE (wp:WikiPage {id: page.id})
-                    ON CREATE SET wp.title = page.title,
-                                  wp.url = page.url,
-                                  wp.facility_id = $facility,
-                                  wp.status = $scanned,
-                                  wp.link_depth = 1,
-                                  wp.discovered_at = datetime(),
-                                  wp.bulk_discovered = true
-                    ON MATCH SET wp.bulk_discovered = true
-                    RETURN count(wp) AS count
-                    """,
-                    pages=batch,
-                    facility=facility,
-                    scanned=WikiPageStatus.scanned.value,
-                )
-                if result:
-                    created += result[0]["count"]
-
-                if on_progress:
-                    on_progress(
-                        f"creating pages ({i + len(batch)}/{len(batch_data)})", None
-                    )
+            created = _bulk_create_wiki_pages(
+                gc, facility, batch_data, on_progress=on_progress
+            )
 
         logger.info("Created/updated %d pages in graph (scanned status)", created)
         if on_progress:
@@ -2078,37 +2092,10 @@ def bulk_discover_all_pages_twiki_static(
             }
         )
 
-    # Insert in batches
-    batch_size = 500
-    created = 0
     with GraphClient() as gc:
-        for i in range(0, len(batch_data), batch_size):
-            batch = batch_data[i : i + batch_size]
-            result = gc.query(
-                """
-                UNWIND $pages AS page
-                MERGE (wp:WikiPage {id: page.id})
-                ON CREATE SET wp.title = page.title,
-                              wp.url = page.url,
-                              wp.facility_id = $facility,
-                              wp.status = $scanned,
-                              wp.link_depth = 1,
-                              wp.discovered_at = datetime(),
-                              wp.bulk_discovered = true
-                ON MATCH SET wp.bulk_discovered = true
-                RETURN count(wp) AS count
-                """,
-                pages=batch,
-                facility=facility,
-                scanned=WikiPageStatus.scanned.value,
-            )
-            if result:
-                created += result[0]["count"]
-
-            if on_progress:
-                on_progress(
-                    f"creating pages ({i + len(batch)}/{len(batch_data)})", None
-                )
+        created = _bulk_create_wiki_pages(
+            gc, facility, batch_data, on_progress=on_progress
+        )
 
     logger.info(f"Created/updated {created} pages in graph (scanned status)")
     if on_progress:
@@ -2166,36 +2153,10 @@ def bulk_discover_all_pages_static_html(
             }
         )
 
-    batch_size = 500
-    created = 0
     with GraphClient() as gc:
-        for i in range(0, len(batch_data), batch_size):
-            batch = batch_data[i : i + batch_size]
-            result = gc.query(
-                """
-                UNWIND $pages AS page
-                MERGE (wp:WikiPage {id: page.id})
-                ON CREATE SET wp.title = page.title,
-                              wp.url = page.url,
-                              wp.facility_id = $facility,
-                              wp.status = $scanned,
-                              wp.link_depth = 1,
-                              wp.discovered_at = datetime(),
-                              wp.bulk_discovered = true
-                ON MATCH SET wp.bulk_discovered = true
-                RETURN count(wp) AS count
-                """,
-                pages=batch,
-                facility=facility,
-                scanned=WikiPageStatus.scanned.value,
-            )
-            if result:
-                created += result[0]["count"]
-
-            if on_progress:
-                on_progress(
-                    f"creating pages ({i + len(batch)}/{len(batch_data)})", None
-                )
+        created = _bulk_create_wiki_pages(
+            gc, facility, batch_data, on_progress=on_progress
+        )
 
     logger.info(f"Created/updated {created} pages in graph (scanned status)")
     if on_progress:
@@ -2238,7 +2199,6 @@ def bulk_discover_artifacts(
         Number of artifacts discovered
     """
     from imas_codex.discovery.wiki.adapters import get_adapter
-    from imas_codex.graph.models import WikiArtifactStatus
 
     logger.debug(f"Starting bulk artifact discovery for {site_type}...")
 
@@ -2260,51 +2220,23 @@ def bulk_discover_artifacts(
 
     logger.debug(f"Discovered {len(artifacts)} artifacts")
 
-    # Create artifact nodes in graph
-    created = 0
+    # Create artifact nodes in graph using shared helper (UNWIND + FACILITY_ID)
+    batch_data = [
+        {
+            "id": f"{facility}:{a.filename}",
+            "filename": a.filename,
+            "url": a.url,
+            "artifact_type": a.artifact_type,
+            "size_bytes": a.size_bytes,
+            "mime_type": a.mime_type,
+        }
+        for a in artifacts
+    ]
+
     with GraphClient() as gc:
-        batch_size = 100
-        for i in range(0, len(artifacts), batch_size):
-            batch = artifacts[i : i + batch_size]
-            batch_data = [
-                {
-                    "id": f"{facility}:{a.filename}",
-                    "filename": a.filename,
-                    "url": a.url,
-                    "artifact_type": a.artifact_type,
-                    "size_bytes": a.size_bytes,
-                    "mime_type": a.mime_type,
-                }
-                for a in batch
-            ]
-
-            result = gc.query(
-                """
-                UNWIND $artifacts AS a
-                MERGE (wa:WikiArtifact {id: a.id})
-                ON CREATE SET wa.facility_id = $facility,
-                              wa.filename = a.filename,
-                              wa.url = a.url,
-                              wa.artifact_type = a.artifact_type,
-                              wa.size_bytes = a.size_bytes,
-                              wa.mime_type = a.mime_type,
-                              wa.status = $discovered,
-                              wa.discovered_at = datetime(),
-                              wa.bulk_discovered = true
-                ON MATCH SET wa.bulk_discovered = true
-                RETURN count(wa) AS count
-                """,
-                artifacts=batch_data,
-                facility=facility,
-                discovered=WikiArtifactStatus.discovered.value,
-            )
-            if result:
-                created += result[0]["count"]
-
-            if on_progress:
-                on_progress(
-                    f"created {i + len(batch)}/{len(artifacts)} artifacts", None
-                )
+        created = _bulk_create_wiki_artifacts(
+            gc, facility, batch_data, on_progress=on_progress
+        )
 
     logger.info(f"Created/updated {created} artifact nodes in graph")
     if on_progress:
@@ -3634,6 +3566,8 @@ def _create_discovered_pages(
 ) -> int:
     """Create pending page nodes for newly discovered links.
 
+    Uses UNWIND for efficient batch creation with FACILITY_ID relationships.
+
     Args:
         facility: Facility ID
         page_names: List of page names (not full URLs)
@@ -3648,36 +3582,37 @@ def _create_discovered_pages(
     if not page_names:
         return 0
 
-    # Deduplicate and check for existing pages
     from imas_codex.discovery.wiki.scraper import canonical_page_id
 
+    # Prepare batch data — construct URLs based on site type
+    batch_data = []
+    for name in page_names:
+        page_id = canonical_page_id(name, facility)
+
+        url = None
+        if base_url:
+            if site_type == "twiki":
+                name_with_web = name if "/" in name else f"Main/{name}"
+                url = f"{base_url}/bin/view/{name_with_web}"
+            elif site_type == "confluence":
+                url = f"{base_url}/display/{urllib.parse.quote(name, safe='/')}"
+            else:
+                url = f"{base_url}/index.php?title={urllib.parse.quote(name, safe='')}"
+
+        batch_data.append({"id": page_id, "title": name, "url": url})
+
+    # Batch UNWIND with FACILITY_ID relationship
     created = 0
+    batch_size = 500
     with GraphClient() as gc:
-        for name in page_names:
-            page_id = canonical_page_id(name, facility)
-
-            # Construct URL based on site type
-            url = None
-            if base_url:
-                if site_type == "twiki":
-                    if "/" not in name:
-                        name_with_web = f"Main/{name}"
-                    else:
-                        name_with_web = name
-                    url = f"{base_url}/bin/view/{name_with_web}"
-                elif site_type == "confluence":
-                    # name is a page title; use display URL format
-                    url = f"{base_url}/display/{urllib.parse.quote(name, safe='/')}"
-                else:
-                    # MediaWiki - use index.php format for consistency
-                    url = f"{base_url}/index.php?title={urllib.parse.quote(name, safe='')}"
-
-            # MERGE to avoid duplicates
+        for i in range(0, len(batch_data), batch_size):
+            batch = batch_data[i : i + batch_size]
             result = gc.query(
                 """
-                MERGE (wp:WikiPage {id: $id})
-                ON CREATE SET wp.title = $title,
-                              wp.url = $url,
+                UNWIND $pages AS page
+                MERGE (wp:WikiPage {id: page.id})
+                ON CREATE SET wp.title = page.title,
+                              wp.url = page.url,
                               wp.facility_id = $facility,
                               wp.status = $scanned,
                               wp.link_depth = $depth,
@@ -3685,17 +3620,18 @@ def _create_discovered_pages(
                 ON MATCH SET wp.link_depth = CASE
                     WHEN wp.link_depth IS NULL OR wp.link_depth > $depth
                     THEN $depth ELSE wp.link_depth END
-                RETURN wp.status AS status
+                WITH wp
+                MATCH (f:Facility {id: $facility})
+                MERGE (wp)-[:FACILITY_ID]->(f)
+                RETURN count(CASE WHEN wp.status = $scanned THEN 1 END) AS created
                 """,
-                id=page_id,
-                title=name,
-                url=url,
+                pages=batch,
                 facility=facility,
                 scanned=WikiPageStatus.scanned.value,
                 depth=depth,
             )
-            if result and result[0]["status"] == WikiPageStatus.scanned.value:
-                created += 1
+            if result:
+                created += result[0]["created"]
 
     return created
 
@@ -3753,7 +3689,11 @@ def _create_discovered_artifacts(
     artifact_links: list[tuple[str, str]],
     source_page_id: str | None = None,
 ) -> int:
-    """Create pending artifact nodes and link them to the source page.
+    """Create artifact nodes with FACILITY_ID and optional HAS_ARTIFACT link.
+
+    Uses UNWIND for efficient batch creation. Every artifact gets a
+    [:FACILITY_ID]->(:Facility) relationship. When source_page_id is
+    provided, also creates [:HAS_ARTIFACT] from the source WikiPage.
 
     Args:
         facility: Facility ID
@@ -3768,55 +3708,74 @@ def _create_discovered_artifacts(
     if not artifact_links:
         return 0
 
-    created = 0
-    with GraphClient() as gc:
-        for path, artifact_type in artifact_links:
-            filename = path.split("/")[-1]
-            artifact_id = f"{facility}:{filename}"
+    # Prepare batch data
+    batch_data = []
+    for path, artifact_type in artifact_links:
+        filename = path.split("/")[-1]
+        batch_data.append(
+            {
+                "id": f"{facility}:{filename}",
+                "filename": filename,
+                "url": path,
+                "artifact_type": artifact_type,
+            }
+        )
 
-            # Create artifact and link to source page in single query
+    created = 0
+    batch_size = 100
+    with GraphClient() as gc:
+        for i in range(0, len(batch_data), batch_size):
+            batch = batch_data[i : i + batch_size]
+
             if source_page_id:
-                gc.query(
+                # Create artifacts with FACILITY_ID + HAS_ARTIFACT from source page
+                result = gc.query(
                     """
-                    MERGE (wa:WikiArtifact {id: $id})
+                    UNWIND $artifacts AS a
+                    MERGE (wa:WikiArtifact {id: a.id})
                     ON CREATE SET wa.facility_id = $facility,
-                                  wa.filename = $filename,
-                                  wa.url = $path,
-                                  wa.artifact_type = $artifact_type,
+                                  wa.filename = a.filename,
+                                  wa.url = a.url,
+                                  wa.artifact_type = a.artifact_type,
                                   wa.status = $discovered,
                                   wa.discovered_at = datetime()
                     WITH wa
+                    MATCH (f:Facility {id: $facility})
+                    MERGE (wa)-[:FACILITY_ID]->(f)
+                    WITH wa
                     MATCH (wp:WikiPage {id: $page_id})
                     MERGE (wp)-[:HAS_ARTIFACT]->(wa)
+                    RETURN count(wa) AS count
                     """,
-                    id=artifact_id,
+                    artifacts=batch,
                     facility=facility,
-                    filename=filename,
-                    path=path,
-                    artifact_type=artifact_type,
                     discovered=WikiArtifactStatus.discovered.value,
                     page_id=source_page_id,
                 )
             else:
-                # Fallback for bulk discovery (no source page)
-                gc.query(
+                # Bulk discovery — no source page, still get FACILITY_ID
+                result = gc.query(
                     """
-                    MERGE (wa:WikiArtifact {id: $id})
+                    UNWIND $artifacts AS a
+                    MERGE (wa:WikiArtifact {id: a.id})
                     ON CREATE SET wa.facility_id = $facility,
-                                  wa.filename = $filename,
-                                  wa.url = $path,
-                                  wa.artifact_type = $artifact_type,
+                                  wa.filename = a.filename,
+                                  wa.url = a.url,
+                                  wa.artifact_type = a.artifact_type,
                                   wa.status = $discovered,
                                   wa.discovered_at = datetime()
+                    WITH wa
+                    MATCH (f:Facility {id: $facility})
+                    MERGE (wa)-[:FACILITY_ID]->(f)
+                    RETURN count(wa) AS count
                     """,
-                    id=artifact_id,
+                    artifacts=batch,
                     facility=facility,
-                    filename=filename,
-                    path=path,
-                    artifact_type=artifact_type,
                     discovered=WikiArtifactStatus.discovered.value,
                 )
-            created += 1
+
+            if result:
+                created += result[0]["count"]
 
     return created
 
