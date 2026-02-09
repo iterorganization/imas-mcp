@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 # Default configuration
 DEFAULT_PARTITION = "titan"
-DEFAULT_GPU_COUNT = 1
+DEFAULT_GPU_COUNT = 4
 DEFAULT_WALLTIME = "08:00:00"
 DEFAULT_IDLE_TIMEOUT = 1800  # 30 minutes
 DEFAULT_PORT = 18765
@@ -143,13 +143,16 @@ def _generate_sbatch_script(
     idle_timeout: int = DEFAULT_IDLE_TIMEOUT,
 ) -> str:
     """Generate the SLURM batch script for the embedding server."""
+    # Scale CPUs and memory with GPU count
+    cpus = max(4, gpu_count * 2)
+    mem_gb = max(16, gpu_count * 8)
     return textwrap.dedent(f"""\
         #!/bin/bash
         #SBATCH --job-name=imas-codex-embed
         #SBATCH --partition={partition}
         #SBATCH --gres=gpu:{gpu_count}
-        #SBATCH --cpus-per-task=4
-        #SBATCH --mem=16G
+        #SBATCH --cpus-per-task={cpus}
+        #SBATCH --mem={mem_gb}G
         #SBATCH --time={walltime}
         #SBATCH --output=$HOME/.imas-codex/slurm-embed-%j.log
         #SBATCH --error=$HOME/.imas-codex/slurm-embed-%j.log
@@ -158,7 +161,8 @@ def _generate_sbatch_script(
         echo "${{SLURM_JOB_NODELIST}}" > $HOME/.imas-codex/slurm-embed-node
         echo "${{SLURM_JOB_ID}}" > $HOME/.imas-codex/slurm-embed-jobid
 
-        export CUDA_VISIBLE_DEVICES=${{SLURM_LOCALID:-0}}
+        # Expose all allocated GPUs to the server
+        export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(({gpu_count} - 1)))
         export PATH="${{HOME}}/.local/bin:${{PATH}}"
 
         cd ${{HOME}}/Code/imas-codex

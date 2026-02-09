@@ -372,14 +372,27 @@ python("print(reload())")  # After editing imas_codex/ source files
 
 ## Embedding Server
 
-Uses SSH tunnel to ITER GPU cluster (port 18765, Qwen3-Embedding-0.6B, 1024-dim).
+SLURM-managed GPU server on titan partition (4x P100, Qwen3-Embedding-0.6B, 1024-dim).
+
+Architecture: `workstation → SSH tunnel → login:18765 → port forward → GPU node:18765`
 
 Establish tunnel: `ssh -f -N -L 18765:127.0.0.1:18765 iter`
 
+Auto-launch: The Encoder's `_try_slurm_auto_launch()` submits a SLURM job automatically
+when the remote server is unreachable. Manual management:
+
+```bash
+imas-codex serve embed slurm submit    # Submit job (default: 4 GPUs, 8h)
+imas-codex serve embed slurm status    # Check job and server health
+imas-codex serve embed slurm cancel    # Cancel job
+imas-codex serve embed slurm logs      # View server logs
+```
+
 If embedding fails, check in order:
 1. Tunnel active: `lsof -i :18765`
-2. Server running: `ssh iter "systemctl --user status imas-codex-embed"`
+2. SLURM job running: `ssh iter "squeue -u \\$USER -n imas-codex-embed"`
 3. Server health: `curl http://localhost:18765/health`
+4. Port forward: `ssh iter "pgrep -fa 'ssh.*-L.*18765'"`
 
 ## Domain Workflows
 

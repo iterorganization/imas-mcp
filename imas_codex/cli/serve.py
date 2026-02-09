@@ -574,9 +574,9 @@ def serve_embed_slurm() -> None:
 )
 @click.option(
     "--gpu-count",
-    default=1,
+    default=4,
     type=int,
-    help="Number of GPUs to request (default: 1)",
+    help="Number of GPUs to request (default: 4)",
 )
 @click.option(
     "--walltime",

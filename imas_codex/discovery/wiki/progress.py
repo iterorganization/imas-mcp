@@ -537,15 +537,15 @@ class WikiProgressDisplay:
         # Embedding source indicator (live - changes if fallback triggered)
         embed_source = get_embedding_source()
         if embed_source.startswith("iter-"):
-            section.append(f"    embed:{embed_source}", style="green")
+            section.append(f"  embed:{embed_source}", style="green")
         elif embed_source == "remote":
-            section.append("    embed:remote", style="green")
+            section.append("  embed:remote", style="green")
         elif embed_source == "openrouter":
-            section.append("    embed:openrouter", style="yellow")
+            section.append("  embed:openrouter", style="yellow")
         elif embed_source == "local":
-            section.append("    embed:local", style="cyan")
+            section.append("  embed:local", style="cyan")
         else:
-            section.append(f"    embed:{embed_source}", style="dim")
+            section.append(f"  embed:{embed_source}", style="dim")
 
         return section
 
