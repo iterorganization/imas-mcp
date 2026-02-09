@@ -49,8 +49,12 @@ class TestEncoder:
         """Encoder initializes with explicit local backend config.
 
         When backend is LOCAL, model loads eagerly.
+        Uses all-MiniLM-L6-v2 (~80MB) instead of the production model.
         """
-        config = EncoderConfig(backend=EmbeddingBackend.LOCAL)
+        config = EncoderConfig(
+            model_name="all-MiniLM-L6-v2",
+            backend=EmbeddingBackend.LOCAL,
+        )
         encoder = Encoder(config=config)
         assert encoder.config is not None
         # Model loads eagerly when backend is local
