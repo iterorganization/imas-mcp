@@ -82,3 +82,4 @@ docs/TOOL_IMPROVEMENT_PLAN.md
 *.tmp
 imas_codex/graph/dd_models.py
 .aider*
+*.tar.gz
