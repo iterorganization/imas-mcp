@@ -53,6 +53,7 @@ def main(ctx: click.Context, version: bool) -> None:
 def register_commands() -> None:
     """Register all command groups with the main CLI."""
     from imas_codex.cli.clusters import clusters
+    from imas_codex.cli.credentials import credentials
     from imas_codex.cli.data import data
     from imas_codex.cli.discover import discover
     from imas_codex.cli.embed import embed
@@ -81,6 +82,7 @@ def register_commands() -> None:
     main.add_command(release)
     main.add_command(setup_age)
     main.add_command(wiki)
+    main.add_command(credentials)
 
 
 # Register commands at import time

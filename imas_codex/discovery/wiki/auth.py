@@ -183,7 +183,7 @@ class CredentialManager:
         except concurrent.futures.TimeoutError:
             logger.warning(
                 "Keyring operation timed out after %ds - may need unlock. "
-                "See: imas-codex wiki credentials status",
+                "See: imas-codex credentials status",
                 self.KEYRING_TIMEOUT,
             )
             return None
@@ -230,7 +230,7 @@ class CredentialManager:
             else:
                 logger.error(
                     "Failed to store credentials - keyring may need unlock. "
-                    "Run: imas-codex wiki credentials status"
+                    "Run: imas-codex credentials status"
                 )
                 return False
         except Exception as e:
@@ -535,7 +535,7 @@ def require_credentials(site: str) -> tuple[str, str]:
     if result is None:
         print(f"\n❌ Credentials required for: {site}")
         print("\nTo set up credentials, run:")
-        print(f"  imas-codex wiki credentials set {site}")
+        print(f"  imas-codex credentials set {site}")
         print("\nOr set environment variables:")
         env_user = creds._env_var_name(site, "username")
         env_pass = creds._env_var_name(site, "password")

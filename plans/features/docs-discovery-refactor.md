@@ -327,7 +327,7 @@ imas-codex wiki score tcv           # LLM evaluation
 imas-codex wiki ingest tcv          # Content processing
 imas-codex wiki status tcv          # Progress
 imas-codex wiki sites tcv           # List sources
-imas-codex wiki credentials set ... # Auth management
+imas-codex credentials set ... # Auth management
 ```
 
 ### New discover docs CLI
@@ -347,7 +347,7 @@ imas-codex discover sources add ...          # Existing
 imas-codex discover status tcv --domain docs
 
 # Credential management (stays under wiki for now)
-imas-codex wiki credentials set iter-confluence
+imas-codex credentials set iter-confluence
 ```
 
 ### Implementation Plan
@@ -424,6 +424,6 @@ from imas_codex.discovery.docs.pipeline import DocsIngestionPipeline
 3. **Language detection**: Detect before embedding or let model handle?
    - Qwen3 handles mixed-language natively, no detection needed
 
-4. **Credential migration**: Keep under `wiki credentials` or move?
-   - Keep as-is, credentials work for all sources
+4. **Credential migration**: ~~Keep under `wiki credentials` or move?~~ Moved to top-level `credentials` command.
+   - Credentials are service-agnostic, not wiki-specific
 

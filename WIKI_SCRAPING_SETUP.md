@@ -59,11 +59,11 @@ Expected output: `keyring.backends.SecretService.Keyring (priority: 5)` on Linux
 
 ```bash
 # For ITER Confluence
-uv run imas-codex wiki credentials set iter-confluence
+uv run imas-codex credentials set iter-confluence
 # Prompts for username and password
 
 # Verify credentials are stored
-uv run imas-codex wiki credentials get iter-confluence
+uv run imas-codex credentials get iter-confluence
 ```
 
 ### 3. List Configured Sites
@@ -96,13 +96,13 @@ uv run imas-codex wiki ingest iter
 
 ```bash
 # Set credentials for a site
-uv run imas-codex wiki credentials set iter-confluence
+uv run imas-codex credentials set iter-confluence
 
 # Check if credentials exist
-uv run imas-codex wiki credentials get iter-confluence
+uv run imas-codex credentials get iter-confluence
 
 # Delete credentials
-uv run imas-codex wiki credentials delete iter-confluence --yes
+uv run imas-codex credentials delete iter-confluence --yes
 ```
 
 ## Credential Security
@@ -157,12 +157,12 @@ uv run imas-codex wiki credentials delete iter-confluence --yes
 # Settings → Personal Settings → API Tokens → Create API Token
 
 # 2. Store credentials
-uv run imas-codex wiki credentials set iter-confluence
+uv run imas-codex credentials set iter-confluence
 # Username: your_username
 # Password: your_api_token
 
 # 3. Verify
-uv run imas-codex wiki credentials get iter-confluence
+uv run imas-codex credentials get iter-confluence
 
 # 4. Start discovery
 uv run imas-codex wiki discover iter
@@ -239,8 +239,8 @@ Error: Authentication required or session expired
 **Solution**: Delete cached session and re-authenticate:
 
 ```bash
-uv run imas-codex wiki credentials delete iter-confluence
-uv run imas-codex wiki credentials set iter-confluence
+uv run imas-codex credentials delete iter-confluence
+uv run imas-codex credentials set iter-confluence
 ```
 
 ### Confluence API Errors

@@ -1376,7 +1376,7 @@ def discover_wiki(
             if creds is None:
                 log_print(
                     f"[red]Credentials required for {credential_service}.[/red]\n"
-                    f"Set them with: imas-codex wiki credentials set {credential_service}\n"
+                    f"Set them with: imas-codex credentials set {credential_service}\n"
                     f"Or set environment variables:\n"
                     f"  export {cred_mgr._env_var_name(credential_service, 'username')}=your_username\n"
                     f"  export {cred_mgr._env_var_name(credential_service, 'password')}=your_password"

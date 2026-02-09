@@ -35,7 +35,7 @@ data_sources:
 
 # Wiki/documentation sites
 # Direct HTTP access via Tequila SSO (EPFL authentication)
-# Set credentials: imas-codex wiki credentials set tcv-wiki
+# Set credentials: imas-codex credentials set tcv-wiki
 wiki_sites:
   - url: https://spcwiki.epfl.ch/wiki
     portal_page: Portal:TCV
