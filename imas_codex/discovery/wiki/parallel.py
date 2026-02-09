@@ -133,9 +133,13 @@ class WikiDiscoveryState:
     _async_wiki_client: Any = field(default=None, repr=False)
     _async_wiki_client_lock: Any = field(default=None, repr=False)
 
-    # Shared Keycloak async client (for keycloak/basic auth)
+    # Shared Keycloak async client (for keycloak auth via oauth2-proxy)
     _keycloak_client: Any = field(default=None, repr=False)
     _keycloak_client_lock: Any = field(default=None, repr=False)
+
+    # Shared HTTP Basic auth async client (for basic auth wikis like JET)
+    _basic_auth_client: Any = field(default=None, repr=False)
+    _basic_auth_client_lock: Any = field(default=None, repr=False)
 
     # Limits
     cost_limit: float = 10.0
@@ -325,7 +329,7 @@ class WikiDiscoveryState:
             self._async_wiki_client = None
 
     async def get_keycloak_client(self) -> Any:
-        """Get shared AsyncKeycloakSession for Keycloak/Basic auth.
+        """Get shared AsyncKeycloakSession for Keycloak OIDC auth.
 
         Lazily initializes a Keycloak OIDC session that persists cookies
         across all page fetches. One login authenticates across all wiki
@@ -362,6 +366,65 @@ class WikiDiscoveryState:
             except Exception:
                 pass
             self._keycloak_client = None
+
+    async def get_basic_auth_client(self) -> Any:
+        """Get shared httpx.AsyncClient with HTTP Basic auth.
+
+        For wikis that use standard HTTP Basic authentication (RFC 7617),
+        e.g. JET wiki sites at wiki.jetdata.eu.
+
+        Returns:
+            httpx.AsyncClient with BasicAuth or None if credentials unavailable.
+        """
+        if self._basic_auth_client is None:
+            import httpx
+
+            from imas_codex.discovery.wiki.auth import CredentialManager
+
+            if self._basic_auth_client_lock is None:
+                self._basic_auth_client_lock = asyncio.Lock()
+
+            async with self._basic_auth_client_lock:
+                if self._basic_auth_client is None:
+                    cred_mgr = CredentialManager()
+                    service = self.credential_service or self.facility
+                    creds = cred_mgr.get_credentials(service, prompt_if_missing=False)
+                    if not creds:
+                        logger.warning(
+                            "No credentials for %s - cannot use HTTP Basic auth",
+                            service,
+                        )
+                        return None
+                    username, password = creds
+                    self._basic_auth_client = httpx.AsyncClient(
+                        auth=httpx.BasicAuth(username, password),
+                        timeout=httpx.Timeout(60.0),
+                        follow_redirects=True,
+                        verify=False,
+                        headers={
+                            "User-Agent": "imas-codex/1.0 (IMAS Data Mapping Tool)",
+                            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                        },
+                        limits=httpx.Limits(
+                            max_connections=20,
+                            max_keepalive_connections=10,
+                        ),
+                    )
+                    logger.info(
+                        "Initialized shared HTTP Basic auth client for %s",
+                        service,
+                    )
+
+        return self._basic_auth_client
+
+    async def close_basic_auth_client(self):
+        """Close the shared HTTP Basic auth client."""
+        if self._basic_auth_client is not None:
+            try:
+                await self._basic_auth_client.aclose()
+            except Exception:
+                pass
+            self._basic_auth_client = None
 
 
 # Artifact types we can extract text from
@@ -1770,7 +1833,178 @@ def bulk_discover_all_pages_keycloak(
 
 
 # Keep old name as alias for backwards compatibility in CLI imports
-bulk_discover_all_pages_basic_auth = bulk_discover_all_pages_keycloak
+# bulk_discover_all_pages_basic_auth uses HTTP Basic auth (RFC 7617)
+# while bulk_discover_all_pages_keycloak uses Keycloak OIDC
+
+
+def bulk_discover_all_pages_basic_auth(
+    facility: str,
+    base_url: str,
+    credential_service: str,
+    on_progress: Callable | None = None,
+    session: Any = None,
+) -> int:
+    """Bulk discover all wiki pages via MediaWiki API with HTTP Basic auth.
+
+    Uses the MediaWiki API (api.php?action=query&list=allpages) which is
+    the fastest and most reliable method. HTTP Basic auth credentials are
+    sent with every request via the Authorization header.
+
+    Args:
+        facility: Facility ID
+        base_url: Wiki base URL (e.g., "https://wiki.jetdata.eu/pog")
+        credential_service: Keyring service name for credentials
+        on_progress: Progress callback
+        session: Pre-authenticated requests.Session (optional)
+
+    Returns:
+        Number of pages discovered
+    """
+    import json as json_mod
+
+    import requests as req
+
+    logger.info("Starting bulk page discovery via API (HTTP Basic auth)...")
+
+    # Use provided session or create one with Basic auth
+    close_session = False
+    if session is None:
+        from imas_codex.discovery.wiki.auth import CredentialManager
+
+        cred_mgr = CredentialManager()
+        creds = cred_mgr.get_credentials(credential_service, prompt_if_missing=False)
+        if not creds:
+            logger.error(
+                "No credentials for %s - set with: imas-codex credentials set %s",
+                credential_service,
+                credential_service,
+            )
+            return 0
+
+        username, password = creds
+        session = req.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update(
+            {"User-Agent": "imas-codex/1.0 (IMAS Data Mapping Tool)"}
+        )
+        close_session = True
+
+    try:
+        # Use MediaWiki API to enumerate all pages (fastest method)
+        all_pages: set[str] = set()
+        apcontinue = None
+
+        while True:
+            api_url = (
+                f"{base_url}/api.php?action=query&list=allpages&aplimit=500&format=json"
+            )
+            if apcontinue:
+                api_url += f"&apcontinue={urllib.parse.quote(apcontinue)}"
+
+            try:
+                response = session.get(api_url, timeout=30)
+                if response.status_code == 401:
+                    logger.error(
+                        "HTTP 401 Unauthorized for %s - check credentials", base_url
+                    )
+                    break
+                if response.status_code != 200:
+                    logger.warning(
+                        "API returned HTTP %d for %s", response.status_code, base_url
+                    )
+                    break
+                data = json_mod.loads(response.text)
+            except Exception as e:
+                logger.warning("Error fetching API for %s: %s", base_url, e)
+                break
+
+            pages = data.get("query", {}).get("allpages", [])
+            for page in pages:
+                title = page.get("title", "")
+                if title and not any(
+                    title.startswith(prefix)
+                    for prefix in (
+                        "Special:",
+                        "File:",
+                        "Talk:",
+                        "User:",
+                        "Template:",
+                        "Category:",
+                        "Help:",
+                        "MediaWiki:",
+                    )
+                ):
+                    all_pages.add(title)
+
+            if on_progress:
+                on_progress(f"{len(all_pages)} pages discovered", None)
+
+            # Check for continuation
+            cont = data.get("continue", {})
+            apcontinue = cont.get("apcontinue")
+            if not apcontinue:
+                break
+
+        logger.info("Discovered %d unique pages from %s", len(all_pages), base_url)
+        if not all_pages:
+            return 0
+
+        # Create all pages in graph as 'scanned' status
+        from imas_codex.discovery.wiki.scraper import canonical_page_id
+
+        batch_data = []
+        for page_name in all_pages:
+            page_id = canonical_page_id(page_name, facility)
+            url = f"{base_url}/{urllib.parse.quote(page_name, safe='/')}"
+            batch_data.append(
+                {
+                    "id": page_id,
+                    "title": page_name,
+                    "url": url,
+                }
+            )
+
+        batch_size = 500
+        created = 0
+        with GraphClient() as gc:
+            for i in range(0, len(batch_data), batch_size):
+                batch = batch_data[i : i + batch_size]
+                result = gc.query(
+                    """
+                    UNWIND $pages AS page
+                    MERGE (wp:WikiPage {id: page.id})
+                    ON CREATE SET wp.title = page.title,
+                                  wp.url = page.url,
+                                  wp.facility_id = $facility,
+                                  wp.status = $scanned,
+                                  wp.link_depth = 1,
+                                  wp.discovered_at = datetime(),
+                                  wp.bulk_discovered = true
+                    ON MATCH SET wp.bulk_discovered = true
+                    RETURN count(wp) AS count
+                    """,
+                    pages=batch,
+                    facility=facility,
+                    scanned=WikiPageStatus.scanned.value,
+                )
+                if result:
+                    created += result[0]["count"]
+
+                if on_progress:
+                    on_progress(
+                        f"creating pages ({i + len(batch)}/{len(batch_data)})", None
+                    )
+
+        logger.info("Created/updated %d pages in graph (scanned status)", created)
+        if on_progress:
+            on_progress(f"created {created} pages", None)
+
+        return created
+
+    finally:
+        if close_session:
+            session.close()
 
 
 # =============================================================================
@@ -2474,11 +2708,13 @@ async def score_worker(
         if state.auth_type in ("tequila", "session")
         else None
     )
-    # Get shared Keycloak client for keycloak/basic auth
+    # Get shared Keycloak client for keycloak auth (OIDC via oauth2-proxy)
     shared_keycloak_client = (
-        await state.get_keycloak_client()
-        if state.auth_type in ("keycloak", "basic")
-        else None
+        await state.get_keycloak_client() if state.auth_type == "keycloak" else None
+    )
+    # Get shared HTTP Basic auth client (e.g. JET wikis)
+    shared_basic_auth_client = (
+        await state.get_basic_auth_client() if state.auth_type == "basic" else None
     )
     logger.debug(f"score_worker {worker_id}: got async wiki client")
 
@@ -2495,6 +2731,7 @@ async def score_worker(
                     max_chars=1500,  # Reduced for scoring
                     async_wiki_client=shared_async_wiki_client,  # Native async HTTP
                     keycloak_client=shared_keycloak_client,
+                    basic_auth_client=shared_basic_auth_client,
                 )
                 return {
                     "id": page["id"],
@@ -2628,11 +2865,13 @@ async def ingest_worker(
         if state.auth_type in ("tequila", "session")
         else None
     )
-    # Get shared Keycloak client for keycloak/basic auth
+    # Get shared Keycloak client for keycloak auth (OIDC via oauth2-proxy)
     shared_keycloak_client = (
-        await state.get_keycloak_client()
-        if state.auth_type in ("keycloak", "basic")
-        else None
+        await state.get_keycloak_client() if state.auth_type == "keycloak" else None
+    )
+    # Get shared HTTP Basic auth client (e.g. JET wikis)
+    shared_basic_auth_client = (
+        await state.get_basic_auth_client() if state.auth_type == "basic" else None
     )
 
     # Semaphore to limit concurrent page ingestion
@@ -2656,6 +2895,7 @@ async def ingest_worker(
                     credential_service=state.credential_service,
                     async_wiki_client=shared_async_wiki_client,
                     keycloak_client=shared_keycloak_client,
+                    basic_auth_client=shared_basic_auth_client,
                 )
                 return {
                     "id": page_id,
@@ -3571,6 +3811,7 @@ async def _fetch_and_summarize(
     max_chars: int = 2000,
     async_wiki_client: Any = None,
     keycloak_client: Any = None,
+    basic_auth_client: Any = None,
 ) -> str:
     """Fetch page content and extract text preview.
 
@@ -3585,6 +3826,7 @@ async def _fetch_and_summarize(
         max_chars: Maximum characters to extract (default 2000, use 1500 for scoring)
         async_wiki_client: Shared AsyncMediaWikiClient for Tequila auth
         keycloak_client: Shared httpx.AsyncClient for Keycloak auth
+        basic_auth_client: Shared httpx.AsyncClient with HTTP Basic auth
 
     Returns:
         Extracted text preview or empty string on error
@@ -3668,13 +3910,33 @@ async def _fetch_and_summarize(
             logger.debug("Keycloak fetch failed for %s: %s", url, e)
             return ""
 
+    async def _async_basic_auth_fetch() -> str:
+        """Fetch with HTTP Basic auth using shared httpx.AsyncClient."""
+        if basic_auth_client is None:
+            logger.warning("No HTTP Basic auth client available for %s", url)
+            return ""
+        try:
+            response = await basic_auth_client.get(url)
+            if response.status_code == 200:
+                return response.text
+            logger.debug(
+                "Basic auth fetch returned HTTP %d for %s", response.status_code, url
+            )
+            return ""
+        except Exception as e:
+            logger.debug("Basic auth fetch failed for %s: %s", url, e)
+            return ""
+
     # Determine fetch strategy - prefer direct HTTP over SSH when credentials available
     if auth_type in ("tequila", "session"):
         # Fetch via Tequila SSO authentication using native async HTTP
         html = await _async_tequila_fetch()
-    elif auth_type in ("keycloak", "basic") and keycloak_client:
+    elif auth_type == "keycloak" and keycloak_client:
         # Fetch via Keycloak OIDC with shared session
         html = await _async_keycloak_fetch()
+    elif auth_type == "basic" and basic_auth_client:
+        # Fetch via HTTP Basic auth (e.g. JET wikis)
+        html = await _async_basic_auth_fetch()
     elif ssh_host:
         # Fetch via SSH proxy using curl in thread pool (subprocess is blocking)
         html = await asyncio.to_thread(_ssh_fetch)
@@ -3975,6 +4237,7 @@ async def _ingest_page(
     credential_service: str | None = None,
     async_wiki_client: Any = None,
     keycloak_client: Any = None,
+    basic_auth_client: Any = None,
 ) -> int:
     """Ingest a page: fetch content, chunk, and embed.
 
@@ -3990,6 +4253,7 @@ async def _ingest_page(
         credential_service: Keyring service for credentials
         async_wiki_client: Optional shared AsyncMediaWikiClient for Tequila auth
         keycloak_client: Optional shared httpx.AsyncClient for Keycloak auth
+        basic_auth_client: Optional shared httpx.AsyncClient with HTTP Basic auth
 
     Returns:
         Number of chunks created
@@ -4008,6 +4272,7 @@ async def _ingest_page(
         credential_service=credential_service,
         async_wiki_client=async_wiki_client,
         keycloak_client=keycloak_client,
+        basic_auth_client=basic_auth_client,
     )
     if not html or len(html) < 100:
         logger.warning("Insufficient content for %s", page_id)
@@ -4058,6 +4323,7 @@ async def _fetch_html(
     credential_service: str | None = None,
     async_wiki_client: Any = None,
     keycloak_client: Any = None,
+    basic_auth_client: Any = None,
 ) -> str:
     """Fetch HTML content from URL.
 
@@ -4068,6 +4334,7 @@ async def _fetch_html(
         credential_service: Keyring service for credentials
         async_wiki_client: Shared AsyncMediaWikiClient for Tequila auth
         keycloak_client: Shared httpx.AsyncClient for Keycloak auth
+        basic_auth_client: Shared httpx.AsyncClient with HTTP Basic auth
 
     Returns:
         HTML content string or empty string on error
@@ -4149,11 +4416,30 @@ async def _fetch_html(
             logger.debug("Keycloak fetch failed for %s: %s", url, e)
             return ""
 
+    async def _async_basic_auth_fetch() -> str:
+        """Fetch with HTTP Basic auth using shared httpx.AsyncClient."""
+        if basic_auth_client is None:
+            logger.warning("No HTTP Basic auth client available for %s", url)
+            return ""
+        try:
+            response = await basic_auth_client.get(url)
+            if response.status_code == 200:
+                return response.text
+            logger.debug(
+                "Basic auth fetch returned HTTP %d for %s", response.status_code, url
+            )
+            return ""
+        except Exception as e:
+            logger.debug("Basic auth fetch failed for %s: %s", url, e)
+            return ""
+
     # Determine fetch strategy - prefer direct HTTP over SSH when credentials available
     if auth_type in ("tequila", "session"):
         return await _async_tequila_fetch()
-    elif auth_type in ("keycloak", "basic") and keycloak_client:
+    elif auth_type == "keycloak" and keycloak_client:
         return await _async_keycloak_fetch()
+    elif auth_type == "basic" and basic_auth_client:
+        return await _async_basic_auth_fetch()
     elif ssh_host:
         return await asyncio.to_thread(_ssh_fetch)
     else:
@@ -4500,6 +4786,8 @@ async def run_parallel_wiki_discovery(
 
     # Clean up async wiki client
     await state.close_async_wiki_client()
+    await state.close_keycloak_client()
+    await state.close_basic_auth_client()
 
     elapsed = time.time() - start_time
 

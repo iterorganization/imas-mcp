@@ -1425,6 +1425,7 @@ def discover_wiki(
         if should_bulk_discover and not score_only:
             if site_type == "mediawiki":
                 from imas_codex.discovery.wiki.parallel import (
+                    bulk_discover_all_pages_basic_auth,
                     bulk_discover_all_pages_http,
                     bulk_discover_all_pages_keycloak,
                     bulk_discover_all_pages_mediawiki,
@@ -1458,6 +1459,13 @@ def discover_wiki(
                                 bulk_progress_rich,
                             )
                         elif auth_type == "basic" and credential_service:
+                            bulk_discovered = bulk_discover_all_pages_basic_auth(
+                                facility,
+                                base_url,
+                                credential_service,
+                                bulk_progress_rich,
+                            )
+                        elif auth_type == "keycloak" and credential_service:
                             bulk_discovered = bulk_discover_all_pages_keycloak(
                                 facility,
                                 base_url,
@@ -1482,6 +1490,13 @@ def discover_wiki(
                             bulk_progress_log,
                         )
                     elif auth_type == "basic" and credential_service:
+                        bulk_discovered = bulk_discover_all_pages_basic_auth(
+                            facility,
+                            base_url,
+                            credential_service,
+                            bulk_progress_log,
+                        )
+                    elif auth_type == "keycloak" and credential_service:
                         bulk_discovered = bulk_discover_all_pages_keycloak(
                             facility,
                             base_url,
