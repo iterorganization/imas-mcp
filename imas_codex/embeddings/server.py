@@ -136,33 +136,41 @@ async def lifespan(app: FastAPI):
     _gpu_count = _get_cuda_device_count()
 
     load_time = time.time() - start
-    model_device = _encoder.get_model().device
-    logger.info(f"Model {model_name} loaded on {model_device} in {load_time:.1f}s")
+    logger.info(
+        "Model %s loaded in %.1fs (device_info=%s)",
+        model_name,
+        load_time,
+        _encoder.device_info,
+    )
 
-    # Multi-GPU handling: device_map="auto" distributes the model across
-    # GPUs automatically (for large models like 8B). In that case, the
-    # model.device reports 'cpu' or the first device, but inference uses
-    # all mapped GPUs. Don't try encode_multi_process which duplicates
-    # the model (4 copies × 16GB = 64GB, won't fit on 4×16GB P100s).
-    # Only use multi-process pool if the model fits on a single GPU.
-    if _gpu_count > 1 and str(model_device).startswith("cuda"):
-        try:
-            model = _encoder.get_model()
-            devices = [f"cuda:{i}" for i in range(_gpu_count)]
-            _multi_process_pool = model.start_multi_process_pool(devices)
-            logger.info("Multi-GPU pool started: %d GPUs %s", _gpu_count, devices)
-        except Exception as e:
-            logger.warning("Failed to start multi-GPU pool, using single GPU: %s", e)
-            _multi_process_pool = None
-            _gpu_count = 1
-    else:
-        if _gpu_count > 1:
-            logger.info(
-                "Model distributed across GPUs via device_map (gpu_count=%d)",
-                _gpu_count,
-            )
+    # Multi-GPU handling:
+    #  - device_map="auto": model distributed across GPUs automatically.
+    #    The pooling module is patched in encoder.py. No multi-process pool.
+    #  - Single-GPU per process: use encode_multi_process to parallelise
+    #    across GPU workers (only if model fits on one GPU).
+    if _encoder._uses_device_map:
+        logger.info(
+            "Model distributed via device_map across %d GPUs (pooling patched)",
+            _gpu_count,
+        )
+    elif _gpu_count > 1:
+        model_device = _encoder.get_model().device
+        if str(model_device).startswith("cuda"):
+            try:
+                model = _encoder.get_model()
+                devices = [f"cuda:{i}" for i in range(_gpu_count)]
+                _multi_process_pool = model.start_multi_process_pool(devices)
+                logger.info("Multi-GPU pool started: %d GPUs %s", _gpu_count, devices)
+            except Exception as e:
+                logger.warning(
+                    "Failed to start multi-GPU pool, using single GPU: %s", e
+                )
+                _multi_process_pool = None
+                _gpu_count = 1
         else:
             logger.info("Single GPU mode (gpu_count=%d)", _gpu_count)
+    else:
+        logger.info("Single GPU mode (gpu_count=%d)", _gpu_count)
 
     # Start idle watchdog if timeout is configured
     _shutdown_event = asyncio.Event()
@@ -231,13 +239,16 @@ def create_app() -> FastAPI:
         if _encoder is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
 
-        model = _encoder.get_model()
         gpu_name, gpu_memory = _get_gpu_info()
+
+        # Report actual device usage, not model.device (which may say
+        # 'cpu' when device_map distributes across GPUs).
+        device_str = _encoder.device_info
 
         return HealthResponse(
             status="healthy",
             model=_encoder.config.model_name,
-            device=str(model.device),
+            device=device_str,
             gpu_name=gpu_name,
             gpu_memory_mb=gpu_memory,
             gpu_count=_gpu_count,
@@ -310,7 +321,8 @@ def create_app() -> FastAPI:
         return {
             "model": {
                 "name": _encoder.config.model_name,
-                "device": str(model.device),
+                "device": _encoder.device_info,
+                "device_map": _encoder._uses_device_map,
                 "embedding_dimension": model.get_sentence_embedding_dimension(),
             },
             "gpu": {

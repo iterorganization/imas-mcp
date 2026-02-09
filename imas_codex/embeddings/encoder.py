@@ -80,6 +80,7 @@ class Encoder:
         self._using_fallback: bool = False
         self._fallback_backend: str | None = None  # "local" or "openrouter"
         self._remote_hostname: str | None = None
+        self._uses_device_map: bool = False
 
         # Cost tracking for OpenRouter backend
         self.cost_tracker = cost_tracker or EmbeddingCostTracker()
@@ -827,26 +828,29 @@ class Encoder:
         1. Resolve model to local snapshot path (project cache or HF hub cache)
         2. Fall back to downloading from HuggingFace (requires internet)
 
-        For CUDA devices, uses float16 with ``device_map="auto"`` to
-        automatically distribute large models across all available GPUs.
-        This is critical for 8B+ parameter models that don't fit on a
-        single P100 (16GB VRAM).
+        For CUDA devices, uses float16. When multiple GPUs are available,
+        uses ``device_map="auto"`` to distribute the model across all GPUs
+        with a pooling patch to handle cross-device tensor alignment.
         """
         ST = self._import_sentence_transformers()
         model_kwargs: dict = {}
         device = self.config.device
+        use_device_map = False
 
         if device and "cuda" in device:
             import torch
 
             # float16 for GPU — P100 doesn't support bfloat16 natively.
             model_kwargs["torch_dtype"] = torch.float16
-            # device_map="auto" distributes the model across all available
-            # GPUs when it doesn't fit on a single one (8B model ≈ 16.4GB,
-            # P100 VRAM = 16GB). SentenceTransformer device must be None
-            # to avoid conflicting with device_map.
-            model_kwargs["device_map"] = "auto"
-            device = None  # Let device_map handle placement
+            model_kwargs["low_cpu_mem_usage"] = True
+
+            if torch.cuda.device_count() > 1:
+                # Distribute model across all available GPUs via accelerate.
+                # Critical for 8B+ models that exceed single GPU VRAM
+                # (Qwen3-Embedding-8B fp16 ≈ 16.4GB > P100 16GB).
+                model_kwargs["device_map"] = "auto"
+                device = None  # Let device_map handle placement
+                use_device_map = True
         else:
             model_kwargs["torch_dtype"] = "auto"
 
@@ -868,31 +872,115 @@ class Encoder:
                     device=device,
                     model_kwargs=model_kwargs,
                 )
+            else:
+                # No local cache found — download from HuggingFace
                 self.logger.debug(
-                    f"Model {self.config.model_name} loaded from {resolved} "
-                    f"on device: {self._model.device}"
+                    f"No local cache for {self.config.model_name}, downloading..."
                 )
-                return
+                self._model = ST(
+                    self.config.model_name,
+                    device=device,
+                    cache_folder=cache_folder,
+                    local_files_only=False,
+                    model_kwargs=model_kwargs,
+                )
 
-            # No local cache found — download from HuggingFace
+            # Patch pooling module for cross-device alignment when using
+            # device_map. Without this, SentenceTransformer's Pooling sees
+            # attention_mask on CPU (from batch_to_device) but
+            # token_embeddings on the last backbone layer's GPU.
+            if use_device_map:
+                self._patch_pooling_for_device_map()
+                self._uses_device_map = True
+
             self.logger.debug(
-                f"No local cache for {self.config.model_name}, downloading..."
-            )
-            self._model = ST(
+                "Model %s loaded (device=%s, device_map=%s)",
                 self.config.model_name,
-                device=device,
-                cache_folder=cache_folder,
-                local_files_only=False,
-                model_kwargs=model_kwargs,
-            )
-            self.logger.debug(
-                f"Downloaded model {self.config.model_name} on device: {self._model.device}"
+                self._model.device,
+                use_device_map,
             )
         except Exception as e:  # pragma: no cover
             self.logger.error(f"Failed to load model {self.config.model_name}: {e}")
             raise EmbeddingBackendError(
                 f"Failed to load embedding model '{self.config.model_name}': {e}"
             ) from e
+
+    def _patch_pooling_for_device_map(self) -> None:
+        """Patch SentenceTransformer's Pooling for ``device_map='auto'``.
+
+        With ``device_map``, the transformer backbone distributes layers
+        across GPUs.  After the forward pass ``token_embeddings`` lands on
+        the last layer's device, but ``attention_mask`` stays on the input
+        device (CPU, because SentenceTransformer sets ``_target_device`` to
+        CPU when device_map is active).  The Pooling module then tries to
+        combine them — causing a cross-device RuntimeError.
+
+        This patch wraps the Pooling module's ``forward`` to move all
+        feature tensors onto the same device as ``token_embeddings``
+        before pooling.
+        """
+        import torch
+
+        model = self._model
+        if model is None:
+            return
+
+        # Find the Pooling module (typically index 1 in the pipeline)
+        pooling_module = None
+        pooling_idx = None
+        for i, module in enumerate(model):
+            if type(module).__name__ == "Pooling":
+                pooling_module = module
+                pooling_idx = i
+                break
+
+        if pooling_module is None:
+            self.logger.warning(
+                "No Pooling module found in SentenceTransformer pipeline; "
+                "device alignment patch skipped"
+            )
+            return
+
+        original_forward = pooling_module.forward
+
+        def _aligned_forward(
+            features: dict[str, Any],
+        ) -> dict[str, Any]:
+            token_emb = features.get("token_embeddings")
+            if token_emb is not None:
+                target = token_emb.device
+                features = {
+                    k: v.to(target) if isinstance(v, torch.Tensor) else v
+                    for k, v in features.items()
+                }
+            return original_forward(features)
+
+        pooling_module.forward = _aligned_forward  # type: ignore[method-assign]
+        self.logger.debug(
+            "Patched Pooling module (index %d) for device_map cross-device alignment",
+            pooling_idx,
+        )
+
+    @property
+    def device_info(self) -> str:
+        """Human-readable device description for health reporting.
+
+        Returns something like ``"4x Tesla P100-PCIE-16GB (device_map)"``
+        when the model is distributed, or falls back to
+        ``str(model.device)``.
+        """
+        if not self._model:
+            return "not loaded"
+        if self._uses_device_map:
+            try:
+                import torch
+
+                count = torch.cuda.device_count()
+                name = torch.cuda.get_device_name(0)
+                return f"{count}x {name} (device_map)"
+            except Exception:
+                return "cuda (device_map)"
+        return str(self._model.device)
 
     def _generate_embeddings(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings for texts using configured backend."""

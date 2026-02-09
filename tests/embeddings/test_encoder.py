@@ -460,3 +460,73 @@ def test_encoder_build_document_embeddings_cache_integration(tmp_path, monkeypat
     assert was_cached2
     assert np.array_equal(emb1, emb2)
     assert ids1 == ids2
+
+
+class TestDeviceMapSupport:
+    """Tests for device_map multi-GPU support in Encoder."""
+
+    @pytest.fixture
+    def encoder(self) -> Encoder:
+        """Create an encoder with mocked model loading."""
+        with patch.object(Encoder, "_load_model"):
+            enc = Encoder(
+                config=EncoderConfig(
+                    model_name="test-model",
+                    backend=EmbeddingBackend.LOCAL,
+                )
+            )
+        enc._model = MagicMock()
+        enc._model.device = "cpu"
+        return enc
+
+    def test_device_info_without_device_map(self, encoder):
+        """device_info returns model.device when device_map is not used."""
+        encoder._uses_device_map = False
+        encoder._model.device = "cuda:0"
+        assert encoder.device_info == "cuda:0"
+
+    def test_device_info_with_device_map(self, encoder):
+        """device_info returns GPU description when device_map is active."""
+        encoder._uses_device_map = True
+        # device_info does `import torch` locally; mock the builtins import
+        mock_torch = MagicMock()
+        mock_torch.cuda.device_count.return_value = 4
+        mock_torch.cuda.get_device_name.return_value = "Tesla P100-PCIE-16GB"
+        with patch.dict("sys.modules", {"torch": mock_torch}):
+            info = encoder.device_info
+        assert "4x" in info
+        assert "P100" in info
+        assert "device_map" in info
+
+    def test_device_info_not_loaded(self, encoder):
+        """device_info returns 'not loaded' when model is None."""
+        encoder._model = None
+        assert encoder.device_info == "not loaded"
+
+    def test_uses_device_map_default_false(self, encoder):
+        """_uses_device_map defaults to False."""
+        assert encoder._uses_device_map is False
+
+    def test_patch_pooling_aligns_devices(self, encoder):
+        """Pooling patch moves all tensors to token_embeddings device."""
+        torch = pytest.importorskip("torch")
+
+        # Create a mock Pooling module
+        class FakePooling(torch.nn.Module):
+            def forward(self, features):
+                return features
+
+        pooling = FakePooling()
+
+        # Build a mock SentenceTransformer with Transformer + Pooling
+        mock_st = MagicMock()
+        mock_st.__iter__ = MagicMock(return_value=iter([MagicMock(), pooling]))
+        encoder._model = mock_st
+
+        # Patch the pooling module
+        encoder._patch_pooling_for_device_map()
+
+        # Simulate: token_embeddings on cuda-like device, attention_mask on cpu
+        # Since we can't easily create real CUDA tensors in tests, verify
+        # the patch was applied by checking the forward was replaced
+        assert pooling.forward.__name__ == "_aligned_forward"
