@@ -116,10 +116,10 @@ class GraphClient:
 
         Creates vector indexes on:
         - CodeChunk.embedding - code semantic search
-        - FacilitySignal.description_embedding - signal description search
-        - FacilityPath.description_embedding - path description search
-        - TreeNode.description_embedding - tree node description search
-        - WikiArtifact.description_embedding - artifact description search
+        - FacilitySignal.embedding - signal description search
+        - FacilityPath.embedding - path description search
+        - TreeNode.embedding - tree node description search
+        - WikiArtifact.embedding - artifact description search
 
         Requires Neo4j 5.x+ with vector index support.
         """
@@ -133,11 +133,11 @@ class GraphClient:
             (
                 "facility_signal_desc_embedding",
                 "FacilitySignal",
-                "description_embedding",
+                "embedding",
             ),
-            ("facility_path_desc_embedding", "FacilityPath", "description_embedding"),
-            ("tree_node_desc_embedding", "TreeNode", "description_embedding"),
-            ("wiki_artifact_desc_embedding", "WikiArtifact", "description_embedding"),
+            ("facility_path_desc_embedding", "FacilityPath", "embedding"),
+            ("tree_node_desc_embedding", "TreeNode", "embedding"),
+            ("wiki_artifact_desc_embedding", "WikiArtifact", "embedding"),
         ]
 
         dim = get_embedding_dimension()

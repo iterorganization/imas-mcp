@@ -63,7 +63,7 @@ def update(
 ) -> None:
     """Update description embeddings for nodes.
 
-    Finds nodes with description but no description_embedding and
+    Finds nodes with description but no embedding and
     generates embeddings in batches.
 
     \b
@@ -91,7 +91,7 @@ def update(
         MATCH (n:{label})
         WHERE n.description IS NOT NULL
           AND n.description <> ''
-          AND n.description_embedding IS NULL
+          AND n.embedding IS NULL
           {facility_filter}
         RETURN count(n) AS total
     """
@@ -100,7 +100,7 @@ def update(
         MATCH (n:{label})
         WHERE n.description IS NOT NULL
           AND n.description <> ''
-          AND n.description_embedding IS NULL
+          AND n.embedding IS NULL
           {facility_filter}
         RETURN n.id AS id, n.description AS description
         LIMIT $batch_size
@@ -109,7 +109,7 @@ def update(
     update_query = f"""
         UNWIND $items AS item
         MATCH (n:{label} {{id: item.id}})
-        SET n.description_embedding = item.description_embedding
+        SET n.embedding = item.embedding
     """
 
     with GraphClient() as gc:
@@ -274,7 +274,7 @@ def status(no_rich: bool) -> None:
                 WITH count(n) AS total,
                      count(CASE WHEN n.description IS NOT NULL
                                  AND n.description <> '' THEN 1 END) AS with_desc,
-                     count(CASE WHEN n.description_embedding IS NOT NULL THEN 1 END) AS with_emb
+                     count(CASE WHEN n.embedding IS NOT NULL THEN 1 END) AS with_emb
                 RETURN total, with_desc, with_emb
             """)
             if result:

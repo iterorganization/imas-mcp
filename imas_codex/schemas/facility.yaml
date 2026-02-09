@@ -711,7 +711,7 @@ classes:
         range: integer
       description:
         description: Human-readable description of what this path contains
-      description_embedding:
+      embedding:
         description: Vector embedding of description for semantic search
         multivalued: true
         range: float
@@ -1272,7 +1272,7 @@ classes:
         range: Unit
       description:
         description: Node description
-      description_embedding:
+      embedding:
         description: Vector embedding of description for semantic search
         multivalued: true
         range: float
@@ -1637,7 +1637,7 @@ classes:
         range: AccessMethod
       description:
         description: What this signal measures (physics description)
-      description_embedding:
+      embedding:
         description: Vector embedding of description for semantic search
         multivalued: true
         range: float
@@ -2532,7 +2532,7 @@ classes:
         range: WikiPageType
       description:
         description: Concise description of artifact contents (1-2 sentences)
-      description_embedding:
+      embedding:
         description: Vector embedding of description for semantic search
         multivalued: true
         range: float

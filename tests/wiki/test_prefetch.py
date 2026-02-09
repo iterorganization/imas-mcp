@@ -1,4 +1,4 @@
-"""Tests for wiki prefetch module."""
+"""Tests for wiki prefetch content utilities."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,8 +7,6 @@ import pytest
 from imas_codex.discovery.wiki.prefetch import (
     extract_text_from_html,
     fetch_page_content,
-    prefetch_pages,
-    summarize_pages_batch,
 )
 
 
@@ -116,106 +114,3 @@ class TestExtractText:
         text = extract_text_from_html(html)
         assert "First" in text
         assert "Second" in text
-
-
-class TestSummarizeBatch:
-    @pytest.mark.asyncio
-    async def test_summarize_single_page(self):
-        """Test summarizing a single page."""
-        pages = [
-            {
-                "id": "test:page1",
-                "title": "Thomson Scattering",
-                "preview_text": "Thomson scattering diagnostic measures electron temperature and density profiles.",
-            }
-        ]
-
-        with patch("imas_codex.discovery.wiki.prefetch.get_llm") as mock_get_llm:
-            mock_llm = AsyncMock()
-            mock_response = MagicMock()
-            # Use return_value to mock str() behavior
-            mock_response.return_value = (
-                "1. Diagnostic for measuring electron temperature and density."
-            )
-            mock_llm.acomplete = AsyncMock(return_value=mock_response)
-            mock_get_llm.return_value = mock_llm
-
-            summaries = await summarize_pages_batch(pages)
-
-            assert len(summaries) == 1
-            assert len(summaries[0]) <= 300
-
-    @pytest.mark.asyncio
-    async def test_summarize_batch_multiple(self):
-        """Test summarizing multiple pages in batch."""
-        pages = [
-            {
-                "id": "test:page1",
-                "title": "Page 1",
-                "preview_text": "Content 1",
-            },
-            {
-                "id": "test:page2",
-                "title": "Page 2",
-                "preview_text": "Content 2",
-            },
-        ]
-
-        with patch("imas_codex.discovery.wiki.prefetch.get_llm") as mock_get_llm:
-            mock_llm = AsyncMock()
-            mock_response = MagicMock()
-            # Use return_value to mock str() behavior
-            mock_response.return_value = "1. Summary 1\n2. Summary 2"
-            mock_llm.acomplete = AsyncMock(return_value=mock_response)
-            mock_get_llm.return_value = mock_llm
-
-            summaries = await summarize_pages_batch(pages)
-
-            assert len(summaries) == 2
-
-
-class TestPrefetchPages:
-    @pytest.mark.asyncio
-    async def test_prefetch_no_pages(self):
-        """Test prefetch when no pages need processing."""
-        with patch("imas_codex.discovery.wiki.prefetch.GraphClient") as mock_gc_class:
-            mock_gc = MagicMock()
-            mock_gc.query = MagicMock(return_value=[])
-            mock_gc_class.return_value = mock_gc
-
-            stats = await prefetch_pages("tcv")
-
-            assert stats["fetched"] == 0
-            assert stats["summarized"] == 0
-
-    @pytest.mark.asyncio
-    async def test_prefetch_with_pages(self):
-        """Test prefetch with actual pages."""
-        pages = [
-            {"id": "test:page1", "url": "http://example.com/page1", "title": "Page 1"}
-        ]
-
-        with (
-            patch("imas_codex.discovery.wiki.prefetch.GraphClient") as mock_gc_class,
-            patch(
-                "imas_codex.discovery.wiki.prefetch.fetch_page_content"
-            ) as mock_fetch,
-            patch(
-                "imas_codex.discovery.wiki.prefetch.summarize_pages_batch"
-            ) as mock_summarize,
-        ):
-            mock_gc = MagicMock()
-            mock_gc.query = MagicMock(
-                side_effect=[pages, None]
-            )  # First for query, then for updates
-            mock_gc_class.return_value = mock_gc
-
-            # Mock fetch to return HTML content
-            mock_fetch.return_value = ("<html><body>Test</body></html>", None)
-
-            # Mock summarize
-            mock_summarize.return_value = ["Test summary"]
-
-            stats = await prefetch_pages("tcv", max_pages=1)
-
-            assert stats["fetched"] == 1

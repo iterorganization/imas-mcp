@@ -29,7 +29,7 @@ def _get_encoder() -> Encoder:
 def embed_descriptions_batch(
     items: list[dict[str, Any]],
     text_field: str = "description",
-    embedding_field: str = "description_embedding",
+    embedding_field: str = "embedding",
 ) -> list[dict[str, Any]]:
     """Add embeddings to a batch of items for UNWIND-based graph persistence.
 
@@ -42,7 +42,7 @@ def embed_descriptions_batch(
     Args:
         items: List of dicts to enrich with embeddings
         text_field: Key containing text to embed (default: "description")
-        embedding_field: Key to store embedding (default: "description_embedding")
+        embedding_field: Key to store embedding (default: "embedding")
 
     Returns:
         Same list of items with embedding_field added to each
@@ -53,12 +53,12 @@ def embed_descriptions_batch(
         ...     {"id": "tcv:eq/q95", "description": "Edge safety factor"},
         ... ]
         >>> enriched = embed_descriptions_batch(signals)
-        >>> # Now each signal has description_embedding ready for UNWIND
+        >>> # Now each signal has embedding ready for UNWIND
         >>> gc.query('''
         ...     UNWIND $signals AS sig
         ...     MATCH (s:FacilitySignal {id: sig.id})
         ...     SET s.description = sig.description,
-        ...         s.description_embedding = sig.description_embedding
+        ...         s.embedding = sig.embedding
         ... ''', signals=enriched)
     """
     if not items:
