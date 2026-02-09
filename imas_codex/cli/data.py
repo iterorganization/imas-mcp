@@ -274,14 +274,47 @@ def get_registry(git_info: dict, force_registry: str | None = None) -> str:
 
 
 def get_version_tag(git_info: dict, dev: bool = False) -> str:
-    """Determine version tag for push."""
+    """Determine version tag for push.
+
+    For dev pushes, auto-increments a revision counter per base version
+    so that successive pushes from the same commit produce unique tags:
+      0.5.0.dev123-abc1234-r1, 0.5.0.dev123-abc1234-r2, ...
+
+    The revision counter is tracked in the local graph manifest and
+    resets when the base version changes (new commit or version bump).
+    """
     if dev:
-        return __version__.replace("+", "-")
+        base = __version__.replace("+", "-")
+        revision = _next_dev_revision(base)
+        return f"{base}-r{revision}"
     if git_info["tag"]:
         return git_info["tag"]
     raise click.ClickException(
         "Not on a git tag. Use --dev for development push, or create a tag first."
     )
+
+
+def _next_dev_revision(base_version: str) -> int:
+    """Get next revision number for a dev push.
+
+    Reads the graph manifest to find the last pushed revision for this
+    base version. Returns last_revision + 1, or 1 if no previous push.
+    """
+    manifest = get_local_graph_manifest()
+    if manifest:
+        last_base = manifest.get("dev_base_version")
+        last_rev = manifest.get("dev_revision", 0)
+        if last_base == base_version:
+            return last_rev + 1
+    return 1
+
+
+def _save_dev_revision(base_version: str, revision: int) -> None:
+    """Save the current dev revision to the graph manifest."""
+    manifest = get_local_graph_manifest() or {}
+    manifest["dev_base_version"] = base_version
+    manifest["dev_revision"] = revision
+    save_local_graph_manifest(manifest)
 
 
 def require_clean_git(git_info: dict) -> None:
@@ -1360,6 +1393,13 @@ def data_push(
         manifest["pushed_at"] = datetime.now(UTC).isoformat()
         save_local_graph_manifest(manifest)
 
+        # Save dev revision for auto-increment on next push
+        if dev:
+            base = __version__.replace("+", "-")
+            # Extract revision from version_tag (format: base-rN)
+            rev_str = version_tag.rsplit("-r", 1)[-1]
+            _save_dev_revision(base, int(rev_str))
+
         if not dev:
             subprocess.run(
                 [
@@ -1556,9 +1596,250 @@ def data_status(registry: str | None) -> None:
     click.echo(f"  Is fork: {git_info['is_fork']}")
     click.echo(f"  Target registry: {target_registry}")
 
+    manifest = get_local_graph_manifest()
+    if manifest:
+        click.echo("\nGraph manifest:")
+        click.echo(f"  Version: {manifest.get('version', 'unknown')}")
+        click.echo(f"  Pushed: {manifest.get('pushed', False)}")
+        if manifest.get("pushed_version"):
+            click.echo(f"  Pushed as: {manifest['pushed_version']}")
+        if manifest.get("dev_base_version"):
+            click.echo(
+                f"  Dev revision: {manifest['dev_base_version']}"
+                f"-r{manifest.get('dev_revision', '?')}"
+            )
+
     click.echo(f"\nNeo4j: {'running' if is_neo4j_running() else 'stopped'}")
 
     click.echo(f"\nPrivate YAML: {len(private_files)} files")
     click.echo(f"  Gist: {gist_id or '(not configured)'}")
     if not gist_id and private_files:
         click.echo("  → Run 'imas-codex data private push' to backup")
+
+
+# ============================================================================
+# Delete and Cleanup Commands
+# ============================================================================
+
+
+def _list_registry_tags(registry: str, token: str | None = None) -> list[str]:
+    """List all tags in the GHCR registry."""
+    login_to_ghcr(token)
+    repo_ref = f"{registry}/imas-codex-graph"
+    result = subprocess.run(
+        ["oras", "repo", "tags", repo_ref],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        if "not found" in result.stderr.lower():
+            return []
+        raise click.ClickException(f"Failed to list tags: {result.stderr}")
+    return [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
+
+
+def _delete_tag(registry: str, tag: str, token: str | None = None) -> bool:
+    """Delete a specific tag from GHCR using oras."""
+    login_to_ghcr(token)
+    artifact_ref = f"{registry}/imas-codex-graph:{tag}"
+
+    # oras manifest delete removes the tag
+    result = subprocess.run(
+        ["oras", "manifest", "delete", artifact_ref, "--force"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        click.echo(f"  Failed to delete {tag}: {result.stderr.strip()}", err=True)
+        return False
+    return True
+
+
+@data.command("delete")
+@click.argument("tags", nargs=-1, required=True)
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+@click.option("--token", envvar="GHCR_TOKEN")
+@click.option("--force", is_flag=True, help="Skip confirmation prompt")
+def data_delete(
+    tags: tuple[str, ...],
+    registry: str | None,
+    token: str | None,
+    force: bool,
+) -> None:
+    """Delete specific graph versions from GHCR.
+
+    \b
+    Examples:
+      imas-codex data delete 0.5.0.dev123-abc1234-r1
+      imas-codex data delete 0.5.0.dev123-abc1234-r1 0.5.0.dev123-abc1234-r2
+      imas-codex data delete latest
+    """
+    require_oras()
+
+    git_info = get_git_info()
+    target_registry = get_registry(git_info, registry)
+
+    # Verify tags exist
+    available = _list_registry_tags(target_registry, token)
+    missing = [t for t in tags if t not in available]
+    if missing:
+        click.echo(f"Tags not found: {', '.join(missing)}", err=True)
+        if not available:
+            click.echo("  (no tags in registry)")
+        else:
+            click.echo(f"  Available: {', '.join(sorted(available)[:10])}")
+        if len(missing) == len(tags):
+            raise SystemExit(1)
+
+    found = [t for t in tags if t in available]
+    if not found:
+        return
+
+    click.echo(f"Will delete {len(found)} tag(s) from {target_registry}:")
+    for t in found:
+        click.echo(f"  - {t}")
+
+    if not force:
+        if not click.confirm("\nProceed?"):
+            click.echo("Aborted.")
+            return
+
+    deleted = 0
+    for t in found:
+        if _delete_tag(target_registry, t, token):
+            click.echo(f"  Deleted: {t}")
+            deleted += 1
+
+    click.echo(f"\n✓ Deleted {deleted}/{len(found)} tags")
+
+
+@data.command("cleanup")
+@click.option(
+    "--version",
+    "target_version",
+    help="Delete all dev tags for this version (e.g. 0.5.0)",
+)
+@click.option("--dev", "dev_only", is_flag=True, help="Only delete dev/revision tags")
+@click.option(
+    "--keep-latest",
+    type=int,
+    default=0,
+    help="Keep the N most recent dev tags (by revision number)",
+)
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+@click.option("--token", envvar="GHCR_TOKEN")
+@click.option("--force", is_flag=True, help="Skip confirmation prompt")
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted")
+def data_cleanup(
+    target_version: str | None,
+    dev_only: bool,
+    keep_latest: int,
+    registry: str | None,
+    token: str | None,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    """Remove old graph versions from GHCR.
+
+    \b
+    Examples:
+      # Delete all dev tags for version 0.5.0
+      imas-codex data cleanup --version 0.5.0 --dev
+
+      # Delete ALL tags for version 0.5.0 (including release)
+      imas-codex data cleanup --version 0.5.0
+
+      # Keep the 3 most recent dev tags, delete the rest
+      imas-codex data cleanup --version 0.5.0 --dev --keep-latest 3
+
+      # Dry run to see what would be deleted
+      imas-codex data cleanup --version 0.5.0 --dev --dry-run
+    """
+    require_oras()
+
+    git_info = get_git_info()
+    target_registry = get_registry(git_info, registry)
+
+    available = _list_registry_tags(target_registry, token)
+    if not available:
+        click.echo("No tags in registry.")
+        return
+
+    # Determine which tags to delete
+    to_delete: list[str] = []
+
+    if target_version:
+        for tag in available:
+            if tag == "latest":
+                continue  # Never auto-delete 'latest'
+            # Match tags that start with the version prefix
+            # e.g. version="0.5.0" matches "0.5.0", "0.5.0.dev123-abc-r1", etc.
+            if tag == target_version or tag.startswith(f"{target_version}."):
+                if dev_only:
+                    # Only delete dev tags (contain 'dev' or '-r')
+                    if "dev" in tag or "-r" in tag:
+                        to_delete.append(tag)
+                else:
+                    to_delete.append(tag)
+    else:
+        # No version specified - find all dev tags
+        if dev_only:
+            to_delete = [
+                t for t in available if t != "latest" and ("dev" in t or "-r" in t)
+            ]
+        else:
+            raise click.ClickException(
+                "Specify --version to target a specific version, "
+                "or use --dev to target all dev tags."
+            )
+
+    if not to_delete:
+        click.echo("No matching tags to delete.")
+        return
+
+    # Sort by revision number for --keep-latest
+    def _sort_key(tag: str) -> int:
+        """Extract revision number for sorting. Higher = newer."""
+        if "-r" in tag:
+            try:
+                return int(tag.rsplit("-r", 1)[-1])
+            except ValueError:
+                return 0
+        return 0
+
+    to_delete.sort(key=_sort_key, reverse=True)
+
+    # Keep N most recent
+    if keep_latest > 0 and len(to_delete) > keep_latest:
+        kept = to_delete[:keep_latest]
+        to_delete = to_delete[keep_latest:]
+        click.echo(f"Keeping {len(kept)} most recent:")
+        for t in kept:
+            click.echo(f"  + {t}")
+    elif keep_latest > 0:
+        click.echo(
+            f"Only {len(to_delete)} tag(s) found, "
+            f"fewer than --keep-latest={keep_latest}. Nothing to delete."
+        )
+        return
+
+    click.echo(f"\nWill delete {len(to_delete)} tag(s):")
+    for t in to_delete:
+        click.echo(f"  - {t}")
+
+    if dry_run:
+        click.echo("\n[DRY RUN] No tags were deleted.")
+        return
+
+    if not force:
+        if not click.confirm("\nProceed?"):
+            click.echo("Aborted.")
+            return
+
+    deleted = 0
+    for t in to_delete:
+        if _delete_tag(target_registry, t, token):
+            click.echo(f"  Deleted: {t}")
+            deleted += 1
+
+    click.echo(f"\n✓ Deleted {deleted}/{len(to_delete)} tags")

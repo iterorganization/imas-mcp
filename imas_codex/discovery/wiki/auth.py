@@ -306,21 +306,6 @@ class CredentialManager:
 
         return None
 
-        # 2. Try environment variables
-        username_var = self._env_var_name(site, "username")
-        password_var = self._env_var_name(site, "password")
-        username = os.environ.get(username_var)
-        password = os.environ.get(password_var)
-        if username and password:
-            logger.debug("Retrieved credentials from environment for %s", site)
-            return username, password
-
-        # 3. Interactive prompt
-        if prompt_if_missing and sys.stdin.isatty():
-            return self._prompt_credentials(site)
-
-        return None
-
     def _prompt_credentials(self, site: str) -> tuple[str, str] | None:
         """Prompt user for credentials interactively.
 

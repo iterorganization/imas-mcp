@@ -853,16 +853,14 @@ class WikiProgressDisplay:
         section.append(f"  ingested={self.state.pages_ingested}", style="magenta")
         section.append(f"  skipped={self.state.pages_skipped}", style="yellow")
 
-        # Pending work by worker type
+        # Pending work by worker type (combined page + artifact)
+        pending_score = self.state.pending_score + self.state.pending_artifact_score
+        pending_ingest = self.state.pending_ingest + self.state.pending_artifact_ingest
         pending_parts = []
-        if self.state.pending_score > 0:
-            pending_parts.append(f"score:{self.state.pending_score}")
-        if self.state.pending_ingest > 0:
-            pending_parts.append(f"ingest:{self.state.pending_ingest}")
-        if self.state.pending_artifact_score > 0:
-            pending_parts.append(f"art_score:{self.state.pending_artifact_score}")
-        if self.state.pending_artifact_ingest > 0:
-            pending_parts.append(f"art_ingest:{self.state.pending_artifact_ingest}")
+        if pending_score > 0:
+            pending_parts.append(f"score:{pending_score}")
+        if pending_ingest > 0:
+            pending_parts.append(f"ingest:{pending_ingest}")
         if pending_parts:
             section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
@@ -1210,19 +1208,27 @@ class WikiProgressDisplay:
         """Build final summary text."""
         summary = Text()
 
-        # SCORE stats
+        # SCORE stats (pages + artifacts combined)
         total_scored = self.state.pages_scored + self.state.pages_ingested
+        total_score_cost = (
+            self.state._run_score_cost + self.state._run_artifact_score_cost
+        )
         summary.append("  SCORE ", style="bold blue")
         summary.append(f"scored={total_scored:,}", style="blue")
+        if self.state.run_artifacts_scored > 0:
+            summary.append(f"+{self.state.run_artifacts_scored:,}art", style="blue dim")
         summary.append(f"  skipped={self.state.pages_skipped:,}", style="yellow")
-        summary.append(f"  cost=${self.state._run_score_cost:.3f}", style="yellow")
+        summary.append(f"  cost=${total_score_cost:.3f}", style="yellow")
         if self.state.score_rate:
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # INGEST stats
+        # INGEST stats (pages + artifacts combined)
+        total_ingested = self.state.pages_ingested
         summary.append("  INGEST", style="bold magenta")
-        summary.append(f"  ingested={self.state.pages_ingested:,}", style="magenta")
+        summary.append(f"  ingested={total_ingested:,}", style="magenta")
+        if self.state.run_artifacts > 0:
+            summary.append(f"+{self.state.run_artifacts:,}art", style="magenta dim")
         if self.state.ingest_rate:
             summary.append(f"  {self.state.ingest_rate:.1f}/s", style="dim")
         summary.append("\n")
