@@ -29,12 +29,9 @@ All graph node types, relationships, and properties are defined in LinkML schema
 - Regenerate manually: `uv run build-models --force`
 - Output: `imas_codex/graph/models.py`, `imas_codex/graph/dd_models.py`
 
-**Enforcement rules:**
-
-Always import enums and classes from generated models. Never hardcode status values.
+Always import enums and classes from generated models. Never hardcode status values:
 
 ```python
-# Correct - import from generated models
 from imas_codex.graph.models import SourceFile, SourceFileStatus, TreeNode
 
 sf = SourceFile(
@@ -44,156 +41,55 @@ sf = SourceFile(
     status=SourceFileStatus.discovered,  # Use enum, not string
 )
 add_to_graph("SourceFile", [sf.model_dump()])
-
-# Wrong - hardcoded string bypasses validation
-data = {"id": "...", "status": "discovered"}  # No type checking!
 ```
 
-**Extending schemas:**
-1. Edit LinkML YAML in `imas_codex/schemas/`
-2. Run `uv run build-models --force`
-3. Import new classes from `imas_codex.graph.models`
-
-Schema changes are additive only in the graph. Add properties, never rename or remove.
+**Extending schemas:** Edit LinkML YAML → `uv run build-models --force` → import from `imas_codex.graph.models`. Schema changes are additive only in the graph—add properties, never rename or remove.
 
 ## Graph State Machine
 
 Status enums represent **durable states only**. No transient states like `scanning`, `scoring`, or `ingesting`.
 
-**Worker coordination pattern:**
-- Claim: set `claimed_at = datetime()`, status unchanged
-- Complete: update status to next state, clear `claimed_at = null`
-- Orphan recovery: expired claims (`claimed_at < now - timeout`) become reclaimable
-
-This applies to all discovery pipelines: paths, wiki, signals. The claim query includes a timeout check, making orphan recovery automatic.
+**Worker coordination:** Claim via `claimed_at = datetime()` (status unchanged), complete by updating status and clearing `claimed_at = null`. Orphan recovery is automatic via timeout check in claim queries. This applies to all discovery pipelines: paths, wiki, signals.
 
 ## LLM Prompts
 
 Prompts live in `imas_codex/agentic/prompts/` using Jinja2 templates with schema injection.
 
-**Key principles:**
-- Never hardcode JSON examples - use Pydantic schema injection
-- Each prompt declares its `schema_needs` to load only required context
+- Never hardcode JSON examples - use Pydantic schema injection via `get_pydantic_schema_json()`
+- Each prompt declares `schema_needs` in `prompt_loader.py` to load only required context
 - LLM structured output uses Pydantic models via LiteLLM `response_format`
 
-**Schema injection pattern** (`prompt_loader.py`):
+## Command Execution
 
-```python
-# Prompts get schema context via providers:
-_DEFAULT_SCHEMA_NEEDS = {
-    "discovery/scorer": ["path_purposes", "score_dimensions", "scoring_schema"],
-    "discovery/rescorer": ["rescore_schema"],  # Only 2 context keys
-}
+**Decision tree:**
+1. Single command, local → Terminal directly (`rg`, `fd`, `tokei`, `uv run`)
+2. Single command, remote → SSH (`ssh facility "command"`)
+3. Chained processing → `python()` with `run()` (auto-detects local/remote)
+4. Graph queries / MCP → `python()` with `query()`, `add_to_graph()`, etc.
 
-# Template uses injected variables:
-{{ scoring_schema_example }}    # JSON example from Pydantic
-{{ scoring_schema_fields }}     # Field descriptions
-{{ path_purposes }}             # Enum values from LinkML
-```
+**MCP tool routing:**
+- Dedicated MCP tools for single operations: `add_to_graph()`, `get_graph_schema()`, `update_facility_infrastructure()`, `add_exploration_note()`
+- `python()` REPL for chained processing, Cypher queries, IMAS/COCOS operations
+- Terminal for `rg`, `fd`, `git`, `uv run`; SSH for remote single commands
 
-**Pydantic models for LLM output** (`discovery/paths/models.py`):
+**CLI in agent sessions:** Always use `--no-rich` to prevent animation loops in non-TTY contexts.
 
-```python
-class DirectoryScoringBatch(BaseModel):
-    """LLM returns this structure via response_format."""
-    results: list[DirectoryScoringResult] = Field(...)
+## Graph Operations
 
-# Scorer uses:
-response = litellm.completion(
-    model=model_id,
-    response_format=DirectoryScoringBatch,  # Enforced by LLM
-    messages=[...],
-)
-batch = DirectoryScoringBatch.model_validate_json(response.content)
-```
+### Backup
 
-**DO:**
-- Define Pydantic models for all LLM structured output
-- Use `get_pydantic_schema_json()` to generate JSON examples
-- Add new prompts to `_DEFAULT_SCHEMA_NEEDS` with minimal context
-- Include `{% include "schema/output-format.md" %}` for schema documentation
+Never use `DETACH DELETE` on production data without user confirmation. For re-embedding: update nodes in place, don't delete and recreate.
 
-**DON'T:**
-- Hardcode JSON examples in prompts (breaks on schema changes)
-- Load full schema context when prompt only needs specific fields
-- Use plain text parsing when structured output is available
+### Vector Indexes
 
-## Critical Rules
+Embeddings require a vector index for `db.index.vector.queryNodes()` to work:
 
-### Locality Check
-
-Always determine if you're on the target facility before choosing execution method:
-
-```bash
-hostname
-pwd
-```
-
-**Command Execution Decision Tree:**
-1. Single command on local facility? → Terminal directly (`rg`, `fd`, `tokei`)
-2. Single command on remote facility? → Direct SSH (`ssh facility "command"`)
-3. Chained processing with logic? → `python()` with `run()` (auto-detects local/remote)
-4. Graph queries or MCP functions? → `python()` with `query()`, `add_to_graph()`, etc.
-
-### MCP Tool Selection
-
-**Use dedicated MCP tools** for single operations:
-- `add_to_graph()` - Create graph nodes with schema validation
-- `get_graph_schema()` - Get schema for Cypher generation
-- `update_facility_infrastructure()` - Update private facility data
-- `get_facility_infrastructure()` - Read private facility data
-- `add_exploration_note()` - Add timestamped exploration note
-
-**Use `python()` REPL** when you need:
-- Chained operations with intermediate processing
-- Graph queries with Cypher (`query()` function)
-- IMAS/COCOS domain operations (`search_imas`, `validate_cocos`)
-- Complex data transformations requiring Python execution
-
-**Use terminal directly** for single operations:
-- Local: `rg`, `fd`, `git`, `tokei`, `uv run`
-- Remote: `ssh facility "command"`
-
-**Never use `python()` for:**
-- Text formatting (LLM can do this natively)
-- Single infrastructure updates (use dedicated MCP tools)
-- Simple string operations
-
-### CLI in Chat Sessions
-
-When running CLI commands in chat/agent sessions, **always use `--no-rich`** if available:
-
-```bash
-# Correct - no-rich prevents animation loops in non-TTY contexts
-uv run imas-codex discover paths tcv --no-rich --seed
-
-# Wrong - rich progress bars cause output loops in chat
-uv run imas-codex discover paths tcv --seed
-```
-
-### Graph Backup
-
-Before ANY operation that modifies or deletes graph nodes:
-
-- Never use `DETACH DELETE` on production data without user confirmation
-- For re-embedding: update nodes in place, don't delete and recreate
-
-### Vector Indexes for Embeddings
-
-When adding embeddings to graph nodes, you must create a vector index:
-
-- Embeddings are stored as regular node properties
-- Without an index, `db.index.vector.queryNodes()` fails
-- Indexes can be created before or after embedding (no impact on running processes)
-- Use `IF NOT EXISTS` for idempotent index creation
-
-**Required pattern:**
 ```python
 from imas_codex.settings import get_embedding_dimension
 
-dim = get_embedding_dimension()  # Dynamic: 1024 for Qwen3, 384 for MiniLM
+dim = get_embedding_dimension()  # 1024 for Qwen3, 384 for MiniLM
 gc.query(f"""
-    CREATE VECTOR INDEX my_embedding_index IF NOT EXISTS
+    CREATE VECTOR INDEX my_index IF NOT EXISTS
     FOR (n:MyNodeType) ON n.embedding
     OPTIONS {{
         indexConfig: {{
@@ -205,261 +101,70 @@ gc.query(f"""
 ```
 
 **Existing indexes:**
-- `imas_path_embedding`: IMASPath nodes
-- `cluster_centroid`: IMASSemanticCluster centroids
-- `code_chunk_embedding`: CodeChunk nodes
-- `wiki_chunk_embedding`: WikiChunk nodes
-- `facility_signal_desc_embedding`: FacilitySignal descriptions
-- `facility_path_desc_embedding`: FacilityPath descriptions
-- `tree_node_desc_embedding`: TreeNode descriptions
-- `wiki_artifact_desc_embedding`: WikiArtifact descriptions
 
-## Semantic Search & Graph RAG
+| Index | Content |
+|-------|---------|
+| `imas_path_embedding` | IMASPath nodes |
+| `cluster_centroid` | IMASSemanticCluster centroids |
+| `code_chunk_embedding` | CodeChunk nodes |
+| `wiki_chunk_embedding` | WikiChunk nodes |
+| `facility_signal_desc_embedding` | FacilitySignal descriptions |
+| `facility_path_desc_embedding` | FacilityPath descriptions |
+| `tree_node_desc_embedding` | TreeNode descriptions |
+| `wiki_artifact_desc_embedding` | WikiArtifact descriptions |
 
-The knowledge graph supports semantic search via vector embeddings on both **document chunks** (wiki pages, code) and **descriptive metadata** (signal descriptions, path descriptions). Use these together for effective retrieval-augmented generation.
-
-### Querying Embeddings
+### Semantic Search & Graph RAG
 
 Use `semantic_search(text, index, k)` in the python REPL:
 
 ```python
-# Find signals by physics meaning (searches LLM-generated descriptions)
-results = semantic_search("plasma current measurement", index="facility_signal_desc_embedding", k=10)
+# Document content (wiki, code)
+semantic_search("COCOS sign conventions", index="wiki_chunk_embedding", k=5)
 
-# Find documentation about a concept (searches wiki content)
-chunks = semantic_search("COCOS sign conventions", index="wiki_chunk_embedding", k=5)
+# Descriptive metadata (signals, paths - search by physics meaning)
+semantic_search("plasma current measurement", index="facility_signal_desc_embedding", k=10)
 ```
-
-### Graph RAG Pattern
 
 Combine vector similarity with link traversal for richer context:
 
-1. **Vector search** - Find semantically relevant entry points
-2. **Link traversal** - Expand via graph relationships
-3. **Context assembly** - Gather connected information for LLM
-
-Example - find signals and their access methods:
 ```python
 results = query("""
     CALL db.index.vector.queryNodes('facility_signal_desc_embedding', 5, $embedding)
     YIELD node AS signal, score
     MATCH (signal)-[:ACCESS_METHOD]->(am:AccessMethod)
     OPTIONAL MATCH (signal)-[:MAPS_TO_IMAS]->(imas:IMASPath)
-    RETURN signal.id, signal.description, am.template_python, 
+    RETURN signal.id, signal.description, am.template_python,
            collect(imas.id) AS imas_paths, score
     ORDER BY score DESC
 """, embedding=embed("electron density profile"))
 ```
 
-### Strategy Selection
+**Key relationships for traversal:**
 
-**Use document embeddings** (`wiki_chunk_embedding`, `code_chunk_embedding`) when:
-- Searching for specific technical content or procedures
-- Finding code examples with implementation details
-- Locating documentation sections
+| From | Relationship | To |
+|------|--------------|-----|
+| FacilitySignal | ACCESS_METHOD | AccessMethod |
+| FacilitySignal | MAPS_TO_IMAS | IMASPath |
+| WikiChunk | HAS_CHUNK← | WikiPage |
+| FacilityPath | FACILITY_ID | Facility |
 
-**Use description embeddings** (`*_desc_embedding`) when:
-- Searching for concepts across many items (signals, paths)
-- Finding resources by physics meaning rather than exact wording
-- Exploring what a facility offers for a given topic
-
-**Combine both** when building comprehensive context for LLM tasks.
-
-### Link Traversal After Vector Search
-
-| From | Relationship | To | Use |
-|------|--------------|-----|-----|
-| FacilitySignal | ACCESS_METHOD | AccessMethod | Get code templates |
-| FacilitySignal | MAPS_TO_IMAS | IMASPath | Canonical mapping |
-| WikiChunk | HAS_CHUNK← | WikiPage | Parent page context |
-| FacilityPath | FACILITY_ID | Facility | Facility context |
-
-### Token Cost Optimization
-
-Graph queries can be expensive. Follow these rules:
-
-**Never return full nodes** - always project specific properties:
-
-```python
-# Bad - embeddings cost ~2k tokens per node
-query("MATCH (n:IMASPath) RETURN n LIMIT 10")
-
-# Good - project only needed properties (~50 tokens per node)
-query("MATCH (n:IMASPath) RETURN n.id, n.name, n.documentation LIMIT 10")
-```
-
-**Use Cypher aggregations** instead of Python post-processing:
-
-```python
-# Bad - multiple calls, Python aggregation
-files = query("MATCH (f:SourceFile) RETURN f.status")
-# Then Counter() in another call
-
-# Good - single call with Cypher aggregation
-query("""
-    MATCH (f:SourceFile)
-    RETURN f.status AS status, count(*) AS count
-    ORDER BY count DESC
-""")
-```
+**Token cost:** Always project specific properties in Cypher (`RETURN n.id, n.name`), never return full nodes. Use Cypher aggregations instead of Python post-processing.
 
 ## Fast Tools
 
-High-performance Rust-based CLI tools that **must be used instead of slower builtins**. Defined in `imas_codex/config/fast_tools.yaml`.
-
-### Installation
-
-```bash
-# Check environment status (tools + Python + venv)
-uv run imas-codex tools status local
-
-# Install everything (tools + Python + venv)
-uv run imas-codex tools install local
-
-# Install specific tool only
-uv run imas-codex tools install local --tool rg
-
-# Install on remote facility
-uv run imas-codex tools install tcv
-```
-
-After installation, ensure `~/bin` is in your PATH (the installer adds this to `.bashrc` automatically).
-
-### Required Tools
-
-These are essential for effective exploration:
+Prefer these Rust-based CLI tools over standard Unix commands. Defined in `imas_codex/config/fast_tools.yaml`.
 
 | Tool | Purpose | Use Instead Of |
 |------|---------|----------------|
-| `rg` | Pattern search across files (10x faster than grep) | `grep -r` |
-| `fd` | Find files by name/extension (5x faster than find) | `find` |
-| `eza` | Modern ls with tree view for directory hierarchy | `ls -la`, `tree` |
-| `tokei` | Lines of code by language (enrichment pipeline) | `wc -l`, `cloc` |
-| `git` | Version control, metadata extraction | - |
-| `gh` | GitHub API access, repo visibility checking | curl to API |
-| `uv` | Fast Python package manager for venv/dependency management | pip, virtualenv |
+| `rg` | Pattern search | `grep -r` |
+| `fd` | File finder | `find` |
+| `eza` | Directory listing with tree view | `ls -la`, `tree` |
+| `tokei` | LOC by language | `wc -l`, `cloc` |
+| `uv` | Python package manager | `pip`, `virtualenv` |
 
-### Optional Tools
+Install on any facility: `uv run imas-codex tools install <facility>`
 
-Enhance exploration but not required:
-
-| Tool | Purpose | Use Instead Of |
-|------|---------|----------------|
-| `scc` | Code complexity and SLOC metrics | `cloc` |
-| `dust` | Interactive disk usage visualization | `du -h` |
-| `bat` | Syntax-highlighted file viewing | `cat`, `less` |
-| `delta` | Better git diff viewer | `diff` |
-| `fzf` | Fuzzy finder for interactive selection | - |
-| `yq` | YAML processor | Python yaml parsing |
-| `jq` | JSON processor | Python json parsing |
-
-### Usage Rules
-
-**Always prefer fast tools:**
-
-```bash
-# CORRECT - use rg
-rg 'IMAS' /path -g '*.py'
-
-# WRONG - never use grep for code search
-grep -r 'IMAS' /path --include='*.py'
-
-# CORRECT - use fd
-fd -e py /path
-
-# WRONG - never use find for file search
-find /path -name '*.py'
-```
-
-**Critical: `fd` requires path as trailing argument:**
-
-```bash
-# CORRECT - path specified
-fd -e py /work/projects
-
-# WRONG - will hang without path on large filesystems
-fd -e py
-```
-
-**Remote facility usage:**
-
-```bash
-# Single command via SSH
-ssh tcv "rg -l 'IMAS' /home/codes"
-ssh tcv "fd -e py /home/codes | head -20"
-```
-
-## Python Environments
-
-Use uv to ensure modern Python (3.10+) on all facilities, avoiding version compatibility issues.
-
-### Why This Matters
-
-- System Python varies: JET has 3.13, TCV has 3.9, ITER has 3.9
-- Development on modern Python, then deployment fails on old Python
-- uv installs Python from python-build-standalone (GitHub), not PyPI
-- Works on airgapped facilities if GitHub is accessible
-
-### SSH Non-Interactive Shell PATH
-
-SSH command execution uses non-interactive shells that don't load the interactive section of `.bashrc`. Most `.bashrc` files have `[[ $- != *i* ]] && return` early, exiting before PATH is configured.
-
-The tool installer creates `~/.imas-codex.env` and sources it BEFORE the non-interactive return:
-
-```bash
-# Created by: imas-codex tools install <facility>
-$ cat ~/.imas-codex.env
-# IMAS Codex environment - sourced early for non-interactive shells
-export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
-
-# Added to .bashrc BEFORE the non-interactive return:
-[ -f ~/.imas-codex.env ] && . ~/.imas-codex.env
-```
-
-This ensures `uv`, `rg`, `fd`, and other tools work via SSH without explicit PATH prefixes:
-
-```bash
-# Works directly - no PATH manipulation needed
-ssh iter 'uv --version'
-ssh tcv 'rg --version'
-```
-
-The executor module also prepends PATH as a fallback for first-time use before setup.
-
-### Quick Setup
-
-```bash
-# Check environment status on a facility (tools + Python + venv)
-uv run imas-codex tools status tcv
-
-# Complete setup (tools + uv + Python + venv) in one command
-uv run imas-codex tools install tcv
-
-# Install specific tool only
-uv run imas-codex tools install tcv --tool rg
-
-# Install tools only, skip Python/venv
-uv run imas-codex tools install tcv --tools-only
-```
-
-### Facility Status Reference
-
-| Facility | System Python | uv | PyPI | Strategy |
-|----------|--------------|-----|------|----------|
-| JET | 3.13.3 | ✗ | ✓ | Already modern, install uv for venv |
-| TCV | 3.9.25 | ✗ | ✓ | Install uv, then Python 3.12 |
-| ITER | 3.9.16 | ✗ | ✓ | Install uv, then Python 3.12 |
-| JT60SA | 3.9.10 | ✓ | ✗ | Already has 3.12/3.13 via uv |
-
-### Using the Remote venv
-
-```bash
-# Activate on remote
-ssh tcv "source ~/.local/share/imas-codex/venv/bin/activate && python --version"
-
-# Run scripts with the venv Python
-ssh tcv "~/.local/share/imas-codex/venv/bin/python script.py"
-```
+**Critical:** `fd` requires a path argument on large filesystems to avoid hanging: `fd -e py /path`
 
 ## Commit Workflow
 
@@ -473,7 +178,6 @@ git add <file1> <file2> ...
 
 # 3. Commit with conventional format
 uv run git commit -m "type: concise summary
-
 
 Detailed explanation of what changed and why.
 - First significant change
@@ -498,187 +202,86 @@ git push origin main
 
 Breaking changes use `BREAKING CHANGE:` footer, not `type!:` suffix.
 
-## Working in Worktrees
+### Worktrees
 
-Cursor remote agents often work in auto-created worktrees. Commits in worktrees are NOT on `main` until merged.
-
-**Always complete both steps together:**
+Commits in worktrees are NOT on `main` until merged. Always merge immediately:
 
 ```bash
-# Step 1: Commit in worktree
-uv run ruff check --fix . && uv run ruff format .
-git add <file1> <file2> ...
-uv run git commit -m "type: description"
-
-# Step 2: Immediately merge to main
 WORKTREE_HEAD=$(git rev-parse HEAD)
 cd /home/mcintos/Code/imas-codex
 git merge --no-ff $WORKTREE_HEAD -m "merge: worktree changes for <description>"
 git push origin main
 ```
 
-Never end a session after step 1. Check for un-merged commits:
-```bash
-git log --oneline --all --not main | head -20
-```
+### Session Completion
 
-## Session Completion
+**MANDATORY** after any file modifications: commit and push before responding to the user.
 
-**CRITICAL - MANDATORY FOR EVERY RESPONSE THAT MODIFIES FILES:**
-
-After completing any file modifications, you MUST commit before responding to the user:
-
-1. `git status --short` - check for uncommitted changes
-2. If changes exist: `uv run ruff check --fix . && uv run ruff format .`
-3. `git add <files>` - stage specific files (never `git add -A`)
-4. `uv run git commit -m "type: description"` - commit with conventional format
-5. `git push origin main` - push immediately
-6. End your response with the **full commit message** followed by a **rich summary**:
+End every response that modifies files with the **full commit message** and a brief summary:
 
 ```
 ✓ Committed: `<commit-hash>`
 
 type: concise summary
 
-Detailed explanation of what changed and why.
-- First significant change
-- Second change with rationale
+Detailed explanation.
+- Key changes
 ```
-
-**Rich Summary** (after commit message):
-Provide a brief, user-friendly summary highlighting:
-- What capability was added or changed
-- Key files affected
-- Any breaking changes or migration notes
-- Next steps if applicable
-
-Example:
-> FacilitySignal now enforces PhysicsDomain enum for categorization. The schema imports `physics_domains.yaml` directly, eliminating the redundant string description. Graph nodes updated with proper domain values.
-
-**Why show full message:** The commit message serves as the session's work record. Showing only a one-line summary loses context about what was done and why. The full message allows the user to track changes across sessions without checking git log.
-
-**Why commit is mandatory:** Uncommitted changes are lost when sessions end. The user cannot see your work until it's committed. Never describe changes without committing them first.
 
 ## Code Style
 
-### Python Version
-
-This project requires Python greater or equal to 3.12 (`requires-python = ">=3.12"`). Do not write fallback code for older Python versions. Remove any legacy compatibility patterns you encounter.
-
-```python
-# Wrong - unnecessary fallback for older Python
-try:
-    script_path = importlib.resources.files("package").joinpath("file")
-except (AttributeError, TypeError):
-    import pkg_resources  # Python 3.8 fallback - DELETE THIS
-    ...
-
-# Correct - use Python 3.12 features directly
-script_path = importlib.resources.files("package").joinpath("file")
-```
-
-### Type Annotations
-
-```python
-# Correct - Python 3.12 syntax
-def process(items: list[str]) -> dict[str, int]: ...
-if isinstance(e, ValueError | TypeError): ...
-
-# Wrong - legacy typing module
-def process(items: List[str]) -> Dict[str, int]: ...
-if isinstance(e, (ValueError, TypeError)): ...
-```
-
-### Error Handling
-
-```python
-# Correct - chain exceptions
-try:
-    operation()
-except IOError as e:
-    raise ProcessingError("failed to process") from e
-
-# Wrong - loses context
-except IOError:
-    raise ProcessingError("failed to process")
-```
-
-### General Rules
-
-- Use `pydantic` for schemas, `dataclasses` for other data classes
-- Use `anyio` for async operations
-- Stage files individually, never `git add -A`
-- Use `uv run` for all Python commands (handles venv automatically)
-
-### DO
-
-- Check locality first (`hostname`) before choosing execution method
-- Use terminal directly for single operations on local facility
-- Use direct SSH for single operations on remote facility
-- Use MCP `python()` only for chained processing and graph queries
-- Batch multiple operations in single `python()` calls
-- Use `python("print(reload())")` after editing source files
-
-### DON'T
-
-- Don't use `python()` wrapper for single commands (local or remote)
-- Don't manually activate venv - use `uv run`
-- Don't use `git add -A`
-- Don't use `type!:` suffix for breaking changes
-- Don't use `List[str]`, `Union[X, Y]`, or `isinstance(e, (X, Y))`
-- Don't use "new", "refactored", "enhanced" in names
+- Python ≥3.12: `list[str]`, `X | Y`, `isinstance(e, ValueError | TypeError)`
+- Exception chaining: `raise Error("msg") from e`
+- `pydantic` for schemas, `dataclasses` for other data classes
+- `anyio` for async
+- `uv run` for all Python commands (never activate venv manually)
+- Never use `git add -A`
+- Never use "new", "refactored", "enhanced" in names
 
 ## Testing
 
 ```bash
-# Sync dependencies (required in worktrees)
-uv sync --extra test
-
-# Run all tests
-uv run pytest
-
-# Run with coverage
-uv run pytest --cov=imas_codex
-
-# Run specific test
-uv run pytest tests/path/to/test.py::test_function
-
-# Fast iteration with restricted IDS filter
-uv run imas-codex clusters build --ids-filter "core_profiles equilibrium" -v -f
+uv sync --extra test          # Required in worktrees
+uv run pytest                 # All tests
+uv run pytest --cov=imas_codex  # With coverage
+uv run pytest tests/path/to/test.py::test_function  # Specific test
 ```
 
-## Python REPL Discovery
+## Python REPL
 
-The `python()` tool provides a persistent REPL with pre-loaded utilities. Discover the API first:
+The `python()` MCP tool provides a persistent REPL with pre-loaded utilities:
 
 ```python
 python("print([name for name in dir() if not name.startswith('_')])")
 python("help(search_imas)")
 python("import inspect; print(inspect.signature(get_facility))")
-```
-
-After editing `imas_codex/` source files, reload:
-```python
-python("print(reload())")
+python("print(reload())")  # After editing imas_codex/ source files
 ```
 
 ## Quick Reference
 
 | Task | Command |
 |------|---------|
-| Check locality | `hostname` |
-| Local command | `rg pattern /path` |
-| Remote command | `ssh facility "rg pattern /path"` |
 | Graph query | `python("print(query('MATCH (n) RETURN n.id LIMIT 5'))")` |
 | IMAS search | `python("print(search_imas('electron temperature'))")` |
 | Code search | `python("print(search_code('equilibrium'))")` |
 | Facility info | `python("print(get_facility('tcv'))")` |
 | Add to graph | `add_to_graph('SourceFile', [...])` |
-| Update infrastructure | `update_facility_infrastructure('tcv', {...})` |
+| Update infra | `update_facility_infrastructure('tcv', {...})` |
+| Remote command | `ssh facility "rg pattern /path"` |
+
+## Embedding Server
+
+Uses SSH tunnel to ITER GPU cluster (port 18765, Qwen3-Embedding-0.6B, 1024-dim).
+
+Establish tunnel: `ssh -f -N -L 18765:127.0.0.1:18765 iter`
+
+If embedding fails, check in order:
+1. Tunnel active: `lsof -i :18765`
+2. Server running: `ssh iter "systemctl --user status imas-codex-embed"`
+3. Server health: `curl http://localhost:18765/health`
 
 ## Domain Workflows
-
-For detailed domain-specific workflows, see:
 
 | Workflow | Documentation |
 |----------|---------------|
@@ -689,8 +292,6 @@ For detailed domain-specific workflows, see:
 
 ## Custom Agents
 
-Select from the VS Code agent dropdown for restricted toolsets:
-
 | Agent | Purpose |
 |-------|---------|
 | Explore | Remote facility discovery (read-only + MCP) |
@@ -698,72 +299,11 @@ Select from the VS Code agent dropdown for restricted toolsets:
 | Ingest | Code ingestion pipeline (core + MCP) |
 | Graph | Knowledge graph operations (core + MCP) |
 
-## Remote Embedding Server
-
-The MCP server uses remote embedding by default (`embedding-backend = "remote"` in pyproject.toml). The embedding server runs on the ITER cluster GPU and is accessed via SSH tunnel.
-
-**Architecture:**
-- Server: FastAPI app running on ITER with Tesla T4 GPU
-- Client: HTTP requests via SSH tunnel (port 18765)
-- Model: Qwen/Qwen3-Embedding-0.6B (1024-dim embeddings)
-
-**Local workstation setup:**
-
-```bash
-# Establish SSH tunnel (required for MCP embedding functions)
-ssh -f -N -L 18765:127.0.0.1:18765 iter
-
-# Check server status
-imas-codex serve embed status
-```
-
-**ITER cluster management:**
-
-```bash
-# Check service status
-ssh iter "systemctl --user status imas-codex-embed"
-
-# Start/stop/restart
-ssh iter "systemctl --user start imas-codex-embed"
-ssh iter "systemctl --user stop imas-codex-embed"
-ssh iter "systemctl --user restart imas-codex-embed"
-
-# View logs
-ssh iter "journalctl --user -u imas-codex-embed -f"
-```
-
-**First-time installation on ITER cluster:**
-
-```bash
-ssh iter
-cd ~/Code/imas-codex
-uv sync --extra gpu
-imas-codex serve embed service install --gpu 1
-imas-codex serve embed service start
-```
-
-**Troubleshooting:**
-
-If embedding calls fail from MCP, check in order:
-1. SSH tunnel active: `lsof -i :18765`
-2. Server running: `ssh iter "systemctl --user status imas-codex-embed"`
-3. Server health: `curl http://localhost:18765/health`
-
 ## Fallback: MCP Server Not Running
 
-If `python()` is unavailable, use CLI:
-
 ```bash
-# Graph operations
-uv run imas-codex neo4j status
-uv run imas-codex neo4j shell
-uv run imas-codex neo4j dump
-
-# Ingestion
-uv run imas-codex ingest queue tcv /path/*.py
-uv run imas-codex ingest run tcv
-
-# Testing
-uv run pytest
-uv run ruff check --fix . && uv run ruff format .
+uv run imas-codex neo4j status    # Graph operations
+uv run imas-codex neo4j shell     # Interactive Cypher
+uv run imas-codex ingest run tcv  # Ingestion
+uv run pytest                     # Testing
 ```
