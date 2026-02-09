@@ -22,26 +22,27 @@ def discover():
     """Discover facility resources with graph-led exploration.
 
     \b
-    Discovery Pipeline:
-      paths              Scan and score directory structure
-      signals            Discover and document facility data signals
-      wiki               Discover wiki pages and build documentation graph
-      code               Find source files in scored paths (not yet implemented)
-
-    \b
-    Management:
-      status             Show discovery statistics
-      inspect            Debug view of scanned/scored paths
+    Top-level Commands:
+      status             Show discovery statistics for all domains
       clear              Clear ALL discovery data (nuclear reset)
-      paths-clear        Clear path data only
-      signals-clear      Clear signal data only
-      wiki-reset         Reset failed/deferred wiki pages for re-processing
       seed               Seed root paths from config
+      inspect            Debug view of scanned/scored paths
 
     \b
-    Wiki-specific operations:
-      imas-codex wiki clear <facility>    Clear wiki data only
-      imas-codex wiki status <facility>   Wiki discovery statistics
+    Domain Subgroups (each has run, status, clear):
+      paths              Directory structure discovery
+      wiki               Wiki page discovery and ingestion
+      signals            Facility signal discovery
+
+    \b
+    Examples:
+      imas-codex discover status jet          # All domains
+      imas-codex discover paths run jet       # Run paths discovery
+      imas-codex discover paths status jet    # Paths status only
+      imas-codex discover wiki run jet        # Run wiki discovery
+      imas-codex discover wiki clear jet      # Clear wiki only
+      imas-codex discover signals run jet     # Run signals discovery
+      imas-codex discover clear jet           # Clear ALL domains
 
     The graph is the single source of truth. All discovery operations
     are idempotent and resume from the current graph state.
@@ -49,7 +50,76 @@ def discover():
     pass
 
 
-@discover.command("paths")
+# =============================================================================
+# Paths Subgroup
+# =============================================================================
+
+
+@click.group()
+def paths():
+    """Directory structure discovery.
+
+    \b
+    Commands:
+      run       Run paths discovery (scan directories, LLM scoring)
+      status    Show paths discovery statistics
+      clear     Clear paths data for a facility
+    """
+    pass
+
+
+discover.add_command(paths)
+
+
+# =============================================================================
+# Wiki Subgroup
+# =============================================================================
+
+
+@click.group()
+def wiki():
+    """Wiki page discovery and ingestion.
+
+    \b
+    Commands:
+      run       Run wiki discovery (scan, score, ingest)
+      status    Show wiki discovery statistics
+      clear     Clear wiki data for a facility
+      reset     Reset failed/deferred pages for re-processing
+    """
+    pass
+
+
+discover.add_command(wiki)
+
+
+# =============================================================================
+# Signals Subgroup
+# =============================================================================
+
+
+@click.group()
+def signals():
+    """Facility signal discovery.
+
+    \b
+    Commands:
+      run       Run signal discovery (TDI, enrichment, quality check)
+      status    Show signal discovery statistics
+      clear     Clear signal data for a facility
+    """
+    pass
+
+
+discover.add_command(signals)
+
+
+# =============================================================================
+# Paths Commands
+# =============================================================================
+
+
+@paths.command("run")
 @click.argument("facility")
 @click.option(
     "--root",
@@ -127,7 +197,7 @@ def discover():
     default=None,
     help="Auto-enrich paths scoring >= threshold even if should_enrich=false (e.g., 0.75)",
 )
-def discover_paths(
+def paths_run(
     facility: str,
     root: tuple[str, ...],
     cost_limit: float,
@@ -146,12 +216,12 @@ def discover_paths(
 
     \b
     Examples:
-      imas-codex discover paths <facility>              # Default $10 limit
-      imas-codex discover paths <facility> -c 20.0      # $20 limit
-      imas-codex discover paths iter --focus "equilibrium codes"
-      imas-codex discover paths iter --scan-only        # SSH only, no LLM
-      imas-codex discover paths iter --score-only       # LLM only, no SSH
-      imas-codex discover paths tcv -r /home/codes/astra  # Deep dive into ASTRA
+      imas-codex discover paths run <facility>          # Default $10 limit
+      imas-codex discover paths run <facility> -c 20.0  # $20 limit
+      imas-codex discover paths run iter --focus "equilibrium codes"
+      imas-codex discover paths run iter --scan-only    # SSH only, no LLM
+      imas-codex discover paths run iter --score-only   # LLM only, no SSH
+      imas-codex discover paths run tcv -r /home/codes/astra  # Deep dive
 
     \b
     Targeted deep dives:
@@ -772,34 +842,56 @@ async def _async_discovery_loop(
 @click.option(
     "--domain",
     "-d",
-    type=click.Choice(["paths", "code", "docs", "data"]),
-    help="Show detailed status for specific domain",
+    type=click.Choice(["paths", "wiki", "signals"]),
+    help="Show status for specific domain only (default: all)",
 )
 def discover_status(
     facility: str, as_json: bool, no_rich: bool, domain: str | None
 ) -> None:
-    """Show discovery statistics for a facility."""
+    """Show discovery statistics for a facility.
+
+    By default shows status for all discovery domains: paths, wiki, and signals.
+    Use --domain/-d to filter to a specific domain.
+
+    \b
+    Examples:
+      imas-codex discover status jet           # All domains
+      imas-codex discover status jet -d paths  # Paths only
+      imas-codex discover status jet -d wiki   # Wiki only
+      imas-codex discover status jet --json    # JSON output
+    """
     import json as json_module
     import sys
 
     from imas_codex.discovery import get_discovery_stats, get_high_value_paths
-    from imas_codex.discovery.paths.progress import print_discovery_status
+    from imas_codex.discovery.data.parallel import get_data_discovery_stats
+    from imas_codex.discovery.wiki.parallel import get_wiki_discovery_stats
 
     # Auto-detect TTY if --no-rich not explicitly set
     use_rich = not no_rich and sys.stdout.isatty()
 
     try:
         if as_json:
-            stats = get_discovery_stats(facility)
-            high_value = get_high_value_paths(facility, min_score=0.7, limit=20)
-            output = {
-                "facility": facility,
-                "stats": stats,
-                "high_value_paths": high_value,
-            }
+            output: dict = {"facility": facility}
+
+            if domain is None or domain == "paths":
+                stats = get_discovery_stats(facility)
+                high_value = get_high_value_paths(facility, min_score=0.7, limit=20)
+                output["paths"] = {"stats": stats, "high_value_paths": high_value}
+
+            if domain is None or domain == "wiki":
+                wiki_stats = get_wiki_discovery_stats(facility)
+                output["wiki"] = wiki_stats
+
+            if domain is None or domain == "signals":
+                signal_stats = get_data_discovery_stats(facility)
+                output["signals"] = signal_stats
+
             click.echo(json_module.dumps(output, indent=2))
         else:
-            print_discovery_status(facility, use_rich=use_rich)
+            from imas_codex.discovery.paths.progress import print_discovery_status
+
+            print_discovery_status(facility, use_rich=use_rich, domain=domain)
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
@@ -1176,7 +1268,7 @@ def discover_code(facility: str, dry_run: bool) -> None:
     "--focus", "-p", help="Focus discovery (e.g., 'equilibrium', 'diagnostics')"
 )
 @click.option(
-    "--scan-only", is_flag=True, help="Only discover pages, skip scoring and ingestion"
+    "--scan-only", is_flag=True, help="Only scan pages, skip scoring and ingestion"
 )
 @click.option(
     "--score-only",
@@ -1198,7 +1290,7 @@ def discover_code(facility: str, dry_run: bool) -> None:
     "-f",
     is_flag=True,
     default=False,
-    help="Force bulk discovery even if wiki pages already exist",
+    help="Re-scan pages even if wiki pages already exist",
 )
 @click.option(
     "--score-workers",
@@ -1216,7 +1308,7 @@ def discover_code(facility: str, dry_run: bool) -> None:
     "--discover-artifacts",
     is_flag=True,
     default=False,
-    help="Force bulk artifact discovery via API (useful when pages already exist)",
+    help="Re-scan artifacts even if already discovered",
 )
 def discover_wiki(
     facility: str,
@@ -1240,14 +1332,13 @@ def discover_wiki(
     Runs parallel wiki discovery workers:
 
     \b
-    - BULK DISCOVER: Fast API-based page enumeration (runs once per site)
-    - SCORE: Content-aware LLM evaluation with inline content fetch
+    - SCAN: Enumerate all pages per site (runs once, cached in graph)
+    - SCORE: LLM relevance evaluation with content fetch
     - INGEST: Chunk and embed high-score pages
-    - ARTIFACT SCORE/INGEST: Score and embed wiki artifacts (PDFs, images)
+    - ARTIFACTS: Score and embed wiki attachments (PDFs, images, etc.)
 
-    Bulk discovery runs automatically on first invocation when no wiki pages
-    exist for the facility. Use --force-discovery to re-run bulk discovery
-    (adds new pages only, does not reset existing ones).
+    Page scanning runs automatically on first invocation. Use
+    --force-discovery to re-scan (adds new pages, keeps existing).
     """
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki import get_wiki_stats
