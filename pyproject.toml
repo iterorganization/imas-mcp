@@ -61,7 +61,6 @@ dependencies = [
     "scikit-learn>=1.7.2",
     "imas-python>=2.0.1",
     "requests>=2.25.0",
-    "sentence-transformers>=5.0.0",
     "huggingface_hub[hf_xet]>=0.20.0",
     "rapidfuzz>=3.0.0",
     "linkml>=1.9.3",
@@ -72,7 +71,6 @@ dependencies = [
     "neo4j>=5.28.0,<6.0.0",
     "ruamel-yaml>=0.18.17",
     "llama-index-core>=0.14",
-    "llama-index-embeddings-huggingface>=0.6",
     "llama-index-vector-stores-neo4jvector>=0.4",
     "tree-sitter>=0.25.2",
     "tree-sitter-languages>=1.10.2",
@@ -115,8 +113,16 @@ bench = ["asv>=0.6.0,<1.0.0"]
 # PyTorch backend selection - choose one:
 #   uv sync --extra cpu  (default, ~2GB, no CUDA)
 #   uv sync --extra gpu  (CUDA 12.1, ~6GB, torch 2.5.1 max due to iter driver)
-cpu = ["torch"]
-gpu = ["torch==2.5.1"]
+cpu = [
+    "torch",
+    "sentence-transformers>=5.0.0",
+    "llama-index-embeddings-huggingface>=0.6",
+]
+gpu = [
+    "torch==2.5.1",
+    "sentence-transformers>=5.0.0",
+    "llama-index-embeddings-huggingface>=0.6",
+]
 
 [dependency-groups]
 dev = [

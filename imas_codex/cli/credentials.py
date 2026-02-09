@@ -300,7 +300,9 @@ def credentials_list(facility: str | None, remote: bool) -> None:
     table.add_column("Auth")
     table.add_column("Service", style="cyan")
     table.add_column("Credentials")
-    table.add_column("URL", style="dim")
+    table.add_column(
+        "URL", style="dim", no_wrap=not bool(facility), min_width=20 if facility else 0
+    )
 
     # Group sites with identical patterns for compact display
     # e.g., JET's 16 wikis all share the same access/auth/service pattern
@@ -317,14 +319,16 @@ def credentials_list(facility: str | None, remote: bool) -> None:
             # Sites with credential services always get individual rows
             if group_key in seen_groups:
                 seen_groups[group_key]["_count"] += 1
+                seen_groups[group_key]["_urls"].append(info["url"])
             else:
-                entry = {**info, "_count": 1}
+                entry = {**info, "_count": 1, "_urls": [info["url"]]}
                 seen_groups[group_key] = entry
                 grouped.append(entry)
         elif group_key in seen_groups:
             seen_groups[group_key]["_count"] += 1
+            seen_groups[group_key]["_urls"].append(info["url"])
         else:
-            entry = {**info, "_count": 1}
+            entry = {**info, "_count": 1, "_urls": [info["url"]]}
             seen_groups[group_key] = entry
             grouped.append(entry)
 
@@ -349,13 +353,18 @@ def credentials_list(facility: str | None, remote: bool) -> None:
             "[green]✓[/green]" if info.get("ssh_available") else "[dim]—[/dim]"
         )
 
-        url = info["url"]
+        urls = [u for u in info.get("_urls", []) if u]
         count = info.get("_count", 1)
-        url_display = (
-            f"{count} sites"
-            if count > 1
-            else (url[:40] + "…" if len(url) > 40 else url)
-        )
+        if facility and urls:
+            # When a specific facility is requested, show all URLs stacked
+            url_display = "\n".join(urls)
+        elif count > 1:
+            url_display = f"{count} sites"
+        elif urls:
+            url = urls[0]
+            url_display = url[:40] + "…" if len(url) > 40 else url
+        else:
+            url_display = ""
 
         table.add_row(
             info["facility"],
