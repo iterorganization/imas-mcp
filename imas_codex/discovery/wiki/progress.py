@@ -532,6 +532,17 @@ class WikiProgressDisplay:
                     parts.append(f"{failed} failed")
                 section.append(f" ({', '.join(parts)})", style="dim")
 
+        # Embedding source indicator (live - changes if fallback triggered)
+        embed_source = get_embedding_source()
+        if embed_source == "remote":
+            section.append("    embed:remote", style="green")
+        elif embed_source == "openrouter":
+            section.append("    embed:openrouter", style="yellow")
+        elif embed_source == "local":
+            section.append("    embed:local", style="cyan")
+        else:
+            section.append("    embed:?", style="dim")
+
         return section
 
     def _build_progress_section(self) -> Text:
@@ -926,17 +937,6 @@ class WikiProgressDisplay:
         if pending_parts:
             section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
-        # Embedding source indicator (live - changes if fallback triggered)
-        embed_source = get_embedding_source()
-        if embed_source == "remote":
-            section.append("  embed:remote", style="green")
-        elif embed_source == "openrouter":
-            section.append("  embed:openrouter", style="yellow")
-        elif embed_source == "local":
-            section.append("  embed:local", style="cyan")
-        else:
-            section.append("  embed:?", style="dim")
-
         return section
 
     def _build_display(self) -> Panel:
@@ -976,6 +976,7 @@ class WikiProgressDisplay:
             self._build_display(),
             console=self.console,
             refresh_per_second=4,
+            transient=True,  # Remove live display on exit; summary replaces it
             vertical_overflow="visible",
         )
         self._live.__enter__()

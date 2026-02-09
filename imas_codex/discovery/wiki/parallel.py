@@ -1268,7 +1268,6 @@ def bulk_discover_all_pages_mediawiki(
         result = subprocess.run(
             ["ssh", ssh_host, cmd],
             capture_output=True,
-            text=True,
             timeout=30,
         )
         if result.returncode != 0:
@@ -1282,10 +1281,11 @@ def bulk_discover_all_pages_mediawiki(
     # Format: from=Page_Name&to=Page_Name
     import re
 
+    html_text = result.stdout.decode("utf-8", errors="replace")
     range_pattern = re.compile(
         r'href="[^"]*title=Special:AllPages[^"]*from=([^&"]+)[^"]*"'
     )
-    ranges = list(set(range_pattern.findall(result.stdout)))
+    ranges = list(set(range_pattern.findall(html_text)))
 
     if not ranges:
         logger.warning("No page ranges found in AllPages index")
@@ -1306,7 +1306,6 @@ def bulk_discover_all_pages_mediawiki(
             result = subprocess.run(
                 ["ssh", ssh_host, cmd],
                 capture_output=True,
-                text=True,
                 timeout=30,
             )
             if result.returncode != 0:
@@ -1316,8 +1315,9 @@ def bulk_discover_all_pages_mediawiki(
 
         # Extract page links from response
         # Format: href="/wiki/Page_Name" or href="/wiki/index.php?title=Page_Name"
+        range_html = result.stdout.decode("utf-8", errors="replace")
         page_pattern = re.compile(r'href="/wiki/([^"?]+)"')
-        for match in page_pattern.finditer(result.stdout):
+        for match in page_pattern.finditer(range_html):
             page_name = unquote(match.group(1))
             # Skip special pages and system namespaces
             if not any(
@@ -3379,11 +3379,11 @@ async def _fetch_and_summarize(
             result = subprocess.run(
                 ["ssh", ssh_host, cmd],
                 capture_output=True,
-                text=True,
                 timeout=30,
             )
             if result.returncode == 0 and result.stdout:
-                return result.stdout
+                # Wiki pages may be ISO-8859 encoded despite claiming UTF-8
+                return result.stdout.decode("utf-8", errors="replace")
             return ""
         except subprocess.TimeoutExpired:
             logger.warning("Timeout fetching %s via SSH", url)
@@ -3836,11 +3836,11 @@ async def _fetch_html(
             result = subprocess.run(
                 ["ssh", ssh_host, cmd],
                 capture_output=True,
-                text=True,
                 timeout=30,
             )
             if result.returncode == 0:
-                return result.stdout
+                # Wiki pages may be ISO-8859 encoded despite claiming UTF-8
+                return result.stdout.decode("utf-8", errors="replace")
             return ""
         except Exception as e:
             logger.warning("SSH fetch failed for %s: %s", url, e)
@@ -3929,6 +3929,7 @@ async def run_parallel_wiki_discovery(
     score_only: bool = False,
     bulk_discover: bool = True,
     ingest_artifacts: bool = True,
+    skip_reset: bool = False,
     on_scan_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
     on_ingest_progress: Callable | None = None,
@@ -3949,6 +3950,9 @@ async def run_parallel_wiki_discovery(
             download and ingest artifacts discovered during scanning.
             Artifacts go through score→ingest pipeline:
             discovered → scored (LLM) → ingested (embed)
+        skip_reset: If True, skip reset_transient_pages on entry. Set this
+            when called from multi-site loop where the CLI has already
+            reset orphans once at startup.
         on_artifact_progress: Progress callback for artifact ingest worker.
         on_artifact_score_progress: Progress callback for artifact score worker.
         on_worker_status: Callback for worker status changes. Called with
@@ -3959,8 +3963,10 @@ async def run_parallel_wiki_discovery(
     """
     start_time = time.time()
 
-    # Reset orphans from previous runs
-    reset_transient_pages(facility)
+    # Reset orphans from previous runs (skip when called from multi-site
+    # loop since the CLI already resets once at the start)
+    if not skip_reset:
+        reset_transient_pages(facility)
 
     # Initialize state with auth info
     state = WikiDiscoveryState(

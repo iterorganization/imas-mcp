@@ -1605,7 +1605,7 @@ def discover_wiki(
     if not scan_only:
         worker_parts.append(f"{score_workers} score")
         worker_parts.append(f"{ingest_workers} ingest")
-        worker_parts.append("1 artifact")
+        worker_parts.append("2 artifact")
     log_print(f"\nWorkers: {', '.join(worker_parts)}")
     if not scan_only:
         log_print(f"Cost limit: ${cost_limit:.2f}")
@@ -1656,6 +1656,7 @@ def discover_wiki(
                     wiki_logger.info(f"INGEST: {msg}")
 
             if not _use_rich:
+                _multi = len(_site_configs) > 1
                 for i, sc in enumerate(_site_configs):
                     if remaining_budget <= 0:
                         wiki_logger.info("Budget exhausted, skipping remaining sites")
@@ -1671,28 +1672,33 @@ def discover_wiki(
                         sc["base_url"],
                     )
 
-                    result = await run_parallel_wiki_discovery(
-                        facility=_facility,
-                        site_type=sc["site_type"],
-                        base_url=sc["base_url"],
-                        portal_page=sc["portal_page"],
-                        ssh_host=sc["ssh_host"],
-                        auth_type=sc["auth_type"],
-                        credential_service=sc["credential_service"],
-                        cost_limit=remaining_budget,
-                        page_limit=remaining_pages,
-                        max_depth=_max_depth,
-                        focus=_focus,
-                        num_scan_workers=1,
-                        num_score_workers=_num_score_workers,
-                        num_ingest_workers=_num_ingest_workers,
-                        scan_only=_scan_only,
-                        score_only=_score_only,
-                        bulk_discover=False,
-                        on_scan_progress=log_on_scan,
-                        on_score_progress=log_on_score,
-                        on_ingest_progress=log_on_ingest,
-                    )
+                    try:
+                        result = await run_parallel_wiki_discovery(
+                            facility=_facility,
+                            site_type=sc["site_type"],
+                            base_url=sc["base_url"],
+                            portal_page=sc["portal_page"],
+                            ssh_host=sc["ssh_host"],
+                            auth_type=sc["auth_type"],
+                            credential_service=sc["credential_service"],
+                            cost_limit=remaining_budget,
+                            page_limit=remaining_pages,
+                            max_depth=_max_depth,
+                            focus=_focus,
+                            num_scan_workers=1,
+                            num_score_workers=_num_score_workers,
+                            num_ingest_workers=_num_ingest_workers,
+                            scan_only=_scan_only,
+                            score_only=_score_only,
+                            bulk_discover=False,
+                            skip_reset=_multi,
+                            on_scan_progress=log_on_scan,
+                            on_score_progress=log_on_score,
+                            on_ingest_progress=log_on_ingest,
+                        )
+                    except Exception as e:
+                        wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
+                        continue
 
                     for key in ("scanned", "scored", "ingested", "artifacts"):
                         combined[key] += result.get(key, 0)
@@ -1865,31 +1871,36 @@ def discover_wiki(
                         if remaining_pages is not None and remaining_pages <= 0:
                             break
 
-                        result = await run_parallel_wiki_discovery(
-                            facility=_facility,
-                            site_type=sc["site_type"],
-                            base_url=sc["base_url"],
-                            portal_page=sc["portal_page"],
-                            ssh_host=sc["ssh_host"],
-                            auth_type=sc["auth_type"],
-                            credential_service=sc["credential_service"],
-                            cost_limit=remaining_budget,
-                            page_limit=remaining_pages,
-                            max_depth=_max_depth,
-                            focus=_focus,
-                            num_scan_workers=1,
-                            num_score_workers=_num_score_workers,
-                            num_ingest_workers=_num_ingest_workers,
-                            scan_only=_scan_only,
-                            score_only=_score_only,
-                            bulk_discover=False,
-                            on_scan_progress=on_scan,
-                            on_score_progress=on_score,
-                            on_ingest_progress=on_ingest,
-                            on_artifact_progress=on_artifact,
-                            on_artifact_score_progress=on_artifact_score,
-                            on_worker_status=on_worker_status,
-                        )
+                        try:
+                            result = await run_parallel_wiki_discovery(
+                                facility=_facility,
+                                site_type=sc["site_type"],
+                                base_url=sc["base_url"],
+                                portal_page=sc["portal_page"],
+                                ssh_host=sc["ssh_host"],
+                                auth_type=sc["auth_type"],
+                                credential_service=sc["credential_service"],
+                                cost_limit=remaining_budget,
+                                page_limit=remaining_pages,
+                                max_depth=_max_depth,
+                                focus=_focus,
+                                num_scan_workers=1,
+                                num_score_workers=_num_score_workers,
+                                num_ingest_workers=_num_ingest_workers,
+                                scan_only=_scan_only,
+                                score_only=_score_only,
+                                bulk_discover=False,
+                                skip_reset=multi_site,
+                                on_scan_progress=on_scan,
+                                on_score_progress=on_score,
+                                on_ingest_progress=on_ingest,
+                                on_artifact_progress=on_artifact,
+                                on_artifact_score_progress=on_artifact_score,
+                                on_worker_status=on_worker_status,
+                            )
+                        except Exception as e:
+                            wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
+                            continue
 
                         for key in (
                             "scanned",
@@ -1917,8 +1928,9 @@ def discover_wiki(
                     except asyncio.CancelledError:
                         pass
 
-                # Print summary
-                display.print_summary()
+            # Print summary AFTER Live display exits (outside `with` block)
+            # so it appears cleanly below the frozen display
+            display.print_summary()
 
             return combined
 

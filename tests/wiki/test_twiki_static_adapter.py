@@ -92,9 +92,11 @@ class TestGetAdapter:
         assert isinstance(adapter, TWikiStaticAdapter)
 
     def test_get_adapter_static_html(self):
-        """Test get_adapter returns TWikiStaticAdapter for static_html."""
+        """Test get_adapter returns StaticHtmlAdapter for static_html."""
+        from imas_codex.discovery.wiki.adapters import StaticHtmlAdapter
+
         adapter = get_adapter("static_html", base_url="https://example.org")
-        assert isinstance(adapter, TWikiStaticAdapter)
+        assert isinstance(adapter, StaticHtmlAdapter)
 
     def test_get_adapter_mediawiki(self):
         """Test get_adapter still works for mediawiki."""
