@@ -9,18 +9,22 @@ No fallback between backends - if the selected backend fails, errors are raised.
 The remote client has built-in retry logic for transient connection failures.
 """
 
+from __future__ import annotations
+
 import hashlib
 import logging
 import pickle
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from imas_codex import dd_version
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 from imas_codex.core.progress_monitor import create_progress_monitor
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 
@@ -55,7 +59,7 @@ class Encoder:
     ):
         self.config = config or EncoderConfig()
         self.logger = logging.getLogger(__name__)
-        self._model: SentenceTransformer | None = None
+        self._model: SentenceTransformer | None = None  # Lazy import at runtime
         self._cache: EmbeddingCache | None = None
         self._cache_path: Path | None = None
         self._lock = threading.RLock()
@@ -445,13 +449,21 @@ class Encoder:
             self._load_model()
         return self._model  # type: ignore[return-value]
 
+    @staticmethod
+    def _import_sentence_transformers() -> type:
+        """Lazy import of SentenceTransformer to avoid torch/CUDA at import time."""
+        from sentence_transformers import SentenceTransformer
+
+        return SentenceTransformer
+
     def _load_model(self) -> None:
         """Load local SentenceTransformer model."""
+        ST = self._import_sentence_transformers()
         try:
             cache_folder = str(self._get_cache_directory() / "models")
             try:
                 self.logger.debug("Loading cached sentence transformer model...")
-                self._model = SentenceTransformer(
+                self._model = ST(
                     self.config.model_name,
                     device=self.config.device,
                     cache_folder=cache_folder,
@@ -464,7 +476,7 @@ class Encoder:
                 self.logger.debug(
                     f"Model not in cache, downloading {self.config.model_name}..."
                 )
-                self._model = SentenceTransformer(
+                self._model = ST(
                     self.config.model_name,
                     device=self.config.device,
                     cache_folder=cache_folder,
@@ -477,7 +489,7 @@ class Encoder:
             self.logger.error(f"Failed to load model {self.config.model_name}: {e}")
             fallback = "all-MiniLM-L6-v2"
             self.logger.debug(f"Trying fallback model: {fallback}")
-            self._model = SentenceTransformer(fallback, device=self.config.device)
+            self._model = ST(fallback, device=self.config.device)
             self.config.model_name = fallback
 
     def _generate_embeddings(self, texts: list[str]) -> np.ndarray:

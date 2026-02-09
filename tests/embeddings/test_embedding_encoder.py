@@ -67,7 +67,7 @@ def test_model_fallback_to_local():
     )
 
     # Mock SentenceTransformer to fail for the nonexistent model but succeed for fallback
-    with patch("imas_codex.embeddings.encoder.SentenceTransformer") as mock_st:
+    with patch("sentence_transformers.SentenceTransformer") as mock_st:
 
         def st_side_effect(model_name, **kwargs):
             if model_name == "nonexistent/model-name":
