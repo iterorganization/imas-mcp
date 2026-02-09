@@ -32,8 +32,12 @@ def discover():
     Management:
       status             Show discovery statistics
       inspect            Debug view of scanned/scored paths
-      clear              Clear discovery data (reset)
+      clear              Clear ALL discovery data (nuclear reset)
+      paths-clear        Clear path data only
+      signals-clear      Clear signal data only
       seed               Seed root paths from config
+
+    For wiki-specific clear: imas-codex wiki clear <facility>
 
     The graph is the single source of truth. All discovery operations
     are idempotent and resume from the current graph state.
@@ -934,37 +938,19 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
 
 @discover.command("clear")
 @click.argument("facility")
-@click.option(
-    "--domain",
-    "-d",
-    type=click.Choice(["paths", "wiki", "signals", "all"]),
-    default="all",
-    help="Which discovery domain to clear (default: all)",
-)
-@click.option(
-    "--cascade",
-    is_flag=True,
-    help="Also delete related nodes (SourceFile, FacilityUser for paths; epochs for signals)",
-)
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
-def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> None:
-    """Clear discovered data for a facility.
+def discover_clear(facility: str, force: bool) -> None:
+    """Clear ALL discovered data for a facility.
+
+    Deletes everything: paths, wiki, signals and all dependent nodes.
+    Always cascades (SourceFile, FacilityUser, chunks, artifacts, epochs).
 
     \b
-    Domains:
-      - paths: FacilityPath nodes (filesystem discovery)
-      - wiki: WikiPage + WikiChunk + WikiArtifact nodes (always cascades)
-      - signals: FacilitySignal + TreeModelVersion nodes (data discovery)
-      - all: All discovery domains
-
-    Use --cascade to also delete derived data like SourceFile, FacilityUser,
-    and epoch checkpoints. Wiki domain always cascades (chunks and artifacts
-    are dependent data).
-
-    Equivalent shortcut: imas-codex wiki clear <facility>
+    For domain-specific clear, use:
+      imas-codex discover paths-clear <facility>   # Paths only
+      imas-codex discover signals-clear <facility>  # Signals only
+      imas-codex wiki clear <facility>              # Wiki only
     """
-    from functools import partial
-
     from imas_codex.discovery import clear_facility_paths, get_discovery_stats
     from imas_codex.discovery.data import (
         clear_facility_signals,
@@ -975,45 +961,40 @@ def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> No
     try:
         items_to_clear: list[tuple[str, int, callable]] = []
 
-        if domain in ("paths", "all"):
-            stats = get_discovery_stats(facility)
-            total = stats.get("total", 0)
-            if total > 0:
-                clear_func = partial(clear_facility_paths, cascade=cascade)
-                label = "paths + related" if cascade else "paths"
-                items_to_clear.append((label, total, clear_func))
+        # Paths domain (always cascade)
+        stats = get_discovery_stats(facility)
+        total = stats.get("total", 0)
+        if total > 0:
+            items_to_clear.append(("paths + related", total, clear_facility_paths))
 
-        if domain in ("wiki", "all"):
-            wiki_stats = get_wiki_stats(facility)
-            total = wiki_stats.get("pages", 0)  # WikiPage count
-            chunks = wiki_stats.get("chunks", 0)
-            # Get artifact count separately since get_wiki_stats doesn't include it
-            from imas_codex.graph import GraphClient
+        # Wiki domain
+        wiki_stats = get_wiki_stats(facility)
+        pages = wiki_stats.get("pages", 0)
+        chunks = wiki_stats.get("chunks", 0)
+        from imas_codex.graph import GraphClient
 
-            with GraphClient() as gc:
-                artifact_result = gc.query(
-                    "MATCH (wa:WikiArtifact {facility_id: $f}) RETURN count(wa) AS cnt",
-                    f=facility,
-                )
-                artifacts = artifact_result[0]["cnt"] if artifact_result else 0
-            if total > 0 or artifacts > 0:
-                # Wiki always cascades — chunks and artifacts are dependent data
-                label = f"wiki pages + {chunks} chunks + {artifacts} artifacts"
-                items_to_clear.append((label, total or artifacts, clear_facility_wiki))
+        with GraphClient() as gc:
+            artifact_result = gc.query(
+                "MATCH (wa:WikiArtifact {facility_id: $f}) RETURN count(wa) AS cnt",
+                f=facility,
+            )
+            artifacts = artifact_result[0]["cnt"] if artifact_result else 0
+        if pages > 0 or artifacts > 0:
+            label = f"wiki pages + {chunks} chunks + {artifacts} artifacts"
+            items_to_clear.append((label, pages or artifacts, clear_facility_wiki))
 
-        if domain in ("signals", "all"):
-            signal_stats = get_data_discovery_stats(facility)
-            total = signal_stats.get("total", 0)
-            if total > 0:
-                # signals always cascade to epochs (it's required for clean state)
-                clear_func = partial(clear_facility_signals, cascade=True)
-                items_to_clear.append(("signals + epochs", total, clear_func))
+        # Signals domain
+        signal_stats = get_data_discovery_stats(facility)
+        signal_total = signal_stats.get("total", 0)
+        if signal_total > 0:
+            items_to_clear.append(
+                ("signals + epochs", signal_total, clear_facility_signals)
+            )
 
         if not items_to_clear:
-            click.echo(f"No {domain} data to clear for {facility}")
+            click.echo(f"No discovery data to clear for {facility}")
             return
 
-        # Summary message
         summary_parts = [f"{count} {name}" for name, count, _ in items_to_clear]
         summary = " and ".join(summary_parts)
 
@@ -1023,31 +1004,101 @@ def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> No
                 abort=True,
             )
 
-        # Execute deletions
         for name, _, clear_func in items_to_clear:
             result = clear_func(facility)
-            # Handle dict return (signals, wiki) vs int return (paths)
-            if isinstance(result, dict):
-                parts = []
-                if result.get("pages_deleted"):
-                    parts.append(f"{result['pages_deleted']} pages")
-                if result.get("chunks_deleted"):
-                    parts.append(f"{result['chunks_deleted']} chunks")
-                if result.get("artifacts_deleted"):
-                    parts.append(f"{result['artifacts_deleted']} artifacts")
-                if result.get("signals_deleted"):
-                    parts.append(f"{result['signals_deleted']} signals")
-                if result.get("epochs_deleted"):
-                    parts.append(f"{result['epochs_deleted']} epochs")
-                if result.get("checkpoints_deleted"):
-                    parts.append(f"{result['checkpoints_deleted']} checkpoints")
-                click.echo(f"✓ Deleted {', '.join(parts)} for {facility}")
-            else:
-                click.echo(f"✓ Deleted {result} {name} for {facility}")
+            _print_clear_result(name, result, facility)
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from e
+
+
+@discover.command("paths-clear")
+@click.argument("facility")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+def discover_paths_clear(facility: str, force: bool) -> None:
+    """Clear path discovery data for a facility.
+
+    Deletes FacilityPath, SourceFile, and FacilityUser nodes.
+    """
+    from imas_codex.discovery import clear_facility_paths, get_discovery_stats
+
+    try:
+        stats = get_discovery_stats(facility)
+        total = stats.get("total", 0)
+        if total == 0:
+            click.echo(f"No path data to clear for {facility}")
+            return
+
+        if not force:
+            click.confirm(
+                f"This will delete {total} paths + related nodes for {facility}. Continue?",
+                abort=True,
+            )
+
+        result = clear_facility_paths(facility)
+        _print_clear_result("paths + related", result, facility)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover.command("signals-clear")
+@click.argument("facility")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+def discover_signals_clear(facility: str, force: bool) -> None:
+    """Clear signal discovery data for a facility.
+
+    Deletes FacilitySignal, TreeModelVersion, and epoch checkpoint files.
+    """
+    from imas_codex.discovery.data import (
+        clear_facility_signals,
+        get_data_discovery_stats,
+    )
+
+    try:
+        stats = get_data_discovery_stats(facility)
+        total = stats.get("total", 0)
+        if total == 0:
+            click.echo(f"No signal data to clear for {facility}")
+            return
+
+        if not force:
+            click.confirm(
+                f"This will delete {total} signals + epochs for {facility}. Continue?",
+                abort=True,
+            )
+
+        result = clear_facility_signals(facility)
+        _print_clear_result("signals + epochs", result, facility)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+def _print_clear_result(name: str, result: dict | int, facility: str) -> None:
+    """Format and print clear operation result."""
+    if isinstance(result, dict):
+        parts = []
+        for key in (
+            "pages_deleted",
+            "chunks_deleted",
+            "artifacts_deleted",
+            "signals_deleted",
+            "epochs_deleted",
+            "checkpoints_deleted",
+            "paths_deleted",
+            "source_files_deleted",
+            "users_deleted",
+        ):
+            if result.get(key):
+                label = key.replace("_deleted", "").replace("_", " ")
+                parts.append(f"{result[key]} {label}")
+        click.echo(f"✓ Deleted {', '.join(parts)} for {facility}")
+    else:
+        click.echo(f"✓ Deleted {result} {name} for {facility}")
 
 
 @discover.command("seed")

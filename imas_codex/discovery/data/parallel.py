@@ -270,17 +270,15 @@ def reset_transient_signals(facility: str, silent: bool = False) -> dict[str, in
 def clear_facility_signals(
     facility: str,
     batch_size: int = 1000,
-    cascade: bool = True,
 ) -> dict[str, int]:
     """Clear all signal discovery data for a facility.
 
     Deletes FacilitySignal nodes, TreeModelVersion (epoch) nodes,
-    and clears epoch checkpoint files.
+    and clears epoch checkpoint files. Always cascades.
 
     Args:
         facility: Facility ID
         batch_size: Nodes to delete per batch
-        cascade: If True (default), also delete TreeModelVersion epochs
 
     Returns:
         Dict with counts: signals_deleted, epochs_deleted, checkpoints_deleted
@@ -306,23 +304,22 @@ def clear_facility_signals(
                 if deleted < batch_size:
                     break
 
-            if cascade:
-                # Delete TreeModelVersion (epoch) nodes in batches
-                while True:
-                    result = gc.query(
-                        """
-                        MATCH (v:TreeModelVersion {facility_id: $facility})
-                        WITH v LIMIT $batch_size
-                        DETACH DELETE v
-                        RETURN count(v) AS deleted
-                        """,
-                        facility=facility,
-                        batch_size=batch_size,
-                    )
-                    deleted = result[0]["deleted"] if result else 0
-                    results["epochs_deleted"] += deleted
-                    if deleted < batch_size:
-                        break
+            # Delete TreeModelVersion (epoch) nodes in batches
+            while True:
+                result = gc.query(
+                    """
+                    MATCH (v:TreeModelVersion {facility_id: $facility})
+                    WITH v LIMIT $batch_size
+                    DETACH DELETE v
+                    RETURN count(v) AS deleted
+                    """,
+                    facility=facility,
+                    batch_size=batch_size,
+                )
+                deleted = result[0]["deleted"] if result else 0
+                results["epochs_deleted"] += deleted
+                if deleted < batch_size:
+                    break
 
         # Clear epoch checkpoint files
         checkpoint_dir = get_checkpoint_dir()

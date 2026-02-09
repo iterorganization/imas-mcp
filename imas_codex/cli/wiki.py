@@ -206,7 +206,7 @@ def wiki_clear(facility: str, force: bool) -> None:
     """Clear all wiki data for a facility.
 
     Deletes WikiPages, WikiChunks, and WikiArtifacts for the facility.
-    This is equivalent to: imas-codex discover clear <facility> --domain wiki
+
 
     \b
     Examples:

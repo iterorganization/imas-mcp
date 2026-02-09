@@ -256,12 +256,24 @@ def _init_repl() -> dict[str, Any]:
         encoder = _get_encoder()
         embeddings = encoder.embed_texts([text])
         embedding = embeddings[0].tolist()
-        return gc.query(
+        results = gc.query(
             f'CALL db.index.vector.queryNodes("{index}", $k, $embedding) '
-            "YIELD node, score RETURN node, score ORDER BY score DESC",
+            "YIELD node, score "
+            "RETURN [k IN keys(node) "
+            "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
+            "AS properties, labels(node) AS labels, score "
+            "ORDER BY score DESC",
             k=k,
             embedding=embedding,
         )
+        # Reconstruct clean dicts without embedding arrays
+        return [
+            {
+                "node": {"labels": r["labels"], **dict(r["properties"])},
+                "score": r["score"],
+            }
+            for r in results
+        ]
 
     # =========================================================================
     # Facility utilities
