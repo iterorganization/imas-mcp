@@ -198,6 +198,10 @@ def _generate_sbatch_script(
         echo "${{SLURM_JOB_NODELIST}}" > {state_dir}/slurm-embed-node
         echo "${{SLURM_JOB_ID}}" > {state_dir}/slurm-embed-jobid
 
+        # GPU nodes have no internet - use HuggingFace cache from NFS
+        export HF_HUB_OFFLINE=1
+        export TRANSFORMERS_OFFLINE=1
+
         # Expose all allocated GPUs to the server
         export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(({gpu_count} - 1)))
         export PATH="{home}/.local/bin:${{PATH}}"
