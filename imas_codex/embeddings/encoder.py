@@ -885,12 +885,14 @@ class Encoder:
                     model_kwargs=model_kwargs,
                 )
 
-            # Patch pooling module for cross-device alignment when using
-            # device_map. Without this, SentenceTransformer's Pooling sees
-            # attention_mask on CPU (from batch_to_device) but
-            # token_embeddings on the last backbone layer's GPU.
+            # Patch SentenceTransformer modules for cross-device alignment
+            # when using device_map. Two patches are needed:
+            #  1. Transformer: move inputs to backbone's first parameter
+            #     device (cuda:0) before the nn.Embedding lookup.
+            #  2. Pooling: move attention_mask to the output device after
+            #     the backbone forward pass.
             if use_device_map:
-                self._patch_pooling_for_device_map()
+                self._patch_modules_for_device_map()
                 self._uses_device_map = True
 
             self.logger.debug(
@@ -905,19 +907,23 @@ class Encoder:
                 f"Failed to load embedding model '{self.config.model_name}': {e}"
             ) from e
 
-    def _patch_pooling_for_device_map(self) -> None:
-        """Patch SentenceTransformer's Pooling for ``device_map='auto'``.
+    def _patch_modules_for_device_map(self) -> None:
+        """Patch SentenceTransformer modules for ``device_map='auto'``.
 
-        With ``device_map``, the transformer backbone distributes layers
-        across GPUs.  After the forward pass ``token_embeddings`` lands on
-        the last layer's device, but ``attention_mask`` stays on the input
-        device (CPU, because SentenceTransformer sets ``_target_device`` to
-        CPU when device_map is active).  The Pooling module then tries to
-        combine them — causing a cross-device RuntimeError.
+        With ``device_map``, layers are distributed across GPUs, but
+        SentenceTransformer moves all inputs to ``_target_device`` (CPU)
+        via ``batch_to_device``.  This causes two failures:
 
-        This patch wraps the Pooling module's ``forward`` to move all
-        feature tensors onto the same device as ``token_embeddings``
-        before pooling.
+        1. **Transformer**: ``nn.Embedding`` does ``index_select`` with
+           ``input_ids`` on CPU and weights on ``cuda:0`` → device error.
+        2. **Pooling**: ``attention_mask`` stays on CPU while
+           ``token_embeddings`` ends up on the last layer's GPU.
+
+        This method patches both modules:
+        - Transformer forward: move all input tensors to the backbone's
+          first parameter device before calling ``auto_model``.
+        - Pooling forward: move all feature tensors to the same device as
+          ``token_embeddings`` before mean/max pooling.
         """
         import torch
 
@@ -925,7 +931,39 @@ class Encoder:
         if model is None:
             return
 
-        # Find the Pooling module (typically index 1 in the pipeline)
+        # --- Patch 1: Transformer module (index 0) ---
+        transformer_module = None
+        for _i, module in enumerate(model):
+            if type(module).__name__ == "Transformer":
+                transformer_module = module
+                break
+
+        if transformer_module is not None:
+            backbone = transformer_module.auto_model
+            first_param_device = next(backbone.parameters()).device
+            original_transformer_forward = transformer_module.forward
+
+            def _transformer_forward(
+                features: dict[str, Any],
+            ) -> dict[str, Any]:
+                # Move all tensor inputs to the backbone's first device
+                # so nn.Embedding can do index_select on the same device.
+                features = {
+                    k: v.to(first_param_device) if isinstance(v, torch.Tensor) else v
+                    for k, v in features.items()
+                }
+                return original_transformer_forward(features)
+
+            transformer_module.forward = _transformer_forward  # type: ignore[method-assign]
+            self.logger.debug(
+                "Patched Transformer module: inputs → %s", first_param_device
+            )
+        else:
+            self.logger.warning(
+                "No Transformer module found; input device patch skipped"
+            )
+
+        # --- Patch 2: Pooling module (index 1) ---
         pooling_module = None
         pooling_idx = None
         for i, module in enumerate(model):
@@ -934,32 +972,30 @@ class Encoder:
                 pooling_idx = i
                 break
 
-        if pooling_module is None:
-            self.logger.warning(
-                "No Pooling module found in SentenceTransformer pipeline; "
-                "device alignment patch skipped"
+        if pooling_module is not None:
+            original_pooling_forward = pooling_module.forward
+
+            def _pooling_forward(
+                features: dict[str, Any],
+            ) -> dict[str, Any]:
+                # After the backbone, token_embeddings lands on the last
+                # layer's GPU.  Move everything else there too.
+                token_emb = features.get("token_embeddings")
+                if token_emb is not None:
+                    target = token_emb.device
+                    features = {
+                        k: v.to(target) if isinstance(v, torch.Tensor) else v
+                        for k, v in features.items()
+                    }
+                return original_pooling_forward(features)
+
+            pooling_module.forward = _pooling_forward  # type: ignore[method-assign]
+            self.logger.debug(
+                "Patched Pooling module (index %d): features → token_embeddings device",
+                pooling_idx,
             )
-            return
-
-        original_forward = pooling_module.forward
-
-        def _aligned_forward(
-            features: dict[str, Any],
-        ) -> dict[str, Any]:
-            token_emb = features.get("token_embeddings")
-            if token_emb is not None:
-                target = token_emb.device
-                features = {
-                    k: v.to(target) if isinstance(v, torch.Tensor) else v
-                    for k, v in features.items()
-                }
-            return original_forward(features)
-
-        pooling_module.forward = _aligned_forward  # type: ignore[method-assign]
-        self.logger.debug(
-            "Patched Pooling module (index %d) for device_map cross-device alignment",
-            pooling_idx,
-        )
+        else:
+            self.logger.warning("No Pooling module found; pooling device patch skipped")
 
     @property
     def device_info(self) -> str:

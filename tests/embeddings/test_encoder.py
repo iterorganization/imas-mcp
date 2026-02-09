@@ -507,26 +507,34 @@ class TestDeviceMapSupport:
         """_uses_device_map defaults to False."""
         assert encoder._uses_device_map is False
 
-    def test_patch_pooling_aligns_devices(self, encoder):
-        """Pooling patch moves all tensors to token_embeddings device."""
+    def test_patch_modules_aligns_devices(self, encoder):
+        """Module patches are applied to Transformer and Pooling."""
         torch = pytest.importorskip("torch")
 
-        # Create a mock Pooling module
+        # Create mock Transformer and Pooling modules
+        class FakeTransformer(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.auto_model = torch.nn.Linear(10, 10)
+
+            def forward(self, features):
+                return features
+
         class FakePooling(torch.nn.Module):
             def forward(self, features):
                 return features
 
+        transformer = FakeTransformer()
         pooling = FakePooling()
 
         # Build a mock SentenceTransformer with Transformer + Pooling
         mock_st = MagicMock()
-        mock_st.__iter__ = MagicMock(return_value=iter([MagicMock(), pooling]))
+        mock_st.__iter__ = MagicMock(return_value=iter([transformer, pooling]))
         encoder._model = mock_st
 
-        # Patch the pooling module
-        encoder._patch_pooling_for_device_map()
+        # Patch the modules
+        encoder._patch_modules_for_device_map()
 
-        # Simulate: token_embeddings on cuda-like device, attention_mask on cpu
-        # Since we can't easily create real CUDA tensors in tests, verify
-        # the patch was applied by checking the forward was replaced
-        assert pooling.forward.__name__ == "_aligned_forward"
+        # Verify both forwards were replaced
+        assert transformer.forward.__name__ == "_transformer_forward"
+        assert pooling.forward.__name__ == "_pooling_forward"
