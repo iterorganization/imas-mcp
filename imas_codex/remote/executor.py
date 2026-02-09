@@ -328,6 +328,27 @@ def _ensure_ssh_healthy_once(ssh_host: str) -> None:
     _verified_hosts.add(ssh_host)
 
 
+# PATH directories to prepend for SSH commands (non-interactive shells don't load full profile)
+SSH_PATH_DIRS = ["$HOME/bin", "$HOME/.local/bin"]
+
+
+def _prepend_path_setup(cmd: str) -> str:
+    """Prepend PATH setup to command for non-interactive SSH shells.
+
+    Non-interactive SSH shells (bash without -l) don't source ~/.profile or
+    the interactive section of ~/.bashrc, so ~/bin and ~/.local/bin are often
+    not in PATH. This ensures tools installed by our installer are available.
+
+    Args:
+        cmd: Original command
+
+    Returns:
+        Command with PATH setup prepended
+    """
+    path_dirs = ":".join(SSH_PATH_DIRS)
+    return f'export PATH="{path_dirs}:$PATH" && {cmd}'
+
+
 # ============================================================================
 # Hostname Resolution
 # ============================================================================
@@ -496,10 +517,13 @@ def run_command(
         # Check SSH health once per host per session (prevents stale socket hangs)
         _ensure_ssh_healthy_once(ssh_host)
 
+        # Prepend PATH setup for non-interactive SSH shells
+        remote_cmd = _prepend_path_setup(cmd)
+
         # SSH execution with -T to disable pseudo-terminal allocation
         # This avoids triggering .bashrc on systems where it's loaded for PTY sessions
         result = subprocess.run(
-            ["ssh", "-T", ssh_host, cmd],
+            ["ssh", "-T", ssh_host, remote_cmd],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -557,6 +581,12 @@ def run_script_via_stdin(
     else:
         interp_cmd = [interpreter]
 
+    # For remote bash scripts, prepend PATH setup
+    remote_script = script
+    if not is_local and interpreter == "bash":
+        path_dirs = ":".join(SSH_PATH_DIRS)
+        remote_script = f'export PATH="{path_dirs}:$PATH"\n{script}'
+
     if is_local:
         # Local execution via stdin
         result = subprocess.run(
@@ -574,7 +604,7 @@ def run_script_via_stdin(
         # Use 'interpreter [args]' to read script from stdin
         result = subprocess.run(
             ["ssh", "-T", ssh_host, " ".join(interp_cmd)],
-            input=script,
+            input=remote_script,
             capture_output=True,
             text=True,
             timeout=timeout,

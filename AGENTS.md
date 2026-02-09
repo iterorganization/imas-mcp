@@ -400,6 +400,32 @@ Use uv to ensure modern Python (3.10+) on all facilities, avoiding version compa
 - uv installs Python from python-build-standalone (GitHub), not PyPI
 - Works on airgapped facilities if GitHub is accessible
 
+### SSH Non-Interactive Shell PATH
+
+SSH command execution uses non-interactive shells that don't load the interactive section of `.bashrc`. Most `.bashrc` files have `[[ $- != *i* ]] && return` early, exiting before PATH is configured.
+
+The tool installer creates `~/.imas-codex.env` and sources it BEFORE the non-interactive return:
+
+```bash
+# Created by: imas-codex tools install <facility>
+$ cat ~/.imas-codex.env
+# IMAS Codex environment - sourced early for non-interactive shells
+export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
+
+# Added to .bashrc BEFORE the non-interactive return:
+[ -f ~/.imas-codex.env ] && . ~/.imas-codex.env
+```
+
+This ensures `uv`, `rg`, `fd`, and other tools work via SSH without explicit PATH prefixes:
+
+```bash
+# Works directly - no PATH manipulation needed
+ssh iter 'uv --version'
+ssh tcv 'rg --version'
+```
+
+The executor module also prepends PATH as a fallback for first-time use before setup.
+
 ### Quick Setup
 
 ```bash
@@ -447,6 +473,7 @@ git add <file1> <file2> ...
 
 # 3. Commit with conventional format
 uv run git commit -m "type: concise summary
+
 
 Detailed explanation of what changed and why.
 - First significant change
