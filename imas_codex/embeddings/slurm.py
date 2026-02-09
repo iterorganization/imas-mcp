@@ -409,7 +409,7 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
     # Use a Python TCP proxy instead of SSH -L (compute nodes block
     # SSH TCP forwarding but allow direct IP connections from login).
     proxy_script = textwrap.dedent(f"""\
-        import asyncio, signal, sys, os
+        import asyncio, sys, os
 
         LOCAL_PORT = {state.port}
         REMOTE_HOST = "{state.node}"
@@ -430,35 +430,69 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
 
         async def handle(local_r, local_w):
             try:
-                remote_r, remote_w = await asyncio.open_connection(REMOTE_HOST, REMOTE_PORT)
+                remote_r, remote_w = await asyncio.open_connection(
+                    REMOTE_HOST, REMOTE_PORT
+                )
             except Exception:
                 local_w.close()
                 return
-            await asyncio.gather(relay(local_r, remote_w), relay(remote_r, local_w))
+            await asyncio.gather(
+                relay(local_r, remote_w), relay(remote_r, local_w)
+            )
 
         async def main():
             srv = await asyncio.start_server(handle, "127.0.0.1", LOCAL_PORT)
-            # Write PID for lifecycle management
-            sys.stdout.write(str(os.getpid()))
-            sys.stdout.flush()
+            # Write PID file for lifecycle management
+            pid_path = os.path.expanduser(
+                "~/.imas-codex/tcp-proxy-{state.port}.pid"
+            )
+            with open(pid_path, "w") as f:
+                f.write(str(os.getpid()))
             async with srv:
                 await srv.serve_forever()
 
         asyncio.run(main())
     """)
 
-    # Launch the proxy as a background Python process on the login node.
-    result = _run_cmd(
-        f"python3 -c {_shell_quote(proxy_script)} &"
-        f" PROXY_PID=$!; sleep 0.5; kill -0 $PROXY_PID 2>/dev/null"
-        f" && echo $PROXY_PID || echo FAIL"
+    # Write proxy script to file, then launch with nohup and full fd
+    # isolation so subprocess.run() returns immediately.
+    script_path = f"{REMOTE_STATE_DIR}/tcp-proxy-{state.port}.py"
+    pid_path = f"{REMOTE_STATE_DIR}/tcp-proxy-{state.port}.pid"
+    log_path = f"{REMOTE_STATE_DIR}/tcp-proxy-{state.port}.log"
+
+    write_result = _run_cmd(
+        f"mkdir -p {REMOTE_STATE_DIR}"
+        f" && cat > {script_path} << 'PROXY_SCRIPT_EOF'\n{proxy_script}PROXY_SCRIPT_EOF"
+    )
+    if write_result.returncode != 0:
+        logger.warning("Failed to write proxy script: %s", write_result.stderr.strip())
+        return False
+
+    # Launch proxy: nohup + redirect all fds so bash returns immediately.
+    # The script writes its own PID file on startup.
+    _run_cmd(
+        f"nohup python3 {script_path} > {log_path} 2>&1 </dev/null &",
+        timeout=5,
     )
 
+    # Give the proxy a moment to start and write its PID file
+    time.sleep(1.0)
+
+    # Read PID from file
+    result = _run_cmd(f"cat {pid_path} 2>/dev/null", timeout=5)
     output = result.stdout.strip()
-    if result.returncode != 0 or output == "FAIL":
+    if not output:
+        # Check if the proxy is listening despite no PID file
+        check = _run_cmd(
+            f"fuser {state.port}/tcp 2>/dev/null | tr -s ' ' '\\n' | head -1",
+            timeout=5,
+        )
+        output = check.stdout.strip()
+
+    if not output:
         logger.warning(
-            "TCP proxy failed: %s",
-            result.stderr.strip() or result.stdout.strip(),
+            "TCP proxy failed to start. Log: %s",
+            _run_cmd(f"cat {log_path} 2>/dev/null", timeout=5).stdout.strip(),
         )
         return False
 
@@ -480,13 +514,6 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
     return True
 
 
-def _shell_quote(s: str) -> str:
-    """Shell-quote a string for use in a command."""
-    import shlex
-
-    return shlex.quote(s)
-
-
 def _kill_port_forward(state: SlurmJobState) -> None:
     """Kill any existing port forward (SSH tunnel or TCP proxy) for this job."""
     if state.forward_pid:
@@ -496,9 +523,9 @@ def _kill_port_forward(state: SlurmJobState) -> None:
     # Also kill by pattern match (catch orphans — both SSH tunnels and TCP proxies)
     if state.node and state.port:
         _run_cmd(f"pkill -f 'ssh.*-L.*{state.port}.*{state.node}' 2>/dev/null")
-        _run_cmd(
-            f"pkill -f 'python3.*REMOTE_HOST.*{state.node}.*LOCAL_PORT.*{state.port}' 2>/dev/null"
-        )
+        _run_cmd(f"pkill -f 'tcp-proxy-{state.port}.py' 2>/dev/null")
+        # Clean up PID file
+        _run_cmd(f"rm -f {REMOTE_STATE_DIR}/tcp-proxy-{state.port}.pid 2>/dev/null")
 
 
 def _wait_for_job_start(
