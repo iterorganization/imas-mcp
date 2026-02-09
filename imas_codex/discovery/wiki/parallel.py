@@ -1666,6 +1666,93 @@ def bulk_discover_all_pages_twiki_static(
     return created
 
 
+def bulk_discover_all_pages_static_html(
+    facility: str,
+    base_url: str,
+    exclude_prefixes: list[str] | None = None,
+    on_progress: Callable | None = None,
+) -> int:
+    """Bulk discover all pages from a static HTML site by BFS crawling.
+
+    Crawls from the portal page, following same-origin HTML links.
+    Excludes paths belonging to other configured wiki sites to avoid
+    duplicate page discovery.
+
+    Args:
+        facility: Facility ID
+        base_url: Base URL of the static HTML site
+        exclude_prefixes: URL path prefixes to exclude (e.g., ["/twiki_html"])
+        on_progress: Progress callback
+
+    Returns:
+        Number of pages discovered
+    """
+    from imas_codex.discovery.wiki.adapters import StaticHtmlAdapter
+    from imas_codex.discovery.wiki.scraper import canonical_page_id
+
+    logger.info(f"Starting bulk static HTML discovery from {base_url}...")
+
+    adapter = StaticHtmlAdapter(
+        base_url=base_url, exclude_prefixes=exclude_prefixes or []
+    )
+    pages = adapter.bulk_discover_pages(facility, base_url, on_progress)
+
+    if not pages:
+        logger.warning("No pages discovered from static HTML site")
+        return 0
+
+    logger.info(f"Discovered {len(pages)} pages from static HTML site")
+
+    # Create WikiPage nodes in graph
+    batch_data = []
+    for page in pages:
+        page_id = canonical_page_id(page.name, facility)
+        batch_data.append(
+            {
+                "id": page_id,
+                "title": page.name,
+                "url": page.url,
+            }
+        )
+
+    batch_size = 500
+    created = 0
+    with GraphClient() as gc:
+        for i in range(0, len(batch_data), batch_size):
+            batch = batch_data[i : i + batch_size]
+            result = gc.query(
+                """
+                UNWIND $pages AS page
+                MERGE (wp:WikiPage {id: page.id})
+                ON CREATE SET wp.title = page.title,
+                              wp.url = page.url,
+                              wp.facility_id = $facility,
+                              wp.status = $scanned,
+                              wp.link_depth = 1,
+                              wp.discovered_at = datetime(),
+                              wp.bulk_discovered = true
+                ON MATCH SET wp.bulk_discovered = true
+                RETURN count(wp) AS count
+                """,
+                pages=batch,
+                facility=facility,
+                scanned=WikiPageStatus.scanned.value,
+            )
+            if result:
+                created += result[0]["count"]
+
+            if on_progress:
+                on_progress(
+                    f"creating pages ({i + len(batch)}/{len(batch_data)})", None
+                )
+
+    logger.info(f"Created/updated {created} pages in graph (scanned status)")
+    if on_progress:
+        on_progress(f"created {created} pages", None)
+
+    return created
+
+
 # =============================================================================
 # Bulk Artifact Discovery via MediaWiki API
 # =============================================================================
@@ -3935,7 +4022,7 @@ async def run_parallel_wiki_discovery(
                     bulk_progress,
                 )
 
-        elif site_type in ("twiki_static", "static_html"):
+        elif site_type == "twiki_static":
             # Static TWiki export: use WebTopicList.html for topic manifest
             logger.info("Using bulk discovery via WebTopicList.html...")
 
@@ -3948,6 +4035,25 @@ async def run_parallel_wiki_discovery(
                 bulk_discover_all_pages_twiki_static,
                 facility,
                 base_url,
+                bulk_progress,
+            )
+
+        elif site_type == "static_html":
+            # Static HTML site: BFS crawl from portal page
+            logger.info("Using bulk discovery via BFS crawl...")
+
+            def bulk_progress(msg, _stats):
+                if on_scan_progress:
+                    on_scan_progress(f"bulk: {msg}", state.scan_stats)
+
+            # Compute exclude prefixes from other wiki_sites with same origin
+            exclude_prefixes = _get_exclude_prefixes(facility, base_url)
+
+            bulk_discovered = await asyncio.to_thread(
+                bulk_discover_all_pages_static_html,
+                facility,
+                base_url,
+                exclude_prefixes,
                 bulk_progress,
             )
 
@@ -4138,6 +4244,60 @@ async def run_parallel_wiki_discovery(
         "scan_rate": state.scan_stats.rate,
         "score_rate": state.score_stats.rate,
     }
+
+
+def _get_exclude_prefixes(facility: str, current_base_url: str) -> list[str]:
+    """Get URL path prefixes to exclude from crawling.
+
+    When a facility has multiple wiki_sites on the same origin, this
+    returns the path prefixes of OTHER sites so the current crawl
+    doesn't overlap with them.
+
+    For example, jt60sa has:
+      - https://nakasvr23.iferc.org/twiki_html (twiki_static)
+      - https://nakasvr23.iferc.org (static_html)
+
+    When crawling the root site, /twiki_html should be excluded.
+
+    Args:
+        facility: Facility ID
+        current_base_url: Base URL of the site being crawled
+
+    Returns:
+        List of URL path prefixes to exclude
+    """
+    import urllib.parse as urlparse
+
+    try:
+        from imas_codex.discovery.base.facility import get_facility
+
+        config = get_facility(facility)
+        wiki_sites = config.get("wiki_sites", [])
+    except Exception:
+        return []
+
+    current_parsed = urlparse.urlparse(current_base_url.rstrip("/"))
+    current_origin = f"{current_parsed.scheme}://{current_parsed.netloc}"
+
+    prefixes = []
+    for site in wiki_sites:
+        site_url = site.get("url", "").rstrip("/")
+        if not site_url or site_url == current_base_url.rstrip("/"):
+            continue
+
+        site_parsed = urlparse.urlparse(site_url)
+        site_origin = f"{site_parsed.scheme}://{site_parsed.netloc}"
+
+        # Same origin, different path → exclude that path
+        if site_origin == current_origin and site_parsed.path:
+            prefixes.append(site_parsed.path)
+
+    if prefixes:
+        logger.info(
+            "Excluding paths from crawl: %s (belong to other wiki_sites)", prefixes
+        )
+
+    return prefixes
 
 
 def _seed_portal_page(

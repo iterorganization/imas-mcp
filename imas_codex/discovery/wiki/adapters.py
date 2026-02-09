@@ -1059,6 +1059,180 @@ class TWikiStaticAdapter(WikiAdapter):
         return "document"
 
 
+class StaticHtmlAdapter(WikiAdapter):
+    """Adapter for static HTML documentation sites.
+
+    Discovers pages by breadth-first crawling from a portal page,
+    following same-origin HTML links. Excludes paths that belong to
+    other wiki_sites entries (e.g., /twiki_html/ paths when crawling
+    the server landing page).
+
+    Page discovery: BFS crawl from portal page
+    Artifact discovery: Extract PDF/document links during crawl
+    """
+
+    site_type = "static_html"
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        exclude_prefixes: list[str] | None = None,
+    ):
+        """Initialize static HTML adapter.
+
+        Args:
+            base_url: Base URL of the static site
+            exclude_prefixes: URL path prefixes to exclude from crawling
+                (e.g., ["/twiki_html"] to avoid overlapping with a TWiki site)
+        """
+        self._base_url = base_url
+        self._exclude_prefixes = exclude_prefixes or []
+
+    def bulk_discover_pages(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredPage]:
+        """Discover pages by BFS crawling from the portal page.
+
+        Follows same-origin links to .html pages, respecting
+        exclude_prefixes to avoid overlapping with other wiki sites.
+
+        Args:
+            facility: Facility ID
+            base_url: Base URL (portal page URL)
+            on_progress: Progress callback
+
+        Returns:
+            List of discovered pages
+        """
+        import httpx
+        from bs4 import BeautifulSoup
+
+        effective_base_url = base_url or self._base_url
+        if not effective_base_url:
+            logger.warning("No base URL configured for static HTML adapter")
+            return []
+
+        effective_base_url = effective_base_url.rstrip("/")
+        parsed_base = urllib.parse.urlparse(effective_base_url)
+        origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
+
+        # BFS state
+        seen_urls: set[str] = set()
+        queue: list[str] = []
+        pages: list[DiscoveredPage] = []
+
+        # Seed with common entry points
+        # Include both language versions if they exist
+        portal_candidates = [
+            f"{effective_base_url}/index.html",
+            f"{effective_base_url}/index-en.html",
+            effective_base_url,
+        ]
+        for url in portal_candidates:
+            if url not in seen_urls:
+                queue.append(url)
+                seen_urls.add(url)
+
+        try:
+            with httpx.Client(
+                verify=False, timeout=30.0, follow_redirects=True
+            ) as client:
+                while queue:
+                    current_url = queue.pop(0)
+
+                    try:
+                        response = client.get(current_url)
+                        if response.status_code != 200:
+                            continue
+                        content_type = response.headers.get("content-type", "")
+                        if "html" not in content_type:
+                            continue
+                    except Exception as e:
+                        logger.debug("Failed to fetch %s: %s", current_url, e)
+                        continue
+
+                    # Extract page name from URL path
+                    parsed = urllib.parse.urlparse(current_url)
+                    path = parsed.path.rstrip("/")
+                    name = path.split("/")[-1] if path else "index.html"
+
+                    pages.append(DiscoveredPage(name=name, url=current_url))
+
+                    # Parse links
+                    soup = BeautifulSoup(response.text, "html.parser")
+                    for link in soup.find_all("a", href=True):
+                        href = link["href"]
+
+                        # Resolve relative URLs
+                        full_url = urllib.parse.urljoin(current_url, href)
+
+                        # Strip fragment
+                        full_url = urllib.parse.urldefrag(full_url)[0]
+
+                        # Same origin only
+                        parsed_link = urllib.parse.urlparse(full_url)
+                        if f"{parsed_link.scheme}://{parsed_link.netloc}" != origin:
+                            continue
+
+                        # Must be HTML (not PDF, images, etc.)
+                        link_path = parsed_link.path.lower()
+                        if not (
+                            link_path.endswith(".html")
+                            or link_path.endswith(".htm")
+                            or link_path.endswith("/")
+                            or "." not in link_path.split("/")[-1]
+                        ):
+                            continue
+
+                        # Exclude paths belonging to other wiki sites
+                        if any(
+                            parsed_link.path.startswith(prefix)
+                            for prefix in self._exclude_prefixes
+                        ):
+                            continue
+
+                        # Skip CGI/dynamic paths
+                        if (
+                            "/cgi/" in parsed_link.path
+                            or "/cgi-bin/" in parsed_link.path
+                        ):
+                            continue
+
+                        if full_url not in seen_urls:
+                            seen_urls.add(full_url)
+                            queue.append(full_url)
+
+                    if on_progress and len(pages) % 10 == 0:
+                        on_progress(
+                            f"crawled {len(pages)} pages, {len(queue)} queued", None
+                        )
+
+        except Exception as e:
+            logger.warning(f"Error during static HTML discovery: {e}")
+
+        if on_progress:
+            on_progress(f"discovered {len(pages)} pages", None)
+
+        return pages
+
+    def bulk_discover_artifacts(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Discover artifacts by scanning discovered pages for file links.
+
+        Reuses the page crawl to find PDF, document, and data file links.
+        """
+        # Artifacts are discovered during the page scan in parallel.py
+        # via extract_artifacts_from_html, so return empty here
+        return []
+
+
 class ConfluenceAdapter(WikiAdapter):
     """Adapter for Confluence sites.
 
@@ -1192,8 +1366,10 @@ def get_adapter(
         )
     elif site_type == "twiki":
         return TWikiAdapter(ssh_host=ssh_host)
-    elif site_type in ("twiki_static", "static_html"):
+    elif site_type == "twiki_static":
         return TWikiStaticAdapter(base_url=base_url)
+    elif site_type == "static_html":
+        return StaticHtmlAdapter(base_url=base_url)
     elif site_type == "confluence":
         return ConfluenceAdapter(api_token=api_token, ssh_host=ssh_host)
     else:

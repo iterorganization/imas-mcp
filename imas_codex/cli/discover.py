@@ -1469,17 +1469,32 @@ def discover_wiki(
 
             elif site_type in ("twiki_static", "static_html"):
                 from imas_codex.discovery.wiki.parallel import (
+                    bulk_discover_all_pages_static_html,
                     bulk_discover_all_pages_twiki_static,
                 )
 
                 def twiki_progress_log(msg, _):
                     wiki_logger.info(f"BULK: {msg}")
 
+                if site_type == "twiki_static":
+                    discover_func = bulk_discover_all_pages_twiki_static
+                    discover_args = (facility, base_url)
+                    label = "TWiki"
+                else:
+                    from imas_codex.discovery.wiki.parallel import (
+                        _get_exclude_prefixes,
+                    )
+
+                    exclude_prefixes = _get_exclude_prefixes(facility, base_url)
+                    discover_func = bulk_discover_all_pages_static_html
+                    discover_args = (facility, base_url, exclude_prefixes)
+                    label = "Static HTML"
+
                 if use_rich:
                     from rich.status import Status
 
                     with Status(
-                        f"[cyan]TWiki discovery: {short_name}...[/cyan]",
+                        f"[cyan]{label} discovery: {short_name}...[/cyan]",
                         console=console,
                         spinner="dots",
                     ) as status:
@@ -1487,8 +1502,8 @@ def discover_wiki(
                         def twiki_progress_rich(msg, _, _sn=short_name):
                             status.update(f"[cyan]{_sn}: {msg}[/cyan]")
 
-                        bulk_discovered = bulk_discover_all_pages_twiki_static(
-                            facility, base_url, twiki_progress_rich
+                        bulk_discovered = discover_func(
+                            *discover_args, twiki_progress_rich
                         )
 
                     if bulk_discovered > 0:
@@ -1496,9 +1511,7 @@ def discover_wiki(
                             f"[green]Discovered {bulk_discovered:,} pages[/green]"
                         )
                 else:
-                    bulk_discovered = bulk_discover_all_pages_twiki_static(
-                        facility, base_url, twiki_progress_log
-                    )
+                    bulk_discovered = discover_func(*discover_args, twiki_progress_log)
                     if bulk_discovered > 0:
                         wiki_logger.info(
                             f"Discovered {bulk_discovered} pages from {short_name}"
