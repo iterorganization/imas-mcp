@@ -1155,23 +1155,30 @@ def get_wiki_stats(facility_id: str) -> dict:
         return {"pages": 0, "chunks": 0, "tree_nodes_linked": 0, "imas_paths_linked": 0}
 
 
-def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
+def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
     """Delete all wiki discovery nodes for a facility in batches.
+
+    Always cascades: deletes WikiChunks and WikiArtifacts along with WikiPages.
+    Wiki chunks and artifacts are always dependent on their parent pages/facility,
+    so cascade is the only sensible behaviour.
 
     Deletion order follows referential integrity:
     1. WikiChunks linked via HAS_CHUNK from WikiPages
     2. WikiChunks linked via HAS_CHUNK from WikiArtifacts
-    3. WikiArtifacts linked via HAS_ARTIFACT from WikiPages (plus orphans by facility_id)
-    4. WikiPages by facility_id
+    3. Any remaining orphaned WikiChunks by facility_id
+    4. WikiArtifacts by facility_id
+    5. WikiPages by facility_id
 
     Args:
         facility: Facility ID
         batch_size: Nodes to delete per batch (default 1000)
 
     Returns:
-        Total number of wiki pages deleted
+        Dict with deletion counts: pages_deleted, chunks_deleted, artifacts_deleted
     """
-    total_deleted = 0
+    chunks_deleted = 0
+    artifacts_deleted = 0
+    pages_deleted = 0
 
     with GraphClient() as gc:
         # First delete WikiChunks linked to WikiPages
@@ -1188,6 +1195,7 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
                 batch_size=batch_size,
             )
             deleted = result[0]["deleted"] if result else 0
+            chunks_deleted += deleted
             if deleted < batch_size:
                 break
 
@@ -1205,11 +1213,28 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
                 batch_size=batch_size,
             )
             deleted = result[0]["deleted"] if result else 0
+            chunks_deleted += deleted
+            if deleted < batch_size:
+                break
+
+        # Delete any remaining orphaned WikiChunks by facility_id
+        while True:
+            result = gc.query(
+                """
+                MATCH (wc:WikiChunk {facility_id: $facility})
+                WITH wc LIMIT $batch_size
+                DETACH DELETE wc
+                RETURN count(wc) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            chunks_deleted += deleted
             if deleted < batch_size:
                 break
 
         # Delete WikiArtifacts (uses facility_id to catch both linked and orphaned)
-        # Note: Artifacts linked via HAS_ARTIFACT are also matched by facility_id
         while True:
             result = gc.query(
                 """
@@ -1222,6 +1247,7 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
                 batch_size=batch_size,
             )
             deleted = result[0]["deleted"] if result else 0
+            artifacts_deleted += deleted
             if deleted < batch_size:
                 break
 
@@ -1238,11 +1264,15 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
                 batch_size=batch_size,
             )
             deleted = result[0]["deleted"] if result else 0
-            total_deleted += deleted
+            pages_deleted += deleted
             if deleted < batch_size:
                 break
 
-    return total_deleted
+    return {
+        "pages_deleted": pages_deleted,
+        "chunks_deleted": chunks_deleted,
+        "artifacts_deleted": artifacts_deleted,
+    }
 
 
 # =============================================================================

@@ -199,6 +199,64 @@ def wiki_test(
         console.print(f"[yellow]Unknown site_type: {config.site_type}[/yellow]")
 
 
+@wiki.command("clear")
+@click.argument("facility")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+def wiki_clear(facility: str, force: bool) -> None:
+    """Clear all wiki data for a facility.
+
+    Deletes WikiPages, WikiChunks, and WikiArtifacts for the facility.
+    This is equivalent to: imas-codex discover clear <facility> --domain wiki
+
+    \b
+    Examples:
+      imas-codex wiki clear tcv
+      imas-codex wiki clear jt60sa --force
+    """
+    from imas_codex.discovery.wiki import clear_facility_wiki, get_wiki_stats
+    from imas_codex.graph import GraphClient
+
+    wiki_stats = get_wiki_stats(facility)
+    pages = wiki_stats.get("pages", 0)
+    chunks = wiki_stats.get("chunks", 0)
+
+    with GraphClient() as gc:
+        artifact_result = gc.query(
+            "MATCH (wa:WikiArtifact {facility_id: $f}) RETURN count(wa) AS cnt",
+            f=facility,
+        )
+        artifacts = artifact_result[0]["cnt"] if artifact_result else 0
+
+    if pages == 0 and artifacts == 0:
+        console.print(f"No wiki data to clear for {facility}")
+        return
+
+    parts = []
+    if pages:
+        parts.append(f"{pages:,} pages")
+    if chunks:
+        parts.append(f"{chunks:,} chunks")
+    if artifacts:
+        parts.append(f"{artifacts:,} artifacts")
+    summary = ", ".join(parts)
+
+    if not force:
+        click.confirm(
+            f"This will delete {summary} for {facility}. Continue?",
+            abort=True,
+        )
+
+    result = clear_facility_wiki(facility)
+    deleted_parts = []
+    if result.get("pages_deleted"):
+        deleted_parts.append(f"{result['pages_deleted']:,} pages")
+    if result.get("chunks_deleted"):
+        deleted_parts.append(f"{result['chunks_deleted']:,} chunks")
+    if result.get("artifacts_deleted"):
+        deleted_parts.append(f"{result['artifacts_deleted']:,} artifacts")
+    console.print(f"[green]✓ Deleted {', '.join(deleted_parts)} for {facility}[/green]")
+
+
 @wiki.group()
 def session():
     """Manage cached wiki sessions.

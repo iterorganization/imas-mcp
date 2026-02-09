@@ -953,12 +953,15 @@ def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> No
     \b
     Domains:
       - paths: FacilityPath nodes (filesystem discovery)
-      - wiki: WikiPage nodes (documentation discovery)
+      - wiki: WikiPage + WikiChunk + WikiArtifact nodes (always cascades)
       - signals: FacilitySignal + TreeModelVersion nodes (data discovery)
       - all: All discovery domains
 
     Use --cascade to also delete derived data like SourceFile, FacilityUser,
-    and epoch checkpoints.
+    and epoch checkpoints. Wiki domain always cascades (chunks and artifacts
+    are dependent data).
+
+    Equivalent shortcut: imas-codex wiki clear <facility>
     """
     from functools import partial
 
@@ -983,8 +986,20 @@ def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> No
         if domain in ("wiki", "all"):
             wiki_stats = get_wiki_stats(facility)
             total = wiki_stats.get("pages", 0)  # WikiPage count
-            if total > 0:
-                items_to_clear.append(("wiki pages", total, clear_facility_wiki))
+            chunks = wiki_stats.get("chunks", 0)
+            # Get artifact count separately since get_wiki_stats doesn't include it
+            from imas_codex.graph import GraphClient
+
+            with GraphClient() as gc:
+                artifact_result = gc.query(
+                    "MATCH (wa:WikiArtifact {facility_id: $f}) RETURN count(wa) AS cnt",
+                    f=facility,
+                )
+                artifacts = artifact_result[0]["cnt"] if artifact_result else 0
+            if total > 0 or artifacts > 0:
+                # Wiki always cascades — chunks and artifacts are dependent data
+                label = f"wiki pages + {chunks} chunks + {artifacts} artifacts"
+                items_to_clear.append((label, total or artifacts, clear_facility_wiki))
 
         if domain in ("signals", "all"):
             signal_stats = get_data_discovery_stats(facility)
@@ -1011,9 +1026,15 @@ def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> No
         # Execute deletions
         for name, _, clear_func in items_to_clear:
             result = clear_func(facility)
-            # Handle dict return (signals) vs int return (paths, wiki)
+            # Handle dict return (signals, wiki) vs int return (paths)
             if isinstance(result, dict):
                 parts = []
+                if result.get("pages_deleted"):
+                    parts.append(f"{result['pages_deleted']} pages")
+                if result.get("chunks_deleted"):
+                    parts.append(f"{result['chunks_deleted']} chunks")
+                if result.get("artifacts_deleted"):
+                    parts.append(f"{result['artifacts_deleted']} artifacts")
                 if result.get("signals_deleted"):
                     parts.append(f"{result['signals_deleted']} signals")
                 if result.get("epochs_deleted"):
