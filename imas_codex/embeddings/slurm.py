@@ -135,6 +135,21 @@ def _run_cmd(cmd: str, timeout: float = 30) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _resolve_remote_home() -> str:
+    """Resolve the remote home directory path.
+
+    On ITER login nodes, $HOME expands to /home/ITER/<user>.
+    When running locally (on ITER), Path.home() gives the right answer.
+    When running via SSH, we ask the remote shell.
+    """
+    if _is_on_iter():
+        return str(Path.home())
+    result = _run_cmd("echo $HOME", timeout=10)
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return str(Path.home())
+
+
 def _generate_sbatch_script(
     port: int = DEFAULT_PORT,
     partition: str = DEFAULT_PARTITION,
@@ -157,6 +172,11 @@ def _generate_sbatch_script(
     cpus = max(4, gpu_count * 2)
     mem_gb = max(16, gpu_count * 8)
 
+    # Resolve absolute home path for SLURM directives.
+    # SLURM #SBATCH does NOT expand $HOME or %h on all versions.
+    home = _resolve_remote_home()
+    state_dir = f"{home}/.imas-codex"
+
     # Pin model via env var so the remote server uses the same model
     # as the client, regardless of the remote pyproject.toml config.
     model_env = ""
@@ -171,22 +191,22 @@ def _generate_sbatch_script(
         #SBATCH --cpus-per-task={cpus}
         #SBATCH --mem={mem_gb}G
         #SBATCH --time={walltime}
-        #SBATCH --output=%h/.imas-codex/slurm-embed-%j.log
-        #SBATCH --error=%h/.imas-codex/slurm-embed-%j.log
+        #SBATCH --output={state_dir}/slurm-embed-%j.log
+        #SBATCH --error={state_dir}/slurm-embed-%j.log
 
         # Write node info for port forwarding
-        echo "${{SLURM_JOB_NODELIST}}" > $HOME/.imas-codex/slurm-embed-node
-        echo "${{SLURM_JOB_ID}}" > $HOME/.imas-codex/slurm-embed-jobid
+        echo "${{SLURM_JOB_NODELIST}}" > {state_dir}/slurm-embed-node
+        echo "${{SLURM_JOB_ID}}" > {state_dir}/slurm-embed-jobid
 
         # Expose all allocated GPUs to the server
         export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(({gpu_count} - 1)))
-        export PATH="${{HOME}}/.local/bin:${{PATH}}"
+        export PATH="{home}/.local/bin:${{PATH}}"
         {model_env}
 
-        cd ${{HOME}}/Code/imas-codex
+        cd {home}/Code/imas-codex
 
         # Start embedding server with idle timeout
-        exec ${{HOME}}/.local/bin/uv run --extra gpu imas-codex serve embed start \\
+        exec {home}/.local/bin/uv run --extra gpu imas-codex serve embed start \\
             --host 0.0.0.0 \\
             --port {port} \\
             --idle-timeout {idle_timeout}
