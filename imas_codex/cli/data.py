@@ -354,6 +354,48 @@ def is_neo4j_running() -> bool:
         return False
 
 
+def is_port_bound_by_tunnel(port: int = 7687) -> bool:
+    """Check if the Neo4j port is bound by an SSH tunnel (not a local Neo4j).
+
+    This detects the case where an SSH tunnel is forwarding a remote Neo4j
+    to localhost, which would conflict with starting a local Neo4j instance.
+    """
+    try:
+        result = subprocess.run(
+            ["ss", "-tlnp"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if f":{port}" in line and "ssh" in line.lower():
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def check_graph_conflict() -> str | None:
+    """Check for conflicting graph configurations.
+
+    Returns an error message if a conflict is detected, None otherwise.
+    """
+    if is_port_bound_by_tunnel(7687):
+        return (
+            "Port 7687 is bound by an SSH tunnel (likely forwarding ITER Neo4j).\n"
+            "Starting a local Neo4j would create two separate graphs.\n"
+            "\n"
+            "To use the remote graph via tunnel:\n"
+            "  - Don't start local Neo4j\n"
+            "  - Ensure SSH tunnel is active: ssh -f -N iter\n"
+            "\n"
+            "To use a local graph instead:\n"
+            "  - Kill the SSH tunnel: ssh -O exit iter\n"
+            "  - Then start local Neo4j"
+        )
+    return None
+
+
 def backup_existing_data(reason: str) -> Path | None:
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     recovery_path = RECOVERY_DIR / f"{timestamp}-{reason}"
@@ -524,6 +566,11 @@ def db_start(
 
     require_apptainer()
 
+    # Check for conflicting tunnel before starting
+    conflict = check_graph_conflict()
+    if conflict:
+        raise click.ClickException(conflict)
+
     image_path = Path(image) if image else NEO4J_IMAGE
     data_path = Path(data_dir) if data_dir else DATA_DIR
 
@@ -681,6 +728,11 @@ def db_service(
     apptainer_path = shutil.which("apptainer")
 
     if action == "install":
+        # Check for conflicting tunnel before installing
+        conflict = check_graph_conflict()
+        if conflict:
+            raise click.ClickException(conflict)
+
         if not image_path.exists():
             raise click.ClickException(
                 f"Neo4j image not found: {image_path}\n"

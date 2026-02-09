@@ -14,6 +14,7 @@ Example:
 """
 
 import logging
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -29,6 +30,14 @@ from imas_codex.settings import get_embedding_dimension
 logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 
 
+def _default_uri() -> str:
+    return os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+
+
+def _default_password() -> str:
+    return os.environ.get("NEO4J_PASSWORD", "imas-codex")
+
+
 @dataclass
 class GraphClient:
     """Client for Neo4j knowledge graph operations.
@@ -36,15 +45,19 @@ class GraphClient:
     The graph structure is derived from the LinkML schema (schemas/facility.yaml)
     via GraphSchema, which provides node labels, relationship types, and constraints.
 
+    Connection settings are read from environment variables with sensible defaults:
+        NEO4J_URI (default: bolt://localhost:7687)
+        NEO4J_PASSWORD (default: imas-codex)
+
     Attributes:
-        uri: Neo4j Bolt URI (default: bolt://localhost:7687)
+        uri: Neo4j Bolt URI
         username: Neo4j username (default: neo4j)
-        password: Neo4j password (default: imas-codex)
+        password: Neo4j password
     """
 
-    uri: str = "bolt://localhost:7687"
+    uri: str = field(default_factory=_default_uri)
     username: str = "neo4j"
-    password: str = "imas-codex"
+    password: str = field(default_factory=_default_password)
     _driver: Driver | None = field(default=None, init=False, repr=False)
     _schema: GraphSchema | None = field(default=None, init=False, repr=False)
 
