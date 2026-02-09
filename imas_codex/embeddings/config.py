@@ -24,8 +24,10 @@ IMAS_CODEX_EMBEDDING_MODEL = get_imas_embedding_model()
 class EmbeddingBackend(Enum):
     """Embedding backend selection.
 
-    Explicit backend selection - no automatic fallback between backends.
-    If the selected backend is unavailable, an error is raised.
+    Remote backend includes a fallback chain:
+      remote (SLURM GPU) → local (login node CPU) → openrouter (cloud API)
+
+    Explicit local or openrouter backends have no fallback.
     """
 
     LOCAL = "local"  # Local CPU/GPU via SentenceTransformer

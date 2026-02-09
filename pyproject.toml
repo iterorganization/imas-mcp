@@ -193,7 +193,7 @@ imas-embedding-dimension = 256
 imas-language-model = "google/gemini-3-pro-preview"
 include-ggd = true
 include-error-fields = false
-embedding-backend = "openrouter"
+embedding-backend = "remote"
 embed-remote-url = "http://localhost:18765"
 embed-server-port = 18765
 

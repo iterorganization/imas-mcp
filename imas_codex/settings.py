@@ -197,15 +197,13 @@ def get_embedding_backend() -> str:
     Backend options:
         - "local": Local CPU/GPU via SentenceTransformer
         - "remote": Remote GPU server (iter cluster via SSH tunnel)
+          Fallback chain: remote (SLURM GPU) → local (login node CPU) → openrouter
         - "openrouter": OpenRouter API for cloud embeddings
-
-    No fallback between backends - if selected backend is unavailable,
-    an error is raised rather than silently switching.
 
     Priority:
         1. IMAS_CODEX_EMBEDDING_BACKEND environment variable
         2. pyproject.toml [tool.imas-codex] embedding-backend
-        3. Fallback default: "local"
+        3. Fallback default: "remote"
 
     Returns:
         Backend name string.
@@ -217,7 +215,7 @@ def get_embedding_backend() -> str:
     if backend := settings.get("embedding-backend"):
         return str(backend).lower()
 
-    return "local"
+    return "remote"
 
 
 def get_embed_remote_url() -> str | None:

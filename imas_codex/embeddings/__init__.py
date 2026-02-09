@@ -5,11 +5,12 @@ Supports multiple embedding backends:
 - remote: GPU server via HTTP (iter cluster through SSH tunnel)
 - openrouter: OpenRouter API for cloud embeddings
 
-Transparent fallback for remote backend:
-- If remote is unavailable, automatically falls back to OpenRouter
-- Single warning on first fallback, then silent operation
-- Cost tracking via EmbeddingCostTracker
-- Source tracking via get_embedding_source() for progress display
+Fallback chain for remote backend:
+  remote (SLURM GPU) → local (login node CPU) → openrouter (cloud API)
+
+Explicit local or openrouter backends have no fallback.
+Cost tracking via EmbeddingCostTracker.
+Source tracking via get_embedding_source() for progress display.
 """
 
 from .cache import EmbeddingCache
