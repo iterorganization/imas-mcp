@@ -76,10 +76,19 @@ class CredentialManager:
 
     Falls back to environment variables for CI/automation,
     and interactive prompts for first-time setup.
+
+    Credentials entered via interactive prompts are cached in-memory
+    (class-level) so they persist across CredentialManager instances
+    within the same process, avoiding re-prompting on headless servers
+    where keyring is unavailable.
     """
 
     # Timeout for keyring operations (seconds)
     KEYRING_TIMEOUT = 3
+
+    # Class-level in-memory credential cache: {site: (username, password)}
+    # Persists across instances within the same process
+    _memory_cache: dict[str, tuple[str, str]] = {}
 
     def __init__(self) -> None:
         """Initialize credential manager."""
@@ -273,7 +282,12 @@ class CredentialManager:
         Returns:
             Tuple of (username, password) or None if not available
         """
-        # 1. Try keyring (with timeout to avoid blocking on unlock prompt)
+        # 1. Try in-memory cache (fastest, works across instances)
+        if site in self._memory_cache:
+            logger.debug("Retrieved credentials from memory cache for %s", site)
+            return self._memory_cache[site]
+
+        # 2. Try keyring (with timeout to avoid blocking on unlock prompt)
         if self._keyring_available:
             import keyring
 
@@ -287,20 +301,25 @@ class CredentialManager:
                 try:
                     creds = json.loads(creds_json)
                     logger.debug("Retrieved credentials from keyring for %s", site)
-                    return creds["username"], creds["password"]
+                    result = creds["username"], creds["password"]
+                    # Populate memory cache for future lookups
+                    self._memory_cache[site] = result
+                    return result
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.debug("Invalid credentials JSON: %s", e)
 
-        # 2. Try environment variables
+        # 3. Try environment variables
         username_var = self._env_var_name(site, "username")
         password_var = self._env_var_name(site, "password")
         username = os.environ.get(username_var)
         password = os.environ.get(password_var)
         if username and password:
             logger.debug("Retrieved credentials from environment for %s", site)
-            return username, password
+            result = username, password
+            self._memory_cache[site] = result
+            return result
 
-        # 3. Interactive prompt
+        # 4. Interactive prompt
         if prompt_if_missing and sys.stdin.isatty():
             return self._prompt_credentials(site)
 
@@ -326,12 +345,15 @@ class CredentialManager:
             if not password:
                 return None
 
-            # Offer to save
+            # Offer to save to keyring
             save = input("Save to keyring? [Y/n]: ").strip().lower()
             if save != "n":
                 self.set_credentials(site, username, password)
 
-            return username, password
+            # Always cache in memory for this process
+            result = username, password
+            self._memory_cache[site] = result
+            return result
         except (KeyboardInterrupt, EOFError):
             print("\nCancelled.")
             return None
@@ -456,8 +478,12 @@ class CredentialManager:
             site: Site identifier
 
         Returns:
-            True if credentials are available (keyring or env)
+            True if credentials are available (memory cache, keyring, or env)
         """
+        # Check in-memory cache first
+        if site in self._memory_cache:
+            return True
+
         # Check keyring (with timeout to avoid blocking on unlock prompt)
         if self._keyring_available:
             import keyring

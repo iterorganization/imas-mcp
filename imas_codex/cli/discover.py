@@ -1365,6 +1365,25 @@ def discover_wiki(
         elif ssh_host:
             log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
 
+        # Validate credentials upfront BEFORE launching any workers.
+        # This ensures the interactive prompt happens early (not mid-output),
+        # and fails fast if credentials can't be obtained.
+        if auth_type in ("tequila", "session") and credential_service:
+            from imas_codex.discovery.wiki.auth import CredentialManager
+
+            cred_mgr = CredentialManager()
+            creds = cred_mgr.get_credentials(credential_service, prompt_if_missing=True)
+            if creds is None:
+                log_print(
+                    f"[red]Credentials required for {credential_service}.[/red]\n"
+                    f"Set them with: imas-codex wiki credentials set {credential_service}\n"
+                    f"Or set environment variables:\n"
+                    f"  export {cred_mgr._env_var_name(credential_service, 'username')}=your_username\n"
+                    f"  export {cred_mgr._env_var_name(credential_service, 'password')}=your_password"
+                )
+                raise SystemExit(1)
+            log_print(f"[dim]Authenticated as: {creds[0]}[/dim]")
+
         # Reset any transient states from crashed previous runs
         reset_counts = reset_transient_pages(facility, silent=True)
         if any(reset_counts.values()):

@@ -16,6 +16,13 @@ warnings.filterwarnings(
     category=DeprecationWarning,
     module=r"aiohttp\..*",
 )
+# Also filter by module path for cases where module= pattern doesn't match
+warnings.filterwarnings(
+    "ignore",
+    message=r".*enable_cleanup_closed.*",
+    category=DeprecationWarning,
+    module=r".*",
+)
 # Suppress neo4j driver destructor warning
 warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 
