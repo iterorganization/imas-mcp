@@ -16,6 +16,46 @@ from rich.table import Table
 console = Console()
 
 
+def _resolve_service(service: str) -> str:
+    """Resolve a facility name or service name to a credential service name.
+
+    If the argument matches a facility ID, looks up its credential service(s).
+    If only one service is found, returns it. Otherwise returns the input unchanged.
+    """
+    try:
+        from imas_codex.discovery.base.facility import get_facility, list_facilities
+
+        if service in list_facilities():
+            config = get_facility(service)
+            credential_services = []
+            for site in config.get("wiki_sites", []):
+                svc = site.get("credential_service")
+                if svc and svc not in credential_services:
+                    credential_services.append(svc)
+            if len(credential_services) == 1:
+                resolved = credential_services[0]
+                console.print(
+                    f"[dim]Resolved facility '{service}' → service '{resolved}'[/dim]"
+                )
+                return resolved
+            if len(credential_services) > 1:
+                console.print(
+                    f"[yellow]Facility '{service}' has multiple credential services: "
+                    f"{', '.join(credential_services)}[/yellow]\n"
+                    "Please specify one directly."
+                )
+                raise SystemExit(1)
+            # No credential services for this facility
+            console.print(
+                f"[yellow]Facility '{service}' has no credential services "
+                "(all sites use auth_type: none).[/yellow]"
+            )
+            raise SystemExit(1)
+    except ImportError:
+        pass
+    return service
+
+
 @click.group()
 def credentials():
     """Manage service credentials.
@@ -52,10 +92,12 @@ def credentials_set(
 ) -> None:
     """Store credentials for a service.
 
-    SERVICE is the credential service name (e.g., "tcv-wiki", "iter-confluence").
+    SERVICE is a credential service name or facility name.
+    Facility names are resolved to their credential service automatically.
 
     \b
     Examples:
+      imas-codex credentials set tcv           # resolves to tcv-wiki
       imas-codex credentials set tcv-wiki
       imas-codex credentials set iter-confluence -u myuser
     """
@@ -63,6 +105,7 @@ def credentials_set(
 
     from imas_codex.discovery.wiki.auth import CredentialManager
 
+    service = _resolve_service(service)
     creds = CredentialManager()
 
     # Check for existing credentials
@@ -113,17 +156,20 @@ def credentials_get(
     Shows credential status and storage source. Passwords are masked
     by default — use --show-password to reveal them.
 
-    SERVICE is the credential service name (e.g., "tcv-wiki", "iter-confluence").
+    SERVICE is a credential service name or facility name.
+    Facility names are resolved to their credential service automatically.
 
     \b
     Examples:
+      imas-codex credentials get tcv               # resolves to tcv-wiki
       imas-codex credentials get tcv-wiki
-      imas-codex credentials get tcv-wiki --show-password
+      imas-codex credentials get tcv --show-password
     """
     import os
 
     from imas_codex.discovery.wiki.auth import CredentialManager
 
+    service = _resolve_service(service)
     creds = CredentialManager()
 
     result = creds.get_credentials(service, prompt_if_missing=False)
@@ -164,15 +210,18 @@ def credentials_delete(
 
     Also clears any cached session for the service.
 
-    SERVICE is the credential service name (e.g., "tcv-wiki", "iter-confluence").
+    SERVICE is a credential service name or facility name.
+    Facility names are resolved to their credential service automatically.
 
     \b
     Examples:
+      imas-codex credentials delete tcv          # resolves to tcv-wiki
       imas-codex credentials delete tcv-wiki
       imas-codex credentials delete iter-confluence --yes
     """
     from imas_codex.discovery.wiki.auth import CredentialManager
 
+    service = _resolve_service(service)
     creds = CredentialManager()
 
     if not creds.has_credentials(service):
