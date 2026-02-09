@@ -588,9 +588,9 @@ def has_pending_ingest_work(facility: str) -> bool:
 
 
 def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, int]:
-    """Reset claimed_at on all wiki pages on CLI startup.
+    """Reset claimed_at on all wiki pages and artifacts on CLI startup.
 
-    Since only one CLI process runs per facility at a time, any pages with
+    Since only one CLI process runs per facility at a time, any items with
     claimed_at set are orphans from a previous crashed/killed process.
     Simply clear claimed_at to make them reclaimable.
     """
@@ -604,12 +604,30 @@ def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, i
             """,
             facility=facility,
         )
-        reset_count = result[0]["reset_count"] if result else 0
+        page_reset = result[0]["reset_count"] if result else 0
 
-    if not silent and reset_count > 0:
-        logger.info(f"Reset {reset_count} orphaned wiki pages on startup")
+        # Also clear artifact claims
+        result = gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $facility})
+            WHERE wa.claimed_at IS NOT NULL
+            SET wa.claimed_at = null
+            RETURN count(wa) AS reset_count
+            """,
+            facility=facility,
+        )
+        artifact_reset = result[0]["reset_count"] if result else 0
 
-    return {"orphan_reset": reset_count}
+    total_reset = page_reset + artifact_reset
+    if not silent and total_reset > 0:
+        logger.info(
+            "Reset %d orphaned claims on startup (%d pages, %d artifacts)",
+            total_reset,
+            page_reset,
+            artifact_reset,
+        )
+
+    return {"orphan_reset": page_reset, "artifact_reset": artifact_reset}
 
 
 # =============================================================================
@@ -5005,7 +5023,19 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             ):
                 pending_artifact_ingest += r["cnt"]
 
+        # Count ingested artifacts
+        artifacts_ingested = 0
+        artifacts_scored = 0
+        for r in artifact_result:
+            st = r["status"]
+            if st == WikiArtifactStatus.ingested.value:
+                artifacts_ingested += r["cnt"]
+            elif st == WikiArtifactStatus.scored.value:
+                artifacts_scored += r["cnt"]
+
         stats["total_artifacts"] = total_artifacts
+        stats["artifacts_ingested"] = artifacts_ingested
+        stats["artifacts_scored"] = artifacts_scored
         stats["pending_artifact_score"] = pending_artifact_score
         stats["pending_artifact_ingest"] = pending_artifact_ingest
 

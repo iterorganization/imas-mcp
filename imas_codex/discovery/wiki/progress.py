@@ -599,6 +599,7 @@ class WikiProgressDisplay:
                 section.append(f" {self.state.ingest_rate:>5.1f}/s", style="dim")
 
         # ARTIFACTS row - progress bar showing ingested / (ingested + pending)
+        # Uses graph-based counts (like SCORE/INGEST) for accurate totals
         section.append("\n")
         if self.state.scan_only:
             section.append("  ARTFCT  ", style="dim")
@@ -606,7 +607,7 @@ class WikiProgressDisplay:
             section.append("    disabled", style="dim italic")
         else:
             section.append("  ARTFCT  ", style="bold yellow")
-            ingested = self.state.total_run_artifacts
+            ingested = self.state.artifacts_ingested
             pending = self.state.pending_artifact_ingest
             art_total = ingested + pending
             if art_total > 0:
@@ -784,6 +785,13 @@ class WikiProgressDisplay:
                 display_name = artifact.filename
                 if artifact.chunk_count > 0:
                     suffix = f" ({artifact.chunk_count} chunks)"
+                    if len(display_name) + len(suffix) > title_width:
+                        display_name = (
+                            display_name[: title_width - len(suffix) - 3] + "..."
+                        )
+                    display_name += suffix
+                elif artifact.score is not None and artifact.score < 0.5:
+                    suffix = " (skipped)"
                     if len(display_name) + len(suffix) > title_width:
                         display_name = (
                             display_name[: title_width - len(suffix) - 3] + "..."
@@ -1253,6 +1261,11 @@ class WikiProgressDisplay:
         self.state.pending_artifact_score = pending_artifact_score
         self.state.pending_artifact_ingest = pending_artifact_ingest
         self.state.accumulated_cost = accumulated_cost
+        # Update graph-based artifact counts if provided
+        if "artifacts_ingested" in kwargs:
+            self.state.artifacts_ingested = kwargs["artifacts_ingested"]
+        if "artifacts_scored" in kwargs:
+            self.state.artifacts_scored = kwargs["artifacts_scored"]
         self._refresh()
 
     def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
