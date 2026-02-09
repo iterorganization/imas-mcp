@@ -1,11 +1,11 @@
 """Wiki discovery for facility documentation.
 
-Provides a four-phase parallel pipeline for discovering and ingesting wiki content:
+Provides a parallel pipeline for discovering and ingesting wiki content:
 
-Phase 1 - SCAN: Fast link extraction, builds wiki graph structure
-Phase 2 - PREFETCH: Fetch content and generate summaries
-Phase 3 - SCORE: LLM evaluation with cost tracking (stops at budget limit)
-Phase 4 - INGEST: Chunk and embed high-score pages
+Phase 1 - BULK DISCOVER: Fast API-based enumeration of all wiki pages
+Phase 2 - SCORE: LLM evaluation with inline content fetch (stops at budget limit)
+Phase 3 - INGEST: Chunk and embed high-score pages
+Phase 4 - ARTIFACTS: Score and embed wiki artifacts (PDFs, images, etc.)
 
 Facility-agnostic design - wiki configuration comes from facility YAML.
 """

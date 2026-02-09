@@ -24,9 +24,9 @@ def discover():
     \b
     Discovery Pipeline:
       paths              Scan and score directory structure
-      code               Find source files in scored paths
-      signals            Discover MDSplus trees and data signals
-      wiki               Crawl and score wiki documentation
+      signals            Discover and document facility data signals
+      wiki               Discover wiki pages and build documentation graph
+      code               Find source files in scored paths (not yet implemented)
 
     \b
     Management:
@@ -35,9 +35,13 @@ def discover():
       clear              Clear ALL discovery data (nuclear reset)
       paths-clear        Clear path data only
       signals-clear      Clear signal data only
+      wiki-reset         Reset failed/deferred wiki pages for re-processing
       seed               Seed root paths from config
 
-    For wiki-specific clear: imas-codex wiki clear <facility>
+    \b
+    Wiki-specific operations:
+      imas-codex wiki clear <facility>    Clear wiki data only
+      imas-codex wiki status <facility>   Wiki discovery statistics
 
     The graph is the single source of truth. All discovery operations
     are idempotent and resume from the current graph state.
@@ -1050,7 +1054,8 @@ def discover_paths_clear(facility: str, force: bool) -> None:
 def discover_signals_clear(facility: str, force: bool) -> None:
     """Clear signal discovery data for a facility.
 
-    Deletes FacilitySignal, TreeModelVersion, and epoch checkpoint files.
+    Deletes FacilitySignal, DataAccess, TreeModelVersion nodes,
+    and epoch checkpoint files.
     """
     from imas_codex.discovery.data import (
         clear_facility_signals,
@@ -1126,7 +1131,11 @@ def discover_seed(facility: str, path: tuple[str, ...]) -> None:
 @click.argument("facility")
 @click.option("--dry-run", is_flag=True, help="Show what would be discovered")
 def discover_code(facility: str, dry_run: bool) -> None:
-    """Discover source files in scored paths. (NOT YET IMPLEMENTED)"""
+    """Discover source files in scored paths.
+
+    NOT YET IMPLEMENTED. Use 'imas-codex ingest queue' to manually
+    queue source files for ingestion.
+    """
     from imas_codex.discovery import get_discovery_stats
 
     console = Console()
@@ -1157,7 +1166,9 @@ def discover_code(facility: str, dry_run: bool) -> None:
 @click.option(
     "--cost-limit", "-c", type=float, default=10.0, help="Maximum LLM spend in USD"
 )
-@click.option("--max-pages", "-n", type=int, default=None, help="Maximum pages to scan")
+@click.option(
+    "--max-pages", "-n", type=int, default=None, help="Maximum pages to process"
+)
 @click.option(
     "--max-depth", type=int, default=None, help="Maximum link depth from portal"
 )
@@ -1165,10 +1176,16 @@ def discover_code(facility: str, dry_run: bool) -> None:
     "--focus", "-p", help="Focus discovery (e.g., 'equilibrium', 'diagnostics')"
 )
 @click.option(
-    "--scan-only", is_flag=True, help="Only scan links, don't score or ingest"
+    "--scan-only", is_flag=True, help="Only discover pages, skip scoring and ingestion"
 )
-@click.option("--score-only", is_flag=True, help="Only score already-discovered pages")
-@click.option("--model", "-m", default=None, help="LLM model to use")
+@click.option(
+    "--score-only",
+    is_flag=True,
+    help="Only score already-discovered pages, skip ingestion",
+)
+@click.option(
+    "--model", "-m", default=None, help="LLM model override (currently unused)"
+)
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed progress")
 @click.option(
     "--no-rich",
@@ -1223,10 +1240,10 @@ def discover_wiki(
     Runs parallel wiki discovery workers:
 
     \b
-    - SCAN: Fast link extraction, builds doc graph (continues even at budget)
-    - PREFETCH: Fetch page content and generate summaries
-    - SCORE: Content-aware LLM evaluation (stops at budget limit)
-    - INGEST: Chunk and embed high-score pages (stops at budget limit)
+    - BULK DISCOVER: Fast API-based page enumeration (runs once per site)
+    - SCORE: Content-aware LLM evaluation with inline content fetch
+    - INGEST: Chunk and embed high-score pages
+    - ARTIFACT SCORE/INGEST: Score and embed wiki artifacts (PDFs, images)
 
     Bulk discovery runs automatically on first invocation when no wiki pages
     exist for the facility. Use --force-discovery to re-run bulk discovery
