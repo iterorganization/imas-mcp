@@ -784,14 +784,49 @@ class Encoder:
 
         return SentenceTransformer
 
+    @staticmethod
+    def _resolve_model_path(model_name: str, cache_folder: str | None = None) -> str:
+        """Resolve a HuggingFace model name to a local directory path.
+
+        If the model is cached locally (either in ``cache_folder`` or the
+        default HuggingFace hub cache), returns the absolute path to the
+        snapshot directory.  This lets ``SentenceTransformer`` load directly
+        from disk without any HuggingFace API calls — critical for
+        air-gapped GPU nodes on HPC clusters.
+
+        Returns the original model name if not found locally.
+        """
+        try:
+            from huggingface_hub import try_to_load_from_cache
+            from huggingface_hub.errors import EntryNotFoundError
+
+            # Check custom cache first, then default HF cache
+            cache_dirs = [cache_folder] if cache_folder else []
+            cache_dirs.append(None)  # None = default HF cache
+
+            for cache_dir in cache_dirs:
+                try:
+                    path = try_to_load_from_cache(
+                        model_name,
+                        "config.json",
+                        cache_dir=cache_dir,
+                    )
+                    if path and isinstance(path, (str, Path)):
+                        # Return the snapshot directory (parent of config.json)
+                        return str(Path(path).parent)
+                except (EntryNotFoundError, Exception):
+                    continue
+        except ImportError:
+            pass
+        return model_name
+
     def _load_model(self) -> None:
         """Load local SentenceTransformer model.
 
         Searches for model files in three stages:
-        1. Project-specific cache directory (local_files_only)
-        2. Default HuggingFace hub cache (local_files_only) — needed for
-           air-gapped GPU nodes where models are pre-cached on NFS
-        3. Download from HuggingFace (requires internet)
+        1. Resolve model to local snapshot path (project cache or HF hub cache)
+        2. Load from resolved path (works on air-gapped GPU nodes)
+        3. Fall back to downloading from HuggingFace (requires internet)
 
         Uses ``torch_dtype="auto"`` so models load in their native precision
         (e.g., bfloat16 for Qwen3-Embedding-8B) instead of fp32, halving GPU
@@ -803,38 +838,32 @@ class Encoder:
         model_kwargs = {"torch_dtype": "auto"}
         try:
             cache_folder = str(self._get_cache_directory() / "models")
-            try:
-                self.logger.debug("Loading model from project cache...")
+
+            # Try to resolve to a local directory path first.
+            # This bypasses all HuggingFace API calls and cache resolution,
+            # which is critical for air-gapped SLURM GPU nodes.
+            resolved = self._resolve_model_path(
+                self.config.model_name, cache_folder=cache_folder
+            )
+            if resolved != self.config.model_name:
+                self.logger.debug(
+                    "Resolved %s to local path: %s", self.config.model_name, resolved
+                )
                 self._model = ST(
-                    self.config.model_name,
+                    resolved,
                     device=self.config.device,
-                    cache_folder=cache_folder,
-                    local_files_only=True,
                     model_kwargs=model_kwargs,
                 )
                 self.logger.debug(
-                    f"Model {self.config.model_name} loaded from project cache on device: {self._model.device}"
+                    f"Model {self.config.model_name} loaded from {resolved} "
+                    f"on device: {self._model.device}"
                 )
                 return
-            except Exception:
-                self.logger.debug("Model not in project cache, trying HF hub cache...")
 
-            try:
-                self._model = ST(
-                    self.config.model_name,
-                    device=self.config.device,
-                    local_files_only=True,
-                    model_kwargs=model_kwargs,
-                )
-                self.logger.debug(
-                    f"Model {self.config.model_name} loaded from HF hub cache on device: {self._model.device}"
-                )
-                return
-            except Exception:
-                self.logger.debug(
-                    f"Model not in HF hub cache, downloading {self.config.model_name}..."
-                )
-
+            # No local cache found — download from HuggingFace
+            self.logger.debug(
+                f"No local cache for {self.config.model_name}, downloading..."
+            )
             self._model = ST(
                 self.config.model_name,
                 device=self.config.device,
