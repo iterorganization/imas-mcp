@@ -1761,6 +1761,11 @@ def discover_wiki(
 
             multi_site = len(_site_configs) > 1
 
+            # Suppress noisy INFO logs from embedding modules during rich display
+            # (source tracking, model init etc. are shown in the progress panel)
+            for mod in ("imas_codex.embeddings",):
+                logging.getLogger(mod).setLevel(logging.WARNING)
+
             with WikiProgressDisplay(
                 facility=_facility,
                 cost_limit=_cost_limit,

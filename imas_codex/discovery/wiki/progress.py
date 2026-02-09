@@ -512,6 +512,8 @@ class WikiProgressDisplay:
                 style = "yellow"
             elif state_counts.get(WorkerState.running, 0) > 0:
                 style = "green"
+            elif state_counts.get(WorkerState.stopped, 0) == count:
+                style = "green"  # All workers completed
             else:
                 style = "dim"
 
@@ -649,12 +651,26 @@ class WikiProgressDisplay:
         def should_show_idle(processing: bool, queue: StreamQueue) -> bool:
             return not processing and queue.is_empty()
 
+        def is_worker_complete(task_type: str) -> bool:
+            """Check if all workers of a given task type have stopped."""
+            wg = self.state.worker_group
+            if not wg:
+                return False
+            workers = [
+                (name, status.state)
+                for name, status in wg.workers.items()
+                if task_type in name
+            ]
+            return len(workers) > 0 and all(
+                s == WorkerState.stopped for _, s in workers
+            )
+
         # SCORE section - always 2 lines for consistent height
         if not self.state.scan_only:
-            section.append("  SCORE ", style="bold blue")
+            section.append("  SCORE   ", style="bold blue")
             if score:
                 # Line 1: Page title (clipped to fit remaining space)
-                title_width = content_width - 8  # 8 = "  SCORE "
+                title_width = content_width - self.LABEL_WIDTH
                 section.append(
                     self._clip_title(score.title, title_width), style="white"
                 )
@@ -706,6 +722,9 @@ class WikiProgressDisplay:
                 queued = len(self.state.score_queue)
                 section.append(f"streaming {queued} items...", style="cyan italic")
                 section.append("\n    ", style="dim")
+            elif is_worker_complete("score"):
+                section.append("complete", style="green")
+                section.append("\n    ", style="dim")
             elif should_show_idle(self.state.score_processing, self.state.score_queue):
                 section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
@@ -716,12 +735,12 @@ class WikiProgressDisplay:
 
         # INGEST section - 2 lines: title, then score + domain + description
         if not self.state.scan_only:
-            section.append("  INGEST", style="bold magenta")
+            section.append("  INGEST  ", style="bold magenta")
             if ingest:
                 # Line 1: Page title (clipped to fit remaining space)
-                title_width = content_width - 9  # 9 = "  INGEST "
+                title_width = content_width - self.LABEL_WIDTH
                 section.append(
-                    " " + self._clip_title(ingest.title, title_width), style="white"
+                    self._clip_title(ingest.title, title_width), style="white"
                 )
                 section.append("\n")
 
@@ -758,30 +777,33 @@ class WikiProgressDisplay:
                         clip_text(desc, max(10, desc_width)), style="italic dim"
                     )
             elif self.state.ingest_processing:
-                section.append(" processing batch...", style="cyan italic")
+                section.append("processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif not self.state.ingest_queue.is_empty():
                 # Items in queue but not yet popped - show waiting state
                 queued = len(self.state.ingest_queue)
-                section.append(f" streaming {queued} items...", style="cyan italic")
+                section.append(f"streaming {queued} items...", style="cyan italic")
+                section.append("\n    ", style="dim")
+            elif is_worker_complete("ingest"):
+                section.append("complete", style="green")
                 section.append("\n    ", style="dim")
             elif should_show_idle(
                 self.state.ingest_processing, self.state.ingest_queue
             ):
-                section.append(" idle", style="dim italic")
+                section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
             else:
-                section.append(" ...", style="dim italic")
+                section.append("...", style="dim italic")
                 section.append("\n    ", style="dim")
 
         # ARTIFACT section - 2 lines: filename, then score + domain + description
         artifact = self.state.current_artifact
         if not self.state.scan_only:
             section.append("\n")
-            section.append("  ARTFCT", style="bold yellow")
+            section.append("  ARTFCT  ", style="bold yellow")
             if artifact:
                 # Line 1: Artifact filename
-                title_width = content_width - 9  # 9 = "  ARTFCT "
+                title_width = content_width - self.LABEL_WIDTH
                 display_name = artifact.filename
                 if artifact.chunk_count > 0:
                     suffix = f" ({artifact.chunk_count} chunks)"
@@ -798,7 +820,7 @@ class WikiProgressDisplay:
                         )
                     display_name += suffix
                 section.append(
-                    " " + self._clip_title(display_name, title_width), style="white"
+                    self._clip_title(display_name, title_width), style="white"
                 )
                 section.append("\n")
 
@@ -832,7 +854,7 @@ class WikiProgressDisplay:
                         clip_text(desc, max(10, desc_width)), style="italic dim"
                     )
             elif self.state.artifact_processing:
-                section.append(" processing...", style="cyan italic")
+                section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif (
                 not self.state.artifact_queue.is_empty()
@@ -841,16 +863,19 @@ class WikiProgressDisplay:
                 queued = len(self.state.artifact_queue) + len(
                     self.state.artifact_score_queue
                 )
-                section.append(f" streaming {queued} items...", style="cyan italic")
+                section.append(f"streaming {queued} items...", style="cyan italic")
+                section.append("\n    ", style="dim")
+            elif is_worker_complete("artifact"):
+                section.append("complete", style="green")
                 section.append("\n    ", style="dim")
             elif should_show_idle(
                 self.state.artifact_processing,
                 self.state.artifact_queue,
             ):
-                section.append(" idle", style="dim italic")
+                section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
             else:
-                section.append(" ...", style="dim italic")
+                section.append("...", style="dim italic")
                 section.append("\n    ", style="dim")
 
         return section

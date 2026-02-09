@@ -99,7 +99,7 @@ class EncoderLlamaEmbedding(BaseEmbedding):
         # Update global source tracking
         self._update_source()
 
-        logger.info(
+        logger.debug(
             f"Initialized EncoderLlamaEmbedding: {model_name} "
             f"(backend={config.backend}, source={get_embedding_source()})"
         )
@@ -173,7 +173,7 @@ def get_llama_embed_model() -> BaseEmbedding:
     except ValueError:
         backend = EmbeddingBackend.LOCAL
 
-    logger.info(f"Creating LlamaIndex embed model: {model_name} (backend={backend})")
+    logger.debug(f"Creating LlamaIndex embed model: {model_name} (backend={backend})")
 
     return EncoderLlamaEmbedding(
         model_name=model_name,

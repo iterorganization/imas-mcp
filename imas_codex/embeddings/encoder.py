@@ -158,6 +158,20 @@ class Encoder:
         except Exception:
             pass
 
+        # Fallback: if URL is localhost/127.0.0.1, server runs on this machine
+        try:
+            url = self.config.remote_url or ""
+            if any(h in url for h in ("localhost", "127.0.0.1", "[::1]")):
+                import socket
+
+                hn = socket.gethostname()
+                if hn:
+                    self._remote_hostname = hn
+                    self.logger.debug("Resolved hostname from local socket: %s", hn)
+                    return
+        except Exception:
+            pass
+
     def _validate_remote_backend(self) -> None:
         """Validate remote backend is available and model matches.
 
