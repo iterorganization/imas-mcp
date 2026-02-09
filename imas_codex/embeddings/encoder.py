@@ -845,10 +845,12 @@ class Encoder:
             model_kwargs["low_cpu_mem_usage"] = True
 
             if torch.cuda.device_count() > 1:
-                # Distribute model across all available GPUs via accelerate.
-                # Critical for 8B+ models that exceed single GPU VRAM
-                # (Qwen3-Embedding-8B fp16 ≈ 16.4GB > P100 16GB).
-                model_kwargs["device_map"] = "auto"
+                # Distribute model across all available GPUs.
+                # Build explicit device_map to keep decoder layers whole.
+                # device_map="auto" can split within layers (placing
+                # layernorm on a different GPU than attention), causing
+                # cross-device errors that accelerate hooks don't fix.
+                # Actual device_map built after cache_folder is resolved.
                 device = None  # Let device_map handle placement
                 use_device_map = True
         else:
@@ -856,6 +858,12 @@ class Encoder:
 
         try:
             cache_folder = str(self._get_cache_directory() / "models")
+
+            if use_device_map:
+                # Now that cache_folder is available, build device_map.
+                model_kwargs["device_map"] = self._build_device_map(
+                    self.config.model_name, cache_folder=cache_folder
+                )
 
             # Try to resolve to a local directory path first.
             # This bypasses all HuggingFace API calls and cache resolution,
@@ -906,6 +914,65 @@ class Encoder:
             raise EmbeddingBackendError(
                 f"Failed to load embedding model '{self.config.model_name}': {e}"
             ) from e
+
+    def _build_device_map(
+        self,
+        model_name: str,
+        cache_folder: str | None = None,
+    ) -> dict[str, int]:
+        """Build an explicit device_map that keeps decoder layers whole.
+
+        ``device_map='auto'`` can split *within* transformer layers,
+        placing e.g. ``input_layernorm`` on a different GPU than the
+        parent ``DecoderLayer``.  Accelerate's hooks don't fully handle
+        intra-layer cross-device moves, producing ``RuntimeError``
+        on the layernorm's ``self.weight * hidden_states`` operation.
+
+        This method reads the model config to learn the number of hidden
+        layers, then distributes whole layers evenly across visible GPUs.
+        """
+        import json
+
+        import torch
+
+        n_gpu = torch.cuda.device_count()
+        resolved_path = self._resolve_model_path(model_name, cache_folder=cache_folder)
+        config_file = Path(resolved_path) / "config.json"
+
+        if not config_file.exists():
+            self.logger.warning(
+                "config.json not found at %s; falling back to device_map='balanced'",
+                config_file,
+            )
+            return "balanced"  # type: ignore[return-value]
+
+        with open(config_file) as f:
+            config = json.load(f)
+
+        n_layers = config.get("num_hidden_layers", 0)
+        if n_layers == 0:
+            self.logger.warning(
+                "num_hidden_layers not found in config; falling back to device_map='balanced'"
+            )
+            return "balanced"  # type: ignore[return-value]
+
+        # Build explicit mapping keeping each decoder layer on one GPU.
+        device_map: dict[str, int] = {"model.embed_tokens": 0}
+        layers_per_gpu = n_layers / n_gpu
+        for i in range(n_layers):
+            gpu = min(int(i / layers_per_gpu), n_gpu - 1)
+            device_map[f"model.layers.{i}"] = gpu
+
+        # Final norm and optional lm_head go on last GPU
+        device_map["model.norm"] = n_gpu - 1
+
+        self.logger.debug(
+            "Built explicit device_map: %d layers across %d GPUs (layers_per_gpu=%.1f)",
+            n_layers,
+            n_gpu,
+            layers_per_gpu,
+        )
+        return device_map
 
     def _patch_modules_for_device_map(self) -> None:
         """Patch SentenceTransformer modules for ``device_map='auto'``.
