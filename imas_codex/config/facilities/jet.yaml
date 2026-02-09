@@ -36,8 +36,8 @@ user_info:
 _wiki_defaults: &wiki_defaults
   portal_page: Main_Page
   site_type: mediawiki
-  auth_type: none
-  requires_ssh: true
+  access_method: ssh_tunnel  # Only accessible via SSH tunnel through JET
+  auth_type: none             # No authentication once tunnel is active
 
 wiki_sites:
   - <<: *wiki_defaults

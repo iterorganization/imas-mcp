@@ -40,7 +40,8 @@ wiki_sites:
   - url: https://spcwiki.epfl.ch/wiki
     portal_page: Portal:TCV
     site_type: mediawiki
-    auth_type: tequila
+    access_method: direct  # Accessible from internet
+    auth_type: tequila     # EPFL Tequila SSO
     credential_service: tcv-wiki
 
 # User info discovery configuration

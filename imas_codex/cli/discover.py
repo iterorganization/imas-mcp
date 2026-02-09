@@ -1329,11 +1329,9 @@ def discover_wiki(
         auth_type = site.get("auth_type")
         credential_service = site.get("credential_service")
 
-        # Determine SSH host: explicit site ssh_host, or facility default if requires_ssh
+        # Determine SSH host: explicit site ssh_host, or facility default for ssh_tunnel sites
         ssh_host = site.get("ssh_host")
-        if not ssh_host and (
-            site.get("requires_ssh") or site.get("auth_type") == "ssh_proxy"
-        ):
+        if not ssh_host and site.get("access_method") == "ssh_tunnel":
             ssh_host = config.get("ssh_host")
 
         log_print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")

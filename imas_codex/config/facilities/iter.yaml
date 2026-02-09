@@ -23,9 +23,9 @@ wiki_sites:
   - url: https://confluence.iter.org
     portal_page: IMP
     site_type: confluence
-    auth_type: session
+    access_method: direct  # Accessible from internet (no VPN/SSH needed)
+    auth_type: session     # Username/password session login
     credential_service: iter-confluence
-    requires_ssh: false  # Confluence uses REST API directly
 
 # User info discovery configuration
 # GECOS = General Comprehensive Operating System (5th field in /etc/passwd)

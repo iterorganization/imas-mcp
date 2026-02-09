@@ -51,10 +51,11 @@ class WikiSiteConfig:
 
     url: str
     portal_page: str
-    site_type: str  # mediawiki, confluence, generic
-    auth_type: str  # none, ssh_proxy, basic, session
+    site_type: str  # mediawiki, confluence, twiki_static, static_html
+    auth_type: str  # none, tequila, session, basic
+    access_method: str = "direct"  # direct, vpn, ssh_tunnel
     credential_service: str | None = None  # keyring service name
-    ssh_host: str | None = None  # for ssh_proxy auth
+    ssh_host: str | None = None  # for ssh_tunnel access
 
 
 def _is_wsl() -> bool:

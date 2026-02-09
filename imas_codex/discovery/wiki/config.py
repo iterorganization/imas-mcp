@@ -23,9 +23,12 @@ class WikiConfig:
     base_url: str
     portal_page: str
     facility_id: str
-    site_type: str = "mediawiki"  # mediawiki, confluence, twiki, generic
-    auth_type: str = "ssh_proxy"  # none, ssh_proxy, basic, session
-    ssh_host: str | None = None  # for ssh_proxy auth
+    site_type: str = (
+        "mediawiki"  # mediawiki, confluence, twiki, twiki_static, static_html
+    )
+    auth_type: str = "none"  # none, tequila, session, basic
+    access_method: str = "direct"  # direct, vpn, ssh_tunnel
+    ssh_host: str | None = None  # for ssh_tunnel access
     credential_service: str | None = None  # keyring service name
 
     @classmethod
@@ -54,26 +57,29 @@ class WikiConfig:
                     facility_id=facility,
                     site_type=site.get("site_type", "mediawiki"),
                     auth_type=site.get("auth_type", "none"),
+                    access_method=site.get("access_method", "direct"),
                     ssh_host=site.get("ssh_host") or config.get("ssh_host"),
                     credential_service=site.get("credential_service"),
                 )
         except Exception:
             pass  # Fall back to hardcoded defaults
 
-        # Default configurations per facility (legacy support)
+        # Default configurations per facility (legacy fallback)
         configs = {
             "tcv": {
                 "base_url": "https://spcwiki.epfl.ch/wiki",
                 "portal_page": "Portal:TCV",
                 "site_type": "mediawiki",
-                "auth_type": "ssh_proxy",
-                "ssh_host": "tcv",
+                "auth_type": "tequila",
+                "access_method": "direct",
+                "credential_service": "tcv-wiki",
             },
             "iter": {
                 "base_url": "https://confluence.iter.org",
                 "portal_page": "IMP",
                 "site_type": "confluence",
                 "auth_type": "session",
+                "access_method": "direct",
                 "credential_service": "iter-confluence",
             },
         }
@@ -90,6 +96,7 @@ class WikiConfig:
             facility_id=facility,
             site_type=cfg.get("site_type", "mediawiki"),
             auth_type=cfg.get("auth_type", "none"),
+            access_method=cfg.get("access_method", "direct"),
             ssh_host=cfg.get("ssh_host"),
             credential_service=cfg.get("credential_service"),
         )
@@ -130,16 +137,12 @@ class WikiConfig:
     @property
     def requires_auth(self) -> bool:
         """Check if this site requires authentication."""
-        return self.auth_type in ("basic", "session")
+        return self.auth_type not in ("none",)
 
     @property
     def requires_ssh(self) -> bool:
-        """Check if this site requires SSH proxy to access.
-
-        Confluence sites use REST API directly (no SSH needed).
-        MediaWiki sites may require SSH proxy if behind firewall.
-        """
-        return self.auth_type == "ssh_proxy" and self.ssh_host is not None
+        """Check if this site requires SSH tunnel to access."""
+        return self.access_method == "ssh_tunnel"
 
 
 __all__ = ["WikiConfig"]

@@ -101,20 +101,24 @@ def credentials_set(
 
 @credentials.command("get")
 @click.argument("service")
-@click.option("--show-password", is_flag=True, help="Show password (security risk)")
 def credentials_get(
     service: str,
-    show_password: bool,
 ) -> None:
     """Check if credentials exist for a service.
+
+    Shows credential status and storage source without revealing secrets.
+    Passwords are never displayed — use 'credentials delete' and 're-set'
+    if you need to change them.
 
     SERVICE is the credential service name (e.g., "tcv-wiki", "iter-confluence").
 
     \b
     Examples:
       imas-codex credentials get tcv-wiki
-      imas-codex credentials get iter-confluence --show-password
+      imas-codex credentials get iter-confluence
     """
+    import os
+
     from imas_codex.discovery.wiki.auth import CredentialManager
 
     creds = CredentialManager()
@@ -125,13 +129,21 @@ def credentials_get(
         console.print(f"\nTo set credentials: imas-codex credentials set {service}")
         raise SystemExit(1)
 
-    username, password = result
-    console.print(f"[green]✓ Credentials exist for {service}[/green]")
-    console.print(f"  Username: {username}")
-    if show_password:
-        console.print(f"  Password: {password}")
+    username, _password = result
+
+    # Determine storage source
+    username_var = creds._env_var_name(service, "username")
+    password_var = creds._env_var_name(service, "password")
+    if service in CredentialManager._memory_cache:
+        source = "memory cache (this process only)"
+    elif os.environ.get(username_var) and os.environ.get(password_var):
+        source = f"environment ({username_var}, {password_var})"
     else:
-        console.print(f"  Password: {'*' * len(password)}")
+        source = "system keyring"
+
+    console.print(f"[green]✓ Credentials stored for {service}[/green]")
+    console.print(f"  Username: {username}")
+    console.print(f"  Source:   {source}")
 
 
 @credentials.command("delete")
@@ -172,14 +184,38 @@ def credentials_delete(
 
 
 @credentials.command("list")
-def credentials_list() -> None:
+@click.argument("facility", required=False)
+@click.option(
+    "--remote",
+    is_flag=True,
+    help="Check credential status on the remote facility via SSH.",
+)
+def credentials_list(facility: str | None, remote: bool) -> None:
     """List known credential services.
 
-    Shows services from facility configurations and environment variables.
+    Shows services from facility configurations with access requirements
+    and credential status.
+
+    \b
+    Examples:
+      imas-codex credentials list          # All facilities
+      imas-codex credentials list iter     # ITER services only
+      imas-codex credentials list iter --remote  # Check ITER's keyring via SSH
     """
     import os
 
     from imas_codex.discovery.wiki.auth import CredentialManager
+
+    # Remote mode: check credentials on the facility host via SSH
+    if remote:
+        if not facility:
+            console.print(
+                "[red]--remote requires a facility argument "
+                "(e.g., credentials list iter --remote)[/red]"
+            )
+            raise SystemExit(1)
+        _list_remote_credentials(facility)
+        return
 
     creds = CredentialManager()
 
@@ -187,72 +223,258 @@ def credentials_list() -> None:
     services: dict[str, dict] = {}
 
     try:
-        from imas_codex.discovery.base.facility import list_facilities
+        from imas_codex.discovery.base.facility import get_facility, list_facilities
 
-        for facility_id in list_facilities():
-            from imas_codex.discovery.base.facility import get_facility
-
+        facilities = [facility] if facility else list_facilities()
+        for facility_id in facilities:
             try:
                 config = get_facility(facility_id)
                 wiki_sites = config.get("wiki_sites", [])
                 for site in wiki_sites:
-                    service = site.get("credential_service") or f"{facility_id}-wiki"
-                    services[service] = {
+                    auth_type = site.get("auth_type", "none")
+                    access = site.get("access_method", "direct")
+                    needs_creds = auth_type not in ("none",)
+                    service = site.get("credential_service") or (
+                        f"{facility_id}-wiki" if needs_creds else None
+                    )
+                    services[site.get("url", facility_id)] = {
+                        "service": service,
                         "facility": facility_id,
-                        "source": site.get("site_type", "mediawiki"),
+                        "site_type": site.get("site_type", "mediawiki"),
+                        "auth_type": auth_type,
+                        "access_method": access,
                         "url": site.get("url", ""),
-                        "has_creds": False,
+                        "has_creds": (
+                            creds.has_credentials(service)
+                            if service
+                            else None  # Not applicable
+                        ),
                     }
             except Exception:
                 pass
     except Exception:
         pass
 
-    # Check which have stored credentials
-    for service in services:
-        services[service]["has_creds"] = creds.has_credentials(service)
-
-    # Also check for environment-based credentials
-    for key in os.environ:
-        if key.endswith("_USERNAME"):
-            service_name = key.replace("_USERNAME", "").lower().replace("_", "-")
-            if service_name not in services:
-                password_key = key.replace("_USERNAME", "_PASSWORD")
-                if password_key in os.environ:
-                    services[service_name] = {
-                        "facility": "env",
-                        "source": "environment",
-                        "url": "",
-                        "has_creds": True,
-                    }
+    # Also check for environment-based credentials not in config
+    if not facility:
+        for key in os.environ:
+            if key.endswith("_USERNAME"):
+                service_name = key.replace("_USERNAME", "").lower().replace("_", "-")
+                if not any(s.get("service") == service_name for s in services.values()):
+                    password_key = key.replace("_USERNAME", "_PASSWORD")
+                    if password_key in os.environ:
+                        services[service_name] = {
+                            "service": service_name,
+                            "facility": "env",
+                            "site_type": "environment",
+                            "auth_type": "env",
+                            "access_method": "direct",
+                            "url": "",
+                            "has_creds": True,
+                        }
 
     if not services:
-        console.print("[yellow]No credential services configured.[/yellow]")
-        console.print(
-            "\nConfigure wiki sites in facility YAML files under 'wiki_sites:'"
-        )
+        if facility:
+            console.print(
+                f"[yellow]No credential services configured for {facility}.[/yellow]"
+            )
+        else:
+            console.print("[yellow]No credential services configured.[/yellow]")
         raise SystemExit(0)
 
     # Display table
-    table = Table(title="Credential Services")
+    title = f"Credential Services — {facility}" if facility else "Credential Services"
+    table = Table(title=title)
+    table.add_column("Facility", style="bold")
+    table.add_column("Access", style="dim")
+    table.add_column("Auth")
     table.add_column("Service", style="cyan")
-    table.add_column("Facility")
-    table.add_column("Source")
-    table.add_column("Credentials", style="green")
+    table.add_column("Credentials")
     table.add_column("URL", style="dim")
 
-    for service, info in sorted(services.items()):
-        status = "✓ stored" if info["has_creds"] else "✗ missing"
-        style = "green" if info["has_creds"] else "yellow"
+    # Group sites with identical patterns for compact display
+    # e.g., JET's 16 wikis all have ssh_tunnel/none/n/a — show as one row
+    grouped: list[dict] = []
+    seen_groups: dict[str, dict] = {}  # key -> group info with count
+
+    for _key, info in sorted(services.items(), key=lambda x: x[1]["facility"]):
+        group_key = (
+            f"{info['facility']}|{info['access_method']}|"
+            f"{info['auth_type']}|{info.get('service') or ''}"
+        )
+
+        if info.get("service"):
+            # Sites with credentials always get individual rows
+            grouped.append(info)
+        elif group_key in seen_groups:
+            seen_groups[group_key]["_count"] += 1
+        else:
+            entry = {**info, "_count": 1}
+            seen_groups[group_key] = entry
+            grouped.append(entry)
+
+    for _key, info in sorted(services.items(), key=lambda x: x[1]["facility"]):
+        # Credential status
+        if info["has_creds"] is None:
+            cred_display = "[dim]n/a[/dim]"
+        elif info["has_creds"]:
+            cred_display = "[green]✓ stored[/green]"
+        else:
+            cred_display = "[yellow]✗ missing[/yellow]"
+
+        # Access display with icons
+        access = info["access_method"]
+        access_display = {
+            "direct": "direct",
+            "vpn": "[magenta]vpn[/magenta]",
+            "ssh_tunnel": "[blue]ssh tunnel[/blue]",
+        }.get(access, access)
+
+    for info in grouped:
+        # Credential status
+        if info["has_creds"] is None:
+            cred_display = "[dim]n/a[/dim]"
+        elif info["has_creds"]:
+            cred_display = "[green]✓ stored[/green]"
+        else:
+            cred_display = "[yellow]✗ missing[/yellow]"
+
+        access = info["access_method"]
+        access_display = {
+            "direct": "direct",
+            "vpn": "[magenta]vpn[/magenta]",
+            "ssh_tunnel": "[blue]ssh tunnel[/blue]",
+        }.get(access, access)
+
+        url = info["url"]
+        count = info.get("_count", 1)
+        url_display = (
+            f"{count} sites"
+            if count > 1
+            else (url[:45] + "…" if len(url) > 45 else url)
+        )
+
         table.add_row(
-            service,
             info["facility"],
-            info["source"],
-            f"[{style}]{status}[/{style}]",
-            info["url"][:50] + "..." if len(info["url"]) > 50 else info["url"],
+            access_display,
+            info["auth_type"],
+            info.get("service") or "—",
+            cred_display,
+            url_display,
         )
 
     console.print(table)
+
+
+def _list_remote_credentials(facility: str) -> None:
+    """Check credential status on a remote facility via SSH."""
+    from imas_codex.discovery.base.facility import get_facility
+
+    try:
+        config = get_facility(facility)
+    except Exception as e:
+        console.print(f"[red]Unknown facility: {facility}[/red]")
+        raise SystemExit(1) from e
+
+    ssh_host = config.get("ssh_host", facility)
+    venv_python = "~/.local/share/imas-codex/venv/bin/python"
+
+    # Build a small Python script to check keyring status remotely
+    check_script = """
+import json, sys
+try:
+    import keyring
+    backend = keyring.get_keyring().__class__.__name__
+except Exception as e:
+    print(json.dumps({"error": f"keyring unavailable: {e}"}))
+    sys.exit(0)
+
+services = %s
+results = {}
+for svc in services:
+    try:
+        val = keyring.get_password(f"imas-codex/{svc}", "credentials")
+        results[svc] = bool(val)
+    except Exception:
+        results[svc] = False
+
+print(json.dumps({"backend": backend, "results": results}))
+"""
+
+    # Collect credential services for this facility
+    credential_services = []
+    for site in config.get("wiki_sites", []):
+        svc = site.get("credential_service")
+        if svc:
+            credential_services.append(svc)
+
+    if not credential_services:
+        console.print(
+            f"[yellow]No credential services configured for {facility}.[/yellow]"
+        )
+        return
+
+    import subprocess
+
+    script = check_script % repr(credential_services)
+    cmd = [
+        "ssh",
+        ssh_host,
+        f"{venv_python} -c {repr(script)}",
+    ]
+
+    console.print(
+        f"Checking keyring on [bold]{ssh_host}[/bold] "
+        f"({len(credential_services)} services)…\n"
+    )
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            if "No such file" in stderr or "not found" in stderr:
+                console.print(
+                    f"[yellow]imas-codex venv not installed on {ssh_host}.[/yellow]\n"
+                    f"Install with: imas-codex tools install {facility}"
+                )
+            else:
+                console.print(
+                    f"[red]SSH command failed:[/red] {stderr or 'unknown error'}"
+                )
+            return
+
+        import json
+
+        data = json.loads(result.stdout.strip())
+        if "error" in data:
+            console.print(
+                f"[yellow]Remote keyring: {data['error']}[/yellow]\n"
+                "Credentials on this host must use environment variables."
+            )
+            return
+
+        table = Table(title=f"Remote Credentials — {facility} ({ssh_host})")
+        table.add_column("Service", style="cyan")
+        table.add_column("Keyring Backend")
+        table.add_column("Credentials")
+
+        for svc, has_creds in data["results"].items():
+            status = (
+                "[green]✓ stored[/green]" if has_creds else "[yellow]✗ missing[/yellow]"
+            )
+            table.add_row(svc, data["backend"], status)
+
+        console.print(table)
+        console.print(
+            f"\n[dim]To set credentials on {ssh_host}: "
+            f'ssh {ssh_host} "~/.local/share/imas-codex/venv/bin/imas-codex '
+            f'credentials set <service>"[/dim]'
+        )
+
+    except subprocess.TimeoutExpired:
+        console.print(f"[red]SSH connection to {ssh_host} timed out.[/red]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
 
 
 @credentials.command("status")
