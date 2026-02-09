@@ -26,6 +26,7 @@ wiki_sites:
     access_method: direct  # Accessible from internet (no VPN/SSH needed)
     auth_type: session     # Username/password session login
     credential_service: iter-confluence
+    ssh_available: false   # Confluence is a web service, no SSH route
 
 # User info discovery configuration
 # GECOS = General Comprehensive Operating System (5th field in /etc/passwd)

@@ -43,6 +43,7 @@ wiki_sites:
     access_method: direct  # Accessible from internet
     auth_type: tequila     # EPFL Tequila SSO
     credential_service: tcv-wiki
+    ssh_available: true    # SSH tunnel also possible via tcv host
 
 # User info discovery configuration
 # GECOS = General Comprehensive Operating System (5th field in /etc/passwd)

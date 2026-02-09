@@ -36,8 +36,10 @@ user_info:
 _wiki_defaults: &wiki_defaults
   portal_page: Main_Page
   site_type: mediawiki
-  access_method: ssh_tunnel  # Only accessible via SSH tunnel through JET
-  auth_type: none             # No authentication once tunnel is active
+  access_method: direct      # Accessible via browser with login
+  auth_type: basic           # MediaWiki username/password login
+  credential_service: jet-wiki
+  ssh_available: true        # SSH tunnel also possible via JET host
 
 wiki_sites:
   - <<: *wiki_defaults

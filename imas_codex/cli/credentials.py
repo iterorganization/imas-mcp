@@ -101,21 +101,24 @@ def credentials_set(
 
 @credentials.command("get")
 @click.argument("service")
+@click.option(
+    "--show-password", is_flag=True, help="Show password in plaintext (use with care)"
+)
 def credentials_get(
     service: str,
+    show_password: bool,
 ) -> None:
-    """Check if credentials exist for a service.
+    """Retrieve credentials for a service.
 
-    Shows credential status and storage source without revealing secrets.
-    Passwords are never displayed — use 'credentials delete' and 're-set'
-    if you need to change them.
+    Shows credential status and storage source. Passwords are masked
+    by default — use --show-password to reveal them.
 
     SERVICE is the credential service name (e.g., "tcv-wiki", "iter-confluence").
 
     \b
     Examples:
       imas-codex credentials get tcv-wiki
-      imas-codex credentials get iter-confluence
+      imas-codex credentials get tcv-wiki --show-password
     """
     import os
 
@@ -129,7 +132,7 @@ def credentials_get(
         console.print(f"\nTo set credentials: imas-codex credentials set {service}")
         raise SystemExit(1)
 
-    username, _password = result
+    username, password = result
 
     # Determine storage source
     username_var = creds._env_var_name(service, "username")
@@ -143,6 +146,10 @@ def credentials_get(
 
     console.print(f"[green]✓ Credentials stored for {service}[/green]")
     console.print(f"  Username: {username}")
+    if show_password:
+        console.print(f"  Password: {password}")
+    else:
+        console.print("  Password: ********")
     console.print(f"  Source:   {source}")
 
 
@@ -233,6 +240,7 @@ def credentials_list(facility: str | None, remote: bool) -> None:
                 for site in wiki_sites:
                     auth_type = site.get("auth_type", "none")
                     access = site.get("access_method", "direct")
+                    ssh_avail = site.get("ssh_available", False)
                     needs_creds = auth_type not in ("none",)
                     service = site.get("credential_service") or (
                         f"{facility_id}-wiki" if needs_creds else None
@@ -243,6 +251,7 @@ def credentials_list(facility: str | None, remote: bool) -> None:
                         "site_type": site.get("site_type", "mediawiki"),
                         "auth_type": auth_type,
                         "access_method": access,
+                        "ssh_available": ssh_avail,
                         "url": site.get("url", ""),
                         "has_creds": (
                             creds.has_credentials(service)
@@ -286,16 +295,17 @@ def credentials_list(facility: str | None, remote: bool) -> None:
     title = f"Credential Services — {facility}" if facility else "Credential Services"
     table = Table(title=title)
     table.add_column("Facility", style="bold")
-    table.add_column("Access", style="dim")
+    table.add_column("Access")
+    table.add_column("SSH")
     table.add_column("Auth")
     table.add_column("Service", style="cyan")
     table.add_column("Credentials")
     table.add_column("URL", style="dim")
 
     # Group sites with identical patterns for compact display
-    # e.g., JET's 16 wikis all have ssh_tunnel/none/n/a — show as one row
+    # e.g., JET's 16 wikis all share the same access/auth/service pattern
     grouped: list[dict] = []
-    seen_groups: dict[str, dict] = {}  # key -> group info with count
+    seen_groups: dict[str, dict] = {}
 
     for _key, info in sorted(services.items(), key=lambda x: x[1]["facility"]):
         group_key = (
@@ -304,31 +314,19 @@ def credentials_list(facility: str | None, remote: bool) -> None:
         )
 
         if info.get("service"):
-            # Sites with credentials always get individual rows
-            grouped.append(info)
+            # Sites with credential services always get individual rows
+            if group_key in seen_groups:
+                seen_groups[group_key]["_count"] += 1
+            else:
+                entry = {**info, "_count": 1}
+                seen_groups[group_key] = entry
+                grouped.append(entry)
         elif group_key in seen_groups:
             seen_groups[group_key]["_count"] += 1
         else:
             entry = {**info, "_count": 1}
             seen_groups[group_key] = entry
             grouped.append(entry)
-
-    for _key, info in sorted(services.items(), key=lambda x: x[1]["facility"]):
-        # Credential status
-        if info["has_creds"] is None:
-            cred_display = "[dim]n/a[/dim]"
-        elif info["has_creds"]:
-            cred_display = "[green]✓ stored[/green]"
-        else:
-            cred_display = "[yellow]✗ missing[/yellow]"
-
-        # Access display with icons
-        access = info["access_method"]
-        access_display = {
-            "direct": "direct",
-            "vpn": "[magenta]vpn[/magenta]",
-            "ssh_tunnel": "[blue]ssh tunnel[/blue]",
-        }.get(access, access)
 
     for info in grouped:
         # Credential status
@@ -339,24 +337,30 @@ def credentials_list(facility: str | None, remote: bool) -> None:
         else:
             cred_display = "[yellow]✗ missing[/yellow]"
 
+        # Access method display
         access = info["access_method"]
         access_display = {
             "direct": "direct",
             "vpn": "[magenta]vpn[/magenta]",
-            "ssh_tunnel": "[blue]ssh tunnel[/blue]",
         }.get(access, access)
+
+        # SSH availability
+        ssh_display = (
+            "[green]✓[/green]" if info.get("ssh_available") else "[dim]—[/dim]"
+        )
 
         url = info["url"]
         count = info.get("_count", 1)
         url_display = (
             f"{count} sites"
             if count > 1
-            else (url[:45] + "…" if len(url) > 45 else url)
+            else (url[:40] + "…" if len(url) > 40 else url)
         )
 
         table.add_row(
             info["facility"],
             access_display,
+            ssh_display,
             info["auth_type"],
             info.get("service") or "—",
             cred_display,

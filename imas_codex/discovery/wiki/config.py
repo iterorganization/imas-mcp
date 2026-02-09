@@ -27,8 +27,9 @@ class WikiConfig:
         "mediawiki"  # mediawiki, confluence, twiki, twiki_static, static_html
     )
     auth_type: str = "none"  # none, tequila, session, basic
-    access_method: str = "direct"  # direct, vpn, ssh_tunnel
-    ssh_host: str | None = None  # for ssh_tunnel access
+    access_method: str = "direct"  # direct, vpn (preferred network route)
+    ssh_available: bool = False  # SSH access possible (for scp, tunneling)
+    ssh_host: str | None = None  # SSH host for tunnel/proxy access
     credential_service: str | None = None  # keyring service name
 
     @classmethod
@@ -58,6 +59,7 @@ class WikiConfig:
                     site_type=site.get("site_type", "mediawiki"),
                     auth_type=site.get("auth_type", "none"),
                     access_method=site.get("access_method", "direct"),
+                    ssh_available=site.get("ssh_available", False),
                     ssh_host=site.get("ssh_host") or config.get("ssh_host"),
                     credential_service=site.get("credential_service"),
                 )
@@ -72,6 +74,7 @@ class WikiConfig:
                 "site_type": "mediawiki",
                 "auth_type": "tequila",
                 "access_method": "direct",
+                "ssh_available": True,
                 "credential_service": "tcv-wiki",
             },
             "iter": {
@@ -80,6 +83,7 @@ class WikiConfig:
                 "site_type": "confluence",
                 "auth_type": "session",
                 "access_method": "direct",
+                "ssh_available": False,
                 "credential_service": "iter-confluence",
             },
         }
@@ -97,6 +101,7 @@ class WikiConfig:
             site_type=cfg.get("site_type", "mediawiki"),
             auth_type=cfg.get("auth_type", "none"),
             access_method=cfg.get("access_method", "direct"),
+            ssh_available=cfg.get("ssh_available", False),
             ssh_host=cfg.get("ssh_host"),
             credential_service=cfg.get("credential_service"),
         )
@@ -141,8 +146,8 @@ class WikiConfig:
 
     @property
     def requires_ssh(self) -> bool:
-        """Check if this site requires SSH tunnel to access."""
-        return self.access_method == "ssh_tunnel"
+        """Check if SSH is available for this site."""
+        return self.ssh_available
 
 
 __all__ = ["WikiConfig"]

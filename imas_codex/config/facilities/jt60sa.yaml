@@ -31,6 +31,7 @@ wiki_sites:
     site_type: twiki_static
     access_method: vpn   # Only accessible when IFERC VPN is active
     auth_type: none      # No credentials — VPN is the access gate
+    ssh_available: true  # SSH to jt60sa host also possible via VPN
     description: >-
       JT-60SA analysis code documentation (static TWiki export).
       Contains TOPICS, EDAS, SLICE, equilibrium codes.
@@ -44,6 +45,7 @@ wiki_sites:
     site_type: static_html
     access_method: vpn   # Only accessible when IFERC VPN is active
     auth_type: none      # No credentials — VPN is the access gate
+    ssh_available: true  # SSH to jt60sa host also possible via VPN
     description: >-
       JT-60SA data analysis server documentation.
       Hardware specs, login procedures, batch job usage.
