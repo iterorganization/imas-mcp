@@ -66,7 +66,6 @@ def register_commands() -> None:
     from imas_codex.cli.serve import serve
     from imas_codex.cli.tools import tools
     from imas_codex.cli.utils import setup_age
-    from imas_codex.cli.wiki import wiki
 
     main.add_command(serve)
     main.add_command(data)
@@ -81,7 +80,6 @@ def register_commands() -> None:
     main.add_command(facilities)
     main.add_command(release)
     main.add_command(setup_age)
-    main.add_command(wiki)
     main.add_command(credentials)
 
 

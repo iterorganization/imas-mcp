@@ -1178,7 +1178,10 @@ class ParallelProgressDisplay:
 
 
 def print_discovery_status(
-    facility: str, console: Console | None = None, use_rich: bool = True
+    facility: str,
+    console: Console | None = None,
+    use_rich: bool = True,
+    domain: str | None = None,
 ) -> None:
     """Print a formatted discovery status report.
 
@@ -1186,6 +1189,7 @@ def print_discovery_status(
         facility: Facility ID
         console: Optional Rich console
         use_rich: Whether to use Rich formatting (False for LLM tools)
+        domain: Optional domain filter ("paths", "wiki", "signals", or None for all)
     """
     import re
 
@@ -1208,99 +1212,152 @@ def print_discovery_status(
             print(strip_rich_markup(text))
 
     console = console or Console()
-    stats = get_discovery_stats(facility)
 
     # Header
-    output(f"\n[bold]Facility: {facility}[/bold]")
-    output(f"Total paths: {stats['total']:,}")
+    if domain:
+        output(f"\n[bold]Facility: {facility} – {domain.title()} Discovery[/bold]")
+    else:
+        output(f"\n[bold]Facility: {facility}[/bold]")
 
-    # Status breakdown
-    total = stats["total"] or 1  # Avoid division by zero
-    discovered = stats.get("discovered", 0)
-    scanned = stats.get("scanned", 0)
-    scored = stats.get("scored", 0)
-    skipped = stats.get("skipped", 0)
-    excluded = stats.get("excluded", 0)
-    max_depth = stats.get("max_depth", 0)
+    # --------------------------------------------------------------------------
+    # Paths domain
+    # --------------------------------------------------------------------------
+    if domain is None or domain == "paths":
+        stats = get_discovery_stats(facility)
+        total = stats.get("total", 0)
+        if total > 0:
+            if domain is None:
+                output("\n[bold]Paths Discovery:[/bold]")
+            output(f"Total paths: {total:,}")
 
-    output(f"├─ Discovered: {discovered:,} ({discovered / total * 100:.1f}%)")
-    output(f"├─ Scanned:    {scanned:,} ({scanned / total * 100:.1f}%)")
-    output(f"├─ Scored:     {scored:,} ({scored / total * 100:.1f}%)")
-    output(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
-    output(f"└─ Excluded:   {excluded:,} ({excluded / total * 100:.1f}%)")
+            discovered = stats.get("discovered", 0)
+            scanned = stats.get("scanned", 0)
+            scored = stats.get("scored", 0)
+            skipped = stats.get("skipped", 0)
+            excluded = stats.get("excluded", 0)
+            max_depth = stats.get("max_depth", 0)
 
-    # Purpose distribution with top paths per category
-    purpose_dist = get_purpose_distribution(facility)
-    if purpose_dist:
-        output("\n[bold]By Purpose (top 3 per category):[/bold]")
+            output(f"├─ Discovered: {discovered:,} ({discovered / total * 100:.1f}%)")
+            output(f"├─ Scanned:    {scanned:,} ({scanned / total * 100:.1f}%)")
+            output(f"├─ Scored:     {scored:,} ({scored / total * 100:.1f}%)")
+            output(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
+            output(f"└─ Excluded:   {excluded:,} ({excluded / total * 100:.1f}%)")
 
-        # Define category groups with their purposes
-        categories = [
-            ("Modeling Code", "cyan", ["modeling_code"]),
-            ("Analysis Code", "green", ["analysis_code", "operations_code"]),
-            ("Data", "yellow", ["modeling_data", "experimental_data"]),
-            ("Infrastructure", "blue", ["data_access", "workflow", "visualization"]),
-            ("Documentation", "magenta", ["documentation"]),
-        ]
+            # Purpose distribution with top paths per category
+            purpose_dist = get_purpose_distribution(facility)
+            if purpose_dist:
+                output("\n[bold]By Purpose (top 3 per category):[/bold]")
 
-        for cat_name, color, purposes in categories:
-            purpose_count = sum(purpose_dist.get(p, 0) for p in purposes)
-            if purpose_count == 0:
-                continue
+                categories = [
+                    ("Modeling Code", "cyan", ["modeling_code"]),
+                    ("Analysis Code", "green", ["analysis_code", "operations_code"]),
+                    ("Data", "yellow", ["modeling_data", "experimental_data"]),
+                    (
+                        "Infrastructure",
+                        "blue",
+                        ["data_access", "workflow", "visualization"],
+                    ),
+                    ("Documentation", "magenta", ["documentation"]),
+                ]
 
-            output(f"\n[{color}]{cat_name}[/{color}] ({purpose_count:,} paths)")
+                for cat_name, color, purposes in categories:
+                    purpose_count = sum(purpose_dist.get(p, 0) for p in purposes)
+                    if purpose_count == 0:
+                        continue
 
-            # Get top paths for each purpose in this category
-            for purpose in purposes:
-                if purpose_dist.get(purpose, 0) == 0:
-                    continue
+                    output(f"\n[{color}]{cat_name}[/{color}] ({purpose_count:,} paths)")
 
-                top_paths = get_top_paths_by_purpose(facility, purpose, limit=3)
-                if top_paths:
-                    for p in top_paths:
-                        output(f"  [{p['score']:.2f}] [dim]{p['path']}[/dim]")
+                    for purpose in purposes:
+                        if purpose_dist.get(purpose, 0) == 0:
+                            continue
+                        top_paths = get_top_paths_by_purpose(facility, purpose, limit=3)
+                        if top_paths:
+                            for p in top_paths:
+                                output(f"  [{p['score']:.2f}] [dim]{p['path']}[/dim]")
 
-        # Structural/skip categories (just counts, no paths)
-        structural_purposes = ["container", "archive", "build_artifact", "system"]
-        structural = sum(purpose_dist.get(p, 0) for p in structural_purposes)
-        if structural > 0:
-            output(f"\n[dim]Structural[/dim] ({structural:,} paths)")
+                structural_purposes = [
+                    "container",
+                    "archive",
+                    "build_artifact",
+                    "system",
+                ]
+                structural = sum(purpose_dist.get(p, 0) for p in structural_purposes)
+                if structural > 0:
+                    output(f"\n[dim]Structural[/dim] ({structural:,} paths)")
 
-    # Summary
-    frontier = discovered + scanned
-    output(f"\nFrontier: {frontier} paths awaiting work")
-    output(f"Max depth: {max_depth}")
-    coverage = scored / total * 100 if total > 0 else 0
-    output(f"Coverage: {coverage:.1f}% scored")
+            frontier = discovered + scanned
+            output(f"\nFrontier: {frontier} paths awaiting work")
+            output(f"Max depth: {max_depth}")
+            coverage = scored / total * 100 if total > 0 else 0
+            output(f"Coverage: {coverage:.1f}% scored")
 
-    # High value paths
-    high_value = get_high_value_paths(facility, min_score=0.7, limit=10)
-    if high_value:
-        output(f"High-value paths (score > 0.7): {len(high_value)}")
-        for p in high_value[:5]:
-            output(f"  [{p['score']:.2f}] {p['path']}")
-        if len(high_value) > 5:
-            output(f"  ... and {len(high_value) - 5} more")
+            high_value = get_high_value_paths(facility, min_score=0.7, limit=10)
+            if high_value:
+                output(f"High-value paths (score > 0.7): {len(high_value)}")
+                for p in high_value[:5]:
+                    output(f"  [{p['score']:.2f}] {p['path']}")
+                if len(high_value) > 5:
+                    output(f"  ... and {len(high_value) - 5} more")
+        elif domain == "paths":
+            output("No paths discovered")
 
-    # Wiki stats (if any wiki pages exist for this facility)
-    try:
-        from imas_codex.discovery.wiki import get_wiki_discovery_stats
+    # --------------------------------------------------------------------------
+    # Wiki domain
+    # --------------------------------------------------------------------------
+    if domain is None or domain == "wiki":
+        try:
+            from imas_codex.discovery.wiki import get_wiki_discovery_stats
 
-        wiki_stats = get_wiki_discovery_stats(facility)
-        wiki_total = wiki_stats.get("total", 0)
-        if wiki_total > 0:
-            output("\n[bold]Wiki Discovery:[/bold]")
-            wiki_scanned = wiki_stats.get("scanned", 0)
-            wiki_scored = wiki_stats.get("scored", 0)
-            wiki_ingested = wiki_stats.get("ingested", 0)
-            wiki_skipped = wiki_stats.get("skipped", 0)
-            wiki_cost = wiki_stats.get("accumulated_cost", 0.0)
+            wiki_stats = get_wiki_discovery_stats(facility)
+            wiki_total = wiki_stats.get("total", 0)
+            if wiki_total > 0:
+                if domain is None:
+                    output("\n[bold]Wiki Discovery:[/bold]")
+                wiki_scanned = wiki_stats.get("scanned", 0)
+                wiki_scored = wiki_stats.get("scored", 0)
+                wiki_ingested = wiki_stats.get("ingested", 0)
+                wiki_skipped = wiki_stats.get("skipped", 0)
+                wiki_cost = wiki_stats.get("accumulated_cost", 0.0)
 
-            output(f"Total pages: {wiki_total:,}")
-            output(f"├─ Scanned:   {wiki_scanned:,}")
-            output(f"├─ Scored:    {wiki_scored:,}")
-            output(f"├─ Ingested:  {wiki_ingested:,}")
-            output(f"└─ Skipped:   {wiki_skipped:,}")
-            output(f"Accumulated cost: ${wiki_cost:.2f}")
-    except Exception:
-        pass  # Wiki stats unavailable, skip silently
+                output(f"Total pages: {wiki_total:,}")
+                output(f"├─ Scanned:   {wiki_scanned:,}")
+                output(f"├─ Scored:    {wiki_scored:,}")
+                output(f"├─ Ingested:  {wiki_ingested:,}")
+                output(f"└─ Skipped:   {wiki_skipped:,}")
+                output(f"Accumulated cost: ${wiki_cost:.2f}")
+            elif domain == "wiki":
+                output("No wiki pages discovered")
+        except Exception:
+            if domain == "wiki":
+                output("Wiki stats unavailable")
+
+    # --------------------------------------------------------------------------
+    # Signals domain
+    # --------------------------------------------------------------------------
+    if domain is None or domain == "signals":
+        try:
+            from imas_codex.discovery.data import get_data_discovery_stats
+
+            signal_stats = get_data_discovery_stats(facility)
+            signal_total = signal_stats.get("total", 0)
+            if signal_total > 0:
+                if domain is None:
+                    output("\n[bold]Signal Discovery:[/bold]")
+                scanned = signal_stats.get("scanned", 0)
+                enriched = signal_stats.get("enriched", 0)
+                checked = signal_stats.get("checked", 0)
+                skipped = signal_stats.get("skipped", 0)
+                cost = signal_stats.get("accumulated_cost", 0.0)
+
+                output(f"Total signals: {signal_total:,}")
+                output(f"├─ Scanned:   {scanned:,}")
+                output(f"├─ Enriched:  {enriched:,}")
+                output(f"├─ Checked:   {checked:,}")
+                output(f"└─ Skipped:   {skipped:,}")
+                if cost > 0:
+                    output(f"Accumulated cost: ${cost:.2f}")
+            elif domain == "signals":
+                output("No signals discovered")
+        except Exception:
+            if domain == "signals":
+                output("Signal stats unavailable")

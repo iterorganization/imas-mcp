@@ -14,6 +14,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+# Import wiki site management commands for subgroup registration
+from imas_codex.cli.wiki import session as wiki_session, wiki_sites, wiki_test
+
 logger = logging.getLogger(__name__)
 
 
@@ -81,14 +84,25 @@ def wiki():
     """Wiki page discovery and ingestion.
 
     \b
-    Commands:
+    Discovery Commands:
       run       Run wiki discovery (scan, score, ingest)
       status    Show wiki discovery statistics
       clear     Clear wiki data for a facility
       reset     Reset failed/deferred pages for re-processing
+
+    \b
+    Site Management:
+      sites     List configured wiki sites for a facility
+      test      Test connectivity to a wiki site
+      session   Manage cached authentication sessions
     """
     pass
 
+
+# Register wiki site management commands (imported at top of file)
+wiki.add_command(wiki_sites, name="sites")
+wiki.add_command(wiki_test, name="test")
+wiki.add_command(wiki_session, name="session")
 
 discover.add_command(wiki)
 
@@ -186,16 +200,16 @@ discover.add_command(signals)
     help="Use logging output instead of rich progress display",
 )
 @click.option(
-    "--seed",
+    "--add-roots",
     is_flag=True,
     default=False,
-    help="Additive seed: add missing discovery_roots from config",
+    help="Add missing discovery_roots from facility config",
 )
 @click.option(
-    "--auto-enrich-threshold",
+    "--enrich-threshold",
     type=float,
     default=None,
-    help="Auto-enrich paths scoring >= threshold even if should_enrich=false (e.g., 0.75)",
+    help="Auto-enrich paths scoring >= threshold (e.g., 0.75)",
 )
 def paths_run(
     facility: str,
@@ -209,8 +223,8 @@ def paths_run(
     scan_only: bool,
     score_only: bool,
     no_rich: bool,
-    seed: bool,
-    auto_enrich_threshold: float | None,
+    add_roots: bool,
+    enrich_threshold: float | None,
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -255,8 +269,8 @@ def paths_run(
         score_only=score_only,
         no_rich=no_rich,
         root_filter=root_filter,
-        seed=seed,
-        auto_enrich_threshold=auto_enrich_threshold,
+        add_roots=add_roots,
+        enrich_threshold=enrich_threshold,
     )
 
 
@@ -272,8 +286,8 @@ def _run_iterative_discovery(
     score_only: bool = False,
     no_rich: bool = False,
     root_filter: list[str] | None = None,
-    seed: bool = False,
-    auto_enrich_threshold: float | None = None,
+    add_roots: bool = False,
+    enrich_threshold: float | None = None,
 ) -> None:
     """Run parallel scan/score discovery."""
     from imas_codex.agentic.agents import get_model_for_task
@@ -311,12 +325,12 @@ def _run_iterative_discovery(
     # Get initial stats to determine next steps
     stats = get_discovery_stats(facility)
 
-    # Handle --seed flag
-    if seed:
+    # Handle --add-roots flag
+    if add_roots:
         log_print("[cyan]Checking for missing discovery_roots...[/cyan]")
         seeded = seed_missing_roots(facility)
         if seeded > 0:
-            log_print(f"[green]Seeded {seeded} new root path(s) from config[/green]")
+            log_print(f"[green]Added {seeded} new root path(s) from config[/green]")
         else:
             log_print("[dim]All discovery_roots already in graph[/dim]")
         stats = get_discovery_stats(facility)
@@ -328,7 +342,7 @@ def _run_iterative_discovery(
             log_print(f"  • {r}")
         seeded = seed_facility_roots(facility, root_paths=root_filter)
         if seeded > 0:
-            log_print(f"[green]Seeded {seeded} new root path(s)[/green]")
+            log_print(f"[green]Added {seeded} new root path(s)[/green]")
         stats = get_discovery_stats(facility)
     elif stats["total"] == 0:
         if score_only:
@@ -405,7 +419,7 @@ def _run_iterative_discovery(
                 score_only=score_only,
                 use_rich=use_rich,
                 root_filter=root_filter,
-                auto_enrich_threshold=auto_enrich_threshold,
+                auto_enrich_threshold=enrich_threshold,
             )
         )
 
@@ -1043,9 +1057,9 @@ def discover_clear(facility: str, force: bool) -> None:
 
     \b
     For domain-specific clear, use:
-      imas-codex discover paths-clear <facility>   # Paths only
-      imas-codex discover signals-clear <facility>  # Signals only
-      imas-codex wiki clear <facility>              # Wiki only
+      imas-codex discover paths clear <facility>    # Paths only
+      imas-codex discover wiki clear <facility>     # Wiki only
+      imas-codex discover signals clear <facility>  # Signals only
     """
     from imas_codex.discovery import clear_facility_paths, get_discovery_stats
     from imas_codex.discovery.data import (
@@ -1109,13 +1123,18 @@ def discover_clear(facility: str, force: bool) -> None:
         raise SystemExit(1) from e
 
 
-@discover.command("paths-clear")
+@paths.command("clear")
 @click.argument("facility")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
-def discover_paths_clear(facility: str, force: bool) -> None:
+def paths_clear(facility: str, force: bool) -> None:
     """Clear path discovery data for a facility.
 
     Deletes FacilityPath, SourceFile, and FacilityUser nodes.
+
+    \b
+    Examples:
+      imas-codex discover paths clear jet
+      imas-codex discover paths clear tcv --force
     """
     from imas_codex.discovery import clear_facility_paths, get_discovery_stats
 
@@ -1140,14 +1159,101 @@ def discover_paths_clear(facility: str, force: bool) -> None:
         raise SystemExit(1) from e
 
 
-@discover.command("signals-clear")
+@paths.command("status")
+@click.argument("facility")
+def paths_status(facility: str) -> None:
+    """Show paths discovery statistics for a facility.
+
+    \b
+    Examples:
+      imas-codex discover paths status jet
+      imas-codex discover paths status tcv
+    """
+    from imas_codex.discovery import get_discovery_stats
+    from imas_codex.discovery.paths.progress import print_discovery_status
+
+    stats = get_discovery_stats(facility)
+    if stats.get("total", 0) == 0:
+        click.echo(f"No paths discovered for {facility}")
+        return
+
+    print_discovery_status(facility, domain="paths")
+
+
+# =============================================================================
+# Wiki Clear & Status
+# =============================================================================
+
+
+@wiki.command("clear")
 @click.argument("facility")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
-def discover_signals_clear(facility: str, force: bool) -> None:
+def wiki_clear(facility: str, force: bool) -> None:
+    """Clear wiki discovery data for a facility.
+
+    Deletes WikiPage, WikiChunk, WikiArtifact nodes.
+
+    \b
+    Examples:
+      imas-codex discover wiki clear jet
+      imas-codex discover wiki clear tcv --force
+    """
+    from imas_codex.discovery.wiki import clear_facility_wiki, get_wiki_stats
+
+    try:
+        stats = get_wiki_stats(facility)
+        pages = stats.get("pages", 0)
+        if pages == 0:
+            click.echo(f"No wiki data to clear for {facility}")
+            return
+
+        if not force:
+            click.confirm(
+                f"This will delete {pages} pages + chunks/artifacts for {facility}. Continue?",
+                abort=True,
+            )
+
+        result = clear_facility_wiki(facility)
+        _print_clear_result("wiki", result, facility)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@wiki.command("status")
+@click.argument("facility")
+def wiki_status(facility: str) -> None:
+    """Show wiki discovery statistics for a facility.
+
+    \b
+    Examples:
+      imas-codex discover wiki status jet
+      imas-codex discover wiki status tcv
+    """
+    from imas_codex.discovery.paths.progress import print_discovery_status
+
+    print_discovery_status(facility, domain="wiki")
+
+
+# =============================================================================
+# Signals Clear & Status
+# =============================================================================
+
+
+@signals.command("clear")
+@click.argument("facility")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+def signals_clear(facility: str, force: bool) -> None:
     """Clear signal discovery data for a facility.
 
     Deletes FacilitySignal, DataAccess, TreeModelVersion nodes,
     and epoch checkpoint files.
+
+    \b
+    Examples:
+      imas-codex discover signals clear jet
+      imas-codex discover signals clear tcv --force
     """
     from imas_codex.discovery.data import (
         clear_facility_signals,
@@ -1173,6 +1279,21 @@ def discover_signals_clear(facility: str, force: bool) -> None:
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from e
+
+
+@signals.command("status")
+@click.argument("facility")
+def signals_status(facility: str) -> None:
+    """Show signal discovery statistics for a facility.
+
+    \b
+    Examples:
+      imas-codex discover signals status jet
+      imas-codex discover signals status tcv
+    """
+    from imas_codex.discovery.paths.progress import print_discovery_status
+
+    print_discovery_status(facility, domain="signals")
 
 
 def _print_clear_result(name: str, result: dict | int, facility: str) -> None:
@@ -1252,7 +1373,7 @@ def discover_code(facility: str, dry_run: bool) -> None:
     raise SystemExit(1)
 
 
-@discover.command("wiki")
+@wiki.command("run")
 @click.argument("facility")
 @click.option("--source", "-s", help="Specific wiki site URL or index")
 @click.option(
@@ -1310,7 +1431,7 @@ def discover_code(facility: str, dry_run: bool) -> None:
     default=False,
     help="Re-scan artifacts even if already discovered",
 )
-def discover_wiki(
+def wiki_run(
     facility: str,
     source: str | None,
     cost_limit: float,
@@ -1338,7 +1459,7 @@ def discover_wiki(
     - ARTIFACTS: Score and embed wiki attachments (PDFs, images, etc.)
 
     Page scanning runs automatically on first invocation. Use
-    --force-discovery to re-scan (adds new pages, keeps existing).
+    --rescan to re-scan (adds new pages, keeps existing).
     """
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki import get_wiki_stats
@@ -2246,7 +2367,7 @@ def discover_wiki(
     log_print("\n[green]Documentation discovery complete.[/green]")
 
 
-@discover.command("wiki-reset")
+@wiki.command("reset")
 @click.argument("facility")
 @click.option(
     "--status",
@@ -2272,7 +2393,7 @@ def discover_wiki(
     "--dry-run", is_flag=True, help="Show what would be reset without changing anything"
 )
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
-def discover_wiki_reset(
+def wiki_reset(
     facility: str,
     status: tuple[str, ...],
     target: str,
@@ -2426,7 +2547,7 @@ def discover_wiki_reset(
         log_print(f"\n[green]Reset {reset_total:,} items for re-processing[/green]")
 
 
-@discover.command("signals")
+@signals.command("run")
 @click.argument("facility")
 @click.option(
     "--cost-limit",
@@ -2485,7 +2606,7 @@ def discover_wiki_reset(
     default=False,
     help="Use logging output instead of rich progress display",
 )
-def discover_signals(
+def signals_run(
     facility: str,
     cost_limit: float,
     signal_limit: int | None,
