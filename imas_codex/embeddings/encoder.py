@@ -823,27 +823,33 @@ class Encoder:
     def _load_model(self) -> None:
         """Load local SentenceTransformer model.
 
-        Searches for model files in three stages:
+        Searches for model files in two stages:
         1. Resolve model to local snapshot path (project cache or HF hub cache)
-        2. Load from resolved path (works on air-gapped GPU nodes)
-        3. Fall back to downloading from HuggingFace (requires internet)
+        2. Fall back to downloading from HuggingFace (requires internet)
 
-        Uses ``torch_dtype="auto"`` so models load in their native precision
-        (e.g., bfloat16 for Qwen3-Embedding-8B) instead of fp32, halving GPU
-        memory from ~32GB to ~16GB for 8B parameter models.
+        For CUDA devices, uses float16 with ``device_map="auto"`` to
+        automatically distribute large models across all available GPUs.
+        This is critical for 8B+ parameter models that don't fit on a
+        single P100 (16GB VRAM).
         """
         ST = self._import_sentence_transformers()
-        # Load in half precision to halve memory. Use float16 (not bfloat16)
-        # since older GPUs like P100 (compute capability 6.0) don't support
-        # bfloat16 natively — torch_dtype="auto" would load bf16 per model
-        # config, causing a silent fallback to CPU.
         model_kwargs: dict = {}
-        if self.config.device and "cuda" in self.config.device:
+        device = self.config.device
+
+        if device and "cuda" in device:
             import torch
 
+            # float16 for GPU — P100 doesn't support bfloat16 natively.
             model_kwargs["torch_dtype"] = torch.float16
+            # device_map="auto" distributes the model across all available
+            # GPUs when it doesn't fit on a single one (8B model ≈ 16.4GB,
+            # P100 VRAM = 16GB). SentenceTransformer device must be None
+            # to avoid conflicting with device_map.
+            model_kwargs["device_map"] = "auto"
+            device = None  # Let device_map handle placement
         else:
             model_kwargs["torch_dtype"] = "auto"
+
         try:
             cache_folder = str(self._get_cache_directory() / "models")
 
@@ -859,7 +865,7 @@ class Encoder:
                 )
                 self._model = ST(
                     resolved,
-                    device=self.config.device,
+                    device=device,
                     model_kwargs=model_kwargs,
                 )
                 self.logger.debug(
@@ -874,7 +880,7 @@ class Encoder:
             )
             self._model = ST(
                 self.config.model_name,
-                device=self.config.device,
+                device=device,
                 cache_folder=cache_folder,
                 local_files_only=False,
                 model_kwargs=model_kwargs,

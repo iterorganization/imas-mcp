@@ -136,12 +136,16 @@ async def lifespan(app: FastAPI):
     _gpu_count = _get_cuda_device_count()
 
     load_time = time.time() - start
-    logger.info(
-        f"Model {model_name} loaded on {_encoder.get_model().device} in {load_time:.1f}s"
-    )
+    model_device = _encoder.get_model().device
+    logger.info(f"Model {model_name} loaded on {model_device} in {load_time:.1f}s")
 
-    # Start multi-process pool for parallel GPU encoding when >1 GPU
-    if _gpu_count > 1:
+    # Multi-GPU handling: device_map="auto" distributes the model across
+    # GPUs automatically (for large models like 8B). In that case, the
+    # model.device reports 'cpu' or the first device, but inference uses
+    # all mapped GPUs. Don't try encode_multi_process which duplicates
+    # the model (4 copies × 16GB = 64GB, won't fit on 4×16GB P100s).
+    # Only use multi-process pool if the model fits on a single GPU.
+    if _gpu_count > 1 and str(model_device).startswith("cuda"):
         try:
             model = _encoder.get_model()
             devices = [f"cuda:{i}" for i in range(_gpu_count)]
@@ -152,7 +156,13 @@ async def lifespan(app: FastAPI):
             _multi_process_pool = None
             _gpu_count = 1
     else:
-        logger.info("Single GPU mode (gpu_count=%d)", _gpu_count)
+        if _gpu_count > 1:
+            logger.info(
+                "Model distributed across GPUs via device_map (gpu_count=%d)",
+                _gpu_count,
+            )
+        else:
+            logger.info("Single GPU mode (gpu_count=%d)", _gpu_count)
 
     # Start idle watchdog if timeout is configured
     _shutdown_event = asyncio.Event()
