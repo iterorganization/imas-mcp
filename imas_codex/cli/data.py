@@ -1685,20 +1685,190 @@ def _list_registry_tags(registry: str, token: str | None = None) -> list[str]:
     return [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
 
 
-def _delete_tag(registry: str, tag: str, token: str | None = None) -> bool:
-    """Delete a specific tag from GHCR using oras."""
-    login_to_ghcr(token)
-    artifact_ref = f"{registry}/imas-codex-graph:{tag}"
+_GITHUB_API = "https://api.github.com"
 
-    # oras manifest delete removes the tag
-    result = subprocess.run(
-        ["oras", "manifest", "delete", artifact_ref, "--force"],
-        capture_output=True,
-        text=True,
+_SCOPE_FIX_HINT = (
+    "\n  Your token lacks the required GitHub API scopes for package management."
+    "\n  Fix: set GHCR_TOKEN to a PAT with read:packages + delete:packages scopes."
+    "\n  Create one at: https://github.com/settings/tokens/new"
+    "\n    Required scopes: read:packages, write:packages, delete:packages"
+)
+
+
+def _github_api_request(
+    path: str,
+    token: str,
+    method: str = "GET",
+) -> tuple[int, dict | list | None]:
+    """Make a GitHub REST API request. Returns (status_code, json_body)."""
+    import urllib.error
+    import urllib.request
+
+    url = f"{_GITHUB_API}{path}"
+    req = urllib.request.Request(url, method=method)
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Accept", "application/vnd.github+json")
+    req.add_header("X-GitHub-Api-Version", "2022-11-28")
+
+    try:
+        with urllib.request.urlopen(req) as resp:
+            body = resp.read().decode()
+            return resp.status, json.loads(body) if body else None
+    except urllib.error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        try:
+            return e.code, json.loads(body) if body else None
+        except json.JSONDecodeError:
+            return e.code, {"message": body}
+
+
+def _github_api_paginated(
+    path: str,
+    token: str,
+) -> tuple[int, list]:
+    """Fetch all pages from a paginated GitHub API endpoint."""
+    import urllib.error
+    import urllib.request
+
+    all_items: list = []
+    url = f"{_GITHUB_API}{path}?per_page=100"
+
+    while url:
+        req = urllib.request.Request(url)
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("X-GitHub-Api-Version", "2022-11-28")
+
+        try:
+            with urllib.request.urlopen(req) as resp:
+                body = json.loads(resp.read().decode())
+                if isinstance(body, list):
+                    all_items.extend(body)
+                else:
+                    return resp.status, all_items
+
+                # Parse Link header for next page
+                link_header = resp.headers.get("Link", "")
+                url = None
+                for part in link_header.split(","):
+                    if 'rel="next"' in part:
+                        url = part.split("<")[1].split(">")[0]
+        except urllib.error.HTTPError as e:
+            body_str = e.read().decode() if e.fp else ""
+            try:
+                err = json.loads(body_str)
+            except json.JSONDecodeError:
+                err = {"message": body_str}
+            return e.code, err if isinstance(err, list) else [err]
+
+    return 200, all_items
+
+
+def _resolve_token(token: str | None) -> str:
+    """Resolve a GitHub token from argument, env var, or gh CLI."""
+    if token:
+        return token
+
+    # Try GHCR_TOKEN env var
+    env_token = os.environ.get("GHCR_TOKEN")
+    if env_token:
+        return env_token
+
+    # Fall back to gh auth token
+    result = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True)
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+
+    raise click.ClickException(
+        "No GitHub token found. Provide --token, set GHCR_TOKEN, or run 'gh auth login'."
     )
-    if result.returncode != 0:
-        click.echo(f"  Failed to delete {tag}: {result.stderr.strip()}", err=True)
+
+
+def _get_ghcr_owner_and_type(registry: str, token: str) -> tuple[str, str]:
+    """Extract the owner and API type from a GHCR registry string.
+
+    Returns (owner, api_type) where api_type is 'orgs' or 'users'.
+    """
+    # registry is like "ghcr.io/owner-name"
+    parts = registry.split("/")
+    owner = parts[-1] if len(parts) >= 2 else parts[0]
+
+    status, _ = _github_api_request(f"/orgs/{owner}", token)
+    api_type = "orgs" if status == 200 else "users"
+    return owner, api_type
+
+
+def _get_package_version_id(
+    owner: str, api_type: str, tag: str, token: str
+) -> int | None:
+    """Find the GHCR package version ID for a given tag."""
+    path = f"/{api_type}/{owner}/packages/container/imas-codex-graph/versions"
+    status, data = _github_api_paginated(path, token)
+
+    if status == 403:
+        msg = ""
+        if isinstance(data, list) and data:
+            msg = data[0].get("message", "") if isinstance(data[0], dict) else ""
+        click.echo(f"  Permission denied listing package versions: {msg}", err=True)
+        click.echo(_SCOPE_FIX_HINT, err=True)
+        return None
+
+    if status != 200:
+        msg = ""
+        if isinstance(data, list) and data:
+            msg = (
+                data[0].get("message", "")
+                if isinstance(data[0], dict)
+                else str(data[0])
+            )
+        click.echo(
+            f"  Failed to query package versions (HTTP {status}): {msg}", err=True
+        )
+        return None
+
+    if not isinstance(data, list):
+        click.echo("  Unexpected API response format", err=True)
+        return None
+
+    for version in data:
+        tags = version.get("metadata", {}).get("container", {}).get("tags", [])
+        if tag in tags:
+            return version["id"]
+
+    return None
+
+
+def _delete_tag(registry: str, tag: str, token: str | None = None) -> bool:
+    """Delete a specific tag from GHCR using the GitHub Packages API.
+
+    GHCR does not support the OCI manifest delete endpoint (`oras manifest
+    delete` returns "unsupported: The operation is unsupported"). We use
+    the GitHub REST API directly to find and delete the package version.
+    """
+    resolved_token = _resolve_token(token)
+    owner, api_type = _get_ghcr_owner_and_type(registry, resolved_token)
+    version_id = _get_package_version_id(owner, api_type, tag, resolved_token)
+
+    if version_id is None:
+        click.echo(f"  Could not find version for tag: {tag}", err=True)
         return False
+
+    path = (
+        f"/{api_type}/{owner}/packages/container/imas-codex-graph/versions/{version_id}"
+    )
+    status, resp = _github_api_request(path, resolved_token, method="DELETE")
+
+    if status == 403:
+        msg = resp.get("message", "") if isinstance(resp, dict) else ""
+        click.echo(f"  Permission denied deleting {tag}: {msg}", err=True)
+        click.echo(_SCOPE_FIX_HINT, err=True)
+        return False
+
+    if status not in (200, 204):
+        msg = resp.get("message", "") if isinstance(resp, dict) else str(resp)
+        click.echo(f"  Failed to delete {tag} (HTTP {status}): {msg}", err=True)
+        return False
+
     return True
 
 
@@ -1721,7 +1891,7 @@ def data_delete(
       imas-codex data delete 0.5.0.dev123-abc1234-r1 0.5.0.dev123-abc1234-r2
       imas-codex data delete latest
     """
-    require_oras()
+    require_oras()  # For tag listing
 
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
@@ -1802,7 +1972,7 @@ def data_prune(
       # Dry run to see what would be deleted
       imas-codex data prune --version 0.5.0 --dev --dry-run
     """
-    require_oras()
+    require_oras()  # For tag listing
 
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
