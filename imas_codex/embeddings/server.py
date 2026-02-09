@@ -62,6 +62,7 @@ class HealthResponse(BaseModel):
     uptime_seconds: float = Field(..., description="Server uptime in seconds")
     idle_seconds: float = Field(0, description="Seconds since last request")
     idle_timeout: int = Field(0, description="Auto-shutdown timeout (0=disabled)")
+    hostname: str | None = Field(None, description="Server hostname")
 
 
 def _get_gpu_info() -> tuple[str | None, int | None]:
@@ -189,6 +190,7 @@ def create_app() -> FastAPI:
             uptime_seconds=time.time() - _startup_time,
             idle_seconds=time.time() - _last_request_time,
             idle_timeout=_idle_timeout,
+            hostname=os.uname().nodename,
         )
 
     @app.post("/embed", response_model=EmbedResponse)

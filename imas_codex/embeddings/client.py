@@ -37,6 +37,7 @@ class RemoteServerInfo:
     gpu_name: str | None
     gpu_memory_mb: int | None
     uptime_seconds: float
+    hostname: str | None = None
 
 
 class RemoteEmbeddingClient:
@@ -128,6 +129,7 @@ class RemoteEmbeddingClient:
                     gpu_name=data.get("gpu_name"),
                     gpu_memory_mb=data.get("gpu_memory_mb"),
                     uptime_seconds=data.get("uptime_seconds", 0),
+                    hostname=data.get("hostname"),
                 )
         except Exception as e:
             logger.debug(f"Failed to get server info: {e}")

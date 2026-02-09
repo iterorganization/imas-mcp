@@ -52,6 +52,10 @@ class Encoder:
     transient connection failures.
     """
 
+    # Class-level: track which remote URLs have already logged validation
+    _validated_urls: set[str] = set()
+    _validated_urls_lock = threading.Lock()
+
     def __init__(
         self,
         config: EncoderConfig | None = None,
@@ -109,15 +113,50 @@ class Encoder:
     def _fetch_remote_hostname(self) -> None:
         """Eagerly fetch remote server hostname for source display.
 
-        Non-blocking best-effort: if the server isn't up yet, hostname
-        will be resolved lazily during _validate_remote_backend().
+        Tries multiple sources in order:
+        1. /info endpoint (server.hostname) - requires updated server
+        2. /health endpoint (hostname field) - simpler response
+        3. SLURM state file (~/.imas-codex/slurm-embed-node) - works with old servers
+
+        Non-blocking best-effort: if nothing works, hostname
+        will remain None and display will show 'remote'.
         """
+        if not self._remote_client:
+            return
+
+        # Try /info endpoint first (has structured server.hostname)
         try:
             detailed = self._remote_client.get_detailed_info()
             if detailed:
-                self._remote_hostname = detailed.get("server", {}).get("hostname")
+                hn = detailed.get("server", {}).get("hostname")
+                if hn:
+                    self._remote_hostname = hn
+                    self.logger.debug("Resolved hostname from /info: %s", hn)
+                    return
         except Exception:
-            pass  # Will be resolved on first embed call
+            pass
+
+        # Try /health endpoint (may have hostname on newer servers)
+        try:
+            info = self._remote_client.get_info()
+            if info and hasattr(info, "hostname") and info.hostname:
+                self._remote_hostname = info.hostname
+                self.logger.debug("Resolved hostname from /health: %s", info.hostname)
+                return
+        except Exception:
+            pass
+
+        # Fallback: read SLURM state file (written by sbatch script)
+        try:
+            node_file = Path.home() / ".imas-codex" / "slurm-embed-node"
+            if node_file.exists():
+                node = node_file.read_text().strip()
+                if node:
+                    self._remote_hostname = node
+                    self.logger.debug("Resolved hostname from SLURM state: %s", node)
+                    return
+        except Exception:
+            pass
 
     def _validate_remote_backend(self) -> None:
         """Validate remote backend is available and model matches.
@@ -181,17 +220,33 @@ class Encoder:
                 f"got '{info.model}'. Update embedding-backend config or restart server."
             )
 
-        # Get hostname from /info for detailed source tracking
-        detailed = self._remote_client.get_detailed_info()
-        if detailed:
-            self._remote_hostname = detailed.get("server", {}).get("hostname")
+        # Resolve hostname if not already set by eager fetch
+        if not self._remote_hostname:
+            # Try /health hostname first (cheapest, already fetched)
+            if info.hostname:
+                self._remote_hostname = info.hostname
+            else:
+                # Try /info and SLURM state fallbacks
+                self._fetch_remote_hostname()
 
-        self.logger.info(
-            "Using remote embedder: %s on %s (host=%s)",
-            info.model,
-            info.device,
-            self._remote_hostname or "unknown",
-        )
+        # Log once per URL across all Encoder instances
+        url = self.config.remote_url or ""
+        with Encoder._validated_urls_lock:
+            first_validation = url not in Encoder._validated_urls
+            Encoder._validated_urls.add(url)
+
+        if first_validation:
+            self.logger.info(
+                "Remote embedder: %s on %s (source=%s)",
+                info.model,
+                info.device,
+                self._resolve_remote_source(),
+            )
+        else:
+            self.logger.debug(
+                "Remote embedder validated (source=%s)",
+                self._resolve_remote_source(),
+            )
         self._backend_validated = True
 
     def _try_slurm_auto_launch(self) -> bool:
@@ -378,7 +433,8 @@ class Encoder:
         backend = self.config.backend or EmbeddingBackend.LOCAL
 
         if backend == EmbeddingBackend.REMOTE:
-            self._validate_remote_backend()
+            with self._lock:
+                self._validate_remote_backend()
 
             try:
                 return self._remote_client.embed(  # type: ignore[union-attr]
@@ -433,7 +489,8 @@ class Encoder:
         start = time.time()
 
         if backend == EmbeddingBackend.REMOTE:
-            self._validate_remote_backend()
+            with self._lock:
+                self._validate_remote_backend()
 
             try:
                 embeddings = self._remote_client.embed(  # type: ignore[union-attr]
