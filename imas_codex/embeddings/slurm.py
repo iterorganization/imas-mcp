@@ -206,6 +206,11 @@ def _generate_sbatch_script(
         export HF_HUB_OFFLINE=1
         export TRANSFORMERS_OFFLINE=1
 
+        # Reduce PyTorch memory fragmentation on P100 GPUs (16GB VRAM).
+        # Without this, reserved-but-unallocated memory (~2GB) cannot be
+        # reclaimed, causing OOM during MLP forward passes.
+        export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
         # Expose all allocated GPUs to the server
         export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(({gpu_count} - 1)))
         export PATH="{home}/.local/bin:${{PATH}}"

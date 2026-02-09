@@ -452,7 +452,29 @@ class OpenRouterEmbeddingClient:
                 # Extract embeddings from OpenAI-format response
                 embedding_data = data.get("data", [])
                 if not embedding_data:
-                    raise RuntimeError("No embeddings returned from OpenRouter")
+                    # Some providers don't support the dimensions parameter.
+                    # Retry without it and truncate client-side.
+                    logger.debug(
+                        "Empty embeddings with dimensions=%d, "
+                        "retrying without dimensions parameter",
+                        self.dimensions,
+                    )
+                    retry_response = client.post(
+                        "/embeddings",
+                        json={
+                            "model": self.model_name,
+                            "input": texts,
+                        },
+                    )
+                    if retry_response.status_code == 200:
+                        data = retry_response.json()
+                        embedding_data = data.get("data", [])
+
+                if not embedding_data:
+                    raise RuntimeError(
+                        f"No embeddings returned from OpenRouter "
+                        f"(model={self.model_name}, texts={len(texts)})"
+                    )
 
                 # Sort by index to ensure correct order
                 embedding_data.sort(key=lambda x: x.get("index", 0))
@@ -460,6 +482,12 @@ class OpenRouterEmbeddingClient:
                     [item["embedding"] for item in embedding_data],
                     dtype=np.float32,
                 )
+
+                # Truncate to configured dimension if server returned
+                # native dimensions (e.g., when dimensions param was
+                # not supported and we retried without it)
+                if embeddings.ndim == 2 and embeddings.shape[1] > self.dimensions:
+                    embeddings = embeddings[:, : self.dimensions]
 
                 # Apply L2 normalization if requested
                 if normalize:

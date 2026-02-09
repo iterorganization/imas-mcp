@@ -37,6 +37,11 @@ _startup_time: float = 0
 _last_request_time: float = 0
 _idle_timeout: int = 0  # 0 = disabled
 _shutdown_event: asyncio.Event | None = None
+_gpu_name: str | None = None  # Cached at startup
+_gpu_memory_mb: int | None = None  # Cached at startup
+_cached_device_info: str = "not loaded"  # Cached at startup
+_cached_embedding_dim: int = 0  # Cached at startup
+_encode_timeout: float = 300.0  # 5 minutes max per embed request
 
 
 class EmbedRequest(BaseModel):
@@ -105,6 +110,7 @@ async def lifespan(app: FastAPI):
     """Load model at startup, cleanup at shutdown."""
     global _encoder, _multi_process_pool, _gpu_count
     global _startup_time, _last_request_time, _shutdown_event
+    global _gpu_name, _gpu_memory_mb, _cached_device_info, _cached_embedding_dim
 
     logger.info("Loading embedding model...")
     start = time.time()
@@ -128,12 +134,27 @@ async def lifespan(app: FastAPI):
         backend=EmbeddingBackend.LOCAL,
         normalize_embeddings=True,
         use_rich=False,
+        # GPU-appropriate batch size.  The default (250) is for CPU and
+        # causes OOM on P100 16GB with the 4B model because the
+        # MLP forward pass allocations exceed remaining VRAM.
+        batch_size=4,
     )
 
     _encoder = Encoder(config=config)
     _startup_time = time.time()
     _last_request_time = time.time()
     _gpu_count = _get_cuda_device_count()
+
+    # Cache GPU info once at startup to avoid blocking CUDA calls
+    # in request handlers (which would block the async event loop)
+    _gpu_name, _gpu_memory_mb = _get_gpu_info()
+    _cached_device_info = _encoder.device_info
+    try:
+        _cached_embedding_dim = (
+            _encoder.get_model().get_sentence_embedding_dimension() or 0
+        )
+    except Exception:
+        _cached_embedding_dim = 0
 
     load_time = time.time() - start
     logger.info(
@@ -217,6 +238,77 @@ def _cuda_available() -> bool:
         return False
 
 
+def _encode_texts_sync(
+    texts: list[str],
+    normalize: bool,
+    batch_size: int,
+) -> Any:
+    """Synchronous encoding helper (runs in thread pool via asyncio.to_thread).
+
+    Checks multi-process pool health before using it.  Falls back to
+    single-GPU encoding if pool workers are dead.
+    """
+    import numpy as np
+
+    pool = _multi_process_pool
+
+    if pool is not None:
+        # Check if all pool workers are still alive
+        processes = pool.get("processes", [])
+        if processes and not all(p.is_alive() for p in processes):
+            alive_count = sum(1 for p in processes if p.is_alive())
+            logger.warning(
+                "Multi-GPU pool has dead workers (%d/%d alive), "
+                "falling back to single GPU",
+                alive_count,
+                len(processes),
+            )
+            _recover_from_pool_failure()
+            pool = None
+
+    if pool is not None:
+        model = _encoder.get_model()
+        embeddings = model.encode_multi_process(
+            texts,
+            pool,
+            normalize_embeddings=normalize,
+            batch_size=batch_size,
+        )
+        if not isinstance(embeddings, np.ndarray):
+            embeddings = np.array(embeddings)
+        return embeddings
+
+    # Single-GPU encoding fallback
+    model = _encoder.get_model()
+    return model.encode(
+        texts,
+        convert_to_numpy=True,
+        normalize_embeddings=normalize,
+        batch_size=batch_size,
+        show_progress_bar=False,
+    )
+
+
+def _recover_from_pool_failure() -> None:
+    """Terminate dead multi-process pool and fall back to single GPU."""
+    global _multi_process_pool, _gpu_count
+
+    if _multi_process_pool is not None:
+        try:
+            processes = _multi_process_pool.get("processes", [])
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
+            logger.info("Terminated multi-GPU pool processes")
+        except Exception as e:
+            logger.warning("Error terminating pool: %s", e)
+        _multi_process_pool = None
+
+    if _gpu_count > 1:
+        _gpu_count = 1
+    logger.warning("Fell back to single-GPU encoding")
+
+
 def create_app() -> FastAPI:
     """Create FastAPI application."""
     app = FastAPI(
@@ -228,22 +320,20 @@ def create_app() -> FastAPI:
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
-        """Health check endpoint."""
+        """Health check endpoint.
+
+        Uses GPU info cached at startup to avoid blocking CUDA calls
+        in the async event loop.
+        """
         if _encoder is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
-
-        gpu_name, gpu_memory = _get_gpu_info()
-
-        # Report actual device usage, not model.device (which may say
-        # 'cpu' when device_map distributes across GPUs).
-        device_str = _encoder.device_info
 
         return HealthResponse(
             status="healthy",
             model=_encoder.config.model_name,
-            device=device_str,
-            gpu_name=gpu_name,
-            gpu_memory_mb=gpu_memory,
+            device=_cached_device_info,
+            gpu_name=_gpu_name,
+            gpu_memory_mb=_gpu_memory_mb,
             gpu_count=_gpu_count,
             uptime_seconds=time.time() - _startup_time,
             idle_seconds=time.time() - _last_request_time,
@@ -253,7 +343,11 @@ def create_app() -> FastAPI:
 
     @app.post("/embed", response_model=EmbedResponse)
     async def embed(request: EmbedRequest) -> EmbedResponse:
-        """Embed texts and return vectors."""
+        """Embed texts and return vectors.
+
+        Runs encoding in a thread pool to avoid blocking the async event
+        loop (which would make /health unresponsive during encoding).
+        """
         global _last_request_time
 
         if _encoder is None:
@@ -263,30 +357,15 @@ def create_app() -> FastAPI:
         start = time.time()
 
         try:
-            # Update normalize setting if different from default
-            original_normalize = _encoder.config.normalize_embeddings
-            if request.normalize != original_normalize:
-                _encoder.config.normalize_embeddings = request.normalize
-
-            # Use multi-GPU pool when available for parallel encoding
-            if _multi_process_pool is not None:
-                import numpy as np
-
-                model = _encoder.get_model()
-                embeddings = model.encode_multi_process(
+            embeddings = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _encode_texts_sync,
                     request.texts,
-                    _multi_process_pool,
-                    normalize_embeddings=request.normalize,
-                    batch_size=_encoder.config.batch_size,
-                )
-                if not isinstance(embeddings, np.ndarray):
-                    embeddings = np.array(embeddings)
-            else:
-                embeddings = _encoder.embed_texts(request.texts)
-
-            # Restore original setting
-            if request.normalize != original_normalize:
-                _encoder.config.normalize_embeddings = original_normalize
+                    request.normalize,
+                    _encoder.config.batch_size,
+                ),
+                timeout=_encode_timeout,
+            )
 
             elapsed_ms = (time.time() - start) * 1000
 
@@ -298,28 +377,36 @@ def create_app() -> FastAPI:
                 elapsed_ms=elapsed_ms,
             )
 
+        except TimeoutError:
+            logger.error(
+                "Encoding timed out after %.0fs for %d texts",
+                _encode_timeout,
+                len(request.texts),
+            )
+            _recover_from_pool_failure()
+            raise HTTPException(
+                status_code=504,
+                detail=f"Encoding timed out after {_encode_timeout:.0f}s",
+            ) from None
         except Exception as e:
             logger.error(f"Embedding error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @app.get("/info")
     async def info() -> dict[str, Any]:
-        """Detailed server information."""
+        """Detailed server information (uses cached GPU data)."""
         if _encoder is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
-
-        gpu_name, gpu_memory = _get_gpu_info()
-        model = _encoder.get_model()
 
         return {
             "model": {
                 "name": _encoder.config.model_name,
-                "device": _encoder.device_info,
-                "embedding_dimension": model.get_sentence_embedding_dimension(),
+                "device": _cached_device_info,
+                "embedding_dimension": _cached_embedding_dim,
             },
             "gpu": {
-                "name": gpu_name,
-                "memory_mb": gpu_memory,
+                "name": _gpu_name,
+                "memory_mb": _gpu_memory_mb,
                 "count": _gpu_count,
                 "multi_process": _multi_process_pool is not None,
                 "cuda_available": _cuda_available(),
