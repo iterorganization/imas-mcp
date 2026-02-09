@@ -143,24 +143,21 @@ def credentials_set(
 
 @credentials.command("get")
 @click.argument("service")
-@click.option(
-    "--show-password", is_flag=True, help="Show password in plaintext (use with care)"
-)
 def credentials_get(
     service: str,
-    show_password: bool,
 ) -> None:
     """Retrieve credentials for a service.
 
-    Shows credential status and storage source. Passwords are masked
-    by default — use --show-password to reveal them.
+    Shows credential status and storage source. Passwords are always
+    masked — manage passwords via your system keyring or environment
+    variables directly.
 
     SERVICE is a facility name (e.g., "tcv", "iter", "jet").
 
     \b
     Examples:
       imas-codex credentials get tcv
-      imas-codex credentials get iter --show-password
+      imas-codex credentials get iter
     """
     import os
 
@@ -189,10 +186,7 @@ def credentials_get(
 
     console.print(f"[green]✓ Credentials stored for {service}[/green]")
     console.print(f"  Username: {username}")
-    if show_password:
-        console.print(f"  Password: {password}")
-    else:
-        console.print("  Password: ********")
+    console.print("  Password: ********")
     console.print(f"  Source:   {source}")
 
 
