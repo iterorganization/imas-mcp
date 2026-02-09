@@ -13,18 +13,15 @@ imas-codex discover
 ├── seed <facility>             # Seed root paths
 ├── inspect <facility>          # Debug view
 │
-├── paths                       # Directory structure discovery
-│   ├── run <facility>
+├── paths <facility>            # Directory structure discovery
 │   ├── status <facility>
 │   └── clear <facility>
 │
-├── wiki                        # Wiki page discovery
-│   ├── run <facility>
+├── wiki <facility>             # Wiki page discovery
 │   ├── status <facility>
 │   └── clear <facility>
 │
-└── signals                     # Facility signal discovery
-    ├── run <facility>
+└── signals <facility>          # Facility signal discovery
     ├── status <facility>
     └── clear <facility>
 ```
@@ -32,8 +29,8 @@ imas-codex discover
 ## Design Principles
 
 1. **Top-level aggregates**: `discover status` and `discover clear` operate on ALL domains
-2. **Domain subgroups**: Each domain (paths, wiki, signals) has run/status/clear commands
-3. **Consistent naming**: `<domain> run` executes discovery, `<domain> status` shows stats
+2. **Domain subgroups**: Each domain (paths, wiki, signals) runs discovery directly, with status/clear subcommands
+3. **Consistent naming**: `<domain> <facility>` executes discovery, `<domain> status` shows stats
 4. **Single source of truth**: Commands under one group, not duplicated at main level
 
 ## Examples
@@ -52,7 +49,7 @@ imas-codex discover clear tcv
 imas-codex discover wiki clear tcv
 
 # Run wiki discovery
-imas-codex discover wiki run tcv --cost-limit 5.0
+imas-codex discover wiki tcv --cost-limit 5.0
 ```
 
 ## Status Output

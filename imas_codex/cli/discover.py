@@ -17,6 +17,24 @@ from rich.text import Text
 logger = logging.getLogger(__name__)
 
 
+class DefaultGroup(click.Group):
+    """Click group that routes to a default command when no subcommand matches.
+
+    If the first argument is not a known subcommand (e.g. a facility name),
+    it is treated as an argument to the default command.
+    """
+
+    def __init__(self, *args, default_cmd_name: str = "run", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.default_cmd_name = default_cmd_name
+
+    def resolve_command(self, ctx, args):
+        cmd_name = args[0] if args else None
+        if cmd_name and cmd_name not in self.commands:
+            args.insert(0, self.default_cmd_name)
+        return super().resolve_command(ctx, args)
+
+
 @click.group()
 def discover():
     """Discover facility resources with graph-led exploration.
@@ -29,7 +47,7 @@ def discover():
       inspect            Debug view of scanned/scored paths
 
     \b
-    Domain Subgroups (each has run, status, clear):
+    Domain Subgroups (each has status, clear):
       paths              Directory structure discovery
       wiki               Wiki page discovery and ingestion
       signals            Facility signal discovery
@@ -37,12 +55,12 @@ def discover():
     \b
     Examples:
       imas-codex discover status jet          # All domains
-      imas-codex discover paths run jet       # Run paths discovery
-      imas-codex discover paths status jet    # Paths status only
-      imas-codex discover wiki run jet        # Run wiki discovery
-      imas-codex discover wiki clear jet      # Clear wiki only
-      imas-codex discover signals run jet     # Run signals discovery
-      imas-codex discover clear jet           # Clear ALL domains
+      imas-codex discover paths jet            # Run paths discovery
+      imas-codex discover paths status jet     # Paths status only
+      imas-codex discover wiki jet             # Run wiki discovery
+      imas-codex discover wiki clear jet       # Clear wiki only
+      imas-codex discover signals jet          # Run signals discovery
+      imas-codex discover clear jet            # Clear ALL domains
 
     The graph is the single source of truth. All discovery operations
     are idempotent and resume from the current graph state.
@@ -55,15 +73,19 @@ def discover():
 # =============================================================================
 
 
-@click.group()
+@click.group(cls=DefaultGroup)
 def paths():
     """Directory structure discovery.
 
+    Discovers and scores directory structures at remote facilities via
+    parallel SSH scanning and LLM classification.
+
     \b
-    Commands:
-      run       Run paths discovery (scan directories, LLM scoring)
-      status    Show paths discovery statistics
-      clear     Clear paths data for a facility
+    Examples:
+      imas-codex discover paths jet              # Default $10 limit
+      imas-codex discover paths jet -c 20.0      # $20 limit
+      imas-codex discover paths status jet       # Show statistics
+      imas-codex discover paths clear jet        # Clear paths data
     """
     pass
 
@@ -76,15 +98,18 @@ discover.add_command(paths)
 # =============================================================================
 
 
-@click.group()
+@click.group(cls=DefaultGroup)
 def wiki():
     """Wiki page discovery and ingestion.
 
+    Discovers, scores, and ingests wiki pages into the documentation graph.
+
     \b
-    Commands:
-      run       Run wiki discovery (scan, score, ingest)
-      status    Show wiki discovery statistics
-      clear     Clear wiki data for a facility
+    Examples:
+      imas-codex discover wiki jet               # Full discovery
+      imas-codex discover wiki jet --scan-only   # Scan pages only
+      imas-codex discover wiki status jet        # Show statistics
+      imas-codex discover wiki clear jet         # Clear wiki data
     """
     pass
 
@@ -97,15 +122,18 @@ discover.add_command(wiki)
 # =============================================================================
 
 
-@click.group()
+@click.group(cls=DefaultGroup)
 def signals():
     """Facility signal discovery.
 
+    Scans TDI function files to discover and classify data signals.
+
     \b
-    Commands:
-      run       Run signal discovery (TDI, enrichment, quality check)
-      status    Show signal discovery statistics
-      clear     Clear signal data for a facility
+    Examples:
+      imas-codex discover signals tcv              # Full pipeline
+      imas-codex discover signals tcv --scan-only  # Scan only
+      imas-codex discover signals status tcv       # Show statistics
+      imas-codex discover signals clear tcv        # Clear signals data
     """
     pass
 
@@ -118,7 +146,7 @@ discover.add_command(signals)
 # =============================================================================
 
 
-@paths.command("run")
+@paths.command("run", hidden=True)
 @click.argument("facility")
 @click.option(
     "--root",
@@ -215,12 +243,12 @@ def paths_run(
 
     \b
     Examples:
-      imas-codex discover paths run <facility>          # Default $10 limit
-      imas-codex discover paths run <facility> -c 20.0  # $20 limit
-      imas-codex discover paths run iter --focus "equilibrium codes"
-      imas-codex discover paths run iter --scan-only    # SSH only, no LLM
-      imas-codex discover paths run iter --score-only   # LLM only, no SSH
-      imas-codex discover paths run tcv -r /home/codes/astra  # Deep dive
+      imas-codex discover paths <facility>              # Default $10 limit
+      imas-codex discover paths <facility> -c 20.0      # $20 limit
+      imas-codex discover paths iter --focus "equilibrium codes"
+      imas-codex discover paths iter --scan-only        # SSH only, no LLM
+      imas-codex discover paths iter --score-only       # LLM only, no SSH
+      imas-codex discover paths tcv -r /home/codes/astra  # Deep dive
 
     \b
     Targeted deep dives:
@@ -1324,7 +1352,7 @@ def discover_code(facility: str, dry_run: bool) -> None:
     raise SystemExit(1)
 
 
-@wiki.command("run")
+@wiki.command("run", hidden=True)
 @click.argument("facility")
 @click.option("--source", "-s", help="Specific wiki site URL or index")
 @click.option(
@@ -2313,7 +2341,7 @@ def wiki_run(
     log_print("\n[green]Documentation discovery complete.[/green]")
 
 
-@signals.command("run")
+@signals.command("run", hidden=True)
 @click.argument("facility")
 @click.option(
     "--cost-limit",
