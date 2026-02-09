@@ -4,13 +4,17 @@ This server runs on a GPU-equipped machine (e.g., ITER cluster) and provides
 an HTTP API for embedding text. Clients connect via SSH tunnel.
 
 Start server:
-    imas-codex serve embed --host 127.0.0.1 --port 18765
+    imas-codex serve embed start --host 127.0.0.1 --port 18765
+
+With idle timeout (auto-shutdown after 30 minutes of inactivity):
+    imas-codex serve embed start --idle-timeout 1800
 
 Client access (via SSH tunnel):
     ssh -L 18765:127.0.0.1:18765 iter
     curl http://localhost:18765/health
 """
 
+import asyncio
 import logging
 import os
 import time
@@ -25,6 +29,9 @@ logger = logging.getLogger(__name__)
 # Global encoder instance (loaded at startup)
 _encoder = None
 _startup_time: float = 0
+_last_request_time: float = 0
+_idle_timeout: int = 0  # 0 = disabled
+_shutdown_event: asyncio.Event | None = None
 
 
 class EmbedRequest(BaseModel):
@@ -53,6 +60,8 @@ class HealthResponse(BaseModel):
     gpu_name: str | None = Field(None, description="GPU name if available")
     gpu_memory_mb: int | None = Field(None, description="GPU memory in MB")
     uptime_seconds: float = Field(..., description="Server uptime in seconds")
+    idle_seconds: float = Field(0, description="Seconds since last request")
+    idle_timeout: int = Field(0, description="Auto-shutdown timeout (0=disabled)")
 
 
 def _get_gpu_info() -> tuple[str | None, int | None]:
@@ -75,7 +84,7 @@ def _get_gpu_info() -> tuple[str | None, int | None]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load model at startup, cleanup at shutdown."""
-    global _encoder, _startup_time
+    global _encoder, _startup_time, _last_request_time, _shutdown_event
 
     logger.info("Loading embedding model...")
     start = time.time()
@@ -103,16 +112,44 @@ async def lifespan(app: FastAPI):
 
     _encoder = Encoder(config=config)
     _startup_time = time.time()
+    _last_request_time = time.time()
 
     load_time = time.time() - start
     logger.info(
         f"Model {model_name} loaded on {_encoder.get_model().device} in {load_time:.1f}s"
     )
 
+    # Start idle watchdog if timeout is configured
+    _shutdown_event = asyncio.Event()
+    watchdog_task = None
+    if _idle_timeout > 0:
+        logger.info(f"Idle timeout enabled: {_idle_timeout}s")
+        watchdog_task = asyncio.create_task(_idle_watchdog())
+
     yield
+
+    # Cancel watchdog on shutdown
+    if watchdog_task and not watchdog_task.done():
+        watchdog_task.cancel()
 
     logger.info("Shutting down embedding server")
     _encoder = None
+
+
+async def _idle_watchdog() -> None:
+    """Background task that shuts down the server after idle timeout."""
+    while True:
+        await asyncio.sleep(60)  # Check every minute
+        idle_seconds = time.time() - _last_request_time
+        if idle_seconds >= _idle_timeout:
+            logger.info(
+                "Server idle for %.0fs (timeout=%ds), shutting down...",
+                idle_seconds,
+                _idle_timeout,
+            )
+            # Signal uvicorn to shut down
+            os.kill(os.getpid(), 15)  # SIGTERM
+            return
 
 
 def _cuda_available() -> bool:
@@ -150,14 +187,19 @@ def create_app() -> FastAPI:
             gpu_name=gpu_name,
             gpu_memory_mb=gpu_memory,
             uptime_seconds=time.time() - _startup_time,
+            idle_seconds=time.time() - _last_request_time,
+            idle_timeout=_idle_timeout,
         )
 
     @app.post("/embed", response_model=EmbedResponse)
     async def embed(request: EmbedRequest) -> EmbedResponse:
         """Embed texts and return vectors."""
+        global _last_request_time
+
         if _encoder is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
 
+        _last_request_time = time.time()
         start = time.time()
 
         try:
@@ -212,6 +254,10 @@ def create_app() -> FastAPI:
             },
             "server": {
                 "uptime_seconds": time.time() - _startup_time,
+                "idle_seconds": time.time() - _last_request_time,
+                "idle_timeout": _idle_timeout,
+                "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+                "hostname": os.uname().nodename,
                 "version": "1.0.0",
             },
         }

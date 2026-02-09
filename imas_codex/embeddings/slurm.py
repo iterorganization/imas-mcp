@@ -1,0 +1,509 @@
+"""SLURM-based embedding server lifecycle management.
+
+Automatically submits, monitors, port-forwards, and shuts down a GPU embedding
+server on the SLURM titan partition. The user never needs to interact with
+SLURM directly - the system handles the full lifecycle:
+
+1. ``ensure_server()`` checks for a running SLURM job
+2. If none, submits one via ``sbatch`` and waits for it to start
+3. Sets up port forwarding from login node to compute node
+4. Returns when ``/health`` is reachable on ``localhost:PORT``
+5. Server auto-stops after ``--idle-timeout`` of inactivity
+
+State is persisted in ``~/.imas-codex/slurm-embed.json`` so multiple
+processes can share the same SLURM job without redundant submissions.
+
+Architecture::
+
+    workstation ---SSH tunnel---> login node ---port forward---> GPU node (SLURM)
+    localhost:18765             localhost:18765                 0.0.0.0:18765
+
+Usage:
+    from imas_codex.embeddings.slurm import ensure_server, get_job_status
+
+    # Automatically start if needed, block until ready
+    ensure_server()
+
+    # Check status without starting
+    info = get_job_status()
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import subprocess
+import textwrap
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Default configuration
+DEFAULT_PARTITION = "titan"
+DEFAULT_GPU_COUNT = 1
+DEFAULT_WALLTIME = "08:00:00"
+DEFAULT_IDLE_TIMEOUT = 1800  # 30 minutes
+DEFAULT_PORT = 18765
+
+# Local state (on workstation) - tracks job_id, node, port forward PID
+STATE_DIR = Path.home() / ".imas-codex"
+STATE_FILE = STATE_DIR / "slurm-embed.json"
+
+# Remote state dir (on ITER) - uses $HOME for shell expansion in SSH commands
+REMOTE_STATE_DIR = "$HOME/.imas-codex"
+
+# How long to wait for job to start and server to become ready
+JOB_START_TIMEOUT = 300  # 5 minutes for SLURM scheduling
+SERVER_READY_TIMEOUT = 120  # 2 minutes for model loading
+POLL_INTERVAL = 3.0  # seconds between status checks
+
+
+@dataclass
+class SlurmJobState:
+    """Persisted state for the SLURM embedding server."""
+
+    job_id: str | None = None
+    node: str | None = None
+    port: int = DEFAULT_PORT
+    partition: str = DEFAULT_PARTITION
+    submitted_at: float = 0.0
+    started_at: float = 0.0
+    pid_on_node: int | None = None
+
+    # Port forwarding state
+    forward_pid: int | None = None
+
+    def save(self) -> None:
+        """Persist state to disk."""
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(json.dumps(asdict(self), indent=2))
+        logger.debug("Saved SLURM state: job_id=%s node=%s", self.job_id, self.node)
+
+    @classmethod
+    def load(cls) -> SlurmJobState:
+        """Load state from disk, returning empty state if not found."""
+        if STATE_FILE.exists():
+            try:
+                data = json.loads(STATE_FILE.read_text())
+                return cls(
+                    **{k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+                )
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.warning("Corrupt state file, resetting: %s", e)
+        return cls()
+
+    def clear(self) -> None:
+        """Remove persisted state."""
+        if STATE_FILE.exists():
+            STATE_FILE.unlink()
+        self.job_id = None
+        self.node = None
+        self.forward_pid = None
+
+
+def _run_ssh(cmd: str, timeout: float = 30) -> subprocess.CompletedProcess[str]:
+    """Run a command on ITER via SSH."""
+    return subprocess.run(
+        ["ssh", "iter", cmd],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _generate_sbatch_script(
+    port: int = DEFAULT_PORT,
+    partition: str = DEFAULT_PARTITION,
+    gpu_count: int = DEFAULT_GPU_COUNT,
+    walltime: str = DEFAULT_WALLTIME,
+    idle_timeout: int = DEFAULT_IDLE_TIMEOUT,
+) -> str:
+    """Generate the SLURM batch script for the embedding server."""
+    return textwrap.dedent(f"""\
+        #!/bin/bash
+        #SBATCH --job-name=imas-codex-embed
+        #SBATCH --partition={partition}
+        #SBATCH --gres=gpu:{gpu_count}
+        #SBATCH --cpus-per-task=4
+        #SBATCH --mem=16G
+        #SBATCH --time={walltime}
+        #SBATCH --output=$HOME/.imas-codex/slurm-embed-%j.log
+        #SBATCH --error=$HOME/.imas-codex/slurm-embed-%j.log
+
+        # Write node info for port forwarding
+        echo "${{SLURM_JOB_NODELIST}}" > $HOME/.imas-codex/slurm-embed-node
+        echo "${{SLURM_JOB_ID}}" > $HOME/.imas-codex/slurm-embed-jobid
+
+        export CUDA_VISIBLE_DEVICES=${{SLURM_LOCALID:-0}}
+        export PATH="${{HOME}}/.local/bin:${{PATH}}"
+
+        cd ${{HOME}}/Code/imas-codex
+
+        # Start embedding server with idle timeout
+        exec ${{HOME}}/.local/bin/uv run --extra gpu imas-codex serve embed start \\
+            --host 0.0.0.0 \\
+            --port {port} \\
+            --idle-timeout {idle_timeout}
+    """)
+
+
+def submit_job(
+    port: int = DEFAULT_PORT,
+    partition: str = DEFAULT_PARTITION,
+    gpu_count: int = DEFAULT_GPU_COUNT,
+    walltime: str = DEFAULT_WALLTIME,
+    idle_timeout: int = DEFAULT_IDLE_TIMEOUT,
+) -> SlurmJobState:
+    """Submit a SLURM job to run the embedding server.
+
+    Args:
+        port: Port for the embedding server
+        partition: SLURM partition (default: titan)
+        gpu_count: Number of GPUs to request
+        walltime: Maximum wall time
+        idle_timeout: Seconds of inactivity before auto-shutdown
+
+    Returns:
+        SlurmJobState with job_id set
+
+    Raises:
+        RuntimeError: If job submission fails
+    """
+    script = _generate_sbatch_script(
+        port=port,
+        partition=partition,
+        gpu_count=gpu_count,
+        walltime=walltime,
+        idle_timeout=idle_timeout,
+    )
+
+    # Write script to temp file on remote and submit
+    script_path = f"{REMOTE_STATE_DIR}/slurm-embed.sh"
+    result = _run_ssh(
+        f"mkdir -p {REMOTE_STATE_DIR} && cat > {script_path} << 'SLURM_SCRIPT_EOF'\n{script}SLURM_SCRIPT_EOF\n"
+        f"&& sbatch {script_path}"
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
+
+    # Parse job ID from "Submitted batch job 12345"
+    output = result.stdout.strip()
+    if "Submitted batch job" not in output:
+        raise RuntimeError(f"Unexpected sbatch output: {output}")
+
+    job_id = output.split()[-1]
+    logger.info("Submitted SLURM job %s on partition %s", job_id, partition)
+
+    state = SlurmJobState(
+        job_id=job_id,
+        port=port,
+        partition=partition,
+        submitted_at=time.time(),
+    )
+    state.save()
+    return state
+
+
+def get_job_status(state: SlurmJobState | None = None) -> SlurmJobState | None:
+    """Check the status of a SLURM embedding server job.
+
+    Returns updated state with node info if running, or None if no job exists.
+    """
+    if state is None:
+        state = SlurmJobState.load()
+
+    if not state.job_id:
+        return None
+
+    result = _run_ssh(
+        f"squeue -j {state.job_id} --noheader --format='%T %N %S' 2>/dev/null"
+    )
+
+    if result.returncode != 0 or not result.stdout.strip():
+        # Job no longer in queue (completed/cancelled/failed)
+        logger.info("SLURM job %s no longer in queue", state.job_id)
+        state.clear()
+        return None
+
+    parts = result.stdout.strip().split()
+    job_state = parts[0] if parts else "UNKNOWN"
+
+    if job_state == "RUNNING":
+        node = parts[1] if len(parts) > 1 else None
+        if node and node != state.node:
+            state.node = node
+            state.started_at = time.time()
+            state.save()
+            logger.info("Job %s running on node %s", state.job_id, node)
+        return state
+
+    if job_state in ("PENDING", "CONFIGURING"):
+        logger.debug("Job %s is %s", state.job_id, job_state)
+        return state
+
+    # Failed/cancelled/etc
+    logger.warning("Job %s in unexpected state: %s", state.job_id, job_state)
+    state.clear()
+    return None
+
+
+def _setup_port_forward(state: SlurmJobState) -> bool:
+    """Set up port forwarding from login node to compute node.
+
+    Creates an SSH local port forward on the ITER login node:
+    login:PORT → compute-node:PORT
+
+    This is done via `ssh -f -N -L ...` running on the login node itself.
+    The workstation's SSH tunnel (workstation → login) then chains through.
+
+    Returns True if forwarding is established.
+    """
+    if not state.node or not state.port:
+        return False
+
+    # Kill any existing forward
+    _kill_port_forward(state)
+
+    # Start port forward on login node
+    result = _run_ssh(
+        f"ssh -f -N -o StrictHostKeyChecking=no "
+        f"-L {state.port}:localhost:{state.port} {state.node}"
+    )
+
+    if result.returncode != 0:
+        logger.warning(
+            "Port forward failed: %s", result.stderr.strip() or result.stdout.strip()
+        )
+        return False
+
+    # Find the PID of the forwarding SSH process
+    pid_result = _run_ssh(f"pgrep -f 'ssh.*-L.*{state.port}.*{state.node}' | tail -1")
+    if pid_result.returncode == 0 and pid_result.stdout.strip():
+        state.forward_pid = int(pid_result.stdout.strip())
+        state.save()
+
+    logger.info(
+        "Port forward established: login:%d → %s:%d",
+        state.port,
+        state.node,
+        state.port,
+    )
+    return True
+
+
+def _kill_port_forward(state: SlurmJobState) -> None:
+    """Kill any existing port forward for this job."""
+    if state.forward_pid:
+        _run_ssh(f"kill {state.forward_pid} 2>/dev/null")
+        state.forward_pid = None
+
+    # Also kill by pattern match (catch orphans)
+    if state.node and state.port:
+        _run_ssh(f"pkill -f 'ssh.*-L.*{state.port}.*{state.node}' 2>/dev/null")
+
+
+def _wait_for_job_start(
+    state: SlurmJobState, timeout: float = JOB_START_TIMEOUT
+) -> bool:
+    """Wait for a pending SLURM job to start running.
+
+    Returns True if job is running, False if timeout or failure.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        updated = get_job_status(state)
+        if updated is None:
+            logger.error("Job disappeared from queue")
+            return False
+        if updated.node:
+            return True
+        time.sleep(POLL_INTERVAL)
+
+    logger.error("Timed out waiting for job %s to start (%ds)", state.job_id, timeout)
+    return False
+
+
+def _wait_for_server_ready(
+    port: int = DEFAULT_PORT,
+    timeout: float = SERVER_READY_TIMEOUT,
+) -> bool:
+    """Wait for the embedding server to respond to health checks.
+
+    This checks localhost:PORT which is forwarded through to the compute node.
+    """
+    import httpx
+
+    deadline = time.time() + timeout
+    url = f"http://localhost:{port}/health"
+
+    while time.time() < deadline:
+        try:
+            with httpx.Client(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+                response = client.get(url)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("status") == "healthy":
+                        logger.info("Embedding server ready on localhost:%d", port)
+                        return True
+        except (httpx.ConnectError, httpx.TimeoutException):
+            pass
+        except Exception as e:
+            logger.debug("Health check error: %s", e)
+
+        time.sleep(POLL_INTERVAL)
+
+    logger.error("Timed out waiting for server to be ready (%ds)", timeout)
+    return False
+
+
+def ensure_server(
+    port: int = DEFAULT_PORT,
+    partition: str = DEFAULT_PARTITION,
+    gpu_count: int = DEFAULT_GPU_COUNT,
+    walltime: str = DEFAULT_WALLTIME,
+    idle_timeout: int = DEFAULT_IDLE_TIMEOUT,
+) -> bool:
+    """Ensure the SLURM embedding server is running and reachable.
+
+    This is the main entry point for automatic lifecycle management.
+    It will:
+    1. Check for an existing running job and reuse it
+    2. If no job, submit one and wait for it to start
+    3. Set up port forwarding from login node to compute node
+    4. Wait for the server to respond to health checks
+
+    Args:
+        port: Port for the embedding server
+        partition: SLURM partition
+        gpu_count: Number of GPUs
+        walltime: Maximum wall time
+        idle_timeout: Seconds of inactivity before auto-shutdown
+
+    Returns:
+        True if server is ready, False on failure
+    """
+    logger.info("Ensuring SLURM embedding server is available...")
+
+    # Step 1: Check for existing job
+    state = SlurmJobState.load()
+    if state.job_id:
+        updated = get_job_status(state)
+        if updated and updated.node:
+            logger.info("Found running job %s on %s", updated.job_id, updated.node)
+            # Ensure port forwarding is active
+            if not _check_port_forward(updated):
+                _setup_port_forward(updated)
+            # Check if server is already responding
+            if _wait_for_server_ready(port, timeout=10):
+                return True
+            # Port forward might need refresh
+            _setup_port_forward(updated)
+            return _wait_for_server_ready(port, timeout=30)
+        elif updated:
+            # Job pending, wait for it
+            logger.info("Job %s is pending, waiting...", state.job_id)
+            if not _wait_for_job_start(updated):
+                # Timed out, cancel and resubmit
+                cancel_job(updated)
+                state = SlurmJobState()
+            else:
+                _setup_port_forward(updated)
+                return _wait_for_server_ready(port)
+        # Job gone, need new one
+        state = SlurmJobState()
+
+    # Step 2: Submit new job
+    logger.info("Submitting new SLURM job...")
+    state = submit_job(
+        port=port,
+        partition=partition,
+        gpu_count=gpu_count,
+        walltime=walltime,
+        idle_timeout=idle_timeout,
+    )
+
+    # Step 3: Wait for job to start
+    if not _wait_for_job_start(state):
+        cancel_job(state)
+        return False
+
+    # Step 4: Set up port forwarding
+    if not _setup_port_forward(state):
+        logger.error("Failed to set up port forwarding")
+        return False
+
+    # Step 5: Wait for server to be ready
+    return _wait_for_server_ready(port)
+
+
+def _check_port_forward(state: SlurmJobState) -> bool:
+    """Check if port forwarding is still active."""
+    if not state.forward_pid:
+        return False
+
+    result = _run_ssh(f"kill -0 {state.forward_pid} 2>/dev/null")
+    return result.returncode == 0
+
+
+def cancel_job(state: SlurmJobState | None = None) -> bool:
+    """Cancel the SLURM embedding server job.
+
+    Args:
+        state: Job state (loads from disk if None)
+
+    Returns:
+        True if job was cancelled
+    """
+    if state is None:
+        state = SlurmJobState.load()
+
+    if not state.job_id:
+        logger.info("No active SLURM job to cancel")
+        return False
+
+    _kill_port_forward(state)
+
+    result = _run_ssh(f"scancel {state.job_id}")
+    if result.returncode == 0:
+        logger.info("Cancelled SLURM job %s", state.job_id)
+    else:
+        logger.warning(
+            "Failed to cancel job %s: %s", state.job_id, result.stderr.strip()
+        )
+
+    state.clear()
+    return True
+
+
+def get_logs(state: SlurmJobState | None = None, tail: int = 50) -> str:
+    """Get logs from the SLURM embedding server.
+
+    Args:
+        state: Job state (loads from disk if None)
+        tail: Number of lines from the end
+
+    Returns:
+        Log content as string
+    """
+    if state is None:
+        state = SlurmJobState.load()
+
+    if not state.job_id:
+        return "No active SLURM job"
+
+    log_path = f"{REMOTE_STATE_DIR}/slurm-embed-{state.job_id}.log"
+    result = _run_ssh(f"tail -n {tail} {log_path} 2>/dev/null")
+    return result.stdout if result.returncode == 0 else f"No log file: {log_path}"
+
+
+__all__ = [
+    "SlurmJobState",
+    "cancel_job",
+    "ensure_server",
+    "get_job_status",
+    "get_logs",
+    "submit_job",
+]
