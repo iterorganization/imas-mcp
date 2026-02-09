@@ -14,9 +14,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-# Import wiki site management commands for subgroup registration
-from imas_codex.cli.wiki import session as wiki_session, wiki_sites, wiki_test
-
 logger = logging.getLogger(__name__)
 
 
@@ -84,25 +81,13 @@ def wiki():
     """Wiki page discovery and ingestion.
 
     \b
-    Discovery Commands:
+    Commands:
       run       Run wiki discovery (scan, score, ingest)
       status    Show wiki discovery statistics
       clear     Clear wiki data for a facility
-      reset     Reset failed/deferred pages for re-processing
-
-    \b
-    Site Management:
-      sites     List configured wiki sites for a facility
-      test      Test connectivity to a wiki site
-      session   Manage cached authentication sessions
     """
     pass
 
-
-# Register wiki site management commands (imported at top of file)
-wiki.add_command(wiki_sites, name="sites")
-wiki.add_command(wiki_test, name="test")
-wiki.add_command(wiki_session, name="session")
 
 discover.add_command(wiki)
 
@@ -1049,78 +1034,26 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
 @discover.command("clear")
 @click.argument("facility")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
-def discover_clear(facility: str, force: bool) -> None:
-    """Clear ALL discovered data for a facility.
+@click.option(
+    "--domain",
+    "-d",
+    type=click.Choice(["paths", "wiki", "signals"]),
+    help="Clear specific domain only (default: all)",
+)
+def discover_clear(facility: str, force: bool, domain: str | None) -> None:
+    """Clear discovered data for a facility.
 
-    Deletes everything: paths, wiki, signals and all dependent nodes.
-    Always cascades (SourceFile, FacilityUser, chunks, artifacts, epochs).
+    By default clears ALL domains: paths, wiki, and signals.
+    Use --domain/-d to clear a specific domain only.
 
     \b
-    For domain-specific clear, use:
-      imas-codex discover paths clear <facility>    # Paths only
-      imas-codex discover wiki clear <facility>     # Wiki only
-      imas-codex discover signals clear <facility>  # Signals only
+    Examples:
+      imas-codex discover clear jet           # All domains
+      imas-codex discover clear jet -d paths  # Paths only
+      imas-codex discover clear jet -d wiki   # Wiki only
+      imas-codex discover clear jet --force   # Skip confirmation
     """
-    from imas_codex.discovery import clear_facility_paths, get_discovery_stats
-    from imas_codex.discovery.data import (
-        clear_facility_signals,
-        get_data_discovery_stats,
-    )
-    from imas_codex.discovery.wiki import clear_facility_wiki, get_wiki_stats
-
-    try:
-        items_to_clear: list[tuple[str, int, callable]] = []
-
-        # Paths domain (always cascade)
-        stats = get_discovery_stats(facility)
-        total = stats.get("total", 0)
-        if total > 0:
-            items_to_clear.append(("paths + related", total, clear_facility_paths))
-
-        # Wiki domain
-        wiki_stats = get_wiki_stats(facility)
-        pages = wiki_stats.get("pages", 0)
-        chunks = wiki_stats.get("chunks", 0)
-        from imas_codex.graph import GraphClient
-
-        with GraphClient() as gc:
-            artifact_result = gc.query(
-                "MATCH (wa:WikiArtifact {facility_id: $f}) RETURN count(wa) AS cnt",
-                f=facility,
-            )
-            artifacts = artifact_result[0]["cnt"] if artifact_result else 0
-        if pages > 0 or artifacts > 0:
-            label = f"wiki pages + {chunks} chunks + {artifacts} artifacts"
-            items_to_clear.append((label, pages or artifacts, clear_facility_wiki))
-
-        # Signals domain
-        signal_stats = get_data_discovery_stats(facility)
-        signal_total = signal_stats.get("total", 0)
-        if signal_total > 0:
-            items_to_clear.append(
-                ("signals + epochs", signal_total, clear_facility_signals)
-            )
-
-        if not items_to_clear:
-            click.echo(f"No discovery data to clear for {facility}")
-            return
-
-        summary_parts = [f"{count} {name}" for name, count, _ in items_to_clear]
-        summary = " and ".join(summary_parts)
-
-        if not force:
-            click.confirm(
-                f"This will delete {summary} for {facility}. Continue?",
-                abort=True,
-            )
-
-        for name, _, clear_func in items_to_clear:
-            result = clear_func(facility)
-            _print_clear_result(name, result, facility)
-
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        raise SystemExit(1) from e
+    _clear_facility_domain(facility, domain, force)
 
 
 @paths.command("clear")
@@ -1136,27 +1069,7 @@ def paths_clear(facility: str, force: bool) -> None:
       imas-codex discover paths clear jet
       imas-codex discover paths clear tcv --force
     """
-    from imas_codex.discovery import clear_facility_paths, get_discovery_stats
-
-    try:
-        stats = get_discovery_stats(facility)
-        total = stats.get("total", 0)
-        if total == 0:
-            click.echo(f"No path data to clear for {facility}")
-            return
-
-        if not force:
-            click.confirm(
-                f"This will delete {total} paths + related nodes for {facility}. Continue?",
-                abort=True,
-            )
-
-        result = clear_facility_paths(facility)
-        _print_clear_result("paths + related", result, facility)
-
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        raise SystemExit(1) from e
+    _clear_facility_domain(facility, "paths", force)
 
 
 @paths.command("status")
@@ -1198,27 +1111,7 @@ def wiki_clear(facility: str, force: bool) -> None:
       imas-codex discover wiki clear jet
       imas-codex discover wiki clear tcv --force
     """
-    from imas_codex.discovery.wiki import clear_facility_wiki, get_wiki_stats
-
-    try:
-        stats = get_wiki_stats(facility)
-        pages = stats.get("pages", 0)
-        if pages == 0:
-            click.echo(f"No wiki data to clear for {facility}")
-            return
-
-        if not force:
-            click.confirm(
-                f"This will delete {pages} pages + chunks/artifacts for {facility}. Continue?",
-                abort=True,
-            )
-
-        result = clear_facility_wiki(facility)
-        _print_clear_result("wiki", result, facility)
-
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        raise SystemExit(1) from e
+    _clear_facility_domain(facility, "wiki", force)
 
 
 @wiki.command("status")
@@ -1255,30 +1148,7 @@ def signals_clear(facility: str, force: bool) -> None:
       imas-codex discover signals clear jet
       imas-codex discover signals clear tcv --force
     """
-    from imas_codex.discovery.data import (
-        clear_facility_signals,
-        get_data_discovery_stats,
-    )
-
-    try:
-        stats = get_data_discovery_stats(facility)
-        total = stats.get("total", 0)
-        if total == 0:
-            click.echo(f"No signal data to clear for {facility}")
-            return
-
-        if not force:
-            click.confirm(
-                f"This will delete {total} signals + epochs for {facility}. Continue?",
-                abort=True,
-            )
-
-        result = clear_facility_signals(facility)
-        _print_clear_result("signals + epochs", result, facility)
-
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        raise SystemExit(1) from e
+    _clear_facility_domain(facility, "signals", force)
 
 
 @signals.command("status")
@@ -1294,6 +1164,87 @@ def signals_status(facility: str) -> None:
     from imas_codex.discovery.paths.progress import print_discovery_status
 
     print_discovery_status(facility, domain="signals")
+
+
+# =============================================================================
+# Shared Clear Function
+# =============================================================================
+
+
+def _clear_facility_domain(
+    facility: str, domain: str | None, force: bool = False
+) -> None:
+    """Clear discovery data for facility, optionally filtered by domain.
+
+    Args:
+        facility: Facility ID
+        domain: "paths", "wiki", "signals", or None for all
+        force: Skip confirmation prompt
+    """
+    from imas_codex.discovery import clear_facility_paths, get_discovery_stats
+    from imas_codex.discovery.data import (
+        clear_facility_signals,
+        get_data_discovery_stats,
+    )
+    from imas_codex.discovery.wiki import clear_facility_wiki, get_wiki_stats
+
+    try:
+        items_to_clear: list[tuple[str, int, callable]] = []
+
+        # Paths domain
+        if domain is None or domain == "paths":
+            stats = get_discovery_stats(facility)
+            total = stats.get("total", 0)
+            if total > 0:
+                items_to_clear.append(("paths + related", total, clear_facility_paths))
+
+        # Wiki domain
+        if domain is None or domain == "wiki":
+            wiki_stats = get_wiki_stats(facility)
+            pages = wiki_stats.get("pages", 0)
+            chunks = wiki_stats.get("chunks", 0)
+            from imas_codex.graph import GraphClient
+
+            with GraphClient() as gc:
+                artifact_result = gc.query(
+                    "MATCH (wa:WikiArtifact {facility_id: $f}) RETURN count(wa) AS cnt",
+                    f=facility,
+                )
+                artifacts = artifact_result[0]["cnt"] if artifact_result else 0
+            if pages > 0 or artifacts > 0:
+                label = f"wiki pages + {chunks} chunks + {artifacts} artifacts"
+                items_to_clear.append((label, pages or artifacts, clear_facility_wiki))
+
+        # Signals domain
+        if domain is None or domain == "signals":
+            signal_stats = get_data_discovery_stats(facility)
+            signal_total = signal_stats.get("total", 0)
+            if signal_total > 0:
+                items_to_clear.append(
+                    ("signals + epochs", signal_total, clear_facility_signals)
+                )
+
+        if not items_to_clear:
+            domain_msg = f" {domain}" if domain else ""
+            click.echo(f"No{domain_msg} discovery data to clear for {facility}")
+            return
+
+        summary_parts = [f"{count} {name}" for name, count, _ in items_to_clear]
+        summary = " and ".join(summary_parts)
+
+        if not force:
+            click.confirm(
+                f"This will delete {summary} for {facility}. Continue?",
+                abort=True,
+            )
+
+        for name, _, clear_func in items_to_clear:
+            result = clear_func(facility)
+            _print_clear_result(name, result, facility)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
 
 
 def _print_clear_result(name: str, result: dict | int, facility: str) -> None:
@@ -2365,186 +2316,6 @@ def wiki_run(
             traceback.print_exc()
 
     log_print("\n[green]Documentation discovery complete.[/green]")
-
-
-@wiki.command("reset")
-@click.argument("facility")
-@click.option(
-    "--status",
-    "-s",
-    multiple=True,
-    default=("failed",),
-    help="Status values to reset (default: failed). Can specify multiple: -s failed -s deferred",
-)
-@click.option(
-    "--target",
-    "-t",
-    type=click.Choice(["pages", "artifacts", "all"]),
-    default="all",
-    help="What to reset: pages, artifacts, or all (default: all)",
-)
-@click.option(
-    "--to-status",
-    type=click.Choice(["discovered", "scanned"]),
-    default=None,
-    help="Target status. Default: 'scanned' for pages, 'discovered' for artifacts",
-)
-@click.option(
-    "--dry-run", is_flag=True, help="Show what would be reset without changing anything"
-)
-@click.option("--force", is_flag=True, help="Skip confirmation prompt")
-def wiki_reset(
-    facility: str,
-    status: tuple[str, ...],
-    target: str,
-    to_status: str | None,
-    dry_run: bool,
-    force: bool,
-) -> None:
-    """Reset failed/deferred wiki pages and artifacts for re-processing.
-
-    After fixing auth issues, use this to reset pages/artifacts that failed
-    during previous runs so they can be re-scored and re-ingested.
-
-    Examples:
-
-        # Reset all failed items (default)
-        imas-codex discover wiki-reset tcv
-
-        # Reset both failed and deferred artifacts
-        imas-codex discover wiki-reset tcv -s failed -s deferred
-
-        # Reset only artifacts
-        imas-codex discover wiki-reset tcv -t artifacts
-
-        # Dry run to see what would be reset
-        imas-codex discover wiki-reset tcv --dry-run
-    """
-    from imas_codex.graph.client import GraphClient
-
-    console = Console()
-
-    def log_print(msg: str, style: str = "") -> None:
-        console.print(msg)
-
-    log_print(f"[bold]Wiki reset for {facility.upper()}[/bold]")
-
-    status_list = list(status)
-
-    with GraphClient() as gc:
-        # Count items to reset
-        counts = {}
-        if target in ("pages", "all"):
-            for s in status_list:
-                result = gc.query(
-                    """
-                    MATCH (wp:WikiPage {facility_id: $facility})
-                    WHERE wp.status = $status
-                    RETURN count(wp) AS cnt
-                    """,
-                    facility=facility,
-                    status=s,
-                )
-                cnt = result[0]["cnt"] if result else 0
-                if cnt > 0:
-                    counts[f"pages ({s})"] = cnt
-
-        if target in ("artifacts", "all"):
-            for s in status_list:
-                result = gc.query(
-                    """
-                    MATCH (wa:WikiArtifact {facility_id: $facility})
-                    WHERE wa.status = $status
-                    RETURN count(wa) AS cnt
-                    """,
-                    facility=facility,
-                    status=s,
-                )
-                cnt = result[0]["cnt"] if result else 0
-                if cnt > 0:
-                    counts[f"artifacts ({s})"] = cnt
-
-        if not counts:
-            log_print(
-                f"[dim]No {'/'.join(status_list)} items found for {facility}[/dim]"
-            )
-            return
-
-        # Display what will be reset
-        total = sum(counts.values())
-        log_print(f"\nItems to reset ({total} total):")
-        for label, cnt in counts.items():
-            log_print(f"  {label}: {cnt:,}")
-
-        if dry_run:
-            log_print("\n[yellow]Dry run — no changes made[/yellow]")
-            return
-
-        if not force:
-            click.confirm(f"Reset {total} items?", abort=True)
-
-        # Perform reset
-        reset_total = 0
-        if target in ("pages", "all"):
-            page_to = to_status or "scanned"
-            for s in status_list:
-                result = gc.query(
-                    """
-                    MATCH (wp:WikiPage {facility_id: $facility})
-                    WHERE wp.status = $status
-                    SET wp.status = $new_status,
-                        wp.score = null,
-                        wp.score_cost = null,
-                        wp.physics_domain = null,
-                        wp.description = null,
-                        wp.claimed_at = null
-                    RETURN count(wp) AS cnt
-                    """,
-                    facility=facility,
-                    status=s,
-                    new_status=page_to,
-                )
-                cnt = result[0]["cnt"] if result else 0
-                if cnt > 0:
-                    log_print(f"  Reset {cnt:,} pages ({s} → {page_to})")
-                    reset_total += cnt
-
-        if target in ("artifacts", "all"):
-            artifact_to = to_status or "discovered"
-            for s in status_list:
-                # Delete chunks from previously failed ingests
-                gc.query(
-                    """
-                    MATCH (wa:WikiArtifact {facility_id: $facility})-[:HAS_CHUNK]->(c:WikiChunk)
-                    WHERE wa.status = $status
-                    DETACH DELETE c
-                    """,
-                    facility=facility,
-                    status=s,
-                )
-                result = gc.query(
-                    """
-                    MATCH (wa:WikiArtifact {facility_id: $facility})
-                    WHERE wa.status = $status
-                    SET wa.status = $new_status,
-                        wa.score = null,
-                        wa.score_cost = null,
-                        wa.physics_domain = null,
-                        wa.description = null,
-                        wa.claimed_at = null,
-                        wa.preview_text = null
-                    RETURN count(wa) AS cnt
-                    """,
-                    facility=facility,
-                    status=s,
-                    new_status=artifact_to,
-                )
-                cnt = result[0]["cnt"] if result else 0
-                if cnt > 0:
-                    log_print(f"  Reset {cnt:,} artifacts ({s} → {artifact_to})")
-                    reset_total += cnt
-
-        log_print(f"\n[green]Reset {reset_total:,} items for re-processing[/green]")
 
 
 @signals.command("run")

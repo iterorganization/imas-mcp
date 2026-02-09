@@ -21,13 +21,7 @@ imas-codex discover
 ├── wiki                        # Wiki page discovery
 │   ├── run <facility>
 │   ├── status <facility>
-│   ├── clear <facility>
-│   ├── reset <facility>        # Reset failed/deferred pages
-│   ├── sites <facility>        # List configured wiki sites
-│   ├── test <facility>         # Test connectivity
-│   └── session                 # Session management
-│       ├── clear <service>
-│       └── status <service>
+│   └── clear <facility>
 │
 └── signals                     # Facility signal discovery
     ├── run <facility>
@@ -59,12 +53,6 @@ imas-codex discover wiki clear tcv
 
 # Run wiki discovery
 imas-codex discover wiki run tcv --cost-limit 5.0
-
-# Test wiki connectivity
-imas-codex discover wiki test tcv
-
-# List wiki sites
-imas-codex discover wiki sites tcv
 ```
 
 ## Status Output
