@@ -276,6 +276,50 @@ def get_job_status(state: SlurmJobState | None = None) -> SlurmJobState | None:
     return None
 
 
+def _free_port(port: int) -> None:
+    """Free the embedding server port on the login node.
+
+    Stops any non-SLURM process bound to the port (e.g., systemd user
+    service) so that SLURM port forwarding can bind successfully.
+    """
+    # Stop systemd user service if running (most common scenario)
+    result = _run_cmd("systemctl --user stop imas-codex-embed 2>/dev/null", timeout=10)
+    if result.returncode == 0:
+        logger.info("Stopped systemd embed service to free port %d", port)
+        time.sleep(0.5)
+        return
+
+    # Kill any remaining (non-SSH) process on the port
+    _run_cmd(
+        f"fuser {port}/tcp 2>/dev/null | tr -s ' ' '\\n' | "
+        f"while read pid; do "
+        f"  ps -p $pid -o args= 2>/dev/null | grep -q 'ssh.*-L' || kill $pid 2>/dev/null; "
+        f"done",
+        timeout=10,
+    )
+    time.sleep(0.5)
+
+
+def _is_slurm_server(port: int = DEFAULT_PORT) -> bool:
+    """Check if the server on the given port is SLURM-managed.
+
+    Queries the /info endpoint for a SLURM job ID. Servers launched via
+    SLURM have SLURM_JOB_ID in their environment, while systemd or
+    manual servers do not.
+    """
+    try:
+        import httpx
+
+        with httpx.Client(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+            response = client.get(f"http://localhost:{port}/info")
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("server", {}).get("slurm_job_id") is not None
+    except Exception:
+        pass
+    return False
+
+
 def _setup_port_forward(state: SlurmJobState) -> bool:
     """Set up port forwarding from login node to compute node.
 
@@ -285,6 +329,9 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
     This is done via `ssh -f -N -L ...` running on the login node itself.
     The workstation's SSH tunnel (workstation → login) then chains through.
 
+    Before binding, frees the port from any non-SLURM process (e.g.,
+    systemd user service) that might be occupying it.
+
     Returns True if forwarding is established.
     """
     if not state.node or not state.port:
@@ -292,6 +339,9 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
 
     # Kill any existing forward
     _kill_port_forward(state)
+
+    # Free port from non-SLURM processes (e.g., systemd service)
+    _free_port(state.port)
 
     # Start port forward on login node
     result = _run_cmd(
@@ -419,13 +469,14 @@ def ensure_server(
         updated = get_job_status(state)
         if updated and updated.node:
             logger.info("Found running job %s on %s", updated.job_id, updated.node)
-            # Ensure port forwarding is active
-            if not _check_port_forward(updated):
-                _setup_port_forward(updated)
-            # Check if server is already responding
-            if _wait_for_server_ready(port, timeout=10):
+            # Verify existing server is actually our SLURM server
+            if (
+                _check_port_forward(updated)
+                and _is_slurm_server(port)
+                and _wait_for_server_ready(port, timeout=10)
+            ):
                 return True
-            # Port forward might need refresh
+            # Port forward missing or wrong server on port - refresh
             _setup_port_forward(updated)
             return _wait_for_server_ready(port, timeout=30)
         elif updated:
@@ -527,6 +578,7 @@ def get_logs(state: SlurmJobState | None = None, tail: int = 50) -> str:
 
 __all__ = [
     "SlurmJobState",
+    "_is_slurm_server",
     "cancel_job",
     "ensure_server",
     "get_job_status",

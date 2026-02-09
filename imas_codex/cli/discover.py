@@ -1361,27 +1361,67 @@ def discover_wiki(
                 f"[dim]Embedding server: {remote_url} ({client.get_info().model})[/dim]"
             )
 
-    log_print(f"[bold]Documentation sources for {facility}:[/bold]")
-    if len(wiki_sites) > 3 and not verbose:
-        # Compact display: show wiki short names on a single line
+    # Display wiki sites
+    multi_site_table = use_rich and len(wiki_sites) > 3
+    if multi_site_table:
         from urllib.parse import urlparse as _parse_url
 
-        names = []
+        site_table = Table(
+            show_header=True,
+            header_style="bold",
+            border_style="dim",
+            padding=(0, 1),
+        )
+        site_table.add_column("Site", style="cyan", no_wrap=True)
+        site_table.add_column("Type", style="dim")
+        site_table.add_column("Description", style="white")
+
         for site in wiki_sites:
             parsed = _parse_url(site.get("url", ""))
             name = parsed.path.rstrip("/").rsplit("/", 1)[-1] or site.get("url", "")
-            names.append(name)
-        log_print(f"  {len(wiki_sites)} sites: {', '.join(names)}")
-    else:
-        for i, site in enumerate(wiki_sites):
-            site_type = site.get("site_type", "mediawiki")
-            url = site.get("url", "")
+            site_type_str = site.get("site_type", "mediawiki")
             desc = site.get("description", "")
-            log_print(f"  [{i}] {site_type}: {url}")
-            if desc and verbose:
-                log_print(f"      {desc}")
-    if use_rich:
+            site_table.add_row(name, site_type_str, desc)
+
+        console.print(site_table)
+
+        # Show auth info once (aggregated across all sites)
+        auth_types = {s.get("auth_type") for s in wiki_sites if s.get("auth_type")}
+        cred_services = {
+            s.get("credential_service")
+            for s in wiki_sites
+            if s.get("credential_service")
+        }
+        if auth_types and cred_services:
+            if "basic" in auth_types:
+                auth_label = f"HTTP Basic ({', '.join(sorted(cred_services))})"
+            elif "tequila" in auth_types:
+                auth_label = "Tequila"
+            else:
+                auth_label = ", ".join(sorted(auth_types))
+            console.print(f"[dim]Auth: {auth_label}[/dim]")
         console.print()
+    else:
+        log_print(f"[bold]Documentation sources for {facility}:[/bold]")
+        if len(wiki_sites) > 3 and not verbose:
+            from urllib.parse import urlparse as _parse_url
+
+            names = []
+            for site in wiki_sites:
+                parsed = _parse_url(site.get("url", ""))
+                name = parsed.path.rstrip("/").rsplit("/", 1)[-1] or site.get("url", "")
+                names.append(name)
+            log_print(f"  {len(wiki_sites)} sites: {', '.join(names)}")
+        else:
+            for i, site in enumerate(wiki_sites):
+                site_type_str = site.get("site_type", "mediawiki")
+                url = site.get("url", "")
+                desc = site.get("description", "")
+                log_print(f"  [{i}] {site_type_str}: {url}")
+                if desc and verbose:
+                    log_print(f"      {desc}")
+        if use_rich:
+            console.print()
 
     site_indices = list(range(len(wiki_sites)))
     if source:
@@ -1452,24 +1492,26 @@ def discover_wiki(
         parsed_url = _urlparse(base_url)
         short_name = parsed_url.path.rstrip("/").rsplit("/", 1)[-1] or base_url
 
-        if len(site_indices) > 1:
-            site_n = site_indices.index(site_idx) + 1
-            log_print(
-                f"[bold cyan]({site_n}/{len(site_indices)}) {short_name}[/bold cyan]"
-            )
-        else:
-            log_print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
+        # Site header - skip if sites table was already displayed
+        if not multi_site_table:
+            if len(site_indices) > 1:
+                site_n = site_indices.index(site_idx) + 1
+                log_print(
+                    f"[bold cyan]({site_n}/{len(site_indices)}) {short_name}[/bold cyan]"
+                )
+            else:
+                log_print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
 
-        if site_type == "twiki":
-            log_print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
-        elif auth_type in ("tequila", "session"):
-            log_print("[cyan]Using Tequila authentication[/cyan]")
-        elif auth_type == "basic" and credential_service:
-            log_print(
-                f"[cyan]Using HTTP Basic authentication ({credential_service})[/cyan]"
-            )
-        elif ssh_host:
-            log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
+            if site_type == "twiki":
+                log_print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
+            elif auth_type in ("tequila", "session"):
+                log_print("[cyan]Using Tequila authentication[/cyan]")
+            elif auth_type == "basic" and credential_service:
+                log_print(
+                    f"[cyan]Using HTTP Basic authentication ({credential_service})[/cyan]"
+                )
+            elif ssh_host:
+                log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
 
         # Validate credentials once per credential_service
         if auth_type in ("tequila", "session", "basic") and credential_service:

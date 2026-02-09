@@ -175,14 +175,12 @@ class Encoder:
     def _validate_remote_backend(self) -> None:
         """Validate remote backend is available and model matches.
 
-        No fallback to OpenRouter - if remote is unavailable, raises error.
-        The remote client has its own retry logic for transient failures.
+        Proactively ensures the SLURM embedding server is running before
+        checking health. SLURM is preferred over ad-hoc login node services
+        (systemd, manual) because it runs on dedicated GPU nodes.
 
-        Retries the health check up to 3 times with backoff to handle
-        transient timeouts when the server is under heavy load.
-
-        If the server is unreachable, attempts SLURM auto-launch (submits
-        a GPU job on the titan partition and waits for it to start).
+        If SLURM is not available (no sbatch), falls through to check
+        whatever server is already responding on the configured URL.
         """
         if self._backend_validated:
             return
@@ -190,7 +188,12 @@ class Encoder:
         if not self._remote_client:
             raise EmbeddingBackendError("Remote client not initialized")
 
-        # Retry health check with increasing timeout under load
+        # Proactively ensure SLURM server is running (preferred over login node).
+        # This is a no-op if SLURM is not accessible (no sbatch locally or via SSH).
+        # ensure_server() handles port conflicts with non-SLURM services.
+        self._try_slurm_auto_launch()
+
+        # Verify server health with retries
         last_error = None
         for attempt in range(3):
             timeout = 5.0 + attempt * 5.0  # 5s, 10s, 15s
@@ -202,23 +205,12 @@ class Encoder:
             if attempt < 2:
                 time.sleep(1.0 + attempt)
         else:
-            # Server unreachable - try SLURM auto-launch
-            if self._try_slurm_auto_launch():
-                # Re-check health after SLURM launch
-                if self._remote_client.is_available(timeout=15.0):
-                    self.logger.info("Server available after SLURM auto-launch")
-                else:
-                    raise EmbeddingBackendError(
-                        "SLURM job started but server not reachable. "
-                        "Check: imas-codex serve embed slurm status"
-                    )
-            else:
-                raise EmbeddingBackendError(
-                    f"Remote embedding server not available at {self.config.remote_url}. "
-                    f"{last_error}. "
-                    "Ensure SSH tunnel is active: ssh -f -N -L 18765:127.0.0.1:18765 iter\n"
-                    "Or submit a SLURM job: imas-codex serve embed slurm submit"
-                )
+            raise EmbeddingBackendError(
+                f"Remote embedding server not available at {self.config.remote_url}. "
+                f"{last_error}. "
+                "Ensure SSH tunnel is active: ssh -f -N -L 18765:127.0.0.1:18765 iter\n"
+                "Or submit a SLURM job: imas-codex serve embed slurm submit"
+            )
 
         info = self._remote_client.get_info()
         if not info:
@@ -264,13 +256,17 @@ class Encoder:
         self._backend_validated = True
 
     def _try_slurm_auto_launch(self) -> bool:
-        """Try to auto-launch the embedding server via SLURM.
+        """Proactively ensure the SLURM embedding server is running.
 
-        Checks if SLURM (sbatch) is available — either locally (on ITER)
-        or via SSH to the ITER login node.
+        Called before health checks to prefer SLURM GPU nodes over ad-hoc
+        services on the login node (systemd, manual). SLURM servers run
+        on titan partition with dedicated P100 GPUs.
+
+        If a non-SLURM server is occupying the port, ensure_server() will
+        free the port (stop systemd etc.) before setting up port forwarding.
 
         Returns:
-            True if SLURM launch succeeded and server is available
+            True if SLURM server is ready, False if SLURM unavailable
         """
         import shutil
         import subprocess
@@ -300,9 +296,7 @@ class Encoder:
                 self.logger.debug("Cannot reach ITER via SSH for SLURM auto-launch")
                 return False
 
-        self.logger.info(
-            "Remote embed server unreachable, attempting SLURM auto-launch..."
-        )
+        self.logger.info("Ensuring SLURM embedding server is running...")
 
         try:
             from imas_codex.embeddings.slurm import ensure_server
