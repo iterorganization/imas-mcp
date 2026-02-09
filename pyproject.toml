@@ -120,6 +120,7 @@ cpu = [
 ]
 gpu = [
     "torch==2.5.1",
+    "accelerate>=1.0.0",
     "sentence-transformers>=5.0.0",
     "llama-index-embeddings-huggingface>=0.6",
 ]
