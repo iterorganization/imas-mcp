@@ -400,7 +400,30 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
     if not state.node or not state.port:
         return False
 
-    # Kill any existing forward
+    # Check if a proxy is already running for this port and working.
+    # If so, skip teardown/restart to avoid interrupting active connections.
+    check = _run_cmd(
+        f"ss -tlnp src :{state.port} 2>/dev/null | grep -q python3",
+        timeout=5,
+    )
+    if check.returncode == 0:
+        # Port is already bound by a python3 process — verify it reaches
+        # the correct compute node by checking the proxy script content.
+        verify = _run_cmd(
+            f"grep -q '{state.node}' {REMOTE_STATE_DIR}/tcp-proxy-{state.port}.py 2>/dev/null"
+            f" || ps -p $(cat {REMOTE_STATE_DIR}/tcp-proxy-{state.port}.pid 2>/dev/null) -o args= 2>/dev/null"
+            f" | grep -q '{state.node}'",
+            timeout=5,
+        )
+        if verify.returncode == 0:
+            logger.info(
+                "TCP proxy already running for %s:%d, reusing",
+                state.node,
+                state.port,
+            )
+            return True
+
+    # Kill any existing forward (wrong target or stale)
     _kill_port_forward(state)
 
     # Free port from non-SLURM processes (e.g., systemd service)
