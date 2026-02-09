@@ -785,12 +785,19 @@ class Encoder:
         return SentenceTransformer
 
     def _load_model(self) -> None:
-        """Load local SentenceTransformer model."""
+        """Load local SentenceTransformer model.
+
+        Searches for model files in three stages:
+        1. Project-specific cache directory (local_files_only)
+        2. Default HuggingFace hub cache (local_files_only) — needed for
+           air-gapped GPU nodes where models are pre-cached on NFS
+        3. Download from HuggingFace (requires internet)
+        """
         ST = self._import_sentence_transformers()
         try:
             cache_folder = str(self._get_cache_directory() / "models")
             try:
-                self.logger.debug("Loading cached sentence transformer model...")
+                self.logger.debug("Loading model from project cache...")
                 self._model = ST(
                     self.config.model_name,
                     device=self.config.device,
@@ -798,21 +805,36 @@ class Encoder:
                     local_files_only=True,
                 )
                 self.logger.debug(
-                    f"Model {self.config.model_name} loaded from cache on device: {self._model.device}"
+                    f"Model {self.config.model_name} loaded from project cache on device: {self._model.device}"
                 )
+                return
             except Exception:
-                self.logger.debug(
-                    f"Model not in cache, downloading {self.config.model_name}..."
-                )
+                self.logger.debug("Model not in project cache, trying HF hub cache...")
+
+            try:
                 self._model = ST(
                     self.config.model_name,
                     device=self.config.device,
-                    cache_folder=cache_folder,
-                    local_files_only=False,
+                    local_files_only=True,
                 )
                 self.logger.debug(
-                    f"Downloaded and loaded model {self.config.model_name} on device: {self._model.device}"
+                    f"Model {self.config.model_name} loaded from HF hub cache on device: {self._model.device}"
                 )
+                return
+            except Exception:
+                self.logger.debug(
+                    f"Model not in HF hub cache, downloading {self.config.model_name}..."
+                )
+
+            self._model = ST(
+                self.config.model_name,
+                device=self.config.device,
+                cache_folder=cache_folder,
+                local_files_only=False,
+            )
+            self.logger.debug(
+                f"Downloaded model {self.config.model_name} on device: {self._model.device}"
+            )
         except Exception as e:  # pragma: no cover
             self.logger.error(f"Failed to load model {self.config.model_name}: {e}")
             raise EmbeddingBackendError(
