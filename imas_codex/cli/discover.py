@@ -1321,6 +1321,35 @@ def discover_wiki(
                 log_print(f"[red]No site matching '{source}'[/red]")
                 raise SystemExit(1) from None
 
+    # ================================================================
+    # Phase 1: Preflight - validate credentials, bulk discovery
+    # ================================================================
+
+    # Check wiki stats once (facility-level, not per-site)
+    wiki_stats = get_wiki_stats(facility)
+    existing_pages = wiki_stats.get("pages", 0) or wiki_stats.get("total", 0)
+    should_bulk_discover = force_discovery or existing_pages == 0
+
+    if existing_pages > 0 and not should_bulk_discover:
+        log_print(
+            f"[dim]Found {existing_pages} existing wiki pages, skipping bulk discovery[/dim]"
+        )
+        log_print("[dim]Use --force-discovery to re-run bulk page discovery[/dim]")
+    elif force_discovery and existing_pages > 0:
+        log_print(
+            f"[yellow]Force discovery: adding new pages (keeping {existing_pages} existing)[/yellow]"
+        )
+
+    # Reset orphaned pages once (facility-level)
+    reset_counts = reset_transient_pages(facility, silent=True)
+    if any(reset_counts.values()):
+        total_reset = sum(reset_counts.values())
+        log_print(f"[dim]Reset {total_reset} orphaned pages from previous run[/dim]")
+
+    # Validate all sites and run bulk discovery for each
+    site_configs: list[dict] = []
+    validated_cred_services: set[str] = set()
+
     for site_idx in site_indices:
         site = wiki_sites[site_idx]
         site_type = site.get("site_type", "mediawiki")
@@ -1329,32 +1358,24 @@ def discover_wiki(
         auth_type = site.get("auth_type")
         credential_service = site.get("credential_service")
 
-        # Determine SSH host: explicit site ssh_host, or facility default if ssh_available
+        # Determine SSH host
         ssh_host = site.get("ssh_host")
         if not ssh_host and site.get("ssh_available", False):
             ssh_host = config.get("ssh_host")
 
-        log_print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
+        # Short name for multi-site display (e.g. "/pog" from URL path)
+        from urllib.parse import urlparse as _urlparse
 
-        # Check if wiki pages already exist for this facility
-        wiki_stats = get_wiki_stats(facility)
-        existing_pages = wiki_stats.get("pages", 0) or wiki_stats.get("total", 0)
+        parsed_url = _urlparse(base_url)
+        short_name = parsed_url.path.rstrip("/") or base_url
 
-        # Determine if bulk discovery should run:
-        # - Always run if --force-discovery
-        # - Run if no pages exist at all (first run)
-        # Note: Do NOT re-run just because all pages are scored
-        should_bulk_discover = force_discovery or existing_pages == 0
-
-        if existing_pages > 0 and not should_bulk_discover:
+        if len(site_indices) > 1:
+            site_n = site_indices.index(site_idx) + 1
             log_print(
-                f"[dim]Found {existing_pages} existing wiki pages, skipping bulk discovery[/dim]"
+                f"\n[bold cyan]({site_n}/{len(site_indices)}) {base_url}[/bold cyan]"
             )
-            log_print("[dim]Use --force-discovery to re-run bulk page discovery[/dim]")
-        elif force_discovery and existing_pages > 0:
-            log_print(
-                f"[yellow]Force discovery: adding new pages (keeping {existing_pages} existing)[/yellow]"
-            )
+        else:
+            log_print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
 
         if site_type == "twiki":
             log_print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
@@ -1363,107 +1384,136 @@ def discover_wiki(
         elif ssh_host:
             log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
 
-        # Validate credentials upfront BEFORE launching any workers.
-        # This ensures the interactive prompt happens early (not mid-output),
-        # and fails fast if credentials can't be obtained.
+        # Validate credentials once per credential_service
         if auth_type in ("tequila", "session") and credential_service:
-            from imas_codex.discovery.wiki.auth import CredentialManager
+            if credential_service not in validated_cred_services:
+                from imas_codex.discovery.wiki.auth import CredentialManager
 
-            cred_mgr = CredentialManager()
-            creds = cred_mgr.get_credentials(credential_service, prompt_if_missing=True)
-            if creds is None:
-                log_print(
-                    f"[red]Credentials required for {credential_service}.[/red]\n"
-                    f"Set them with: imas-codex credentials set {credential_service}\n"
-                    f"Or set environment variables:\n"
-                    f"  export {cred_mgr._env_var_name(credential_service, 'username')}=your_username\n"
-                    f"  export {cred_mgr._env_var_name(credential_service, 'password')}=your_password"
+                cred_mgr = CredentialManager()
+                creds = cred_mgr.get_credentials(
+                    credential_service, prompt_if_missing=True
                 )
-                raise SystemExit(1)
-            log_print(f"[dim]Authenticated as: {creds[0]}[/dim]")
+                if creds is None:
+                    log_print(
+                        f"[red]Credentials required for {credential_service}.[/red]\n"
+                        f"Set them with: imas-codex credentials set {credential_service}\n"
+                        f"Or set environment variables:\n"
+                        f"  export {cred_mgr._env_var_name(credential_service, 'username')}=your_username\n"
+                        f"  export {cred_mgr._env_var_name(credential_service, 'password')}=your_password"
+                    )
+                    raise SystemExit(1)
+                log_print(f"[dim]Authenticated as: {creds[0]}[/dim]")
+                validated_cred_services.add(credential_service)
 
-        # Reset any transient states from crashed previous runs
-        reset_counts = reset_transient_pages(facility, silent=True)
-        if any(reset_counts.values()):
-            total_reset = sum(reset_counts.values())
-            log_print(
-                f"[dim]Reset {total_reset} orphaned pages from previous run[/dim]"
-            )
-
-        # Run bulk discovery as a setup step BEFORE the main progress display
-        # This is a one-time operation that discovers all wiki page names quickly
+        # Bulk page discovery
         bulk_discovered = 0
-        if should_bulk_discover and site_type == "mediawiki" and not score_only:
-            from imas_codex.discovery.wiki.parallel import (
-                bulk_discover_all_pages_http,
-                bulk_discover_all_pages_mediawiki,
-            )
+        if should_bulk_discover and not score_only:
+            if site_type == "mediawiki":
+                from imas_codex.discovery.wiki.parallel import (
+                    bulk_discover_all_pages_http,
+                    bulk_discover_all_pages_mediawiki,
+                )
 
-            def bulk_progress_log(msg, _):
-                """Log-only progress for bulk discovery."""
-                wiki_logger.info(f"BULK: {msg}")
+                def bulk_progress_log(msg, _):
+                    wiki_logger.info(f"BULK: {msg}")
 
-            if use_rich:
-                from rich.status import Status
+                if use_rich:
+                    from rich.status import Status
 
-                with Status(
-                    "[cyan]Bulk discovery: scanning Special:AllPages...[/cyan]",
-                    console=console,
-                    spinner="dots",
-                ) as status:
+                    with Status(
+                        f"[cyan]Bulk discovery: {short_name}...[/cyan]",
+                        console=console,
+                        spinner="dots",
+                    ) as status:
 
-                    def bulk_progress_rich(msg, _):
-                        """Update status spinner during bulk discovery."""
-                        # Parse progress from messages like "range 1/23: 355 pages"
-                        if "pages" in msg:
-                            status.update(f"[cyan]Bulk discovery: {msg}[/cyan]")
-                        elif "creating" in msg:
-                            status.update(f"[cyan]Creating pages: {msg}[/cyan]")
-                        elif "created" in msg:
-                            status.update(f"[green]{msg}[/green]")
+                        def bulk_progress_rich(msg, _, _sn=short_name):
+                            if "pages" in msg:
+                                status.update(f"[cyan]{_sn}: {msg}[/cyan]")
+                            elif "creating" in msg:
+                                status.update(f"[cyan]{_sn}: {msg}[/cyan]")
+                            elif "created" in msg:
+                                status.update(f"[green]{_sn}: {msg}[/green]")
 
+                        if auth_type == "tequila" and credential_service:
+                            bulk_discovered = bulk_discover_all_pages_http(
+                                facility,
+                                base_url,
+                                credential_service,
+                                bulk_progress_rich,
+                            )
+                        elif ssh_host:
+                            bulk_discovered = bulk_discover_all_pages_mediawiki(
+                                facility, base_url, ssh_host, bulk_progress_rich
+                            )
+
+                    if bulk_discovered > 0:
+                        log_print(
+                            f"[green]Discovered {bulk_discovered:,} pages[/green]"
+                        )
+                else:
                     if auth_type == "tequila" and credential_service:
                         bulk_discovered = bulk_discover_all_pages_http(
-                            facility, base_url, credential_service, bulk_progress_rich
+                            facility,
+                            base_url,
+                            credential_service,
+                            bulk_progress_log,
                         )
                     elif ssh_host:
                         bulk_discovered = bulk_discover_all_pages_mediawiki(
-                            facility, base_url, ssh_host, bulk_progress_rich
+                            facility, base_url, ssh_host, bulk_progress_log
+                        )
+                    if bulk_discovered > 0:
+                        wiki_logger.info(
+                            f"Discovered {bulk_discovered} pages from {short_name}"
                         )
 
-                if bulk_discovered > 0:
-                    log_print(
-                        f"[green]Discovered {bulk_discovered:,} wiki pages[/green]"
-                    )
-            else:
-                # Non-rich mode: log only
-                if auth_type == "tequila" and credential_service:
-                    bulk_discovered = bulk_discover_all_pages_http(
-                        facility, base_url, credential_service, bulk_progress_log
-                    )
-                elif ssh_host:
-                    bulk_discovered = bulk_discover_all_pages_mediawiki(
-                        facility, base_url, ssh_host, bulk_progress_log
-                    )
-                if bulk_discovered > 0:
-                    wiki_logger.info(f"Discovered {bulk_discovered} wiki pages")
+            elif site_type in ("twiki_static", "static_html"):
+                from imas_codex.discovery.wiki.parallel import (
+                    bulk_discover_all_pages_twiki_static,
+                )
 
-            # Since bulk discovery ran, don't run it again in run_parallel_wiki_discovery
-            should_bulk_discover = False
+                def twiki_progress_log(msg, _):
+                    wiki_logger.info(f"BULK: {msg}")
 
-        # Bulk artifact discovery (separate from page discovery)
-        # Runs if explicitly requested or if page discovery ran
-        should_discover_artifacts = (
+                if use_rich:
+                    from rich.status import Status
+
+                    with Status(
+                        f"[cyan]TWiki discovery: {short_name}...[/cyan]",
+                        console=console,
+                        spinner="dots",
+                    ) as status:
+
+                        def twiki_progress_rich(msg, _, _sn=short_name):
+                            status.update(f"[cyan]{_sn}: {msg}[/cyan]")
+
+                        bulk_discovered = bulk_discover_all_pages_twiki_static(
+                            facility, base_url, twiki_progress_rich
+                        )
+
+                    if bulk_discovered > 0:
+                        log_print(
+                            f"[green]Discovered {bulk_discovered:,} pages[/green]"
+                        )
+                else:
+                    bulk_discovered = bulk_discover_all_pages_twiki_static(
+                        facility, base_url, twiki_progress_log
+                    )
+                    if bulk_discovered > 0:
+                        wiki_logger.info(
+                            f"Discovered {bulk_discovered} pages from {short_name}"
+                        )
+
+        # Bulk artifact discovery
+        should_discover_artifacts_site = (
             discover_artifacts or (bulk_discovered > 0)
         ) and not score_only
-        if should_discover_artifacts and site_type == "mediawiki":
+        if should_discover_artifacts_site and site_type == "mediawiki":
             from imas_codex.discovery.wiki.parallel import bulk_discover_artifacts
 
             def artifact_progress_log(msg, _):
-                """Log-only progress for artifact discovery."""
                 wiki_logger.info(f"ARTIFACTS: {msg}")
 
-            # Get wiki client for Tequila auth
             wiki_client = None
             if auth_type == "tequila" and credential_service:
                 from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
@@ -1479,17 +1529,16 @@ def discover_wiki(
                 from rich.status import Status
 
                 with Status(
-                    "[cyan]Artifact discovery: scanning Special:ListFiles...[/cyan]",
+                    f"[cyan]Artifact discovery: {short_name}...[/cyan]",
                     console=console,
                     spinner="dots",
                 ) as status:
 
-                    def artifact_progress_rich(msg, _):
-                        """Update status spinner during artifact discovery."""
+                    def artifact_progress_rich(msg, _, _sn=short_name):
                         if "batch" in msg:
-                            status.update(f"[cyan]Artifact discovery: {msg}[/cyan]")
+                            status.update(f"[cyan]{_sn} artifacts: {msg}[/cyan]")
                         elif "created" in msg:
-                            status.update(f"[green]Artifacts: {msg}[/green]")
+                            status.update(f"[green]{_sn} artifacts: {msg}[/green]")
 
                     artifacts_discovered = bulk_discover_artifacts(
                         facility=facility,
@@ -1501,7 +1550,6 @@ def discover_wiki(
                         on_progress=artifact_progress_rich,
                     )
             else:
-                # Non-rich mode: log only
                 artifacts_discovered = bulk_discover_artifacts(
                     facility=facility,
                     base_url=base_url,
@@ -1519,71 +1567,107 @@ def discover_wiki(
                 log_print(
                     f"[green]Discovered {artifacts_discovered:,} artifacts[/green]"
                 )
-            else:
-                log_print("[yellow]No artifacts discovered[/yellow]")
 
-        # Display worker configuration (above the progress panel)
-        # Note: With bulk discovery, scan workers aren't used - show actual workers
-        worker_parts = []
-        if not scan_only:
-            worker_parts.append(f"{score_workers} score")
-            worker_parts.append(f"{ingest_workers} ingest")
-            worker_parts.append("1 artifact")
-        log_print(f"Workers: {', '.join(worker_parts)}")
-        if not scan_only:
-            log_print(f"Cost limit: ${cost_limit:.2f}")
-        if max_pages:
-            log_print(f"Page limit: {max_pages}")
-        if focus and not scan_only:
-            log_print(f"Focus: {focus}")
+        site_configs.append(
+            {
+                "site_type": site_type,
+                "base_url": base_url,
+                "portal_page": portal_page,
+                "ssh_host": ssh_host,
+                "auth_type": auth_type,
+                "credential_service": credential_service,
+                "short_name": short_name,
+            }
+        )
 
-        try:
+    if not site_configs:
+        log_print("[yellow]No sites to process[/yellow]")
+        raise SystemExit(1)
 
-            async def run_discovery_with_progress(
-                _facility: str,
-                _site_type: str,
-                _base_url: str,
-                _portal_page: str,
-                _ssh_host: str | None,
-                _auth_type: str | None,
-                _credential_service: str | None,
-                _cost_limit: float,
-                _max_pages: int | None,
-                _max_depth: int | None,
-                _focus: str | None,
-                _scan_only: bool,
-                _score_only: bool,
-                _use_rich: bool,
-                _bulk_discover: bool,
-                _num_score_workers: int,
-                _num_ingest_workers: int,
-            ):
-                # Logging-only callbacks for non-rich mode
-                # Skip idle messages to reduce log noise
-                def log_on_scan(msg, stats, results=None):
-                    if msg != "idle":
-                        wiki_logger.info(f"SCAN: {msg}")
+    # ================================================================
+    # Phase 2: Score/ingest all sites with unified progress display
+    # ================================================================
 
-                def log_on_score(msg, stats, results=None):
-                    if msg != "idle":
-                        wiki_logger.info(f"SCORE: {msg}")
+    worker_parts = []
+    if not scan_only:
+        worker_parts.append(f"{score_workers} score")
+        worker_parts.append(f"{ingest_workers} ingest")
+        worker_parts.append("1 artifact")
+    log_print(f"\nWorkers: {', '.join(worker_parts)}")
+    if not scan_only:
+        log_print(f"Cost limit: ${cost_limit:.2f}")
+    if max_pages:
+        log_print(f"Page limit: {max_pages}")
+    if focus and not scan_only:
+        log_print(f"Focus: {focus}")
+    if len(site_configs) > 1:
+        log_print(f"Sites to process: {len(site_configs)}")
 
-                def log_on_ingest(msg, stats, results=None):
-                    if msg != "idle":
-                        wiki_logger.info(f"INGEST: {msg}")
+    try:
 
-                if not _use_rich:
-                    # Non-rich mode: just run discovery with logging callbacks
+        async def run_all_sites_unified(
+            _facility: str,
+            _site_configs: list[dict],
+            _cost_limit: float,
+            _max_pages: int | None,
+            _max_depth: int | None,
+            _focus: str | None,
+            _scan_only: bool,
+            _score_only: bool,
+            _use_rich: bool,
+            _num_score_workers: int,
+            _num_ingest_workers: int,
+        ):
+            combined: dict = {
+                "scanned": 0,
+                "scored": 0,
+                "ingested": 0,
+                "artifacts": 0,
+                "cost": 0.0,
+                "elapsed_seconds": 0.0,
+            }
+            remaining_budget = _cost_limit
+            remaining_pages = _max_pages
+
+            # Logging-only callbacks for non-rich mode
+            def log_on_scan(msg, stats, results=None):
+                if msg != "idle":
+                    wiki_logger.info(f"SCAN: {msg}")
+
+            def log_on_score(msg, stats, results=None):
+                if msg != "idle":
+                    wiki_logger.info(f"SCORE: {msg}")
+
+            def log_on_ingest(msg, stats, results=None):
+                if msg != "idle":
+                    wiki_logger.info(f"INGEST: {msg}")
+
+            if not _use_rich:
+                for i, sc in enumerate(_site_configs):
+                    if remaining_budget <= 0:
+                        wiki_logger.info("Budget exhausted, skipping remaining sites")
+                        break
+                    if remaining_pages is not None and remaining_pages <= 0:
+                        wiki_logger.info("Page limit reached, skipping remaining sites")
+                        break
+
+                    wiki_logger.info(
+                        "Processing site %d/%d: %s",
+                        i + 1,
+                        len(_site_configs),
+                        sc["base_url"],
+                    )
+
                     result = await run_parallel_wiki_discovery(
                         facility=_facility,
-                        site_type=_site_type,
-                        base_url=_base_url,
-                        portal_page=_portal_page,
-                        ssh_host=_ssh_host,
-                        auth_type=_auth_type,
-                        credential_service=_credential_service,
-                        cost_limit=_cost_limit,
-                        page_limit=_max_pages,
+                        site_type=sc["site_type"],
+                        base_url=sc["base_url"],
+                        portal_page=sc["portal_page"],
+                        ssh_host=sc["ssh_host"],
+                        auth_type=sc["auth_type"],
+                        credential_service=sc["credential_service"],
+                        cost_limit=remaining_budget,
+                        page_limit=remaining_pages,
                         max_depth=_max_depth,
                         focus=_focus,
                         num_scan_workers=1,
@@ -1591,162 +1675,193 @@ def discover_wiki(
                         num_ingest_workers=_num_ingest_workers,
                         scan_only=_scan_only,
                         score_only=_score_only,
-                        bulk_discover=_bulk_discover,
+                        bulk_discover=False,
                         on_scan_progress=log_on_scan,
                         on_score_progress=log_on_score,
                         on_ingest_progress=log_on_ingest,
                     )
-                    return result
 
-                # Rich mode: use WikiProgressDisplay
-                from imas_codex.discovery.wiki.progress import WikiProgressDisplay
+                    for key in ("scanned", "scored", "ingested", "artifacts"):
+                        combined[key] += result.get(key, 0)
+                    combined["cost"] += result.get("cost", 0)
+                    combined["elapsed_seconds"] += result.get("elapsed_seconds", 0)
 
-                with WikiProgressDisplay(
-                    facility=_facility,
-                    cost_limit=_cost_limit,
-                    page_limit=_max_pages,
-                    focus=_focus or "",
-                    console=console,
-                    scan_only=_scan_only,
-                    score_only=_score_only,
-                ) as display:
-                    # Periodic graph state refresh
-                    async def refresh_graph_state():
-                        from imas_codex.discovery.wiki.parallel import (
-                            get_wiki_discovery_stats,
-                        )
+                    remaining_budget -= result.get("cost", 0)
+                    if remaining_pages is not None:
+                        remaining_pages -= result.get("scored", 0)
 
-                        while True:
-                            try:
-                                stats = get_wiki_discovery_stats(_facility)
-                                display.update_from_graph(
-                                    total_pages=stats.get("total", 0),
-                                    pages_scanned=stats.get("scanned", 0),
-                                    pages_scored=stats.get("scored", 0),
-                                    pages_ingested=stats.get("ingested", 0),
-                                    pages_skipped=stats.get("skipped", 0),
-                                    pending_score=stats.get(
-                                        "pending_score", stats.get("scanned", 0)
-                                    ),
-                                    pending_ingest=stats.get("pending_ingest", 0),
-                                    pending_artifact_score=stats.get(
-                                        "pending_artifact_score", 0
-                                    ),
-                                    pending_artifact_ingest=stats.get(
-                                        "pending_artifact_ingest", 0
-                                    ),
-                                    accumulated_cost=stats.get("accumulated_cost", 0.0),
-                                )
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception as e:
-                                wiki_logger.debug("Graph refresh failed: %s", e)
-                            await asyncio.sleep(0.5)
+                return combined
 
-                    async def queue_ticker():
-                        while True:
-                            try:
-                                display.tick()
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception as e:
-                                wiki_logger.debug("Display tick failed: %s", e)
-                            await asyncio.sleep(0.15)
+            # Rich mode: single unified display across all sites
+            from imas_codex.discovery.wiki.progress import WikiProgressDisplay
 
-                    refresh_task = asyncio.create_task(refresh_graph_state())
-                    ticker_task = asyncio.create_task(queue_ticker())
+            multi_site = len(_site_configs) > 1
 
-                    def on_scan(msg, stats, results=None):
-                        # Convert results to dicts for streaming queue
-                        result_dicts = None
-                        if results:
-                            result_dicts = [
-                                {
-                                    "title": r.get("id", "?").split(":")[-1][:50],
-                                    "out_links": r.get("out_degree", 0),
-                                    "depth": r.get("depth", 0),
-                                }
-                                for r in results[:5]
-                            ]
-                        display.update_scan(msg, stats, result_dicts)
+            with WikiProgressDisplay(
+                facility=_facility,
+                cost_limit=_cost_limit,
+                page_limit=_max_pages,
+                focus=_focus or "",
+                console=console,
+                scan_only=_scan_only,
+                score_only=_score_only,
+            ) as display:
+                # Set multi-site info on first iteration
+                if multi_site:
+                    display.set_site_info(
+                        site_name=_site_configs[0]["short_name"],
+                        site_index=0,
+                        total_sites=len(_site_configs),
+                    )
 
-                    def on_score(msg, stats, results=None):
-                        result_dicts = None
-                        if results:
-                            result_dicts = [
-                                {
-                                    "title": r.get("id", "?").split(":")[-1][:60],
-                                    "score": r.get("score"),
-                                    "physics_domain": r.get("physics_domain"),
-                                    "description": r.get("description", ""),
-                                    "is_physics": r.get("is_physics", False),
-                                    "skipped": r.get("skipped", False),
-                                    "skip_reason": r.get("skip_reason", ""),
-                                }
-                                for r in results[:5]
-                            ]
-                        display.update_score(msg, stats, result_dicts)
+                # Periodic graph refresh (facility-level, works across sites)
+                async def refresh_graph_state():
+                    from imas_codex.discovery.wiki.parallel import (
+                        get_wiki_discovery_stats,
+                    )
 
-                    def on_ingest(msg, stats, results=None):
-                        result_dicts = None
-                        if results:
-                            result_dicts = [
-                                {
-                                    "title": r.get("id", "?").split(":")[-1][:60],
-                                    "score": r.get("score"),
-                                    "description": r.get("description", ""),
-                                    "physics_domain": r.get("physics_domain"),
-                                    "chunk_count": r.get("chunk_count", 0),
-                                }
-                                for r in results[:5]
-                            ]
-                        display.update_ingest(msg, stats, result_dicts)
+                    while True:
+                        try:
+                            stats = get_wiki_discovery_stats(_facility)
+                            display.update_from_graph(
+                                total_pages=stats.get("total", 0),
+                                pages_scanned=stats.get("scanned", 0),
+                                pages_scored=stats.get("scored", 0),
+                                pages_ingested=stats.get("ingested", 0),
+                                pages_skipped=stats.get("skipped", 0),
+                                pending_score=stats.get(
+                                    "pending_score",
+                                    stats.get("scanned", 0),
+                                ),
+                                pending_ingest=stats.get("pending_ingest", 0),
+                                pending_artifact_score=stats.get(
+                                    "pending_artifact_score", 0
+                                ),
+                                pending_artifact_ingest=stats.get(
+                                    "pending_artifact_ingest", 0
+                                ),
+                                accumulated_cost=stats.get("accumulated_cost", 0.0),
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as e:
+                            wiki_logger.debug("Graph refresh failed: %s", e)
+                        await asyncio.sleep(0.5)
 
-                    def on_artifact(msg, stats, results=None):
-                        result_dicts = None
-                        if results:
-                            result_dicts = [
-                                {
-                                    "filename": r.get("filename", "unknown"),
-                                    "artifact_type": r.get("artifact_type", ""),
-                                    "score": r.get("score"),
-                                    "physics_domain": r.get("physics_domain"),
-                                    "description": r.get("description", ""),
-                                    "chunk_count": r.get("chunk_count", 0),
-                                }
-                                for r in results[:5]
-                            ]
-                        display.update_artifact(msg, stats, result_dicts)
+                async def queue_ticker():
+                    while True:
+                        try:
+                            display.tick()
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as e:
+                            wiki_logger.debug("Display tick failed: %s", e)
+                        await asyncio.sleep(0.15)
 
-                    def on_artifact_score(msg, stats, results=None):
-                        result_dicts = None
-                        if results:
-                            result_dicts = [
-                                {
-                                    "filename": r.get("filename", "unknown"),
-                                    "artifact_type": r.get("artifact_type", ""),
-                                    "score": r.get("score"),
-                                    "physics_domain": r.get("physics_domain"),
-                                    "description": r.get("description", ""),
-                                }
-                                for r in results[:5]
-                            ]
-                        display.update_artifact_score(msg, stats, result_dicts)
+                refresh_task = asyncio.create_task(refresh_graph_state())
+                ticker_task = asyncio.create_task(queue_ticker())
 
-                    def on_worker_status(worker_group):
-                        display.update_worker_status(worker_group)
+                def on_scan(msg, stats, results=None):
+                    result_dicts = None
+                    if results:
+                        result_dicts = [
+                            {
+                                "title": r.get("id", "?").split(":")[-1][:50],
+                                "out_links": r.get("out_degree", 0),
+                                "depth": r.get("depth", 0),
+                            }
+                            for r in results[:5]
+                        ]
+                    display.update_scan(msg, stats, result_dicts)
 
-                    try:
+                def on_score(msg, stats, results=None):
+                    result_dicts = None
+                    if results:
+                        result_dicts = [
+                            {
+                                "title": r.get("id", "?").split(":")[-1][:60],
+                                "score": r.get("score"),
+                                "physics_domain": r.get("physics_domain"),
+                                "description": r.get("description", ""),
+                                "is_physics": r.get("is_physics", False),
+                                "skipped": r.get("skipped", False),
+                                "skip_reason": r.get("skip_reason", ""),
+                            }
+                            for r in results[:5]
+                        ]
+                    display.update_score(msg, stats, result_dicts)
+
+                def on_ingest(msg, stats, results=None):
+                    result_dicts = None
+                    if results:
+                        result_dicts = [
+                            {
+                                "title": r.get("id", "?").split(":")[-1][:60],
+                                "score": r.get("score"),
+                                "description": r.get("description", ""),
+                                "physics_domain": r.get("physics_domain"),
+                                "chunk_count": r.get("chunk_count", 0),
+                            }
+                            for r in results[:5]
+                        ]
+                    display.update_ingest(msg, stats, result_dicts)
+
+                def on_artifact(msg, stats, results=None):
+                    result_dicts = None
+                    if results:
+                        result_dicts = [
+                            {
+                                "filename": r.get("filename", "unknown"),
+                                "artifact_type": r.get("artifact_type", ""),
+                                "score": r.get("score"),
+                                "physics_domain": r.get("physics_domain"),
+                                "description": r.get("description", ""),
+                                "chunk_count": r.get("chunk_count", 0),
+                            }
+                            for r in results[:5]
+                        ]
+                    display.update_artifact(msg, stats, result_dicts)
+
+                def on_artifact_score(msg, stats, results=None):
+                    result_dicts = None
+                    if results:
+                        result_dicts = [
+                            {
+                                "filename": r.get("filename", "unknown"),
+                                "artifact_type": r.get("artifact_type", ""),
+                                "score": r.get("score"),
+                                "physics_domain": r.get("physics_domain"),
+                                "description": r.get("description", ""),
+                            }
+                            for r in results[:5]
+                        ]
+                    display.update_artifact_score(msg, stats, result_dicts)
+
+                def on_worker_status(worker_group):
+                    display.update_worker_status(worker_group)
+
+                try:
+                    for i, sc in enumerate(_site_configs):
+                        # Advance display to next site (skip first)
+                        if i > 0 and multi_site:
+                            display.advance_site(sc["short_name"], i)
+
+                        # Stop if budget or page limit exhausted
+                        if remaining_budget <= 0:
+                            break
+                        if remaining_pages is not None and remaining_pages <= 0:
+                            break
+
                         result = await run_parallel_wiki_discovery(
                             facility=_facility,
-                            site_type=_site_type,
-                            base_url=_base_url,
-                            portal_page=_portal_page,
-                            ssh_host=_ssh_host,
-                            auth_type=_auth_type,
-                            credential_service=_credential_service,
-                            cost_limit=_cost_limit,
-                            page_limit=_max_pages,
+                            site_type=sc["site_type"],
+                            base_url=sc["base_url"],
+                            portal_page=sc["portal_page"],
+                            ssh_host=sc["ssh_host"],
+                            auth_type=sc["auth_type"],
+                            credential_service=sc["credential_service"],
+                            cost_limit=remaining_budget,
+                            page_limit=remaining_pages,
                             max_depth=_max_depth,
                             focus=_focus,
                             num_scan_workers=1,
@@ -1754,7 +1869,7 @@ def discover_wiki(
                             num_ingest_workers=_num_ingest_workers,
                             scan_only=_scan_only,
                             score_only=_score_only,
-                            bulk_discover=_bulk_discover,
+                            bulk_discover=False,
                             on_scan_progress=on_scan,
                             on_score_progress=on_score,
                             on_ingest_progress=on_ingest,
@@ -1762,63 +1877,71 @@ def discover_wiki(
                             on_artifact_score_progress=on_artifact_score,
                             on_worker_status=on_worker_status,
                         )
-                    finally:
-                        refresh_task.cancel()
-                        ticker_task.cancel()
-                        try:
-                            await refresh_task
-                        except asyncio.CancelledError:
-                            pass
-                        try:
-                            await ticker_task
-                        except asyncio.CancelledError:
-                            pass
 
-                    # Print summary
-                    display.print_summary()
+                        for key in (
+                            "scanned",
+                            "scored",
+                            "ingested",
+                            "artifacts",
+                        ):
+                            combined[key] += result.get(key, 0)
+                        combined["cost"] += result.get("cost", 0)
+                        combined["elapsed_seconds"] += result.get("elapsed_seconds", 0)
 
-                return result
+                        remaining_budget -= result.get("cost", 0)
+                        if remaining_pages is not None:
+                            remaining_pages -= result.get("scored", 0)
 
-            result = asyncio.run(
-                run_discovery_with_progress(
-                    _facility=facility,
-                    _site_type=site_type,
-                    _base_url=base_url,
-                    _portal_page=portal_page,
-                    _ssh_host=ssh_host,
-                    _auth_type=auth_type,
-                    _credential_service=credential_service,
-                    _cost_limit=cost_limit,
-                    _max_pages=max_pages,
-                    _max_depth=max_depth,
-                    _focus=focus,
-                    _scan_only=scan_only,
-                    _score_only=score_only,
-                    _use_rich=use_rich,
-                    _bulk_discover=should_bulk_discover,
-                    _num_score_workers=score_workers,
-                    _num_ingest_workers=ingest_workers,
-                )
+                finally:
+                    refresh_task.cancel()
+                    ticker_task.cancel()
+                    try:
+                        await refresh_task
+                    except asyncio.CancelledError:
+                        pass
+                    try:
+                        await ticker_task
+                    except asyncio.CancelledError:
+                        pass
+
+                # Print summary
+                display.print_summary()
+
+            return combined
+
+        result = asyncio.run(
+            run_all_sites_unified(
+                _facility=facility,
+                _site_configs=site_configs,
+                _cost_limit=cost_limit,
+                _max_pages=max_pages,
+                _max_depth=max_depth,
+                _focus=focus,
+                _scan_only=scan_only,
+                _score_only=score_only,
+                _use_rich=use_rich,
+                _num_score_workers=score_workers,
+                _num_ingest_workers=ingest_workers,
             )
+        )
 
-            # Display final results
-            log_print(
-                f"  [green]{result.get('scanned', 0)} pages scanned, "
-                f"{result.get('scored', 0)} scored, "
-                f"{result.get('ingested', 0)} ingested, "
-                f"{result.get('artifacts', 0)} artifacts[/green]"
-            )
-            log_print(
-                f"  [dim]Cost: ${result.get('cost', 0):.2f}, "
-                f"Time: {result.get('elapsed_seconds', 0):.1f}s[/dim]"
-            )
-        except Exception as e:
-            log_print(f"[red]Error processing site: {e}[/red]")
-            if verbose:
-                import traceback
+        # Display final results
+        log_print(
+            f"  [green]{result.get('scanned', 0)} pages scanned, "
+            f"{result.get('scored', 0)} scored, "
+            f"{result.get('ingested', 0)} ingested, "
+            f"{result.get('artifacts', 0)} artifacts[/green]"
+        )
+        log_print(
+            f"  [dim]Cost: ${result.get('cost', 0):.2f}, "
+            f"Time: {result.get('elapsed_seconds', 0):.1f}s[/dim]"
+        )
+    except Exception as e:
+        log_print(f"[red]Error: {e}[/red]")
+        if verbose:
+            import traceback
 
-                traceback.print_exc()
-            continue
+            traceback.print_exc()
 
     log_print("\n[green]Documentation discovery complete.[/green]")
 

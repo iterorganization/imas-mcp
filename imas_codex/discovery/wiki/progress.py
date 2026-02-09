@@ -143,6 +143,21 @@ class ProgressState:
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
 
+    # Multi-site tracking (for facilities with multiple wiki instances)
+    current_site_name: str = ""
+    current_site_index: int = 0
+    total_sites: int = 1
+
+    # Accumulated stats from previous sites in multi-site run.
+    # These offsets are added to current-site counters for grand totals.
+    _offset_scored: int = 0
+    _offset_ingested: int = 0
+    _offset_score_cost: float = 0.0
+    _offset_ingest_cost: float = 0.0
+    _offset_artifact_score_cost: float = 0.0
+    _offset_artifacts: int = 0
+    _offset_artifacts_scored: int = 0
+
     # Current items (and their processing state)
     current_score: ScoreItem | None = None
     current_ingest: IngestItem | None = None
@@ -186,9 +201,44 @@ class ProgressState:
 
     @property
     def run_cost(self) -> float:
-        """Total cost for this run (page score + ingest + artifact score)."""
+        """Total cost for entire run including previous sites."""
         return (
-            self._run_score_cost + self._run_ingest_cost + self._run_artifact_score_cost
+            self._offset_score_cost
+            + self._run_score_cost
+            + self._offset_ingest_cost
+            + self._run_ingest_cost
+            + self._offset_artifact_score_cost
+            + self._run_artifact_score_cost
+        )
+
+    @property
+    def total_run_scored(self) -> int:
+        """Total scored across all sites in this run."""
+        return self._offset_scored + self.run_scored
+
+    @property
+    def total_run_ingested(self) -> int:
+        """Total ingested across all sites in this run."""
+        return self._offset_ingested + self.run_ingested
+
+    @property
+    def total_run_artifacts(self) -> int:
+        """Total artifacts ingested across all sites."""
+        return self._offset_artifacts + self.run_artifacts
+
+    @property
+    def total_run_artifacts_scored(self) -> int:
+        """Total artifacts scored across all sites."""
+        return self._offset_artifacts_scored + self.run_artifacts_scored
+
+    @property
+    def total_score_cost(self) -> float:
+        """Total page+artifact scoring cost across all sites."""
+        return (
+            self._offset_score_cost
+            + self._run_score_cost
+            + self._offset_artifact_score_cost
+            + self._run_artifact_score_cost
         )
 
     @property
@@ -205,7 +255,7 @@ class ProgressState:
     def page_limit_reached(self) -> bool:
         if self.page_limit is None or self.page_limit <= 0:
             return False
-        return self.run_scored >= self.page_limit
+        return self.total_run_scored >= self.page_limit
 
     @property
     def limit_reason(self) -> str | None:
@@ -219,15 +269,19 @@ class ProgressState:
     @property
     def cost_per_page(self) -> float | None:
         """Average LLM cost per scored page (page scoring only)."""
-        if self.run_scored > 0:
-            return self._run_score_cost / self.run_scored
+        total = self.total_run_scored
+        cost = self._offset_score_cost + self._run_score_cost
+        if total > 0:
+            return cost / total
         return None
 
     @property
     def cost_per_artifact_score(self) -> float | None:
         """Average LLM cost per scored artifact."""
-        if self.run_artifacts_scored > 0:
-            return self._run_artifact_score_cost / self.run_artifacts_scored
+        total = self.total_run_artifacts_scored
+        cost = self._offset_artifact_score_cost + self._run_artifact_score_cost
+        if total > 0:
+            return cost / total
         return None
 
     @property
@@ -248,9 +302,10 @@ class ProgressState:
 
         # Priority 2: Page limit
         if self.page_limit is not None and self.page_limit > 0:
-            if self.run_scored > 0 and self.elapsed > 0:
-                rate = self.run_scored / self.elapsed
-                remaining = self.page_limit - self.run_scored
+            total_scored = self.total_run_scored
+            if total_scored > 0 and self.elapsed > 0:
+                rate = total_scored / self.elapsed
+                remaining = self.page_limit - total_scored
                 return max(0, remaining / rate) if rate > 0 else None
 
         # Priority 3: Work-based ETA from slowest worker group
@@ -377,6 +432,13 @@ class WikiProgressDisplay:
             title += " (SCAN ONLY)"
         elif self.state.score_only:
             title += " (SCORE ONLY)"
+
+        # Multi-site indicator: "JET Wiki Discovery (3/16 /pog)"
+        if self.state.total_sites > 1 and self.state.current_site_name:
+            idx = self.state.current_site_index + 1
+            total = self.state.total_sites
+            title += f"  ({idx}/{total} {self.state.current_site_name})"
+
         header.append(title.center(self.width - 4), style="bold cyan")
 
         # Focus (if set and not scan_only)
@@ -533,8 +595,8 @@ class WikiProgressDisplay:
             section.append("  ARTFCT  ", style="bold yellow")
             # Artifacts don't have a total, just show scored→ingested count
             section.append("─" * bar_width, style="dim")
-            scored = self.state.run_artifacts_scored
-            ingested = self.state.run_artifacts
+            scored = self.state.total_run_artifacts_scored
+            ingested = self.state.total_run_artifacts
             if scored > 0:
                 section.append(f" {scored:>3,}→{ingested:<3,}", style="bold")
             else:
@@ -1192,13 +1254,83 @@ class WikiProgressDisplay:
         self.state.worker_group = worker_group
         self._refresh()
 
+    def set_site_info(self, site_name: str, site_index: int, total_sites: int) -> None:
+        """Set multi-site info for initial display."""
+        self.state.current_site_name = site_name
+        self.state.current_site_index = site_index
+        self.state.total_sites = total_sites
+        self._refresh()
+
+    def advance_site(self, site_name: str, site_index: int) -> None:
+        """Advance to next wiki site, accumulating stats from current site.
+
+        Saves current-site run counters into offsets so that the display
+        shows grand totals across all sites, then resets per-site state
+        for the new site's workers.
+        """
+        # Accumulate current-site stats into offsets
+        self.state._offset_scored += self.state.run_scored
+        self.state._offset_ingested += self.state.run_ingested
+        self.state._offset_score_cost += self.state._run_score_cost
+        self.state._offset_ingest_cost += self.state._run_ingest_cost
+        self.state._offset_artifact_score_cost += self.state._run_artifact_score_cost
+        self.state._offset_artifacts += self.state.run_artifacts
+        self.state._offset_artifacts_scored += self.state.run_artifacts_scored
+
+        # Reset per-site counters (new workers will fill these)
+        self.state.run_scored = 0
+        self.state.run_ingested = 0
+        self.state._run_score_cost = 0.0
+        self.state._run_ingest_cost = 0.0
+        self.state._run_artifact_score_cost = 0.0
+        self.state.run_artifacts = 0
+        self.state.run_artifacts_scored = 0
+        self.state.score_rate = None
+        self.state.ingest_rate = None
+        self.state.artifact_rate = None
+        self.state.artifact_score_rate = None
+
+        # Reset activity displays
+        self.state.current_score = None
+        self.state.current_ingest = None
+        self.state.current_artifact = None
+        self.state.score_processing = False
+        self.state.ingest_processing = False
+        self.state.artifact_processing = False
+
+        # Reset worker group (set by new run_parallel_wiki_discovery)
+        self.state.worker_group = None
+
+        # Reset streaming queues
+        self.state.score_queue = StreamQueue(
+            rate=0.5, max_rate=2.5, min_display_time=0.4
+        )
+        self.state.ingest_queue = StreamQueue(
+            rate=0.5, max_rate=2.5, min_display_time=0.4
+        )
+        self.state.artifact_queue = StreamQueue(
+            rate=0.3, max_rate=1.0, min_display_time=0.5
+        )
+        self.state.artifact_score_queue = StreamQueue(
+            rate=0.3, max_rate=1.0, min_display_time=0.5
+        )
+
+        # Update site info
+        self.state.current_site_name = site_name
+        self.state.current_site_index = site_index
+
+        self._refresh()
+
     def print_summary(self) -> None:
         """Print final discovery summary."""
         self.console.print()
+        title = f"{self.state.facility.upper()} Wiki Discovery Complete"
+        if self.state.total_sites > 1:
+            title += f" ({self.state.total_sites} sites)"
         self.console.print(
             Panel(
                 self._build_summary(),
-                title=f"{self.state.facility.upper()} Wiki Discovery Complete",
+                title=title,
                 border_style="green",
                 width=self.width,
             )
@@ -1210,13 +1342,12 @@ class WikiProgressDisplay:
 
         # SCORE stats (pages + artifacts combined)
         total_scored = self.state.pages_scored + self.state.pages_ingested
-        total_score_cost = (
-            self.state._run_score_cost + self.state._run_artifact_score_cost
-        )
+        total_score_cost = self.state.total_score_cost
         summary.append("  SCORE ", style="bold blue")
         summary.append(f"scored={total_scored:,}", style="blue")
-        if self.state.run_artifacts_scored > 0:
-            summary.append(f"+{self.state.run_artifacts_scored:,}art", style="blue dim")
+        artifacts_scored = self.state.total_run_artifacts_scored
+        if artifacts_scored > 0:
+            summary.append(f"+{artifacts_scored:,}art", style="blue dim")
         summary.append(f"  skipped={self.state.pages_skipped:,}", style="yellow")
         summary.append(f"  cost=${total_score_cost:.3f}", style="yellow")
         if self.state.score_rate:
@@ -1227,8 +1358,9 @@ class WikiProgressDisplay:
         total_ingested = self.state.pages_ingested
         summary.append("  INGEST", style="bold magenta")
         summary.append(f"  ingested={total_ingested:,}", style="magenta")
-        if self.state.run_artifacts > 0:
-            summary.append(f"+{self.state.run_artifacts:,}art", style="magenta dim")
+        artifacts_ingested = self.state.total_run_artifacts
+        if artifacts_ingested > 0:
+            summary.append(f"+{artifacts_ingested:,}art", style="magenta dim")
         if self.state.ingest_rate:
             summary.append(f"  {self.state.ingest_rate:.1f}/s", style="dim")
         summary.append("\n")
@@ -1237,6 +1369,11 @@ class WikiProgressDisplay:
         summary.append("  USAGE ", style="bold white")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
         summary.append(f"  total_cost=${self.state.run_cost:.2f}", style="yellow")
+        if self.state.total_sites > 1:
+            summary.append(
+                f"  sites={self.state.current_site_index + 1}/{self.state.total_sites}",
+                style="cyan",
+            )
 
         # Show coverage percentage
         if self.state.total_pages > 0:
