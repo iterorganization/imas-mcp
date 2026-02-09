@@ -133,12 +133,13 @@ class MediaWikiAdapter(WikiAdapter):
     ) -> list[DiscoveredPage]:
         """Discover all pages via Special:AllPages.
 
-        Uses SSH if available, otherwise HTTP with auth.
+        Prefers authenticated HTTP client over SSH when both are available,
+        since SSH uses unauthenticated curl which fails with SSO (e.g. Tequila).
         """
-        if self.ssh_host:
-            return self._discover_pages_ssh(facility, base_url, on_progress)
-        elif self.wiki_client:
+        if self.wiki_client:
             return self._discover_pages_http(facility, base_url, on_progress)
+        elif self.ssh_host:
+            return self._discover_pages_ssh(facility, base_url, on_progress)
         else:
             logger.warning(
                 "No SSH host or wiki client configured for MediaWiki adapter"
@@ -346,10 +347,10 @@ class MediaWikiAdapter(WikiAdapter):
         Example API call:
         /api.php?action=query&list=allimages&ailimit=500&aiprop=url|size|mime&format=json
         """
-        if self.ssh_host:
-            return self._discover_artifacts_ssh(facility, base_url, on_progress)
-        elif self.wiki_client:
+        if self.wiki_client:
             return self._discover_artifacts_http(facility, base_url, on_progress)
+        elif self.ssh_host:
+            return self._discover_artifacts_ssh(facility, base_url, on_progress)
         else:
             logger.warning("No SSH host or wiki client configured")
             return []
@@ -360,19 +361,58 @@ class MediaWikiAdapter(WikiAdapter):
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> list[DiscoveredArtifact]:
-        """Discover artifacts via SSH using MediaWiki API."""
+        """Discover artifacts via SSH using MediaWiki API.
+
+        Tries two API URL candidates since MediaWiki installations vary:
+        1. {base_url}/api.php  (e.g. https://spcwiki.epfl.ch/wiki/api.php)
+        2. {scheme}://{netloc}/api.php  (e.g. https://spcwiki.epfl.ch/api.php)
+
+        SSH access bypasses SSO (e.g. Tequila) since curl runs from the
+        facility's internal network.
+        """
         import json
         from urllib.parse import urlparse
 
         artifacts: list[DiscoveredArtifact] = []
 
-        # MediaWiki API endpoint - derive from base URL
-        # base_url might be https://spcwiki.epfl.ch/wiki, but API is at https://spcwiki.epfl.ch/api.php
+        # Build candidate API URLs - try wiki path first, then root
         parsed = urlparse(base_url)
-        api_url = f"{parsed.scheme}://{parsed.netloc}/api.php"
+        api_candidates = [f"{base_url}/api.php"]
+        root_api = f"{parsed.scheme}://{parsed.netloc}/api.php"
+        if root_api != api_candidates[0]:
+            api_candidates.append(root_api)
+
         params = (
             "action=query&list=allimages&ailimit=500&aiprop=url|size|mime&format=json"
         )
+
+        # Find working API URL
+        api_url = None
+        for candidate in api_candidates:
+            test_url = f"{candidate}?action=query&meta=siteinfo&format=json"
+            cmd = f'curl -sk "{test_url}"'
+            try:
+                result = subprocess.run(
+                    ["ssh", self.ssh_host, cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    data = json.loads(result.stdout)
+                    if "query" in data:
+                        api_url = candidate
+                        logger.debug("Using API URL: %s", api_url)
+                        break
+            except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+                continue
+
+        if not api_url:
+            logger.warning(
+                "Could not find working MediaWiki API via SSH (tried %s)",
+                ", ".join(api_candidates),
+            )
+            return []
 
         continue_token = None
         batch = 0
@@ -394,7 +434,15 @@ class MediaWikiAdapter(WikiAdapter):
                 if result.returncode != 0:
                     break
 
-                data = json.loads(result.stdout)
+                # Guard against HTML responses (login pages, error pages)
+                stdout = result.stdout.strip()
+                if stdout.startswith("<!") or stdout.startswith("<html"):
+                    logger.warning(
+                        "SSH API returned HTML instead of JSON (possible auth redirect)"
+                    )
+                    break
+
+                data = json.loads(stdout)
                 images = data.get("query", {}).get("allimages", [])
 
                 for img in images:
@@ -466,11 +514,45 @@ class MediaWikiAdapter(WikiAdapter):
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> list[DiscoveredArtifact]:
-        """Discover artifacts via MediaWiki API (list=allimages)."""
+        """Discover artifacts via MediaWiki API (list=allimages).
+
+        Tries two API URL candidates since MediaWiki installations vary:
+        1. {base_url}/api.php  (e.g. https://spcwiki.epfl.ch/wiki/api.php)
+        2. {scheme}://{netloc}/api.php  (e.g. https://spcwiki.epfl.ch/api.php)
+        """
         artifacts: list[DiscoveredArtifact] = []
 
-        # MediaWiki API endpoint - use wiki path (common for proxied wikis)
-        api_url = f"{base_url}/api.php"
+        # Build candidate API URLs
+        parsed = urllib.parse.urlparse(base_url)
+        api_candidates = [f"{base_url}/api.php"]
+        root_api = f"{parsed.scheme}://{parsed.netloc}/api.php"
+        if root_api != api_candidates[0]:
+            api_candidates.append(root_api)
+
+        # Find working API URL by probing siteinfo
+        api_url = None
+        for candidate in api_candidates:
+            try:
+                probe = self.wiki_client.session.get(
+                    candidate,
+                    params={"action": "query", "meta": "siteinfo", "format": "json"},
+                    verify=False,
+                    timeout=15,
+                )
+                ct = probe.headers.get("content-type", "")
+                if probe.status_code == 200 and "json" in ct:
+                    api_url = candidate
+                    logger.debug("Using API URL: %s", api_url)
+                    break
+            except Exception:
+                continue
+
+        if not api_url:
+            logger.debug(
+                "No working API URL found (tried %s), will fall back to HTML",
+                ", ".join(api_candidates),
+            )
+            return []
 
         params = {
             "action": "query",
