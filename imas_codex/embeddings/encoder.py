@@ -919,7 +919,7 @@ class Encoder:
         self,
         model_name: str,
         cache_folder: str | None = None,
-    ) -> dict[str, int]:
+    ) -> dict[str, int] | str:
         """Build an explicit device_map that keeps decoder layers whole.
 
         ``device_map='auto'`` can split *within* transformer layers,
@@ -928,10 +928,12 @@ class Encoder:
         intra-layer cross-device moves, producing ``RuntimeError``
         on the layernorm's ``self.weight * hidden_states`` operation.
 
-        This method reads the model config to learn the number of hidden
-        layers, then distributes whole layers evenly across visible GPUs.
+        This method reads the safetensors index to learn the actual weight
+        key prefix and config for the layer count, then distributes whole
+        layers evenly across visible GPUs.
         """
         import json
+        import re
 
         import torch
 
@@ -952,25 +954,38 @@ class Encoder:
         n_layers = config.get("num_hidden_layers", 0)
         if n_layers == 0:
             self.logger.warning(
-                "num_hidden_layers not found in config; falling back to device_map='balanced'"
+                "num_hidden_layers not in config; falling back to device_map='balanced'"
             )
             return "balanced"  # type: ignore[return-value]
 
-        # Build explicit mapping keeping each decoder layer on one GPU.
-        device_map: dict[str, int] = {"model.embed_tokens": 0}
+        # Detect weight key prefix from safetensors index.
+        # AutoModel may load Qwen3Model (prefix="") or
+        # Qwen3ForCausalLM (prefix="model.") depending on model class.
+        prefix = ""
+        index_file = Path(resolved_path) / "model.safetensors.index.json"
+        if index_file.exists():
+            with open(index_file) as f:
+                index = json.load(f)
+            for key in index.get("weight_map", {}):
+                m = re.match(r"^(.*?)layers\.0\.", key)
+                if m:
+                    prefix = m.group(1)
+                    break
+            self.logger.debug("Detected weight prefix: %r", prefix)
+
+        # Build mapping keeping each decoder layer on one GPU.
+        device_map: dict[str, int] = {f"{prefix}embed_tokens": 0}
         layers_per_gpu = n_layers / n_gpu
         for i in range(n_layers):
             gpu = min(int(i / layers_per_gpu), n_gpu - 1)
-            device_map[f"model.layers.{i}"] = gpu
-
-        # Final norm and optional lm_head go on last GPU
-        device_map["model.norm"] = n_gpu - 1
+            device_map[f"{prefix}layers.{i}"] = gpu
+        device_map[f"{prefix}norm"] = n_gpu - 1
 
         self.logger.debug(
-            "Built explicit device_map: %d layers across %d GPUs (layers_per_gpu=%.1f)",
+            "Built device_map: %d layers / %d GPUs (prefix=%r)",
             n_layers,
             n_gpu,
-            layers_per_gpu,
+            prefix,
         )
         return device_map
 
