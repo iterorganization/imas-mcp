@@ -596,7 +596,7 @@ class WikiProgressDisplay:
             if self.state.ingest_rate and self.state.ingest_rate > 0:
                 section.append(f" {self.state.ingest_rate:>5.1f}/s", style="dim")
 
-        # ARTIFACTS row - shows artifact ingestion progress (no percentage)
+        # ARTIFACTS row - shows artifact scoring and ingestion progress
         section.append("\n")
         if self.state.scan_only:
             section.append("  ARTFCT  ", style="dim")
@@ -604,15 +604,19 @@ class WikiProgressDisplay:
             section.append("    disabled", style="dim italic")
         else:
             section.append("  ARTFCT  ", style="bold yellow")
-            # Artifacts don't have a total, just show scored→ingested count
-            section.append("─" * bar_width, style="dim")
+            # Show scored and ingested counts with clear labels
             scored = self.state.total_run_artifacts_scored
             ingested = self.state.total_run_artifacts
-            if scored > 0:
-                section.append(f" {scored:>3,}→{ingested:<3,}", style="bold")
+            # Build mini progress: [scored scr | ingested ing]
+            if scored > 0 or ingested > 0:
+                section.append("─" * (bar_width - 12), style="dim")
+                section.append(f" {scored:>3,}", style="bold cyan")
+                section.append(" scr", style="dim")
+                section.append(f" {ingested:>3,}", style="bold green")
+                section.append(" ing", style="dim")
             else:
-                section.append(f" {ingested:>6,}", style="bold")
-            section.append("     ", style="dim")  # No percentage for artifacts
+                section.append("─" * bar_width, style="dim")
+                section.append("      ", style="dim")
             rate = self.state.artifact_score_rate or self.state.artifact_rate
             if rate and rate > 0:
                 section.append(f" {rate:>5.1f}/s", style="dim")

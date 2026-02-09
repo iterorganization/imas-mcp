@@ -32,7 +32,6 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import httpx
 from neo4j.exceptions import TransientError
 
 from imas_codex.discovery.base.progress import WorkerStats
@@ -125,14 +124,18 @@ class WikiDiscoveryState:
     portal_page: str
     ssh_host: str | None = None
 
-    # Authentication for HTTP-based access (Tequila SSO)
-    auth_type: str | None = None  # tequila, session, ssh_proxy, or None
+    # Authentication for HTTP-based access
+    auth_type: str | None = None  # tequila, session, keycloak, basic, or None
     credential_service: str | None = None  # Keyring service for credentials
 
     # Shared async wiki client for native async HTTP (avoids re-auth per page)
     # Initialized lazily on first use, shared across all workers
     _async_wiki_client: Any = field(default=None, repr=False)
     _async_wiki_client_lock: Any = field(default=None, repr=False)
+
+    # Shared Keycloak async client (for keycloak/basic auth)
+    _keycloak_client: Any = field(default=None, repr=False)
+    _keycloak_client_lock: Any = field(default=None, repr=False)
 
     # Limits
     cost_limit: float = 10.0
@@ -320,6 +323,45 @@ class WikiDiscoveryState:
             except Exception:
                 pass
             self._async_wiki_client = None
+
+    async def get_keycloak_client(self) -> Any:
+        """Get shared AsyncKeycloakSession for Keycloak/Basic auth.
+
+        Lazily initializes a Keycloak OIDC session that persists cookies
+        across all page fetches. One login authenticates across all wiki
+        sites on the same domain.
+
+        Returns:
+            Authenticated httpx.AsyncClient or None if auth fails.
+        """
+        if self._keycloak_client is None:
+            from imas_codex.discovery.wiki.keycloak import AsyncKeycloakSession
+
+            if self._keycloak_client_lock is None:
+                self._keycloak_client_lock = asyncio.Lock()
+
+            async with self._keycloak_client_lock:
+                if self._keycloak_client is None:
+                    aks = AsyncKeycloakSession(self.credential_service or self.facility)
+                    try:
+                        self._keycloak_client = await aks.login(f"{self.base_url}/")
+                        logger.info(
+                            "Initialized shared Keycloak session for %s",
+                            self.credential_service,
+                        )
+                    except Exception as e:
+                        logger.warning("Keycloak auth failed: %s", e)
+
+        return self._keycloak_client
+
+    async def close_keycloak_client(self):
+        """Close the shared Keycloak client."""
+        if self._keycloak_client is not None:
+            try:
+                await self._keycloak_client.aclose()
+            except Exception:
+                pass
+            self._keycloak_client = None
 
 
 # Artifact types we can extract text from
@@ -1575,78 +1617,75 @@ def bulk_discover_all_pages_http(
         client.close()
 
 
-def bulk_discover_all_pages_basic_auth(
+def bulk_discover_all_pages_keycloak(
     facility: str,
     base_url: str,
     credential_service: str,
     on_progress: Callable | None = None,
+    session: Any = None,
 ) -> int:
-    """Bulk discover all wiki pages via Special:AllPages using HTTP Basic auth.
+    """Bulk discover all wiki pages via MediaWiki API with Keycloak auth.
 
-    Same strategy as bulk_discover_all_pages_http but uses Basic authentication
-    instead of Tequila SSO. This is the preferred method for JET wikis.
+    Uses the MediaWiki API (api.php?action=query&list=allpages) which is
+    the fastest and most reliable method. Keycloak OIDC authentication
+    provides session cookies that work across all wiki sites.
 
     Args:
         facility: Facility ID
-        base_url: Wiki base URL
+        base_url: Wiki base URL (e.g., "https://wiki.jetdata.eu/pog")
         credential_service: Keyring service name for credentials
         on_progress: Progress callback
+        session: Pre-authenticated requests.Session (optional, avoids re-login)
 
     Returns:
         Number of pages discovered
     """
-    import re
-    from urllib.parse import unquote
+    import json as json_mod
 
-    import requests
+    logger.info("Starting bulk page discovery via API (Keycloak auth)...")
 
-    from imas_codex.discovery.wiki.auth import CredentialManager
+    # Use provided session or authenticate
+    close_session = False
+    if session is None:
+        from imas_codex.discovery.wiki.keycloak import KeycloakSession
 
-    logger.info("Starting bulk page discovery via Special:AllPages (Basic auth)...")
-
-    # Get credentials
-    cred_mgr = CredentialManager()
-    creds = cred_mgr.get_credentials(credential_service, prompt_if_missing=False)
-    if not creds:
-        logger.error("No credentials available for %s", credential_service)
-        return 0
-
-    username, password = creds
-    session = requests.Session()
-    session.auth = (username, password)
-    session.verify = False
+        ks = KeycloakSession(credential_service)
+        try:
+            session = ks.login(f"{base_url}/")
+        except RuntimeError as e:
+            logger.error("Keycloak authentication failed: %s", e)
+            return 0
+        close_session = True
 
     try:
-        # Step 1: Get the alphabetical index to find range links
-        index_url = f"{base_url}/index.php?title=Special:AllPages"
+        # Use MediaWiki API to enumerate all pages (fastest method)
+        all_pages: set[str] = set()
+        apcontinue = None
 
-        try:
-            response = session.get(index_url, timeout=30)
-            if response.status_code != 200:
-                logger.warning(
-                    "Failed to fetch AllPages index: HTTP %d", response.status_code
-                )
-                return 0
-            html_content = response.text
-        except Exception as e:
-            logger.warning("Error fetching AllPages index: %s", e)
-            return 0
+        while True:
+            api_url = (
+                f"{base_url}/api.php?action=query&list=allpages&aplimit=500&format=json"
+            )
+            if apcontinue:
+                api_url += f"&apcontinue={urllib.parse.quote(apcontinue)}"
 
-        # Parse range links from the allpageslist table
-        range_pattern = re.compile(
-            r'href="[^"]*title=Special:AllPages[^"]*from=([^&"]+)[^"]*"'
-        )
-        ranges = list(set(range_pattern.findall(html_content)))
+            try:
+                response = session.get(api_url, timeout=30)
+                if response.status_code != 200:
+                    logger.warning(
+                        "API returned HTTP %d for %s", response.status_code, base_url
+                    )
+                    break
+                data = json_mod.loads(response.text)
+            except Exception as e:
+                logger.warning("Error fetching API for %s: %s", base_url, e)
+                break
 
-        if not ranges:
-            # Try extracting pages directly from the index page
-            logger.info("No ranges found, extracting pages from index page directly")
-            page_pattern = re.compile(r'href="/wiki/([^"?]+)"')
-            all_pages: set[str] = set()
-            for match in page_pattern.finditer(html_content):
-                page_name = unquote(match.group(1))
-                if not any(
-                    page_name.startswith(prefix)
+            pages = data.get("query", {}).get("allpages", [])
+            for page in pages:
+                title = page.get("title", "")
+                if title and not any(
+                    title.startswith(prefix)
                     for prefix in (
                         "Special:",
                         "File:",
@@ -1658,55 +1697,22 @@ def bulk_discover_all_pages_basic_auth(
                         "MediaWiki:",
                     )
                 ):
-                    all_pages.add(page_name)
-        else:
-            logger.info("Found %d page ranges to process", len(ranges))
+                    all_pages.add(title)
+
             if on_progress:
-                on_progress(f"found {len(ranges)} ranges", None)
+                on_progress(f"{len(all_pages)} pages discovered", None)
 
-            # Step 2: Fetch each range to get page titles
-            all_pages = set()
-            for i, from_page in enumerate(ranges):
-                range_url = (
-                    f"{base_url}/index.php?title=Special:AllPages&from={from_page}"
-                )
+            # Check for continuation
+            cont = data.get("continue", {})
+            apcontinue = cont.get("apcontinue")
+            if not apcontinue:
+                break
 
-                try:
-                    response = session.get(range_url, timeout=30)
-                    if response.status_code != 200:
-                        continue
-                    range_html = response.text
-                except Exception:
-                    continue
-
-                page_pattern = re.compile(r'href="/wiki/([^"?]+)"')
-                for match in page_pattern.finditer(range_html):
-                    page_name = unquote(match.group(1))
-                    if not any(
-                        page_name.startswith(prefix)
-                        for prefix in (
-                            "Special:",
-                            "File:",
-                            "Talk:",
-                            "User:",
-                            "Template:",
-                            "Category:",
-                            "Help:",
-                            "MediaWiki:",
-                        )
-                    ):
-                        all_pages.add(page_name)
-
-                if on_progress:
-                    on_progress(
-                        f"range {i + 1}/{len(ranges)}: {len(all_pages)} pages", None
-                    )
-
-        logger.info("Discovered %d unique pages", len(all_pages))
+        logger.info("Discovered %d unique pages from %s", len(all_pages), base_url)
         if not all_pages:
             return 0
 
-        # Step 3: Create all pages in graph as 'scanned' status
+        # Create all pages in graph as 'scanned' status
         from imas_codex.discovery.wiki.scraper import canonical_page_id
 
         batch_data = []
@@ -1759,7 +1765,12 @@ def bulk_discover_all_pages_basic_auth(
         return created
 
     finally:
-        session.close()
+        if close_session:
+            session.close()
+
+
+# Keep old name as alias for backwards compatibility in CLI imports
+bulk_discover_all_pages_basic_auth = bulk_discover_all_pages_keycloak
 
 
 # =============================================================================
@@ -2463,6 +2474,12 @@ async def score_worker(
         if state.auth_type in ("tequila", "session")
         else None
     )
+    # Get shared Keycloak client for keycloak/basic auth
+    shared_keycloak_client = (
+        await state.get_keycloak_client()
+        if state.auth_type in ("keycloak", "basic")
+        else None
+    )
     logger.debug(f"score_worker {worker_id}: got async wiki client")
 
     async def fetch_content_for_page(page: dict) -> dict:
@@ -2477,6 +2494,7 @@ async def score_worker(
                     credential_service=state.credential_service,
                     max_chars=1500,  # Reduced for scoring
                     async_wiki_client=shared_async_wiki_client,  # Native async HTTP
+                    keycloak_client=shared_keycloak_client,
                 )
                 return {
                     "id": page["id"],
@@ -2610,6 +2628,12 @@ async def ingest_worker(
         if state.auth_type in ("tequila", "session")
         else None
     )
+    # Get shared Keycloak client for keycloak/basic auth
+    shared_keycloak_client = (
+        await state.get_keycloak_client()
+        if state.auth_type in ("keycloak", "basic")
+        else None
+    )
 
     # Semaphore to limit concurrent page ingestion
     # Remote GPU embedding server handles 8 concurrent requests well
@@ -2631,6 +2655,7 @@ async def ingest_worker(
                     auth_type=state.auth_type,
                     credential_service=state.credential_service,
                     async_wiki_client=shared_async_wiki_client,
+                    keycloak_client=shared_keycloak_client,
                 )
                 return {
                     "id": page_id,
@@ -3545,6 +3570,7 @@ async def _fetch_and_summarize(
     credential_service: str | None = None,
     max_chars: int = 2000,
     async_wiki_client: Any = None,
+    keycloak_client: Any = None,
 ) -> str:
     """Fetch page content and extract text preview.
 
@@ -3554,10 +3580,11 @@ async def _fetch_and_summarize(
     Args:
         url: Page URL to fetch
         ssh_host: Optional SSH host for proxied fetching
-        auth_type: Authentication type (tequila, session, etc.)
+        auth_type: Authentication type (tequila, session, keycloak, basic, etc.)
         credential_service: Keyring service for credentials
         max_chars: Maximum characters to extract (default 2000, use 1500 for scoring)
-        async_wiki_client: Shared AsyncMediaWikiClient for native async HTTP
+        async_wiki_client: Shared AsyncMediaWikiClient for Tequila auth
+        keycloak_client: Shared httpx.AsyncClient for Keycloak auth
 
     Returns:
         Extracted text preview or empty string on error
@@ -3624,42 +3651,30 @@ async def _fetch_and_summarize(
             page = await client.get_page(page_name)
             return page.content_html if page else ""
 
-    async def _async_basic_auth_fetch() -> str:
-        """Fetch with HTTP Basic authentication using httpx."""
-        from imas_codex.discovery.wiki.auth import CredentialManager
-
-        cred_mgr = CredentialManager()
-        creds = cred_mgr.get_credentials(
-            credential_service or "unknown", prompt_if_missing=False
-        )
-        if not creds:
-            logger.warning("No credentials for basic auth fetch of %s", url)
+    async def _async_keycloak_fetch() -> str:
+        """Fetch with Keycloak auth using shared httpx.AsyncClient."""
+        if keycloak_client is None:
+            logger.warning("No Keycloak client available for %s", url)
             return ""
-        username, password = creds
         try:
-            async with httpx.AsyncClient(
-                timeout=30.0, follow_redirects=True, verify=False
-            ) as client:
-                response = await client.get(url, auth=(username, password))
-                if response.status_code == 200:
-                    return response.text
-                logger.debug(
-                    "Basic auth fetch returned HTTP %d for %s",
-                    response.status_code,
-                    url,
-                )
-                return ""
+            response = await keycloak_client.get(url)
+            if response.status_code == 200:
+                return response.text
+            logger.debug(
+                "Keycloak fetch returned HTTP %d for %s", response.status_code, url
+            )
+            return ""
         except Exception as e:
-            logger.debug("Basic auth fetch failed for %s: %s", url, e)
+            logger.debug("Keycloak fetch failed for %s: %s", url, e)
             return ""
 
     # Determine fetch strategy - prefer direct HTTP over SSH when credentials available
     if auth_type in ("tequila", "session"):
         # Fetch via Tequila SSO authentication using native async HTTP
         html = await _async_tequila_fetch()
-    elif auth_type == "basic" and credential_service:
-        # Fetch via HTTP Basic auth (direct access preferred over SSH)
-        html = await _async_basic_auth_fetch()
+    elif auth_type in ("keycloak", "basic") and keycloak_client:
+        # Fetch via Keycloak OIDC with shared session
+        html = await _async_keycloak_fetch()
     elif ssh_host:
         # Fetch via SSH proxy using curl in thread pool (subprocess is blocking)
         html = await asyncio.to_thread(_ssh_fetch)
@@ -3959,6 +3974,7 @@ async def _ingest_page(
     auth_type: str | None = None,
     credential_service: str | None = None,
     async_wiki_client: Any = None,
+    keycloak_client: Any = None,
 ) -> int:
     """Ingest a page: fetch content, chunk, and embed.
 
@@ -3970,9 +3986,10 @@ async def _ingest_page(
         facility: Facility ID (e.g., 'tcv', 'jet')
         site_type: Site type ('mediawiki', 'confluence', 'twiki')
         ssh_host: Optional SSH host for proxied fetching
-        auth_type: Authentication type (tequila, session, etc.)
+        auth_type: Authentication type (tequila, session, keycloak, basic, etc.)
         credential_service: Keyring service for credentials
-        async_wiki_client: Optional shared AsyncMediaWikiClient for native async HTTP
+        async_wiki_client: Optional shared AsyncMediaWikiClient for Tequila auth
+        keycloak_client: Optional shared httpx.AsyncClient for Keycloak auth
 
     Returns:
         Number of chunks created
@@ -3990,6 +4007,7 @@ async def _ingest_page(
         auth_type=auth_type,
         credential_service=credential_service,
         async_wiki_client=async_wiki_client,
+        keycloak_client=keycloak_client,
     )
     if not html or len(html) < 100:
         logger.warning("Insufficient content for %s", page_id)
@@ -4039,15 +4057,17 @@ async def _fetch_html(
     auth_type: str | None = None,
     credential_service: str | None = None,
     async_wiki_client: Any = None,
+    keycloak_client: Any = None,
 ) -> str:
     """Fetch HTML content from URL.
 
     Args:
         url: Page URL
         ssh_host: Optional SSH host for proxied fetching
-        auth_type: Authentication type (tequila, session, etc.)
+        auth_type: Authentication type (tequila, session, keycloak, basic, etc.)
         credential_service: Keyring service for credentials
-        async_wiki_client: Shared AsyncMediaWikiClient for native async HTTP
+        async_wiki_client: Shared AsyncMediaWikiClient for Tequila auth
+        keycloak_client: Shared httpx.AsyncClient for Keycloak auth
 
     Returns:
         HTML content string or empty string on error
@@ -4112,40 +4132,28 @@ async def _fetch_html(
             page = await client.get_page(page_name)
             return page.content_html if page else ""
 
-    async def _async_basic_auth_fetch() -> str:
-        """Fetch with HTTP Basic authentication using httpx."""
-        from imas_codex.discovery.wiki.auth import CredentialManager
-
-        cred_mgr = CredentialManager()
-        creds = cred_mgr.get_credentials(
-            credential_service or "unknown", prompt_if_missing=False
-        )
-        if not creds:
-            logger.warning("No credentials for basic auth fetch of %s", url)
+    async def _async_keycloak_fetch() -> str:
+        """Fetch with Keycloak auth using shared httpx.AsyncClient."""
+        if keycloak_client is None:
+            logger.warning("No Keycloak client available for %s", url)
             return ""
-        username, password = creds
         try:
-            async with httpx.AsyncClient(
-                timeout=30.0, follow_redirects=True, verify=False
-            ) as client:
-                response = await client.get(url, auth=(username, password))
-                if response.status_code == 200:
-                    return response.text
-                logger.debug(
-                    "Basic auth fetch returned HTTP %d for %s",
-                    response.status_code,
-                    url,
-                )
-                return ""
+            response = await keycloak_client.get(url)
+            if response.status_code == 200:
+                return response.text
+            logger.debug(
+                "Keycloak fetch returned HTTP %d for %s", response.status_code, url
+            )
+            return ""
         except Exception as e:
-            logger.debug("Basic auth fetch failed for %s: %s", url, e)
+            logger.debug("Keycloak fetch failed for %s: %s", url, e)
             return ""
 
     # Determine fetch strategy - prefer direct HTTP over SSH when credentials available
     if auth_type in ("tequila", "session"):
         return await _async_tequila_fetch()
-    elif auth_type == "basic" and credential_service:
-        return await _async_basic_auth_fetch()
+    elif auth_type in ("keycloak", "basic") and keycloak_client:
+        return await _async_keycloak_fetch()
     elif ssh_host:
         return await asyncio.to_thread(_ssh_fetch)
     else:
