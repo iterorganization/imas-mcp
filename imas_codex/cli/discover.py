@@ -1290,13 +1290,24 @@ def discover_wiki(
             )
 
     log_print(f"[bold]Documentation sources for {facility}:[/bold]")
-    for i, site in enumerate(wiki_sites):
-        site_type = site.get("site_type", "mediawiki")
-        url = site.get("url", "")
-        desc = site.get("description", "")
-        log_print(f"  [{i}] {site_type}: {url}")
-        if desc and verbose:
-            log_print(f"      {desc}")
+    if len(wiki_sites) > 3 and not verbose:
+        # Compact display: show wiki short names on a single line
+        from urllib.parse import urlparse as _parse_url
+
+        names = []
+        for site in wiki_sites:
+            parsed = _parse_url(site.get("url", ""))
+            name = parsed.path.rstrip("/").rsplit("/", 1)[-1] or site.get("url", "")
+            names.append(name)
+        log_print(f"  {len(wiki_sites)} sites: {', '.join(names)}")
+    else:
+        for i, site in enumerate(wiki_sites):
+            site_type = site.get("site_type", "mediawiki")
+            url = site.get("url", "")
+            desc = site.get("description", "")
+            log_print(f"  [{i}] {site_type}: {url}")
+            if desc and verbose:
+                log_print(f"      {desc}")
     if use_rich:
         console.print()
 
@@ -1363,16 +1374,16 @@ def discover_wiki(
         if not ssh_host and site.get("ssh_available", False):
             ssh_host = config.get("ssh_host")
 
-        # Short name for multi-site display (e.g. "/pog" from URL path)
+        # Short name for multi-site display (e.g. "pog" from URL path)
         from urllib.parse import urlparse as _urlparse
 
         parsed_url = _urlparse(base_url)
-        short_name = parsed_url.path.rstrip("/") or base_url
+        short_name = parsed_url.path.rstrip("/").rsplit("/", 1)[-1] or base_url
 
         if len(site_indices) > 1:
             site_n = site_indices.index(site_idx) + 1
             log_print(
-                f"\n[bold cyan]({site_n}/{len(site_indices)}) {base_url}[/bold cyan]"
+                f"[bold cyan]({site_n}/{len(site_indices)}) {short_name}[/bold cyan]"
             )
         else:
             log_print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
@@ -1381,11 +1392,15 @@ def discover_wiki(
             log_print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
         elif auth_type in ("tequila", "session"):
             log_print("[cyan]Using Tequila authentication[/cyan]")
+        elif auth_type == "basic" and credential_service:
+            log_print(
+                f"[cyan]Using HTTP Basic authentication ({credential_service})[/cyan]"
+            )
         elif ssh_host:
             log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
 
         # Validate credentials once per credential_service
-        if auth_type in ("tequila", "session") and credential_service:
+        if auth_type in ("tequila", "session", "basic") and credential_service:
             if credential_service not in validated_cred_services:
                 from imas_codex.discovery.wiki.auth import CredentialManager
 
@@ -1410,6 +1425,7 @@ def discover_wiki(
         if should_bulk_discover and not score_only:
             if site_type == "mediawiki":
                 from imas_codex.discovery.wiki.parallel import (
+                    bulk_discover_all_pages_basic_auth,
                     bulk_discover_all_pages_http,
                     bulk_discover_all_pages_mediawiki,
                 )
@@ -1441,6 +1457,13 @@ def discover_wiki(
                                 credential_service,
                                 bulk_progress_rich,
                             )
+                        elif auth_type == "basic" and credential_service:
+                            bulk_discovered = bulk_discover_all_pages_basic_auth(
+                                facility,
+                                base_url,
+                                credential_service,
+                                bulk_progress_rich,
+                            )
                         elif ssh_host:
                             bulk_discovered = bulk_discover_all_pages_mediawiki(
                                 facility, base_url, ssh_host, bulk_progress_rich
@@ -1453,6 +1476,13 @@ def discover_wiki(
                 else:
                     if auth_type == "tequila" and credential_service:
                         bulk_discovered = bulk_discover_all_pages_http(
+                            facility,
+                            base_url,
+                            credential_service,
+                            bulk_progress_log,
+                        )
+                    elif auth_type == "basic" and credential_service:
+                        bulk_discovered = bulk_discover_all_pages_basic_auth(
                             facility,
                             base_url,
                             credential_service,

@@ -32,6 +32,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from neo4j.exceptions import TransientError
 
 from imas_codex.discovery.base.progress import WorkerStats
@@ -1574,6 +1575,193 @@ def bulk_discover_all_pages_http(
         client.close()
 
 
+def bulk_discover_all_pages_basic_auth(
+    facility: str,
+    base_url: str,
+    credential_service: str,
+    on_progress: Callable | None = None,
+) -> int:
+    """Bulk discover all wiki pages via Special:AllPages using HTTP Basic auth.
+
+    Same strategy as bulk_discover_all_pages_http but uses Basic authentication
+    instead of Tequila SSO. This is the preferred method for JET wikis.
+
+    Args:
+        facility: Facility ID
+        base_url: Wiki base URL
+        credential_service: Keyring service name for credentials
+        on_progress: Progress callback
+
+    Returns:
+        Number of pages discovered
+    """
+    import re
+    from urllib.parse import unquote
+
+    import requests
+
+    from imas_codex.discovery.wiki.auth import CredentialManager
+
+    logger.info("Starting bulk page discovery via Special:AllPages (Basic auth)...")
+
+    # Get credentials
+    cred_mgr = CredentialManager()
+    creds = cred_mgr.get_credentials(credential_service, prompt_if_missing=False)
+    if not creds:
+        logger.error("No credentials available for %s", credential_service)
+        return 0
+
+    username, password = creds
+    session = requests.Session()
+    session.auth = (username, password)
+    session.verify = False
+
+    try:
+        # Step 1: Get the alphabetical index to find range links
+        index_url = f"{base_url}/index.php?title=Special:AllPages"
+
+        try:
+            response = session.get(index_url, timeout=30)
+            if response.status_code != 200:
+                logger.warning(
+                    "Failed to fetch AllPages index: HTTP %d", response.status_code
+                )
+                return 0
+            html_content = response.text
+        except Exception as e:
+            logger.warning("Error fetching AllPages index: %s", e)
+            return 0
+
+        # Parse range links from the allpageslist table
+        range_pattern = re.compile(
+            r'href="[^"]*title=Special:AllPages[^"]*from=([^&"]+)[^"]*"'
+        )
+        ranges = list(set(range_pattern.findall(html_content)))
+
+        if not ranges:
+            # Try extracting pages directly from the index page
+            logger.info("No ranges found, extracting pages from index page directly")
+            page_pattern = re.compile(r'href="/wiki/([^"?]+)"')
+            all_pages: set[str] = set()
+            for match in page_pattern.finditer(html_content):
+                page_name = unquote(match.group(1))
+                if not any(
+                    page_name.startswith(prefix)
+                    for prefix in (
+                        "Special:",
+                        "File:",
+                        "Talk:",
+                        "User:",
+                        "Template:",
+                        "Category:",
+                        "Help:",
+                        "MediaWiki:",
+                    )
+                ):
+                    all_pages.add(page_name)
+        else:
+            logger.info("Found %d page ranges to process", len(ranges))
+            if on_progress:
+                on_progress(f"found {len(ranges)} ranges", None)
+
+            # Step 2: Fetch each range to get page titles
+            all_pages = set()
+            for i, from_page in enumerate(ranges):
+                range_url = (
+                    f"{base_url}/index.php?title=Special:AllPages&from={from_page}"
+                )
+
+                try:
+                    response = session.get(range_url, timeout=30)
+                    if response.status_code != 200:
+                        continue
+                    range_html = response.text
+                except Exception:
+                    continue
+
+                page_pattern = re.compile(r'href="/wiki/([^"?]+)"')
+                for match in page_pattern.finditer(range_html):
+                    page_name = unquote(match.group(1))
+                    if not any(
+                        page_name.startswith(prefix)
+                        for prefix in (
+                            "Special:",
+                            "File:",
+                            "Talk:",
+                            "User:",
+                            "Template:",
+                            "Category:",
+                            "Help:",
+                            "MediaWiki:",
+                        )
+                    ):
+                        all_pages.add(page_name)
+
+                if on_progress:
+                    on_progress(
+                        f"range {i + 1}/{len(ranges)}: {len(all_pages)} pages", None
+                    )
+
+        logger.info("Discovered %d unique pages", len(all_pages))
+        if not all_pages:
+            return 0
+
+        # Step 3: Create all pages in graph as 'scanned' status
+        from imas_codex.discovery.wiki.scraper import canonical_page_id
+
+        batch_data = []
+        for page_name in all_pages:
+            page_id = canonical_page_id(page_name, facility)
+            url = f"{base_url}/{urllib.parse.quote(page_name, safe='/')}"
+            batch_data.append(
+                {
+                    "id": page_id,
+                    "title": page_name,
+                    "url": url,
+                }
+            )
+
+        batch_size = 500
+        created = 0
+        with GraphClient() as gc:
+            for i in range(0, len(batch_data), batch_size):
+                batch = batch_data[i : i + batch_size]
+                result = gc.query(
+                    """
+                    UNWIND $pages AS page
+                    MERGE (wp:WikiPage {id: page.id})
+                    ON CREATE SET wp.title = page.title,
+                                  wp.url = page.url,
+                                  wp.facility_id = $facility,
+                                  wp.status = $scanned,
+                                  wp.link_depth = 1,
+                                  wp.discovered_at = datetime(),
+                                  wp.bulk_discovered = true
+                    ON MATCH SET wp.bulk_discovered = true
+                    RETURN count(wp) AS count
+                    """,
+                    pages=batch,
+                    facility=facility,
+                    scanned=WikiPageStatus.scanned.value,
+                )
+                if result:
+                    created += result[0]["count"]
+
+                if on_progress:
+                    on_progress(
+                        f"creating pages ({i + len(batch)}/{len(batch_data)})", None
+                    )
+
+        logger.info("Created/updated %d pages in graph (scanned status)", created)
+        if on_progress:
+            on_progress(f"created {created} pages", None)
+
+        return created
+
+    finally:
+        session.close()
+
+
 # =============================================================================
 # Bulk Page Discovery for Static TWiki Exports
 # =============================================================================
@@ -2271,7 +2459,9 @@ async def score_worker(
     # Get shared async wiki client for Tequila auth (native async HTTP)
     logger.debug(f"score_worker {worker_id}: getting async wiki client")
     shared_async_wiki_client = (
-        await state.get_async_wiki_client() if state.auth_type == "tequila" else None
+        await state.get_async_wiki_client()
+        if state.auth_type in ("tequila", "session")
+        else None
     )
     logger.debug(f"score_worker {worker_id}: got async wiki client")
 
@@ -2416,7 +2606,9 @@ async def ingest_worker(
     """
     # Get shared async wiki client for Tequila auth (native async HTTP)
     shared_async_wiki_client = (
-        await state.get_async_wiki_client() if state.auth_type == "tequila" else None
+        await state.get_async_wiki_client()
+        if state.auth_type in ("tequila", "session")
+        else None
     )
 
     # Semaphore to limit concurrent page ingestion
@@ -2533,7 +2725,7 @@ async def artifact_worker(
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         try:
             artifacts = await asyncio.to_thread(
-                claim_artifacts_for_ingesting, state.facility, 8
+                claim_artifacts_for_ingesting, state.facility, limit=8
             )
         except Exception as e:
             # Neo4j connection error - backoff and retry
@@ -3432,13 +3624,45 @@ async def _fetch_and_summarize(
             page = await client.get_page(page_name)
             return page.content_html if page else ""
 
-    # Determine fetch strategy
-    if ssh_host:
-        # Fetch via SSH proxy using curl in thread pool (subprocess is blocking)
-        html = await asyncio.to_thread(_ssh_fetch)
-    elif auth_type in ("tequila", "session"):
+    async def _async_basic_auth_fetch() -> str:
+        """Fetch with HTTP Basic authentication using httpx."""
+        from imas_codex.discovery.wiki.auth import CredentialManager
+
+        cred_mgr = CredentialManager()
+        creds = cred_mgr.get_credentials(
+            credential_service or "unknown", prompt_if_missing=False
+        )
+        if not creds:
+            logger.warning("No credentials for basic auth fetch of %s", url)
+            return ""
+        username, password = creds
+        try:
+            async with httpx.AsyncClient(
+                timeout=30.0, follow_redirects=True, verify=False
+            ) as client:
+                response = await client.get(url, auth=(username, password))
+                if response.status_code == 200:
+                    return response.text
+                logger.debug(
+                    "Basic auth fetch returned HTTP %d for %s",
+                    response.status_code,
+                    url,
+                )
+                return ""
+        except Exception as e:
+            logger.debug("Basic auth fetch failed for %s: %s", url, e)
+            return ""
+
+    # Determine fetch strategy - prefer direct HTTP over SSH when credentials available
+    if auth_type in ("tequila", "session"):
         # Fetch via Tequila SSO authentication using native async HTTP
         html = await _async_tequila_fetch()
+    elif auth_type == "basic" and credential_service:
+        # Fetch via HTTP Basic auth (direct access preferred over SSH)
+        html = await _async_basic_auth_fetch()
+    elif ssh_host:
+        # Fetch via SSH proxy using curl in thread pool (subprocess is blocking)
+        html = await asyncio.to_thread(_ssh_fetch)
     else:
         # Direct HTTP fetch (no auth) - already async
         from imas_codex.discovery.wiki.prefetch import fetch_page_content
@@ -3888,11 +4112,42 @@ async def _fetch_html(
             page = await client.get_page(page_name)
             return page.content_html if page else ""
 
-    # Determine fetch strategy
-    if ssh_host:
-        return await asyncio.to_thread(_ssh_fetch)
-    elif auth_type in ("tequila", "session"):
+    async def _async_basic_auth_fetch() -> str:
+        """Fetch with HTTP Basic authentication using httpx."""
+        from imas_codex.discovery.wiki.auth import CredentialManager
+
+        cred_mgr = CredentialManager()
+        creds = cred_mgr.get_credentials(
+            credential_service or "unknown", prompt_if_missing=False
+        )
+        if not creds:
+            logger.warning("No credentials for basic auth fetch of %s", url)
+            return ""
+        username, password = creds
+        try:
+            async with httpx.AsyncClient(
+                timeout=30.0, follow_redirects=True, verify=False
+            ) as client:
+                response = await client.get(url, auth=(username, password))
+                if response.status_code == 200:
+                    return response.text
+                logger.debug(
+                    "Basic auth fetch returned HTTP %d for %s",
+                    response.status_code,
+                    url,
+                )
+                return ""
+        except Exception as e:
+            logger.debug("Basic auth fetch failed for %s: %s", url, e)
+            return ""
+
+    # Determine fetch strategy - prefer direct HTTP over SSH when credentials available
+    if auth_type in ("tequila", "session"):
         return await _async_tequila_fetch()
+    elif auth_type == "basic" and credential_service:
+        return await _async_basic_auth_fetch()
+    elif ssh_host:
+        return await asyncio.to_thread(_ssh_fetch)
     else:
         # Direct HTTP fetch (no auth) - already async
         from imas_codex.discovery.wiki.prefetch import fetch_page_content
