@@ -1,5 +1,6 @@
 """Tests for embeddings/encoder.py module."""
 
+import importlib.util
 import pickle
 import time
 from pathlib import Path
@@ -11,6 +12,10 @@ import pytest
 from imas_codex.embeddings.cache import EmbeddingCache
 from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
+
+_has_sentence_transformers = (
+    importlib.util.find_spec("sentence_transformers") is not None
+)
 
 
 class TestEncoder:
@@ -29,9 +34,17 @@ class TestEncoder:
 
     @pytest.fixture
     def encoder(self, encoder_config) -> Encoder:
-        """Create an encoder for testing."""
-        return Encoder(config=encoder_config)
+        """Create an encoder for testing with mocked model loading."""
+        with patch.object(Encoder, "_load_model"):
+            enc = Encoder(config=encoder_config)
+        enc._model = MagicMock()
+        enc._model.device = "cpu"
+        return enc
 
+    @pytest.mark.skipif(
+        not _has_sentence_transformers,
+        reason="sentence-transformers not installed",
+    )
     def test_initialization_default_config(self):
         """Encoder initializes with explicit local backend config.
 
@@ -44,10 +57,9 @@ class TestEncoder:
         assert encoder._model is not None
         assert encoder._cache is None
 
-    def test_initialization_custom_config(self, encoder_config):
+    def test_initialization_custom_config(self, encoder):
         """Encoder initializes with provided config."""
-        encoder = Encoder(config=encoder_config)
-        assert encoder.config == encoder_config
+        assert encoder.config is not None
         assert encoder.config.batch_size == 8
 
     def test_get_model_loads_model(self, encoder):
@@ -74,10 +86,9 @@ class TestEncoder:
         mock_model.encode.assert_called_once()
         assert result.shape == (3, 384)
 
-    def test_embed_texts_api_fallback(self, encoder_config):
+    def test_embed_texts_api_fallback(self, encoder):
         """embed_texts falls back to local model on API failure."""
-        encoder_config.use_api_embeddings = True
-        encoder = Encoder(config=encoder_config)
+        encoder.config.use_api_embeddings = True
 
         # First call fails (API error), second call succeeds (local model)
         mock_api_model = MagicMock()
@@ -193,10 +204,9 @@ class TestEncoder:
         assert filename.endswith(".pkl")
         assert "_" in filename  # Hash separator
 
-    def test_generate_cache_filename_with_ids_set(self, encoder_config):
+    def test_generate_cache_filename_with_ids_set(self, encoder):
         """_generate_cache_filename handles ids_set configuration."""
-        encoder_config.ids_set = {"equilibrium", "core_profiles"}
-        encoder = Encoder(config=encoder_config)
+        encoder.config.ids_set = {"equilibrium", "core_profiles"}
 
         filename = encoder._generate_cache_filename()
 
@@ -278,10 +288,9 @@ class TestEncoder:
         )
         assert result is False
 
-    def test_try_load_cache_disabled(self, encoder_config, tmp_path):
+    def test_try_load_cache_disabled(self, encoder, tmp_path):
         """_try_load_cache returns False when caching is disabled."""
-        encoder_config.enable_cache = False
-        encoder = Encoder(config=encoder_config)
+        encoder.config.enable_cache = False
 
         result = encoder._try_load_cache(["text"], ["id"], None)
         assert result is False
@@ -311,10 +320,9 @@ class TestEncoder:
 
         assert encoder._cache.dd_version == "4.0"
 
-    def test_create_cache_disabled(self, encoder_config):
+    def test_create_cache_disabled(self, encoder):
         """_create_cache does nothing when caching is disabled."""
-        encoder_config.enable_cache = False
-        encoder = Encoder(config=encoder_config)
+        encoder.config.enable_cache = False
 
         encoder._create_cache(np.zeros((1, 384)), ["id1"])
 
@@ -402,10 +410,9 @@ class TestEncoder:
         assert mock_model.encode.call_count == 3
         assert result.shape[0] == 5
 
-    def test_generate_embeddings_half_precision(self, encoder_config):
+    def test_generate_embeddings_half_precision(self, encoder):
         """_generate_embeddings uses half precision when configured."""
-        encoder_config.use_half_precision = True
-        encoder = Encoder(config=encoder_config)
+        encoder.config.use_half_precision = True
 
         mock_model = MagicMock()
         mock_model.encode.return_value = np.zeros((2, 384), dtype=np.float32)

@@ -18,7 +18,12 @@ from dataclasses import dataclass
 
 import numpy as np
 import pytest
-from sentence_transformers import SentenceTransformer
+
+sentence_transformers = pytest.importorskip(
+    "sentence_transformers",
+    reason="sentence-transformers not installed (optional GPU dependency)",
+)
+SentenceTransformer = sentence_transformers.SentenceTransformer
 
 # Test cases: (query, expected_top_paths, language)
 # Expected paths should appear in top-5 results for good retrieval

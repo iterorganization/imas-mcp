@@ -5,6 +5,11 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+pytest.importorskip(
+    "sentence_transformers",
+    reason="sentence-transformers not installed (optional GPU dependency)",
+)
+
 from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
 
