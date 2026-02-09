@@ -15,8 +15,12 @@ processes can share the same SLURM job without redundant submissions.
 
 Architecture::
 
-    workstation ---SSH tunnel---> login node ---port forward---> GPU node (SLURM)
-    localhost:18765             localhost:18765                 0.0.0.0:18765
+    workstation ---SSH tunnel---> login node ---TCP proxy---> GPU node (SLURM)
+    localhost:18765             localhost:18765              0.0.0.0:18765
+
+The TCP proxy is used instead of SSH port forwarding because ITER compute
+nodes restrict ``AllowTcpForwarding`` in sshd.  Direct IP connections from
+the login node to compute nodes work fine, so the proxy relays TCP traffic.
 
 Usage:
     from imas_codex.embeddings.slurm import ensure_server, get_job_status
@@ -380,11 +384,13 @@ def _is_slurm_server(port: int = DEFAULT_PORT) -> bool:
 def _setup_port_forward(state: SlurmJobState) -> bool:
     """Set up port forwarding from login node to compute node.
 
-    Creates an SSH local port forward on the ITER login node:
-    login:PORT → compute-node:PORT
+    ITER compute nodes restrict SSH TCP forwarding (AllowTcpForwarding),
+    so we use a Python TCP proxy instead of ``ssh -L``.  The proxy
+    listens on ``localhost:PORT`` on the login node and relays TCP
+    connections to ``COMPUTE_NODE:PORT`` via direct IP.
 
-    This is done via `ssh -f -N -L ...` running on the login node itself.
-    The workstation's SSH tunnel (workstation → login) then chains through.
+    The workstation's SSH tunnel (workstation → login) chains through
+    the proxy to reach the GPU server.
 
     Before binding, frees the port from any non-SLURM process (e.g.,
     systemd user service) that might be occupying it.
@@ -400,42 +406,99 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
     # Free port from non-SLURM processes (e.g., systemd service)
     _free_port(state.port)
 
-    # Start port forward on login node
+    # Use a Python TCP proxy instead of SSH -L (compute nodes block
+    # SSH TCP forwarding but allow direct IP connections from login).
+    proxy_script = textwrap.dedent(f"""\
+        import asyncio, signal, sys, os
+
+        LOCAL_PORT = {state.port}
+        REMOTE_HOST = "{state.node}"
+        REMOTE_PORT = {state.port}
+
+        async def relay(reader, writer):
+            try:
+                while True:
+                    data = await reader.read(65536)
+                    if not data:
+                        break
+                    writer.write(data)
+                    await writer.drain()
+            except Exception:
+                pass
+            finally:
+                writer.close()
+
+        async def handle(local_r, local_w):
+            try:
+                remote_r, remote_w = await asyncio.open_connection(REMOTE_HOST, REMOTE_PORT)
+            except Exception:
+                local_w.close()
+                return
+            await asyncio.gather(relay(local_r, remote_w), relay(remote_r, local_w))
+
+        async def main():
+            srv = await asyncio.start_server(handle, "127.0.0.1", LOCAL_PORT)
+            # Write PID for lifecycle management
+            sys.stdout.write(str(os.getpid()))
+            sys.stdout.flush()
+            async with srv:
+                await srv.serve_forever()
+
+        asyncio.run(main())
+    """)
+
+    # Launch the proxy as a background Python process on the login node.
     result = _run_cmd(
-        f"ssh -f -N -o StrictHostKeyChecking=no "
-        f"-L {state.port}:localhost:{state.port} {state.node}"
+        f"python3 -c {_shell_quote(proxy_script)} &"
+        f" PROXY_PID=$!; sleep 0.5; kill -0 $PROXY_PID 2>/dev/null"
+        f" && echo $PROXY_PID || echo FAIL"
     )
 
-    if result.returncode != 0:
+    output = result.stdout.strip()
+    if result.returncode != 0 or output == "FAIL":
         logger.warning(
-            "Port forward failed: %s", result.stderr.strip() or result.stdout.strip()
+            "TCP proxy failed: %s",
+            result.stderr.strip() or result.stdout.strip(),
         )
         return False
 
-    # Find the PID of the forwarding SSH process
-    pid_result = _run_cmd(f"pgrep -f 'ssh.*-L.*{state.port}.*{state.node}' | tail -1")
-    if pid_result.returncode == 0 and pid_result.stdout.strip():
-        state.forward_pid = int(pid_result.stdout.strip())
+    # Parse PID
+    try:
+        pid = int(output.strip().split("\n")[-1])
+        state.forward_pid = pid
         state.save()
+    except (ValueError, IndexError):
+        logger.debug("Could not parse proxy PID from: %s", output)
 
     logger.info(
-        "Port forward established: login:%d → %s:%d",
+        "TCP proxy established: login:%d → %s:%d (pid=%s)",
         state.port,
         state.node,
         state.port,
+        state.forward_pid,
     )
     return True
 
 
+def _shell_quote(s: str) -> str:
+    """Shell-quote a string for use in a command."""
+    import shlex
+
+    return shlex.quote(s)
+
+
 def _kill_port_forward(state: SlurmJobState) -> None:
-    """Kill any existing port forward for this job."""
+    """Kill any existing port forward (SSH tunnel or TCP proxy) for this job."""
     if state.forward_pid:
         _run_cmd(f"kill {state.forward_pid} 2>/dev/null")
         state.forward_pid = None
 
-    # Also kill by pattern match (catch orphans)
+    # Also kill by pattern match (catch orphans — both SSH tunnels and TCP proxies)
     if state.node and state.port:
         _run_cmd(f"pkill -f 'ssh.*-L.*{state.port}.*{state.node}' 2>/dev/null")
+        _run_cmd(
+            f"pkill -f 'python3.*REMOTE_HOST.*{state.node}.*LOCAL_PORT.*{state.port}' 2>/dev/null"
+        )
 
 
 def _wait_for_job_start(

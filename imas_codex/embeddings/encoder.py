@@ -418,6 +418,8 @@ class Encoder:
         """
         if self._fallback_backend == "local":
             model = self.get_model()
+            # truncate_dim is set on the model at init, so ST handles
+            # truncation before normalization (correct Matryoshka ordering).
             encode_kwargs = {
                 "convert_to_numpy": True,
                 "normalize_embeddings": self.config.normalize_embeddings,
@@ -425,7 +427,7 @@ class Encoder:
                 "show_progress_bar": False,
                 **kwargs,
             }
-            return self._truncate_embeddings(model.encode(texts, **encode_kwargs))
+            return model.encode(texts, **encode_kwargs)
         elif self._fallback_backend == "openrouter":
             return self._embed_via_openrouter(texts)
         else:
@@ -434,11 +436,12 @@ class Encoder:
             )
 
     def _truncate_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
-        """Truncate embeddings to configured dimension (Matryoshka projection).
+        """Truncate embeddings from a remote server to configured dimension.
 
-        OpenRouter handles truncation server-side via `dimensions` parameter.
-        Local and remote backends return native-dimension vectors that need
-        client-side truncation followed by L2 re-normalization.
+        Used only for the *remote* backend where the server may return
+        native-dimension vectors.  Local and server-side encode paths
+        use SentenceTransformer's native ``truncate_dim`` parameter instead,
+        which truncates **before** normalization (correct Matryoshka ordering).
 
         Args:
             embeddings: Raw embeddings array (N x native_dim)
@@ -569,7 +572,7 @@ class Encoder:
         elif backend == EmbeddingBackend.OPENROUTER:
             return self._embed_via_openrouter(texts)
 
-        # Local backend
+        # Local backend — truncate_dim set on model at init
         model = self.get_model()
         encode_kwargs = {
             "convert_to_numpy": True,
@@ -578,7 +581,7 @@ class Encoder:
             "show_progress_bar": False,
             **kwargs,
         }
-        return self._truncate_embeddings(model.encode(texts, **encode_kwargs))
+        return model.encode(texts, **encode_kwargs)
 
     def embed_texts_with_result(self, texts: list[str], **kwargs) -> EmbeddingResult:
         """Embed ad-hoc texts and return result with source and cost tracking.
@@ -665,7 +668,7 @@ class Encoder:
         elif backend == EmbeddingBackend.OPENROUTER:
             return self._embed_via_openrouter_with_result(texts)
 
-        # Local backend
+        # Local backend — truncate_dim set on model at init
         model = self.get_model()
         encode_kwargs = {
             "convert_to_numpy": True,
@@ -675,7 +678,6 @@ class Encoder:
             **kwargs,
         }
         embeddings = model.encode(texts, **encode_kwargs)
-        embeddings = self._truncate_embeddings(embeddings)
         elapsed = time.time() - start
         return EmbeddingResult(
             embeddings=embeddings,
@@ -831,10 +833,16 @@ class Encoder:
         Multi-GPU throughput is handled at the server level via
         ``encode_multi_process`` (one model replica per GPU), not via
         ``device_map`` model splitting.
+
+        Sets ``truncate_dim`` on the model so all encode calls
+        (including ``encode_multi_process``) automatically truncate
+        to the configured Matryoshka dimension and normalize **after**
+        truncation — the correct ordering for Matryoshka embeddings.
         """
         ST = self._import_sentence_transformers()
         model_kwargs: dict = {}
         device = self.config.device
+        target_dim = get_embedding_dimension()
 
         if device and "cuda" in device:
             import torch
@@ -861,6 +869,7 @@ class Encoder:
                 self._model = ST(
                     resolved,
                     device=device,
+                    truncate_dim=target_dim,
                     model_kwargs=model_kwargs,
                 )
             else:
@@ -871,6 +880,7 @@ class Encoder:
                 self._model = ST(
                     self.config.model_name,
                     device=device,
+                    truncate_dim=target_dim,
                     cache_folder=cache_folder,
                     local_files_only=False,
                     model_kwargs=model_kwargs,
@@ -1021,7 +1031,6 @@ class Encoder:
             progress.finish_processing()
         if self.config.use_half_precision:
             embeddings = embeddings.astype(np.float16)
-        embeddings = self._truncate_embeddings(embeddings)
         self.logger.debug(
             f"Generated embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}"
         )

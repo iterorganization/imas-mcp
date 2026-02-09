@@ -501,3 +501,90 @@ class TestDeviceInfo:
         """device_info returns 'not loaded' when model is None."""
         encoder._model = None
         assert encoder.device_info == "not loaded"
+
+
+class TestTruncateDim:
+    """Tests for Matryoshka dimension truncation via truncate_dim."""
+
+    @pytest.fixture
+    def encoder(self) -> Encoder:
+        """Create an encoder with mocked model loading."""
+        with patch.object(Encoder, "_load_model"):
+            enc = Encoder(
+                config=EncoderConfig(
+                    model_name="test-model",
+                    backend=EmbeddingBackend.LOCAL,
+                )
+            )
+        enc._model = MagicMock()
+        enc._model.device = "cpu"
+        return enc
+
+    def test_load_model_passes_truncate_dim(self):
+        """_load_model passes truncate_dim from settings to SentenceTransformer."""
+        mock_st_cls = MagicMock()
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_st_cls.return_value = mock_model
+
+        config = EncoderConfig(
+            model_name="test-model",
+            backend=EmbeddingBackend.LOCAL,
+        )
+
+        with (
+            patch.object(
+                Encoder, "_import_sentence_transformers", return_value=mock_st_cls
+            ),
+            patch.object(Encoder, "_resolve_model_path", return_value="test-model"),
+            patch(
+                "imas_codex.embeddings.encoder.get_embedding_dimension",
+                return_value=256,
+            ),
+        ):
+            Encoder(config=config)
+
+        # Verify truncate_dim was passed to SentenceTransformer constructor
+        call_kwargs = mock_st_cls.call_args
+        assert call_kwargs.kwargs.get("truncate_dim") == 256
+
+    def test_truncate_embeddings_for_remote(self, encoder):
+        """_truncate_embeddings truncates and re-normalizes remote server output."""
+        # Simulate native-dim embeddings from remote server (2560-dim)
+        raw = np.random.randn(3, 2560).astype(np.float32)
+
+        with patch(
+            "imas_codex.embeddings.encoder.get_embedding_dimension", return_value=256
+        ):
+            result = encoder._truncate_embeddings(raw)
+
+        assert result.shape == (3, 256)
+        # Verify re-normalization
+        norms = np.linalg.norm(result, axis=1)
+        np.testing.assert_allclose(norms, 1.0, atol=1e-6)
+
+    def test_truncate_embeddings_noop_for_matching_dim(self, encoder):
+        """_truncate_embeddings is a no-op when dims already match."""
+        raw = np.random.randn(3, 256).astype(np.float32)
+
+        with patch(
+            "imas_codex.embeddings.encoder.get_embedding_dimension", return_value=256
+        ):
+            result = encoder._truncate_embeddings(raw)
+
+        assert result is raw  # Same object, not copied
+
+    def test_local_encode_uses_model_truncate_dim(self, encoder):
+        """Local embed_texts relies on model's truncate_dim (no manual truncation)."""
+        mock_model = MagicMock()
+        # Model already returns truncated output (256-dim) because truncate_dim is set
+        mock_model.encode.return_value = np.zeros((3, 256))
+        encoder._model = mock_model
+
+        result = encoder.embed_texts(["text1", "text2", "text3"])
+
+        # Verify encode was called (truncation handled inside model)
+        mock_model.encode.assert_called_once()
+        assert result.shape == (3, 256)
+        # Should NOT call _truncate_embeddings for local path
+        # (truncate_dim on model handles it)
