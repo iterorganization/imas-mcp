@@ -792,8 +792,15 @@ class Encoder:
         2. Default HuggingFace hub cache (local_files_only) — needed for
            air-gapped GPU nodes where models are pre-cached on NFS
         3. Download from HuggingFace (requires internet)
+
+        Uses ``torch_dtype="auto"`` so models load in their native precision
+        (e.g., bfloat16 for Qwen3-Embedding-8B) instead of fp32, halving GPU
+        memory from ~32GB to ~16GB for 8B parameter models.
         """
         ST = self._import_sentence_transformers()
+        # Load in model's native dtype (e.g., bfloat16) to halve memory.
+        # Critical for fitting large models (8B+) on 16GB GPUs like P100.
+        model_kwargs = {"torch_dtype": "auto"}
         try:
             cache_folder = str(self._get_cache_directory() / "models")
             try:
@@ -803,6 +810,7 @@ class Encoder:
                     device=self.config.device,
                     cache_folder=cache_folder,
                     local_files_only=True,
+                    model_kwargs=model_kwargs,
                 )
                 self.logger.debug(
                     f"Model {self.config.model_name} loaded from project cache on device: {self._model.device}"
@@ -816,6 +824,7 @@ class Encoder:
                     self.config.model_name,
                     device=self.config.device,
                     local_files_only=True,
+                    model_kwargs=model_kwargs,
                 )
                 self.logger.debug(
                     f"Model {self.config.model_name} loaded from HF hub cache on device: {self._model.device}"
@@ -831,6 +840,7 @@ class Encoder:
                 device=self.config.device,
                 cache_folder=cache_folder,
                 local_files_only=False,
+                model_kwargs=model_kwargs,
             )
             self.logger.debug(
                 f"Downloaded model {self.config.model_name} on device: {self._model.device}"
