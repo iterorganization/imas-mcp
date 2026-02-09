@@ -372,7 +372,7 @@ python("print(reload())")  # After editing imas_codex/ source files
 
 ## Embedding Server
 
-SLURM-managed GPU server on titan partition (4x P100, Qwen3-Embedding-8B, 256-dim).
+SLURM-managed GPU server on titan partition (4x P100, Qwen3-Embedding-4B, 256-dim).
 
 Architecture: `workstation → SSH tunnel → login:18765 → port forward → GPU node:18765`
 

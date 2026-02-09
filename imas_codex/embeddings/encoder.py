@@ -80,7 +80,6 @@ class Encoder:
         self._using_fallback: bool = False
         self._fallback_backend: str | None = None  # "local" or "openrouter"
         self._remote_hostname: str | None = None
-        self._uses_device_map: bool = False
 
         # Cost tracking for OpenRouter backend
         self.cost_tracker = cost_tracker or EmbeddingCostTracker()
@@ -828,14 +827,14 @@ class Encoder:
         1. Resolve model to local snapshot path (project cache or HF hub cache)
         2. Fall back to downloading from HuggingFace (requires internet)
 
-        For CUDA devices, uses float16. When multiple GPUs are available,
-        uses ``device_map="auto"`` to distribute the model across all GPUs
-        with a pooling patch to handle cross-device tensor alignment.
+        For CUDA devices, uses float16 (P100 doesn't support bfloat16).
+        Multi-GPU throughput is handled at the server level via
+        ``encode_multi_process`` (one model replica per GPU), not via
+        ``device_map`` model splitting.
         """
         ST = self._import_sentence_transformers()
         model_kwargs: dict = {}
         device = self.config.device
-        use_device_map = False
 
         if device and "cuda" in device:
             import torch
@@ -843,27 +842,11 @@ class Encoder:
             # float16 for GPU — P100 doesn't support bfloat16 natively.
             model_kwargs["torch_dtype"] = torch.float16
             model_kwargs["low_cpu_mem_usage"] = True
-
-            if torch.cuda.device_count() > 1:
-                # Distribute model across all available GPUs.
-                # Build explicit device_map to keep decoder layers whole.
-                # device_map="auto" can split within layers (placing
-                # layernorm on a different GPU than attention), causing
-                # cross-device errors that accelerate hooks don't fix.
-                # Actual device_map built after cache_folder is resolved.
-                device = None  # Let device_map handle placement
-                use_device_map = True
         else:
             model_kwargs["torch_dtype"] = "auto"
 
         try:
             cache_folder = str(self._get_cache_directory() / "models")
-
-            if use_device_map:
-                # Now that cache_folder is available, build device_map.
-                model_kwargs["device_map"] = self._build_device_map(
-                    self.config.model_name, cache_folder=cache_folder
-                )
 
             # Try to resolve to a local directory path first.
             # This bypasses all HuggingFace API calls and cache resolution,
@@ -883,7 +866,7 @@ class Encoder:
             else:
                 # No local cache found — download from HuggingFace
                 self.logger.debug(
-                    f"No local cache for {self.config.model_name}, downloading..."
+                    "No local cache for %s, downloading...", self.config.model_name
                 )
                 self._model = ST(
                     self.config.model_name,
@@ -893,211 +876,34 @@ class Encoder:
                     model_kwargs=model_kwargs,
                 )
 
-            # Patch SentenceTransformer modules for cross-device alignment
-            # when using device_map. Two patches are needed:
-            #  1. Transformer: move inputs to backbone's first parameter
-            #     device (cuda:0) before the nn.Embedding lookup.
-            #  2. Pooling: move attention_mask to the output device after
-            #     the backbone forward pass.
-            if use_device_map:
-                self._patch_modules_for_device_map()
-                self._uses_device_map = True
-
             self.logger.debug(
-                "Model %s loaded (device=%s, device_map=%s)",
+                "Model %s loaded (device=%s)",
                 self.config.model_name,
                 self._model.device,
-                use_device_map,
             )
         except Exception as e:  # pragma: no cover
-            self.logger.error(f"Failed to load model {self.config.model_name}: {e}")
+            self.logger.error("Failed to load model %s: %s", self.config.model_name, e)
             raise EmbeddingBackendError(
                 f"Failed to load embedding model '{self.config.model_name}': {e}"
             ) from e
-
-    def _build_device_map(
-        self,
-        model_name: str,
-        cache_folder: str | None = None,
-    ) -> dict[str, int] | str:
-        """Build an explicit device_map that keeps decoder layers whole.
-
-        ``device_map='auto'`` can split *within* transformer layers,
-        placing e.g. ``input_layernorm`` on a different GPU than the
-        parent ``DecoderLayer``.  Accelerate's hooks don't fully handle
-        intra-layer cross-device moves, producing ``RuntimeError``
-        on the layernorm's ``self.weight * hidden_states`` operation.
-
-        This method reads the safetensors index to learn the actual weight
-        key prefix and config for the layer count, then distributes whole
-        layers evenly across visible GPUs.
-        """
-        import json
-        import re
-
-        import torch
-
-        n_gpu = torch.cuda.device_count()
-        resolved_path = self._resolve_model_path(model_name, cache_folder=cache_folder)
-        config_file = Path(resolved_path) / "config.json"
-
-        if not config_file.exists():
-            self.logger.warning(
-                "config.json not found at %s; falling back to device_map='balanced'",
-                config_file,
-            )
-            return "balanced"  # type: ignore[return-value]
-
-        with open(config_file) as f:
-            config = json.load(f)
-
-        n_layers = config.get("num_hidden_layers", 0)
-        if n_layers == 0:
-            self.logger.warning(
-                "num_hidden_layers not in config; falling back to device_map='balanced'"
-            )
-            return "balanced"  # type: ignore[return-value]
-
-        # Detect weight key prefix from safetensors index.
-        # AutoModel may load Qwen3Model (prefix="") or
-        # Qwen3ForCausalLM (prefix="model.") depending on model class.
-        prefix = ""
-        index_file = Path(resolved_path) / "model.safetensors.index.json"
-        if index_file.exists():
-            with open(index_file) as f:
-                index = json.load(f)
-            for key in index.get("weight_map", {}):
-                m = re.match(r"^(.*?)layers\.0\.", key)
-                if m:
-                    prefix = m.group(1)
-                    break
-            self.logger.debug("Detected weight prefix: %r", prefix)
-
-        # Build mapping keeping each decoder layer on one GPU.
-        device_map: dict[str, int] = {f"{prefix}embed_tokens": 0}
-        layers_per_gpu = n_layers / n_gpu
-        for i in range(n_layers):
-            gpu = min(int(i / layers_per_gpu), n_gpu - 1)
-            device_map[f"{prefix}layers.{i}"] = gpu
-        device_map[f"{prefix}norm"] = n_gpu - 1
-
-        self.logger.debug(
-            "Built device_map: %d layers / %d GPUs (prefix=%r)",
-            n_layers,
-            n_gpu,
-            prefix,
-        )
-        return device_map
-
-    def _patch_modules_for_device_map(self) -> None:
-        """Patch SentenceTransformer modules for ``device_map='auto'``.
-
-        With ``device_map``, layers are distributed across GPUs, but
-        SentenceTransformer moves all inputs to ``_target_device`` (CPU)
-        via ``batch_to_device``.  This causes two failures:
-
-        1. **Transformer**: ``nn.Embedding`` does ``index_select`` with
-           ``input_ids`` on CPU and weights on ``cuda:0`` → device error.
-        2. **Pooling**: ``attention_mask`` stays on CPU while
-           ``token_embeddings`` ends up on the last layer's GPU.
-
-        This method patches both modules:
-        - Transformer forward: move all input tensors to the backbone's
-          first parameter device before calling ``auto_model``.
-        - Pooling forward: move all feature tensors to the same device as
-          ``token_embeddings`` before mean/max pooling.
-        """
-        import torch
-
-        model = self._model
-        if model is None:
-            return
-
-        # --- Patch 1: Transformer module (index 0) ---
-        transformer_module = None
-        for _i, module in enumerate(model):
-            if type(module).__name__ == "Transformer":
-                transformer_module = module
-                break
-
-        if transformer_module is not None:
-            backbone = transformer_module.auto_model
-            first_param_device = next(backbone.parameters()).device
-            original_transformer_forward = transformer_module.forward
-
-            def _transformer_forward(
-                features: dict[str, Any],
-            ) -> dict[str, Any]:
-                # Move all tensor inputs to the backbone's first device
-                # so nn.Embedding can do index_select on the same device.
-                features = {
-                    k: v.to(first_param_device) if isinstance(v, torch.Tensor) else v
-                    for k, v in features.items()
-                }
-                return original_transformer_forward(features)
-
-            transformer_module.forward = _transformer_forward  # type: ignore[method-assign]
-            self.logger.debug(
-                "Patched Transformer module: inputs → %s", first_param_device
-            )
-        else:
-            self.logger.warning(
-                "No Transformer module found; input device patch skipped"
-            )
-
-        # --- Patch 2: Pooling module (index 1) ---
-        pooling_module = None
-        pooling_idx = None
-        for i, module in enumerate(model):
-            if type(module).__name__ == "Pooling":
-                pooling_module = module
-                pooling_idx = i
-                break
-
-        if pooling_module is not None:
-            original_pooling_forward = pooling_module.forward
-
-            def _pooling_forward(
-                features: dict[str, Any],
-            ) -> dict[str, Any]:
-                # After the backbone, token_embeddings lands on the last
-                # layer's GPU.  Move everything else there too.
-                token_emb = features.get("token_embeddings")
-                if token_emb is not None:
-                    target = token_emb.device
-                    features = {
-                        k: v.to(target) if isinstance(v, torch.Tensor) else v
-                        for k, v in features.items()
-                    }
-                return original_pooling_forward(features)
-
-            pooling_module.forward = _pooling_forward  # type: ignore[method-assign]
-            self.logger.debug(
-                "Patched Pooling module (index %d): features → token_embeddings device",
-                pooling_idx,
-            )
-        else:
-            self.logger.warning("No Pooling module found; pooling device patch skipped")
 
     @property
     def device_info(self) -> str:
         """Human-readable device description for health reporting.
 
-        Returns something like ``"4x Tesla P100-PCIE-16GB (device_map)"``
-        when the model is distributed, or falls back to
-        ``str(model.device)``.
+        Returns something like ``"Tesla P100-PCIE-16GB"`` on GPU
+        or ``str(model.device)`` otherwise.
         """
         if not self._model:
             return "not loaded"
-        if self._uses_device_map:
-            try:
-                import torch
+        try:
+            import torch
 
-                count = torch.cuda.device_count()
+            if torch.cuda.is_available():
                 name = torch.cuda.get_device_name(0)
-                return f"{count}x {name} (device_map)"
-            except Exception:
-                return "cuda (device_map)"
+                return name
+        except Exception:
+            pass
         return str(self._model.device)
 
     def _generate_embeddings(self, texts: list[str]) -> np.ndarray:

@@ -1,11 +1,11 @@
 """OpenRouter embedding client for cloud-based embeddings.
 
-Uses Qwen3-Embedding-8B via OpenRouter API with Matryoshka dimension
+Uses Qwen3-Embedding via OpenRouter API with Matryoshka dimension
 projection to 256d.
 
 Model name mapping:
-- HuggingFace: Qwen/Qwen3-Embedding-8B
-- OpenRouter API: qwen/qwen3-embedding-8b
+- HuggingFace: Qwen/Qwen3-Embedding-4B (default), Qwen/Qwen3-Embedding-8B
+- OpenRouter API: qwen/qwen3-embedding-4b, qwen/qwen3-embedding-8b
 
 Cost Tracking:
 - Uses EmbeddingCostTracker for session-level cost tracking

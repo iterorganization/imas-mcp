@@ -189,7 +189,7 @@ imas-dd-version = ""
 
 [tool.imas-codex]
 default-dd-version = "4.1.0"
-imas-embedding-model = "Qwen/Qwen3-Embedding-8B"
+imas-embedding-model = "Qwen/Qwen3-Embedding-4B"
 imas-embedding-dimension = 256
 imas-language-model = "google/gemini-3-pro-preview"
 include-ggd = true

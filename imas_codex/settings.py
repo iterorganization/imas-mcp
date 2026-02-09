@@ -61,7 +61,7 @@ def get_imas_embedding_model() -> str:
     Priority:
         1. IMAS_CODEX_EMBEDDING_MODEL environment variable
         2. pyproject.toml [tool.imas-codex] imas-embedding-model
-        3. Fallback default: Qwen/Qwen3-Embedding-8B
+        3. Fallback default: Qwen/Qwen3-Embedding-4B
 
     Returns:
         Model name string.
@@ -73,7 +73,7 @@ def get_imas_embedding_model() -> str:
     if model := settings.get("imas-embedding-model"):
         return model
 
-    return "Qwen/Qwen3-Embedding-8B"
+    return "Qwen/Qwen3-Embedding-4B"
 
 
 def get_imas_embedding_dimension() -> int:

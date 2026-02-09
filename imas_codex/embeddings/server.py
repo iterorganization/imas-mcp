@@ -143,17 +143,10 @@ async def lifespan(app: FastAPI):
         _encoder.device_info,
     )
 
-    # Multi-GPU handling:
-    #  - device_map="auto": model distributed across GPUs automatically.
-    #    The pooling module is patched in encoder.py. No multi-process pool.
-    #  - Single-GPU per process: use encode_multi_process to parallelise
-    #    across GPU workers (only if model fits on one GPU).
-    if _encoder._uses_device_map:
-        logger.info(
-            "Model distributed via device_map across %d GPUs (pooling patched)",
-            _gpu_count,
-        )
-    elif _gpu_count > 1:
+    # Multi-GPU handling: use encode_multi_process to run one model
+    # replica per GPU for parallel throughput.  The 4B model fits
+    # comfortably on a single P100 (16GB), so each GPU gets its own copy.
+    if _gpu_count > 1:
         model_device = _encoder.get_model().device
         if str(model_device).startswith("cuda"):
             try:
@@ -168,7 +161,7 @@ async def lifespan(app: FastAPI):
                 _multi_process_pool = None
                 _gpu_count = 1
         else:
-            logger.info("Single GPU mode (gpu_count=%d)", _gpu_count)
+            logger.info("Model on CPU, multi-GPU pool skipped")
     else:
         logger.info("Single GPU mode (gpu_count=%d)", _gpu_count)
 
@@ -322,7 +315,6 @@ def create_app() -> FastAPI:
             "model": {
                 "name": _encoder.config.model_name,
                 "device": _encoder.device_info,
-                "device_map": _encoder._uses_device_map,
                 "embedding_dimension": model.get_sentence_embedding_dimension(),
             },
             "gpu": {
