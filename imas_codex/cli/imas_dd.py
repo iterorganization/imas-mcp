@@ -53,8 +53,8 @@ def imas() -> None:
 @click.option(
     "--embedding-model",
     type=str,
-    default="sentence-transformers/all-MiniLM-L6-v2",
-    help="Sentence transformer model for embeddings",
+    default=None,
+    help="Embedding model (defaults to configured model from settings)",
 )
 @click.option(
     "--ids-filter",
@@ -318,13 +318,13 @@ def imas_search(
         imas-codex imas search "magnetic field boundary" --ids equilibrium
         imas-codex imas search "plasma current" -n 20
     """
-    from sentence_transformers import SentenceTransformer
-
+    from imas_codex.embeddings.config import EncoderConfig
+    from imas_codex.embeddings.encoder import Encoder
     from imas_codex.graph import GraphClient
 
-    # Generate query embedding
-    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-    embedding = model.encode(query).tolist()
+    config = EncoderConfig(normalize_embeddings=True, use_rich=False)
+    encoder = Encoder(config=config)
+    embedding = encoder.embed_texts([query])[0].tolist()
 
     # Build filter clause
     where_clauses = []

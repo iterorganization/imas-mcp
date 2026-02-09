@@ -339,7 +339,7 @@ The `OPENAI_API_KEY` secret is **optional** for Docker builds.
 **What runs locally (no API key needed):**
 - Schema building (XML parsing)
 - Path map generation
-- Embeddings (uses local `sentence-transformers` model `all-MiniLM-L6-v2`)
+- Embeddings (uses Encoder with configured embedding backend)
 - Clustering (HDBSCAN algorithm)
 
 **What uses the API key (optional):**

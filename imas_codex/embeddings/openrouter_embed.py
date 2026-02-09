@@ -1,11 +1,11 @@
 """OpenRouter embedding client for cloud-based embeddings.
 
-Provides a transparent fallback when the remote GPU server is unavailable.
-Uses the same model (Qwen3-Embedding-0.6B) as the remote server.
+Uses Qwen3-Embedding-8B via OpenRouter API with Matryoshka dimension
+projection to 256d.
 
 Model name mapping:
-- HuggingFace/local/remote: Qwen/Qwen3-Embedding-0.6B
-- OpenRouter API: qwen/qwen3-embedding-0.6b
+- HuggingFace: Qwen/Qwen3-Embedding-8B
+- OpenRouter API: qwen/qwen3-embedding-8b
 
 Cost Tracking:
 - Uses EmbeddingCostTracker for session-level cost tracking
@@ -31,7 +31,7 @@ from dataclasses import dataclass
 import httpx
 import numpy as np
 
-from imas_codex.settings import get_embedding_dimension
+from imas_codex.settings import get_embedding_dimension, get_imas_embedding_model
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +40,18 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Model name mappings between HuggingFace and OpenRouter formats
 MODEL_NAME_MAP = {
+    "Qwen/Qwen3-Embedding-8B": "qwen/qwen3-embedding-8b",
+    "qwen/qwen3-embedding-8b": "qwen/qwen3-embedding-8b",
+    "Qwen/Qwen3-Embedding-4B": "qwen/qwen3-embedding-4b",
+    "qwen/qwen3-embedding-4b": "qwen/qwen3-embedding-4b",
     "Qwen/Qwen3-Embedding-0.6B": "qwen/qwen3-embedding-0.6b",
     "qwen/qwen3-embedding-0.6b": "qwen/qwen3-embedding-0.6b",
 }
 
 # Reverse mapping for validation
 OPENROUTER_TO_HF_MAP = {
+    "qwen/qwen3-embedding-8b": "Qwen/Qwen3-Embedding-8B",
+    "qwen/qwen3-embedding-4b": "Qwen/Qwen3-Embedding-4B",
     "qwen/qwen3-embedding-0.6b": "Qwen/Qwen3-Embedding-0.6B",
 }
 
@@ -55,9 +61,10 @@ DEFAULT_TIMEOUT = 120.0
 CONNECT_TIMEOUT = 10.0
 
 # OpenRouter embedding model pricing (USD per 1M tokens)
-# Source: https://openrouter.ai/models
 EMBEDDING_MODEL_COSTS: dict[str, float] = {
-    "qwen/qwen3-embedding-0.6b": 0.02,  # $0.02 per 1M tokens (very efficient)
+    "qwen/qwen3-embedding-8b": 0.01,
+    "qwen/qwen3-embedding-4b": 0.02,
+    "qwen/qwen3-embedding-0.6b": 0.02,
 }
 
 # Default fallback cost estimate for unknown models
@@ -229,21 +236,29 @@ class OpenRouterEmbeddingClient:
     def __init__(
         self,
         api_key: str | None = None,
-        model_name: str = "qwen/qwen3-embedding-0.6b",
+        model_name: str | None = None,
         timeout: float = DEFAULT_TIMEOUT,
+        dimensions: int | None = None,
     ):
         """Initialize client.
 
         Args:
             api_key: OpenRouter API key. If None, uses OPENROUTER_API_KEY
                     or OPENAI_API_KEY environment variable.
-            model_name: Model name (OpenRouter or HuggingFace format accepted)
+            model_name: Model name (OpenRouter or HuggingFace format accepted).
+                       Defaults to configured model from settings.
             timeout: Request timeout in seconds
+            dimensions: Matryoshka projection dimension. Defaults to configured
+                       dimension from settings.
         """
+        if model_name is None:
+            model_name = get_imas_embedding_model()
+
         self.api_key = (
             api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
         )
         self.timeout = timeout
+        self.dimensions = dimensions or get_embedding_dimension()
         self._client: httpx.Client | None = None
         self._warned_fallback: bool = False
 
@@ -313,7 +328,7 @@ class OpenRouterEmbeddingClient:
 
         return OpenRouterServerInfo(
             model=self.model_name,
-            dimension=get_embedding_dimension(self.model_name),
+            dimension=self.dimensions,
         )
 
     def embed(
@@ -399,6 +414,7 @@ class OpenRouterEmbeddingClient:
                     json={
                         "model": self.model_name,
                         "input": texts,
+                        "dimensions": self.dimensions,
                     },
                 )
 
@@ -527,13 +543,11 @@ def get_openrouter_client(
 
     Args:
         api_key: Optional explicit API key
-        model_name: Optional model name (defaults to qwen/qwen3-embedding-0.6b)
+        model_name: Optional model name (defaults to configured model)
 
     Returns:
         Client instance or None if not configured
     """
-    from imas_codex.settings import get_imas_embedding_model
-
     if model_name is None:
         model_name = get_imas_embedding_model()
 

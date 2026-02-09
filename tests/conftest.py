@@ -30,7 +30,7 @@ def pytest_addoption(parser):
         "--embedding-model",
         action="store",
         default=None,
-        help="Embedding model to use for tests (default: all-MiniLM-L6-v2 or from env)",
+        help="Embedding model to use for tests (default: from settings)",
     )
 
 
@@ -50,10 +50,6 @@ def configure_embedding_model(embedding_model_name):
     """Configure the embedding model environment variable."""
     if embedding_model_name:
         os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = embedding_model_name
-    else:
-        # Use local SentenceTransformer model by default
-        if not os.environ.get("IMAS_CODEX_EMBEDDING_MODEL"):
-            os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
 
 
 # Standard test IDS set for consistency across all tests
@@ -290,7 +286,7 @@ def mock_heavy_operations():
                             ) as mock_encoder_class:
                                 mock_encoder = MagicMock()
                                 mock_encoder.encode.return_value = np.zeros(
-                                    (1, 384), dtype=np.float32
+                                    (1, 256), dtype=np.float32
                                 )
                                 mock_encoder_class.return_value = mock_encoder
 

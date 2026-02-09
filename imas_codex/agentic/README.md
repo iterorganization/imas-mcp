@@ -30,7 +30,7 @@ The `python()` REPL includes rich pre-loaded utilities:
 **Graph:**
 - `query(cypher, **params)` - Execute Cypher, return list of dicts
 - `semantic_search(text, index, k)` - Vector similarity search
-- `embed(text)` - Get 384-dim embedding vector
+- `embed(text)` - Get 256-dim embedding vector
 
 **Remote:**
 - `ssh(cmd, facility, timeout)` - Run SSH command on remote facility

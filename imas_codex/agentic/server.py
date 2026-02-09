@@ -1075,7 +1075,7 @@ class AgentsServer:
             === GRAPH OPERATIONS ===
             query(cypher, **params) - Execute Cypher query, return list of dicts
             semantic_search(text, index, k) - Vector similarity search
-            embed(text) - Get 384-dim embedding vector
+            embed(text) - Get 256-dim embedding vector
 
             === FACILITY CONFIGURATION ===
             get_facility(facility) - Load complete config (public + private merged)

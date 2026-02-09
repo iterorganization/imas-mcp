@@ -2461,7 +2461,7 @@ classes:
         description: Ending character offset in original page
         range: integer
       embedding:
-        description: Vector embedding for semantic search (384-dim, all-MiniLM-L6-v2)
+        description: Vector embedding for semantic search (256-dim, Qwen3-Embedding-8B)
         multivalued: true
         range: float
 

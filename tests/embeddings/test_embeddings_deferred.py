@@ -7,7 +7,7 @@ from imas_codex.search.document_store import DocumentStore
 from tests.conftest import STANDARD_TEST_IDS_SET
 
 
-def _mock_encoder(model_name: str = "all-MiniLM-L6-v2"):
+def _mock_encoder(model_name: str = "Qwen/Qwen3-Embedding-8B"):
     """Create a mock Encoder that doesn't require sentence_transformers."""
     mock = MagicMock()
     mock_config = MagicMock()
@@ -15,7 +15,7 @@ def _mock_encoder(model_name: str = "all-MiniLM-L6-v2"):
     mock_config.generate_cache_key.return_value = None
     mock.config = mock_config
     mock.build_document_embeddings.return_value = (
-        __import__("numpy").zeros((0, 384)),
+        __import__("numpy").zeros((0, 256)),
         [],
         False,
     )

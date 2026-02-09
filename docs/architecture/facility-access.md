@@ -176,7 +176,7 @@ flowchart TB
 **Pipeline stages:**
 1. **Map** — Enumerate files via `fd -e py`, pattern matching with `rg -l`, create SourceFile nodes
 2. **Score** — LLM-assisted relevance scoring (ReAct agent evaluates high-value candidates)
-3. **Ingest** — Fetch code, chunk with tree-sitter, embed with **local SentenceTransformer** (`all-MiniLM-L6-v2`)
+3. **Ingest** — Fetch code, chunk with tree-sitter, embed with **Encoder** (`Qwen3-Embedding-8B`)
 
 **LLM Usage:** **Score phase only** — Map and Ingest phases use no LLM. The Score phase uses a ReAct agent to evaluate file relevance and assign interest scores, prioritizing high-value code for ingestion.
 

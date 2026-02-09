@@ -134,7 +134,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Path map ready"
 
-# Build embeddings using local sentence-transformers model (all-MiniLM-L6-v2)
+# Build embeddings using Encoder (Qwen3-Embedding-8B at 256d)
 # NO API key required - runs entirely locally
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building embeddings..." && \

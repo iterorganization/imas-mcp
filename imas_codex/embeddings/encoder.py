@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 from imas_codex.core.progress_monitor import create_progress_monitor
 from imas_codex.resource_path_accessor import ResourcePathAccessor
+from imas_codex.settings import get_embedding_dimension
 
 from .cache import EmbeddingCache
 from .client import RemoteEmbeddingClient
@@ -100,7 +101,7 @@ class Encoder:
         elif backend == EmbeddingBackend.OPENROUTER:
             # Direct OpenRouter mode (no remote fallback)
             self._openrouter_client = OpenRouterEmbeddingClient(
-                model_name=self.config.model_name or "Qwen/Qwen3-Embedding-0.6B"
+                model_name=self.config.model_name,
             )
             if not self._openrouter_client.is_available():
                 raise EmbeddingBackendError(
@@ -356,6 +357,29 @@ class Encoder:
         )
         return result.embeddings
 
+    def _truncate_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
+        """Truncate embeddings to configured dimension (Matryoshka projection).
+
+        OpenRouter handles truncation server-side via `dimensions` parameter.
+        Local and remote backends return native-dimension vectors that need
+        client-side truncation followed by L2 re-normalization.
+
+        Args:
+            embeddings: Raw embeddings array (N x native_dim)
+
+        Returns:
+            Truncated and re-normalized embeddings (N x target_dim)
+        """
+        target_dim = get_embedding_dimension()
+        if embeddings.ndim < 2 or embeddings.shape[1] <= target_dim:
+            return embeddings
+
+        truncated = embeddings[:, :target_dim]
+        # Re-normalize after truncation to maintain unit vectors
+        norms = np.linalg.norm(truncated, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1.0, norms)
+        return truncated / norms
+
     @property
     def is_using_fallback(self) -> bool:
         """Check if currently using OpenRouter fallback."""
@@ -445,9 +469,10 @@ class Encoder:
                 self._validate_remote_backend()
 
             try:
-                return self._remote_client.embed(  # type: ignore[union-attr]
+                embeddings = self._remote_client.embed(  # type: ignore[union-attr]
                     texts, normalize=self.config.normalize_embeddings
                 )
+                return self._truncate_embeddings(embeddings)
             except (ConnectionError, RuntimeError) as e:
                 # No fallback to OpenRouter - raise directly.
                 # Remote client already has retry logic for transient failures.
@@ -468,7 +493,7 @@ class Encoder:
             "show_progress_bar": False,
             **kwargs,
         }
-        return model.encode(texts, **encode_kwargs)
+        return self._truncate_embeddings(model.encode(texts, **encode_kwargs))
 
     def embed_texts_with_result(self, texts: list[str], **kwargs) -> EmbeddingResult:
         """Embed ad-hoc texts and return result with source and cost tracking.
@@ -504,6 +529,7 @@ class Encoder:
                 embeddings = self._remote_client.embed(  # type: ignore[union-attr]
                     texts, normalize=self.config.normalize_embeddings
                 )
+                embeddings = self._truncate_embeddings(embeddings)
                 elapsed = time.time() - start
                 return EmbeddingResult(
                     embeddings=embeddings,
@@ -534,6 +560,7 @@ class Encoder:
             **kwargs,
         }
         embeddings = model.encode(texts, **encode_kwargs)
+        embeddings = self._truncate_embeddings(embeddings)
         elapsed = time.time() - start
         return EmbeddingResult(
             embeddings=embeddings,
@@ -673,10 +700,9 @@ class Encoder:
                 )
         except Exception as e:  # pragma: no cover
             self.logger.error(f"Failed to load model {self.config.model_name}: {e}")
-            fallback = "all-MiniLM-L6-v2"
-            self.logger.debug(f"Trying fallback model: {fallback}")
-            self._model = ST(fallback, device=self.config.device)
-            self.config.model_name = fallback
+            raise EmbeddingBackendError(
+                f"Failed to load embedding model '{self.config.model_name}': {e}"
+            ) from e
 
     def _generate_embeddings(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings for texts using configured backend."""
@@ -692,6 +718,7 @@ class Encoder:
                 embeddings = self._remote_client.embed(  # type: ignore[union-attr]
                     texts, normalize=self.config.normalize_embeddings
                 )
+                embeddings = self._truncate_embeddings(embeddings)
                 if self.config.use_half_precision:
                     embeddings = embeddings.astype(np.float16)
                 self.logger.debug(
@@ -772,6 +799,7 @@ class Encoder:
             progress.finish_processing()
         if self.config.use_half_precision:
             embeddings = embeddings.astype(np.float16)
+        embeddings = self._truncate_embeddings(embeddings)
         self.logger.debug(
             f"Generated embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}"
         )

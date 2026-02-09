@@ -133,21 +133,22 @@ Update imas-data-dictionaries dependency or use a lower version.
 
 #### Embedding Configuration
 
-The IMAS Codex server uses sentence-transformers for generating embeddings:
+The IMAS Codex server uses Qwen3-Embedding-8B for generating 256-dim embeddings:
 
 **Configuration:**
 
-The default embedding model is configured in `pyproject.toml` under `[tool.imas-codex]`:
+The embedding model is configured in `pyproject.toml` under `[tool.imas-codex]`:
 
 ```toml
 [tool.imas-codex]
-imas-embedding-model = "all-MiniLM-L6-v2"  # For DD embeddings
+imas-embedding-model = "Qwen/Qwen3-Embedding-8B"
+embedding-dimensions = 256
 ```
 
 Environment variables override pyproject.toml settings:
 
 ```bash
-export IMAS_CODEX_EMBEDDING_MODEL="all-MiniLM-L6-v2"
+export IMAS_CODEX_EMBEDDING_MODEL="Qwen/Qwen3-Embedding-8B"
 ```
 
 **Path Inclusion Settings:**
@@ -176,7 +177,7 @@ export IMAS_CODEX_INCLUDE_ERROR_FIELDS=true  # Include error fields
 
 **Error Handling:**
 
-If model loading fails, the system will fall back to the default `all-MiniLM-L6-v2` model.
+If model loading fails, an error is raised with the model name and cause.
 
 VS Code (`.vscode/mcp.json`):
 
@@ -600,7 +601,7 @@ cp env.example .env
 **Build Behavior:**
 
 - **With OPENAI_API_KEY**: Full embedding generation during build
-- **Without OPENAI_API_KEY**: Uses local embedding model (all-MiniLM-L6-v2)
+- **Without OPENAI_API_KEY**: Uses local embedding model (Qwen3-Embedding-8B)
 - The container works normally in both cases
 
 **Local Docker Build:**

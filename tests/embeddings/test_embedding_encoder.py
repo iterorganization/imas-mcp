@@ -22,7 +22,7 @@ def test_embedding_encoder_build_and_embed(tmp_path: Path):
         use_rich=False,
         enable_cache=True,
         backend=EmbeddingBackend.LOCAL,
-        model_name="all-MiniLM-L6-v2",  # Explicitly set local model to avoid env var override
+        model_name="all-MiniLM-L6-v2",  # Explicitly set small model for integration test
     )
     encoder = Encoder(config)
 
@@ -52,7 +52,7 @@ def test_embedding_encoder_ad_hoc_embed():
         use_rich=False,
         enable_cache=False,
         backend=EmbeddingBackend.LOCAL,
-        model_name="all-MiniLM-L6-v2",
+        model_name="all-MiniLM-L6-v2",  # Explicitly set small model for integration test
     )
     encoder = Encoder(config)
     vecs = encoder.embed_texts(["one", "two"])
@@ -62,8 +62,10 @@ def test_embedding_encoder_ad_hoc_embed():
 
 
 @pytest.mark.slow
-def test_model_fallback_to_local():
-    """Test that Encoder falls back to local model if primary model fails."""
+def test_model_failure_raises_error():
+    """Test that Encoder raises EmbeddingBackendError if model fails to load."""
+    from imas_codex.embeddings.encoder import EmbeddingBackendError
+
     config = EncoderConfig(
         model_name="nonexistent/model-name",
         use_rich=False,
@@ -71,26 +73,15 @@ def test_model_fallback_to_local():
         backend=EmbeddingBackend.LOCAL,
     )
 
-    # Mock SentenceTransformer to fail for the nonexistent model but succeed for fallback
+    # Mock SentenceTransformer to fail for the nonexistent model
     with patch("sentence_transformers.SentenceTransformer") as mock_st:
 
         def st_side_effect(model_name, **kwargs):
-            if model_name == "nonexistent/model-name":
-                raise ValueError("Model not found")
-            # Return a mock for fallback model
-            mock_model = MagicMock()
-            mock_model.encode.return_value = np.array([[0.1, 0.2]], dtype=np.float32)
-            mock_model.device = "cpu"
-            return mock_model
+            raise ValueError("Model not found")
 
         mock_st.side_effect = st_side_effect
 
-        encoder = Encoder(config)
-
-        # Trigger model loading
-        encoder.embed_texts(["test"])
-
-        # Should have tried to load fallback model
-        assert mock_st.call_count >= 1
-        # The model name in config should have been updated to fallback
-        assert config.model_name == "all-MiniLM-L6-v2"
+        with pytest.raises(
+            EmbeddingBackendError, match="Failed to load embedding model"
+        ):
+            Encoder(config)

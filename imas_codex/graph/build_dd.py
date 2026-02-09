@@ -438,69 +438,37 @@ def filter_embeddable_paths(
 
 def generate_embeddings_batch(
     texts: list[str],
-    model_name: str = "all-MiniLM-L6-v2",
+    model_name: str | None = None,
     batch_size: int = 256,
     use_rich: bool | None = None,
 ) -> np.ndarray:
     """
-    Generate embeddings for a batch of texts using sentence transformer.
+    Generate embeddings for a batch of texts using Encoder.
 
     Args:
         texts: List of text strings to embed
-        model_name: Sentence transformer model name
+        model_name: Model name (defaults to configured model from settings)
         batch_size: Batch size for encoding
         use_rich: Force rich progress (True), logging (False), or auto (None)
 
     Returns:
-        Numpy array of embeddings (N x 384 for MiniLM)
+        Numpy array of embeddings (N x embedding_dimension)
     """
-    with suppress_third_party_logging():
-        from sentence_transformers import SentenceTransformer
+    from imas_codex.embeddings.config import EncoderConfig
+    from imas_codex.embeddings.encoder import Encoder
+    from imas_codex.settings import get_imas_embedding_model
 
-        model = SentenceTransformer(model_name)
+    if model_name is None:
+        model_name = get_imas_embedding_model()
 
-        total_batches = (len(texts) + batch_size - 1) // batch_size
-        if total_batches <= 1:
-            return model.encode(
-                texts,
-                batch_size=batch_size,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            )
-
-        batch_names = [
-            f"{min((i + 1) * batch_size, len(texts))}/{len(texts)}"
-            for i in range(total_batches)
-        ]
-
-        progress = create_progress_monitor(
-            use_rich=use_rich,
-            logger=logger,
-            item_names=batch_names,
-            description_template="Embedding: {item}",
-        )
-
-        embeddings_list = []
-        progress.start_processing(batch_names, "Generating embeddings")
-        try:
-            for i in range(0, len(texts), batch_size):
-                texts_processed = min((i // batch_size + 1) * batch_size, len(texts))
-                batch_name = f"{texts_processed}/{len(texts)}"
-                progress.set_current_item(batch_name)
-
-                batch_texts = texts[i : i + batch_size]
-                batch_embeddings = model.encode(
-                    batch_texts,
-                    convert_to_numpy=True,
-                    normalize_embeddings=True,
-                    show_progress_bar=False,
-                )
-                embeddings_list.append(batch_embeddings)
-                progress.update_progress(batch_name)
-        finally:
-            progress.finish_processing()
-
-        return np.vstack(embeddings_list)
+    config = EncoderConfig(
+        model_name=model_name,
+        batch_size=batch_size,
+        normalize_embeddings=True,
+        use_rich=use_rich if use_rich is not None else True,
+    )
+    encoder = Encoder(config=config)
+    return encoder.embed_texts(texts)
 
 
 def get_existing_embedding_data(
@@ -645,7 +613,7 @@ def update_path_embeddings(
     client: GraphClient,
     paths_data: dict[str, dict],
     ids_info: dict[str, dict],
-    model_name: str = "all-MiniLM-L6-v2",
+    model_name: str | None = None,
     batch_size: int = 500,
     force_rebuild: bool = False,
     use_rich: bool | None = None,
@@ -666,7 +634,7 @@ def update_path_embeddings(
         client: GraphClient instance
         paths_data: Dict mapping path_id to path metadata
         ids_info: Dict mapping ids_name to IDS metadata
-        model_name: Sentence transformer model name
+        model_name: Embedding model name (defaults to configured model from settings)
         batch_size: Batch size for embedding generation
         force_rebuild: If True, regenerate all embeddings regardless of cache
         use_rich: Force rich progress (True), logging (False), or auto (None)
@@ -1020,7 +988,7 @@ def build_dd_graph(
     dry_run: bool = False,
     ids_filter: set[str] | None = None,
     use_rich: bool | None = None,
-    embedding_model: str = "all-MiniLM-L6-v2",
+    embedding_model: str | None = None,
     force_embeddings: bool = False,
 ) -> dict:
     """
@@ -1034,7 +1002,7 @@ def build_dd_graph(
         include_embeddings: Whether to generate path embeddings (default True)
         dry_run: If True, don't write to graph
         use_rich: Force rich progress (True), logging (False), or auto (None)
-        embedding_model: Sentence transformer model for embeddings
+        embedding_model: Embedding model name (defaults to configured model from settings)
         force_embeddings: Force regenerate all embeddings (ignore cache)
 
     Returns:

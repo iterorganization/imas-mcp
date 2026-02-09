@@ -51,7 +51,7 @@ semantic_search('plasma current', 'code_chunk_embedding', 3)
 ```python
 embed(text: str) -> list[float]
 ```
-Get 384-dim embedding vector for text.
+Get 256-dim embedding vector for text.
 
 ## Facility Configuration
 

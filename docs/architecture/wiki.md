@@ -31,7 +31,7 @@ The system uses a three-phase pipeline:
 │  - Fetch full HTML content via SSH                              │
 │  - Extract text with MediaWiki-aware parser                     │
 │  - Chunk using LlamaIndex SentenceSplitter                      │
-│  - Generate embeddings (all-MiniLM-L6-v2)                       │
+│  - Generate embeddings (Qwen3-Embedding-8B)                    │
 │  - Create WikiChunk nodes with vector index                     │
 │  - Link to TreeNodes and IMASPaths                              │
 │                                                                  │
@@ -78,7 +78,7 @@ Searchable text chunk with vector embedding.
 |----------|------|-------------|
 | `id` | string | `page_id:chunk_N` |
 | `content` | string | Text content |
-| `embedding` | float[] | 384-dim vector |
+| `embedding` | float[] | 256-dim vector |
 | `mdsplus_paths_mentioned` | string[] | Extracted MDSplus paths |
 | `imas_paths_mentioned` | string[] | Extracted IMAS paths |
 

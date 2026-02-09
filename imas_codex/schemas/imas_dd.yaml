@@ -247,7 +247,7 @@ classes:
       
       Embedding Support:
       - embedding_text: Pre-concatenated context for embedding generation
-      - embedding: 384-dim vector (model tracked on DDVersion)
+      - embedding: 256-dim vector (model tracked on DDVersion)
       - embedding_hash: Content hash for cache busting
       - Error fields, GGD paths, and metadata are excluded from embedding
     class_uri: imas_dd:IMASPath
@@ -306,7 +306,7 @@ classes:
           natural language prose optimized for sentence transformer embedding.
       embedding:
         description: >-
-          384-dim embedding vector. Model tracked on DDVersion.embeddings_model.
+          256-dim embedding vector. Model tracked on DDVersion.embeddings_model.
           Use Neo4j vector index for semantic search.
         multivalued: true
         range: float
@@ -378,7 +378,7 @@ classes:
       # Cluster centroid for semantic search
       centroid:
         description: >-
-          Cluster centroid embedding vector (384-dim, L2-normalized).
+          Cluster centroid embedding vector (256-dim, L2-normalized).
           Mean of member path embeddings. Enables hierarchical search:
           first match clusters by centroid, then search within cluster.
         multivalued: true

@@ -186,28 +186,15 @@ verbose = true
 ids-filter = ""
 imas-dd-version = ""
 
-# Embedding model configuration
 [tool.imas-codex]
-# Default DD version - single source of truth for the project
-# Must not exceed the version available in imas-data-dictionaries dependency
 default-dd-version = "4.1.0"
-imas-embedding-model = "Qwen/Qwen3-Embedding-0.6B"
+imas-embedding-model = "Qwen/Qwen3-Embedding-8B"
+imas-embedding-dimension = 256
 imas-language-model = "google/gemini-3-pro-preview"
-# Include GGD (Generalized Grid Description) paths in schema generation
 include-ggd = true
-# Include error fields (_error_upper, _error_lower, _error_index)
 include-error-fields = false
-
-# Embedding backend configuration
-# Options: "local", "remote", "openrouter"
-# - local: CPU/GPU via SentenceTransformer (best for MiniLM, slow for Qwen)
-# - remote: GPU server at embed-remote-url (iter cluster via SSH tunnel)
-# - openrouter: OpenRouter API (not yet implemented)
-# No fallback - errors if selected backend unavailable
-embedding-backend = "remote"
-# Remote embedding server URL (only used when embedding-backend = "remote")
+embedding-backend = "openrouter"
 embed-remote-url = "http://localhost:18765"
-# Embedding server port (for serve embed command on GPU host)
 embed-server-port = 18765
 
 # LLM model configuration for different agent tasks

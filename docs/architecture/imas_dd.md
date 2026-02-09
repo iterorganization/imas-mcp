@@ -27,7 +27,7 @@ The IMAS Data Dictionary (DD) is stored in Neo4j with full version tracking acro
     documentation: "Poloidal flux profile...",
     units: "Wb",
     data_type: "FLT_1D",
-    embedding: [...]  // 384 floats for semantic search
+    embedding: [...]  // 256 floats for semantic search
 })
 ```
 

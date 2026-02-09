@@ -25,7 +25,7 @@ class TestEncoder:
     def encoder_config(self) -> EncoderConfig:
         """Create an encoder config for testing."""
         return EncoderConfig(
-            model_name="all-MiniLM-L6-v2",
+            model_name="test-model",
             batch_size=8,
             enable_cache=True,
             use_rich=False,
@@ -78,13 +78,13 @@ class TestEncoder:
     def test_embed_texts_delegates_to_model(self, encoder):
         """embed_texts delegates to the loaded model."""
         mock_model = MagicMock()
-        mock_model.encode.return_value = np.zeros((3, 384))
+        mock_model.encode.return_value = np.zeros((3, 256))
         encoder._model = mock_model
 
         result = encoder.embed_texts(["text1", "text2", "text3"])
 
         mock_model.encode.assert_called_once()
-        assert result.shape == (3, 384)
+        assert result.shape == (3, 256)
 
     def test_embed_texts_api_fallback(self, encoder):
         """embed_texts falls back to local model on API failure."""
@@ -95,7 +95,7 @@ class TestEncoder:
         mock_api_model.encode.side_effect = Exception("API Error")
 
         mock_local_model = MagicMock()
-        mock_local_model.encode.return_value = np.zeros((1, 384))
+        mock_local_model.encode.return_value = np.zeros((1, 256))
 
         encoder._model = mock_api_model
 
@@ -103,7 +103,7 @@ class TestEncoder:
         def fallback_behavior(texts, **kwargs):
             if encoder.config.use_api_embeddings:
                 encoder.config.use_api_embeddings = False
-                encoder.config.model_name = "all-MiniLM-L6-v2"
+                encoder.config.model_name = "test-model"
                 encoder._model = mock_local_model
                 return mock_local_model.encode(texts)
             return mock_local_model.encode(texts)
@@ -120,7 +120,7 @@ class TestEncoder:
     def test_get_cache_info_with_cache(self, encoder, tmp_path):
         """get_cache_info returns cache details when cache exists."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((10, 384)),
+            embeddings=np.zeros((10, 256)),
             path_ids=["path_" + str(i) for i in range(10)],
             model_name="test-model",
             document_count=10,
@@ -133,14 +133,14 @@ class TestEncoder:
 
         assert result["model_name"] == "test-model"
         assert result["document_count"] == 10
-        assert result["embedding_dimension"] == 384
+        assert result["embedding_dimension"] == 256
         assert "created_at" in result
         assert "memory_usage_mb" in result
 
     def test_get_cache_info_with_cache_file(self, encoder, tmp_path):
         """get_cache_info includes file info when cache file exists."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((10, 384)),
+            embeddings=np.zeros((10, 256)),
             path_ids=["path_" + str(i) for i in range(10)],
             model_name="test-model",
             document_count=10,
@@ -195,7 +195,7 @@ class TestEncoder:
 
         assert filename.endswith(".pkl")
         assert filename.startswith(".")
-        assert "MiniLM" in filename or "minilm" in filename.lower()
+        assert "test" in filename.lower()
 
     def test_generate_cache_filename_with_cache_key(self, encoder):
         """_generate_cache_filename includes cache key in filename."""
@@ -253,7 +253,7 @@ class TestEncoder:
     def test_try_load_cache_valid_cache(self, encoder, tmp_path):
         """_try_load_cache loads valid cache successfully."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((2, 384)),
+            embeddings=np.zeros((2, 256)),
             path_ids=["id1", "id2"],
             model_name=encoder.config.model_name,
             document_count=2,
@@ -271,7 +271,7 @@ class TestEncoder:
     def test_try_load_cache_path_ids_mismatch(self, encoder, tmp_path):
         """_try_load_cache returns False when path IDs don't match."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((2, 384)),
+            embeddings=np.zeros((2, 256)),
             path_ids=["id1", "id2"],
             model_name=encoder.config.model_name,
             document_count=2,
@@ -299,7 +299,7 @@ class TestEncoder:
         """_create_cache saves cache to disk."""
         encoder._cache_path = tmp_path / "new_cache.pkl"
 
-        embeddings = np.zeros((3, 384))
+        embeddings = np.zeros((3, 256))
         identifiers = ["id1", "id2", "id3"]
 
         encoder._create_cache(embeddings, identifiers)
@@ -316,7 +316,7 @@ class TestEncoder:
         source_dir.mkdir()
         (source_dir / "ids_catalog.json").write_text('{"metadata": {"version": "4.0"}}')
 
-        encoder._create_cache(np.zeros((1, 384)), ["id1"], source_data_dir=source_dir)
+        encoder._create_cache(np.zeros((1, 256)), ["id1"], source_data_dir=source_dir)
 
         assert encoder._cache.dd_version == "4.0"
 
@@ -324,7 +324,7 @@ class TestEncoder:
         """_create_cache does nothing when caching is disabled."""
         encoder.config.enable_cache = False
 
-        encoder._create_cache(np.zeros((1, 384)), ["id1"])
+        encoder._create_cache(np.zeros((1, 256)), ["id1"])
 
         assert encoder._cache is None
 
@@ -339,7 +339,7 @@ class TestEncoder:
     def test_build_document_embeddings_generates_identifiers(self, encoder):
         """build_document_embeddings generates identifiers when not provided."""
         with patch.object(encoder, "_generate_embeddings") as mock_gen:
-            mock_gen.return_value = np.zeros((2, 384))
+            mock_gen.return_value = np.zeros((2, 256))
             with patch.object(encoder, "_set_cache_path"):
                 with patch.object(encoder, "_try_load_cache", return_value=False):
                     with patch.object(encoder, "_create_cache"):
@@ -355,7 +355,7 @@ class TestEncoder:
     def test_build_document_embeddings_uses_cache(self, encoder, tmp_path):
         """build_document_embeddings uses cached embeddings when available."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((2, 384)),
+            embeddings=np.zeros((2, 256)),
             path_ids=["id1", "id2"],
             model_name=encoder.config.model_name,
             document_count=2,
@@ -380,7 +380,7 @@ class TestEncoder:
     def test_build_document_embeddings_caching_disabled(self, encoder):
         """build_document_embeddings works with caching disabled."""
         with patch.object(encoder, "_generate_embeddings") as mock_gen:
-            mock_gen.return_value = np.zeros((2, 384))
+            mock_gen.return_value = np.zeros((2, 256))
 
             embeddings, path_ids, from_cache = encoder.build_document_embeddings(
                 texts=["text1", "text2"],
@@ -397,9 +397,9 @@ class TestEncoder:
         mock_model = MagicMock()
         # Return different shapes for each batch call
         mock_model.encode.side_effect = [
-            np.zeros((2, 384)),  # First batch: text1, text2
-            np.zeros((2, 384)),  # Second batch: text3, text4
-            np.zeros((1, 384)),  # Third batch: text5
+            np.zeros((2, 256)),  # First batch: text1, text2
+            np.zeros((2, 256)),  # Second batch: text3, text4
+            np.zeros((1, 256)),  # Third batch: text5
         ]
         encoder._model = mock_model
 
@@ -415,7 +415,7 @@ class TestEncoder:
         encoder.config.use_half_precision = True
 
         mock_model = MagicMock()
-        mock_model.encode.return_value = np.zeros((2, 384), dtype=np.float32)
+        mock_model.encode.return_value = np.zeros((2, 256), dtype=np.float32)
         encoder._model = mock_model
 
         result = encoder._generate_embeddings(["text1", "text2"])
