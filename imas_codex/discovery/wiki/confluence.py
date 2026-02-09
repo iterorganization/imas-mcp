@@ -14,7 +14,7 @@ Example:
 
     client = ConfluenceClient(
         base_url="https://confluence.iter.org",
-        credential_service="iter-confluence",
+        credential_service="iter",
     )
 
     # Authenticate (uses keyring credentials)

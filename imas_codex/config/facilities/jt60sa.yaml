@@ -20,12 +20,10 @@ data_systems:
   - uda      # UDA available via modules
 
 # Wiki/documentation sites
-# JT60SA has two documentation resources:
-# 1. Static TWiki export (code manuals) - direct HTTP via VPN
-# 2. Server documentation pages - direct HTTP via VPN
+# JT60SA documentation is hosted on nakasvr23 behind IFERC VPN.
+# The TWiki static export is the primary documentation source,
+# with the server landing page providing additional system docs.
 wiki_sites:
-  # Primary: Static TWiki export containing analysis code documentation
-  # TOPICS, EDAS, SLICE, OFMC, ACCOME code manuals
   - url: https://nakasvr23.iferc.org/twiki_html
     portal_page: WebHome.html
     site_type: twiki_static
@@ -33,22 +31,17 @@ wiki_sites:
     auth_type: none      # No credentials — VPN is the access gate
     ssh_available: true  # SSH to jt60sa host also possible via VPN
     description: >-
-      JT-60SA analysis code documentation (static TWiki export).
-      Contains TOPICS, EDAS, SLICE, equilibrium codes.
-      Mixed Japanese/English content.
+      JT-60SA analysis code documentation and server guides.
+      Contains TOPICS, EDAS, SLICE, equilibrium codes, hardware specs,
+      login procedures, batch job usage. Mixed Japanese/English content.
     languages:
       - ja
       - en
-  # Secondary: Server landing page with usage guides
-  - url: https://nakasvr23.iferc.org
-    portal_page: index.html
-    site_type: static_html
-    access_method: vpn   # Only accessible when IFERC VPN is active
-    auth_type: none      # No credentials — VPN is the access gate
-    ssh_available: true  # SSH to jt60sa host also possible via VPN
-    description: >-
-      JT-60SA data analysis server documentation.
-      Hardware specs, login procedures, batch job usage.
+    # Additional pages from the server landing site to include in this crawl
+    additional_urls:
+      - url: https://nakasvr23.iferc.org
+        portal_page: index.html
+        description: Server landing page - hardware, login, batch jobs, compilers
 
 # User info discovery configuration
 user_info:

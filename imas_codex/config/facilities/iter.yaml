@@ -25,7 +25,7 @@ wiki_sites:
     site_type: confluence
     access_method: direct  # Accessible from internet (no VPN/SSH needed)
     auth_type: session     # Username/password session login
-    credential_service: iter-confluence
+    credential_service: iter
     ssh_available: false   # Confluence is a web service, no SSH route
 
 # User info discovery configuration

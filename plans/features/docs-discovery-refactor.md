@@ -347,7 +347,7 @@ imas-codex discover sources add ...          # Existing
 imas-codex discover status tcv --domain docs
 
 # Credential management (stays under wiki for now)
-imas-codex credentials set iter-confluence
+imas-codex credentials set iter
 ```
 
 ### Implementation Plan

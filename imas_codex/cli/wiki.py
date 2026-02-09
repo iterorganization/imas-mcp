@@ -218,8 +218,8 @@ def session_clear(service: str, clear_all: bool) -> None:
 
     \b
     Examples:
-      imas-codex wiki session clear tcv-wiki
-      imas-codex wiki session clear iter-confluence
+      imas-codex wiki session clear tcv
+      imas-codex wiki session clear iter
     """
     from imas_codex.discovery.wiki.auth import CredentialManager
 
@@ -238,7 +238,7 @@ def session_status(service: str) -> None:
 
     \b
     Examples:
-      imas-codex wiki session status tcv-wiki
+      imas-codex wiki session status tcv
     """
     import json
     import time

@@ -2230,7 +2230,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: Unique identifier (e.g., "iter-confluence", "chease-readthedocs")
+        description: Unique identifier (e.g., "iter", "chease-readthedocs")
         required: true
       name:
         description: Human-readable name (e.g., "ITER Confluence Wiki")

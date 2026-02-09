@@ -38,7 +38,7 @@ _wiki_defaults: &wiki_defaults
   site_type: mediawiki
   access_method: direct      # Accessible via browser with login
   auth_type: basic           # MediaWiki username/password login
-  credential_service: jet-wiki
+  credential_service: jet
   ssh_available: true        # SSH tunnel also possible via JET host
 
 wiki_sites:

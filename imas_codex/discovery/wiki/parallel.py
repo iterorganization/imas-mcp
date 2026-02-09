@@ -3335,7 +3335,7 @@ async def _fetch_and_summarize(
 
         async with AsyncMediaWikiClient(
             base_url=base_url,
-            credential_service=credential_service or "tcv-wiki",
+            credential_service=credential_service or "tcv",
             verify_ssl=False,
         ) as client:
             if not await client.authenticate():
@@ -3791,7 +3791,7 @@ async def _fetch_html(
 
         async with AsyncMediaWikiClient(
             base_url=base_url_local,
-            credential_service=credential_service or "tcv-wiki",
+            credential_service=credential_service or "tcv",
             verify_ssl=False,
         ) as client:
             if not await client.authenticate():

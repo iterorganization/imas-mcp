@@ -41,7 +41,7 @@ wiki_sites:
     portal_page: IMP
     site_type: confluence
     auth_type: session
-    credential_service: iter-confluence
+    credential_service: iter
 ```
 
 ## Setup Instructions
@@ -59,11 +59,11 @@ Expected output: `keyring.backends.SecretService.Keyring (priority: 5)` on Linux
 
 ```bash
 # For ITER Confluence
-uv run imas-codex credentials set iter-confluence
+uv run imas-codex credentials set iter
 # Prompts for username and password
 
 # Verify credentials are stored
-uv run imas-codex credentials get iter-confluence
+uv run imas-codex credentials get iter
 ```
 
 ### 3. List Configured Sites
@@ -96,13 +96,13 @@ uv run imas-codex wiki ingest iter
 
 ```bash
 # Set credentials for a site
-uv run imas-codex credentials set iter-confluence
+uv run imas-codex credentials set iter
 
 # Check if credentials exist
-uv run imas-codex credentials get iter-confluence
+uv run imas-codex credentials get iter
 
 # Delete credentials
-uv run imas-codex credentials delete iter-confluence --yes
+uv run imas-codex credentials delete iter --yes
 ```
 
 ## Credential Security
@@ -157,12 +157,12 @@ uv run imas-codex credentials delete iter-confluence --yes
 # Settings → Personal Settings → API Tokens → Create API Token
 
 # 2. Store credentials
-uv run imas-codex credentials set iter-confluence
+uv run imas-codex credentials set iter
 # Username: your_username
 # Password: your_api_token
 
 # 3. Verify
-uv run imas-codex credentials get iter-confluence
+uv run imas-codex credentials get iter
 
 # 4. Start discovery
 uv run imas-codex wiki discover iter
@@ -189,7 +189,7 @@ wiki_sites:
     portal_page: IMP
     site_type: confluence
     auth_type: session
-    credential_service: iter-confluence
+    credential_service: iter
 ```
 
 ### EPFL (MediaWiki)
@@ -239,8 +239,8 @@ Error: Authentication required or session expired
 **Solution**: Delete cached session and re-authenticate:
 
 ```bash
-uv run imas-codex credentials delete iter-confluence
-uv run imas-codex credentials set iter-confluence
+uv run imas-codex credentials delete iter
+uv run imas-codex credentials set iter
 ```
 
 ### Confluence API Errors

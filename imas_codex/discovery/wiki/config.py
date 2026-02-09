@@ -75,7 +75,7 @@ class WikiConfig:
                 "auth_type": "tequila",
                 "access_method": "direct",
                 "ssh_available": True,
-                "credential_service": "tcv-wiki",
+                "credential_service": "tcv",
             },
             "iter": {
                 "base_url": "https://confluence.iter.org",
@@ -84,7 +84,7 @@ class WikiConfig:
                 "auth_type": "session",
                 "access_method": "direct",
                 "ssh_available": False,
-                "credential_service": "iter-confluence",
+                "credential_service": "iter",
             },
         }
 

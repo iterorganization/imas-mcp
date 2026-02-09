@@ -42,7 +42,7 @@ wiki_sites:
     site_type: mediawiki
     access_method: direct  # Accessible from internet
     auth_type: tequila     # EPFL Tequila SSO
-    credential_service: tcv-wiki
+    credential_service: tcv
     ssh_available: true    # SSH tunnel also possible via tcv host
 
 # User info discovery configuration

@@ -34,9 +34,10 @@ def _resolve_service(service: str) -> str:
                     credential_services.append(svc)
             if len(credential_services) == 1:
                 resolved = credential_services[0]
-                console.print(
-                    f"[dim]Resolved facility '{service}' → service '{resolved}'[/dim]"
-                )
+                if resolved != service:
+                    console.print(
+                        f"[dim]Resolved facility '{service}' → service '{resolved}'[/dim]"
+                    )
                 return resolved
             if len(credential_services) > 1:
                 console.print(
@@ -92,14 +93,12 @@ def credentials_set(
 ) -> None:
     """Store credentials for a service.
 
-    SERVICE is a credential service name or facility name.
-    Facility names are resolved to their credential service automatically.
+    SERVICE is a facility name (e.g., "tcv", "iter", "jet").
 
     \b
     Examples:
-      imas-codex credentials set tcv           # resolves to tcv-wiki
-      imas-codex credentials set tcv-wiki
-      imas-codex credentials set iter-confluence -u myuser
+      imas-codex credentials set tcv
+      imas-codex credentials set iter -u myuser
     """
     import getpass
 
@@ -156,14 +155,12 @@ def credentials_get(
     Shows credential status and storage source. Passwords are masked
     by default — use --show-password to reveal them.
 
-    SERVICE is a credential service name or facility name.
-    Facility names are resolved to their credential service automatically.
+    SERVICE is a facility name (e.g., "tcv", "iter", "jet").
 
     \b
     Examples:
-      imas-codex credentials get tcv               # resolves to tcv-wiki
-      imas-codex credentials get tcv-wiki
-      imas-codex credentials get tcv --show-password
+      imas-codex credentials get tcv
+      imas-codex credentials get iter --show-password
     """
     import os
 
@@ -210,14 +207,12 @@ def credentials_delete(
 
     Also clears any cached session for the service.
 
-    SERVICE is a credential service name or facility name.
-    Facility names are resolved to their credential service automatically.
+    SERVICE is a facility name (e.g., "tcv", "iter", "jet").
 
     \b
     Examples:
-      imas-codex credentials delete tcv          # resolves to tcv-wiki
-      imas-codex credentials delete tcv-wiki
-      imas-codex credentials delete iter-confluence --yes
+      imas-codex credentials delete tcv
+      imas-codex credentials delete iter --yes
     """
     from imas_codex.discovery.wiki.auth import CredentialManager
 

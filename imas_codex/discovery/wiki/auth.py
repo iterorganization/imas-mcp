@@ -5,8 +5,9 @@ to environment variables and interactive prompts.
 
 Credential lookup order:
 1. System keyring (GNOME Keyring, macOS Keychain, Windows Credential Locker)
-2. Environment variables (FACILITY_SITE_USERNAME, FACILITY_SITE_PASSWORD)
-3. Interactive prompt (if terminal available)
+2. Legacy keyring names (auto-migrated on first access)
+3. Environment variables (FACILITY_USERNAME, FACILITY_PASSWORD)
+4. Interactive prompt (if terminal available)
 
 Session cookies are also stored in keyring for persistence across runs.
 
@@ -16,16 +17,16 @@ Example:
     creds = CredentialManager()
 
     # Store credentials (one-time setup)
-    creds.set_credentials("iter-confluence", "username", "password")
+    creds.set_credentials("iter", "username", "password")
 
     # Retrieve credentials
-    username, password = creds.get_credentials("iter-confluence")
+    username, password = creds.get_credentials("iter")
 
     # Store session cookies after login
-    creds.set_session("iter-confluence", cookies_dict)
+    creds.set_session("iter", cookies_dict)
 
     # Retrieve session for subsequent requests
-    session = creds.get_session("iter-confluence")
+    session = creds.get_session("iter")
 """
 
 import getpass
@@ -43,6 +44,15 @@ SERVICE_PREFIX = "imas-codex"
 
 # Session TTL in seconds (default: 8 hours)
 DEFAULT_SESSION_TTL = 8 * 60 * 60
+
+# Legacy credential service names (pre-rename).
+# Used to auto-migrate credentials stored under old names.
+_LEGACY_SERVICE_NAMES: dict[str, str] = {
+    "tcv": "tcv-wiki",
+    "iter": "iter-confluence",
+    "jet": "jet-wiki",
+    "jt60sa": "jt60sa-wiki",
+}
 
 
 @dataclass
@@ -158,10 +168,62 @@ class CredentialManager:
         """Generate environment variable name.
 
         Converts site name to uppercase with underscores.
-        e.g., "iter-confluence" + "username" -> "ITER_CONFLUENCE_USERNAME"
+        e.g., "iter" + "username" -> "ITER_USERNAME"
         """
         site_upper = site.upper().replace("-", "_").replace("/", "_")
         return f"{site_upper}_{key.upper()}"
+
+    def _migrate_legacy_credentials(self, site: str) -> str | None:
+        """Check for credentials under a legacy service name and migrate them.
+
+        If credentials exist under the old name (e.g., "tcv-wiki"), they are
+        copied to the new name (e.g., "tcv") and the old entry is deleted.
+
+        Args:
+            site: Current site identifier (e.g., "tcv")
+
+        Returns:
+            The credentials JSON string if found and migrated, None otherwise.
+        """
+        legacy_name = _LEGACY_SERVICE_NAMES.get(site)
+        if not legacy_name or not self._keyring_available:
+            return None
+
+        import keyring
+
+        legacy_service = self._service_name(legacy_name)
+
+        def _get_legacy():
+            return keyring.get_password(legacy_service, "credentials")
+
+        creds_json = self._keyring_op(_get_legacy)
+        if not creds_json:
+            return None
+
+        # Migrate: store under new name, delete old entry
+        new_service = self._service_name(site)
+
+        def _set_new():
+            keyring.set_password(new_service, "credentials", creds_json)
+            return True
+
+        if self._keyring_op(_set_new):
+
+            def _delete_old():
+                try:
+                    keyring.delete_password(legacy_service, "credentials")
+                except Exception:
+                    pass  # Best-effort cleanup
+                return True
+
+            self._keyring_op(_delete_old)
+            logger.info(
+                "Migrated credentials from legacy '%s' to '%s'",
+                legacy_name,
+                site,
+            )
+
+        return creds_json
 
     def _keyring_op(self, func, *args, **kwargs):
         """Run a keyring operation with timeout.
@@ -202,7 +264,7 @@ class CredentialManager:
         """Store credentials in keyring.
 
         Args:
-            site: Site identifier (e.g., "iter-confluence")
+            site: Site identifier (e.g., "tcv", "iter")
             username: Username
             password: Password
 
@@ -273,12 +335,14 @@ class CredentialManager:
         """Retrieve credentials with fallback chain.
 
         Lookup order:
-        1. System keyring
-        2. Environment variables
-        3. Interactive prompt (if prompt_if_missing=True)
+        1. In-memory cache
+        2. System keyring (current name)
+        3. Legacy keyring name (auto-migrates if found)
+        4. Environment variables
+        5. Interactive prompt (if prompt_if_missing=True)
 
         Args:
-            site: Site identifier (e.g., "iter-confluence")
+            site: Site identifier (e.g., "tcv", "iter")
             prompt_if_missing: Whether to prompt interactively if not found
 
         Returns:
@@ -290,6 +354,7 @@ class CredentialManager:
             return self._memory_cache[site]
 
         # 2. Try keyring (with timeout to avoid blocking on unlock prompt)
+        creds_json = None
         if self._keyring_available:
             import keyring
 
@@ -299,16 +364,21 @@ class CredentialManager:
                 return keyring.get_password(service, "credentials")
 
             creds_json = self._keyring_op(_get)
-            if creds_json:
-                try:
-                    creds = json.loads(creds_json)
-                    logger.debug("Retrieved credentials from keyring for %s", site)
-                    result = creds["username"], creds["password"]
-                    # Populate memory cache for future lookups
-                    self._memory_cache[site] = result
-                    return result
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.debug("Invalid credentials JSON: %s", e)
+
+            # 3. Try legacy keyring name and auto-migrate
+            if not creds_json:
+                creds_json = self._migrate_legacy_credentials(site)
+
+        if creds_json:
+            try:
+                creds = json.loads(creds_json)
+                logger.debug("Retrieved credentials from keyring for %s", site)
+                result = creds["username"], creds["password"]
+                # Populate memory cache for future lookups
+                self._memory_cache[site] = result
+                return result
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.debug("Invalid credentials JSON: %s", e)
 
         # 3. Try environment variables
         username_var = self._env_var_name(site, "username")
@@ -476,11 +546,13 @@ class CredentialManager:
     def has_credentials(self, site: str) -> bool:
         """Check if credentials exist for a site.
 
+        Checks current name, then legacy name (without migrating).
+
         Args:
             site: Site identifier
 
         Returns:
-            True if credentials are available (memory cache, keyring, or env)
+            True if credentials are available (memory cache, keyring, legacy, or env)
         """
         # Check in-memory cache first
         if site in self._memory_cache:
@@ -498,6 +570,17 @@ class CredentialManager:
             result = self._keyring_op(_check)
             if result:
                 return True
+
+            # Check legacy keyring name (don't migrate here, just check)
+            legacy_name = _LEGACY_SERVICE_NAMES.get(site)
+            if legacy_name:
+                legacy_service = self._service_name(legacy_name)
+
+                def _check_legacy():
+                    return keyring.get_password(legacy_service, "credentials")
+
+                if self._keyring_op(_check_legacy):
+                    return True
 
         # Check environment
         username_var = self._env_var_name(site, "username")

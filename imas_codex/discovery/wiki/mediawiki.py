@@ -14,7 +14,7 @@ Example:
 
     client = MediaWikiClient(
         base_url="https://spcwiki.epfl.ch/wiki",
-        credential_service="tcv-wiki",
+        credential_service="tcv",
     )
 
     if client.authenticate():
@@ -676,7 +676,7 @@ class AsyncMediaWikiClient:
     Example:
         async with AsyncMediaWikiClient(
             base_url="https://spcwiki.epfl.ch/wiki",
-            credential_service="tcv-wiki",
+            credential_service="tcv",
         ) as client:
             if await client.authenticate():
                 page = await client.get_page("Portal:TCV")
