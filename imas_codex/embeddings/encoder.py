@@ -285,8 +285,8 @@ class Encoder:
         services on the login node (systemd, manual). SLURM servers run
         on titan partition with dedicated P100 GPUs.
 
-        If a non-SLURM server is occupying the port, ensure_server() will
-        free the port (stop systemd etc.) before setting up port forwarding.
+        If running off-ITER (no local sbatch), ensures SSH tunnel first
+        so that the health check after ensure_server() can reach the server.
 
         Returns:
             True if SLURM server is ready, False if SLURM unavailable
@@ -294,9 +294,11 @@ class Encoder:
         import shutil
         import subprocess
 
-        # Check 1: sbatch available locally (we're on ITER)?
-        if not shutil.which("sbatch"):
-            # Check 2: sbatch available via SSH to ITER?
+        has_local_sbatch = shutil.which("sbatch") is not None
+        has_remote_sbatch = False
+
+        if not has_local_sbatch:
+            # Check if sbatch available via SSH to ITER
             try:
                 result = subprocess.run(
                     [
@@ -312,12 +314,21 @@ class Encoder:
                     text=True,
                     timeout=10,
                 )
-                if result.returncode != 0:
+                has_remote_sbatch = result.returncode == 0
+                if not has_remote_sbatch:
                     self.logger.debug("SLURM not available locally or via SSH")
                     return False
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 self.logger.debug("Cannot reach ITER via SSH for SLURM auto-launch")
                 return False
+
+        # If off-ITER, ensure SSH tunnel so localhost:PORT reaches login node
+        if not has_local_sbatch and has_remote_sbatch:
+            from imas_codex.embeddings.readiness import _ensure_ssh_tunnel
+            from imas_codex.settings import get_embed_server_port
+
+            port = get_embed_server_port()
+            _ensure_ssh_tunnel(port)
 
         self.logger.info("Ensuring SLURM embedding server is running...")
 

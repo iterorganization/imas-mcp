@@ -1481,10 +1481,12 @@ def wiki_run(
         )
         raise SystemExit(1)
 
-    # Check embedding server availability upfront for ingestion mode
+    # Check embedding server availability upfront for ingestion mode.
+    # Uses centralized readiness check which handles the full lifecycle:
+    # SLURM auto-start, TCP proxy, SSH tunnel (if off-ITER), health check.
     if not scan_only and not score_only:
         from imas_codex.embeddings.config import EmbeddingBackend
-        from imas_codex.settings import get_embed_remote_url, get_embedding_backend
+        from imas_codex.settings import get_embedding_backend
 
         backend_str = get_embedding_backend()
         try:
@@ -1493,77 +1495,28 @@ def wiki_run(
             backend = EmbeddingBackend.LOCAL
 
         if backend == EmbeddingBackend.REMOTE:
-            import socket
-            import subprocess
-            import time
+            from imas_codex.embeddings.readiness import ensure_embedding_ready
 
-            from imas_codex.embeddings.client import RemoteEmbeddingClient
+            _style_map = {
+                "info": "",
+                "dim": "[dim]",
+                "warning": "[yellow]",
+                "success": "[green]",
+                "error": "[red]",
+            }
 
-            remote_url = get_embed_remote_url()
-            client = RemoteEmbeddingClient(remote_url)
+            def _readiness_log(msg: str, style: str = "info") -> None:
+                prefix = _style_map.get(style, "")
+                suffix = f"[/{style}]" if prefix else ""
+                log_print(f"{prefix}{msg}{suffix}")
 
-            # Use longer timeout for initial check (server may be cold)
-            if not client.is_available(timeout=15.0):
-                # Check if tunnel port is already listening (autossh may be active)
-                tunnel_port = 18765
-                port_in_use = False
-                try:
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                        s.settimeout(1)
-                        result = s.connect_ex(("127.0.0.1", tunnel_port))
-                        port_in_use = result == 0
-                except OSError:
-                    pass
-
-                if not port_in_use:
-                    # Try to auto-start SSH tunnel
-                    log_print("[dim]Starting SSH tunnel to iter...[/dim]")
-                    try:
-                        subprocess.run(
-                            [
-                                "ssh",
-                                "-f",
-                                "-N",
-                                "-o",
-                                "ExitOnForwardFailure=yes",
-                                "-L",
-                                f"{tunnel_port}:127.0.0.1:{tunnel_port}",
-                                "iter",
-                            ],
-                            timeout=10,
-                            check=True,
-                            capture_output=True,
-                        )
-                        # Give tunnel a moment to establish
-                        time.sleep(1.0)
-                        log_print("[green]SSH tunnel established[/green]")
-                    except (
-                        subprocess.TimeoutExpired,
-                        subprocess.CalledProcessError,
-                    ) as e:
-                        log_print(f"[yellow]SSH tunnel start failed: {e}[/yellow]")
-                else:
-                    log_print(
-                        "[dim]Tunnel port active, waiting for server response...[/dim]"
-                    )
-                    # Give more time if tunnel is up but server is slow
-                    time.sleep(2.0)
-
-                # Re-check with longer timeout after tunnel attempt
-                if not client.is_available(timeout=15.0):
-                    log_print(
-                        f"[red]Remote embedding server not available at {remote_url}[/red]"
-                    )
-                    log_print(
-                        "[yellow]Start SSH tunnel manually:[/yellow]\n"
-                        "  ssh -f -N -L 18765:127.0.0.1:18765 iter\n\n"
-                        "[dim]Or use --scan-only / --score-only to skip embedding[/dim]"
-                    )
-                    raise SystemExit(1)
-
-            log_print(
-                f"[dim]Embedding server: {remote_url} ({client.get_info().model})[/dim]"
-            )
+            ok, msg = ensure_embedding_ready(log_fn=_readiness_log, timeout=60.0)
+            if not ok:
+                log_print(f"[red]{msg}[/red]")
+                log_print(
+                    "[dim]Or use --scan-only / --score-only to skip embedding[/dim]"
+                )
+                raise SystemExit(1)
 
     # Display wiki sites
     multi_site_table = use_rich and len(wiki_sites) > 3

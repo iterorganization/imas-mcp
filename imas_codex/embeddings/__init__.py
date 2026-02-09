@@ -35,6 +35,7 @@ from .openrouter_embed import (
     estimate_embedding_cost,
     get_openrouter_client,
 )
+from .readiness import ensure_embedding_ready
 
 __all__ = [
     "EmbeddingBackend",
@@ -54,6 +55,7 @@ __all__ = [
     "RemoteLlamaEmbedding",
     "RemoteServerInfo",
     "calculate_embedding_cost",
+    "ensure_embedding_ready",
     "estimate_embedding_cost",
     "get_embedding_source",
     "get_llama_embed_model",
