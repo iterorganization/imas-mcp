@@ -171,8 +171,8 @@ def _generate_sbatch_script(
         #SBATCH --cpus-per-task={cpus}
         #SBATCH --mem={mem_gb}G
         #SBATCH --time={walltime}
-        #SBATCH --output=$HOME/.imas-codex/slurm-embed-%j.log
-        #SBATCH --error=$HOME/.imas-codex/slurm-embed-%j.log
+        #SBATCH --output=%h/.imas-codex/slurm-embed-%j.log
+        #SBATCH --error=%h/.imas-codex/slurm-embed-%j.log
 
         # Write node info for port forwarding
         echo "${{SLURM_JOB_NODELIST}}" > $HOME/.imas-codex/slurm-embed-node
