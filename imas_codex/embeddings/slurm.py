@@ -32,10 +32,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 import subprocess
 import textwrap
 import time
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -47,17 +50,29 @@ DEFAULT_WALLTIME = "08:00:00"
 DEFAULT_IDLE_TIMEOUT = 1800  # 30 minutes
 DEFAULT_PORT = 18765
 
-# Local state (on workstation) - tracks job_id, node, port forward PID
+# State directory (works both locally and on ITER)
 STATE_DIR = Path.home() / ".imas-codex"
 STATE_FILE = STATE_DIR / "slurm-embed.json"
 
-# Remote state dir (on ITER) - uses $HOME for shell expansion in SSH commands
+# Remote state dir - uses $HOME for shell expansion in sbatch scripts
 REMOTE_STATE_DIR = "$HOME/.imas-codex"
 
 # How long to wait for job to start and server to become ready
 JOB_START_TIMEOUT = 300  # 5 minutes for SLURM scheduling
 SERVER_READY_TIMEOUT = 120  # 2 minutes for model loading
 POLL_INTERVAL = 3.0  # seconds between status checks
+
+
+@lru_cache(maxsize=1)
+def _is_on_iter() -> bool:
+    """Detect if we're running on an ITER cluster node (login or compute).
+
+    Checks for ITER-specific hostname pattern (98dci4-*) or SLURM availability.
+    """
+    hostname = os.uname().nodename
+    if hostname.startswith("98dci4-"):
+        return True
+    return shutil.which("sbatch") is not None
 
 
 @dataclass
@@ -103,8 +118,15 @@ class SlurmJobState:
         self.forward_pid = None
 
 
-def _run_ssh(cmd: str, timeout: float = 30) -> subprocess.CompletedProcess[str]:
-    """Run a command on ITER via SSH."""
+def _run_cmd(cmd: str, timeout: float = 30) -> subprocess.CompletedProcess[str]:
+    """Run a command, locally if on ITER or via SSH otherwise."""
+    if _is_on_iter():
+        return subprocess.run(
+            ["bash", "-c", cmd],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
     return subprocess.run(
         ["ssh", "iter", cmd],
         capture_output=True,
@@ -181,7 +203,7 @@ def submit_job(
 
     # Write script to temp file on remote and submit
     script_path = f"{REMOTE_STATE_DIR}/slurm-embed.sh"
-    result = _run_ssh(
+    result = _run_cmd(
         f"mkdir -p {REMOTE_STATE_DIR} && cat > {script_path} << 'SLURM_SCRIPT_EOF'\n{script}SLURM_SCRIPT_EOF\n"
         f"&& sbatch {script_path}"
     )
@@ -218,7 +240,7 @@ def get_job_status(state: SlurmJobState | None = None) -> SlurmJobState | None:
     if not state.job_id:
         return None
 
-    result = _run_ssh(
+    result = _run_cmd(
         f"squeue -j {state.job_id} --noheader --format='%T %N %S' 2>/dev/null"
     )
 
@@ -268,7 +290,7 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
     _kill_port_forward(state)
 
     # Start port forward on login node
-    result = _run_ssh(
+    result = _run_cmd(
         f"ssh -f -N -o StrictHostKeyChecking=no "
         f"-L {state.port}:localhost:{state.port} {state.node}"
     )
@@ -280,7 +302,7 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
         return False
 
     # Find the PID of the forwarding SSH process
-    pid_result = _run_ssh(f"pgrep -f 'ssh.*-L.*{state.port}.*{state.node}' | tail -1")
+    pid_result = _run_cmd(f"pgrep -f 'ssh.*-L.*{state.port}.*{state.node}' | tail -1")
     if pid_result.returncode == 0 and pid_result.stdout.strip():
         state.forward_pid = int(pid_result.stdout.strip())
         state.save()
@@ -297,12 +319,12 @@ def _setup_port_forward(state: SlurmJobState) -> bool:
 def _kill_port_forward(state: SlurmJobState) -> None:
     """Kill any existing port forward for this job."""
     if state.forward_pid:
-        _run_ssh(f"kill {state.forward_pid} 2>/dev/null")
+        _run_cmd(f"kill {state.forward_pid} 2>/dev/null")
         state.forward_pid = None
 
     # Also kill by pattern match (catch orphans)
     if state.node and state.port:
-        _run_ssh(f"pkill -f 'ssh.*-L.*{state.port}.*{state.node}' 2>/dev/null")
+        _run_cmd(f"pkill -f 'ssh.*-L.*{state.port}.*{state.node}' 2>/dev/null")
 
 
 def _wait_for_job_start(
@@ -444,7 +466,7 @@ def _check_port_forward(state: SlurmJobState) -> bool:
     if not state.forward_pid:
         return False
 
-    result = _run_ssh(f"kill -0 {state.forward_pid} 2>/dev/null")
+    result = _run_cmd(f"kill -0 {state.forward_pid} 2>/dev/null")
     return result.returncode == 0
 
 
@@ -466,7 +488,7 @@ def cancel_job(state: SlurmJobState | None = None) -> bool:
 
     _kill_port_forward(state)
 
-    result = _run_ssh(f"scancel {state.job_id}")
+    result = _run_cmd(f"scancel {state.job_id}")
     if result.returncode == 0:
         logger.info("Cancelled SLURM job %s", state.job_id)
     else:
@@ -495,7 +517,7 @@ def get_logs(state: SlurmJobState | None = None, tail: int = 50) -> str:
         return "No active SLURM job"
 
     log_path = f"{REMOTE_STATE_DIR}/slurm-embed-{state.job_id}.log"
-    result = _run_ssh(f"tail -n {tail} {log_path} 2>/dev/null")
+    result = _run_cmd(f"tail -n {tail} {log_path} 2>/dev/null")
     return result.stdout if result.returncode == 0 else f"No log file: {log_path}"
 
 

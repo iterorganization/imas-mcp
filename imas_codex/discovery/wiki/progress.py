@@ -534,14 +534,16 @@ class WikiProgressDisplay:
 
         # Embedding source indicator (live - changes if fallback triggered)
         embed_source = get_embedding_source()
-        if embed_source == "remote":
+        if embed_source.startswith("iter-"):
+            section.append(f"    embed:{embed_source}", style="green")
+        elif embed_source == "remote":
             section.append("    embed:remote", style="green")
         elif embed_source == "openrouter":
             section.append("    embed:openrouter", style="yellow")
         elif embed_source == "local":
             section.append("    embed:local", style="cyan")
         else:
-            section.append("    embed:?", style="dim")
+            section.append(f"    embed:{embed_source}", style="dim")
 
         return section
 
@@ -596,7 +598,7 @@ class WikiProgressDisplay:
             if self.state.ingest_rate and self.state.ingest_rate > 0:
                 section.append(f" {self.state.ingest_rate:>5.1f}/s", style="dim")
 
-        # ARTIFACTS row - shows artifact scoring and ingestion progress
+        # ARTIFACTS row - progress bar showing ingested / (ingested + pending)
         section.append("\n")
         if self.state.scan_only:
             section.append("  ARTFCT  ", style="dim")
@@ -604,20 +606,19 @@ class WikiProgressDisplay:
             section.append("    disabled", style="dim italic")
         else:
             section.append("  ARTFCT  ", style="bold yellow")
-            # Show scored and ingested counts with clear labels
-            scored = self.state.total_run_artifacts_scored
             ingested = self.state.total_run_artifacts
-            # Build mini progress: [scored scr | ingested ing]
-            if scored > 0 or ingested > 0:
-                section.append("─" * (bar_width - 12), style="dim")
-                section.append(f" {scored:>3,}", style="bold cyan")
-                section.append(" scr", style="dim")
-                section.append(f" {ingested:>3,}", style="bold green")
-                section.append(" ing", style="dim")
+            pending = self.state.pending_artifact_ingest
+            art_total = ingested + pending
+            if art_total > 0:
+                art_ratio = min(ingested / art_total, 1.0)
+                section.append(make_bar(art_ratio, bar_width), style="yellow")
+                section.append(f" {ingested:>6,}", style="bold")
+                art_pct = ingested / art_total * 100
+                section.append(f" {art_pct:>3.0f}%", style="cyan")
             else:
                 section.append("─" * bar_width, style="dim")
-                section.append("      ", style="dim")
-            rate = self.state.artifact_score_rate or self.state.artifact_rate
+                section.append(f" {ingested:>6,}", style="bold")
+            rate = self.state.artifact_rate
             if rate and rate > 0:
                 section.append(f" {rate:>5.1f}/s", style="dim")
 

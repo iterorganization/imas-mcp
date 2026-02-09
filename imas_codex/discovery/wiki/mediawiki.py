@@ -572,7 +572,7 @@ class MediaWikiClient:
                         )
                 return None
             except requests.RequestException as e:
-                logger.error("Request failed for %s: %s", page_name, e)
+                logger.warning("Request failed for %s: %s", page_name, e)
                 return None
 
     def get_page_links(self, page_name: str) -> list[str]:
@@ -1131,7 +1131,7 @@ class AsyncMediaWikiClient:
                         )
             return None
         except httpx.RequestError as e:
-            logger.error("Request failed for %s: %s", page_name, e)
+            logger.warning("Request failed for %s: %s", page_name, e)
             return None
 
     async def close(self) -> None:

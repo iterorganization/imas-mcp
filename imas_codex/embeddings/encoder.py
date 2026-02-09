@@ -68,6 +68,7 @@ class Encoder:
         self._backend_validated: bool = False
         self._fallback_warned: bool = False
         self._using_fallback: bool = False
+        self._remote_hostname: str | None = None
 
         # Cost tracking for OpenRouter backend
         self.cost_tracker = cost_tracker or EmbeddingCostTracker()
@@ -165,43 +166,55 @@ class Encoder:
                 f"got '{info.model}'. Update embedding-backend config or restart server."
             )
 
-        self.logger.info(f"Using remote embedder: {info.model} on {info.device}")
+        # Get hostname from /info for detailed source tracking
+        detailed = self._remote_client.get_detailed_info()
+        if detailed:
+            self._remote_hostname = detailed.get("server", {}).get("hostname")
+
+        self.logger.info(
+            "Using remote embedder: %s on %s (host=%s)",
+            info.model,
+            info.device,
+            self._remote_hostname or "unknown",
+        )
         self._backend_validated = True
 
     def _try_slurm_auto_launch(self) -> bool:
         """Try to auto-launch the embedding server via SLURM.
 
-        Checks if SLURM (sbatch) is available on the ITER login node,
-        then submits a job and waits for it to be ready.
+        Checks if SLURM (sbatch) is available — either locally (on ITER)
+        or via SSH to the ITER login node.
 
         Returns:
             True if SLURM launch succeeded and server is available
         """
+        import shutil
         import subprocess
 
-        # Check 1: Are we on a machine with SSH access to ITER?
-        # Don't attempt SLURM on the embed server itself or on unknown hosts
-        try:
-            result = subprocess.run(
-                [
-                    "ssh",
-                    "-o",
-                    "ConnectTimeout=3",
-                    "-o",
-                    "BatchMode=yes",
-                    "iter",
-                    "which sbatch",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                self.logger.debug("SLURM not available via SSH to ITER")
+        # Check 1: sbatch available locally (we're on ITER)?
+        if not shutil.which("sbatch"):
+            # Check 2: sbatch available via SSH to ITER?
+            try:
+                result = subprocess.run(
+                    [
+                        "ssh",
+                        "-o",
+                        "ConnectTimeout=3",
+                        "-o",
+                        "BatchMode=yes",
+                        "iter",
+                        "which sbatch",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode != 0:
+                    self.logger.debug("SLURM not available locally or via SSH")
+                    return False
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                self.logger.debug("Cannot reach ITER via SSH for SLURM auto-launch")
                 return False
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            self.logger.debug("Cannot reach ITER via SSH for SLURM auto-launch")
-            return False
 
         self.logger.info(
             "Remote embed server unreachable, attempting SLURM auto-launch..."
@@ -275,16 +288,32 @@ class Encoder:
         """Get current embedding source identifier.
 
         Returns:
-            'local', 'remote', or 'openrouter'
+            'local', 'remote', 'openrouter', or host-specific
+            like 'iter-login' or 'iter-titan'
         """
         if self._using_fallback:
             return "openrouter"
         backend = self.config.backend or EmbeddingBackend.LOCAL
         if backend == EmbeddingBackend.REMOTE:
-            return "remote"
+            return self._resolve_remote_source()
         elif backend == EmbeddingBackend.OPENROUTER:
             return "openrouter"
         return "local"
+
+    def _resolve_remote_source(self) -> str:
+        """Resolve remote source to a descriptive name based on hostname."""
+        hn = self._remote_hostname
+        if not hn:
+            return "remote"
+        # ITER login nodes: 98dci4-srv-XXXX
+        if hn.startswith("98dci4-srv"):
+            return "iter-login"
+        # ITER GPU compute nodes: 98dci4-gpu-XXXX (titan partition)
+        if hn.startswith("98dci4-gpu"):
+            return "iter-titan"
+        # Generic: strip domain, use short hostname
+        short = hn.split(".")[0]
+        return f"iter-{short}" if "iter" in hn.lower() or "98dci4" in hn else short
 
     @property
     def cost_summary(self) -> str:
