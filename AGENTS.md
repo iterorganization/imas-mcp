@@ -4,20 +4,18 @@ Use terminal for direct operations (`rg`, `fd`, `git`), MCP `python()` for chain
 
 ## Project Philosophy
 
-This is a greenfield project under active development. We move fast and do not maintain backwards compatibility.
+Greenfield project under active development. No backwards compatibility.
 
-**Key principles:**
-- No backwards compatibility requirements - breaking changes are expected
-- Strategic pivots are normal - remove deprecated code decisively
+- Breaking changes are expected - remove deprecated code decisively
 - Avoid "enhanced", "new", "refactored" in names - just use the good name
-- When patterns change, update all usages - don't leave old patterns alongside new ones
+- When patterns change, update all usages - don't leave old patterns alongside new
 - Prefer explicit over clever - future agents will read this code
-- Never create documentation for transient analysis - `docs/` is for mature infrastructure only
 - Exploration notes go in facility YAML, not markdown files
+- `docs/` is for mature infrastructure only
 
 ## Schema System
 
-All graph node types, relationships, and properties are defined in LinkML schemas. These schemas are the single source of truth.
+All graph node types, relationships, and properties are defined in LinkML schemas — the single source of truth.
 
 **Schema files:**
 - `imas_codex/schemas/facility.yaml` - Facility graph: SourceFile, TreeNode, CodeChunk, etc.
@@ -43,21 +41,34 @@ sf = SourceFile(
 add_to_graph("SourceFile", [sf.model_dump()])
 ```
 
-**Extending schemas:** Edit LinkML YAML → `uv run build-models --force` → import from `imas_codex.graph.models`. Schema changes are additive only in the graph—add properties, never rename or remove.
+**Extending schemas:** Edit LinkML YAML → `uv run build-models --force` → import from `imas_codex.graph.models`. Schema changes are additive only — add properties, never rename or remove.
 
 ## Graph State Machine
 
 Status enums represent **durable states only**. No transient states like `scanning`, `scoring`, or `ingesting`.
 
-**Worker coordination:** Claim via `claimed_at = datetime()` (status unchanged), complete by updating status and clearing `claimed_at = null`. Orphan recovery is automatic via timeout check in claim queries. This applies to all discovery pipelines: paths, wiki, signals.
+**Worker coordination:** Claim via `claimed_at = datetime()` (status unchanged), complete by updating status and clearing `claimed_at = null`. Orphan recovery is automatic via timeout check in claim queries.
 
-## LLM Prompts
+### FacilityPath Lifecycle
 
-Prompts live in `imas_codex/agentic/prompts/` using Jinja2 templates with schema injection.
+```
+discovered → explored | skipped | stale
+```
 
-- Never hardcode JSON examples - use Pydantic schema injection via `get_pydantic_schema_json()`
-- Each prompt declares `schema_needs` in `prompt_loader.py` to load only required context
-- LLM structured output uses Pydantic models via LiteLLM `response_format`
+| Score | Use Case |
+|-------|----------|
+| 0.9+ | IMAS integration, IDS read/write |
+| 0.7+ | MDSplus access, equilibrium codes |
+| 0.5+ | General analysis codes |
+| <0.3 | Config files, documentation |
+
+### SourceFile Lifecycle
+
+```
+discovered → ingested | failed | stale
+```
+
+Ingestion is interrupt-safe — rerun to continue. Already-ingested files are skipped.
 
 ## Command Execution
 
@@ -74,9 +85,76 @@ Prompts live in `imas_codex/agentic/prompts/` using Jinja2 templates with schema
 
 **CLI in agent sessions:** Always use `--no-rich` to prevent animation loops in non-TTY contexts.
 
+## LLM Prompts
+
+Prompts live in `imas_codex/agentic/prompts/` using Jinja2 templates with schema injection.
+
+- Never hardcode JSON examples - use Pydantic schema injection via `get_pydantic_schema_json()`
+- Each prompt declares `schema_needs` in `prompt_loader.py` to load only required context
+- LLM structured output uses Pydantic models via LiteLLM `response_format`
+
+## Exploration
+
+Before disk-intensive operations, **check facility excludes** to avoid repeating known timeouts:
+
+```python
+info = get_facility('tcv')
+excludes = info.get('excludes', {})
+print(excludes.get('large_dirs', []))
+print(excludes.get('depth_limits', {}))
+print(info.get('exploration_notes', [])[-3:])
+```
+
+When a command times out, **persist the constraint immediately** via `update_infrastructure()` and `add_exploration_note()`. Never repeat a timeout.
+
+### Persistence
+
+| Discovery Type | Destination |
+|----------------|-------------|
+| Source files, paths, codes, trees | `add_to_graph()` (public graph) |
+| Hostnames, IPs, OS, tool versions | `update_infrastructure()` (private YAML) |
+| Context for future sessions | `add_exploration_note()` |
+
+### Data Classification
+
+- **Graph (public):** MDSplus tree names, analysis code names/versions/paths, TDI functions, diagnostic names
+- **Infrastructure (private):** Hostnames, IPs, NFS mounts, OS versions, tool availability, user directories
+
+## Ingestion
+
+```bash
+# Queue files for ingestion
+uv run imas-codex ingest queue tcv /path/a.py /path/b.py
+
+# Pipe from remote search
+ssh tcv 'rg -l "equilibrium|IMAS" /home/codes -g "*.py"' | \
+  uv run imas-codex ingest queue tcv --stdin
+
+# Process queue
+uv run imas-codex ingest run tcv
+uv run imas-codex ingest run tcv --min-score 0.7  # High-priority only
+uv run imas-codex ingest run tcv --dry-run         # Preview
+
+# Monitor
+uv run imas-codex ingest status tcv
+uv run imas-codex ingest list tcv -s failed
+uv run imas-codex ingest run tcv --retry-failed
+```
+
+The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, and import dependencies. Do not fabricate `patterns_matched` metadata.
+
 ## Graph Operations
 
-### Backup
+### Neo4j Management
+
+```bash
+uv run imas-codex neo4j status           # Check status
+uv run imas-codex neo4j shell            # Interactive Cypher
+uv run imas-codex neo4j dump             # Backup (always before destructive ops)
+uv run imas-codex neo4j load graph.dump  # Restore
+uv run imas-codex neo4j pull             # Pull latest from GHCR
+uv run imas-codex neo4j push v4.0.0      # Push to GHCR
+```
 
 Never use `DETACH DELETE` on production data without user confirmation. For re-embedding: update nodes in place, don't delete and recreate.
 
@@ -104,10 +182,10 @@ gc.query(f"""
 
 | Index | Content |
 |-------|---------|
-| `imas_path_embedding` | IMASPath nodes |
+| `imas_path_embedding` | IMASPath nodes (61k) |
 | `cluster_centroid` | IMASSemanticCluster centroids |
-| `code_chunk_embedding` | CodeChunk nodes |
-| `wiki_chunk_embedding` | WikiChunk nodes |
+| `code_chunk_embedding` | CodeChunk nodes (8.5k) |
+| `wiki_chunk_embedding` | WikiChunk nodes (25k) |
 | `facility_signal_desc_embedding` | FacilitySignal descriptions |
 | `facility_path_desc_embedding` | FacilityPath descriptions |
 | `tree_node_desc_embedding` | TreeNode descriptions |
@@ -150,6 +228,30 @@ results = query("""
 
 **Token cost:** Always project specific properties in Cypher (`RETURN n.id, n.name`), never return full nodes. Use Cypher aggregations instead of Python post-processing.
 
+### Batch Operations
+
+Use `UNWIND` for batch graph writes:
+
+```python
+query('''
+    UNWIND $items AS item
+    MERGE (n:Tool {id: item.id})
+    SET n += item
+    WITH n
+    MATCH (f:Facility {id: 'tcv'})
+    MERGE (n)-[:FACILITY_ID]->(f)
+''', items=tools)
+```
+
+### Release Workflow
+
+```bash
+# Prepare PR (pushes tag to fork)
+uv run imas-codex release v4.0.0 -m 'Release message' --remote origin
+# After PR merge, finalize (graph to GHCR, tag to upstream)
+uv run imas-codex release v4.0.0 -m 'Release message'
+```
+
 ## Fast Tools
 
 Prefer these Rust-based CLI tools over standard Unix commands. Defined in `imas_codex/config/fast_tools.yaml`.
@@ -169,24 +271,22 @@ Install on any facility: `uv run imas-codex tools install <facility>`
 ## Commit Workflow
 
 ```bash
-# 1. Lint and format first
+# 1. Lint and format
 uv run ruff check --fix .
 uv run ruff format .
 
-# 2. Stage specific files (never git add -A, never add gitignored files)
+# 2. Stage specific files (never git add -A)
 git add <file1> <file2> ...
 
 # 3. Commit with conventional format
 uv run git commit -m "type: concise summary
 
-Detailed explanation of what changed and why.
-- First significant change
-- Second change with rationale
+Detailed explanation.
+- Key changes
 
 BREAKING CHANGE: description (if applicable)"
 
-# 4. If pre-commit fails, fix and repeat steps 2-3
-
+# 4. If pre-commit fails, fix and repeat 2-3
 # 5. Push
 git push origin main
 ```
@@ -217,16 +317,7 @@ git push origin main
 
 **MANDATORY** after any file modifications: commit and push before responding to the user.
 
-End every response that modifies files with the **full commit message** and a brief summary:
-
-```
-✓ Committed: `<commit-hash>`
-
-type: concise summary
-
-Detailed explanation.
-- Key changes
-```
+End every response that modifies files with the **full commit message** and a brief summary.
 
 ## Code Style
 
@@ -236,7 +327,7 @@ Detailed explanation.
 - `anyio` for async
 - `uv run` for all Python commands (never activate venv manually)
 - Never use `git add -A`
-- Never use "new", "refactored", "enhanced" in names
+- The `.env` file contains secrets — never expose or commit it
 
 ## Testing
 
@@ -283,14 +374,7 @@ If embedding fails, check in order:
 
 ## Domain Workflows
 
-| Workflow | Documentation |
-|----------|---------------|
-| Facility exploration | [agents/explore.md](agents/explore.md) |
-| Development | [agents/develop.md](agents/develop.md) |
-| Code ingestion | [agents/ingest.md](agents/ingest.md) |
-| Graph operations | [agents/graph.md](agents/graph.md) |
-
-## Custom Agents
+Extended examples and edge cases for each domain: [agents/](agents/)
 
 | Agent | Purpose |
 |-------|---------|
