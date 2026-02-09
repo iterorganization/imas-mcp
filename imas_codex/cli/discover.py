@@ -2018,6 +2018,186 @@ def discover_wiki(
     log_print("\n[green]Documentation discovery complete.[/green]")
 
 
+@discover.command("wiki-reset")
+@click.argument("facility")
+@click.option(
+    "--status",
+    "-s",
+    multiple=True,
+    default=("failed",),
+    help="Status values to reset (default: failed). Can specify multiple: -s failed -s deferred",
+)
+@click.option(
+    "--target",
+    "-t",
+    type=click.Choice(["pages", "artifacts", "all"]),
+    default="all",
+    help="What to reset: pages, artifacts, or all (default: all)",
+)
+@click.option(
+    "--to-status",
+    type=click.Choice(["discovered", "scanned"]),
+    default=None,
+    help="Target status. Default: 'scanned' for pages, 'discovered' for artifacts",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would be reset without changing anything"
+)
+@click.option("--force", is_flag=True, help="Skip confirmation prompt")
+def discover_wiki_reset(
+    facility: str,
+    status: tuple[str, ...],
+    target: str,
+    to_status: str | None,
+    dry_run: bool,
+    force: bool,
+) -> None:
+    """Reset failed/deferred wiki pages and artifacts for re-processing.
+
+    After fixing auth issues, use this to reset pages/artifacts that failed
+    during previous runs so they can be re-scored and re-ingested.
+
+    Examples:
+
+        # Reset all failed items (default)
+        imas-codex discover wiki-reset tcv
+
+        # Reset both failed and deferred artifacts
+        imas-codex discover wiki-reset tcv -s failed -s deferred
+
+        # Reset only artifacts
+        imas-codex discover wiki-reset tcv -t artifacts
+
+        # Dry run to see what would be reset
+        imas-codex discover wiki-reset tcv --dry-run
+    """
+    from imas_codex.graph.client import GraphClient
+
+    console = Console()
+
+    def log_print(msg: str, style: str = "") -> None:
+        console.print(msg)
+
+    log_print(f"[bold]Wiki reset for {facility.upper()}[/bold]")
+
+    status_list = list(status)
+
+    with GraphClient() as gc:
+        # Count items to reset
+        counts = {}
+        if target in ("pages", "all"):
+            for s in status_list:
+                result = gc.query(
+                    """
+                    MATCH (wp:WikiPage {facility_id: $facility})
+                    WHERE wp.status = $status
+                    RETURN count(wp) AS cnt
+                    """,
+                    facility=facility,
+                    status=s,
+                )
+                cnt = result[0]["cnt"] if result else 0
+                if cnt > 0:
+                    counts[f"pages ({s})"] = cnt
+
+        if target in ("artifacts", "all"):
+            for s in status_list:
+                result = gc.query(
+                    """
+                    MATCH (wa:WikiArtifact {facility_id: $facility})
+                    WHERE wa.status = $status
+                    RETURN count(wa) AS cnt
+                    """,
+                    facility=facility,
+                    status=s,
+                )
+                cnt = result[0]["cnt"] if result else 0
+                if cnt > 0:
+                    counts[f"artifacts ({s})"] = cnt
+
+        if not counts:
+            log_print(
+                f"[dim]No {'/'.join(status_list)} items found for {facility}[/dim]"
+            )
+            return
+
+        # Display what will be reset
+        total = sum(counts.values())
+        log_print(f"\nItems to reset ({total} total):")
+        for label, cnt in counts.items():
+            log_print(f"  {label}: {cnt:,}")
+
+        if dry_run:
+            log_print("\n[yellow]Dry run — no changes made[/yellow]")
+            return
+
+        if not force:
+            click.confirm(f"Reset {total} items?", abort=True)
+
+        # Perform reset
+        reset_total = 0
+        if target in ("pages", "all"):
+            page_to = to_status or "scanned"
+            for s in status_list:
+                result = gc.query(
+                    """
+                    MATCH (wp:WikiPage {facility_id: $facility})
+                    WHERE wp.status = $status
+                    SET wp.status = $new_status,
+                        wp.score = null,
+                        wp.score_cost = null,
+                        wp.physics_domain = null,
+                        wp.description = null,
+                        wp.claimed_at = null
+                    RETURN count(wp) AS cnt
+                    """,
+                    facility=facility,
+                    status=s,
+                    new_status=page_to,
+                )
+                cnt = result[0]["cnt"] if result else 0
+                if cnt > 0:
+                    log_print(f"  Reset {cnt:,} pages ({s} → {page_to})")
+                    reset_total += cnt
+
+        if target in ("artifacts", "all"):
+            artifact_to = to_status or "discovered"
+            for s in status_list:
+                # Delete chunks from previously failed ingests
+                gc.query(
+                    """
+                    MATCH (wa:WikiArtifact {facility_id: $facility})-[:HAS_CHUNK]->(c:WikiChunk)
+                    WHERE wa.status = $status
+                    DETACH DELETE c
+                    """,
+                    facility=facility,
+                    status=s,
+                )
+                result = gc.query(
+                    """
+                    MATCH (wa:WikiArtifact {facility_id: $facility})
+                    WHERE wa.status = $status
+                    SET wa.status = $new_status,
+                        wa.score = null,
+                        wa.score_cost = null,
+                        wa.physics_domain = null,
+                        wa.description = null,
+                        wa.claimed_at = null,
+                        wa.preview_text = null
+                    RETURN count(wa) AS cnt
+                    """,
+                    facility=facility,
+                    status=s,
+                    new_status=artifact_to,
+                )
+                cnt = result[0]["cnt"] if result else 0
+                if cnt > 0:
+                    log_print(f"  Reset {cnt:,} artifacts ({s} → {artifact_to})")
+                    reset_total += cnt
+
+        log_print(f"\n[green]Reset {reset_total:,} items for re-processing[/green]")
+
+
 @discover.command("signals")
 @click.argument("facility")
 @click.option(

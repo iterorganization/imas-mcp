@@ -90,7 +90,9 @@ class Encoder:
                 )
             self._remote_client = RemoteEmbeddingClient(self.config.remote_url)
             # No OpenRouter fallback - remote backend should retry remote only.
-            # Validate remote on first use (lazy)
+            # Validate remote on first use (lazy), but eagerly fetch hostname
+            # for progress display source resolution.
+            self._fetch_remote_hostname()
         elif backend == EmbeddingBackend.OPENROUTER:
             # Direct OpenRouter mode (no remote fallback)
             self._openrouter_client = OpenRouterEmbeddingClient(
@@ -103,6 +105,19 @@ class Encoder:
                 )
         else:
             raise EmbeddingBackendError(f"Unknown backend: {backend}")
+
+    def _fetch_remote_hostname(self) -> None:
+        """Eagerly fetch remote server hostname for source display.
+
+        Non-blocking best-effort: if the server isn't up yet, hostname
+        will be resolved lazily during _validate_remote_backend().
+        """
+        try:
+            detailed = self._remote_client.get_detailed_info()
+            if detailed:
+                self._remote_hostname = detailed.get("server", {}).get("hostname")
+        except Exception:
+            pass  # Will be resolved on first embed call
 
     def _validate_remote_backend(self) -> None:
         """Validate remote backend is available and model matches.

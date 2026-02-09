@@ -115,13 +115,13 @@ class EncoderLlamaEmbedding(BaseEmbedding):
     def _get_query_embedding(self, query: str) -> list[float]:
         """Get embedding for a query string."""
         result = self._encoder.embed_texts_with_result([query])
-        _set_embedding_source(result.source)
+        _set_embedding_source(self._encoder.current_source)
         return result.embeddings[0].tolist()
 
     def _get_text_embedding(self, text: str) -> list[float]:
         """Get embedding for a text string."""
         result = self._encoder.embed_texts_with_result([text])
-        _set_embedding_source(result.source)
+        _set_embedding_source(self._encoder.current_source)
         return result.embeddings[0].tolist()
 
     async def _aget_query_embedding(self, query: str) -> list[float]:
@@ -135,7 +135,7 @@ class EncoderLlamaEmbedding(BaseEmbedding):
     def _get_text_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Get embeddings for multiple texts."""
         result = self._encoder.embed_texts_with_result(texts)
-        _set_embedding_source(result.source)
+        _set_embedding_source(self._encoder.current_source)
         return result.embeddings.tolist()
 
     @property
