@@ -572,7 +572,12 @@ class MediaWikiClient:
                         )
                 return None
             except requests.RequestException as e:
-                logger.warning("Request failed for %s: %s", page_name, e)
+                logger.warning(
+                    "Request failed for %s (%s): %s",
+                    page_name,
+                    type(e).__name__,
+                    e or "no details",
+                )
                 return None
 
     def get_page_links(self, page_name: str) -> list[str]:
@@ -1013,10 +1018,10 @@ class AsyncMediaWikiClient:
             return False
 
     async def get_page(self, page_name: str) -> MediaWikiPage | None:
-        """Fetch a MediaWiki page.
+        """Fetch a MediaWiki page with retry logic.
 
         Uses httpx AsyncClient for concurrent requests with connection pooling.
-        Includes a backstop timeout to prevent indefinite hangs.
+        Includes a backstop timeout and retries for transient connection errors.
 
         Args:
             page_name: Page name (e.g., "Portal:TCV", "Thomson/DDJ")
@@ -1032,107 +1037,158 @@ class AsyncMediaWikiClient:
             if not await self.authenticate():
                 return None
 
-        await self._rate_limit()
-
         # URL-encode page name (preserve slashes for subpages)
         from urllib.parse import quote
 
         encoded_name = quote(page_name, safe="/")
         url = f"{self.base_url}/{encoded_name}"
 
-        # Backstop timeout (2x the client timeout) in case httpx timeout fails
-        backstop_timeout = self.timeout * 2
+        # Retry loop for transient connection errors
+        max_attempts = 3
+        last_error = None
 
-        client = await self._get_client()
-        try:
-            # Wrap request in wait_for as backstop against hanging connections
-            response = await asyncio.wait_for(client.get(url), timeout=backstop_timeout)
+        for attempt in range(max_attempts):
+            await self._rate_limit()
 
-            # Check if session expired mid-request
-            if self._is_tequila_redirect(response):
-                logger.warning("Session expired during request, re-authenticating")
-                self._authenticated = False
-                async with self._lock:
-                    if not await self._authenticate_impl(force=True):
-                        return None
-                # Retry request with backstop timeout
+            # Backstop timeout (2x the client timeout) in case httpx timeout fails
+            backstop_timeout = self.timeout * 2
+            client = await self._get_client()
+
+            try:
                 response = await asyncio.wait_for(
                     client.get(url), timeout=backstop_timeout
                 )
 
-            response.raise_for_status()
-
-            # Extract title
-            title_match = re.search(r"<title>([^<]+)</title>", response.text)
-            title = (
-                title_match.group(1).replace(" - SPCwiki", "")
-                if title_match
-                else page_name
-            )
-
-            # Extract text content (strip tags for entity extraction)
-            text_content = re.sub(r"<[^>]+>", " ", response.text)
-            text_content = re.sub(r"\s+", " ", text_content)
-
-            return MediaWikiPage(
-                title=title,
-                url=url,
-                content_html=response.text,
-                content_text=text_content,
-            )
-
-        except TimeoutError:
-            logger.warning(
-                "Request timed out for %s after %.1fs", page_name, backstop_timeout
-            )
-            return None
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                logger.debug("Page not found: %s", page_name)
-            else:
-                logger.error("HTTP error fetching %s: %s", page_name, e)
-            return None
-        except httpx.TooManyRedirects:
-            logger.warning(
-                "Redirect loop for %s - clearing session and retrying", page_name
-            )
-            self._authenticated = False
-            client.cookies.clear()
-            await asyncio.to_thread(self._creds.delete_session, self.credential_service)
-            async with self._lock:
-                if await self._authenticate_impl(force=True):
-                    try:
-                        response = await asyncio.wait_for(
-                            client.get(url), timeout=backstop_timeout
-                        )
-                        if not self._is_tequila_redirect(response):
-                            response.raise_for_status()
-                            title_match = re.search(
-                                r"<title>([^<]+)</title>", response.text
-                            )
-                            title = (
-                                title_match.group(1).replace(" - SPCwiki", "")
-                                if title_match
-                                else page_name
-                            )
-                            text_content = re.sub(r"<[^>]+>", " ", response.text)
-                            text_content = re.sub(r"\s+", " ", text_content)
-                            return MediaWikiPage(
-                                title=title,
-                                url=url,
-                                content_html=response.text,
-                                content_text=text_content,
-                            )
-                    except Exception as retry_e:
+                # Check if session expired mid-request
+                if self._is_tequila_redirect(response):
+                    logger.warning("Session expired during request, re-authenticating")
+                    self._authenticated = False
+                    async with self._lock:
+                        if not await self._authenticate_impl(force=True):
+                            logger.error("Re-authentication failed for %s", page_name)
+                            return None
+                    # Retry request with backstop timeout
+                    response = await asyncio.wait_for(
+                        client.get(url), timeout=backstop_timeout
+                    )
+                    # Check if retry also hit Tequila (auth failed silently)
+                    if self._is_tequila_redirect(response):
                         logger.error(
-                            "Retry after redirect loop failed for %s: %s",
+                            "Page %s still returns Tequila redirect after re-auth",
                             page_name,
-                            retry_e,
                         )
-            return None
-        except httpx.RequestError as e:
-            logger.warning("Request failed for %s: %s", page_name, e)
-            return None
+                        return None
+
+                response.raise_for_status()
+
+                # Extract title
+                title_match = re.search(r"<title>([^<]+)</title>", response.text)
+                title = (
+                    title_match.group(1).replace(" - SPCwiki", "")
+                    if title_match
+                    else page_name
+                )
+
+                # Extract text content (strip tags for entity extraction)
+                text_content = re.sub(r"<[^>]+>", " ", response.text)
+                text_content = re.sub(r"\s+", " ", text_content)
+
+                return MediaWikiPage(
+                    title=title,
+                    url=url,
+                    content_html=response.text,
+                    content_text=text_content,
+                )
+
+            except TimeoutError:
+                last_error = f"timeout after {backstop_timeout:.1f}s"
+                logger.debug(
+                    "Request timed out for %s (attempt %d/%d)",
+                    page_name,
+                    attempt + 1,
+                    max_attempts,
+                )
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    logger.debug("Page not found: %s", page_name)
+                    return None  # Don't retry 404s
+                if e.response.status_code >= 500:
+                    # Server errors are retryable
+                    last_error = f"HTTP {e.response.status_code}"
+                    logger.debug(
+                        "Server error for %s (attempt %d/%d): %s",
+                        page_name,
+                        attempt + 1,
+                        max_attempts,
+                        e,
+                    )
+                else:
+                    # Client errors are not retryable
+                    logger.warning("HTTP error fetching %s: %s", page_name, e)
+                    return None
+            except httpx.TooManyRedirects:
+                logger.warning(
+                    "Redirect loop for %s - clearing session and retrying", page_name
+                )
+                self._authenticated = False
+                client.cookies.clear()
+                await asyncio.to_thread(
+                    self._creds.delete_session, self.credential_service
+                )
+                async with self._lock:
+                    if await self._authenticate_impl(force=True):
+                        try:
+                            response = await asyncio.wait_for(
+                                client.get(url), timeout=backstop_timeout
+                            )
+                            if not self._is_tequila_redirect(response):
+                                response.raise_for_status()
+                                title_match = re.search(
+                                    r"<title>([^<]+)</title>", response.text
+                                )
+                                title = (
+                                    title_match.group(1).replace(" - SPCwiki", "")
+                                    if title_match
+                                    else page_name
+                                )
+                                text_content = re.sub(r"<[^>]+>", " ", response.text)
+                                text_content = re.sub(r"\s+", " ", text_content)
+                                return MediaWikiPage(
+                                    title=title,
+                                    url=url,
+                                    content_html=response.text,
+                                    content_text=text_content,
+                                )
+                        except Exception as retry_e:
+                            logger.error(
+                                "Retry after redirect loop failed for %s: %s",
+                                page_name,
+                                retry_e,
+                            )
+                return None
+            except httpx.RequestError as e:
+                # Connection-level errors are retryable
+                last_error = f"{type(e).__name__}: {e or 'no details'}"
+                logger.debug(
+                    "Request failed for %s (attempt %d/%d): %s",
+                    page_name,
+                    attempt + 1,
+                    max_attempts,
+                    last_error,
+                )
+
+            # Backoff before retry
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(0.5 * (attempt + 1))
+
+        # All retries exhausted
+        logger.warning(
+            "Request failed for %s after %d attempts: %s",
+            page_name,
+            max_attempts,
+            last_error,
+        )
+        return None
 
     async def close(self) -> None:
         """Close the async client."""
