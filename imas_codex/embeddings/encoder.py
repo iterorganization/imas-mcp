@@ -231,7 +231,7 @@ class Encoder:
                 f"{last_error}. "
                 "Fallback to local and OpenRouter also failed.\n"
                 "Ensure SSH tunnel is active: ssh -f -N -L 18765:127.0.0.1:18765 iter\n"
-                "Or submit a SLURM job: imas-codex serve embed slurm submit\n"
+                "Or submit a SLURM job: imas-codex serve embed submit\n"
                 "Or set OPENROUTER_API_KEY for cloud fallback."
             )
 

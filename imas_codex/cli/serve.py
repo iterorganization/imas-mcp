@@ -234,11 +234,14 @@ def serve_agents(
 
 @serve.group("embed")
 def serve_embed() -> None:
-    """Manage GPU embedding server.
+    """Manage GPU embedding server (local, SLURM, systemd).
 
     \b
-      imas-codex serve embed start      Start embedding server
-      imas-codex serve embed status     Check server status
+      imas-codex serve embed start      Start embedding server locally
+      imas-codex serve embed status     Check server & SLURM job status
+      imas-codex serve embed submit     Submit SLURM job on GPU cluster
+      imas-codex serve embed cancel     Cancel SLURM job
+      imas-codex serve embed logs       Show SLURM server logs
       imas-codex serve embed service    Manage systemd service
     """
     pass
@@ -347,10 +350,13 @@ def embed_start(
 )
 @click.option("--local", is_flag=True, help="Check local embedding capability")
 def embed_status(url: str | None, local: bool) -> None:
-    """Check embedding server status.
+    """Check embedding server status (remote, SLURM, and local).
+
+    Shows combined status: remote server health, SLURM job, port forwarding,
+    and optionally local GPU capability.
 
     Examples:
-        # Check remote server (via tunnel)
+        # Check remote server + SLURM status
         imas-codex serve embed status
 
         # Check local capability
@@ -386,28 +392,55 @@ def embed_status(url: str | None, local: bool) -> None:
 
         return
 
-    # Check remote server
+    # Check SLURM job status
+    from imas_codex.embeddings.slurm import (
+        SlurmJobState,
+        _check_port_forward,
+        get_job_status,
+    )
+
+    state = SlurmJobState.load()
+    if state.job_id:
+        updated = get_job_status(state)
+        if updated:
+            click.echo(f"SLURM Job: {updated.job_id}")
+            click.echo(f"  Partition: {updated.partition}")
+            if updated.node:
+                click.echo(f"  Node: {updated.node}")
+                click.echo(f"  Port: {updated.port}")
+
+                fwd_ok = _check_port_forward(updated)
+                click.echo(f"  Port forward: {'active' if fwd_ok else 'inactive'}")
+            else:
+                click.echo("  Status: PENDING (waiting for resources)")
+        else:
+            click.echo("SLURM: no active job (completed/cancelled/failed)")
+    else:
+        click.echo("SLURM: no active job")
+
+    # Check remote server health
     if url is None:
         from imas_codex.settings import get_embed_remote_url
 
         url = get_embed_remote_url()
 
     if not url:
-        click.echo("No remote embedding server configured.")
+        click.echo("\nNo remote embedding server configured.")
         click.echo(
             "Set embed-remote-url in pyproject.toml or IMAS_CODEX_EMBED_REMOTE_URL env var."
         )
         return
 
+    click.echo(f"\nServer ({url}):")
+
     from imas_codex.embeddings.client import RemoteEmbeddingClient
 
     client = RemoteEmbeddingClient(url)
-    click.echo(f"Checking remote embedder at {url}...")
 
     if client.is_available():
         info = client.get_detailed_info()
         if info:
-            click.echo("✓ Server is healthy")
+            click.echo("  ✓ Healthy")
             click.echo(f"  Model: {info['model']['name']}")
             click.echo(f"  Device: {info['model']['device']}")
             click.echo(f"  Dimension: {info['model']['embedding_dimension']}")
@@ -416,10 +449,18 @@ def embed_status(url: str | None, local: bool) -> None:
                     f"  GPU: {info['gpu']['name']} ({info['gpu']['memory_mb']} MB)"
                 )
             uptime_h = info["server"]["uptime_seconds"] / 3600
-            click.echo(f"  Uptime: {uptime_h:.1f} hours")
+            idle_s = info["server"].get("idle_seconds", 0)
+            timeout_s = info["server"].get("idle_timeout", 0)
+            click.echo(f"  Uptime: {uptime_h:.1f}h")
+            if timeout_s > 0:
+                click.echo(f"  Idle: {idle_s:.0f}s / {timeout_s}s timeout")
+            slurm_id = info["server"].get("slurm_job_id")
+            if slurm_id:
+                click.echo(f"  SLURM job: {slurm_id}")
     else:
-        click.echo("✗ Server is not available")
+        click.echo("  ✗ Not available")
         click.echo("  Ensure SSH tunnel is active: ssh -L 18765:127.0.0.1:18765 iter")
+        click.echo("  Or submit a SLURM job: imas-codex serve embed submit")
 
 
 @serve_embed.command("service")
@@ -538,35 +579,7 @@ WantedBy=default.target
         click.echo("Service stopped")
 
 
-# ============================================================================
-# Serve Embed SLURM Commands
-# ============================================================================
-
-
-@serve_embed.group("slurm")
-def serve_embed_slurm() -> None:
-    """Manage embedding server via SLURM on GPU cluster.
-
-    Automatically submits, monitors, and cleans up SLURM jobs that run
-    the embedding server on a GPU node (titan partition). Port forwarding
-    from the login node to the compute node is handled automatically.
-
-    \b
-    Architecture:
-      workstation --SSH tunnel--> login node --port forward--> GPU node
-      localhost:18765           localhost:18765              0.0.0.0:18765
-
-    \b
-    Examples:
-      imas-codex serve embed slurm submit
-      imas-codex serve embed slurm status
-      imas-codex serve embed slurm cancel
-      imas-codex serve embed slurm logs
-    """
-    pass
-
-
-@serve_embed_slurm.command("submit")
+@serve_embed.command("submit")
 @click.option(
     "--partition",
     default="titan",
@@ -594,7 +607,7 @@ def serve_embed_slurm() -> None:
     default=True,
     help="Wait for server to become ready (default: --wait)",
 )
-def slurm_submit(
+def embed_submit(
     partition: str,
     gpu_count: int,
     walltime: str,
@@ -603,18 +616,23 @@ def slurm_submit(
 ) -> None:
     """Submit a SLURM job to run the embedding server.
 
-    Submits a batch job on the titan partition, optionally waits for the
+    Submits a batch job on the GPU partition, optionally waits for the
     server to start and become reachable via port forwarding.
+
+    \b
+    Architecture:
+      workstation --SSH tunnel--> login node --TCP proxy--> GPU node
+      localhost:18765           localhost:18765            0.0.0.0:18765
 
     Examples:
         # Submit and wait (default)
-        imas-codex serve embed slurm submit
+        imas-codex serve embed submit
 
         # Submit with 1 hour walltime and 15 min idle timeout
-        imas-codex serve embed slurm submit --walltime 01:00:00 --idle-timeout 900
+        imas-codex serve embed submit --walltime 01:00:00 --idle-timeout 900
 
         # Submit without waiting
-        imas-codex serve embed slurm submit --no-wait
+        imas-codex serve embed submit --no-wait
     """
     from imas_codex.embeddings.slurm import ensure_server, submit_job
     from imas_codex.settings import get_imas_embedding_model
@@ -635,7 +653,7 @@ def slurm_submit(
         else:
             raise click.ClickException(
                 "Failed to start embedding server. Check logs with: "
-                "imas-codex serve embed slurm logs"
+                "imas-codex serve embed logs"
             )
     else:
         state = submit_job(
@@ -646,76 +664,17 @@ def slurm_submit(
             model_name=model_name,
         )
         click.echo(f"✓ Submitted SLURM job {state.job_id}")
-        click.echo("  Check status: imas-codex serve embed slurm status")
+        click.echo("  Check status: imas-codex serve embed status")
 
 
-@serve_embed_slurm.command("status")
-def slurm_status() -> None:
-    """Check SLURM embedding server status.
-
-    Shows job state, node assignment, port forwarding, and server health.
-
-    Examples:
-        imas-codex serve embed slurm status
-    """
-    from imas_codex.embeddings.slurm import (
-        SlurmJobState,
-        _check_port_forward,
-        get_job_status,
-    )
-
-    state = SlurmJobState.load()
-    if not state.job_id:
-        click.echo("No active SLURM embedding job")
-        click.echo("  Submit one: imas-codex serve embed slurm submit")
-        return
-
-    updated = get_job_status(state)
-    if updated is None:
-        click.echo("SLURM job no longer in queue (completed/cancelled/failed)")
-        click.echo("  Submit new: imas-codex serve embed slurm submit")
-        return
-
-    click.echo(f"SLURM Job: {updated.job_id}")
-    click.echo(f"  Partition: {updated.partition}")
-    if updated.node:
-        click.echo(f"  Node: {updated.node}")
-        click.echo(f"  Port: {updated.port}")
-
-        # Check port forwarding
-        fwd_ok = _check_port_forward(updated)
-        click.echo(f"  Port forward: {'active' if fwd_ok else 'inactive'}")
-
-        # Check server health
-        try:
-            import httpx
-
-            with httpx.Client(timeout=5) as client:
-                resp = client.get(f"http://localhost:{updated.port}/health")
-                if resp.status_code == 200:
-                    health = resp.json()
-                    click.echo("  Server: healthy")
-                    click.echo(f"  Model: {health.get('model', 'unknown')}")
-                    click.echo(f"  Device: {health.get('device', 'unknown')}")
-                    idle = health.get("idle_seconds", 0)
-                    timeout = health.get("idle_timeout", 0)
-                    click.echo(f"  Idle: {idle:.0f}s / {timeout}s timeout")
-                else:
-                    click.echo(f"  Server: unhealthy (HTTP {resp.status_code})")
-        except Exception:
-            click.echo("  Server: not reachable (port forward may be down)")
-    else:
-        click.echo("  Status: PENDING (waiting for resources)")
-
-
-@serve_embed_slurm.command("cancel")
-def slurm_cancel() -> None:
+@serve_embed.command("cancel")
+def embed_cancel() -> None:
     """Cancel the SLURM embedding server job.
 
     Cancels the job and cleans up port forwarding.
 
     Examples:
-        imas-codex serve embed slurm cancel
+        imas-codex serve embed cancel
     """
     from imas_codex.embeddings.slurm import cancel_job
 
@@ -726,14 +685,14 @@ def slurm_cancel() -> None:
         click.echo("No active SLURM job to cancel")
 
 
-@serve_embed_slurm.command("logs")
+@serve_embed.command("logs")
 @click.option("--tail", default=50, type=int, help="Number of lines to show")
-def slurm_logs(tail: int) -> None:
+def embed_logs(tail: int) -> None:
     """Show logs from the SLURM embedding server.
 
     Examples:
-        imas-codex serve embed slurm logs
-        imas-codex serve embed slurm logs --tail 100
+        imas-codex serve embed logs
+        imas-codex serve embed logs --tail 100
     """
     from imas_codex.embeddings.slurm import get_logs
 

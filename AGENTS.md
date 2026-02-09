@@ -382,10 +382,10 @@ Auto-launch: The Encoder's `_try_slurm_auto_launch()` submits a SLURM job automa
 when the remote server is unreachable. Manual management:
 
 ```bash
-imas-codex serve embed slurm submit    # Submit job (default: 4 GPUs, 8h)
-imas-codex serve embed slurm status    # Check job and server health
-imas-codex serve embed slurm cancel    # Cancel job
-imas-codex serve embed slurm logs      # View server logs
+imas-codex serve embed submit    # Submit job (default: 4 GPUs, 8h)
+imas-codex serve embed status    # Check job and server health
+imas-codex serve embed cancel    # Cancel job
+imas-codex serve embed logs      # View server logs
 ```
 
 If embedding fails, check in order:
