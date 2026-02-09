@@ -202,7 +202,7 @@ def enrich_directory(
     result["write_matches"] = write_matches
 
     # Storage size analysis using du -sb (reliable byte output)
-    # Note: dust is a visual tool without simple bytes-only output,
+    # Note: dust is a TUI visualization tool without machine-parseable output,
     # so we use du -sb which outputs "BYTES\tPATH" format
     total_bytes = 0
     try:

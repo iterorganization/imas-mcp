@@ -1195,7 +1195,7 @@ async def enrich_worker(
     """Async enrichment worker.
 
     Continuously claims scored paths with should_enrich=true, runs deep
-    analysis (dust, tokei, patterns) via SSH, marks complete.
+    analysis (du, tokei, patterns) via SSH, marks complete.
     Runs in PARALLEL with scan/score/expand workers.
 
     Args:
@@ -1680,7 +1680,7 @@ async def run_parallel_discovery(
     scan_batch_size: int = 50,
     expand_batch_size: int = 50,
     score_batch_size: int = 50,  # Increased: more work per API call
-    enrich_batch_size: int = 10,  # Smaller: heavy SSH operations (dust/tokei)
+    enrich_batch_size: int = 10,  # Smaller: heavy SSH operations (du/tokei)
     rescore_batch_size: int = 50,  # Increased: lightweight heuristic rescore
     on_scan_progress: Callable[
         [str, WorkerStats, list[str] | None, list[dict] | None], None
@@ -1704,7 +1704,7 @@ async def run_parallel_discovery(
     - scan: Lists directories, discovers child paths (SSH-bound)
     - expand: Expands scored high-value paths (should_expand=true)
     - score: LLM-based scoring with should_expand/should_enrich decisions
-    - enrich: Deep analysis (dust/tokei/patterns) for should_enrich=true paths
+    - enrich: Deep analysis (du/tokei/patterns) for should_enrich=true paths
     - rescore: Refines scores using enrichment data (optional)
 
     All workers run in PARALLEL - expand/enrich do not wait for each other.

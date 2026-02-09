@@ -126,26 +126,9 @@ required:
       local: "eza --tree --level 2 --only-dirs /path"
       remote: "ssh facility 'eza --tree --level 2 --only-dirs /path'"
 
-# Optional tools - enhance exploration but not required
-optional:
-  dust:
-    name: dust
-    purpose: Visual disk usage analyzer for interactive exploration
-    binary: dust
-    fallback: "du -h --max-depth=2"
-    releases:
-      repo: bootandy/dust
-      version: "1.2.4"
-      asset_pattern: "dust-v{version}-{arch}.tar.gz"
-      strip_components: 1
-      binary_path: "dust-v{version}-{arch}/dust"
-    # Note: enrichment uses du -sb for scripted byte counts (reliable output format)
-    examples:
-      local: "dust -d 2 ."
-      remote: "ssh('dust -d 2 /path')"
   tokei:
     name: tokei
-    purpose: Lines of code by language
+    purpose: Lines of code by language (used in enrichment pipeline)
     binary: tokei
     fallback: "wc -l"
     releases:
@@ -155,9 +138,31 @@ optional:
       asset_pattern: "tokei-{arch}.tar.gz"
       strip_components: 0
       binary_path: "tokei"
+    # Used in enrich_directories.py for LOC + language breakdown
+    # Data stored in graph as total_lines and language_breakdown
     examples:
       local: "tokei . -o json"
       remote: "ssh('tokei /path -o json')"
+
+# Optional tools - enhance exploration but not required
+optional:
+  dust:
+    name: dust
+    purpose: Interactive disk usage visualization (not used in pipelines)
+    binary: dust
+    fallback: "du -h --max-depth=2"
+    releases:
+      repo: bootandy/dust
+      version: "1.2.4"
+      asset_pattern: "dust-v{version}-{arch}.tar.gz"
+      strip_components: 1
+      binary_path: "dust-v{version}-{arch}/dust"
+    # Note: dust is a TUI visualization tool with no machine-parseable output.
+    # All pipeline code uses du -sb for scripted byte counts.
+    # dust is only useful for interactive ad-hoc exploration.
+    examples:
+      local: "dust -d 2 ."
+      remote: "ssh('dust -d 2 /path')"
 
   scc:
     name: scc

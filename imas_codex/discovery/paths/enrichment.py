@@ -3,7 +3,7 @@ Path enrichment pipeline for high-value directories.
 
 Runs deep analysis on scored paths to collect additional metadata:
 - Pattern search: Code patterns via rg (imports, format conversions)
-- Storage analysis: Directory size breakdown via dust
+- Storage analysis: Directory size breakdown via du
 - Lines of code: Language breakdown via tokei
 
 Enrichment is triggered for paths scoring above a threshold (0.75 by default).

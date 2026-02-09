@@ -11,7 +11,7 @@ Provides three discovery domains:
 2. **paths** - Filesystem discovery
    - SSH directory scanning
    - LLM-based path scoring
-   - Deep enrichment (dust, tokei, patterns)
+   - Deep enrichment (du, tokei, patterns)
 
 3. **wiki** - Documentation discovery
    - MediaWiki/Confluence support

@@ -32,7 +32,7 @@ pwd
 
 **Command Execution Decision Tree:**
 
-1. **Single command on local facility?** → Use terminal directly (`rg`, `fd`, `dust`)
+1. **Single command on local facility?** → Use terminal directly (`rg`, `fd`, `tokei`)
 2. **Single command on remote facility?** → Use direct SSH (`ssh facility "command"`)
 3. **Chained processing with logic?** → Use `python()` with `run()` (auto-detects local/remote)
 4. **Graph queries or MCP functions?** → Use `python()` with `query()`, `ingest_nodes()`, etc.
@@ -67,8 +67,7 @@ hostname  # e.g., 98dci4-srv-1003.iter.org
 # Direct terminal commands
 rg -l "IMAS" /work/imas
 fd -e py /home/codes
-dust -d 2 /work
-tokei /home/codes/liuqe
+tokei /home/codes/liuqe -o json
 ```
 
 ### Remote Facility (Accessing Different System)
@@ -79,7 +78,7 @@ Use **direct SSH** for single commands:
 # Direct SSH
 ssh tcv "rg -l 'IMAS' /home/codes"
 ssh tcv "fd -e py /home/codes | head -20"
-ssh tcv "dust -d 2 /home/codes"
+ssh tcv "tokei /home/codes -o json"
 ```
 
 ### Chained Processing & Graph Operations
@@ -120,9 +119,8 @@ Tools are defined in [`imas_codex/config/fast_tools.yaml`](../imas_codex/config/
 |------|---------|----------|
 | `rg` | Fast pattern search | `grep -r` |
 | `fd` | Fast file finder | `find . -name` |
-| `tokei` | LOC by language | `wc -l` |
+| `tokei` | LOC by language (enrichment pipeline) | `wc -l` |
 | `scc` | Code complexity | - |
-| `dust` | Disk usage | `du -h` |
 
 **Examples:**
 

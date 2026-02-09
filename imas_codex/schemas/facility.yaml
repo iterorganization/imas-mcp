@@ -626,15 +626,14 @@ classes:
       REQUIRED TOOLS (install at ~/bin before exploration):
       - rg (ripgrep): Fast pattern search with --max-depth, --max-count limits
       - fd: Fast file finder, safer than find for large directories
-      - dust: Disk usage visualization (~10x faster than du)
       - tokei: Lines of code by language (parallel, very fast)
-      - scc: SLOC + complexity metrics for prioritization
+      - eza: Tree view for directory hierarchy context
       
       PARALLEL DISCOVERY PIPELINE:
       1. Scan: discovered -> listing -> listed (enumerate files, set counts)
       2. Score: listed -> scoring -> scored (LLM evaluates, sets score/expand/enrich)
       3. Expand: scored + should_expand -> children created as discovered
-      4. Enrich: scored + should_enrich -> enriched (dust/tokei/patterns)
+      4. Enrich: scored + should_enrich -> enriched (du/tokei/patterns)
       5. Rescore: enriched -> rescored (optional refinement with enrichment data)
       
       Expand and Enrich run in PARALLEL as independent workers.
@@ -798,7 +797,7 @@ classes:
         description: Why this directory should be expanded
       should_enrich:
         description: >-
-          Whether to run deep analysis (dust, tokei, patterns) on this path.
+          Whether to run deep analysis (du, tokei, patterns) on this path.
           Decided by LLM during scoring based on path depth, size estimate,
           and purpose. False for huge dirs like /work, /home that would hang.
         range: boolean
@@ -812,7 +811,7 @@ classes:
       path_purpose:
         description: Classified purpose of the directory
         range: PathPurpose
-      # Enrichment tracking (for high-value paths with dust/tokei/scc data)
+      # Enrichment tracking (for high-value paths with du/tokei data)
       is_enriched:
         description: Whether this path has been enriched with deep scan data
         range: boolean
@@ -820,7 +819,7 @@ classes:
         description: When enrichment was completed
         range: datetime
       total_bytes:
-        description: Total size in bytes (from dust)
+        description: Total size in bytes (from du -sb)
         range: integer
       total_lines:
         description: Total lines of code (from tokei/scc)

@@ -2497,7 +2497,7 @@ def get_accumulated_cost(facility: str) -> dict[str, Any]:
 
 
 def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, Any]]:
-    """Claim paths ready for enrichment (deep analysis: dust, tokei, patterns).
+    """Claim paths ready for enrichment (deep analysis: du, tokei, patterns).
 
     Paths ready for enrichment:
     - status = 'scored' (already valued by LLM)
@@ -2555,7 +2555,7 @@ def mark_enrichment_complete(
     Updates paths with:
     - is_enriched = true
     - enriched_at = current timestamp
-    - total_bytes, total_lines, language_breakdown from dust/tokei
+    - total_bytes, total_lines, language_breakdown from du/tokei
     - is_multiformat from pattern analysis
     - Clears claimed_at
 
@@ -2563,7 +2563,7 @@ def mark_enrichment_complete(
         facility: Facility ID
         results: List of dicts with enrichment data:
             - path: Path string
-            - total_bytes: Size from dust (optional)
+            - total_bytes: Size from du (optional)
             - total_lines: Lines from tokei (optional)
             - language_breakdown: Language stats from tokei (optional, dict or JSON)
             - is_multiformat: Multi-format detection (optional)

@@ -132,7 +132,7 @@ class ScoreResult(BaseModel):
     should_expand: bool = Field(description="Whether to explore child directories")
 
     should_enrich: bool = Field(
-        description="Whether to run deep analysis (dust, tokei, patterns). "
+        description="Whether to run deep analysis (du, tokei, patterns). "
         "False for huge dirs like /work, /home, or paths with no code files."
     )
 
@@ -372,7 +372,7 @@ class ScoredDirectory:
     """Whether to explore children of this directory."""
 
     should_enrich: bool = True
-    """Whether to run deep analysis (dust, tokei, patterns) on this path."""
+    """Whether to run deep analysis (du, tokei, patterns) on this path."""
 
     keywords: list[str] = field(default_factory=list)
     """Searchable keywords for this directory (max 5)."""

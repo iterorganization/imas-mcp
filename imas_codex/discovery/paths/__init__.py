@@ -10,7 +10,7 @@ Workers:
     - scan_worker: SSH directory enumeration
     - expand_worker: Create child paths from scan results
     - score_worker: LLM classification and scoring
-    - enrich_worker: Deep analysis (dust, tokei, patterns)
+    - enrich_worker: Deep analysis (du, tokei, patterns)
     - rescore_worker: Refinement with enrichment data
 """
 

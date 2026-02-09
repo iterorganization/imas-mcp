@@ -130,7 +130,7 @@ pwd
 ```
 
 **Command Execution Decision Tree:**
-1. Single command on local facility? → Terminal directly (`rg`, `fd`, `dust`)
+1. Single command on local facility? → Terminal directly (`rg`, `fd`, `tokei`)
 2. Single command on remote facility? → Direct SSH (`ssh facility "command"`)
 3. Chained processing with logic? → `python()` with `run()` (auto-detects local/remote)
 4. Graph queries or MCP functions? → `python()` with `query()`, `add_to_graph()`, etc.
@@ -151,7 +151,7 @@ pwd
 - Complex data transformations requiring Python execution
 
 **Use terminal directly** for single operations:
-- Local: `rg`, `fd`, `git`, `dust`, `uv run`
+- Local: `rg`, `fd`, `git`, `tokei`, `uv run`
 - Remote: `ssh facility "command"`
 
 **Never use `python()` for:**
@@ -334,6 +334,7 @@ These are essential for effective exploration:
 | `rg` | Pattern search across files (10x faster than grep) | `grep -r` |
 | `fd` | Find files by name/extension (5x faster than find) | `find` |
 | `eza` | Modern ls with tree view for directory hierarchy | `ls -la`, `tree` |
+| `tokei` | Lines of code by language (enrichment pipeline) | `wc -l`, `cloc` |
 | `git` | Version control, metadata extraction | - |
 | `gh` | GitHub API access, repo visibility checking | curl to API |
 | `uv` | Fast Python package manager for venv/dependency management | pip, virtualenv |
@@ -344,9 +345,8 @@ Enhance exploration but not required:
 
 | Tool | Purpose | Use Instead Of |
 |------|---------|----------------|
-| `tokei` | Lines of code by language | `wc -l`, `cloc` |
 | `scc` | Code complexity and SLOC metrics | `cloc` |
-| `dust` | Visual disk usage analyzer | `du -h` |
+| `dust` | Interactive disk usage visualization | `du -h` |
 | `bat` | Syntax-highlighted file viewing | `cat`, `less` |
 | `delta` | Better git diff viewer | `diff` |
 | `fzf` | Fuzzy finder for interactive selection | - |
