@@ -617,6 +617,9 @@ def slurm_submit(
         imas-codex serve embed slurm submit --no-wait
     """
     from imas_codex.embeddings.slurm import ensure_server, submit_job
+    from imas_codex.settings import get_imas_embedding_model
+
+    model_name = get_imas_embedding_model()
 
     if wait:
         click.echo(f"Submitting SLURM job on {partition} and waiting for server...")
@@ -625,6 +628,7 @@ def slurm_submit(
             gpu_count=gpu_count,
             walltime=walltime,
             idle_timeout=idle_timeout,
+            model_name=model_name,
         )
         if ok:
             click.echo("✓ Embedding server ready on localhost:18765")
@@ -639,6 +643,7 @@ def slurm_submit(
             gpu_count=gpu_count,
             walltime=walltime,
             idle_timeout=idle_timeout,
+            model_name=model_name,
         )
         click.echo(f"✓ Submitted SLURM job {state.job_id}")
         click.echo("  Check status: imas-codex serve embed slurm status")

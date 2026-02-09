@@ -141,11 +141,28 @@ def _generate_sbatch_script(
     gpu_count: int = DEFAULT_GPU_COUNT,
     walltime: str = DEFAULT_WALLTIME,
     idle_timeout: int = DEFAULT_IDLE_TIMEOUT,
+    model_name: str | None = None,
 ) -> str:
-    """Generate the SLURM batch script for the embedding server."""
+    """Generate the SLURM batch script for the embedding server.
+
+    Args:
+        port: Port for the embedding server
+        partition: SLURM partition
+        gpu_count: Number of GPUs to request
+        walltime: Maximum wall time
+        idle_timeout: Seconds of inactivity before auto-shutdown
+        model_name: Embedding model to use (overrides remote pyproject.toml)
+    """
     # Scale CPUs and memory with GPU count
     cpus = max(4, gpu_count * 2)
     mem_gb = max(16, gpu_count * 8)
+
+    # Pin model via env var so the remote server uses the same model
+    # as the client, regardless of the remote pyproject.toml config.
+    model_env = ""
+    if model_name:
+        model_env = f'export IMAS_CODEX_EMBEDDING_MODEL="{model_name}"'
+
     return textwrap.dedent(f"""\
         #!/bin/bash
         #SBATCH --job-name=imas-codex-embed
@@ -164,6 +181,7 @@ def _generate_sbatch_script(
         # Expose all allocated GPUs to the server
         export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $(({gpu_count} - 1)))
         export PATH="${{HOME}}/.local/bin:${{PATH}}"
+        {model_env}
 
         cd ${{HOME}}/Code/imas-codex
 
@@ -181,6 +199,7 @@ def submit_job(
     gpu_count: int = DEFAULT_GPU_COUNT,
     walltime: str = DEFAULT_WALLTIME,
     idle_timeout: int = DEFAULT_IDLE_TIMEOUT,
+    model_name: str | None = None,
 ) -> SlurmJobState:
     """Submit a SLURM job to run the embedding server.
 
@@ -190,6 +209,7 @@ def submit_job(
         gpu_count: Number of GPUs to request
         walltime: Maximum wall time
         idle_timeout: Seconds of inactivity before auto-shutdown
+        model_name: Embedding model to use (overrides remote pyproject.toml)
 
     Returns:
         SlurmJobState with job_id set
@@ -197,20 +217,33 @@ def submit_job(
     Raises:
         RuntimeError: If job submission fails
     """
+    # Resolve model name from settings if not provided
+    if model_name is None:
+        from imas_codex.settings import get_imas_embedding_model
+
+        model_name = get_imas_embedding_model()
+
     script = _generate_sbatch_script(
         port=port,
         partition=partition,
         gpu_count=gpu_count,
         walltime=walltime,
         idle_timeout=idle_timeout,
+        model_name=model_name,
     )
 
-    # Write script to temp file on remote and submit
+    # Write script to remote, then submit (separate commands to avoid
+    # heredoc + '&&' syntax error in bash -c / SSH contexts).
     script_path = f"{REMOTE_STATE_DIR}/slurm-embed.sh"
-    result = _run_cmd(
-        f"mkdir -p {REMOTE_STATE_DIR} && cat > {script_path} << 'SLURM_SCRIPT_EOF'\n{script}SLURM_SCRIPT_EOF\n"
-        f"&& sbatch {script_path}"
+    write_result = _run_cmd(
+        f"mkdir -p {REMOTE_STATE_DIR} && cat > {script_path} << 'SLURM_SCRIPT_EOF'\n{script}SLURM_SCRIPT_EOF"
     )
+    if write_result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to write sbatch script: {write_result.stderr.strip()}"
+        )
+
+    result = _run_cmd(f"sbatch {script_path}")
 
     if result.returncode != 0:
         raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
@@ -441,6 +474,7 @@ def ensure_server(
     gpu_count: int = DEFAULT_GPU_COUNT,
     walltime: str = DEFAULT_WALLTIME,
     idle_timeout: int = DEFAULT_IDLE_TIMEOUT,
+    model_name: str | None = None,
 ) -> bool:
     """Ensure the SLURM embedding server is running and reachable.
 
@@ -457,6 +491,7 @@ def ensure_server(
         gpu_count: Number of GPUs
         walltime: Maximum wall time
         idle_timeout: Seconds of inactivity before auto-shutdown
+        model_name: Embedding model to use (overrides remote pyproject.toml)
 
     Returns:
         True if server is ready, False on failure
@@ -500,6 +535,7 @@ def ensure_server(
         gpu_count=gpu_count,
         walltime=walltime,
         idle_timeout=idle_timeout,
+        model_name=model_name,
     )
 
     # Step 3: Wait for job to start

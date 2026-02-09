@@ -324,7 +324,7 @@ class Encoder:
         try:
             from imas_codex.embeddings.slurm import ensure_server
 
-            return ensure_server()
+            return ensure_server(model_name=self.config.model_name)
         except Exception as e:
             self.logger.warning("SLURM auto-launch failed: %s", e)
             return False
