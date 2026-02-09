@@ -472,6 +472,8 @@ def data() -> None:
       imas-codex data pull         Pull graph + private YAML (full restore)
       imas-codex data list         List available versions
       imas-codex data status       Show local status
+      imas-codex data delete <tag> Delete specific version from GHCR
+      imas-codex data prune        Remove old dev versions from GHCR
 
     \b
       imas-codex data db start     Start Neo4j server
@@ -1401,16 +1403,18 @@ def data_push(
             _save_dev_revision(base, int(rev_str))
 
         if not dev:
-            subprocess.run(
-                [
-                    "oras",
-                    "tag",
-                    artifact_ref,
-                    f"{target_registry}/imas-codex-graph:latest",
-                ],
+            result = subprocess.run(
+                ["oras", "tag", artifact_ref, "latest"],
                 capture_output=True,
+                text=True,
             )
-            click.echo("✓ Tagged as latest")
+            if result.returncode == 0:
+                click.echo("✓ Tagged as latest")
+            else:
+                click.echo(
+                    f"Warning: Failed to tag as latest: {result.stderr.strip()}",
+                    err=True,
+                )
 
     finally:
         if archive_path.exists():
@@ -1449,12 +1453,22 @@ def data_pull(
     skip_private: bool,
     gist_url: str | None,
 ) -> None:
-    """Pull graph archive from GHCR and private facility configs from Gist."""
+    """Pull graph archive from GHCR and private facility configs from Gist.
+
+    When no --version is specified, pulls 'latest'. If 'latest' doesn't
+    exist, falls back to the most recent tag in the registry.
+    """
     require_oras()
 
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
-    artifact_ref = f"{target_registry}/imas-codex-graph:{version}"
+
+    # Resolve version: if "latest" doesn't exist, find most recent tag
+    resolved_version = version
+    if version == "latest":
+        resolved_version = _resolve_latest_tag(target_registry, token)
+
+    artifact_ref = f"{target_registry}/imas-codex-graph:{resolved_version}"
 
     if check_graph_exists() and not force:
         manifest = get_local_graph_manifest()
@@ -1514,9 +1528,9 @@ def data_pull(
             if manifest_file.exists():
                 manifest = json.loads(manifest_file.read_text())
                 manifest["pulled_from"] = artifact_ref
-                manifest["pulled_version"] = version
+                manifest["pulled_version"] = resolved_version
                 manifest["pushed"] = True
-                manifest["pushed_version"] = version
+                manifest["pushed_version"] = resolved_version
                 save_local_graph_manifest(manifest)
 
     click.echo("✓ Graph pull complete")
@@ -1622,6 +1636,39 @@ def data_status(registry: str | None) -> None:
 # ============================================================================
 
 
+def _resolve_latest_tag(registry: str, token: str | None = None) -> str:
+    """Resolve the most recent tag when 'latest' doesn't exist.
+
+    Checks for 'latest' first. If not found, picks the most recent tag
+    by sorting: release tags (semver) first, then dev tags by revision.
+    """
+    tags = _list_registry_tags(registry, token)
+    if not tags:
+        raise click.ClickException(
+            f"No graph versions found in {registry}/imas-codex-graph.\n"
+            "Push a graph first: imas-codex data push --dev"
+        )
+
+    if "latest" in tags:
+        return "latest"
+
+    # Sort: prefer release tags (no 'dev'), then by revision number descending
+    def _tag_sort_key(tag: str) -> tuple[int, int]:
+        is_dev = 1 if ("dev" in tag or "-r" in tag) else 0
+        rev = 0
+        if "-r" in tag:
+            try:
+                rev = int(tag.rsplit("-r", 1)[-1])
+            except ValueError:
+                pass
+        return (is_dev, -rev)
+
+    tags.sort(key=_tag_sort_key)
+    best = tags[0]
+    click.echo(f"No 'latest' tag found. Using most recent: {best}")
+    return best
+
+
 def _list_registry_tags(registry: str, token: str | None = None) -> list[str]:
     """List all tags in the GHCR registry."""
     login_to_ghcr(token)
@@ -1713,7 +1760,7 @@ def data_delete(
     click.echo(f"\n✓ Deleted {deleted}/{len(found)} tags")
 
 
-@data.command("cleanup")
+@data.command("prune")
 @click.option(
     "--version",
     "target_version",
@@ -1730,7 +1777,7 @@ def data_delete(
 @click.option("--token", envvar="GHCR_TOKEN")
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
 @click.option("--dry-run", is_flag=True, help="Show what would be deleted")
-def data_cleanup(
+def data_prune(
     target_version: str | None,
     dev_only: bool,
     keep_latest: int,
@@ -1744,16 +1791,16 @@ def data_cleanup(
     \b
     Examples:
       # Delete all dev tags for version 0.5.0
-      imas-codex data cleanup --version 0.5.0 --dev
+      imas-codex data prune --version 0.5.0 --dev
 
       # Delete ALL tags for version 0.5.0 (including release)
-      imas-codex data cleanup --version 0.5.0
+      imas-codex data prune --version 0.5.0
 
       # Keep the 3 most recent dev tags, delete the rest
-      imas-codex data cleanup --version 0.5.0 --dev --keep-latest 3
+      imas-codex data prune --version 0.5.0 --dev --keep-latest 3
 
       # Dry run to see what would be deleted
-      imas-codex data cleanup --version 0.5.0 --dev --dry-run
+      imas-codex data prune --version 0.5.0 --dev --dry-run
     """
     require_oras()
 
