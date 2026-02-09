@@ -1337,7 +1337,7 @@ def discover_code(facility: str, dry_run: bool) -> None:
     "--max-depth", type=int, default=None, help="Maximum link depth from portal"
 )
 @click.option(
-    "--focus", "-p", help="Focus discovery (e.g., 'equilibrium', 'diagnostics')"
+    "--focus", "-f", help="Focus discovery (e.g., 'equilibrium', 'diagnostics')"
 )
 @click.option(
     "--scan-only", is_flag=True, help="Only scan pages, skip scoring and ingestion"
@@ -1347,9 +1347,6 @@ def discover_code(facility: str, dry_run: bool) -> None:
     is_flag=True,
     help="Only score already-discovered pages, skip ingestion",
 )
-@click.option(
-    "--model", "-m", default=None, help="LLM model override (currently unused)"
-)
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed progress")
 @click.option(
     "--no-rich",
@@ -1358,11 +1355,10 @@ def discover_code(facility: str, dry_run: bool) -> None:
     help="Use logging output instead of rich progress display",
 )
 @click.option(
-    "--force-discovery",
-    "-f",
+    "--rescan",
     is_flag=True,
     default=False,
-    help="Re-scan pages even if wiki pages already exist",
+    help="Re-scan pages even if already in graph",
 )
 @click.option(
     "--score-workers",
@@ -1377,10 +1373,10 @@ def discover_code(facility: str, dry_run: bool) -> None:
     help="Number of parallel ingest workers (default: 4)",
 )
 @click.option(
-    "--discover-artifacts",
+    "--rescan-artifacts",
     is_flag=True,
     default=False,
-    help="Re-scan artifacts even if already discovered",
+    help="Re-scan artifacts even if already in graph",
 )
 def wiki_run(
     facility: str,
@@ -1391,13 +1387,12 @@ def wiki_run(
     focus: str | None,
     scan_only: bool,
     score_only: bool,
-    model: str | None,
     verbose: bool,
     no_rich: bool,
-    force_discovery: bool,
+    rescan: bool,
     score_workers: int,
     ingest_workers: int,
-    discover_artifacts: bool,
+    rescan_artifacts: bool,
 ) -> None:
     """Discover wiki pages and build documentation graph.
 
@@ -1409,8 +1404,8 @@ def wiki_run(
     - INGEST: Chunk and embed high-score pages
     - ARTIFACTS: Score and embed wiki attachments (PDFs, images, etc.)
 
-    Page scanning runs automatically on first invocation. Use
-    --rescan to re-scan (adds new pages, keeps existing).
+    Page scanning runs automatically on first invocation. Use --rescan
+    to re-enumerate pages (adds new pages, keeps existing).
     """
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki import get_wiki_stats
@@ -1632,16 +1627,16 @@ def wiki_run(
     # Check wiki stats once (facility-level, not per-site)
     wiki_stats = get_wiki_stats(facility)
     existing_pages = wiki_stats.get("pages", 0) or wiki_stats.get("total", 0)
-    should_bulk_discover = force_discovery or existing_pages == 0
+    should_bulk_discover = rescan or existing_pages == 0
 
     if existing_pages > 0 and not should_bulk_discover:
         log_print(
-            f"[dim]Found {existing_pages} existing wiki pages, skipping bulk discovery[/dim]"
+            f"[dim]Found {existing_pages} existing wiki pages, skipping scan[/dim]"
         )
-        log_print("[dim]Use --force-discovery to re-run bulk page discovery[/dim]")
-    elif force_discovery and existing_pages > 0:
+        log_print("[dim]Use --rescan to re-enumerate pages[/dim]")
+    elif rescan and existing_pages > 0:
         log_print(
-            f"[yellow]Force discovery: adding new pages (keeping {existing_pages} existing)[/yellow]"
+            f"[yellow]Rescan: adding new pages (keeping {existing_pages} existing)[/yellow]"
         )
 
     # Reset orphaned pages once (facility-level)
@@ -1857,9 +1852,9 @@ def wiki_run(
                             f"Discovered {bulk_discovered} pages from {short_name}"
                         )
 
-        # Bulk artifact discovery
+        # Artifact scanning
         should_discover_artifacts_site = (
-            discover_artifacts or (bulk_discovered > 0)
+            rescan_artifacts or (bulk_discovered > 0)
         ) and not score_only
         if should_discover_artifacts_site and site_type == "mediawiki":
             from imas_codex.discovery.wiki.parallel import bulk_discover_artifacts
