@@ -1087,6 +1087,7 @@ def _print_clear_result(name: str, result: dict | int, facility: str) -> None:
             "chunks_deleted",
             "artifacts_deleted",
             "signals_deleted",
+            "access_methods_deleted",
             "epochs_deleted",
             "checkpoints_deleted",
             "paths_deleted",

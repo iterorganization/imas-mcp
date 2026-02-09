@@ -273,17 +273,23 @@ def clear_facility_signals(
 ) -> dict[str, int]:
     """Clear all signal discovery data for a facility.
 
-    Deletes FacilitySignal nodes, TreeModelVersion (epoch) nodes,
-    and clears epoch checkpoint files. Always cascades.
+    Deletes FacilitySignal nodes, AccessMethod nodes, TreeModelVersion
+    (epoch) nodes, and clears epoch checkpoint files. Always cascades.
 
     Args:
         facility: Facility ID
         batch_size: Nodes to delete per batch
 
     Returns:
-        Dict with counts: signals_deleted, epochs_deleted, checkpoints_deleted
+        Dict with counts: signals_deleted, access_methods_deleted,
+        epochs_deleted, checkpoints_deleted
     """
-    results = {"signals_deleted": 0, "epochs_deleted": 0, "checkpoints_deleted": 0}
+    results = {
+        "signals_deleted": 0,
+        "access_methods_deleted": 0,
+        "epochs_deleted": 0,
+        "checkpoints_deleted": 0,
+    }
 
     try:
         with GraphClient() as gc:
@@ -303,6 +309,18 @@ def clear_facility_signals(
                 results["signals_deleted"] += deleted
                 if deleted < batch_size:
                     break
+
+            # Delete orphaned AccessMethod nodes for this facility
+            result = gc.query(
+                """
+                MATCH (am:AccessMethod {facility_id: $facility})
+                WHERE NOT EXISTS { MATCH (am)<-[:ACCESS_METHOD]-() }
+                DETACH DELETE am
+                RETURN count(am) AS deleted
+                """,
+                facility=facility,
+            )
+            results["access_methods_deleted"] = result[0]["deleted"] if result else 0
 
             # Delete TreeModelVersion (epoch) nodes in batches
             while True:
@@ -331,9 +349,10 @@ def clear_facility_signals(
                 logger.warning("Could not delete checkpoint %s: %s", checkpoint_file, e)
 
         logger.info(
-            "Cleared signals for %s: %d signals, %d epochs, %d checkpoints",
+            "Cleared signals for %s: %d signals, %d access_methods, %d epochs, %d checkpoints",
             facility,
             results["signals_deleted"],
+            results["access_methods_deleted"],
             results["epochs_deleted"],
             results["checkpoints_deleted"],
         )
