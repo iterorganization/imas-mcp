@@ -121,13 +121,13 @@ def _bulk_create_wiki_artifacts(
     batch_size: int = 100,
     on_progress: Callable | None = None,
 ) -> int:
-    """Create WikiArtifact nodes with FACILITY_ID relationship in batches.
+    """Create WikiArtifact nodes with FACILITY_ID and HAS_ARTIFACT relationships.
 
     Args:
         gc: Open GraphClient
         facility: Facility ID
         batch_data: List of dicts with id, filename, url, artifact_type,
-                    and optionally size_bytes, mime_type
+                    and optionally size_bytes, mime_type, linked_pages
         batch_size: Nodes per batch
         on_progress: Optional progress callback
 
@@ -166,6 +166,27 @@ def _bulk_create_wiki_artifacts(
 
         if on_progress:
             on_progress(f"created {i + len(batch)}/{total} artifacts", None)
+
+    # Create HAS_ARTIFACT relationships from linked pages
+    # This is done in a separate pass to handle pages that may not exist yet
+    page_links = []
+    for a in batch_data:
+        artifact_id = a["id"]
+        for page_name in a.get("linked_pages", []):
+            page_id = f"{facility}:{page_name}"
+            page_links.append({"artifact_id": artifact_id, "page_id": page_id})
+
+    if page_links:
+        # Link artifacts to existing pages (pages discovered via bulk discovery)
+        gc.query(
+            """
+            UNWIND $links AS link
+            MATCH (wa:WikiArtifact {id: link.artifact_id})
+            MATCH (wp:WikiPage {id: link.page_id})
+            MERGE (wp)-[:HAS_ARTIFACT]->(wa)
+            """,
+            links=page_links,
+        )
 
     return created
 
@@ -2285,6 +2306,7 @@ def bulk_discover_artifacts(
     logger.debug(f"Discovered {len(artifacts)} artifacts")
 
     # Create artifact nodes in graph using shared helper (UNWIND + FACILITY_ID)
+    # Include linked_pages for HAS_ARTIFACT relationship creation
     batch_data = [
         {
             "id": f"{facility}:{a.filename}",
@@ -2293,6 +2315,7 @@ def bulk_discover_artifacts(
             "artifact_type": a.artifact_type,
             "size_bytes": a.size_bytes,
             "mime_type": a.mime_type,
+            "linked_pages": a.linked_pages,
         }
         for a in artifacts
     ]
