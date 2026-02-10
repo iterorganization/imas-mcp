@@ -1669,7 +1669,13 @@ def wiki_run(
                     f"[cyan]Using HTTP Basic authentication ({credential_service})[/cyan]"
                 )
             elif ssh_host:
-                log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
+                # Check if SOCKS tunnel is available (faster path)
+                from imas_codex.discovery.wiki.adapters import _ensure_socks_tunnel
+
+                if _ensure_socks_tunnel():
+                    log_print("[cyan]Using SOCKS proxy via laptop[/cyan]")
+                else:
+                    log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
 
         # Validate credentials once per credential_service
         if auth_type in ("tequila", "session", "basic") and credential_service:
