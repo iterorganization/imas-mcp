@@ -952,9 +952,18 @@ def mark_pages_scored(
 
     # Prepare batch data with all scoring fields
     batch_data = []
+    # Safety: collect page IDs with empty preview_text to release for reprocessing
+    released_ids: list[str] = []
+
     for r in results:
         page_id = r.get("id")
         if not page_id:
+            continue
+
+        # Pages without preview_text should not be marked as scored —
+        # release them back to scanned so they can be retried
+        if not r.get("preview_text"):
+            released_ids.append(page_id)
             continue
 
         batch_data.append(
@@ -978,37 +987,54 @@ def mark_pages_scored(
             }
         )
 
-    if not batch_data:
+    if not batch_data and not released_ids:
         return 0
 
     with GraphClient() as gc:
-        gc.query(
-            """
-            UNWIND $batch AS item
-            MATCH (wp:WikiPage {id: item.id})
-            SET wp.status = $status,
-                wp.score = item.score,
-                wp.page_purpose = item.page_purpose,
-                wp.description = item.description,
-                wp.score_reasoning = item.reasoning,
-                wp.keywords = item.keywords,
-                wp.physics_domain = item.physics_domain,
-                wp.preview_text = item.preview_text,
-                wp.score_data_documentation = item.score_data_documentation,
-                wp.score_physics_content = item.score_physics_content,
-                wp.score_code_documentation = item.score_code_documentation,
-                wp.score_data_access = item.score_data_access,
-                wp.score_calibration = item.score_calibration,
-                wp.score_imas_relevance = item.score_imas_relevance,
-                wp.is_physics_content = item.is_physics,
-                wp.score_cost = item.score_cost,
-                wp.scored_at = datetime(),
-                wp.preview_fetched_at = datetime(),
-                wp.claimed_at = null
-            """,
-            batch=batch_data,
-            status=WikiPageStatus.scored.value,
-        )
+        if batch_data:
+            gc.query(
+                """
+                UNWIND $batch AS item
+                MATCH (wp:WikiPage {id: item.id})
+                SET wp.status = $status,
+                    wp.score = item.score,
+                    wp.page_purpose = item.page_purpose,
+                    wp.description = item.description,
+                    wp.score_reasoning = item.reasoning,
+                    wp.keywords = item.keywords,
+                    wp.physics_domain = item.physics_domain,
+                    wp.preview_text = item.preview_text,
+                    wp.score_data_documentation = item.score_data_documentation,
+                    wp.score_physics_content = item.score_physics_content,
+                    wp.score_code_documentation = item.score_code_documentation,
+                    wp.score_data_access = item.score_data_access,
+                    wp.score_calibration = item.score_calibration,
+                    wp.score_imas_relevance = item.score_imas_relevance,
+                    wp.is_physics_content = item.is_physics,
+                    wp.score_cost = item.score_cost,
+                    wp.scored_at = datetime(),
+                    wp.preview_fetched_at = datetime(),
+                    wp.claimed_at = null
+                """,
+                batch=batch_data,
+                status=WikiPageStatus.scored.value,
+            )
+
+        # Release pages with empty preview_text back to scanned for reprocessing
+        if released_ids:
+            logger.info(
+                "mark_pages_scored: releasing %d pages with empty preview_text "
+                "back to scanned for retry",
+                len(released_ids),
+            )
+            gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (wp:WikiPage {id: id})
+                SET wp.claimed_at = null
+                """,
+                ids=released_ids,
+            )
 
     return len(batch_data)
 
@@ -2047,19 +2073,22 @@ def bulk_discover_all_pages_basic_auth(
 def bulk_discover_all_pages_twiki_static(
     facility: str,
     base_url: str,
+    ssh_host: str | None = None,
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all pages from a static TWiki HTML export.
 
     TWiki static exports include WebTopicList.html, which contains a
     complete manifest of all topics. This function:
-    1. Fetches WebTopicList.html via direct HTTP
+    1. Fetches WebTopicList.html via SSH proxy or direct HTTP
     2. Parses the bullet list for all topic links
     3. Creates WikiPage nodes with 'scanned' status
 
     Args:
         facility: Facility ID
         base_url: Base URL of the static TWiki export
+        ssh_host: SSH host for proxied access (when URL is not
+            directly reachable from the machine running the CLI)
         on_progress: Progress callback
 
     Returns:
@@ -2069,9 +2098,11 @@ def bulk_discover_all_pages_twiki_static(
     from imas_codex.discovery.wiki.scraper import canonical_page_id
 
     logger.info(f"Starting bulk TWiki static discovery from {base_url}...")
+    if ssh_host:
+        logger.info(f"Using SSH proxy via {ssh_host}")
 
     # Use the adapter to discover pages
-    adapter = TWikiStaticAdapter(base_url=base_url)
+    adapter = TWikiStaticAdapter(base_url=base_url, ssh_host=ssh_host)
     pages = adapter.bulk_discover_pages(facility, base_url, on_progress)
 
     if not pages:
@@ -2108,6 +2139,7 @@ def bulk_discover_all_pages_static_html(
     facility: str,
     base_url: str,
     exclude_prefixes: list[str] | None = None,
+    ssh_host: str | None = None,
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all pages from a static HTML site by BFS crawling.
@@ -2120,6 +2152,8 @@ def bulk_discover_all_pages_static_html(
         facility: Facility ID
         base_url: Base URL of the static HTML site
         exclude_prefixes: URL path prefixes to exclude (e.g., ["/twiki_html"])
+        ssh_host: SSH host for proxied access (when URL is not
+            directly reachable from the machine running the CLI)
         on_progress: Progress callback
 
     Returns:
@@ -2129,9 +2163,11 @@ def bulk_discover_all_pages_static_html(
     from imas_codex.discovery.wiki.scraper import canonical_page_id
 
     logger.info(f"Starting bulk static HTML discovery from {base_url}...")
+    if ssh_host:
+        logger.info(f"Using SSH proxy via {ssh_host}")
 
     adapter = StaticHtmlAdapter(
-        base_url=base_url, exclude_prefixes=exclude_prefixes or []
+        base_url=base_url, exclude_prefixes=exclude_prefixes or [], ssh_host=ssh_host
     )
     pages = adapter.bulk_discover_pages(facility, base_url, on_progress)
 
@@ -2727,16 +2763,38 @@ async def score_worker(
 
         # Step 1: Fetch content for all pages in parallel
         fetch_tasks = [fetch_content_for_page(page) for page in pages]
-        pages_with_content = await asyncio.gather(*fetch_tasks)
-        logger.debug(
-            f"score_worker {worker_id}: fetched {len(pages_with_content)} pages"
-        )
+        fetched_pages = await asyncio.gather(*fetch_tasks)
+        logger.debug(f"score_worker {worker_id}: fetched {len(fetched_pages)} pages")
+
+        # Step 1b: Separate pages with content from those where fetch failed.
+        # Pages without preview_text cannot be scored meaningfully — release
+        # them back so they can be retried when the server is responsive.
+        pages_with_content = [p for p in fetched_pages if p.get("preview_text")]
+        pages_no_content = [p for p in fetched_pages if not p.get("preview_text")]
+
+        if pages_no_content:
+            logger.info(
+                "score_worker %s: %d/%d pages had no content (fetch failed), "
+                "releasing for retry",
+                worker_id,
+                len(pages_no_content),
+                len(fetched_pages),
+            )
+            await asyncio.to_thread(
+                _release_claimed_pages, [p["id"] for p in pages_no_content]
+            )
+
+        if not pages_with_content:
+            logger.debug(
+                f"score_worker {worker_id}: no pages with content, skipping LLM"
+            )
+            continue
 
         if on_progress:
-            on_progress(f"scoring {len(pages)} pages", state.score_stats)
+            on_progress(f"scoring {len(pages_with_content)} pages", state.score_stats)
 
         try:
-            # Step 2: Score batch with LLM
+            # Step 2: Score batch with LLM (only pages that have content)
             model = get_model_for_task("discovery")
             logger.debug(f"score_worker {worker_id}: starting LLM scoring...")
             results, cost = await _score_pages_batch(
@@ -3106,7 +3164,7 @@ async def artifact_score_worker(
                 )
             except Exception as e:
                 logger.debug("Failed to extract preview for %s: %s", filename, e)
-                # Still include it with empty preview - LLM scores from filename
+                # Track failed extractions for release
                 artifacts_with_text.append(
                     {
                         "id": artifact_id,
@@ -3118,23 +3176,58 @@ async def artifact_score_worker(
                     }
                 )
 
+        # Separate artifacts with content from those where extraction failed.
+        # Artifacts without preview_text are released for retry.
+        artifacts_to_score = [a for a in artifacts_with_text if a.get("preview_text")]
+        artifacts_no_content = [
+            a for a in artifacts_with_text if not a.get("preview_text")
+        ]
+
+        if artifacts_no_content:
+            logger.info(
+                "artifact_score_worker %s: %d/%d artifacts had no content, "
+                "releasing for retry",
+                worker_id,
+                len(artifacts_no_content),
+                len(artifacts_with_text),
+            )
+            try:
+                with GraphClient() as gc:
+                    gc.query(
+                        """
+                        UNWIND $ids AS id
+                        MATCH (wa:WikiArtifact {id: id})
+                        SET wa.claimed_at = null
+                        """,
+                        ids=[a["id"] for a in artifacts_no_content],
+                    )
+            except Exception:
+                pass
+
+        if not artifacts_to_score:
+            logger.debug(
+                "artifact_score_worker %s: no artifacts with content, skipping LLM",
+                worker_id,
+            )
+            continue
+
         if on_progress:
             on_progress(
-                f"scoring {len(artifacts_with_text)} artifacts",
+                f"scoring {len(artifacts_to_score)} artifacts",
                 state.artifact_score_stats,
             )
 
         try:
-            # Step 2: Score batch with LLM
+            # Step 2: Score batch with LLM (only artifacts that have content)
             model = get_model_for_task("discovery")
             results, cost = await _score_artifacts_batch(
-                artifacts_with_text, model, state.focus
+                artifacts_to_score, model, state.focus
             )
 
             # Add preview_text to results for persistence
             for r in results:
                 matching = next(
-                    (a for a in artifacts_with_text if a["id"] == r["id"]), {}
+                    (a for a in artifacts_to_score if a["id"] == r["id"]), {}
                 )
                 r["preview_text"] = matching.get("preview_text", "")[:500]
                 r["score_cost"] = cost / len(results) if results else 0.0
@@ -4562,11 +4655,12 @@ async def run_parallel_wiki_discovery(
                 if on_scan_progress:
                     on_scan_progress(f"bulk: {msg}", state.scan_stats)
 
-            # Run bulk discovery in thread pool (blocking HTTP calls)
+            # Run bulk discovery in thread pool (blocking HTTP/SSH calls)
             bulk_discovered = await asyncio.to_thread(
                 bulk_discover_all_pages_twiki_static,
                 facility,
                 base_url,
+                ssh_host,
                 bulk_progress,
             )
 
@@ -4586,6 +4680,7 @@ async def run_parallel_wiki_discovery(
                 facility,
                 base_url,
                 exclude_prefixes,
+                ssh_host,
                 bulk_progress,
             )
 

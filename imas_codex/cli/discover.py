@@ -1795,7 +1795,7 @@ def wiki_run(
 
                 if site_type == "twiki_static":
                     discover_func = bulk_discover_all_pages_twiki_static
-                    discover_args = (facility, base_url)
+                    discover_args = (facility, base_url, ssh_host)
                     label = "TWiki"
                 else:
                     from imas_codex.discovery.wiki.parallel import (
@@ -1804,7 +1804,7 @@ def wiki_run(
 
                     exclude_prefixes = _get_exclude_prefixes(facility, base_url)
                     discover_func = bulk_discover_all_pages_static_html
-                    discover_args = (facility, base_url, exclude_prefixes)
+                    discover_args = (facility, base_url, exclude_prefixes, ssh_host)
                     label = "Static HTML"
 
                 if use_rich:

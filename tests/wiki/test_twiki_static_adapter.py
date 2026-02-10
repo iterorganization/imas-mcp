@@ -24,6 +24,13 @@ class TestTWikiStaticAdapter:
         adapter = TWikiStaticAdapter()
         assert adapter._base_url is None
 
+    def test_init_with_ssh_host(self):
+        """Test adapter initializes with SSH host."""
+        adapter = TWikiStaticAdapter(
+            base_url="https://example.org/twiki_html", ssh_host="myhost"
+        )
+        assert adapter._ssh_host == "myhost"
+
     def test_site_type(self):
         """Test adapter has correct site type."""
         adapter = TWikiStaticAdapter()
@@ -79,6 +86,54 @@ class TestTWikiStaticAdapterDiscovery:
         """Test that bulk_discover_pages returns empty list without base URL."""
         adapter = TWikiStaticAdapter()
         pages = adapter.bulk_discover_pages("test_facility", "")
+
+        assert len(pages) == 0
+
+    @patch("imas_codex.discovery.wiki.adapters._fetch_html_via_ssh")
+    def test_bulk_discover_pages_via_ssh(self, mock_ssh_fetch):
+        """Test that bulk_discover_pages uses SSH proxy when ssh_host is set."""
+        mock_ssh_fetch.return_value = """
+        <html>
+        <body>
+        <ul>
+            <li><a href="TopicAlpha.html">TopicAlpha</a></li>
+            <li><a href="TopicBeta.html">TopicBeta</a></li>
+            <li><a href="WebHome.html">WebHome</a></li>
+        </ul>
+        </body>
+        </html>
+        """
+
+        adapter = TWikiStaticAdapter(
+            base_url="https://example.org/twiki_html", ssh_host="myhost"
+        )
+        pages = adapter.bulk_discover_pages(
+            "test_facility", "https://example.org/twiki_html"
+        )
+
+        # Should call SSH fetch, not httpx
+        mock_ssh_fetch.assert_called_once_with(
+            "https://example.org/twiki_html/WebTopicList.html", "myhost"
+        )
+
+        # Should find 2 pages (Web* pages are skipped)
+        assert len(pages) == 2
+        names = [p.name for p in pages]
+        assert "TopicAlpha" in names
+        assert "TopicBeta" in names
+        assert "WebHome" not in names
+
+    @patch("imas_codex.discovery.wiki.adapters._fetch_html_via_ssh")
+    def test_bulk_discover_pages_ssh_failure(self, mock_ssh_fetch):
+        """Test that SSH failure returns empty list."""
+        mock_ssh_fetch.return_value = None
+
+        adapter = TWikiStaticAdapter(
+            base_url="https://example.org/twiki_html", ssh_host="myhost"
+        )
+        pages = adapter.bulk_discover_pages(
+            "test_facility", "https://example.org/twiki_html"
+        )
 
         assert len(pages) == 0
 

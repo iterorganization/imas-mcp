@@ -903,6 +903,39 @@ class TWikiAdapter(WikiAdapter):
         return "document"
 
 
+def _fetch_html_via_ssh(url: str, ssh_host: str, timeout: int = 30) -> str | None:
+    """Fetch HTML content via SSH-proxied curl.
+
+    Used when the target URL is only reachable from the facility host,
+    not from the machine running the CLI.
+
+    Args:
+        url: URL to fetch
+        ssh_host: SSH host to proxy through
+        timeout: Command timeout in seconds
+
+    Returns:
+        HTML content string, or None on failure
+    """
+    cmd = f'curl -sk --connect-timeout 15 "{url}"'
+    try:
+        result = subprocess.run(
+            ["ssh", ssh_host, cmd],
+            capture_output=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            logger.warning("SSH curl failed for %s (exit %d)", url, result.returncode)
+            return None
+        return result.stdout.decode("utf-8", errors="replace")
+    except subprocess.TimeoutExpired:
+        logger.warning("SSH curl timed out for %s via %s", url, ssh_host)
+        return None
+    except Exception as e:
+        logger.warning("SSH curl error for %s: %s", url, e)
+        return None
+
+
 class TWikiStaticAdapter(WikiAdapter):
     """Adapter for static TWiki HTML exports.
 
@@ -916,13 +949,16 @@ class TWikiStaticAdapter(WikiAdapter):
 
     site_type = "twiki_static"
 
-    def __init__(self, base_url: str | None = None):
+    def __init__(self, base_url: str | None = None, ssh_host: str | None = None):
         """Initialize TWiki static adapter.
 
         Args:
             base_url: Base URL of the static TWiki export
+            ssh_host: SSH host for proxied access (when URL is not
+                directly reachable from the machine running the CLI)
         """
         self._base_url = base_url
+        self._ssh_host = ssh_host
 
     def bulk_discover_pages(
         self,
@@ -936,6 +972,10 @@ class TWikiStaticAdapter(WikiAdapter):
         a bullet list of all topics. This provides complete coverage without
         requiring crawling.
 
+        When ssh_host is configured, fetches via SSH-proxied curl instead
+        of direct HTTP (needed when the URL is only reachable from the
+        facility host).
+
         Args:
             facility: Facility ID
             base_url: Base URL of the static TWiki export
@@ -944,7 +984,6 @@ class TWikiStaticAdapter(WikiAdapter):
         Returns:
             List of discovered pages
         """
-        import httpx
         from bs4 import BeautifulSoup
 
         pages: list[DiscoveredPage] = []
@@ -960,48 +999,55 @@ class TWikiStaticAdapter(WikiAdapter):
         topic_list_url = f"{effective_base_url}/WebTopicList.html"
 
         try:
-            # Use httpx for sync HTTP (can't use async in this interface)
-            with httpx.Client(verify=False, timeout=30.0) as client:
-                if on_progress:
-                    on_progress("fetching WebTopicList.html", None)
+            if on_progress:
+                on_progress("fetching WebTopicList.html", None)
 
-                response = client.get(topic_list_url)
-                response.raise_for_status()
+            # Fetch HTML: via SSH proxy if configured, else direct HTTP
+            if self._ssh_host:
+                html_text = _fetch_html_via_ssh(topic_list_url, self._ssh_host)
+                if html_text is None:
+                    logger.warning("Failed to fetch WebTopicList.html via SSH")
+                    return []
+            else:
+                import httpx
 
-                soup = BeautifulSoup(response.text, "html.parser")
+                with httpx.Client(verify=False, timeout=30.0) as client:
+                    response = client.get(topic_list_url)
+                    response.raise_for_status()
+                    html_text = response.text
 
-                # TWiki exports WebTopicList as a <ul> with one <li><a> per topic
-                # Links are like: <a href="TopicName.html">TopicName</a>
-                for link in soup.select("ul li a"):
-                    href = link.get("href", "")
-                    name = link.get_text(strip=True)
+            soup = BeautifulSoup(html_text, "html.parser")
 
-                    # Skip utility pages (Web* pages are TWiki system pages)
-                    if name.startswith("Web"):
+            # TWiki exports WebTopicList as a <ul> with one <li><a> per topic
+            # Links are like: <a href="TopicName.html">TopicName</a>
+            for link in soup.select("ul li a"):
+                href = link.get("href", "")
+                name = link.get_text(strip=True)
+
+                # Skip utility pages (Web* pages are TWiki system pages)
+                if name.startswith("Web"):
+                    continue
+
+                # Skip external links
+                if href.startswith(("http://", "https://")):
+                    if not href.startswith(effective_base_url):
                         continue
 
-                    # Skip external links
-                    if href.startswith(("http://", "https://")):
-                        if not href.startswith(effective_base_url):
-                            continue
+                # Build full URL for the topic
+                if href.endswith(".html"):
+                    if href.startswith("/"):
+                        # Absolute path
+                        url = f"{effective_base_url.rsplit('/', 1)[0]}{href}"
+                    elif href.startswith("http"):
+                        url = href
+                    else:
+                        # Relative path
+                        url = f"{effective_base_url}/{href}"
+                    pages.append(DiscoveredPage(name=name, url=url))
 
-                    # Build full URL for the topic
-                    if href.endswith(".html"):
-                        if href.startswith("/"):
-                            # Absolute path
-                            url = f"{effective_base_url.rsplit('/', 1)[0]}{href}"
-                        elif href.startswith("http"):
-                            url = href
-                        else:
-                            # Relative path
-                            url = f"{effective_base_url}/{href}"
-                        pages.append(DiscoveredPage(name=name, url=url))
+            if on_progress:
+                on_progress(f"discovered {len(pages)} pages", None)
 
-                if on_progress:
-                    on_progress(f"discovered {len(pages)} pages", None)
-
-        except httpx.HTTPStatusError as e:
-            logger.warning(f"HTTP error fetching WebTopicList.html: {e}")
         except Exception as e:
             logger.warning(f"Error during TWiki static page discovery: {e}")
 
@@ -1027,7 +1073,6 @@ class TWikiStaticAdapter(WikiAdapter):
         Returns:
             List of discovered artifacts
         """
-        import httpx
         from bs4 import BeautifulSoup
 
         artifacts: list[DiscoveredArtifact] = []
@@ -1059,61 +1104,70 @@ class TWikiStaticAdapter(WikiAdapter):
         if on_progress:
             on_progress(f"scanning {len(pages)} pages for artifacts", None)
 
-        try:
-            with httpx.Client(verify=False, timeout=30.0) as client:
-                for i, page in enumerate(pages):
-                    if not page.url:
-                        continue
+        def _fetch_page_html(url: str) -> str | None:
+            """Fetch a single page, via SSH or direct."""
+            if self._ssh_host:
+                return _fetch_html_via_ssh(url, self._ssh_host)
+            else:
+                import httpx
 
-                    try:
-                        response = client.get(page.url)
+                try:
+                    with httpx.Client(verify=False, timeout=30.0) as client:
+                        response = client.get(url)
                         if response.status_code != 200:
+                            return None
+                        return response.text
+                except Exception:
+                    return None
+
+        try:
+            for i, page in enumerate(pages):
+                if not page.url:
+                    continue
+
+                html_text = _fetch_page_html(page.url)
+                if html_text is None:
+                    continue
+
+                soup = BeautifulSoup(html_text, "html.parser")
+
+                # Find all links to files
+                for link in soup.find_all("a", href=True):
+                    href = link["href"]
+                    href_lower = href.lower()
+
+                    if any(href_lower.endswith(ext) for ext in artifact_extensions):
+                        # Build full URL
+                        if href.startswith("http"):
+                            artifact_url = href
+                        elif href.startswith("/"):
+                            artifact_url = (
+                                f"{effective_base_url.rsplit('/', 1)[0]}{href}"
+                            )
+                        else:
+                            artifact_url = f"{effective_base_url}/{href}"
+
+                        if artifact_url in seen_urls:
                             continue
+                        seen_urls.add(artifact_url)
 
-                        soup = BeautifulSoup(response.text, "html.parser")
+                        filename = artifact_url.split("/")[-1]
+                        artifact_type = self._get_artifact_type(filename)
 
-                        # Find all links to files
-                        for link in soup.find_all("a", href=True):
-                            href = link["href"]
-                            href_lower = href.lower()
-
-                            if any(
-                                href_lower.endswith(ext) for ext in artifact_extensions
-                            ):
-                                # Build full URL
-                                if href.startswith("http"):
-                                    artifact_url = href
-                                elif href.startswith("/"):
-                                    artifact_url = (
-                                        f"{effective_base_url.rsplit('/', 1)[0]}{href}"
-                                    )
-                                else:
-                                    artifact_url = f"{effective_base_url}/{href}"
-
-                                if artifact_url in seen_urls:
-                                    continue
-                                seen_urls.add(artifact_url)
-
-                                filename = artifact_url.split("/")[-1]
-                                artifact_type = self._get_artifact_type(filename)
-
-                                artifact = DiscoveredArtifact(
-                                    filename=filename,
-                                    url=artifact_url,
-                                    artifact_type=artifact_type,
-                                )
-                                artifact.linked_pages.append(page.name)
-                                artifacts.append(artifact)
-
-                    except httpx.HTTPError:
-                        continue
-
-                    # Progress every 20 pages
-                    if on_progress and (i + 1) % 20 == 0:
-                        on_progress(
-                            f"scanned {i + 1}/{len(pages)} pages, found {len(artifacts)} artifacts",
-                            None,
+                        artifact = DiscoveredArtifact(
+                            filename=filename,
+                            url=artifact_url,
+                            artifact_type=artifact_type,
                         )
+                        artifact.linked_pages.append(page.name)
+                        artifacts.append(artifact)
+
+                # Progress every 20 pages
+                if on_progress and (i + 1) % 20 == 0:
+                    on_progress(
+                        f"scanned {i + 1}/{len(pages)} pages, found {len(artifacts)} artifacts",
+                        None,
+                    )
 
             if on_progress:
                 on_progress(f"discovered {len(artifacts)} artifacts", None)
@@ -1159,6 +1213,7 @@ class StaticHtmlAdapter(WikiAdapter):
         self,
         base_url: str | None = None,
         exclude_prefixes: list[str] | None = None,
+        ssh_host: str | None = None,
     ):
         """Initialize static HTML adapter.
 
@@ -1166,9 +1221,12 @@ class StaticHtmlAdapter(WikiAdapter):
             base_url: Base URL of the static site
             exclude_prefixes: URL path prefixes to exclude from crawling
                 (e.g., ["/twiki_html"] to avoid overlapping with a TWiki site)
+            ssh_host: SSH host for proxied access (when URL is not
+                directly reachable from the machine running the CLI)
         """
         self._base_url = base_url
         self._exclude_prefixes = exclude_prefixes or []
+        self._ssh_host = ssh_host
 
     def bulk_discover_pages(
         self,
@@ -1181,6 +1239,10 @@ class StaticHtmlAdapter(WikiAdapter):
         Follows same-origin links to .html pages, respecting
         exclude_prefixes to avoid overlapping with other wiki sites.
 
+        When ssh_host is configured, fetches via SSH-proxied curl instead
+        of direct HTTP (needed when the URL is only reachable from the
+        facility host).
+
         Args:
             facility: Facility ID
             base_url: Base URL (portal page URL)
@@ -1189,7 +1251,6 @@ class StaticHtmlAdapter(WikiAdapter):
         Returns:
             List of discovered pages
         """
-        import httpx
         from bs4 import BeautifulSoup
 
         effective_base_url = base_url or self._base_url
@@ -1218,79 +1279,90 @@ class StaticHtmlAdapter(WikiAdapter):
                 queue.append(url)
                 seen_urls.add(url)
 
-        try:
-            with httpx.Client(
-                verify=False, timeout=30.0, follow_redirects=True
-            ) as client:
-                while queue:
-                    current_url = queue.pop(0)
+        def _fetch_url(url: str) -> tuple[str | None, str]:
+            """Fetch URL content and content-type, via SSH or direct."""
+            if self._ssh_host:
+                html_text = _fetch_html_via_ssh(url, self._ssh_host)
+                # SSH curl doesn't give us content-type, assume html
+                return html_text, "text/html"
+            else:
+                import httpx
 
-                    try:
-                        response = client.get(current_url)
+                try:
+                    with httpx.Client(
+                        verify=False, timeout=30.0, follow_redirects=True
+                    ) as client:
+                        response = client.get(url)
                         if response.status_code != 200:
-                            continue
+                            return None, ""
                         content_type = response.headers.get("content-type", "")
-                        if "html" not in content_type:
-                            continue
-                    except Exception as e:
-                        logger.debug("Failed to fetch %s: %s", current_url, e)
+                        return response.text, content_type
+                except Exception as e:
+                    logger.debug("Failed to fetch %s: %s", url, e)
+                    return None, ""
+
+        try:
+            while queue:
+                current_url = queue.pop(0)
+
+                html_text, content_type = _fetch_url(current_url)
+                if html_text is None:
+                    continue
+                if not self._ssh_host and "html" not in content_type:
+                    continue
+
+                # Extract page name from URL path
+                parsed = urllib.parse.urlparse(current_url)
+                path = parsed.path.rstrip("/")
+                name = path.split("/")[-1] if path else "index.html"
+
+                pages.append(DiscoveredPage(name=name, url=current_url))
+
+                # Parse links
+                soup = BeautifulSoup(html_text, "html.parser")
+                for link in soup.find_all("a", href=True):
+                    href = link["href"]
+
+                    # Resolve relative URLs
+                    full_url = urllib.parse.urljoin(current_url, href)
+
+                    # Strip fragment
+                    full_url = urllib.parse.urldefrag(full_url)[0]
+
+                    # Same origin only
+                    parsed_link = urllib.parse.urlparse(full_url)
+                    if f"{parsed_link.scheme}://{parsed_link.netloc}" != origin:
                         continue
 
-                    # Extract page name from URL path
-                    parsed = urllib.parse.urlparse(current_url)
-                    path = parsed.path.rstrip("/")
-                    name = path.split("/")[-1] if path else "index.html"
+                    # Must be HTML (not PDF, images, etc.)
+                    link_path = parsed_link.path.lower()
+                    if not (
+                        link_path.endswith(".html")
+                        or link_path.endswith(".htm")
+                        or link_path.endswith("/")
+                        or "." not in link_path.split("/")[-1]
+                    ):
+                        continue
 
-                    pages.append(DiscoveredPage(name=name, url=current_url))
+                    # Exclude paths belonging to other wiki sites
+                    if any(
+                        parsed_link.path.startswith(prefix)
+                        for prefix in self._exclude_prefixes
+                    ):
+                        continue
 
-                    # Parse links
-                    soup = BeautifulSoup(response.text, "html.parser")
-                    for link in soup.find_all("a", href=True):
-                        href = link["href"]
+                    # Skip CGI/dynamic paths
+                    if "/cgi/" in parsed_link.path or "/cgi-bin/" in parsed_link.path:
+                        continue
 
-                        # Resolve relative URLs
-                        full_url = urllib.parse.urljoin(current_url, href)
+                    if full_url not in seen_urls:
+                        seen_urls.add(full_url)
+                        queue.append(full_url)
 
-                        # Strip fragment
-                        full_url = urllib.parse.urldefrag(full_url)[0]
-
-                        # Same origin only
-                        parsed_link = urllib.parse.urlparse(full_url)
-                        if f"{parsed_link.scheme}://{parsed_link.netloc}" != origin:
-                            continue
-
-                        # Must be HTML (not PDF, images, etc.)
-                        link_path = parsed_link.path.lower()
-                        if not (
-                            link_path.endswith(".html")
-                            or link_path.endswith(".htm")
-                            or link_path.endswith("/")
-                            or "." not in link_path.split("/")[-1]
-                        ):
-                            continue
-
-                        # Exclude paths belonging to other wiki sites
-                        if any(
-                            parsed_link.path.startswith(prefix)
-                            for prefix in self._exclude_prefixes
-                        ):
-                            continue
-
-                        # Skip CGI/dynamic paths
-                        if (
-                            "/cgi/" in parsed_link.path
-                            or "/cgi-bin/" in parsed_link.path
-                        ):
-                            continue
-
-                        if full_url not in seen_urls:
-                            seen_urls.add(full_url)
-                            queue.append(full_url)
-
-                    if on_progress and len(pages) % 10 == 0:
-                        on_progress(
-                            f"crawled {len(pages)} pages, {len(queue)} queued", None
-                        )
+                if on_progress and len(pages) % 10 == 0:
+                    on_progress(
+                        f"crawled {len(pages)} pages, {len(queue)} queued", None
+                    )
 
         except Exception as e:
             logger.warning(f"Error during static HTML discovery: {e}")
@@ -1449,9 +1521,9 @@ def get_adapter(
     elif site_type == "twiki":
         return TWikiAdapter(ssh_host=ssh_host)
     elif site_type == "twiki_static":
-        return TWikiStaticAdapter(base_url=base_url)
+        return TWikiStaticAdapter(base_url=base_url, ssh_host=ssh_host)
     elif site_type == "static_html":
-        return StaticHtmlAdapter(base_url=base_url)
+        return StaticHtmlAdapter(base_url=base_url, ssh_host=ssh_host)
     elif site_type == "confluence":
         return ConfluenceAdapter(api_token=api_token, ssh_host=ssh_host)
     else:
