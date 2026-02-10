@@ -511,9 +511,6 @@ class TestGetCacheInfo:
             clusters_file=clusters_file,
         )
 
-        # Work around missing _cluster_engine attribute in source
-        clusters._cluster_engine = None
-
         info = clusters.get_cache_info()
 
         assert "file_path" in info
@@ -527,9 +524,6 @@ class TestGetCacheInfo:
             encoder_config=encoder_config,
             clusters_file=clusters_file,
         )
-
-        # Work around missing _cluster_engine attribute in source
-        clusters._cluster_engine = None
 
         info = clusters.get_cache_info()
 
@@ -783,3 +777,176 @@ class TestLatin1Fallback:
             data = clusters._load_clusters_data()
 
         assert "clusters" in data
+
+
+class TestCheckGraphEmbeddingsAvailable:
+    """Tests for _check_graph_embeddings_available."""
+
+    def test_returns_false_zero_without_graph_client(
+        self, encoder_config, clusters_file
+    ):
+        """No graph → (False, 0)."""
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file,
+            graph_client=None,
+        )
+        available, count = clusters._check_graph_embeddings_available()
+        assert available is False
+        assert count == 0
+
+    def test_returns_true_with_sufficient_coverage(self, encoder_config, clusters_file):
+        """Graph reports >50% coverage → True."""
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [{"total": 100, "with_emb": 90, "coverage": 0.9}]
+
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file,
+            graph_client=mock_gc,
+        )
+        available, count = clusters._check_graph_embeddings_available()
+        assert available is True
+        assert count == 90
+
+    def test_returns_false_with_low_coverage(self, encoder_config, clusters_file):
+        """Graph reports <50% coverage → False."""
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [{"total": 100, "with_emb": 30, "coverage": 0.3}]
+
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file,
+            graph_client=mock_gc,
+        )
+        available, count = clusters._check_graph_embeddings_available()
+        assert available is False
+        assert count == 30
+
+    def test_handles_query_error(self, encoder_config, clusters_file):
+        """Query failure → (False, 0)."""
+        mock_gc = MagicMock()
+        mock_gc.query.side_effect = Exception("connection lost")
+
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file,
+            graph_client=mock_gc,
+        )
+        available, count = clusters._check_graph_embeddings_available()
+        assert available is False
+        assert count == 0
+
+
+class TestCheckGraphClustersAvailable:
+    """Tests for _check_graph_clusters_available."""
+
+    def test_returns_false_zero_without_graph(self, encoder_config, clusters_file):
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file,
+            graph_client=None,
+        )
+        exists, count = clusters._check_graph_clusters_available()
+        assert exists is False
+        assert count == 0
+
+    def test_returns_true_when_clusters_exist(self, encoder_config, clusters_file):
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [{"cnt": 42}]
+
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file,
+            graph_client=mock_gc,
+        )
+        exists, count = clusters._check_graph_clusters_available()
+        assert exists is True
+        assert count == 42
+
+
+class TestGraphFirstDependencyFreshness:
+    """Tests for graph-first path in _check_dependency_freshness."""
+
+    @pytest.fixture
+    def clusters_file_with_stats(self, tmp_path):
+        """Clusters file with source_document_count in metadata."""
+        data = {
+            "clusters": [{"id": 0}],
+            "statistics": {"source_document_count": 100},
+            "metadata": {},
+        }
+        fp = tmp_path / "clusters.json"
+        fp.write_text(json.dumps(data))
+        return fp
+
+    def test_graph_embeddings_match_clusters_no_rebuild(
+        self, encoder_config, clusters_file_with_stats
+    ):
+        """Graph embedding count matches clusters metadata → no rebuild."""
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [{"total": 100, "with_emb": 100, "coverage": 1.0}]
+
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file_with_stats,
+            graph_client=mock_gc,
+        )
+        assert clusters._check_dependency_freshness() is False
+
+    def test_graph_embeddings_differ_triggers_rebuild(
+        self, encoder_config, clusters_file_with_stats
+    ):
+        """Graph embedding count differs from clusters metadata → rebuild."""
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [{"total": 200, "with_emb": 200, "coverage": 1.0}]
+
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file_with_stats,
+            graph_client=mock_gc,
+        )
+        assert clusters._check_dependency_freshness() is True
+
+    def test_graph_no_embeddings_triggers_rebuild(
+        self, encoder_config, clusters_file_with_stats
+    ):
+        """Graph has no embeddings → rebuild."""
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [{"total": 100, "with_emb": 0, "coverage": 0.0}]
+
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file_with_stats,
+            graph_client=mock_gc,
+        )
+        assert clusters._check_dependency_freshness() is True
+
+    def test_graph_present_but_no_metadata_triggers_rebuild(
+        self, encoder_config, tmp_path
+    ):
+        """Graph has embeddings but clusters file lacks source_document_count → rebuild."""
+        data = {"clusters": [{"id": 0}], "metadata": {}}
+        fp = tmp_path / "clusters.json"
+        fp.write_text(json.dumps(data))
+
+        mock_gc = MagicMock()
+        mock_gc.query.return_value = [{"total": 100, "with_emb": 100, "coverage": 1.0}]
+
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=fp,
+            graph_client=mock_gc,
+        )
+        assert clusters._check_dependency_freshness() is True
+
+    def test_no_graph_falls_back_to_local_cache(self, encoder_config, clusters_file):
+        """Without graph_client, falls back to local embedding cache check."""
+        clusters = Clusters(
+            encoder_config=encoder_config,
+            clusters_file=clusters_file,
+            graph_client=None,
+        )
+        with patch.object(clusters, "_get_embedding_cache_file", return_value=None):
+            # No graph AND no local cache → rebuild
+            assert clusters._check_dependency_freshness() is True

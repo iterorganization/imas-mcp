@@ -33,7 +33,10 @@ import numpy as np
 from imas_codex import dd_version as current_dd_version
 from imas_codex.core.exclusions import ExclusionChecker
 from imas_codex.core.physics_categorization import physics_categorizer
-from imas_codex.core.progress_monitor import create_progress_monitor
+from imas_codex.core.progress_monitor import (
+    create_build_monitor,
+    create_progress_monitor,
+)
 from imas_codex.graph.client import GraphClient
 from imas_codex.settings import get_embedding_dimension
 
@@ -1004,6 +1007,94 @@ def load_path_mappings(version: str) -> dict:
     return {"old_to_new": {}, "new_to_old": {}}
 
 
+def _compute_build_hash(
+    versions: list[str],
+    ids_filter: set[str] | None,
+    embedding_model: str | None,
+    include_clusters: bool,
+    include_embeddings: bool,
+) -> str:
+    """Compute a deterministic hash of the build parameters.
+
+    Used to detect whether a previous build with the same parameters
+    already populated the graph, allowing fast no-op re-runs.
+    """
+    parts = [
+        ",".join(sorted(versions)),
+        ",".join(sorted(ids_filter)) if ids_filter else "",
+        embedding_model or "",
+        str(include_clusters),
+        str(include_embeddings),
+    ]
+    combined = "|".join(parts)
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
+
+
+def _check_graph_up_to_date(
+    client: GraphClient,
+    build_hash: str,
+    versions: list[str],
+    include_embeddings: bool,
+    include_clusters: bool,
+) -> bool:
+    """Check if the graph already contains a build matching the given hash.
+
+    Validates:
+    - _GraphMeta.dd_build_hash matches
+    - All requested versions exist
+    - Embedding coverage is complete (if embeddings were requested)
+    - Clusters exist (if clusters were requested)
+
+    Returns True only when the graph is fully up-to-date.
+    """
+    try:
+        result = client.query(
+            """
+            MATCH (m:_GraphMeta)
+            RETURN m.dd_build_hash AS hash,
+                   m.dd_versions AS versions
+            """
+        )
+        if not result:
+            return False
+
+        meta = result[0]
+        if meta.get("hash") != build_hash:
+            return False
+
+        stored_versions = meta.get("versions") or []
+        if set(versions) != set(stored_versions):
+            return False
+
+        # Verify embeddings are present
+        if include_embeddings:
+            emb_result = client.query(
+                """
+                MATCH (p:IMASPath)
+                WITH count(p) AS total,
+                     count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb
+                RETURN total, with_emb
+                """
+            )
+            if emb_result:
+                row = emb_result[0]
+                if row["total"] == 0 or row["with_emb"] < row["total"] * 0.95:
+                    return False
+
+        # Verify clusters are present
+        if include_clusters:
+            cl_result = client.query(
+                "MATCH (c:IMASSemanticCluster) RETURN count(c) AS cnt"
+            )
+            if not cl_result or cl_result[0]["cnt"] == 0:
+                return False
+
+        return True
+    except Exception as e:
+        logger.debug(f"Graph up-to-date check failed: {e}")
+        return False
+
+
 def build_dd_graph(
     client: GraphClient,
     versions: list[str] | None = None,
@@ -1017,6 +1108,11 @@ def build_dd_graph(
 ) -> dict:
     """
     Build the IMAS DD graph.
+
+    On a second run with identical parameters the function verifies the
+    graph is already up-to-date via a build hash stored in ``_GraphMeta``
+    and returns immediately, avoiding any expensive re-extraction or
+    re-embedding.
 
     Args:
         client: Neo4j GraphClient
@@ -1037,22 +1133,9 @@ def build_dd_graph(
     if versions is None:
         versions = all_versions
     else:
-        # Validate versions
         for v in versions:
             if v not in all_versions:
                 raise ValueError(f"Unknown DD version: {v}")
-
-    logger.debug(f"Building DD graph for {len(versions)} versions")
-    if ids_filter:
-        logger.debug(f"Filtering to IDS: {sorted(ids_filter)}")
-
-    # Create a single progress monitor to reuse across phases
-    progress = create_progress_monitor(
-        use_rich=use_rich,
-        logger=logger,
-        item_names=versions,
-        description_template="Extracting {item}",
-    )
 
     stats = {
         "versions_processed": 0,
@@ -1066,200 +1149,181 @@ def build_dd_graph(
         "definitions_changed": 0,
         "error_relationships": 0,
         "paths_filtered": 0,
+        "skipped": False,
     }
 
-    # Ensure indexes exist for performance
-    if not dry_run:
-        _ensure_indexes(client)
-
-    # First pass: create DDVersion nodes with predecessor chain
-    logger.debug("Creating DDVersion nodes...")
-    if not dry_run:
-        _create_version_nodes(client, versions)
-    stats["versions_processed"] = len(versions)
-
-    # Collect all unique units and extract version data
-    logger.debug("Collecting units across all versions...")
-    all_units: set[str] = set()
-    version_data: dict[str, dict] = {}
-
-    # Phase 1: Extract paths from all versions
-    progress.start_processing(versions, "Extracting DD paths")
-    for version in versions:
-        progress.set_current_item(version)
-        try:
-            data = extract_paths_for_version(version, ids_filter=ids_filter)
-            version_data[version] = data
-            all_units.update(data["units"])
-        except Exception as e:
-            logger.error(f"Error extracting {version}: {e}")
-            progress.update_progress(version, error=str(e))
-            continue
-        progress.update_progress(version)
-    progress.finish_processing()
-
-    # Create Unit nodes
-    logger.debug(f"Creating {len(all_units)} Unit nodes...")
-    if not dry_run:
-        _create_unit_nodes(client, all_units)
-    stats["units_created"] = len(all_units)
-
-    # Collect and create IMASCoordinateSpec nodes for index-based coordinates
-    # Dynamically discover specs from extracted path data instead of hardcoding
-    all_coord_specs: set[str] = set()
-    for ver_data in version_data.values():
-        for path_info in ver_data["paths"].values():
-            for coord_str in path_info.get("coordinates", []):
-                if coord_str and coord_str.startswith("1..."):
-                    all_coord_specs.add(coord_str)
-    logger.debug(f"Creating {len(all_coord_specs)} IMASCoordinateSpec nodes...")
-    if not dry_run:
-        _create_coordinate_spec_nodes(client, all_coord_specs)
-
-    # Phase 2: Create IDS and IMASPath nodes, tracking version changes
-    logger.debug("Creating IDS and IMASPath nodes with version tracking...")
-    prev_paths: dict[str, dict] = {}
-
-    # Create a new progress monitor for the build phase with updated template
-    build_progress = create_progress_monitor(
-        use_rich=use_rich,
-        logger=logger,
-        item_names=versions,
-        description_template="Building {item}",
+    # --- Hash-based idempotency check ---
+    build_hash = _compute_build_hash(
+        versions, ids_filter, embedding_model, include_clusters, include_embeddings
     )
 
-    build_progress.start_processing(versions, "Building graph nodes")
-    for i, version in enumerate(versions):
-        build_progress.set_current_item(version)
+    if not dry_run and not force_embeddings:
+        if _check_graph_up_to_date(
+            client, build_hash, versions, include_embeddings, include_clusters
+        ):
+            logger.info(
+                "Graph already up-to-date (build hash %s) — skipping rebuild",
+                build_hash,
+            )
+            stats["versions_processed"] = len(versions)
+            stats["skipped"] = True
+            return stats
 
-        if version not in version_data:
-            build_progress.update_progress(version, error="No data")
-            continue
+    # --- Build with progress tracking ---
+    monitor = create_build_monitor(use_rich=use_rich, logger=logger)
 
-        data = version_data[version]
-
-        # Compute changes from previous version
-        changes = compute_version_changes(prev_paths, data["paths"])
-
+    with monitor.managed_build():
+        # Ensure indexes exist for performance
         if not dry_run:
-            # Batch create/update IDS nodes
-            _batch_upsert_ids_nodes(client, data["ids_info"], version, i == 0)
-            stats["ids_created"] = max(stats["ids_created"], len(data["ids_info"]))
+            _ensure_indexes(client)
 
-            # Batch create IMASPath nodes for new paths
-            new_paths_data = {p: data["paths"][p] for p in changes["added"]}
-            _batch_create_path_nodes(client, new_paths_data, version)
-            stats["paths_created"] += len(changes["added"])
+        # Create DDVersion nodes
+        if not dry_run:
+            _create_version_nodes(client, versions)
+        stats["versions_processed"] = len(versions)
 
-            # Batch mark deprecated paths
-            _batch_mark_paths_deprecated(client, changes["removed"], version)
+        # Phase 1: Extract paths from all versions
+        all_units: set[str] = set()
+        version_data: dict[str, dict] = {}
 
-            # Batch create IMASPathChange nodes for metadata changes
-            change_count = _batch_create_path_changes(
-                client, changes["changed"], version
-            )
-            stats["path_changes_created"] += change_count
-
-        prev_paths = data["paths"]
-        build_progress.update_progress(version)
-
-    build_progress.finish_processing()
-
-    # Batch create RENAMED_TO relationships from path mappings
-    logger.debug("Creating RENAMED_TO relationships...")
-    if not dry_run:
-        mappings = load_path_mappings(current_dd_version)
-        _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
-
-    # Generate and store embeddings for ALL data paths across ALL versions
-    # This enables semantic search over the full DD history for evolution queries.
-    # Error fields and metadata paths are excluded; GGD paths included by default.
-    if include_embeddings and not dry_run:
-        # Merge paths and ids_info across ALL versions for complete coverage
-        # Later versions take precedence for metadata (units, docs) on shared paths
-        merged_paths: dict[str, dict] = {}
-        merged_ids_info: dict[str, dict] = {}
-        for version in versions:
-            vdata = version_data.get(version)
-            if vdata:
-                merged_paths.update(vdata["paths"])
-                merged_ids_info.update(vdata["ids_info"])
-
-        if merged_paths:
-            # Filter paths and extract error relationships
-            logger.debug(
-                f"Filtering {len(merged_paths)} paths across "
-                f"{len(versions)} versions for embedding..."
-            )
-            embeddable_paths, error_relationships = filter_embeddable_paths(
-                merged_paths
-            )
-            stats["paths_filtered"] = len(merged_paths) - len(embeddable_paths)
-            logger.debug(
-                f"Embedding {len(embeddable_paths)} paths "
-                f"(filtered {stats['paths_filtered']} excluded paths)"
+        with monitor.phase(
+            "Extract paths",
+            items=versions,
+            description_template="Extracting {item}",
+        ) as phase:
+            for version in versions:
+                try:
+                    data = extract_paths_for_version(version, ids_filter=ids_filter)
+                    version_data[version] = data
+                    all_units.update(data["units"])
+                    phase.update(version)
+                except Exception as e:
+                    logger.error(f"Error extracting {version}: {e}")
+                    phase.update(version, error=str(e))
+            phase.set_detail(
+                f"{sum(len(d['paths']) for d in version_data.values())} paths"
             )
 
-            # Create HAS_ERROR relationships for error fields
-            if error_relationships:
-                logger.debug(
-                    f"Creating {len(error_relationships)} HAS_ERROR relationships..."
+        # Create Unit / CoordinateSpec nodes
+        if not dry_run:
+            _create_unit_nodes(client, all_units)
+        stats["units_created"] = len(all_units)
+
+        all_coord_specs: set[str] = set()
+        for ver_data in version_data.values():
+            for path_info in ver_data["paths"].values():
+                for coord_str in path_info.get("coordinates", []):
+                    if coord_str and coord_str.startswith("1..."):
+                        all_coord_specs.add(coord_str)
+        if not dry_run:
+            _create_coordinate_spec_nodes(client, all_coord_specs)
+
+        # Phase 2: Build graph nodes (IDS + IMASPath + relationships)
+        prev_paths: dict[str, dict] = {}
+
+        with monitor.phase(
+            "Build graph",
+            items=versions,
+            description_template="Building {item}",
+        ) as phase:
+            for i, version in enumerate(versions):
+                if version not in version_data:
+                    phase.update(version, error="No data")
+                    continue
+
+                data = version_data[version]
+                changes = compute_version_changes(prev_paths, data["paths"])
+
+                if not dry_run:
+                    _batch_upsert_ids_nodes(client, data["ids_info"], version, i == 0)
+                    stats["ids_created"] = max(
+                        stats["ids_created"], len(data["ids_info"])
+                    )
+
+                    new_paths_data = {p: data["paths"][p] for p in changes["added"]}
+                    _batch_create_path_nodes(client, new_paths_data, version)
+                    stats["paths_created"] += len(changes["added"])
+
+                    _batch_mark_paths_deprecated(client, changes["removed"], version)
+
+                    change_count = _batch_create_path_changes(
+                        client, changes["changed"], version
+                    )
+                    stats["path_changes_created"] += change_count
+
+                prev_paths = data["paths"]
+                phase.update(version)
+
+        # RENAMED_TO relationships
+        if not dry_run:
+            mappings = load_path_mappings(current_dd_version)
+            _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
+
+        # Phase 3: Embeddings
+        if include_embeddings and not dry_run:
+            merged_paths: dict[str, dict] = {}
+            merged_ids_info: dict[str, dict] = {}
+            for version in versions:
+                vdata = version_data.get(version)
+                if vdata:
+                    merged_paths.update(vdata["paths"])
+                    merged_ids_info.update(vdata["ids_info"])
+
+            if merged_paths:
+                embeddable_paths, error_relationships = filter_embeddable_paths(
+                    merged_paths
                 )
-                stats["error_relationships"] = _batch_create_error_relationships(
-                    client, error_relationships
+                stats["paths_filtered"] = len(merged_paths) - len(embeddable_paths)
+
+                if error_relationships:
+                    stats["error_relationships"] = _batch_create_error_relationships(
+                        client, error_relationships
+                    )
+
+                embedding_stats = update_path_embeddings(
+                    client=client,
+                    paths_data=embeddable_paths,
+                    ids_info=merged_ids_info,
+                    model_name=embedding_model,
+                    force_rebuild=force_embeddings,
+                    use_rich=use_rich,
+                    dd_version=current_dd_version,
+                    track_changes=True,
+                )
+                stats["embeddings_updated"] = embedding_stats["updated"]
+                stats["embeddings_cached"] = embedding_stats["cached"]
+
+                client.query(
+                    """
+                    MATCH (v:DDVersion {id: $version})
+                    SET v.embeddings_built_at = datetime(),
+                        v.embeddings_model = $model,
+                        v.embeddings_count = $count
+                    """,
+                    version=current_dd_version,
+                    model=embedding_model,
+                    count=embedding_stats["total"],
                 )
 
-            # Generate embeddings for all embeddable paths (active + deprecated)
-            logger.debug(
-                f"Generating embeddings for {len(embeddable_paths)} paths "
-                f"across {len(versions)} DD versions..."
-            )
-            embedding_stats = update_path_embeddings(
-                client=client,
-                paths_data=embeddable_paths,
-                ids_info=merged_ids_info,
-                model_name=embedding_model,
-                force_rebuild=force_embeddings,
-                use_rich=use_rich,
-                dd_version=current_dd_version,
-                track_changes=True,
-            )
-            stats["embeddings_updated"] = embedding_stats["updated"]
-            stats["embeddings_cached"] = embedding_stats["cached"]
+        # Phase 4: Clusters
+        if include_clusters:
+            cluster_count = _import_clusters(client, dry_run, use_rich=use_rich)
+            stats["clusters_created"] = cluster_count
 
-            # Update DDVersion with embedding metadata
+        # Persist build hash for idempotency on next run
+        if not dry_run:
             client.query(
                 """
-                MATCH (v:DDVersion {id: $version})
-                SET v.embeddings_built_at = datetime(),
-                    v.embeddings_model = $model,
-                    v.embeddings_count = $count
+                MERGE (m:_GraphMeta)
+                SET m.dd_graph_built = datetime(),
+                    m.dd_versions = $versions,
+                    m.dd_current_version = $current,
+                    m.dd_build_hash = $hash
                 """,
-                version=current_dd_version,
-                model=embedding_model,
-                count=embedding_stats["total"],
+                versions=versions,
+                current=current_dd_version,
+                hash=build_hash,
             )
-        else:
-            logger.warning("No path data found across any version")
-
-    # Import semantic clusters if requested
-    if include_clusters:
-        logger.debug("Importing semantic clusters...")
-        cluster_count = _import_clusters(client, dry_run)
-        stats["clusters_created"] = cluster_count
-
-    # Update graph metadata
-    if not dry_run:
-        client.query(
-            """
-            MERGE (m:_GraphMeta)
-            SET m.dd_graph_built = datetime(),
-                m.dd_versions = $versions,
-                m.dd_current_version = $current
-        """,
-            versions=versions,
-            current=current_dd_version,
-        )
 
     return stats
 
@@ -1833,6 +1897,7 @@ def _cleanup_stale_embeddings(client: GraphClient) -> int:
 def _import_clusters(
     client: GraphClient,
     dry_run: bool,
+    use_rich: bool | None = None,
 ) -> int:
     """Import semantic clusters from existing cluster data with centroids.
 
@@ -1840,12 +1905,16 @@ def _import_clusters(
     clusters by centroid similarity, then search within matching clusters.
     Model name is tracked on DDVersion, not on clusters.
 
+    Graph-first: if the graph already contains IMASSemanticCluster nodes
+    whose count matches the clusters.json, the import is skipped.
+
     Passes the graph client to the cluster builder so embeddings are read
     directly from IMASPath nodes instead of regenerated from scratch.
 
     Args:
         client: GraphClient instance
         dry_run: If True, don't write to graph
+        use_rich: Force rich progress setting
 
     Returns:
         Number of clusters imported
@@ -1855,7 +1924,6 @@ def _import_clusters(
             from imas_codex.core.clusters import Clusters
             from imas_codex.embeddings.config import EncoderConfig
 
-            # Create encoder config for loading clusters
             encoder_config = EncoderConfig()
             clusters_manager = Clusters(
                 encoder_config=encoder_config,
@@ -1866,6 +1934,17 @@ def _import_clusters(
                 return 0
 
             cluster_data = clusters_manager.get_clusters()
+
+            # Check if graph already has the right number of clusters
+            existing = client.query(
+                "MATCH (c:IMASSemanticCluster) RETURN count(c) AS cnt"
+            )
+            existing_count = existing[0]["cnt"] if existing else 0
+            if existing_count == len(cluster_data) and existing_count > 0:
+                logger.info(
+                    f"Graph already has {existing_count} clusters — skipping import"
+                )
+                return existing_count
             cluster_count = 0
 
             for cluster in cluster_data:
@@ -1962,6 +2041,19 @@ def _import_clusters(
             return 0
 
 
+def import_semantic_clusters(
+    client: GraphClient,
+    dry_run: bool = False,
+    use_rich: bool | None = None,
+) -> int:
+    """Public API for importing semantic clusters into the graph.
+
+    Thin wrapper around ``_import_clusters`` so external callers
+    (e.g. ``imas-codex clusters sync``) have a stable name.
+    """
+    return _import_clusters(client, dry_run=dry_run, use_rich=use_rich)
+
+
 # Public API exports
 __all__ = [
     "build_dd_graph",
@@ -1969,6 +2061,7 @@ __all__ = [
     "get_all_dd_versions",
     "extract_paths_for_version",
     "compute_version_changes",
+    "import_semantic_clusters",
     "load_path_mappings",
 ]
 
@@ -2052,7 +2145,7 @@ def clear_dd_graph(
     # Clean up _GraphMeta DD fields
     client.query("""
         MATCH (m:_GraphMeta)
-        REMOVE m.dd_graph_built, m.dd_versions, m.dd_current_version
+        REMOVE m.dd_graph_built, m.dd_versions, m.dd_current_version, m.dd_build_hash
     """)
 
     # Drop DD-specific vector indexes (they're empty now)

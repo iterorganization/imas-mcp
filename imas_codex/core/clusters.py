@@ -3,6 +3,10 @@ Unified clusters management for IMAS semantic cluster data.
 
 This module provides a single, coherent dataclass for managing clusters.json with
 intelligent cache management, dependency tracking, and automatic rebuilding.
+
+Graph-first approach: when a graph_client is available, embeddings and cluster
+validity are checked against the Neo4j graph. Local pickle caches are only
+consulted as a fallback when the graph is unavailable.
 """
 
 import json
@@ -173,13 +177,14 @@ class Clusters:
             logger.debug(f"Could not get expected document count: {e}")
             return 0
 
-    def _check_graph_embeddings_available(self) -> bool:
+    def _check_graph_embeddings_available(self) -> tuple[bool, int]:
         """Check if the Neo4j graph has embeddings we can use for clustering.
 
-        Returns True if the graph has sufficient embedding coverage.
+        Returns:
+            Tuple of (has_sufficient_coverage, embedding_count).
         """
         if self.graph_client is None:
-            return False
+            return False, 0
 
         try:
             result = self.graph_client.query(
@@ -193,99 +198,110 @@ class Clusters:
             )
             if result:
                 row = result[0]
+                count = row["with_emb"]
                 coverage = row["coverage"]
                 logger.debug(
-                    f"Graph embedding coverage: {row['with_emb']}/{row['total']} ({coverage:.0%})"
+                    f"Graph embedding coverage: {count}/{row['total']} ({coverage:.0%})"
                 )
-                return (
-                    coverage >= 0.5
-                )  # At least 50% coverage means graph has embeddings
-            return False
+                return coverage >= 0.5, count
+            return False, 0
         except Exception as e:
             logger.debug(f"Could not check graph embeddings: {e}")
-            return False
+            return False, 0
+
+    def _check_graph_clusters_available(self) -> tuple[bool, int]:
+        """Check if graph already has IMASSemanticCluster nodes.
+
+        Returns:
+            Tuple of (clusters_exist, count).
+        """
+        if self.graph_client is None:
+            return False, 0
+
+        try:
+            result = self.graph_client.query(
+                "MATCH (c:IMASSemanticCluster) RETURN count(c) AS cnt"
+            )
+            count = result[0]["cnt"] if result else 0
+            return count > 0, count
+        except Exception as e:
+            logger.debug(f"Could not check graph clusters: {e}")
+            return False, 0
 
     def _check_dependency_freshness(self) -> bool:
         """
         Check if clusters file needs regeneration.
 
-        When a graph_client is available, checks graph embedding coverage
-        instead of looking for a local pickle cache file. This avoids
-        unnecessary re-embedding during ``imas build``.
+        Graph-first approach:
+        1. If graph_client is available, compare graph embedding count with
+           clusters metadata. Local pickle caches are never consulted.
+        2. Only when graph_client is None fall back to local pickle cache
+           mtime / document-count checks.
 
         Returns:
             True if clusters file should be regenerated, False otherwise.
         """
         if not self.file_path.exists():
-            logger.debug("Clusters file does not exist")
+            logger.debug("Clusters file does not exist — rebuild required")
             return True
 
-        # If we have a graph client, check graph for embeddings
+        # --- Graph-first path ---
         if self.graph_client is not None:
-            if self._check_graph_embeddings_available():
-                logger.debug(
-                    "Graph embeddings available - checking clusters document count"
-                )
-                # Verify clusters metadata still matches
-                clusters_doc_count = self._get_clusters_document_count()
-                if clusters_doc_count is None:
-                    logger.info(
-                        "No document count in clusters metadata - rebuild required"
-                    )
-                    return True
-                # Graph has embeddings and clusters exist — check staleness
-                # by comparing graph embedding count with clusters metadata
-                try:
-                    result = self.graph_client.query(
-                        "MATCH (p:IMASPath) WHERE p.embedding IS NOT NULL RETURN count(p) AS cnt"
-                    )
-                    graph_count = result[0]["cnt"] if result else 0
-                    if graph_count != clusters_doc_count:
-                        logger.info(
-                            f"Graph embedding count ({graph_count}) differs from clusters "
-                            f"({clusters_doc_count}) — rebuild required"
-                        )
-                        return True
-                    logger.debug(
-                        f"Clusters up-to-date with graph ({graph_count} embeddings)"
-                    )
-                    return False
-                except Exception as e:
-                    logger.debug(f"Could not validate graph count: {e}")
-                    return True
-            else:
-                logger.debug("Graph embeddings not available, checking local cache")
+            has_embeddings, graph_emb_count = self._check_graph_embeddings_available()
 
+            if not has_embeddings:
+                logger.debug(
+                    "Graph has insufficient embedding coverage — rebuild required"
+                )
+                return True
+
+            # Graph has embeddings — compare count with clusters metadata
+            clusters_doc_count = self._get_clusters_document_count()
+            if clusters_doc_count is None:
+                logger.info(
+                    "Clusters file has no source_document_count metadata — rebuild required"
+                )
+                return True
+
+            if graph_emb_count != clusters_doc_count:
+                logger.info(
+                    f"Graph embedding count ({graph_emb_count}) differs from "
+                    f"clusters ({clusters_doc_count}) — rebuild required"
+                )
+                return True
+
+            logger.debug(
+                f"Clusters up-to-date with graph ({graph_emb_count} embeddings)"
+            )
+            return False
+
+        # --- Local-cache fallback (no graph available) ---
         clusters_mtime = self._get_file_mtime(self.file_path)
         clusters_time = datetime.fromtimestamp(clusters_mtime)
 
-        # Check the specific embedding cache file that will be loaded
         embedding_cache = self._get_embedding_cache_file()
         if embedding_cache:
-            # Check mtime first
             embedding_mtime = self._get_file_mtime(embedding_cache)
             if embedding_mtime > clusters_mtime:
                 embedding_time = datetime.fromtimestamp(embedding_mtime)
                 time_diff = embedding_mtime - clusters_mtime
                 logger.info(
                     f"Embedding cache newer than clusters: {embedding_cache.name} "
-                    f"(embedding: {embedding_time.isoformat()}, clusters: {clusters_time.isoformat()}, diff: {time_diff:.1f}s)"
+                    f"(embedding: {embedding_time.isoformat()}, "
+                    f"clusters: {clusters_time.isoformat()}, diff: {time_diff:.1f}s)"
                 )
                 return True
 
-            # Fast document count check: compare embedding cache count with clusters metadata
-            # This avoids loading the entire DocumentStore just to count documents
             cached_count = self._get_cached_embedding_doc_count(embedding_cache)
             if cached_count is not None:
-                # Get expected count from clusters.json metadata (fast file read)
                 clusters_doc_count = self._get_clusters_document_count()
                 if (
                     clusters_doc_count is not None
                     and cached_count != clusters_doc_count
                 ):
                     logger.info(
-                        f"Embedding cache document count mismatch with clusters: "
-                        f"embedding={cached_count}, clusters={clusters_doc_count}. Clusters rebuild required."
+                        f"Embedding cache document count mismatch: "
+                        f"cache={cached_count}, clusters={clusters_doc_count}"
                     )
                     return True
                 logger.debug(
@@ -293,12 +309,14 @@ class Clusters:
                 )
 
             logger.debug(
-                f"Embedding cache is up-to-date: {embedding_cache.name} "
-                f"(embedding: {datetime.fromtimestamp(embedding_mtime).isoformat()}, clusters: {clusters_time.isoformat()})"
+                f"Embedding cache up-to-date: {embedding_cache.name} "
+                f"(embedding: {datetime.fromtimestamp(embedding_mtime).isoformat()}, "
+                f"clusters: {clusters_time.isoformat()})"
             )
         else:
-            # If no embedding cache exists, we need to rebuild
-            logger.info("No embedding cache file found - clusters rebuild required")
+            logger.info(
+                "No graph connection and no local embedding cache — rebuild required"
+            )
             return True
 
         return False
@@ -318,7 +336,6 @@ class Clusters:
         logger.debug("Invalidating clusters cache")
         self._cached_data = None
         self._cached_mtime = None
-        self._cluster_engine = None
         self._cluster_searcher = None
 
     def _load_clusters_data(self) -> dict[str, Any]:
@@ -367,7 +384,7 @@ class Clusters:
             # Cache the loaded data
             self._cached_data = data
             self._cached_mtime = current_mtime
-            self._cluster_engine = None  # Reset engine on data reload
+            self._cluster_searcher = None  # Reset searcher on data reload
 
             logger.debug(
                 f"Loaded {len(data.get('clusters', []))} clusters from clusters file"
@@ -382,7 +399,7 @@ class Clusters:
 
             self._cached_data = data
             self._cached_mtime = current_mtime
-            self._cluster_engine = None
+            self._cluster_searcher = None
 
             return data
 
@@ -502,7 +519,7 @@ class Clusters:
             "file_path": str(self.file_path),
             "file_exists": self.file_path.exists(),
             "cached": self._cached_data is not None,
-            "engine_cached": self._cluster_engine is not None,
+            "searcher_cached": self._cluster_searcher is not None,
         }
 
         if self.file_path.exists():

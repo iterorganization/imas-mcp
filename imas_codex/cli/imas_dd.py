@@ -173,6 +173,11 @@ def imas_build(
             )
 
         # Report results
+        if stats.get("skipped"):
+            click.echo("\n=== Build Skipped (graph already up-to-date) ===")
+            click.echo(f"Versions verified: {stats['versions_processed']}")
+            return
+
         click.echo("\n=== Build Complete ===")
         click.echo(f"Versions processed: {stats['versions_processed']}")
         click.echo(f"IDS nodes: {stats['ids_created']}")
