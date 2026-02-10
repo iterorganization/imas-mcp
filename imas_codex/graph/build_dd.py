@@ -1175,10 +1175,12 @@ def build_dd_graph(
     with monitor.managed_build():
         # Ensure indexes exist for performance
         if not dry_run:
+            monitor.status("Creating indexes...")
             _ensure_indexes(client)
 
         # Create DDVersion nodes
         if not dry_run:
+            monitor.status(f"Creating {len(versions)} version nodes...")
             _create_version_nodes(client, versions)
         stats["versions_processed"] = len(versions)
 
@@ -1206,6 +1208,7 @@ def build_dd_graph(
 
         # Create Unit / CoordinateSpec nodes
         if not dry_run:
+            monitor.status(f"Creating {len(all_units)} unit nodes...")
             _create_unit_nodes(client, all_units)
         stats["units_created"] = len(all_units)
 
@@ -1216,6 +1219,7 @@ def build_dd_graph(
                     if coord_str and coord_str.startswith("1..."):
                         all_coord_specs.add(coord_str)
         if not dry_run:
+            monitor.status(f"Creating {len(all_coord_specs)} coordinate spec nodes...")
             _create_coordinate_spec_nodes(client, all_coord_specs)
 
         # Phase 2: Build graph nodes (IDS + IMASPath + relationships)
@@ -1256,6 +1260,7 @@ def build_dd_graph(
 
         # RENAMED_TO relationships
         if not dry_run:
+            monitor.status("Creating RENAMED_TO relationships...")
             mappings = load_path_mappings(current_dd_version)
             _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
 
@@ -1274,6 +1279,10 @@ def build_dd_graph(
                     merged_paths
                 )
                 stats["paths_filtered"] = len(merged_paths) - len(embeddable_paths)
+                monitor.status(
+                    f"Embedding {len(embeddable_paths)} paths "
+                    f"(filtered {stats['paths_filtered']})..."
+                )
 
                 if error_relationships:
                     stats["error_relationships"] = _batch_create_error_relationships(
@@ -1307,6 +1316,7 @@ def build_dd_graph(
 
         # Phase 4: Clusters
         if include_clusters:
+            monitor.status("Importing semantic clusters...")
             cluster_count = _import_clusters(client, dry_run, use_rich=use_rich)
             stats["clusters_created"] = cluster_count
 
@@ -2049,7 +2059,7 @@ def import_semantic_clusters(
     """Public API for importing semantic clusters into the graph.
 
     Thin wrapper around ``_import_clusters`` so external callers
-    (e.g. ``imas-codex clusters sync``) have a stable name.
+    (e.g. ``imas-codex imas clusters sync``) have a stable name.
     """
     return _import_clusters(client, dry_run=dry_run, use_rich=use_rich)
 

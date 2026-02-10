@@ -87,7 +87,7 @@ jobs:
           echo "✓ Embeddings built successfully"
           
           echo "Building clusters..."
-          uv run imas-codex clusters build --quiet
+          uv run imas-codex imas clusters build --quiet
           echo "✓ Clusters built successfully"
           
           echo "All IMAS resources built successfully:"

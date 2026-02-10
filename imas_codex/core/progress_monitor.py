@@ -183,6 +183,13 @@ class BuildProgressMonitor:
         self._phases: list[dict[str, Any]] = []
         self._suppressed_handlers: dict[int, int] = {}
 
+    def status(self, message: str) -> None:
+        """Print a status message (visible between phases)."""
+        if self._use_rich and self._console:
+            self._console.print(f"  [dim]{message}[/dim]")
+        else:
+            self.logger.info(message)
+
     @contextmanager
     def managed_build(self, title: str = "IMAS DD Build"):
         """Context manager that provides clean Rich output for the entire build.
@@ -289,6 +296,9 @@ class PhaseTracker:
     def __enter__(self) -> "PhaseTracker":
         self._phase["count"] = self._total
         if self._parent._use_rich and self._parent._console and self._total > 0:
+            self._parent._console.print(
+                f"  [bold]{self._phase['name']}[/bold] [dim]({self._total} items)[/dim]"
+            )
             self._progress = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -303,6 +313,11 @@ class PhaseTracker:
             self._task_id = self._progress.add_task(
                 self._phase["name"], total=self._total
             )
+        elif self._parent._use_rich and self._parent._console:
+            # Phase with no items (spinner only)
+            self._parent._console.print(
+                f"  [bold]{self._phase['name']}[/bold] [dim]...[/dim]"
+            )
         elif not self._parent._use_rich:
             self._parent.logger.info(f"{self._phase['name']}: {self._total} items")
         return self
@@ -312,7 +327,21 @@ class PhaseTracker:
             self._progress.stop()
             self._progress = None
         self._phase["ok"] = exc_type is None
-        if not self._parent._use_rich and exc_type is None:
+
+        # Print persistent completion line so phases leave a visible trace
+        if self._parent._use_rich and self._parent._console:
+            detail = self._phase.get("detail", "")
+            detail_str = f" [dim]({detail})[/dim]" if detail else ""
+            if exc_type is None:
+                self._parent._console.print(
+                    f"    [green]\u2713[/green] {self._completed}/{self._total}"
+                    f"{detail_str}"
+                )
+            else:
+                self._parent._console.print(
+                    f"    [red]\u2717[/red] failed at {self._completed}/{self._total}"
+                )
+        elif not self._parent._use_rich and exc_type is None:
             self._parent.logger.info(
                 f"  {self._phase['name']}: {self._completed}/{self._total} done"
             )

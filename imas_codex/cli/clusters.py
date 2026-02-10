@@ -14,10 +14,10 @@ def clusters() -> None:
     """Manage semantic clusters of IMAS data paths.
 
     \b
-      imas-codex clusters build   Build HDBSCAN clusters from embeddings
-      imas-codex clusters label   Generate LLM labels for clusters
-      imas-codex clusters sync    Sync clusters to Neo4j graph
-      imas-codex clusters status  Show cluster statistics
+      imas-codex imas clusters build    Build HDBSCAN clusters from embeddings
+      imas-codex imas clusters label    Generate LLM labels for clusters
+      imas-codex imas clusters sync     Sync clusters to Neo4j graph
+      imas-codex imas clusters status   Show cluster statistics
     """
     pass
 
@@ -66,9 +66,9 @@ def clusters_build(
 
     \b
     Examples:
-      imas-codex clusters build                    # Build with defaults
-      imas-codex clusters build -v -f              # Force rebuild, verbose
-      imas-codex clusters build --ids-filter "core_profiles equilibrium"
+      imas-codex imas clusters build                    # Build with defaults
+      imas-codex imas clusters build -v -f              # Force rebuild, verbose
+      imas-codex imas clusters build --ids-filter "core_profiles equilibrium"
     """
     # Set up logging
     if quiet:
@@ -164,9 +164,9 @@ def clusters_label(
 
     \b
     Examples:
-      imas-codex clusters label                # Label unlabeled clusters
-      imas-codex clusters label -f             # Force regenerate all labels
-      imas-codex clusters label --cost-limit 5 # Limit to $5 USD
+      imas-codex imas clusters label                # Label unlabeled clusters
+      imas-codex imas clusters label -f             # Force regenerate all labels
+      imas-codex imas clusters label --cost-limit 5 # Limit to $5 USD
     """
     # Set up logging
     if quiet:
@@ -257,8 +257,8 @@ def clusters_sync(verbose: bool, quiet: bool, dry_run: bool) -> None:
 
     \b
     Examples:
-      imas-codex clusters sync              # Sync clusters to graph
-      imas-codex clusters sync --dry-run    # Preview without changes
+      imas-codex imas clusters sync              # Sync clusters to graph
+      imas-codex imas clusters sync --dry-run    # Preview without changes
     """
     # Set up logging
     if quiet:
@@ -307,8 +307,8 @@ def clusters_status(verbose: bool) -> None:
 
     \b
     Examples:
-      imas-codex clusters status     # Basic stats
-      imas-codex clusters status -v  # Detailed stats
+      imas-codex imas clusters status     # Basic stats
+      imas-codex imas clusters status -v  # Detailed stats
     """
     from imas_codex.clusters.label_cache import LabelCache
     from imas_codex.core.clusters import Clusters

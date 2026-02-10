@@ -273,7 +273,7 @@ enums:
       ingest_code:
         description: "CLI: imas-codex ingest run (code ingestion)"
       clusters_build:
-        description: "CLI: imas-codex clusters build"
+        description: "CLI: imas-codex imas clusters build"
       dd_build:
         description: "CLI: imas-codex imas build"
       scout:

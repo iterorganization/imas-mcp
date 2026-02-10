@@ -17,13 +17,23 @@ def imas() -> None:
     """Manage IMAS Data Dictionary graph.
 
     \b
-      imas-codex imas build    Build/update DD graph from imas-python
-      imas-codex imas status   Show DD graph statistics
-      imas-codex imas search   Semantic search for paths
-      imas-codex imas clear    Delete all DD nodes from graph
-      imas-codex imas versions List available DD versions
+      imas-codex imas build             Build/update DD graph from imas-python
+      imas-codex imas status            Show DD graph statistics
+      imas-codex imas search            Semantic search for paths
+      imas-codex imas clear             Delete all DD nodes from graph
+      imas-codex imas version           Show/list DD versions
+      imas-codex imas clusters build    Build HDBSCAN clusters
+      imas-codex imas clusters label    Generate LLM labels
+      imas-codex imas clusters sync     Sync clusters to graph
+      imas-codex imas clusters status   Cluster statistics
     """
     pass
+
+
+# Register clusters subgroup
+from imas_codex.cli.clusters import clusters  # noqa: E402
+
+imas.add_command(clusters)
 
 
 @imas.command("build")

@@ -145,6 +145,18 @@ class TestBuildProgressMonitor:
         finally:
             logger.removeHandler(handler)
 
+    def test_status_method_logging(self):
+        """status() logs info when Rich is disabled."""
+        bpm = BuildProgressMonitor(use_rich=False)
+        with bpm.managed_build():
+            bpm.status("Creating indexes...")  # Should not crash
+
+    def test_status_method_rich(self):
+        """status() prints to console when Rich is enabled."""
+        bpm = BuildProgressMonitor(use_rich=True)
+        with bpm.managed_build():
+            bpm.status("Creating indexes...")  # Should not crash
+
 
 class TestCreateHelpers:
     """Tests for factory functions."""

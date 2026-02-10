@@ -162,10 +162,10 @@ class TestCLICommands:
         assert "IMAS Data Dictionary" in result.output
 
     def test_clusters_help(self, runner):
-        """clusters group has help."""
+        """clusters group has help under imas."""
         from imas_codex.cli import main
 
-        result = runner.invoke(main, ["clusters", "--help"])
+        result = runner.invoke(main, ["imas", "clusters", "--help"])
         assert result.exit_code == 0
         assert "semantic clusters" in result.output.lower()
 
@@ -252,10 +252,10 @@ class TestCLISubcommands:
         assert result.exit_code == 0
 
     def test_clusters_build_help(self, runner):
-        """clusters build subcommand exists."""
+        """clusters build subcommand exists under imas."""
         from imas_codex.cli import main
 
-        result = runner.invoke(main, ["clusters", "build", "--help"])
+        result = runner.invoke(main, ["imas", "clusters", "build", "--help"])
         assert result.exit_code == 0
 
     def test_facilities_list_help(self, runner):
