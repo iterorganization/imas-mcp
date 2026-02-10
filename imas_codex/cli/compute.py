@@ -196,9 +196,9 @@ def hpc_status():
     help=f"Job name (default: {DEFAULT_JOB_NAME})",
 )
 @click.option(
-    "--exclusive",
-    is_flag=True,
-    help="Reserve an entire node exclusively",
+    "--exclusive/--shared",
+    default=True,
+    help="Reserve an entire node exclusively (default) or share with others",
 )
 def hpc_shell(
     partition: str,
@@ -218,15 +218,15 @@ def hpc_shell(
     - Login node's Neo4j instance (via network)
     - Internet access (for wiki scraping, pip, etc.)
 
-    Use --exclusive to reserve a full 28-core/128GB rigel node.
-    This is useful for maintaining a persistent cx (Claude Code)
-    session via zellij without contention.
+    By default, reserves an entire rigel node exclusively (28 CPUs,
+    128GB).  With 41+ idle nodes this costs nothing and guarantees
+    isolation.  Use --shared to request only --cpus/--mem.
 
     \b
     Examples:
-        imas-codex hpc shell                    # Default 4 CPUs, 32GB
-        imas-codex hpc shell -c 8 -m 64         # More resources
-        imas-codex hpc shell --exclusive         # Full node
+        imas-codex hpc shell                    # Exclusive node (default)
+        imas-codex hpc shell --shared            # Only 4 CPUs, 32GB
+        imas-codex hpc shell --shared -c 8 -m 64
         imas-codex hpc shell -p rigel_debug      # Debug partition (1h max)
     """
     if not _slurm_available():
