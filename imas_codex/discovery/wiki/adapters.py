@@ -1779,6 +1779,250 @@ class ConfluenceAdapter(WikiAdapter):
         return []
 
 
+class TWikiRawAdapter(WikiAdapter):
+    """Adapter for raw TWiki data directories accessed via SSH.
+
+    Used when TWiki content exists as raw .txt markup files on the
+    filesystem (accessible via SSH) but is not served via HTTP. This is
+    common for TWiki "webs" that were never exported to static HTML.
+
+    Page discovery: List *.txt files in data/<web>/ directory via SSH
+    Artifact discovery: List files in pub/<web>/ directory via SSH
+    """
+
+    site_type = "twiki_raw"
+
+    def __init__(
+        self,
+        ssh_host: str,
+        data_path: str,
+        pub_path: str | None = None,
+        web_name: str = "Main",
+        exclude_patterns: list[str] | None = None,
+    ):
+        """Initialize TWiki raw adapter.
+
+        Args:
+            ssh_host: SSH host for filesystem access
+            data_path: Absolute path to TWiki data/<web>/ directory
+            pub_path: Absolute path to TWiki pub/<web>/ directory (for artifacts)
+            web_name: TWiki web name (e.g., "Main", "Code")
+            exclude_patterns: Regex patterns for topic names to skip.
+                Defaults to excluding system pages, watchlists, and TWiki internals.
+        """
+        self._ssh_host = ssh_host
+        self._data_path = data_path.rstrip("/")
+        self._pub_path = pub_path.rstrip("/") if pub_path else None
+        self._web_name = web_name
+        self._exclude_patterns = exclude_patterns or [
+            r"^Web",  # TWiki system pages (WebHome, WebTopicList, etc.)
+            r"Watchlist$",  # User watchlists
+            r"^TWiki",  # TWiki admin pages
+            r"Bookmarks$",  # User bookmarks
+            r"Template$",  # Form templates
+        ]
+        self._compiled_excludes = [re.compile(p) for p in self._exclude_patterns]
+
+    def _should_skip(self, topic_name: str) -> bool:
+        """Check if a topic should be excluded from discovery."""
+        return any(pat.search(topic_name) for pat in self._compiled_excludes)
+
+    def bulk_discover_pages(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredPage]:
+        """Discover all topics by listing .txt files via SSH.
+
+        Args:
+            facility: Facility ID
+            base_url: Not used for filesystem access (kept for interface compat)
+            on_progress: Progress callback
+
+        Returns:
+            List of discovered pages with ssh:// URLs for content retrieval
+        """
+        if on_progress:
+            on_progress(f"listing {self._data_path}/*.txt via SSH", None)
+
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    self._ssh_host,
+                    f"ls {self._data_path}/*.txt 2>/dev/null",
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "Failed to list TWiki data dir %s via %s",
+                    self._data_path,
+                    self._ssh_host,
+                )
+                return []
+
+            filenames = (
+                result.stdout.decode("utf-8", errors="replace").strip().split("\n")
+            )
+            filenames = [f.strip() for f in filenames if f.strip()]
+
+        except subprocess.TimeoutExpired:
+            logger.warning("Timeout listing %s via SSH", self._data_path)
+            return []
+        except Exception as e:
+            logger.warning("Error listing TWiki data dir: %s", e)
+            return []
+
+        pages: list[DiscoveredPage] = []
+        for filepath in filenames:
+            # Extract topic name from /path/to/TopicName.txt
+            name = filepath.rsplit("/", 1)[-1].removesuffix(".txt")
+
+            if self._should_skip(name):
+                continue
+
+            # URL encodes the SSH file path for later retrieval
+            url = f"ssh://{self._ssh_host}{filepath}"
+            pages.append(DiscoveredPage(name=name, url=url, namespace=self._web_name))
+
+        if on_progress:
+            on_progress(f"discovered {len(pages)} pages", None)
+
+        logger.info(
+            "TWiki raw discovery: %d topics from %s (excluded %d)",
+            len(pages),
+            self._data_path,
+            len(filenames) - len(pages),
+        )
+        return pages
+
+    def bulk_discover_artifacts(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Discover artifacts by listing pub directory via SSH.
+
+        TWiki stores attachments in pub/<web>/<topic>/<filename>.
+        Scans the pub directory tree for common artifact types.
+
+        Args:
+            facility: Facility ID
+            base_url: Not used for filesystem access
+            on_progress: Progress callback
+
+        Returns:
+            List of discovered artifacts
+        """
+        if not self._pub_path:
+            logger.info(
+                "No pub_path configured for TWiki raw adapter, skipping artifacts"
+            )
+            return []
+
+        artifact_extensions = (
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".ppt",
+            ".pptx",
+            ".xls",
+            ".xlsx",
+            ".ipynb",
+            ".h5",
+            ".hdf5",
+            ".mat",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".svg",
+        )
+
+        if on_progress:
+            on_progress(f"scanning {self._pub_path} for artifacts via SSH", None)
+
+        try:
+            # Use find to list all files in the pub directory
+            ext_args = " -o ".join(f'-name "*{ext}"' for ext in artifact_extensions)
+            cmd = f"find {self._pub_path} -type f \\( {ext_args} \\) 2>/dev/null"
+            result = subprocess.run(
+                ["ssh", self._ssh_host, cmd],
+                capture_output=True,
+                timeout=60,
+            )
+            if result.returncode != 0:
+                logger.warning("Failed to scan pub dir %s", self._pub_path)
+                return []
+
+            files = result.stdout.decode("utf-8", errors="replace").strip().split("\n")
+            files = [f.strip() for f in files if f.strip()]
+
+        except subprocess.TimeoutExpired:
+            logger.warning("Timeout scanning pub dir %s", self._pub_path)
+            return []
+        except Exception as e:
+            logger.warning("Error scanning pub dir: %s", e)
+            return []
+
+        artifacts: list[DiscoveredArtifact] = []
+        for filepath in files:
+            filename = filepath.rsplit("/", 1)[-1]
+            artifact_type = _get_artifact_type_from_filename(filename)
+
+            # Extract topic name from pub/<web>/<topic>/<filename>
+            parts = filepath.replace(self._pub_path + "/", "").split("/")
+            topic_name = parts[0] if len(parts) > 1 else ""
+
+            artifact = DiscoveredArtifact(
+                filename=filename,
+                url=f"ssh://{self._ssh_host}{filepath}",
+                artifact_type=artifact_type,
+            )
+            if topic_name:
+                artifact.linked_pages.append(topic_name)
+            artifacts.append(artifact)
+
+        if on_progress:
+            on_progress(f"discovered {len(artifacts)} artifacts", None)
+
+        return artifacts
+
+
+def fetch_twiki_raw_content(ssh_host: str, filepath: str) -> str | None:
+    """Fetch raw TWiki markup content from a file via SSH.
+
+    Used during ingestion to read .txt files from TWiki data directories.
+
+    Args:
+        ssh_host: SSH host
+        filepath: Absolute path to the .txt file on the remote host
+
+    Returns:
+        Raw TWiki markup content, or None on failure
+    """
+    try:
+        result = subprocess.run(
+            ["ssh", ssh_host, f"cat {filepath}"],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return result.stdout.decode("utf-8", errors="replace")
+        logger.warning("Failed to read %s via SSH (rc=%d)", filepath, result.returncode)
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning("Timeout reading %s via SSH", filepath)
+        return None
+    except Exception as e:
+        logger.warning("Error reading TWiki file %s: %s", filepath, e)
+        return None
+
+
 def get_adapter(
     site_type: str,
     ssh_host: str | None = None,
@@ -1787,17 +2031,26 @@ def get_adapter(
     api_token: str | None = None,
     base_url: str | None = None,
     access_method: str = "direct",
+    data_path: str | None = None,
+    pub_path: str | None = None,
+    web_name: str = "Main",
+    exclude_patterns: list[str] | None = None,
 ) -> WikiAdapter:
     """Get the appropriate adapter for a wiki site type.
 
     Args:
-        site_type: Type of wiki (mediawiki, twiki, twiki_static, confluence, static_html)
+        site_type: Type of wiki (mediawiki, twiki, twiki_static, twiki_raw,
+            confluence, static_html)
         ssh_host: SSH host for proxied commands
         wiki_client: Authenticated MediaWikiClient (for Tequila)
         credential_service: Keyring service name
         api_token: API token (for Confluence)
         base_url: Base URL (for static sites)
         access_method: Access method ("direct" or "vpn")
+        data_path: TWiki data directory path (for twiki_raw)
+        pub_path: TWiki pub directory path (for twiki_raw)
+        web_name: TWiki web name (for twiki_raw, default "Main")
+        exclude_patterns: Topic name exclude patterns (for twiki_raw)
 
     Returns:
         WikiAdapter instance for the site type
@@ -1813,6 +2066,18 @@ def get_adapter(
     elif site_type == "twiki_static":
         return TWikiStaticAdapter(
             base_url=base_url, ssh_host=ssh_host, access_method=access_method
+        )
+    elif site_type == "twiki_raw":
+        if not ssh_host:
+            raise ValueError("twiki_raw requires ssh_host")
+        if not data_path:
+            raise ValueError("twiki_raw requires data_path")
+        return TWikiRawAdapter(
+            ssh_host=ssh_host,
+            data_path=data_path,
+            pub_path=pub_path,
+            web_name=web_name,
+            exclude_patterns=exclude_patterns,
         )
     elif site_type == "static_html":
         return StaticHtmlAdapter(

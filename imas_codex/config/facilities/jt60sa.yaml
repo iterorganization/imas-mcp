@@ -23,6 +23,7 @@ data_systems:
 # JT60SA documentation is hosted on nakasvr23 behind IFERC VPN.
 # Site 0: TWiki static export - analysis code documentation (TOPICS, EDAS, SLICE, etc.)
 # Site 1: Server landing page - hardware, software, login, batch jobs, compilers
+# Site 2: TWiki Main web - EDAS manuals, API docs, experiment reports (raw .txt via SSH)
 wiki_sites:
   - url: https://nakasvr23.iferc.org/twiki_html
     portal_page: WebHome.html
@@ -57,6 +58,39 @@ wiki_sites:
       - /idl             # IDL vendor documentation  
       - /pv-wave         # PV-WAVE vendor documentation
       - /analysis        # Analysis tools help (external)
+
+  - url: /JT60SA_TWIKI/data/Main
+    name: twiki_main
+    site_type: twiki_raw
+    data_path: /JT60SA_TWIKI/data/Main
+    pub_path: /JT60SA_TWIKI/pub/Main
+    web_name: Main
+    access_method: vpn
+    auth_type: none
+    ssh_available: true
+    description: >-
+      JT-60SA Main TWiki web accessed via SSH. Contains EDAS tool manuals
+      (eGIS, eSLICE, eSURF), Eddb API documentation (C/Fortran/Python wrappers),
+      AnalysisDB and ExperimentDB system docs, discharge parameter handbook,
+      and operational reports. Primary source for data access documentation.
+      ~5400 topics total, ~300 substantive docs after filtering.
+    languages:
+      - ja
+      - en
+    # Skip bulk auto-generated/system pages during discovery
+    exclude_patterns:
+      - "^Web"             # TWiki system pages
+      - "^DailyReport"     # ~3800 daily operation reports
+      - "^ShotE"           # ~1200 shot reports
+      - "^ShotA"           # ~70 shot reports
+      - "Watchlist$"       # User watchlists
+      - "Bookmarks$"       # User bookmarks
+      - "^TWiki"           # TWiki admin pages
+      - "Template$"        # Form templates
+      - "^ExperimentChiefReport\\d"  # ~40 numbered experiment reports
+      - "^OperationStatusReport\\d"  # ~18 numbered operation reports
+      - "^DatabaseReport\\d"         # Numbered database reports
+      - "^ProposalID\\d"             # Numbered proposals
 
 # User info discovery configuration
 user_info:

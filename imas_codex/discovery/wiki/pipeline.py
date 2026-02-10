@@ -569,6 +569,151 @@ def html_to_text(html: str) -> tuple[str, dict[str, str]]:
     return text, sections
 
 
+def twiki_markup_to_html(markup: str) -> str:
+    """Convert raw TWiki markup to minimal HTML for the ingestion pipeline.
+
+    Handles common TWiki markup patterns:
+    - %META:...% lines (stripped)
+    - ---+/---++/---+++ headings → <h1>/<h2>/<h3>
+    - *bold*, _italic_ formatting
+    - | table | cells | → <table> rows
+    - Bullet lists (   * item) → <li>
+    - <verbatim>...</verbatim> → <pre>
+    - <literal>...</literal> → passed through (contains HTML)
+    - %VARIABLE% → stripped (except %BR% → <br>)
+    - Inline HTML tags preserved as-is
+
+    Args:
+        markup: Raw TWiki .txt file content
+
+    Returns:
+        Minimal HTML suitable for html_to_text() processing
+    """
+    lines = markup.split("\n")
+    html_lines: list[str] = []
+    title = ""
+    in_verbatim = False
+    in_literal = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Skip META lines
+        if stripped.startswith("%META:"):
+            # Extract title from first heading in TOPICPARENT or keep looking
+            continue
+
+        # Handle <verbatim> blocks → <pre>
+        if "<verbatim>" in stripped and not in_verbatim:
+            in_verbatim = True
+            # Content may be on same line as tag
+            content = stripped.split("<verbatim>", 1)[1]
+            html_lines.append("<pre>")
+            if content:
+                html_lines.append(content)
+            continue
+        if "</verbatim>" in stripped and in_verbatim:
+            content = stripped.split("</verbatim>", 1)[0]
+            if content:
+                html_lines.append(content)
+            html_lines.append("</pre>")
+            in_verbatim = False
+            continue
+        if in_verbatim:
+            html_lines.append(line)
+            continue
+
+        # Handle <literal> blocks (pass through — they contain HTML)
+        if "<literal>" in stripped:
+            in_literal = True
+            content = stripped.split("<literal>", 1)[1]
+            if content:
+                html_lines.append(content)
+            continue
+        if "</literal>" in stripped:
+            content = stripped.split("</literal>", 1)[0]
+            if content:
+                html_lines.append(content)
+            in_literal = False
+            continue
+        if in_literal:
+            html_lines.append(line)
+            continue
+
+        # TWiki headings: ---+ to ---++++++ (h1 to h6)
+        heading_match = re.match(r"^---(\++){1,6}\s*(.*)", stripped)
+        if heading_match:
+            level = len(heading_match.group(1))
+            heading_text = heading_match.group(2).strip()
+            # Strip TWiki formatting from heading text
+            heading_text = _strip_twiki_formatting(heading_text)
+            if not title and level <= 2:
+                title = heading_text
+            html_lines.append(f"<h{level}>{heading_text}</h{level}>")
+            continue
+
+        # TWiki tables: | cell | cell |
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped.split("|")[1:-1]]
+            row = "".join(f"<td>{_strip_twiki_formatting(c)}</td>" for c in cells)
+            html_lines.append(f"<tr>{row}</tr>")
+            continue
+
+        # TWiki bullet lists: 3-space indent + *
+        bullet_match = re.match(r"^(\s+)\*\s+(.*)", line)
+        if bullet_match:
+            content = _strip_twiki_formatting(bullet_match.group(2))
+            html_lines.append(f"<li>{content}</li>")
+            continue
+
+        # TWiki numbered lists: 3-space indent + 1.
+        num_match = re.match(r"^(\s+)\d+\.?\s+(.*)", line)
+        if num_match:
+            content = _strip_twiki_formatting(num_match.group(2))
+            html_lines.append(f"<li>{content}</li>")
+            continue
+
+        # Regular text — apply TWiki variable and formatting cleanup
+        processed = _strip_twiki_formatting(stripped)
+        if processed:
+            html_lines.append(f"<p>{processed}</p>")
+
+    body = "\n".join(html_lines)
+    if not title:
+        title = "Untitled"
+
+    return f"<html><head><title>{title}</title></head><body>{body}</body></html>"
+
+
+def _strip_twiki_formatting(text: str) -> str:
+    """Strip TWiki-specific formatting from text.
+
+    Converts TWiki variables and formatting to plain text/HTML.
+    """
+    # %BR% → <br>
+    text = text.replace("%BR%", "<br>")
+
+    # Strip color formatting: %BLACK%, %RED%, %ENDCOLOR%, etc.
+    text = re.sub(r"%[A-Z_]+%", "", text)
+
+    # Strip %VARIABLE{...}% patterns (e.g., %USERSIG{...}%, %PARENTBC%)
+    text = re.sub(r"%[A-Z_]+\{[^}]*\}%", "", text)
+
+    # TWiki bold: *text* → <b>text</b> (but not ** or inside HTML)
+    text = re.sub(r"(?<!\w)\*([^\*\n]+?)\*(?!\w)", r"<b>\1</b>", text)
+
+    # TWiki italic: _text_ → <i>text</i> (but not __ or inside HTML)
+    text = re.sub(r"(?<!\w)_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)
+
+    # Strip remaining %PUBURLPATH% etc.
+    text = re.sub(r"%[A-Z][A-Z0-9_]*%", "", text)
+
+    # Clean up multiple spaces
+    text = re.sub(r"  +", " ", text)
+
+    return text.strip()
+
+
 # Global cached embed model to avoid reloading for each page
 _CACHED_EMBED_MODEL: BaseEmbedding | None = None
 

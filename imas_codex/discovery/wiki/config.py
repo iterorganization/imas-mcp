@@ -16,6 +16,7 @@ class WikiConfig:
     - confluence: Atlassian Confluence (REST API)
     - twiki: TWiki sites (SSH proxy, live server)
     - twiki_static: Static TWiki HTML export (direct HTTP)
+    - twiki_raw: Raw TWiki data directory (SSH filesystem access)
     - static_html: Generic static HTML site
     - generic: Generic HTML scraping
     """

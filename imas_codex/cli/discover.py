@@ -1793,9 +1793,10 @@ def wiki_run(
                             f"Discovered {bulk_discovered} pages from {short_name}"
                         )
 
-            elif site_type in ("twiki_static", "static_html"):
+            elif site_type in ("twiki_static", "twiki_raw", "static_html"):
                 from imas_codex.discovery.wiki.parallel import (
                     bulk_discover_all_pages_static_html,
+                    bulk_discover_all_pages_twiki_raw,
                     bulk_discover_all_pages_twiki_static,
                 )
 
@@ -1806,6 +1807,20 @@ def wiki_run(
                     discover_func = bulk_discover_all_pages_twiki_static
                     discover_args = (facility, base_url, ssh_host, access_method)
                     label = "TWiki"
+                elif site_type == "twiki_raw":
+                    # For twiki_raw, base_url is the data directory path
+                    data_path = site.get("data_path", base_url)
+                    web_name = site.get("web_name", "Main")
+                    exclude_pats = site.get("exclude_patterns")
+                    discover_func = bulk_discover_all_pages_twiki_raw
+                    discover_args = (
+                        facility,
+                        data_path,
+                        ssh_host,
+                        web_name,
+                        exclude_pats,
+                    )
+                    label = f"TWiki Raw ({web_name})"
                 else:
                     from imas_codex.discovery.wiki.parallel import (
                         _get_exclude_prefixes,
@@ -1897,6 +1912,8 @@ def wiki_run(
                         wiki_client=wiki_client,
                         credential_service=credential_service,
                         access_method=access_method,
+                        data_path=site.get("data_path"),
+                        pub_path=site.get("pub_path"),
                         on_progress=artifact_progress_rich,
                     )
             else:
@@ -1908,6 +1925,8 @@ def wiki_run(
                     wiki_client=wiki_client,
                     credential_service=credential_service,
                     access_method=access_method,
+                    data_path=site.get("data_path"),
+                    pub_path=site.get("pub_path"),
                     on_progress=artifact_progress_log,
                 )
 

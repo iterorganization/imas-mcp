@@ -2176,6 +2176,78 @@ def bulk_discover_all_pages_twiki_static(
     return created
 
 
+def bulk_discover_all_pages_twiki_raw(
+    facility: str,
+    data_path: str,
+    ssh_host: str,
+    web_name: str = "Main",
+    exclude_patterns: list[str] | None = None,
+    on_progress: Callable | None = None,
+) -> int:
+    """Bulk discover all pages from a raw TWiki data directory via SSH.
+
+    Lists .txt files in the TWiki data/<web>/ directory and creates
+    WikiPage nodes with 'scanned' status. The URL stored uses the
+    ssh:// scheme to indicate filesystem-based content retrieval.
+
+    Args:
+        facility: Facility ID
+        data_path: Absolute path to TWiki data/<web>/ directory on remote host
+        ssh_host: SSH host for filesystem access
+        web_name: TWiki web name (e.g., "Main")
+        exclude_patterns: Topic name regex patterns to skip
+        on_progress: Progress callback
+
+    Returns:
+        Number of pages discovered
+    """
+    from imas_codex.discovery.wiki.adapters import TWikiRawAdapter
+    from imas_codex.discovery.wiki.scraper import canonical_page_id
+
+    logger.info(
+        "Starting bulk TWiki raw discovery from %s:%s...",
+        ssh_host,
+        data_path,
+    )
+
+    adapter = TWikiRawAdapter(
+        ssh_host=ssh_host,
+        data_path=data_path,
+        web_name=web_name,
+        exclude_patterns=exclude_patterns,
+    )
+    pages = adapter.bulk_discover_pages(facility, "", on_progress)
+
+    if not pages:
+        logger.warning("No pages discovered from TWiki raw data directory")
+        return 0
+
+    logger.info("Discovered %d pages from %s:%s", len(pages), ssh_host, data_path)
+
+    # Create WikiPage nodes in graph
+    batch_data = []
+    for page in pages:
+        page_id = canonical_page_id(page.name, facility)
+        batch_data.append(
+            {
+                "id": page_id,
+                "title": page.name,
+                "url": page.url,
+            }
+        )
+
+    with GraphClient() as gc:
+        created = _bulk_create_wiki_pages(
+            gc, facility, batch_data, on_progress=on_progress
+        )
+
+    logger.info("Created/updated %d pages in graph (scanned status)", created)
+    if on_progress:
+        on_progress(f"created {created} pages", None)
+
+    return created
+
+
 def bulk_discover_all_pages_static_html(
     facility: str,
     base_url: str,
@@ -2259,6 +2331,8 @@ def bulk_discover_artifacts(
     wiki_client: Any = None,
     credential_service: str | None = None,
     access_method: str = "direct",
+    data_path: str | None = None,
+    pub_path: str | None = None,
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all wiki artifacts via platform API.
@@ -2267,6 +2341,7 @@ def bulk_discover_artifacts(
     - MediaWiki: list=allimages API (returns all files in one call)
     - TWiki: /pub/ directory listing
     - TWiki static: Parse topic pages for linked files
+    - TWiki raw: List files in pub directory via SSH
     - Confluence: /rest/api/content/{id}/child/attachment
 
     Args:
@@ -2277,6 +2352,8 @@ def bulk_discover_artifacts(
         wiki_client: Authenticated MediaWikiClient (for Tequila)
         credential_service: Keyring service name
         access_method: Access method ("direct" or "vpn")
+        data_path: TWiki data directory path (for twiki_raw)
+        pub_path: TWiki pub directory path (for twiki_raw)
         on_progress: Progress callback
 
     Returns:
@@ -2294,6 +2371,8 @@ def bulk_discover_artifacts(
         credential_service=credential_service,
         base_url=base_url,  # Needed for static site adapters
         access_method=access_method,
+        data_path=data_path,
+        pub_path=pub_path,
     )
 
     # Discover artifacts
@@ -4373,16 +4452,40 @@ async def _ingest_page(
     # Extract page name from URL or page_id
     page_name = page_id.split(":", 1)[1] if ":" in page_id else page_id
 
-    # Fetch HTML content with auth
-    html = await _fetch_html(
-        url,
-        ssh_host,
-        auth_type=auth_type,
-        credential_service=credential_service,
-        async_wiki_client=async_wiki_client,
-        keycloak_client=keycloak_client,
-        basic_auth_client=basic_auth_client,
-    )
+    # Handle TWiki raw content (ssh:// URLs → read file via SSH, convert markup)
+    if url and url.startswith("ssh://"):
+        import asyncio
+
+        from imas_codex.discovery.wiki.adapters import fetch_twiki_raw_content
+        from imas_codex.discovery.wiki.pipeline import twiki_markup_to_html
+
+        # Parse ssh://host/path
+        parts = url[len("ssh://") :]
+        slash_idx = parts.index("/")
+        raw_ssh_host = parts[:slash_idx]
+        filepath = parts[slash_idx:]
+
+        # Read raw TWiki markup via SSH (blocking I/O → thread pool)
+        raw_markup = await asyncio.to_thread(
+            fetch_twiki_raw_content, raw_ssh_host, filepath
+        )
+        if not raw_markup or len(raw_markup) < 50:
+            logger.warning("Insufficient TWiki content for %s", page_id)
+            return 0
+
+        # Convert TWiki markup to minimal HTML
+        html = twiki_markup_to_html(raw_markup)
+    else:
+        # Fetch HTML content with auth (standard HTTP path)
+        html = await _fetch_html(
+            url,
+            ssh_host,
+            auth_type=auth_type,
+            credential_service=credential_service,
+            async_wiki_client=async_wiki_client,
+            keycloak_client=keycloak_client,
+            basic_auth_client=basic_auth_client,
+        )
     if not html or len(html) < 100:
         logger.warning("Insufficient content for %s", page_id)
         return 0
@@ -4700,6 +4803,33 @@ async def run_parallel_wiki_discovery(
                 facility,
                 base_url,
                 ssh_host,
+                bulk_progress,
+            )
+
+        elif site_type == "twiki_raw":
+            # Raw TWiki data directory: list .txt files via SSH
+            logger.info("Using bulk discovery via TWiki filesystem listing...")
+
+            def bulk_progress(msg, _stats):
+                if on_scan_progress:
+                    on_scan_progress(f"bulk: {msg}", state.scan_stats)
+
+            # Extract data_path from base_url (ssh:// scheme or direct path)
+            # The base_url for twiki_raw is the data directory path
+            data_path = base_url
+            if data_path.startswith("ssh://"):
+                # Strip ssh://host prefix
+                data_path = data_path.split("/", 3)[-1]
+                if not data_path.startswith("/"):
+                    data_path = "/" + data_path
+
+            bulk_discovered = await asyncio.to_thread(
+                bulk_discover_all_pages_twiki_raw,
+                facility,
+                data_path,
+                ssh_host,
+                "Main",  # web_name
+                None,  # exclude_patterns (uses adapter defaults)
                 bulk_progress,
             )
 
