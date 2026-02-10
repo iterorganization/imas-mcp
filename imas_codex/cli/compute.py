@@ -197,8 +197,8 @@ def hpc_status():
 )
 @click.option(
     "--exclusive/--shared",
-    default=True,
-    help="Reserve an entire node exclusively (default) or share with others",
+    default=False,
+    help="Reserve an entire node exclusively, or share (default)",
 )
 def hpc_shell(
     partition: str,
@@ -218,15 +218,15 @@ def hpc_shell(
     - Login node's Neo4j instance (via network)
     - Internet access (for wiki scraping, pip, etc.)
 
-    By default, reserves an entire rigel node exclusively (28 CPUs,
-    128GB).  With 41+ idle nodes this costs nothing and guarantees
-    isolation.  Use --shared to request only --cpus/--mem.
+    SLURM cgroups enforce resource isolation per-job.  Other users on
+    the same node cannot access your processes or memory.  Use
+    --exclusive only if you need the full 28 CPUs / 128GB.
 
     \b
     Examples:
-        imas-codex hpc shell                    # Exclusive node (default)
-        imas-codex hpc shell --shared            # Only 4 CPUs, 32GB
-        imas-codex hpc shell --shared -c 8 -m 64
+        imas-codex hpc shell                    # 4 CPUs, 32GB (default)
+        imas-codex hpc shell -c 8 -m 64         # More resources
+        imas-codex hpc shell --exclusive         # Full node
         imas-codex hpc shell -p rigel_debug      # Debug partition (1h max)
     """
     if not _slurm_available():
@@ -574,8 +574,12 @@ def hpc_info() -> None:
     click.echo(f"Neo4j: bolt://{login_hn}:7687")
 
     click.echo("\nRecommended configurations:")
-    click.echo("  imas build:    -c 4  -m 32  (IO-bound: embed server + Neo4j writes)")
-    click.echo("  ingest run:    -c 4  -m 32  (IO-bound: SSH + embed + Neo4j)")
-    click.echo("  discover wiki: -c 2  -m 16  (IO-bound: HTTP scraping)")
-    click.echo("  cx session:    -c 4  -m 32  (interactive, --exclusive for dedicated)")
-    click.echo("  pytest:        -c 8  -m 32  (CPU-bound test suite)")
+    click.echo(
+        "  imas build:      -c 4  -m 32  (IO-bound: embed server + Neo4j writes)"
+    )
+    click.echo("  ingest run:      -c 4  -m 32  (IO-bound: SSH + embed + Neo4j)")
+    click.echo("  discover paths:  -c 4  -m 32  (--scan-workers 2 --score-workers 4)")
+    click.echo("  discover wiki:   -c 4  -m 32  (--score-workers 6 --ingest-workers 8)")
+    click.echo("  discover signal: -c 4  -m 32  (--enrich-workers 4 --check-workers 2)")
+    click.echo("  cx session:      -c 4  -m 32  (interactive development)")
+    click.echo("  pytest:          -c 8  -m 32  (CPU-bound test suite)")
