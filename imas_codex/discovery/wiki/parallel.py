@@ -1828,6 +1828,129 @@ def bulk_discover_all_pages_http(
         client.close()
 
 
+def _discover_pages_via_allpages_html(
+    base_url: str,
+    session: Any,
+    on_progress: Callable | None = None,
+    verify_ssl: bool = False,
+) -> set[str]:
+    """Discover pages by scraping Special:AllPages HTML.
+
+    Fallback method when api.php is not available. Works with any
+    MediaWiki site by parsing the allpages list HTML, using the page
+    ``title`` attribute for extraction (URL-structure-independent).
+
+    Args:
+        base_url: Wiki base URL (e.g., ``https://wiki.jetdata.eu/pog``)
+        session: Authenticated requests.Session (any auth type)
+        on_progress: Progress callback
+        verify_ssl: Whether to verify SSL certificates
+
+    Returns:
+        Set of discovered page names
+    """
+    import re
+    from urllib.parse import unquote, urlparse
+
+    SKIP_PREFIXES = (
+        "Special:",
+        "File:",
+        "Talk:",
+        "User:",
+        "Template:",
+        "Category:",
+        "Help:",
+        "MediaWiki:",
+    )
+
+    logger.info("Discovering pages via Special:AllPages HTML for %s", base_url)
+
+    # Derive the wiki path for page link extraction
+    parsed = urlparse(base_url)
+    wiki_path = parsed.path.rstrip("/")  # e.g., "/pog" or "/wiki"
+
+    # Step 1: Fetch the AllPages index page
+    index_url = f"{base_url}/index.php?title=Special:AllPages"
+    try:
+        response = session.get(index_url, timeout=30, verify=verify_ssl)
+        if response.status_code != 200:
+            logger.warning(
+                "AllPages index returned HTTP %d for %s",
+                response.status_code,
+                base_url,
+            )
+            return set()
+        html_content = response.text
+    except Exception as e:
+        logger.warning("Error fetching AllPages index for %s: %s", base_url, e)
+        return set()
+
+    # Step 2: Parse range links (for large wikis with multiple pages of results)
+    range_pattern = re.compile(
+        r'href="[^"]*title=Special:AllPages[^"]*from=([^&"]+)[^"]*"'
+    )
+    ranges = list(set(range_pattern.findall(html_content)))
+
+    # Step 3: Collect HTML from all range pages (or just the single page)
+    if ranges:
+        logger.info("Found %d page ranges for %s", len(ranges), base_url)
+        pages_htmls = []
+        for i, from_page in enumerate(ranges):
+            range_url = f"{base_url}/index.php?title=Special:AllPages&from={from_page}"
+            try:
+                resp = session.get(range_url, timeout=30, verify=verify_ssl)
+                if resp.status_code == 200:
+                    pages_htmls.append(resp.text)
+            except Exception:
+                pass
+            if on_progress:
+                on_progress(f"range {i + 1}/{len(ranges)}", None)
+    else:
+        # Small wiki: all pages on one page
+        pages_htmls = [html_content]
+
+    # Step 4: Extract page names from HTML
+    # Strategy 1: Use the wiki path to find page links (most common)
+    # e.g., href="/pog/PageName" → extract "PageName"
+    path_pattern = re.compile(rf'href="{re.escape(wiki_path)}/([^"?#]+)"')
+    # Strategy 2: Use mw-allpages-body links with title attribute
+    # This is the most robust method as title= always contains the page name
+    title_pattern = re.compile(
+        r'class="mw-allpages-body".*?</div>',
+        re.DOTALL,
+    )
+    link_title_pattern = re.compile(
+        r'<a[^>]+title="([^"]+)"[^>]*>',
+    )
+
+    all_pages: set[str] = set()
+
+    for html in pages_htmls:
+        page_count_before = len(all_pages)
+
+        # Try path-based extraction first (faster, handles most cases)
+        for match in path_pattern.finditer(html):
+            page_name = unquote(match.group(1))
+            if not any(page_name.startswith(p) for p in SKIP_PREFIXES):
+                all_pages.add(page_name)
+
+        # If path-based extraction found nothing new, try mw-allpages-body
+        if len(all_pages) == page_count_before:
+            body_match = title_pattern.search(html)
+            if body_match:
+                body_html = body_match.group(0)
+                for link_match in link_title_pattern.finditer(body_html):
+                    page_name = link_match.group(1)
+                    if not any(page_name.startswith(p) for p in SKIP_PREFIXES):
+                        all_pages.add(page_name)
+
+    if on_progress:
+        on_progress(f"{len(all_pages)} pages discovered", None)
+
+    logger.info("HTML scraping discovered %d pages from %s", len(all_pages), base_url)
+    return all_pages
+
+
 def bulk_discover_all_pages_keycloak(
     facility: str,
     base_url: str,
@@ -1837,9 +1960,8 @@ def bulk_discover_all_pages_keycloak(
 ) -> int:
     """Bulk discover all wiki pages via MediaWiki API with Keycloak auth.
 
-    Uses the MediaWiki API (api.php?action=query&list=allpages) which is
-    the fastest and most reliable method. Keycloak OIDC authentication
-    provides session cookies that work across all wiki sites.
+    Tries the MediaWiki JSON API (api.php) first for speed, then falls
+    back to Special:AllPages HTML scraping if api.php is unavailable.
 
     Args:
         facility: Facility ID
@@ -1853,7 +1975,7 @@ def bulk_discover_all_pages_keycloak(
     """
     import json as json_mod
 
-    logger.info("Starting bulk page discovery via API (Keycloak auth)...")
+    logger.info("Starting bulk page discovery (Keycloak auth) for %s...", base_url)
 
     # Use provided session or authenticate
     close_session = False
@@ -1869,8 +1991,9 @@ def bulk_discover_all_pages_keycloak(
         close_session = True
 
     try:
-        # Use MediaWiki API to enumerate all pages (fastest method)
+        # Try api.php first (fastest when available)
         all_pages: set[str] = set()
+        api_available = True
         apcontinue = None
 
         while True:
@@ -1888,8 +2011,20 @@ def bulk_discover_all_pages_keycloak(
                     )
                     break
                 data = json_mod.loads(response.text)
+            except json_mod.JSONDecodeError:
+                snippet = (response.text[:200] if response.text else "(empty)").replace(
+                    "\n", " "
+                )
+                logger.info(
+                    "api.php not available for %s (got HTML instead of JSON: %s...)",
+                    base_url,
+                    snippet,
+                )
+                api_available = False
+                break
             except Exception as e:
                 logger.warning("Error fetching API for %s: %s", base_url, e)
+                api_available = False
                 break
 
             pages = data.get("query", {}).get("allpages", [])
@@ -1918,6 +2053,15 @@ def bulk_discover_all_pages_keycloak(
             apcontinue = cont.get("apcontinue")
             if not apcontinue:
                 break
+
+        # Fallback: if api.php failed, use Special:AllPages HTML scraping
+        if not all_pages and not api_available:
+            logger.info(
+                "Falling back to Special:AllPages HTML scraping for %s", base_url
+            )
+            all_pages = _discover_pages_via_allpages_html(
+                base_url, session, on_progress, verify_ssl=False
+            )
 
         logger.info("Discovered %d unique pages from %s", len(all_pages), base_url)
         if not all_pages:
@@ -1968,9 +2112,9 @@ def bulk_discover_all_pages_basic_auth(
 ) -> int:
     """Bulk discover all wiki pages via MediaWiki API with HTTP Basic auth.
 
-    Uses the MediaWiki API (api.php?action=query&list=allpages) which is
-    the fastest and most reliable method. HTTP Basic auth credentials are
-    sent with every request via the Authorization header.
+    Tries the MediaWiki JSON API (api.php) first for speed, then falls
+    back to Special:AllPages HTML scraping if api.php is unavailable
+    (common on wikis where URL rewrite rules intercept the endpoint).
 
     Args:
         facility: Facility ID
@@ -1986,7 +2130,7 @@ def bulk_discover_all_pages_basic_auth(
 
     import requests as req
 
-    logger.info("Starting bulk page discovery via API (HTTP Basic auth)...")
+    logger.info("Starting bulk page discovery (HTTP Basic auth) for %s...", base_url)
 
     # Use provided session or create one with Basic auth
     close_session = False
@@ -2013,8 +2157,9 @@ def bulk_discover_all_pages_basic_auth(
         close_session = True
 
     try:
-        # Use MediaWiki API to enumerate all pages (fastest method)
+        # Try api.php first (fastest when available)
         all_pages: set[str] = set()
+        api_available = True
         apcontinue = None
 
         while True:
@@ -2037,8 +2182,22 @@ def bulk_discover_all_pages_basic_auth(
                     )
                     break
                 data = json_mod.loads(response.text)
+            except json_mod.JSONDecodeError:
+                # api.php returned non-JSON (HTML error page, wiki page, etc.)
+                # This happens when the wiki's URL rewrite rules intercept api.php
+                snippet = (response.text[:200] if response.text else "(empty)").replace(
+                    "\n", " "
+                )
+                logger.info(
+                    "api.php not available for %s (got HTML instead of JSON: %s...)",
+                    base_url,
+                    snippet,
+                )
+                api_available = False
+                break
             except Exception as e:
                 logger.warning("Error fetching API for %s: %s", base_url, e)
+                api_available = False
                 break
 
             pages = data.get("query", {}).get("allpages", [])
@@ -2067,6 +2226,15 @@ def bulk_discover_all_pages_basic_auth(
             apcontinue = cont.get("apcontinue")
             if not apcontinue:
                 break
+
+        # Fallback: if api.php failed, use Special:AllPages HTML scraping
+        if not all_pages and not api_available:
+            logger.info(
+                "Falling back to Special:AllPages HTML scraping for %s", base_url
+            )
+            all_pages = _discover_pages_via_allpages_html(
+                base_url, session, on_progress, verify_ssl=False
+            )
 
         logger.info("Discovered %d unique pages from %s", len(all_pages), base_url)
         if not all_pages:
@@ -4829,6 +4997,36 @@ async def run_parallel_wiki_discovery(
                 # Run bulk discovery in thread pool (blocking HTTP calls)
                 bulk_discovered = await asyncio.to_thread(
                     bulk_discover_all_pages_http,
+                    facility,
+                    base_url,
+                    state.credential_service,
+                    bulk_progress,
+                )
+            elif state.auth_type == "basic" and state.credential_service:
+                # HTTP-based discovery with Basic auth
+                logger.info("Using bulk discovery via API (HTTP/Basic)...")
+
+                def bulk_progress(msg, _stats):
+                    if on_scan_progress:
+                        on_scan_progress(f"bulk: {msg}", state.scan_stats)
+
+                bulk_discovered = await asyncio.to_thread(
+                    bulk_discover_all_pages_basic_auth,
+                    facility,
+                    base_url,
+                    state.credential_service,
+                    bulk_progress,
+                )
+            elif state.auth_type == "keycloak" and state.credential_service:
+                # HTTP-based discovery with Keycloak OIDC auth
+                logger.info("Using bulk discovery via API (HTTP/Keycloak)...")
+
+                def bulk_progress(msg, _stats):
+                    if on_scan_progress:
+                        on_scan_progress(f"bulk: {msg}", state.scan_stats)
+
+                bulk_discovered = await asyncio.to_thread(
+                    bulk_discover_all_pages_keycloak,
                     facility,
                     base_url,
                     state.credential_service,
