@@ -20,6 +20,7 @@ def imas() -> None:
       imas-codex imas build    Build/update DD graph from imas-python
       imas-codex imas status   Show DD graph statistics
       imas-codex imas search   Semantic search for paths
+      imas-codex imas clear    Delete all DD nodes from graph
       imas-codex imas versions List available DD versions
     """
     pass
@@ -589,3 +590,114 @@ def _show_versions_summary(gc) -> None:
         console.print(
             f"  {v['version']}: {v['introduced']} paths introduced{embedded}{current}"
         )
+
+
+@imas.command("clear")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
+@click.option(
+    "--dump-first",
+    is_flag=True,
+    help="Create a graph dump before clearing (recommended)",
+)
+def imas_clear(force: bool, dump_first: bool) -> None:
+    """Delete all IMAS Data Dictionary nodes from the graph.
+
+    Removes ALL DD-specific nodes: DDVersion, IDS, IMASPath, IMASPathChange,
+    IMASSemanticCluster, IMASCoordinateSpec, IdentifierSchema, and
+    EmbeddingChange. Orphaned Unit nodes are also cleaned up.
+
+    Cross-references from facility nodes (MAPS_TO_IMAS, MENTIONS_IMAS) are
+    detached before deletion. DD-specific vector indexes are dropped.
+
+    \b
+    Examples:
+      imas-codex imas clear             # Interactive confirmation
+      imas-codex imas clear --force     # Skip confirmation
+      imas-codex imas clear --dump-first  # Backup before clearing
+    """
+    from imas_codex.graph import GraphClient
+    from imas_codex.graph.build_dd import clear_dd_graph
+
+    with GraphClient() as gc:
+        # Count nodes that will be deleted
+        counts = gc.query("""
+            MATCH (p:IMASPath) WITH count(p) AS paths
+            MATCH (v:DDVersion) WITH paths, count(v) AS versions
+            MATCH (i:IDS) WITH paths, versions, count(i) AS ids
+            MATCH (c:IMASSemanticCluster) WITH paths, versions, ids, count(c) AS clusters
+            MATCH (ch:IMASPathChange) WITH paths, versions, ids, clusters, count(ch) AS changes
+            RETURN paths, versions, ids, clusters, changes
+        """)
+
+        if not counts or counts[0]["paths"] == 0:
+            console.print("[yellow]No DD nodes found in graph[/yellow]")
+            return
+
+        c = counts[0]
+        console.print("[bold red]This will delete:[/bold red]")
+        console.print(f"  {c['paths']:,} IMASPath nodes")
+        console.print(f"  {c['versions']} DDVersion nodes")
+        console.print(f"  {c['ids']} IDS nodes")
+        console.print(f"  {c['clusters']:,} IMASSemanticCluster nodes")
+        console.print(f"  {c['changes']:,} IMASPathChange nodes")
+        console.print("  + IMASCoordinateSpec, IdentifierSchema, orphaned Units")
+        console.print(
+            "  + DD vector indexes (imas_path_embedding, imas_cluster_centroid)"
+        )
+
+        if not force:
+            click.confirm(
+                "\nThis action is irreversible. Continue?",
+                abort=True,
+            )
+
+        if dump_first:
+            console.print("[dim]Creating graph dump...[/dim]")
+            try:
+                import subprocess
+
+                result = subprocess.run(
+                    ["uv", "run", "imas-codex", "neo4j", "dump"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if result.returncode == 0:
+                    console.print("[green]Dump created successfully[/green]")
+                else:
+                    raise RuntimeError(result.stderr.strip() or "dump failed")
+            except Exception as e:
+                console.print(f"[red]Dump failed: {e}[/red]")
+                if not force:
+                    click.confirm("Continue without dump?", abort=True)
+
+        console.print("[dim]Clearing DD graph...[/dim]")
+        results = clear_dd_graph(gc)
+
+        # Display results
+        table = Table(title="DD Graph Cleared")
+        table.add_column("Node Type", style="cyan")
+        table.add_column("Deleted", justify="right", style="red")
+
+        label_map = {
+            "paths": "IMASPath",
+            "versions": "DDVersion",
+            "ids_nodes": "IDS",
+            "clusters": "IMASSemanticCluster",
+            "path_changes": "IMASPathChange",
+            "embedding_changes": "EmbeddingChange",
+            "identifier_schemas": "IdentifierSchema",
+            "coordinate_specs": "IMASCoordinateSpec",
+            "orphaned_units": "Unit (orphaned)",
+        }
+
+        total = 0
+        for key, label in label_map.items():
+            count = results.get(key, 0)
+            if count > 0:
+                table.add_row(label, f"{count:,}")
+                total += count
+
+        table.add_row("[bold]Total[/bold]", f"[bold]{total:,}[/bold]")
+        console.print(table)
+        console.print("[green]DD graph cleared successfully[/green]")
