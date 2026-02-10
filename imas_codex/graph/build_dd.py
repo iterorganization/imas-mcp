@@ -1827,6 +1827,9 @@ def _import_clusters(
     clusters by centroid similarity, then search within matching clusters.
     Model name is tracked on DDVersion, not on clusters.
 
+    Passes the graph client to the cluster builder so embeddings are read
+    directly from IMASPath nodes instead of regenerated from scratch.
+
     Args:
         client: GraphClient instance
         dry_run: If True, don't write to graph
@@ -1841,7 +1844,10 @@ def _import_clusters(
 
             # Create encoder config for loading clusters
             encoder_config = EncoderConfig()
-            clusters_manager = Clusters(encoder_config=encoder_config)
+            clusters_manager = Clusters(
+                encoder_config=encoder_config,
+                graph_client=client,
+            )
             if not clusters_manager.is_available():
                 logger.warning("Cluster data not available")
                 return 0

@@ -49,6 +49,9 @@ class Clusters:
 
     encoder_config: EncoderConfig  # Required: encoder configuration for embeddings
     clusters_file: Path | None = None
+    graph_client: Any | None = (
+        None  # Optional GraphClient for reading embeddings from Neo4j
+    )
 
     # Cache state
     _cached_data: dict[str, Any] | None = field(default=None, init=False, repr=False)
@@ -170,14 +173,45 @@ class Clusters:
             logger.debug(f"Could not get expected document count: {e}")
             return 0
 
+    def _check_graph_embeddings_available(self) -> bool:
+        """Check if the Neo4j graph has embeddings we can use for clustering.
+
+        Returns True if the graph has sufficient embedding coverage.
+        """
+        if self.graph_client is None:
+            return False
+
+        try:
+            result = self.graph_client.query(
+                """
+                MATCH (p:IMASPath)
+                WITH count(p) AS total,
+                     count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb
+                RETURN total, with_emb,
+                       CASE WHEN total > 0 THEN toFloat(with_emb) / total ELSE 0.0 END AS coverage
+                """
+            )
+            if result:
+                row = result[0]
+                coverage = row["coverage"]
+                logger.debug(
+                    f"Graph embedding coverage: {row['with_emb']}/{row['total']} ({coverage:.0%})"
+                )
+                return (
+                    coverage >= 0.5
+                )  # At least 50% coverage means graph has embeddings
+            return False
+        except Exception as e:
+            logger.debug(f"Could not check graph embeddings: {e}")
+            return False
+
     def _check_dependency_freshness(self) -> bool:
         """
-        Check if any dependency files are newer than the clusters file.
+        Check if clusters file needs regeneration.
 
-        Uses fast file-based checks only. Does NOT load DocumentStore to avoid
-        expensive initialization (~30s for embeddings). Compares:
-        1. File modification times (clusters vs embeddings)
-        2. Document counts from cached metadata (embeddings cache vs clusters.json)
+        When a graph_client is available, checks graph embedding coverage
+        instead of looking for a local pickle cache file. This avoids
+        unnecessary re-embedding during ``imas build``.
 
         Returns:
             True if clusters file should be regenerated, False otherwise.
@@ -185,6 +219,42 @@ class Clusters:
         if not self.file_path.exists():
             logger.debug("Clusters file does not exist")
             return True
+
+        # If we have a graph client, check graph for embeddings
+        if self.graph_client is not None:
+            if self._check_graph_embeddings_available():
+                logger.debug(
+                    "Graph embeddings available - checking clusters document count"
+                )
+                # Verify clusters metadata still matches
+                clusters_doc_count = self._get_clusters_document_count()
+                if clusters_doc_count is None:
+                    logger.info(
+                        "No document count in clusters metadata - rebuild required"
+                    )
+                    return True
+                # Graph has embeddings and clusters exist — check staleness
+                # by comparing graph embedding count with clusters metadata
+                try:
+                    result = self.graph_client.query(
+                        "MATCH (p:IMASPath) WHERE p.embedding IS NOT NULL RETURN count(p) AS cnt"
+                    )
+                    graph_count = result[0]["cnt"] if result else 0
+                    if graph_count != clusters_doc_count:
+                        logger.info(
+                            f"Graph embedding count ({graph_count}) differs from clusters "
+                            f"({clusters_doc_count}) — rebuild required"
+                        )
+                        return True
+                    logger.debug(
+                        f"Clusters up-to-date with graph ({graph_count} embeddings)"
+                    )
+                    return False
+                except Exception as e:
+                    logger.debug(f"Could not validate graph count: {e}")
+                    return True
+            else:
+                logger.debug("Graph embeddings not available, checking local cache")
 
         clusters_mtime = self._get_file_mtime(self.file_path)
         clusters_time = datetime.fromtimestamp(clusters_mtime)
@@ -358,7 +428,8 @@ class Clusters:
             config = RelationshipExtractionConfig(**default_config)
 
             # Build clusters using the extractor
-            extractor = RelationshipExtractor(config)
+            # Pass graph_client so embeddings are read from graph when available
+            extractor = RelationshipExtractor(config, graph_client=self.graph_client)
             clusters = extractor.extract_relationships(force_rebuild=True)
 
             # Save clusters

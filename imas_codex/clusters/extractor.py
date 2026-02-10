@@ -6,12 +6,14 @@ clusters that may be hidden by density competition in the global
 embedding space.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -20,6 +22,9 @@ from imas_codex.embeddings import EmbeddingCache
 from imas_codex.embeddings.encoder import Encoder
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 from imas_codex.search.document_store import DocumentStore
+
+if TYPE_CHECKING:
+    from imas_codex.graph.client import GraphClient
 
 from .clustering import EmbeddingClusterer, RelationshipBuilder
 from .config import RelationshipExtractionConfig
@@ -49,16 +54,23 @@ class RelationshipExtractor:
     and enrichment metadata.
     """
 
-    def __init__(self, config: RelationshipExtractionConfig | None = None):
+    def __init__(
+        self,
+        config: RelationshipExtractionConfig | None = None,
+        graph_client: GraphClient | None = None,
+    ):
         """Initialize the relationship extractor.
 
-        The rich output configuration is now taken directly from the provided
-        RelationshipExtractionConfig (config.use_rich). A separate use_rich
-        argument is no longer supported.
+        Args:
+            config: Extraction configuration. Defaults to RelationshipExtractionConfig().
+            graph_client: Optional Neo4j client. When provided, embeddings are
+                loaded directly from IMASPath nodes in the graph instead of
+                regenerating them from scratch.
         """
         self.config = config or RelationshipExtractionConfig()
         self._use_rich = getattr(self.config, "use_rich", True)
         self.logger = logging.getLogger(__name__)
+        self._graph_client = graph_client
 
         # Initialize components
         self.path_filter = PathFilter(self.config)
@@ -817,10 +829,97 @@ class RelationshipExtractor:
     def _generate_embeddings(
         self, filtered_paths: dict[str, dict[str, Any]]
     ) -> tuple[np.ndarray, list[str], int]:
-        """Generate embeddings for filtered paths using shared encoder cache.
+        """Generate embeddings for filtered paths.
 
-        Reuses the same cache filename logic as the build_embeddings script so we
-        don't regenerate embeddings unnecessarily.
+        Tries to load embeddings from the Neo4j graph first (where ``imas build``
+        stores them on IMASPath nodes). Falls back to the local encoder cache /
+        fresh generation only when the graph is unavailable or incomplete.
+
+        Returns:
+            Tuple of (embeddings array, path identifiers, source document count)
+        """
+        # Try loading from graph first — this is the fast path during `imas build`
+        if self._graph_client is not None:
+            result = self._load_embeddings_from_graph(filtered_paths)
+            if result is not None:
+                return result
+            self.logger.info(
+                "Graph embeddings incomplete or unavailable, "
+                "falling back to local generation"
+            )
+
+        return self._generate_embeddings_local(filtered_paths)
+
+    def _load_embeddings_from_graph(
+        self, filtered_paths: dict[str, dict[str, Any]]
+    ) -> tuple[np.ndarray, list[str], int] | None:
+        """Load embeddings from IMASPath nodes in the Neo4j graph.
+
+        Returns None if the graph doesn't have enough coverage.
+        """
+        assert self._graph_client is not None
+
+        path_ids = list(filtered_paths.keys())
+        batch_size = 500
+        graph_embeddings: dict[str, list[float]] = {}
+
+        try:
+            for i in range(0, len(path_ids), batch_size):
+                batch = path_ids[i : i + batch_size]
+                results = self._graph_client.query(
+                    """
+                    UNWIND $paths AS pid
+                    MATCH (p:IMASPath {id: pid})
+                    WHERE p.embedding IS NOT NULL
+                    RETURN p.id AS id, p.embedding AS embedding
+                    """,
+                    paths=batch,
+                )
+                for r in results:
+                    graph_embeddings[r["id"]] = r["embedding"]
+
+            coverage = len(graph_embeddings) / len(path_ids) if path_ids else 0
+            self.logger.info(
+                f"Graph embeddings: {len(graph_embeddings)}/{len(path_ids)} "
+                f"paths ({coverage:.0%} coverage)"
+            )
+
+            # Require ≥95% coverage to use graph embeddings
+            if coverage < 0.95:
+                return None
+
+            # Build arrays in deterministic order
+            ordered_ids = [pid for pid in path_ids if pid in graph_embeddings]
+            embeddings = np.array(
+                [graph_embeddings[pid] for pid in ordered_ids], dtype=np.float32
+            )
+
+            self.logger.info(
+                f"Loaded {embeddings.shape[0]} embeddings from graph "
+                f"(dim={embeddings.shape[1]})"
+            )
+
+            # Store cache for compatibility
+            self._embeddings_cache = EmbeddingCache(
+                embeddings=embeddings,
+                path_ids=ordered_ids,
+                model_name=self.config.encoder_config.model_name,
+                document_count=len(filtered_paths),
+            )
+            self._source_document_count = len(ordered_ids)
+
+            return embeddings, ordered_ids, len(ordered_ids)
+
+        except Exception as e:
+            self.logger.warning(f"Failed to load embeddings from graph: {e}")
+            return None
+
+    def _generate_embeddings_local(
+        self, filtered_paths: dict[str, dict[str, Any]]
+    ) -> tuple[np.ndarray, list[str], int]:
+        """Generate embeddings via local encoder with pickle cache.
+
+        This is the fallback path when graph embeddings are unavailable.
 
         Returns:
             Tuple of (embeddings array, path identifiers, source document count)
