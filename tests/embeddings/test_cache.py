@@ -13,7 +13,7 @@ class TestEmbeddingCache:
     def test_initialization(self):
         """Cache initializes with provided values."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((10, 384)),
+            embeddings=np.zeros((10, 256)),
             path_ids=["path_" + str(i) for i in range(10)],
             model_name="test-model",
             document_count=10,
@@ -26,7 +26,7 @@ class TestEmbeddingCache:
     def test_validation_document_count_mismatch(self):
         """Validation fails when document count differs."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((10, 384)),
+            embeddings=np.zeros((10, 256)),
             path_ids=["path_" + str(i) for i in range(10)],
             model_name="test-model",
             document_count=10,
@@ -40,7 +40,7 @@ class TestEmbeddingCache:
     def test_validation_model_mismatch(self):
         """Validation fails when model name differs."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((10, 384)),
+            embeddings=np.zeros((10, 256)),
             path_ids=["path_" + str(i) for i in range(10)],
             model_name="test-model",
             document_count=10,
@@ -68,7 +68,7 @@ class TestEmbeddingCache:
     def test_validation_empty_path_ids(self):
         """Validation fails when path IDs are empty."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((1, 384)),
+            embeddings=np.zeros((1, 256)),
             path_ids=[],
             model_name="test-model",
             document_count=1,
@@ -82,7 +82,7 @@ class TestEmbeddingCache:
     def test_validation_ids_set_mismatch(self):
         """Validation fails when IDS set differs."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((10, 384)),
+            embeddings=np.zeros((10, 256)),
             path_ids=["path_" + str(i) for i in range(10)],
             model_name="test-model",
             document_count=10,
@@ -99,7 +99,7 @@ class TestEmbeddingCache:
     def test_validation_valid_cache(self):
         """Validation passes for valid cache."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((10, 384)),
+            embeddings=np.zeros((10, 256)),
             path_ids=["path_" + str(i) for i in range(10)],
             model_name="test-model",
             document_count=10,
@@ -116,7 +116,7 @@ class TestEmbeddingCache:
     def test_is_valid_convenience_method(self):
         """is_valid method returns boolean correctly."""
         cache = EmbeddingCache(
-            embeddings=np.zeros((10, 384)),
+            embeddings=np.zeros((10, 256)),
             path_ids=["path_" + str(i) for i in range(10)],
             model_name="test-model",
             document_count=10,
@@ -152,7 +152,7 @@ class TestEmbeddingCache:
         (source_dir / "ids_catalog.json").write_text(json.dumps(catalog))
 
         cache = EmbeddingCache(
-            embeddings=np.zeros((1, 384)),
+            embeddings=np.zeros((1, 256)),
             path_ids=["path_0"],
             model_name="test-model",
             document_count=1,
@@ -174,7 +174,7 @@ class TestEmbeddingCache:
         (source_dir / "ids_catalog.json").write_text(json.dumps(catalog))
 
         cache = EmbeddingCache(
-            embeddings=np.zeros((1, 384)),
+            embeddings=np.zeros((1, 256)),
             path_ids=["path_0"],
             model_name="test-model",
             document_count=1,
@@ -196,7 +196,7 @@ class TestEmbeddingCache:
         (source_dir / "ids_catalog.json").write_text(json.dumps(catalog))
 
         cache = EmbeddingCache(
-            embeddings=np.zeros((1, 384)),
+            embeddings=np.zeros((1, 256)),
             path_ids=["path_0"],
             model_name="test-model",
             document_count=1,
@@ -360,7 +360,7 @@ class TestEmbeddingCache:
         (source_dir / "ids_catalog.json").write_text(json.dumps(catalog))
 
         cache = EmbeddingCache(
-            embeddings=np.zeros((1, 384)),
+            embeddings=np.zeros((1, 256)),
             path_ids=["path_0"],
             model_name="test-model",
             document_count=1,

@@ -119,7 +119,7 @@ def benchmark_local_minilm() -> tuple[BenchmarkResult, np.ndarray, np.ndarray]:
 
     result = BenchmarkResult(
         model_name="all-MiniLM-L6-v2",
-        dimension=384,
+        dimension=256,
         total_texts=total_texts,
         total_time_s=total_time,
         embeddings_per_sec=embeddings_per_sec,

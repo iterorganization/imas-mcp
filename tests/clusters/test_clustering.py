@@ -125,7 +125,7 @@ class TestEmbeddingClusterer:
 
     def test_cluster_embeddings_empty(self, clusterer):
         """Test clustering with empty input."""
-        embeddings = np.array([]).reshape(0, 384)
+        embeddings = np.array([]).reshape(0, 256)
         clusters, memberships, stats = clusterer.cluster_embeddings(embeddings, [], {})
         assert "error" in stats
 

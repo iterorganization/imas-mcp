@@ -347,7 +347,7 @@ class OpenRouterEmbeddingClient:
             cost_tracker: Optional tracker for accumulating costs
 
         Returns:
-            Numpy array of embeddings (shape: [len(texts), 1024])
+            Numpy array of embeddings (shape: [len(texts), dimensions])
 
         Raises:
             OpenRouterEmbeddingError: If API key not configured

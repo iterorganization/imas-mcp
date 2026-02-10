@@ -1965,8 +1965,104 @@ def _import_clusters(
 # Public API exports
 __all__ = [
     "build_dd_graph",
+    "clear_dd_graph",
     "get_all_dd_versions",
     "extract_paths_for_version",
     "compute_version_changes",
     "load_path_mappings",
 ]
+
+
+def clear_dd_graph(
+    client: GraphClient,
+    batch_size: int = 5000,
+) -> dict[str, int]:
+    """Clear all IMAS Data Dictionary nodes from the graph.
+
+    Deletes DD-specific nodes in referential-integrity order, cascading to
+    orphaned nodes. Cross-references from facility nodes (MAPS_TO_IMAS,
+    MENTIONS_IMAS, etc.) are detached before deletion.
+
+    Unit nodes are only deleted if no non-DD nodes reference them.
+
+    Deletion order:
+    1. EmbeddingChange (leaf, references IMASPath + DDVersion)
+    2. IMASPathChange (references IMASPath + DDVersion)
+    3. IMASSemanticCluster (references IMASPath via IN_CLUSTER)
+    4. IdentifierSchema (referenced by IMASPath)
+    5. IMASPath (bulk — the largest set)
+    6. IDS (referenced by IMASPath)
+    7. DDVersion (referenced by IMASPath, IMASPathChange)
+    8. IMASCoordinateSpec (referenced by coordinate relationships)
+    9. Orphaned Unit nodes (not referenced by facility nodes)
+
+    Args:
+        client: GraphClient instance
+        batch_size: Nodes to delete per batch (default 5000)
+
+    Returns:
+        Dict with counts per node type deleted
+    """
+    results: dict[str, int] = {}
+
+    # Define deletion order: (label, result_key)
+    # Order matters — delete children before parents
+    node_types = [
+        ("EmbeddingChange", "embedding_changes"),
+        ("IMASPathChange", "path_changes"),
+        ("IMASSemanticCluster", "clusters"),
+        ("IdentifierSchema", "identifier_schemas"),
+        ("IMASPath", "paths"),
+        ("IDS", "ids_nodes"),
+        ("DDVersion", "versions"),
+        ("IMASCoordinateSpec", "coordinate_specs"),
+    ]
+
+    for label, key in node_types:
+        total = 0
+        while True:
+            result = client.query(
+                f"""
+                MATCH (n:{label})
+                WITH n LIMIT $batch_size
+                DETACH DELETE n
+                RETURN count(n) AS deleted
+                """,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            total += deleted
+            if deleted < batch_size:
+                break
+        results[key] = total
+        if total > 0:
+            logger.debug(f"Deleted {total} {label} nodes")
+
+    # Delete orphaned Unit nodes (not referenced by any non-DD node)
+    orphan_result = client.query("""
+        MATCH (u:Unit)
+        WHERE NOT (u)<-[:HAS_UNIT]-()
+        DETACH DELETE u
+        RETURN count(u) AS deleted
+    """)
+    results["orphaned_units"] = orphan_result[0]["deleted"] if orphan_result else 0
+    if results["orphaned_units"] > 0:
+        logger.debug(f"Deleted {results['orphaned_units']} orphaned Unit nodes")
+
+    # Clean up _GraphMeta DD fields
+    client.query("""
+        MATCH (m:_GraphMeta)
+        REMOVE m.dd_graph_built, m.dd_versions, m.dd_current_version
+    """)
+
+    # Drop DD-specific vector indexes (they're empty now)
+    for index_name in ("imas_path_embedding", "cluster_centroid"):
+        try:
+            client.query(f"DROP INDEX {index_name} IF EXISTS")
+            logger.debug(f"Dropped vector index: {index_name}")
+        except Exception:
+            pass  # Index may not exist
+
+    total_deleted = sum(results.values())
+    logger.info(f"Cleared {total_deleted} DD nodes from graph")
+    return results

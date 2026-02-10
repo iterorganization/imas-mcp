@@ -80,7 +80,7 @@ class TestSemanticSearch:
         mock_embeddings.get_path_ids.return_value = []
 
         search = SemanticSearch(embeddings=mock_embeddings)
-        result = search._compute_similarities(np.zeros(384), np.array([]))
+        result = search._compute_similarities(np.zeros(256), np.array([]))
 
         assert len(result) == 0
 
@@ -96,7 +96,7 @@ class TestSemanticSearch:
     def test_get_embeddings_and_ids(self):
         """_get_embeddings_and_ids retrieves matrix and path IDs."""
         mock_embeddings = MagicMock()
-        mock_embeddings.get_embeddings_matrix.return_value = np.random.randn(5, 384)
+        mock_embeddings.get_embeddings_matrix.return_value = np.random.randn(5, 256)
         mock_embeddings.get_path_ids.return_value = [
             "path1",
             "path2",
@@ -108,7 +108,7 @@ class TestSemanticSearch:
         search = SemanticSearch(embeddings=mock_embeddings)
         matrix, path_ids = search._get_embeddings_and_ids()
 
-        assert matrix.shape == (5, 384)
+        assert matrix.shape == (5, 256)
         assert len(path_ids) == 5
 
     def test_get_embeddings_and_ids_no_embeddings(self):

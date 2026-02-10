@@ -83,7 +83,7 @@ class TestEmbeddings:
             mock_encoder = MagicMock()
             mock_encoder.config = mock_config
             mock_encoder.build_document_embeddings.return_value = (
-                np.zeros((5, 384)),
+                np.zeros((5, 256)),
                 [
                     "test/path_0",
                     "test/path_1",
@@ -102,7 +102,7 @@ class TestEmbeddings:
             )
 
             assert embeddings._embeddings is not None
-            assert embeddings._embeddings.shape == (5, 384)
+            assert embeddings._embeddings.shape == (5, 256)
             assert len(embeddings._path_ids) == 5
 
     def test_initialization_deferred_build(self, mock_document_store):
@@ -253,7 +253,7 @@ class TestEmbeddings:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
-                np.zeros((5, 384)),
+                np.zeros((5, 256)),
                 ["path_0", "path_1", "path_2", "path_3", "path_4"],
                 False,
             )
@@ -267,7 +267,7 @@ class TestEmbeddings:
 
             matrix = embeddings.get_embeddings_matrix()
 
-            assert matrix.shape == (5, 384)
+            assert matrix.shape == (5, 256)
 
     def test_get_embeddings_matrix_lazy_load(self, mock_document_store, mock_documents):
         """get_embeddings_matrix triggers lazy load when needed."""
@@ -277,7 +277,7 @@ class TestEmbeddings:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
-                np.zeros((5, 384)),
+                np.zeros((5, 256)),
                 ["path_0", "path_1", "path_2", "path_3", "path_4"],
                 False,
             )
@@ -295,7 +295,7 @@ class TestEmbeddings:
             # Access triggers load
             matrix = embeddings.get_embeddings_matrix()
 
-            assert matrix.shape == (5, 384)
+            assert matrix.shape == (5, 256)
 
     def test_get_path_ids_empty(self, mock_document_store):
         """get_path_ids returns empty list when not loaded."""
@@ -320,7 +320,7 @@ class TestEmbeddings:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
-                np.zeros((5, 384)),
+                np.zeros((5, 256)),
                 [
                     "test/path_0",
                     "test/path_1",
@@ -348,7 +348,7 @@ class TestEmbeddings:
         with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
-            mock_encoder.embed_texts.return_value = np.zeros((2, 384))
+            mock_encoder.embed_texts.return_value = np.zeros((2, 256))
             mock_encoder_class.return_value = mock_encoder
 
             embeddings = Embeddings(
@@ -360,7 +360,7 @@ class TestEmbeddings:
             result = embeddings.encode_texts(["text1", "text2"])
 
             mock_encoder.embed_texts.assert_called_once_with(["text1", "text2"])
-            assert result.shape == (2, 384)
+            assert result.shape == (2, 256)
 
     def test_encoder_config_property(self, mock_document_store):
         """encoder_config property returns encoder's config."""
@@ -404,7 +404,7 @@ class TestEmbeddings:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
-                np.zeros((5, 384)),
+                np.zeros((5, 256)),
                 ["path_0", "path_1", "path_2", "path_3", "path_4"],
                 False,
             )
@@ -442,7 +442,7 @@ class TestEmbeddings:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
-                np.zeros((5, 384)),
+                np.zeros((5, 256)),
                 ["path_0", "path_1", "path_2", "path_3", "path_4"],
                 False,
             )
