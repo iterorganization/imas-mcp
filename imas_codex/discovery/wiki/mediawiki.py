@@ -25,6 +25,7 @@ Example:
 from __future__ import annotations
 
 import logging
+import random
 import re
 import time
 import warnings
@@ -760,7 +761,12 @@ class AsyncMediaWikiClient:
                 logger.debug("Restored session cookies from keyring")
 
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout),
+                timeout=httpx.Timeout(
+                    connect=15.0,
+                    read=self.timeout,
+                    write=self.timeout,
+                    pool=120.0,  # Generous pool timeout to avoid PoolTimeout under load
+                ),
                 follow_redirects=True,
                 verify=self.verify_ssl,
                 cookies=cookie_jar,
@@ -771,8 +777,8 @@ class AsyncMediaWikiClient:
                     "Accept-Encoding": "gzip, deflate",
                 },
                 limits=httpx.Limits(
-                    max_connections=20,
-                    max_keepalive_connections=10,
+                    max_connections=50,
+                    max_keepalive_connections=25,
                     keepalive_expiry=30.0,
                 ),
             )
@@ -1166,6 +1172,19 @@ class AsyncMediaWikiClient:
                                 retry_e,
                             )
                 return None
+            except httpx.PoolTimeout:
+                # Pool exhaustion — all connections busy. Use longer backoff
+                # to let in-flight requests complete and free connections.
+                last_error = "PoolTimeout"
+                logger.debug(
+                    "Pool exhausted for %s (attempt %d/%d), backing off",
+                    page_name,
+                    attempt + 1,
+                    max_attempts,
+                )
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(2.0 * (attempt + 1) + random.uniform(0, 1.0))
+                continue
             except httpx.RequestError as e:
                 # Connection-level errors are retryable
                 last_error = f"{type(e).__name__}: {e or 'no details'}"

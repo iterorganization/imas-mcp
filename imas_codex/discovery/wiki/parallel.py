@@ -261,6 +261,11 @@ class WikiDiscoveryState:
     _basic_auth_client: Any = field(default=None, repr=False)
     _basic_auth_client_lock: Any = field(default=None, repr=False)
 
+    # Shared HTTP fetch semaphore — bounds total concurrent wiki HTTP requests
+    # across ALL workers (score + ingest) to prevent httpx PoolTimeout.
+    # Default 30 keeps us well under httpx pool max_connections=50.
+    _http_fetch_semaphore: Any = field(default=None, repr=False)
+
     # Limits
     cost_limit: float = 10.0
     page_limit: int | None = None
@@ -286,6 +291,18 @@ class WikiDiscoveryState:
     ssh_retry_count: int = 0
     max_ssh_retries: int = 5
     ssh_error_message: str | None = None
+
+    @property
+    def http_fetch_semaphore(self) -> asyncio.Semaphore:
+        """Shared semaphore bounding total concurrent wiki HTTP fetches.
+
+        Lazily initialized because asyncio.Semaphore needs a running event loop.
+        Shared across ALL score and ingest workers so total concurrency stays
+        within the httpx connection pool capacity.
+        """
+        if self._http_fetch_semaphore is None:
+            self._http_fetch_semaphore = asyncio.Semaphore(30)
+        return self._http_fetch_semaphore
 
     @property
     def total_cost(self) -> float:
@@ -2690,9 +2707,10 @@ async def score_worker(
     worker_id = id(asyncio.current_task())
     logger.info(f"score_worker started (task={worker_id})")
 
-    # Semaphore to limit concurrent HTTP fetches
-    # Increased from 15 to 25 for better throughput with connection pooling
-    fetch_semaphore = asyncio.Semaphore(25)
+    # Use shared HTTP fetch semaphore from state to bound total concurrent
+    # wiki requests across ALL workers (score + ingest). This prevents
+    # httpx PoolTimeout when multiple workers compete for connections.
+    fetch_semaphore = state.http_fetch_semaphore
 
     # Get shared async wiki client for Tequila auth (native async HTTP)
     logger.debug(f"score_worker {worker_id}: getting async wiki client")
@@ -2889,16 +2907,17 @@ async def ingest_worker(
         await state.get_basic_auth_client() if state.auth_type == "basic" else None
     )
 
-    # Semaphore to limit concurrent page ingestion
-    # Remote GPU embedding server handles 8 concurrent requests well
-    ingest_semaphore = asyncio.Semaphore(8)
+    # Use shared HTTP fetch semaphore from state for wiki HTTP requests.
+    # This bounds total concurrent wiki fetches across ALL workers to prevent
+    # httpx PoolTimeout when multiple workers compete for connections.
+    http_semaphore = state.http_fetch_semaphore
 
     async def process_single_page(page: dict) -> dict | None:
         """Process a single page with semaphore-limited concurrency."""
         page_id = page["id"]
         url = page.get("url", "")
 
-        async with ingest_semaphore:
+        async with http_semaphore:
             try:
                 chunk_count = await _ingest_page(
                     url=url,
