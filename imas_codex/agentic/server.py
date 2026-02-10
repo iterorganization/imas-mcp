@@ -226,6 +226,7 @@ def _init_repl() -> dict[str, Any]:
         text: str,
         index: str = "imas_path_embedding",
         k: int = 5,
+        include_deprecated: bool = False,
     ) -> list[dict[str, Any]]:
         """Vector similarity search on graph embeddings.
 
@@ -233,6 +234,8 @@ def _init_repl() -> dict[str, Any]:
             text: Query text to embed and search
             index: Vector index name
             k: Number of results to return
+            include_deprecated: If True, include deprecated IMAS paths in results.
+                Only applies to imas_path_embedding index. Default False (active only).
 
         Available indexes:
             Document content:
@@ -256,9 +259,16 @@ def _init_repl() -> dict[str, Any]:
         encoder = _get_encoder()
         embeddings = encoder.embed_texts([text])
         embedding = embeddings[0].tolist()
+
+        # Filter deprecated paths for imas_path_embedding unless explicitly included
+        where_clause = ""
+        if index == "imas_path_embedding" and not include_deprecated:
+            where_clause = "WHERE NOT (node)-[:DEPRECATED_IN]->(:DDVersion) "
+
         results = gc.query(
             f'CALL db.index.vector.queryNodes("{index}", $k, $embedding) '
             "YIELD node, score "
+            f"{where_clause}"
             "RETURN [k IN keys(node) "
             "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
             "AS properties, labels(node) AS labels, score "
@@ -1074,7 +1084,7 @@ class AgentsServer:
 
             === GRAPH OPERATIONS ===
             query(cypher, **params) - Execute Cypher query, return list of dicts
-            semantic_search(text, index, k) - Vector similarity search
+            semantic_search(text, index, k, include_deprecated) - Vector similarity search
             embed(text) - Get 256-dim embedding vector
 
             === FACILITY CONFIGURATION ===

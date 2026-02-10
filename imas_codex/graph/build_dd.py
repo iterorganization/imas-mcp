@@ -1171,18 +1171,30 @@ def build_dd_graph(
         mappings = load_path_mappings(current_dd_version)
         _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
 
-    # Generate and store embeddings for current version paths
-    # Filter out error fields and metadata paths to reduce embedding count
-    # GGD paths are included by default (configurable via include-ggd setting)
+    # Generate and store embeddings for ALL data paths across ALL versions
+    # This enables semantic search over the full DD history for evolution queries.
+    # Error fields and metadata paths are excluded; GGD paths included by default.
     if include_embeddings and not dry_run:
-        current_version_data = version_data.get(current_dd_version)
-        if current_version_data:
-            all_paths = current_version_data["paths"]
+        # Merge paths and ids_info across ALL versions for complete coverage
+        # Later versions take precedence for metadata (units, docs) on shared paths
+        merged_paths: dict[str, dict] = {}
+        merged_ids_info: dict[str, dict] = {}
+        for version in versions:
+            vdata = version_data.get(version)
+            if vdata:
+                merged_paths.update(vdata["paths"])
+                merged_ids_info.update(vdata["ids_info"])
 
+        if merged_paths:
             # Filter paths and extract error relationships
-            logger.debug(f"Filtering {len(all_paths)} paths for embedding...")
-            embeddable_paths, error_relationships = filter_embeddable_paths(all_paths)
-            stats["paths_filtered"] = len(all_paths) - len(embeddable_paths)
+            logger.debug(
+                f"Filtering {len(merged_paths)} paths across "
+                f"{len(versions)} versions for embedding..."
+            )
+            embeddable_paths, error_relationships = filter_embeddable_paths(
+                merged_paths
+            )
+            stats["paths_filtered"] = len(merged_paths) - len(embeddable_paths)
             logger.debug(
                 f"Embedding {len(embeddable_paths)} paths "
                 f"(filtered {stats['paths_filtered']} excluded paths)"
@@ -1197,12 +1209,15 @@ def build_dd_graph(
                     client, error_relationships
                 )
 
-            # Generate embeddings only for non-excluded paths
-            logger.debug(f"Generating embeddings for {current_dd_version}...")
+            # Generate embeddings for all embeddable paths (active + deprecated)
+            logger.debug(
+                f"Generating embeddings for {len(embeddable_paths)} paths "
+                f"across {len(versions)} DD versions..."
+            )
             embedding_stats = update_path_embeddings(
                 client=client,
                 paths_data=embeddable_paths,
-                ids_info=current_version_data["ids_info"],
+                ids_info=merged_ids_info,
                 model_name=embedding_model,
                 force_rebuild=force_embeddings,
                 use_rich=use_rich,
@@ -1224,11 +1239,8 @@ def build_dd_graph(
                 model=embedding_model,
                 count=embedding_stats["total"],
             )
-
-            # Clean up stale embeddings from deprecated paths and track as definition changes
-            stats["definitions_changed"] = _cleanup_stale_embeddings(client)
         else:
-            logger.warning(f"No data for current version {current_dd_version}")
+            logger.warning("No path data found across any version")
 
     # Import semantic clusters if requested
     if include_clusters:
@@ -1797,8 +1809,9 @@ def _batch_create_error_relationships(
 def _cleanup_stale_embeddings(client: GraphClient) -> int:
     """Remove embeddings from deprecated paths.
 
-    When a new DD version becomes current, paths that were deprecated should
-    have their embeddings removed to avoid polluting semantic search results.
+    .. deprecated::
+        Deprecated paths now retain embeddings to support DD evolution queries.
+        Kept for manual cleanup if needed, but no longer called during builds.
 
     Returns:
         Number of paths cleaned up

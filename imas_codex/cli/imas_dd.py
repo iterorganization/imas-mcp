@@ -308,18 +308,29 @@ def imas_status(version_filter: str | None) -> None:
 @click.option("-n", "--limit", default=10, help="Max results (default: 10)")
 @click.option("--ids", help="Filter to specific IDS")
 @click.option("--version", "-v", "version_filter", help="Filter to DD version")
+@click.option(
+    "--include-deprecated",
+    is_flag=True,
+    help="Include deprecated paths in search results (default: active only)",
+)
 def imas_search(
-    query: str, limit: int, ids: str | None, version_filter: str | None
+    query: str,
+    limit: int,
+    ids: str | None,
+    version_filter: str | None,
+    include_deprecated: bool,
 ) -> None:
     """Semantic search for IMAS paths.
 
     Uses vector embeddings to find paths matching natural language queries.
+    By default, only active (non-deprecated) paths are returned.
 
     \b
     Examples:
         imas-codex imas search "electron temperature"
         imas-codex imas search "magnetic field boundary" --ids equilibrium
         imas-codex imas search "plasma current" -n 20
+        imas-codex imas search "plasma current" --include-deprecated
     """
     from imas_codex.embeddings.config import EncoderConfig
     from imas_codex.embeddings.encoder import Encoder
@@ -330,7 +341,10 @@ def imas_search(
     embedding = encoder.embed_texts([query])[0].tolist()
 
     # Build filter clause
+    # By default, exclude deprecated paths unless --include-deprecated flag is used
     where_clauses = []
+    if not include_deprecated:
+        where_clauses.append("NOT (node)-[:DEPRECATED_IN]->(:DDVersion)")
     if ids:
         where_clauses.append(f"node.id STARTS WITH '{ids}/'")
     if version_filter:

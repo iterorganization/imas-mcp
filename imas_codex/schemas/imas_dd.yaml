@@ -249,7 +249,9 @@ classes:
       - embedding_text: Pre-concatenated context for embedding generation
       - embedding: 256-dim vector (model tracked on DDVersion)
       - embedding_hash: Content hash for cache busting
-      - Error fields, GGD paths, and metadata are excluded from embedding
+      - Both active and deprecated data paths are embedded for evolution queries
+      - Error fields and metadata paths are excluded from embedding
+      - GGD paths are included by default (configurable)
     class_uri: imas_dd:IMASPath
     attributes:
       id:
