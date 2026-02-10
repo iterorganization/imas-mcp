@@ -2237,6 +2237,7 @@ def bulk_discover_artifacts(
     ssh_host: str | None = None,
     wiki_client: Any = None,
     credential_service: str | None = None,
+    access_method: str = "direct",
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all wiki artifacts via platform API.
@@ -2244,6 +2245,7 @@ def bulk_discover_artifacts(
     This is much faster than scanning pages - uses dedicated APIs:
     - MediaWiki: list=allimages API (returns all files in one call)
     - TWiki: /pub/ directory listing
+    - TWiki static: Parse topic pages for linked files
     - Confluence: /rest/api/content/{id}/child/attachment
 
     Args:
@@ -2253,6 +2255,7 @@ def bulk_discover_artifacts(
         ssh_host: SSH host for proxied access
         wiki_client: Authenticated MediaWikiClient (for Tequila)
         credential_service: Keyring service name
+        access_method: Access method ("direct" or "vpn")
         on_progress: Progress callback
 
     Returns:
@@ -2269,6 +2272,7 @@ def bulk_discover_artifacts(
         wiki_client=wiki_client,
         credential_service=credential_service,
         base_url=base_url,  # Needed for static site adapters
+        access_method=access_method,
     )
 
     # Discover artifacts
@@ -4734,6 +4738,7 @@ async def run_parallel_wiki_discovery(
             ssh_host,
             None,  # wiki_client - removed, use SSH path
             state.credential_service,
+            "vpn" if ssh_host else "direct",
             artifact_progress,
         )
 

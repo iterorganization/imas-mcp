@@ -1849,18 +1849,22 @@ def wiki_run(
                             f"Discovered {bulk_discovered} pages from {short_name}"
                         )
 
-        # Artifact scanning
+        # Artifact scanning (all site types — adapters handle platform differences)
         should_discover_artifacts_site = (
             rescan_artifacts or (bulk_discovered > 0)
         ) and not score_only
-        if should_discover_artifacts_site and site_type == "mediawiki":
+        if should_discover_artifacts_site:
             from imas_codex.discovery.wiki.parallel import bulk_discover_artifacts
 
             def artifact_progress_log(msg, _):
                 wiki_logger.info(f"ARTIFACTS: {msg}")
 
             wiki_client = None
-            if auth_type == "tequila" and credential_service:
+            if (
+                site_type == "mediawiki"
+                and auth_type == "tequila"
+                and credential_service
+            ):
                 from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
 
                 wiki_client = MediaWikiClient(
@@ -1892,6 +1896,7 @@ def wiki_run(
                         ssh_host=ssh_host,
                         wiki_client=wiki_client,
                         credential_service=credential_service,
+                        access_method=access_method,
                         on_progress=artifact_progress_rich,
                     )
             else:
@@ -1902,6 +1907,7 @@ def wiki_run(
                     ssh_host=ssh_host,
                     wiki_client=wiki_client,
                     credential_service=credential_service,
+                    access_method=access_method,
                     on_progress=artifact_progress_log,
                 )
 

@@ -1683,6 +1683,7 @@ def get_adapter(
     credential_service: str | None = None,
     api_token: str | None = None,
     base_url: str | None = None,
+    access_method: str = "direct",
 ) -> WikiAdapter:
     """Get the appropriate adapter for a wiki site type.
 
@@ -1693,6 +1694,7 @@ def get_adapter(
         credential_service: Keyring service name
         api_token: API token (for Confluence)
         base_url: Base URL (for static sites)
+        access_method: Access method ("direct" or "vpn")
 
     Returns:
         WikiAdapter instance for the site type
@@ -1706,9 +1708,13 @@ def get_adapter(
     elif site_type == "twiki":
         return TWikiAdapter(ssh_host=ssh_host)
     elif site_type == "twiki_static":
-        return TWikiStaticAdapter(base_url=base_url, ssh_host=ssh_host)
+        return TWikiStaticAdapter(
+            base_url=base_url, ssh_host=ssh_host, access_method=access_method
+        )
     elif site_type == "static_html":
-        return StaticHtmlAdapter(base_url=base_url, ssh_host=ssh_host)
+        return StaticHtmlAdapter(
+            base_url=base_url, ssh_host=ssh_host, access_method=access_method
+        )
     elif site_type == "confluence":
         return ConfluenceAdapter(api_token=api_token, ssh_host=ssh_host)
     else:
