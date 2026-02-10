@@ -1122,7 +1122,7 @@ class WikiProgressDisplay:
                 title = r.get("title") or r.get("id", "?").split(":")[-1]
                 items.append(
                     {
-                        "title": title[:60],
+                        "title": title,
                         "score": r.get("score"),
                         "physics_domain": r.get("physics_domain"),
                         "description": r.get("description", ""),
@@ -1168,7 +1168,7 @@ class WikiProgressDisplay:
                 title = r.get("title") or r.get("id", "?").split(":")[-1]
                 items.append(
                     {
-                        "title": title[:60],
+                        "title": title,
                         "score": r.get("score"),
                         "description": r.get("description", ""),
                         "physics_domain": r.get("physics_domain"),

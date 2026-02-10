@@ -1908,16 +1908,6 @@ def wiki_run(
                         verify_ssl=False,
                     )
                     wiki_client.authenticate()
-                elif auth_type == "keycloak":
-                    from imas_codex.discovery.wiki.keycloak import (
-                        KeycloakWikiClient,
-                    )
-
-                    wiki_client = KeycloakWikiClient(
-                        base_url=base_url,
-                        credential_service=credential_service,
-                    )
-                    wiki_client.authenticate()
 
             if use_rich:
                 from rich.status import Status
@@ -1936,7 +1926,7 @@ def wiki_run(
                         elif "created" in msg or "discovered" in msg:
                             status.update(f"[green]{_url}: {msg}[/green]")
 
-                    artifacts_discovered = bulk_discover_artifacts(
+                    artifacts_discovered, page_artifacts = bulk_discover_artifacts(
                         facility=facility,
                         base_url=base_url,
                         site_type=site_type,
@@ -1949,7 +1939,7 @@ def wiki_run(
                         on_progress=artifact_progress_rich,
                     )
             else:
-                artifacts_discovered = bulk_discover_artifacts(
+                artifacts_discovered, page_artifacts = bulk_discover_artifacts(
                     facility=facility,
                     base_url=base_url,
                     site_type=site_type,
@@ -1969,6 +1959,11 @@ def wiki_run(
                 log_print(
                     f"[green]Discovered {artifacts_discovered:,} artifacts[/green]"
                 )
+                # Print page → artifacts summary
+                for page_name in sorted(page_artifacts):
+                    art_list = page_artifacts[page_name]
+                    names = ", ".join(art_list)
+                    log_print(f"  [dim]{page_name}[/dim]: {names}")
 
         site_configs.append(
             {
@@ -2181,7 +2176,7 @@ def wiki_run(
                     if results:
                         result_dicts = [
                             {
-                                "title": r.get("id", "?").split(":")[-1][:50],
+                                "title": r.get("id", "?").split(":")[-1],
                                 "out_links": r.get("out_degree", 0),
                                 "depth": r.get("depth", 0),
                             }
@@ -2194,7 +2189,7 @@ def wiki_run(
                     if results:
                         result_dicts = [
                             {
-                                "title": r.get("id", "?").split(":")[-1][:60],
+                                "title": r.get("id", "?").split(":")[-1],
                                 "score": r.get("score"),
                                 "physics_domain": r.get("physics_domain"),
                                 "description": r.get("description", ""),
@@ -2211,7 +2206,7 @@ def wiki_run(
                     if results:
                         result_dicts = [
                             {
-                                "title": r.get("id", "?").split(":")[-1][:60],
+                                "title": r.get("id", "?").split(":")[-1],
                                 "score": r.get("score"),
                                 "description": r.get("description", ""),
                                 "physics_domain": r.get("physics_domain"),
