@@ -653,8 +653,8 @@ class MediaWikiAdapter(WikiAdapter):
         seen_filenames: set[str] = set()
         seen_offsets: set[str] = set()
 
-        # Start with Special:ListFiles
-        list_url = f"{base_url}/Special:ListFiles"
+        # Start with Special:ListFiles (limit=500 to match API batch size)
+        list_url = f"{base_url}/Special:ListFiles?limit=500"
         batch = 0
         max_batches = 500  # Allow more batches for large wikis
 
@@ -723,7 +723,7 @@ class MediaWikiAdapter(WikiAdapter):
                 if new_offsets:
                     # Pick the lowest (oldest) offset to traverse chronologically
                     next_offset = min(new_offsets)
-                    list_url = f"{base_url}/index.php?title=Special:ListFiles&offset={next_offset}"
+                    list_url = f"{base_url}/index.php?title=Special:ListFiles&limit=500&offset={next_offset}"
                 else:
                     break
 

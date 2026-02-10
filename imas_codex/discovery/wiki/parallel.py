@@ -118,7 +118,7 @@ def _bulk_create_wiki_artifacts(
     facility: str,
     batch_data: list[dict],
     *,
-    batch_size: int = 100,
+    batch_size: int = 500,
     on_progress: Callable | None = None,
 ) -> int:
     """Create WikiArtifact nodes with FACILITY_ID and HAS_ARTIFACT relationships.
@@ -3995,7 +3995,7 @@ def _create_discovered_artifacts(
         )
 
     created = 0
-    batch_size = 100
+    batch_size = 500
     with GraphClient() as gc:
         for i in range(0, len(batch_data), batch_size):
             batch = batch_data[i : i + batch_size]
