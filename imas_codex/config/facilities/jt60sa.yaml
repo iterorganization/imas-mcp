@@ -51,6 +51,12 @@ wiki_sites:
     languages:
       - ja
       - en
+    exclude_prefixes:
+      - /twiki_html      # Separate TWiki site
+      - /matlab          # MATLAB vendor documentation
+      - /idl             # IDL vendor documentation  
+      - /pv-wave         # PV-WAVE vendor documentation
+      - /analysis        # Analysis tools help (external)
 
 # User info discovery configuration
 user_info:

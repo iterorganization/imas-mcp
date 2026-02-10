@@ -4885,15 +4885,16 @@ async def run_parallel_wiki_discovery(
 def _get_exclude_prefixes(facility: str, current_base_url: str) -> list[str]:
     """Get URL path prefixes to exclude from crawling.
 
-    When a facility has multiple wiki_sites on the same origin, this
-    returns the path prefixes of OTHER sites so the current crawl
-    doesn't overlap with them.
+    Combines two sources of exclusions:
+    1. Paths of OTHER wiki_sites on the same origin (auto-computed)
+    2. Explicit exclude_prefixes from the site config (e.g., vendor docs)
 
     For example, jt60sa has:
       - https://nakasvr23.iferc.org/twiki_html (twiki_static)
-      - https://nakasvr23.iferc.org (static_html)
+      - https://nakasvr23.iferc.org (static_html with exclude_prefixes)
 
-    When crawling the root site, /twiki_html should be excluded.
+    When crawling the root site, /twiki_html is auto-excluded, and
+    /matlab, /idl, etc. are excluded via config.
 
     Args:
         facility: Facility ID
@@ -4916,6 +4917,21 @@ def _get_exclude_prefixes(facility: str, current_base_url: str) -> list[str]:
     current_origin = f"{current_parsed.scheme}://{current_parsed.netloc}"
 
     prefixes = []
+
+    # Find the current site config to get explicit exclude_prefixes
+    current_site_config = None
+    for site in wiki_sites:
+        site_url = site.get("url", "").rstrip("/")
+        if site_url == current_base_url.rstrip("/"):
+            current_site_config = site
+            break
+
+    # Add explicit exclude_prefixes from site config (vendor docs, etc.)
+    if current_site_config:
+        explicit_excludes = current_site_config.get("exclude_prefixes", [])
+        prefixes.extend(explicit_excludes)
+
+    # Add paths of other wiki_sites on same origin
     for site in wiki_sites:
         site_url = site.get("url", "").rstrip("/")
         if not site_url or site_url == current_base_url.rstrip("/"):
