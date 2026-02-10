@@ -1039,8 +1039,10 @@ def _fetch_html_via_socks(url: str, timeout: int = 15) -> str | None:
     cmd = [
         "curl",
         "-sk",
-        f"--socks5-hostname=localhost:{_SOCKS_PORT}",
-        f"--connect-timeout={timeout}",
+        "--socks5-hostname",
+        f"localhost:{_SOCKS_PORT}",
+        "--connect-timeout",
+        str(timeout),
         url,
     ]
     try:
