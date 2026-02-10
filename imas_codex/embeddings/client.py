@@ -192,29 +192,38 @@ class RemoteEmbeddingClient:
         max_retries: int,
     ) -> np.ndarray:
         """Embed a large batch by splitting into chunked HTTP requests."""
+        from imas_codex.core.progress_monitor import create_progress_monitor
+
         chunks = [
             texts[i : i + MAX_TEXTS_PER_REQUEST]
             for i in range(0, len(texts), MAX_TEXTS_PER_REQUEST)
         ]
-        logger.info(
+        chunk_names = [
+            f"{min((i + 1) * MAX_TEXTS_PER_REQUEST, len(texts))}/{len(texts)}"
+            for i in range(len(chunks))
+        ]
+        logger.debug(
             "Chunking %d texts into %d requests of ≤%d texts",
             len(texts),
             len(chunks),
             MAX_TEXTS_PER_REQUEST,
         )
+        progress = create_progress_monitor(
+            logger=logger,
+            item_names=chunk_names,
+            description_template="Embedding: {item}",
+        )
+        progress.start_processing(chunk_names, "Embedding remotely")
         start = time.time()
         results = []
         for i, chunk in enumerate(chunks):
-            logger.debug(
-                "Embedding chunk %d/%d (%d texts)",
-                i + 1,
-                len(chunks),
-                len(chunk),
-            )
+            progress.set_current_item(chunk_names[i])
             result = self._embed_single(chunk, normalize, max_retries)
             results.append(result)
+            progress.update_progress(chunk_names[i])
         elapsed = time.time() - start
-        logger.info(
+        progress.finish_processing()
+        logger.debug(
             "Remote embedding: %d texts in %.1fs (%d chunks)",
             len(texts),
             elapsed,

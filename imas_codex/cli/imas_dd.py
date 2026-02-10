@@ -119,6 +119,9 @@ def imas_build(
 
     # Suppress imas library's verbose logging
     logging.getLogger("imas").setLevel(logging.WARNING)
+    # Suppress httpx/httpcore per-request INFO logs (noisy during embedding)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     try:
         # Determine versions to process
