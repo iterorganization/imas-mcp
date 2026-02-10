@@ -1638,11 +1638,14 @@ def wiki_run(
         portal_page = site.get("portal_page", "Main_Page")
         auth_type = site.get("auth_type")
         credential_service = site.get("credential_service")
+        access_method = site.get("access_method", "direct")
 
-        # Determine SSH host
-        ssh_host = site.get("ssh_host")
-        if not ssh_host and site.get("ssh_available", False):
-            ssh_host = config.get("ssh_host")
+        # Determine SSH host (only used for VPN-protected sites)
+        ssh_host = None
+        if access_method == "vpn":
+            ssh_host = site.get("ssh_host")
+            if not ssh_host and site.get("ssh_available", False):
+                ssh_host = config.get("ssh_host")
 
         # Short name for multi-site display (e.g. "pog" from URL path)
         from urllib.parse import urlparse as _urlparse
@@ -1668,8 +1671,8 @@ def wiki_run(
                 log_print(
                     f"[cyan]Using HTTP Basic authentication ({credential_service})[/cyan]"
                 )
-            elif ssh_host:
-                # Check if SOCKS tunnel is available (faster path)
+            elif access_method == "vpn" and ssh_host:
+                # Check if SOCKS tunnel is available (faster path for VPN sites)
                 from imas_codex.discovery.wiki.adapters import _ensure_socks_tunnel
 
                 if _ensure_socks_tunnel():
@@ -1801,7 +1804,7 @@ def wiki_run(
 
                 if site_type == "twiki_static":
                     discover_func = bulk_discover_all_pages_twiki_static
-                    discover_args = (facility, base_url, ssh_host)
+                    discover_args = (facility, base_url, ssh_host, access_method)
                     label = "TWiki"
                 else:
                     from imas_codex.discovery.wiki.parallel import (
@@ -1810,7 +1813,13 @@ def wiki_run(
 
                     exclude_prefixes = _get_exclude_prefixes(facility, base_url)
                     discover_func = bulk_discover_all_pages_static_html
-                    discover_args = (facility, base_url, exclude_prefixes, ssh_host)
+                    discover_args = (
+                        facility,
+                        base_url,
+                        exclude_prefixes,
+                        ssh_host,
+                        access_method,
+                    )
                     label = "Static HTML"
 
                 if use_rich:

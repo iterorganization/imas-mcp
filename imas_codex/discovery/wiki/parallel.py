@@ -2074,6 +2074,7 @@ def bulk_discover_all_pages_twiki_static(
     facility: str,
     base_url: str,
     ssh_host: str | None = None,
+    access_method: str = "direct",
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all pages from a static TWiki HTML export.
@@ -2087,8 +2088,8 @@ def bulk_discover_all_pages_twiki_static(
     Args:
         facility: Facility ID
         base_url: Base URL of the static TWiki export
-        ssh_host: SSH host for proxied access (when URL is not
-            directly reachable from the machine running the CLI)
+        ssh_host: SSH host for proxied access (only used when access_method="vpn")
+        access_method: "direct" (auth-protected) or "vpn" (requires proxy)
         on_progress: Progress callback
 
     Returns:
@@ -2098,11 +2099,13 @@ def bulk_discover_all_pages_twiki_static(
     from imas_codex.discovery.wiki.scraper import canonical_page_id
 
     logger.info(f"Starting bulk TWiki static discovery from {base_url}...")
-    if ssh_host:
+    if access_method == "vpn" and ssh_host:
         logger.info(f"Using SSH proxy via {ssh_host}")
 
     # Use the adapter to discover pages
-    adapter = TWikiStaticAdapter(base_url=base_url, ssh_host=ssh_host)
+    adapter = TWikiStaticAdapter(
+        base_url=base_url, ssh_host=ssh_host, access_method=access_method
+    )
     pages = adapter.bulk_discover_pages(facility, base_url, on_progress)
 
     if not pages:
@@ -2140,6 +2143,7 @@ def bulk_discover_all_pages_static_html(
     base_url: str,
     exclude_prefixes: list[str] | None = None,
     ssh_host: str | None = None,
+    access_method: str = "direct",
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all pages from a static HTML site by BFS crawling.
@@ -2152,8 +2156,8 @@ def bulk_discover_all_pages_static_html(
         facility: Facility ID
         base_url: Base URL of the static HTML site
         exclude_prefixes: URL path prefixes to exclude (e.g., ["/twiki_html"])
-        ssh_host: SSH host for proxied access (when URL is not
-            directly reachable from the machine running the CLI)
+        ssh_host: SSH host for proxied access (only used when access_method="vpn")
+        access_method: "direct" (auth-protected) or "vpn" (requires proxy)
         on_progress: Progress callback
 
     Returns:
@@ -2163,11 +2167,14 @@ def bulk_discover_all_pages_static_html(
     from imas_codex.discovery.wiki.scraper import canonical_page_id
 
     logger.info(f"Starting bulk static HTML discovery from {base_url}...")
-    if ssh_host:
+    if access_method == "vpn" and ssh_host:
         logger.info(f"Using SSH proxy via {ssh_host}")
 
     adapter = StaticHtmlAdapter(
-        base_url=base_url, exclude_prefixes=exclude_prefixes or [], ssh_host=ssh_host
+        base_url=base_url,
+        exclude_prefixes=exclude_prefixes or [],
+        ssh_host=ssh_host,
+        access_method=access_method,
     )
     pages = adapter.bulk_discover_pages(facility, base_url, on_progress)
 

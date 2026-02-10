@@ -1093,37 +1093,44 @@ def _fetch_html_via_ssh(url: str, ssh_host: str, timeout: int = 60) -> str | Non
 
 
 def _fetch_html(
-    url: str, ssh_host: str | None = None, timeout: float = 10.0
+    url: str,
+    ssh_host: str | None = None,
+    access_method: str = "direct",
+    timeout: float = 10.0,
 ) -> str | None:
     """Fetch HTML with automatic strategy selection.
 
-    Tries methods in order of speed:
-    1. Direct HTTP (fast, works with VPN on current machine)
-    2. SOCKS proxy via laptop (fast, ~1.5s, routes via laptop VPN)
-    3. SSH to facility host (slow, ~17s, last resort)
+    Strategy depends on access_method:
+    - "direct": Only try direct HTTP (for auth-protected sites)
+    - "vpn": Try direct, then SOCKS proxy, then SSH fallback
 
     Args:
         url: URL to fetch
-        ssh_host: SSH host for fallback proxy access
+        ssh_host: SSH host for fallback proxy access (only used if access_method="vpn")
+        access_method: "direct" or "vpn" - controls whether proxies are attempted
         timeout: Direct HTTP timeout in seconds
 
     Returns:
         HTML content string, or None if all methods fail
     """
-    # Try direct HTTP first — works when VPN is active locally
+    # Always try direct HTTP first
     html = _fetch_html_direct(url, timeout=timeout)
     if html is not None:
         return html
 
-    # Try SOCKS proxy via laptop — fast path when on iter
-    html = _fetch_html_via_socks(url)
-    if html is not None:
-        return html
+    # For VPN-protected sites, try proxy methods
+    if access_method == "vpn":
+        # Try SOCKS proxy via laptop — fast path when on iter
+        html = _fetch_html_via_socks(url)
+        if html is not None:
+            return html
 
-    # Fall back to SSH proxy if configured — slow but reliable
-    if ssh_host:
-        logger.debug("SOCKS unavailable, falling back to SSH proxy via %s", ssh_host)
-        return _fetch_html_via_ssh(url, ssh_host)
+        # Fall back to SSH proxy if configured — slow but reliable
+        if ssh_host:
+            logger.debug(
+                "SOCKS unavailable, falling back to SSH proxy via %s", ssh_host
+            )
+            return _fetch_html_via_ssh(url, ssh_host)
 
     return None
 
@@ -1141,16 +1148,22 @@ class TWikiStaticAdapter(WikiAdapter):
 
     site_type = "twiki_static"
 
-    def __init__(self, base_url: str | None = None, ssh_host: str | None = None):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        ssh_host: str | None = None,
+        access_method: str = "direct",
+    ):
         """Initialize TWiki static adapter.
 
         Args:
             base_url: Base URL of the static TWiki export
-            ssh_host: SSH host for proxied access (when URL is not
-                directly reachable from the machine running the CLI)
+            ssh_host: SSH host for proxied access (only used when access_method="vpn")
+            access_method: "direct" (auth-protected) or "vpn" (requires proxy)
         """
         self._base_url = base_url
         self._ssh_host = ssh_host
+        self._access_method = access_method
 
     def bulk_discover_pages(
         self,
@@ -1195,7 +1208,11 @@ class TWikiStaticAdapter(WikiAdapter):
                 on_progress("fetching WebTopicList.html", None)
 
             # Fetch HTML: try direct first, fall back to SSH proxy
-            html_text = _fetch_html(topic_list_url, ssh_host=self._ssh_host)
+            html_text = _fetch_html(
+                topic_list_url,
+                ssh_host=self._ssh_host,
+                access_method=self._access_method,
+            )
             if html_text is None:
                 logger.warning("Failed to fetch WebTopicList.html")
                 return []
@@ -1288,18 +1305,21 @@ class TWikiStaticAdapter(WikiAdapter):
         if on_progress:
             on_progress(f"scanning {len(pages)} pages for artifacts", None)
 
-        # Log access method (determined automatically by _fetch_html)
-        if _ensure_socks_tunnel():
-            logger.info("Using SOCKS proxy for artifact scan")
-        elif self._ssh_host:
-            logger.info("Using SSH proxy via %s for artifact scan", self._ssh_host)
+        # Log access method (only for VPN sites that need proxying)
+        if self._access_method == "vpn":
+            if _ensure_socks_tunnel():
+                logger.info("Using SOCKS proxy for artifact scan")
+            elif self._ssh_host:
+                logger.info("Using SSH proxy via %s for artifact scan", self._ssh_host)
 
         try:
             for i, page in enumerate(pages):
                 if not page.url:
                     continue
 
-                html_text = _fetch_html(page.url, ssh_host=self._ssh_host)
+                html_text = _fetch_html(
+                    page.url, ssh_host=self._ssh_host, access_method=self._access_method
+                )
                 if html_text is None:
                     continue
 
@@ -1388,6 +1408,7 @@ class StaticHtmlAdapter(WikiAdapter):
         base_url: str | None = None,
         exclude_prefixes: list[str] | None = None,
         ssh_host: str | None = None,
+        access_method: str = "direct",
     ):
         """Initialize static HTML adapter.
 
@@ -1395,12 +1416,13 @@ class StaticHtmlAdapter(WikiAdapter):
             base_url: Base URL of the static site
             exclude_prefixes: URL path prefixes to exclude from crawling
                 (e.g., ["/twiki_html"] to avoid overlapping with a TWiki site)
-            ssh_host: SSH host for proxied access (when URL is not
-                directly reachable from the machine running the CLI)
+            ssh_host: SSH host for proxied access (only used when access_method="vpn")
+            access_method: "direct" (auth-protected) or "vpn" (requires proxy)
         """
         self._base_url = base_url
         self._exclude_prefixes = exclude_prefixes or []
         self._ssh_host = ssh_host
+        self._access_method = access_method
 
     def bulk_discover_pages(
         self,
@@ -1453,17 +1475,22 @@ class StaticHtmlAdapter(WikiAdapter):
                 queue.append(url)
                 seen_urls.add(url)
 
-        # Log access method (determined automatically by _fetch_html)
-        if _ensure_socks_tunnel():
-            logger.info("Using SOCKS proxy for BFS crawl")
-        elif self._ssh_host:
-            logger.info("Using SSH proxy via %s for BFS crawl", self._ssh_host)
+        # Log access method (only for VPN sites that need proxying)
+        if self._access_method == "vpn":
+            if _ensure_socks_tunnel():
+                logger.info("Using SOCKS proxy for BFS crawl")
+            elif self._ssh_host:
+                logger.info("Using SSH proxy via %s for BFS crawl", self._ssh_host)
 
         try:
             while queue:
                 current_url = queue.pop(0)
 
-                html_text = _fetch_html(current_url, ssh_host=self._ssh_host)
+                html_text = _fetch_html(
+                    current_url,
+                    ssh_host=self._ssh_host,
+                    access_method=self._access_method,
+                )
                 if html_text is None:
                     continue
 

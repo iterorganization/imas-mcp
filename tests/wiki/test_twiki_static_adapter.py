@@ -25,11 +25,14 @@ class TestTWikiStaticAdapter:
         assert adapter._base_url is None
 
     def test_init_with_ssh_host(self):
-        """Test adapter initializes with SSH host."""
+        """Test adapter initializes with SSH host and VPN access method."""
         adapter = TWikiStaticAdapter(
-            base_url="https://example.org/twiki_html", ssh_host="myhost"
+            base_url="https://example.org/twiki_html",
+            ssh_host="myhost",
+            access_method="vpn",
         )
         assert adapter._ssh_host == "myhost"
+        assert adapter._access_method == "vpn"
 
     def test_site_type(self):
         """Test adapter has correct site type."""
@@ -90,11 +93,16 @@ class TestTWikiStaticAdapterDiscovery:
         assert len(pages) == 0
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html_direct")
+    @patch("imas_codex.discovery.wiki.adapters._fetch_html_via_socks")
     @patch("imas_codex.discovery.wiki.adapters._fetch_html_via_ssh")
-    def test_bulk_discover_pages_via_ssh(self, mock_ssh_fetch, mock_direct_fetch):
-        """Test that bulk_discover_pages falls back to SSH when direct fails."""
+    def test_bulk_discover_pages_via_ssh(
+        self, mock_ssh_fetch, mock_socks_fetch, mock_direct_fetch
+    ):
+        """Test that bulk_discover_pages falls back to SSH when direct and SOCKS fail."""
         # Direct HTTP fails (simulates no VPN/tunnel)
         mock_direct_fetch.return_value = None
+        # SOCKS fails too (simulates no laptop tunnel)
+        mock_socks_fetch.return_value = None
 
         # SSH proxy succeeds
         mock_ssh_fetch.return_value = """
@@ -109,15 +117,19 @@ class TestTWikiStaticAdapterDiscovery:
         </html>
         """
 
+        # Must set access_method="vpn" to enable SSH fallback
         adapter = TWikiStaticAdapter(
-            base_url="https://example.org/twiki_html", ssh_host="myhost"
+            base_url="https://example.org/twiki_html",
+            ssh_host="myhost",
+            access_method="vpn",
         )
         pages = adapter.bulk_discover_pages(
             "test_facility", "https://example.org/twiki_html"
         )
 
-        # Direct tried first, then SSH fallback
+        # Direct tried first, then SOCKS, then SSH fallback
         mock_direct_fetch.assert_called()
+        mock_socks_fetch.assert_called()
         mock_ssh_fetch.assert_called_once_with(
             "https://example.org/twiki_html/WebTopicList.html", "myhost"
         )
@@ -130,14 +142,21 @@ class TestTWikiStaticAdapterDiscovery:
         assert "WebHome" not in names
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html_direct")
+    @patch("imas_codex.discovery.wiki.adapters._fetch_html_via_socks")
     @patch("imas_codex.discovery.wiki.adapters._fetch_html_via_ssh")
-    def test_bulk_discover_pages_ssh_failure(self, mock_ssh_fetch, mock_direct_fetch):
-        """Test that both methods failing returns empty list."""
+    def test_bulk_discover_pages_ssh_failure(
+        self, mock_ssh_fetch, mock_socks_fetch, mock_direct_fetch
+    ):
+        """Test that all methods failing returns empty list."""
         mock_direct_fetch.return_value = None
+        mock_socks_fetch.return_value = None
         mock_ssh_fetch.return_value = None
 
+        # Must set access_method="vpn" to enable SSH fallback
         adapter = TWikiStaticAdapter(
-            base_url="https://example.org/twiki_html", ssh_host="myhost"
+            base_url="https://example.org/twiki_html",
+            ssh_host="myhost",
+            access_method="vpn",
         )
         pages = adapter.bulk_discover_pages(
             "test_facility", "https://example.org/twiki_html"
