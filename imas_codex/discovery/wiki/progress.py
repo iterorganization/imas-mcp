@@ -430,11 +430,9 @@ class WikiProgressDisplay:
         elif self.state.score_only:
             title += " (SCORE ONLY)"
 
-        # Multi-site indicator: "JET Wiki Discovery (3/16 /pog)"
+        # Multi-site indicator: show current site URL
         if self.state.total_sites > 1 and self.state.current_site_name:
-            idx = self.state.current_site_index + 1
-            total = self.state.total_sites
-            title += f"  ({idx}/{total} {self.state.current_site_name})"
+            title += f"  {self.state.current_site_name}"
 
         header.append(title.center(self.width - 4), style="bold cyan")
 

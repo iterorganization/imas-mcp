@@ -1611,6 +1611,20 @@ def wiki_run(
     existing_pages = wiki_stats.get("pages", 0) or wiki_stats.get("total", 0)
     should_bulk_discover = rescan or existing_pages == 0
 
+    # Check existing artifact count (discover artifacts if pages exist but no artifacts)
+    existing_artifacts = 0
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        with GraphClient() as _gc:
+            _art_result = _gc.query(
+                "MATCH (wa:WikiArtifact {facility_id: $f}) RETURN count(wa) AS cnt",
+                f=facility,
+            )
+            existing_artifacts = _art_result[0]["cnt"] if _art_result else 0
+    except Exception:
+        pass
+
     if existing_pages > 0 and not should_bulk_discover:
         log_print(
             f"[dim]Found {existing_pages} existing wiki pages, skipping scan[/dim]"
@@ -1859,8 +1873,12 @@ def wiki_run(
                         )
 
         # Artifact scanning (all site types — adapters handle platform differences)
+        # Run artifact discovery when: --rescan-artifacts, or new pages discovered,
+        # or pages exist but no artifacts have been discovered yet
         should_discover_artifacts_site = (
-            rescan_artifacts or (bulk_discovered > 0)
+            rescan_artifacts
+            or (bulk_discovered > 0)
+            or (existing_pages > 0 and existing_artifacts == 0)
         ) and not score_only
         if should_discover_artifacts_site:
             from imas_codex.discovery.wiki.parallel import bulk_discover_artifacts
@@ -2086,7 +2104,7 @@ def wiki_run(
                 # Set multi-site info on first iteration
                 if multi_site:
                     display.set_site_info(
-                        site_name=_site_configs[0]["short_name"],
+                        site_name=_site_configs[0]["base_url"],
                         site_index=0,
                         total_sites=len(_site_configs),
                     )
@@ -2223,7 +2241,7 @@ def wiki_run(
                     for i, sc in enumerate(_site_configs):
                         # Advance display to next site (skip first)
                         if i > 0 and multi_site:
-                            display.advance_site(sc["short_name"], i)
+                            display.advance_site(sc["base_url"], i)
 
                         # Stop if budget or page limit exhausted
                         if remaining_budget <= 0:
