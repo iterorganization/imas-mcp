@@ -1500,16 +1500,15 @@ def wiki_run(
             from imas_codex.embeddings.readiness import ensure_embedding_ready
 
             _style_map = {
-                "info": "",
-                "dim": "[dim]",
-                "warning": "[yellow]",
-                "success": "[green]",
-                "error": "[red]",
+                "info": ("", ""),
+                "dim": ("[dim]", "[/dim]"),
+                "warning": ("[yellow]", "[/yellow]"),
+                "success": ("[green]", "[/green]"),
+                "error": ("[red]", "[/red]"),
             }
 
             def _readiness_log(msg: str, style: str = "info") -> None:
-                prefix = _style_map.get(style, "")
-                suffix = f"[/{style}]" if prefix else ""
+                prefix, suffix = _style_map.get(style, ("", ""))
                 log_print(f"{prefix}{rich_escape(msg)}{suffix}")
 
             ok, msg = ensure_embedding_ready(log_fn=_readiness_log, timeout=60.0)
