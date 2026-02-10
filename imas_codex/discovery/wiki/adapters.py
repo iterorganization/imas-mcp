@@ -931,11 +931,145 @@ def _fetch_html_direct(url: str, timeout: float = 10.0) -> str | None:
         return None
 
 
+# SOCKS proxy port for laptop tunnel (iter → laptop VPN → internet)
+_SOCKS_PORT = 19080
+_socks_tunnel_checked = False
+_socks_tunnel_available = False
+
+
+def _ensure_socks_tunnel() -> bool:
+    """Ensure SOCKS tunnel to laptop is available.
+
+    Establishes a SOCKS5 tunnel via the laptop host which has VPN access.
+    Uses SSH ControlMaster for connection reuse.
+
+    Returns:
+        True if tunnel is available, False otherwise
+    """
+    global _socks_tunnel_checked, _socks_tunnel_available
+
+    if _socks_tunnel_checked:
+        return _socks_tunnel_available
+
+    _socks_tunnel_checked = True
+
+    # Check if laptop host is reachable (reverse tunnel must be active)
+    try:
+        result = subprocess.run(
+            ["ssh", "-O", "check", "laptop"],
+            capture_output=True,
+            timeout=5,
+        )
+        laptop_reachable = result.returncode == 0
+    except (subprocess.TimeoutExpired, Exception):
+        laptop_reachable = False
+
+    if not laptop_reachable:
+        # Try to establish connection (will fail if reverse tunnel not active)
+        try:
+            result = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=5", "-O", "exit", "laptop"],
+                capture_output=True,
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+        try:
+            result = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=5", "-f", "-N", "laptop"],
+                capture_output=True,
+                timeout=15,
+            )
+            laptop_reachable = result.returncode == 0
+        except Exception:
+            laptop_reachable = False
+
+    if not laptop_reachable:
+        logger.debug("Laptop reverse tunnel not available")
+        _socks_tunnel_available = False
+        return False
+
+    # Check if SOCKS port is already bound
+    try:
+        result = subprocess.run(
+            ["ssh", "laptop", f"ss -tln | grep -q ':{_SOCKS_PORT}'"],
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            # Already have a SOCKS tunnel running
+            _socks_tunnel_available = True
+            logger.debug("SOCKS tunnel already active on port %d", _SOCKS_PORT)
+            return True
+    except Exception:
+        pass
+
+    # Start SOCKS tunnel
+    try:
+        result = subprocess.run(
+            ["ssh", "-D", str(_SOCKS_PORT), "-f", "-N", "laptop"],
+            capture_output=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            _socks_tunnel_available = True
+            logger.info("Started SOCKS tunnel on port %d via laptop", _SOCKS_PORT)
+            return True
+        elif b"Address already in use" in result.stderr:
+            # Another process using the port, assume it's our tunnel
+            _socks_tunnel_available = True
+            return True
+    except Exception as e:
+        logger.debug("Failed to start SOCKS tunnel: %s", e)
+
+    _socks_tunnel_available = False
+    return False
+
+
+def _fetch_html_via_socks(url: str, timeout: int = 15) -> str | None:
+    """Fetch HTML via SOCKS proxy through laptop.
+
+    Routes traffic: iter → localhost:SOCKS_PORT → laptop → VPN → target.
+    Much faster than SSH double-hop (~1.5s vs ~17s).
+
+    Args:
+        url: URL to fetch
+        timeout: Curl timeout in seconds
+
+    Returns:
+        HTML content string, or None on failure
+    """
+    if not _ensure_socks_tunnel():
+        return None
+
+    cmd = [
+        "curl",
+        "-sk",
+        f"--socks5-hostname=localhost:{_SOCKS_PORT}",
+        f"--connect-timeout={timeout}",
+        url,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=timeout + 5)
+        if result.returncode != 0:
+            logger.debug("SOCKS curl failed for %s (exit %d)", url, result.returncode)
+            return None
+        return result.stdout.decode("utf-8", errors="replace")
+    except subprocess.TimeoutExpired:
+        logger.debug("SOCKS curl timed out for %s", url)
+        return None
+    except Exception as e:
+        logger.debug("SOCKS curl error for %s: %s", url, e)
+        return None
+
+
 def _fetch_html_via_ssh(url: str, ssh_host: str, timeout: int = 60) -> str | None:
     """Fetch HTML content via SSH-proxied curl.
 
-    Used when the target URL is only reachable from the facility host,
-    not from the machine running the CLI.
+    Used as fallback when SOCKS tunnel is unavailable. Routes traffic
+    via SSH to the facility host which then makes the HTTP request.
+    Slower than SOCKS (~17s vs ~1.5s) due to SSH double-hop.
 
     Args:
         url: URL to fetch
@@ -970,8 +1104,10 @@ def _fetch_html(
 ) -> str | None:
     """Fetch HTML with automatic strategy selection.
 
-    Tries direct HTTP first (fast, works with VPN or port forwarding),
-    then falls back to SSH proxy if configured and direct fails.
+    Tries methods in order of speed:
+    1. Direct HTTP (fast, works with VPN on current machine)
+    2. SOCKS proxy via laptop (fast, ~1.5s, routes via laptop VPN)
+    3. SSH to facility host (slow, ~17s, last resort)
 
     Args:
         url: URL to fetch
@@ -981,35 +1117,22 @@ def _fetch_html(
     Returns:
         HTML content string, or None if all methods fail
     """
-    # Try direct HTTP first — works when VPN is active or tunnel is set up
+    # Try direct HTTP first — works when VPN is active locally
     html = _fetch_html_direct(url, timeout=timeout)
     if html is not None:
         return html
 
-    # Fall back to SSH proxy if configured
+    # Try SOCKS proxy via laptop — fast path when on iter
+    html = _fetch_html_via_socks(url)
+    if html is not None:
+        return html
+
+    # Fall back to SSH proxy if configured — slow but reliable
     if ssh_host:
-        logger.debug("Direct HTTP failed, falling back to SSH proxy via %s", ssh_host)
+        logger.debug("SOCKS unavailable, falling back to SSH proxy via %s", ssh_host)
         return _fetch_html_via_ssh(url, ssh_host)
 
     return None
-
-
-def _probe_direct_access(url: str, timeout: float = 10.0) -> bool:
-    """Probe whether direct HTTP access works for a URL.
-
-    Makes a single test request to determine if the URL is directly
-    reachable. Used to avoid repeated timeout penalties during bulk
-    operations like BFS crawling.
-
-    Args:
-        url: URL to probe
-        timeout: Connection timeout in seconds
-
-    Returns:
-        True if direct access works, False otherwise
-    """
-    result = _fetch_html_direct(url, timeout=timeout)
-    return result is not None
 
 
 class TWikiStaticAdapter(WikiAdapter):
@@ -1172,28 +1295,18 @@ class TWikiStaticAdapter(WikiAdapter):
         if on_progress:
             on_progress(f"scanning {len(pages)} pages for artifacts", None)
 
-        # Probe direct access once to avoid repeated timeouts
-        probe_url = f"{effective_base_url}/WebTopicList.html"
-        use_direct = _probe_direct_access(probe_url)
-        if use_direct:
-            logger.info("Direct HTTP access available for %s", effective_base_url)
+        # Log access method (determined automatically by _fetch_html)
+        if _ensure_socks_tunnel():
+            logger.info("Using SOCKS proxy for artifact scan")
         elif self._ssh_host:
             logger.info("Using SSH proxy via %s for artifact scan", self._ssh_host)
-
-        def _fetch_page_html(url: str) -> str | None:
-            """Fetch a single page using probed strategy."""
-            if use_direct:
-                return _fetch_html_direct(url)
-            elif self._ssh_host:
-                return _fetch_html_via_ssh(url, self._ssh_host)
-            return None
 
         try:
             for i, page in enumerate(pages):
                 if not page.url:
                     continue
 
-                html_text = _fetch_page_html(page.url)
+                html_text = _fetch_html(page.url, ssh_host=self._ssh_host)
                 if html_text is None:
                     continue
 
@@ -1347,33 +1460,18 @@ class StaticHtmlAdapter(WikiAdapter):
                 queue.append(url)
                 seen_urls.add(url)
 
-        # Probe direct access once to avoid repeated timeouts during BFS
-        probe_url = portal_candidates[0]
-        use_direct = _probe_direct_access(probe_url)
-        if use_direct:
-            logger.info("Direct HTTP access available for %s", effective_base_url)
+        # Log access method (determined automatically by _fetch_html)
+        if _ensure_socks_tunnel():
+            logger.info("Using SOCKS proxy for BFS crawl")
         elif self._ssh_host:
             logger.info("Using SSH proxy via %s for BFS crawl", self._ssh_host)
-
-        def _fetch_url(url: str) -> tuple[str | None, str]:
-            """Fetch URL content using probed strategy."""
-            if use_direct:
-                html_text = _fetch_html_direct(url)
-            elif self._ssh_host:
-                html_text = _fetch_html_via_ssh(url, self._ssh_host)
-            else:
-                html_text = _fetch_html_direct(url)
-            content_type = "text/html" if html_text else ""
-            return html_text, content_type
 
         try:
             while queue:
                 current_url = queue.pop(0)
 
-                html_text, content_type = _fetch_url(current_url)
+                html_text = _fetch_html(current_url, ssh_host=self._ssh_host)
                 if html_text is None:
-                    continue
-                if "html" not in content_type:
                     continue
 
                 # Extract page name from URL path
