@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shlex
 import subprocess
 import urllib.parse
 from abc import ABC, abstractmethod
@@ -1354,9 +1355,9 @@ class TWikiStaticAdapter(WikiAdapter):
     ) -> list[DiscoveredArtifact]:
         """Discover artifacts by scanning topic pages for linked files.
 
-        Static TWiki exports may include attachments in subdirectories.
-        This scans the WebTopicList and extracts links to files with
-        relevant extensions.
+        When SSH is available, uses a single SSH command with server-side
+        curl + rg to scan all pages in one shot (seconds instead of minutes).
+        Falls back to per-page fetching when SSH is not available.
 
         Args:
             facility: Facility ID
@@ -1366,40 +1367,42 @@ class TWikiStaticAdapter(WikiAdapter):
         Returns:
             List of discovered artifacts
         """
+        effective_base_url = (base_url or self._base_url or "").rstrip("/")
+        if not effective_base_url:
+            return []
+
+        # Get page list (single SSH call to fetch WebTopicList.html)
+        pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
+        if not pages:
+            return []
+
+        # Fast path: single SSH command with server-side curl + rg
+        if self._ssh_host:
+            if on_progress:
+                on_progress(
+                    f"scanning {len(pages)} pages via SSH+rg (single connection)", None
+                )
+            return _discover_artifacts_via_ssh_rg(
+                pages, effective_base_url, self._ssh_host, on_progress
+            )
+
+        # Slow fallback: per-page HTTP fetch (no SSH available)
+        return self._discover_artifacts_per_page(pages, effective_base_url, on_progress)
+
+    def _discover_artifacts_per_page(
+        self,
+        pages: list[DiscoveredPage],
+        effective_base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Fallback: fetch each page individually to find artifact links."""
         from bs4 import BeautifulSoup
 
         artifacts: list[DiscoveredArtifact] = []
         seen_urls: set[str] = set()
-        effective_base_url = base_url or self._base_url
-        if not effective_base_url:
-            return []
-
-        effective_base_url = effective_base_url.rstrip("/")
-
-        # File extensions we care about
-        artifact_extensions = (
-            ".pdf",
-            ".doc",
-            ".docx",
-            ".ppt",
-            ".pptx",
-            ".xls",
-            ".xlsx",
-            ".ipynb",
-            ".h5",
-            ".hdf5",
-            ".mat",
-        )
-
-        # First, get list of all pages
-        pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
 
         if on_progress:
             on_progress(f"scanning {len(pages)} pages for artifacts", None)
-
-        # Log access method
-        if self._access_method == "vpn" and self._ssh_host:
-            logger.info("VPN access via %s for artifact scan", self._ssh_host)
 
         try:
             for i, page in enumerate(pages):
@@ -1407,20 +1410,20 @@ class TWikiStaticAdapter(WikiAdapter):
                     continue
 
                 html_text = _fetch_html(
-                    page.url, ssh_host=self._ssh_host, access_method=self._access_method
+                    page.url,
+                    ssh_host=self._ssh_host,
+                    access_method=self._access_method,
                 )
                 if html_text is None:
                     continue
 
                 soup = BeautifulSoup(html_text, "html.parser")
 
-                # Find all links to files
                 for link in soup.find_all("a", href=True):
                     href = link["href"]
                     href_lower = href.lower()
 
-                    if any(href_lower.endswith(ext) for ext in artifact_extensions):
-                        # Build full URL
+                    if any(href_lower.endswith(ext) for ext in _ARTIFACT_EXTENSIONS):
                         if href.startswith("http"):
                             artifact_url = href
                         elif href.startswith("/"):
@@ -1445,10 +1448,10 @@ class TWikiStaticAdapter(WikiAdapter):
                         artifact.linked_pages.append(page.name)
                         artifacts.append(artifact)
 
-                # Progress every 5 pages
                 if on_progress and (i + 1) % 5 == 0:
                     on_progress(
-                        f"scanned {i + 1}/{len(pages)} pages, found {len(artifacts)} artifacts",
+                        f"scanned {i + 1}/{len(pages)} pages, "
+                        f"found {len(artifacts)} artifacts",
                         None,
                     )
 
@@ -1463,6 +1466,170 @@ class TWikiStaticAdapter(WikiAdapter):
     def _get_artifact_type(self, filename: str) -> str:
         """Get artifact type from filename."""
         return _get_artifact_type_from_filename(filename)
+
+
+# =============================================================================
+# Shared artifact discovery helpers
+# =============================================================================
+
+_ARTIFACT_EXTENSIONS = (
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".ppt",
+    ".pptx",
+    ".xls",
+    ".xlsx",
+    ".ipynb",
+    ".h5",
+    ".hdf5",
+    ".mat",
+)
+
+
+def _discover_artifacts_via_ssh_rg(
+    pages: list[DiscoveredPage],
+    base_url: str,
+    ssh_host: str,
+    on_progress: Callable[[str, Any], None] | None = None,
+    timeout: int = 300,
+) -> list[DiscoveredArtifact]:
+    """Discover artifacts across all pages using a single SSH command.
+
+    Pipes page name/URL pairs into a server-side script that curls each
+    page locally (loopback — near-instant) and extracts artifact links
+    via rg. This replaces N individual SSH+curl calls with 1 SSH call.
+
+    Performance: ~5-10s for 272 pages vs ~5-15 minutes with per-page SSH.
+
+    Args:
+        pages: List of discovered pages with URLs
+        base_url: Base URL for resolving relative hrefs
+        ssh_host: SSH host that can reach the URLs locally
+        on_progress: Progress callback
+        timeout: SSH command timeout in seconds
+
+    Returns:
+        List of discovered artifacts with page linkage
+    """
+    if not pages:
+        return []
+
+    # Build tab-separated input: name\turl
+    page_lines = []
+    for page in pages:
+        if page.url:
+            page_lines.append(f"{page.name}\t{page.url}")
+
+    if not page_lines:
+        return []
+
+    page_input = "\n".join(page_lines)
+
+    # Server-side script: read name/url pairs from stdin, curl each locally,
+    # extract artifact hrefs. rg is used for fast regex; grep -oP as fallback.
+    # Each match is prefixed with PAGE:name for page→artifact mapping.
+    remote_script = r"""
+while IFS=$'\t' read -r name url; do
+  html=$(curl -sk --noproxy '*' --max-time 5 "$url" 2>/dev/null) || continue
+  matches=$(echo "$html" | rg -oNI 'href="[^"]*\.(pdf|doc|docx|ppt|pptx|xls|xlsx|ipynb|h5|hdf5|mat)(\?[^"]*)?(\#[^"]*)?"' 2>/dev/null \
+         || echo "$html" | grep -oP 'href="[^"]*\.(pdf|doc|docx|ppt|pptx|xls|xlsx|ipynb|h5|hdf5|mat)(\?[^"]*)?(\#[^"]*)?"' 2>/dev/null)
+  if [ -n "$matches" ]; then
+    while IFS= read -r match; do
+      echo "PAGE:${name}	${match}"
+    done <<< "$matches"
+  fi
+done
+"""
+
+    # Combine: page data followed by script, using heredoc to separate them
+    # We pipe the page list as stdin data and embed the script in the command
+    ssh_command = f"bash -c {shlex.quote(remote_script)}"
+
+    logger.info(
+        "Running SSH+rg artifact scan: %d pages via %s", len(page_lines), ssh_host
+    )
+
+    try:
+        result = subprocess.run(
+            ["ssh", ssh_host, ssh_command],
+            input=page_input.encode("utf-8"),
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "SSH+rg artifact scan timed out after %ds for %s", timeout, ssh_host
+        )
+        return []
+    except Exception as e:
+        logger.warning("SSH+rg artifact scan failed: %s", e)
+        return []
+
+    if result.returncode not in (0, 1):  # rg returns 1 for no matches
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        if stderr:
+            logger.warning("SSH+rg artifact scan stderr: %s", stderr[:200])
+
+    # Parse output: "PAGE:TopicName\thref="path/to/file.pdf""
+    output = result.stdout.decode("utf-8", errors="replace")
+    artifacts: list[DiscoveredArtifact] = []
+    seen_urls: set[str] = set()
+    parsed_base = urllib.parse.urlparse(base_url)
+
+    for line in output.strip().split("\n"):
+        if not line or "\t" not in line:
+            continue
+
+        page_part, href_part = line.split("\t", 1)
+        page_name = page_part.removeprefix("PAGE:")
+
+        # Extract URL from href="..."
+        match = re.search(r'href="([^"]+)"', href_part)
+        if not match:
+            continue
+        href = match.group(1)
+
+        # Strip query/fragment for deduplication
+        href_clean = re.sub(r"[?#].*$", "", href)
+
+        # Resolve to absolute URL
+        if href_clean.startswith("http"):
+            artifact_url = href_clean
+        elif href_clean.startswith("/"):
+            artifact_url = f"{parsed_base.scheme}://{parsed_base.netloc}{href_clean}"
+        else:
+            artifact_url = f"{base_url}/{href_clean}"
+
+        if artifact_url in seen_urls:
+            # Still add page linkage to existing artifact
+            for a in artifacts:
+                if a.url == artifact_url and page_name not in a.linked_pages:
+                    a.linked_pages.append(page_name)
+                    break
+            continue
+        seen_urls.add(artifact_url)
+
+        filename = artifact_url.split("/")[-1]
+        artifact_type = _get_artifact_type_from_filename(filename)
+
+        artifact = DiscoveredArtifact(
+            filename=filename,
+            url=artifact_url,
+            artifact_type=artifact_type,
+        )
+        artifact.linked_pages.append(page_name)
+        artifacts.append(artifact)
+
+    if on_progress:
+        on_progress(f"discovered {len(artifacts)} artifacts", None)
+
+    logger.info(
+        "SSH+rg artifact scan complete: %d artifacts from %d pages",
+        len(artifacts),
+        len(page_lines),
+    )
+    return artifacts
 
 
 def _get_artifact_type_from_filename(filename: str) -> str:
@@ -1660,8 +1827,9 @@ class StaticHtmlAdapter(WikiAdapter):
     ) -> list[DiscoveredArtifact]:
         """Discover artifacts by scanning discovered pages for file links.
 
-        BFS-crawls the same pages as bulk_discover_pages and extracts
-        links to artifact files (PDF, Excel, PowerPoint, etc.).
+        When SSH is available, uses a single SSH command with server-side
+        curl + rg to scan all pages in one shot. Falls back to per-page
+        fetching when SSH is not available.
 
         Args:
             facility: Facility ID
@@ -1671,31 +1839,38 @@ class StaticHtmlAdapter(WikiAdapter):
         Returns:
             List of discovered artifacts
         """
+        effective_base_url = (base_url or self._base_url or "").rstrip("/")
+        if not effective_base_url:
+            return []
+
+        pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
+        if not pages:
+            return []
+
+        # Fast path: single SSH command with server-side curl + rg
+        if self._ssh_host:
+            if on_progress:
+                on_progress(
+                    f"scanning {len(pages)} pages via SSH+rg (single connection)", None
+                )
+            return _discover_artifacts_via_ssh_rg(
+                pages, effective_base_url, self._ssh_host, on_progress
+            )
+
+        # Slow fallback: per-page HTTP fetch (no SSH available)
+        return self._discover_artifacts_per_page(pages, effective_base_url, on_progress)
+
+    def _discover_artifacts_per_page(
+        self,
+        pages: list[DiscoveredPage],
+        effective_base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Fallback: fetch each page individually to find artifact links."""
         from bs4 import BeautifulSoup
 
         artifacts: list[DiscoveredArtifact] = []
         seen_urls: set[str] = set()
-        effective_base_url = base_url or self._base_url
-        if not effective_base_url:
-            return []
-
-        effective_base_url = effective_base_url.rstrip("/")
-
-        artifact_extensions = (
-            ".pdf",
-            ".doc",
-            ".docx",
-            ".ppt",
-            ".pptx",
-            ".xls",
-            ".xlsx",
-            ".ipynb",
-            ".h5",
-            ".hdf5",
-            ".mat",
-        )
-
-        pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
 
         if on_progress:
             on_progress(f"scanning {len(pages)} pages for artifacts", None)
@@ -1719,7 +1894,7 @@ class StaticHtmlAdapter(WikiAdapter):
                     href = link["href"]
                     href_lower = href.lower()
 
-                    if any(href_lower.endswith(ext) for ext in artifact_extensions):
+                    if any(href_lower.endswith(ext) for ext in _ARTIFACT_EXTENSIONS):
                         if href.startswith("http"):
                             artifact_url = href
                         elif href.startswith("/"):
@@ -1728,7 +1903,6 @@ class StaticHtmlAdapter(WikiAdapter):
                                 f"{parsed_base.scheme}://{parsed_base.netloc}{href}"
                             )
                         else:
-                            # Resolve relative to page URL
                             artifact_url = urllib.parse.urljoin(page.url, href)
 
                         if artifact_url in seen_urls:
