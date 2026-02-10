@@ -254,7 +254,7 @@ def generate_embedding_text(
 
 def compute_content_hash(text: str) -> str:
     """
-    Compute SHA256 hash of content for cache busting.
+    Compute SHA256 hash of content for change tracking.
 
     Args:
         text: Text to hash (typically enriched_text)
@@ -263,6 +263,24 @@ def compute_content_hash(text: str) -> str:
         First 16 characters of SHA256 hex digest
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def compute_embedding_hash(text: str, model_name: str) -> str:
+    """
+    Compute hash for embedding cache validation including model name.
+
+    Includes model name so changing the embedding model invalidates
+    cached embeddings even if the content text hasn't changed.
+
+    Args:
+        text: Embedding text content
+        model_name: Full model name (e.g., "Qwen/Qwen3-Embedding-0.6B")
+
+    Returns:
+        First 16 characters of SHA256 hex digest
+    """
+    combined = f"{model_name}:{text}"
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
 
 
 # Embedding change types for tracking what changed between versions
@@ -647,7 +665,13 @@ def update_path_embeddings(
     if not paths_data:
         return {"updated": 0, "cached": 0, "total": 0, "changes": 0}
 
+    # Resolve model name early for hash computation
+    from imas_codex.settings import get_imas_embedding_model
+
+    resolved_model = model_name or get_imas_embedding_model()
+
     # Step 1: Generate embedding text and compute hashes for all paths
+    # Hash includes model name so changing model invalidates cached embeddings
     path_ids = list(paths_data.keys())
     embedding_texts = {}
     content_hashes = {}
@@ -657,7 +681,7 @@ def update_path_embeddings(
         ids_meta = ids_info.get(ids_name, {})
         text = generate_embedding_text(path_id, path_info, ids_meta)
         embedding_texts[path_id] = text
-        content_hashes[path_id] = compute_content_hash(text)
+        content_hashes[path_id] = compute_embedding_hash(text, resolved_model)
 
     # Step 2: Get existing data from graph for cache validation AND change detection
     existing_data = {}
@@ -713,7 +737,7 @@ def update_path_embeddings(
     # Step 4: Generate embeddings for paths that need update
     texts_to_embed = [embedding_texts[pid] for pid in paths_to_update]
     embeddings = generate_embeddings_batch(
-        texts_to_embed, model_name, batch_size, use_rich=use_rich
+        texts_to_embed, resolved_model, batch_size, use_rich=use_rich
     )
 
     # Step 4: Store embeddings in graph in batches with progress tracking
