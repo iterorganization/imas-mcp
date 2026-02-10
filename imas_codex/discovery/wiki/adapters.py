@@ -1397,12 +1397,9 @@ class TWikiStaticAdapter(WikiAdapter):
         if on_progress:
             on_progress(f"scanning {len(pages)} pages for artifacts", None)
 
-        # Log access method (only for VPN sites that need proxying)
-        if self._access_method == "vpn":
-            if _ensure_socks_tunnel():
-                logger.info("Using SOCKS proxy for artifact scan")
-            elif self._ssh_host:
-                logger.info("Using SSH proxy via %s for artifact scan", self._ssh_host)
+        # Log access method
+        if self._access_method == "vpn" and self._ssh_host:
+            logger.info("VPN access via %s for artifact scan", self._ssh_host)
 
         try:
             for i, page in enumerate(pages):
@@ -1448,8 +1445,8 @@ class TWikiStaticAdapter(WikiAdapter):
                         artifact.linked_pages.append(page.name)
                         artifacts.append(artifact)
 
-                # Progress every 20 pages
-                if on_progress and (i + 1) % 20 == 0:
+                # Progress every 5 pages
+                if on_progress and (i + 1) % 5 == 0:
                     on_progress(
                         f"scanned {i + 1}/{len(pages)} pages, found {len(artifacts)} artifacts",
                         None,
@@ -1749,7 +1746,7 @@ class StaticHtmlAdapter(WikiAdapter):
                         artifact.linked_pages.append(page.name)
                         artifacts.append(artifact)
 
-                if on_progress and (i + 1) % 20 == 0:
+                if on_progress and (i + 1) % 5 == 0:
                     on_progress(
                         f"scanned {i + 1}/{len(pages)} pages, "
                         f"found {len(artifacts)} artifacts",

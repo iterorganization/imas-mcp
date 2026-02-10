@@ -21,10 +21,28 @@ data_systems:
 
 # Wiki/documentation sites
 # JT60SA documentation is hosted on nakasvr23 behind IFERC VPN.
-# Site 0: TWiki static export - analysis code documentation (Code web, ~285 topics)
-# Site 1: Server landing page - hardware, software, login, batch jobs, compilers
-# Site 2: Live TWiki Main web - EDAS manuals, API docs, shot reports, daily reports (~5500 topics)
+# Site 0: Live TWiki Main web - EDAS manuals, API docs, shot reports, daily reports (~5500 topics)
+# Site 1: TWiki static export - analysis code documentation (Code web, ~285 topics)
+# Site 2: Server landing page - hardware, software, login, batch jobs, compilers
 wiki_sites:
+  - url: http://157.111.10.188/twiki
+    name: twiki_main
+    site_type: twiki
+    webs:
+      - Main
+    access_method: vpn
+    auth_type: none
+    ssh_available: true
+    description: >-
+      JT-60SA Main TWiki web via live Apache/CGI. Contains EDAS tool manuals
+      (eGIS, eSLICE, eSURF), Eddb API documentation (C/Fortran/Python wrappers),
+      AnalysisDB and ExperimentDB system docs, discharge parameter handbook,
+      daily reports, shot reports, and operational reports.
+      ~5500 topics. Accessed via SSH-proxied curl to 157.111.10.188.
+    languages:
+      - ja
+      - en
+
   - url: https://nakasvr23.iferc.org/twiki_html
     portal_page: WebHome.html
     site_type: twiki_static
@@ -58,24 +76,6 @@ wiki_sites:
       - /idl             # IDL vendor documentation
       - /pv-wave         # PV-WAVE vendor documentation
       - /analysis        # Analysis tools help (external)
-
-  - url: http://157.111.10.188/twiki
-    name: twiki_main
-    site_type: twiki
-    webs:
-      - Main
-    access_method: vpn
-    auth_type: none
-    ssh_available: true
-    description: >-
-      JT-60SA Main TWiki web via live Apache/CGI. Contains EDAS tool manuals
-      (eGIS, eSLICE, eSURF), Eddb API documentation (C/Fortran/Python wrappers),
-      AnalysisDB and ExperimentDB system docs, discharge parameter handbook,
-      daily reports, shot reports, and operational reports.
-      ~5500 topics. Accessed via SSH-proxied curl to 157.111.10.188.
-    languages:
-      - ja
-      - en
 
 # User info discovery configuration
 user_info:

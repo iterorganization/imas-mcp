@@ -1655,13 +1655,7 @@ def wiki_run(
 
         # Site header - skip if sites table was already displayed
         if not multi_site_table:
-            if len(site_indices) > 1:
-                site_n = site_indices.index(site_idx) + 1
-                log_print(
-                    f"[bold cyan]({site_n}/{len(site_indices)}) {short_name}[/bold cyan]"
-                )
-            else:
-                log_print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
+            log_print(f"\n[bold cyan]{base_url}[/bold cyan]")
 
             if site_type == "twiki":
                 log_print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
@@ -1672,13 +1666,7 @@ def wiki_run(
                     f"[cyan]Using HTTP Basic authentication ({credential_service})[/cyan]"
                 )
             elif access_method == "vpn" and ssh_host:
-                # Check if SOCKS tunnel is available (faster path for VPN sites)
-                from imas_codex.discovery.wiki.adapters import _ensure_socks_tunnel
-
-                if _ensure_socks_tunnel():
-                    log_print("[cyan]Using SOCKS proxy via laptop[/cyan]")
-                else:
-                    log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
+                log_print(f"[cyan]VPN access via {ssh_host}[/cyan]")
 
         # Validate credentials once per credential_service
         if auth_type in ("tequila", "session", "basic") and credential_service:
@@ -1719,18 +1707,18 @@ def wiki_run(
                     from rich.status import Status
 
                     with Status(
-                        f"[cyan]Bulk discovery: {short_name}...[/cyan]",
+                        f"[cyan]Bulk discovery: {base_url}...[/cyan]",
                         console=console,
                         spinner="dots",
                     ) as status:
 
-                        def bulk_progress_rich(msg, _, _sn=short_name):
+                        def bulk_progress_rich(msg, _, _url=base_url):
                             if "pages" in msg:
-                                status.update(f"[cyan]{_sn}: {msg}[/cyan]")
+                                status.update(f"[cyan]{_url}: {msg}[/cyan]")
                             elif "creating" in msg:
-                                status.update(f"[cyan]{_sn}: {msg}[/cyan]")
+                                status.update(f"[cyan]{_url}: {msg}[/cyan]")
                             elif "created" in msg:
-                                status.update(f"[green]{_sn}: {msg}[/green]")
+                                status.update(f"[green]{_url}: {msg}[/green]")
 
                         if auth_type == "tequila" and credential_service:
                             bulk_discovered = bulk_discover_all_pages_http(
@@ -1790,7 +1778,7 @@ def wiki_run(
                         )
                     if bulk_discovered > 0:
                         wiki_logger.info(
-                            f"Discovered {bulk_discovered} pages from {short_name}"
+                            f"Discovered {bulk_discovered} pages from {base_url}"
                         )
 
             elif site_type in ("twiki", "twiki_static", "twiki_raw", "static_html"):
@@ -1847,13 +1835,13 @@ def wiki_run(
                     from rich.status import Status
 
                     with Status(
-                        f"[cyan]{label} discovery: {short_name}...[/cyan]",
+                        f"[cyan]{label} discovery: {base_url}...[/cyan]",
                         console=console,
                         spinner="dots",
                     ) as status:
 
-                        def twiki_progress_rich(msg, _, _sn=short_name):
-                            status.update(f"[cyan]{_sn}: {msg}[/cyan]")
+                        def twiki_progress_rich(msg, _, _url=base_url):
+                            status.update(f"[cyan]{_url}: {msg}[/cyan]")
 
                         bulk_discovered = discover_func(
                             *discover_args, twiki_progress_rich
@@ -1867,7 +1855,7 @@ def wiki_run(
                     bulk_discovered = discover_func(*discover_args, twiki_progress_log)
                     if bulk_discovered > 0:
                         wiki_logger.info(
-                            f"Discovered {bulk_discovered} pages from {short_name}"
+                            f"Discovered {bulk_discovered} pages from {base_url}"
                         )
 
         # Artifact scanning (all site types — adapters handle platform differences)
@@ -1899,16 +1887,18 @@ def wiki_run(
                 from rich.status import Status
 
                 with Status(
-                    f"[cyan]Artifact discovery: {short_name}...[/cyan]",
+                    f"[cyan]Artifact discovery: {base_url}...[/cyan]",
                     console=console,
                     spinner="dots",
                 ) as status:
 
-                    def artifact_progress_rich(msg, _, _sn=short_name):
-                        if "batch" in msg:
-                            status.update(f"[cyan]{_sn} artifacts: {msg}[/cyan]")
-                        elif "created" in msg:
-                            status.update(f"[green]{_sn} artifacts: {msg}[/green]")
+                    def artifact_progress_rich(msg, _, _url=base_url):
+                        if "scanned" in msg or "scanning" in msg:
+                            status.update(f"[cyan]{_url}: {msg}[/cyan]")
+                        elif "batch" in msg:
+                            status.update(f"[cyan]{_url} artifacts: {msg}[/cyan]")
+                        elif "created" in msg or "discovered" in msg:
+                            status.update(f"[green]{_url}: {msg}[/green]")
 
                     artifacts_discovered = bulk_discover_artifacts(
                         facility=facility,
