@@ -25,7 +25,7 @@ class EmbeddingBackend(Enum):
     """Embedding backend selection.
 
     Remote backend includes a fallback chain:
-      remote (SLURM GPU) → local (login node CPU) → openrouter (cloud API)
+      remote (login GPU) → local (CPU) → openrouter (cloud API)
 
     Explicit local or openrouter backends have no fallback.
     """

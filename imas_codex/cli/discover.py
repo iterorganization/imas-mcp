@@ -1483,7 +1483,7 @@ def wiki_run(
 
     # Check embedding server availability upfront for ingestion mode.
     # Uses centralized readiness check which handles the full lifecycle:
-    # SLURM auto-start, TCP proxy, SSH tunnel (if off-ITER), health check.
+    # SSH tunnel (if off-ITER), systemd service start, health check.
     if not scan_only and not score_only:
         from imas_codex.embeddings.config import EmbeddingBackend
         from imas_codex.settings import get_embedding_backend

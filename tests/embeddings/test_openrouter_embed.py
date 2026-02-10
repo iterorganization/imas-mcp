@@ -34,9 +34,14 @@ class TestModelNameMapping:
         assert result == "qwen/qwen3-embedding-8b"
 
     def test_unsupported_model_raises(self):
-        """Test unsupported model raises ValueError."""
-        with pytest.raises(ValueError, match="not supported"):
-            get_openrouter_model_name("some/unsupported-model")
+        """Test model without org/name format raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot convert"):
+            get_openrouter_model_name("just-a-model-name")
+
+    def test_generic_conversion(self):
+        """Test generic HuggingFace to OpenRouter conversion via lowercase."""
+        result = get_openrouter_model_name("Qwen/Qwen3-Embedding-0.6B")
+        assert result == "qwen/qwen3-embedding-0.6b"
 
     def test_model_name_map_consistency(self):
         """Test MODEL_NAME_MAP values are all lowercase."""

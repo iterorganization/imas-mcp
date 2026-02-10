@@ -6,7 +6,7 @@ Supports multiple embedding backends:
 - openrouter: OpenRouter API for cloud embeddings
 
 Fallback chain for remote backend:
-  remote (SLURM GPU) → local (login node CPU) → openrouter (cloud API)
+  remote (login GPU) → local (CPU) → openrouter (cloud API)
 
 Explicit local or openrouter backends have no fallback.
 Cost tracking via EmbeddingCostTracker.

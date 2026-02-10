@@ -134,8 +134,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Path map ready"
 
-# Build embeddings using Encoder (Qwen3-Embedding-4B at 256d)
-# NO API key required - runs entirely locally
+# Build embeddings using Encoder (Qwen3-Embedding-0.6B at 256d)
+# NO API key required - runs entirely locally via CPU fallback
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building embeddings..." && \
     if [ -n "${IDS_FILTER}" ]; then \

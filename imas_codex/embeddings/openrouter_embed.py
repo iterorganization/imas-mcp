@@ -4,7 +4,7 @@ Uses Qwen3-Embedding via OpenRouter API with Matryoshka dimension
 projection to 256d.
 
 Model name mapping:
-- HuggingFace: Qwen/Qwen3-Embedding-4B (default), Qwen/Qwen3-Embedding-8B
+- HuggingFace: Qwen/Qwen3-Embedding-0.6B (default), Qwen/Qwen3-Embedding-4B, 8B
 - OpenRouter API: qwen/qwen3-embedding-4b, qwen/qwen3-embedding-8b
 
 Cost Tracking:
@@ -38,22 +38,13 @@ logger = logging.getLogger(__name__)
 # OpenRouter embedding API endpoint
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Model name mappings between HuggingFace and OpenRouter formats
-MODEL_NAME_MAP = {
-    "Qwen/Qwen3-Embedding-8B": "qwen/qwen3-embedding-8b",
-    "qwen/qwen3-embedding-8b": "qwen/qwen3-embedding-8b",
-    "Qwen/Qwen3-Embedding-4B": "qwen/qwen3-embedding-4b",
-    "qwen/qwen3-embedding-4b": "qwen/qwen3-embedding-4b",
-    "Qwen/Qwen3-Embedding-0.6B": "qwen/qwen3-embedding-0.6b",
-    "qwen/qwen3-embedding-0.6b": "qwen/qwen3-embedding-0.6b",
-}
+# Model name mappings between HuggingFace and OpenRouter formats.
+# Generic conversion: "Org/Model-Name" → "org/model-name"
+# Explicit overrides only needed when the mapping is non-trivial.
+MODEL_NAME_MAP: dict[str, str] = {}
 
-# Reverse mapping for validation
-OPENROUTER_TO_HF_MAP = {
-    "qwen/qwen3-embedding-8b": "Qwen/Qwen3-Embedding-8B",
-    "qwen/qwen3-embedding-4b": "Qwen/Qwen3-Embedding-4B",
-    "qwen/qwen3-embedding-0.6b": "Qwen/Qwen3-Embedding-0.6B",
-}
+# Reverse mapping for validation (populated dynamically)
+OPENROUTER_TO_HF_MAP: dict[str, str] = {}
 
 # Default timeout for embedding requests (seconds)
 DEFAULT_TIMEOUT = 120.0
@@ -64,7 +55,6 @@ CONNECT_TIMEOUT = 10.0
 EMBEDDING_MODEL_COSTS: dict[str, float] = {
     "qwen/qwen3-embedding-8b": 0.01,
     "qwen/qwen3-embedding-4b": 0.02,
-    "qwen/qwen3-embedding-0.6b": 0.02,
 }
 
 # Default fallback cost estimate for unknown models
@@ -205,25 +195,35 @@ class OpenRouterServerInfo:
 def get_openrouter_model_name(hf_model_name: str) -> str:
     """Convert HuggingFace model name to OpenRouter format.
 
+    Uses explicit overrides from MODEL_NAME_MAP first, then falls back
+    to generic conversion: "Org/Model-Name" → "org/model-name".
+
+    Availability is validated at request time by OpenRouter's API, not here.
+
     Args:
-        hf_model_name: Model name in HuggingFace format (e.g., Qwen/Qwen3-Embedding-0.6B)
+        hf_model_name: Model name in HuggingFace format (e.g., Qwen/Qwen3-Embedding-4B)
 
     Returns:
-        Model name in OpenRouter format (e.g., qwen/qwen3-embedding-0.6b)
+        Model name in OpenRouter format (e.g., qwen/qwen3-embedding-4b)
 
     Raises:
-        ValueError: If model is not supported by OpenRouter
+        ValueError: If model name format is unrecognizable
     """
+    # Check explicit overrides first
     openrouter_name = MODEL_NAME_MAP.get(hf_model_name)
-    if not openrouter_name:
-        # Try lowercase match
-        openrouter_name = MODEL_NAME_MAP.get(hf_model_name.lower())
-    if not openrouter_name:
-        raise ValueError(
-            f"Model '{hf_model_name}' not supported by OpenRouter. "
-            f"Supported models: {list(MODEL_NAME_MAP.keys())}"
-        )
-    return openrouter_name
+    if openrouter_name:
+        return openrouter_name
+
+    # Generic conversion: lowercase the HuggingFace name
+    # HuggingFace: "Org/Model-Name" → OpenRouter: "org/model-name"
+    name = hf_model_name.strip()
+    if "/" in name:
+        return name.lower()
+
+    raise ValueError(
+        f"Cannot convert '{hf_model_name}' to OpenRouter format. "
+        "Expected 'org/model-name' format."
+    )
 
 
 class OpenRouterEmbeddingClient:

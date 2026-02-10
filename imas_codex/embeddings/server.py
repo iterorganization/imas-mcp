@@ -1,18 +1,15 @@
 """FastAPI embedding server for GPU-accelerated remote embedding.
 
-This server runs on a GPU-equipped machine (e.g., ITER cluster) and provides
-an HTTP API for embedding text. Clients connect via SSH tunnel.
+Runs on the ITER login node using a T4 GPU and provides an HTTP API
+for embedding text.  Clients connect via localhost (on ITER) or SSH
+tunnel (from WSL/workstation).
 
-Start server:
-    imas-codex serve embed start --host 127.0.0.1 --port 18765
+Start server::
 
-With idle timeout (auto-shutdown after 30 minutes of inactivity):
-    imas-codex serve embed start --idle-timeout 1800
+    imas-codex serve embed start --gpu 1
 
-Multi-GPU (automatic when multiple GPUs visible):
-    CUDA_VISIBLE_DEVICES=0,1,2,3 imas-codex serve embed start
+Client access (via SSH tunnel from workstation)::
 
-Client access (via SSH tunnel):
     ssh -L 18765:127.0.0.1:18765 iter
     curl http://localhost:18765/health
 """
@@ -31,8 +28,6 @@ logger = logging.getLogger(__name__)
 
 # Global encoder instance (loaded at startup)
 _encoder = None
-_multi_process_pool = None  # SentenceTransformer multi-GPU pool
-_gpu_count: int = 0  # Number of GPUs in use
 _startup_time: float = 0
 _last_request_time: float = 0
 _idle_timeout: int = 0  # 0 = disabled
@@ -69,7 +64,6 @@ class HealthResponse(BaseModel):
     device: str = Field(..., description="Compute device (cuda/cpu)")
     gpu_name: str | None = Field(None, description="GPU name if available")
     gpu_memory_mb: int | None = Field(None, description="GPU memory in MB")
-    gpu_count: int = Field(0, description="Number of GPUs in use")
     uptime_seconds: float = Field(..., description="Server uptime in seconds")
     idle_seconds: float = Field(0, description="Seconds since last request")
     idle_timeout: int = Field(0, description="Auto-shutdown timeout (0=disabled)")
@@ -93,22 +87,20 @@ def _get_gpu_info() -> tuple[str | None, int | None]:
     return None, None
 
 
-def _get_cuda_device_count() -> int:
-    """Get number of visible CUDA devices."""
+def _cuda_available() -> bool:
+    """Check if CUDA is available."""
     try:
         import torch
 
-        if torch.cuda.is_available():
-            return torch.cuda.device_count()
-    except Exception:
-        pass
-    return 0
+        return torch.cuda.is_available()
+    except ImportError:
+        return False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load model at startup, cleanup at shutdown."""
-    global _encoder, _multi_process_pool, _gpu_count
+    global _encoder
     global _startup_time, _last_request_time, _shutdown_event
     global _gpu_name, _gpu_memory_mb, _cached_device_info, _cached_embedding_dim
 
@@ -121,29 +113,29 @@ async def lifespan(app: FastAPI):
     from imas_codex.settings import get_imas_embedding_model
 
     model_name = get_imas_embedding_model()
-    device = os.environ.get("CUDA_VISIBLE_DEVICES", None)
-    if device:
-        logger.info(f"Using CUDA device(s): {device}")
+    device = "cuda" if _cuda_available() else "cpu"
+
+    # Log CUDA device selection
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    if cuda_visible:
+        logger.info("CUDA_VISIBLE_DEVICES=%s", cuda_visible)
 
     config = EncoderConfig(
         model_name=model_name,
-        device="cuda" if _cuda_available() else "cpu",
+        device=device,
         # CRITICAL: Server must always use LOCAL backend (its own GPU).
-        # Without this, it reads pyproject.toml which may say "remote"
+        # Without this, it reads pyproject.toml which says "remote"
         # causing the server to try calling itself via HTTP.
         backend=EmbeddingBackend.LOCAL,
         normalize_embeddings=True,
         use_rich=False,
-        # GPU-appropriate batch size.  The default (250) is for CPU and
-        # causes OOM on P100 16GB with the 4B model because the
-        # MLP forward pass allocations exceed remaining VRAM.
-        batch_size=4,
+        # 0.6B model is small enough for generous batch sizes on T4.
+        batch_size=64,
     )
 
     _encoder = Encoder(config=config)
     _startup_time = time.time()
     _last_request_time = time.time()
-    _gpu_count = _get_cuda_device_count()
 
     # Cache GPU info once at startup to avoid blocking CUDA calls
     # in request handlers (which would block the async event loop)
@@ -158,39 +150,18 @@ async def lifespan(app: FastAPI):
 
     load_time = time.time() - start
     logger.info(
-        "Model %s loaded in %.1fs (device_info=%s)",
+        "Model %s loaded in %.1fs (device=%s, gpu=%s)",
         model_name,
         load_time,
-        _encoder.device_info,
+        device,
+        _gpu_name or "none",
     )
-
-    # Multi-GPU handling: use encode_multi_process to run one model
-    # replica per GPU for parallel throughput.  The 4B model fits
-    # comfortably on a single P100 (16GB), so each GPU gets its own copy.
-    if _gpu_count > 1:
-        model_device = _encoder.get_model().device
-        if str(model_device).startswith("cuda"):
-            try:
-                model = _encoder.get_model()
-                devices = [f"cuda:{i}" for i in range(_gpu_count)]
-                _multi_process_pool = model.start_multi_process_pool(devices)
-                logger.info("Multi-GPU pool started: %d GPUs %s", _gpu_count, devices)
-            except Exception as e:
-                logger.warning(
-                    "Failed to start multi-GPU pool, using single GPU: %s", e
-                )
-                _multi_process_pool = None
-                _gpu_count = 1
-        else:
-            logger.info("Model on CPU, multi-GPU pool skipped")
-    else:
-        logger.info("Single GPU mode (gpu_count=%d)", _gpu_count)
 
     # Start idle watchdog if timeout is configured
     _shutdown_event = asyncio.Event()
     watchdog_task = None
     if _idle_timeout > 0:
-        logger.info(f"Idle timeout enabled: {_idle_timeout}s")
+        logger.info("Idle timeout enabled: %ds", _idle_timeout)
         watchdog_task = asyncio.create_task(_idle_watchdog())
 
     yield
@@ -199,17 +170,8 @@ async def lifespan(app: FastAPI):
     if watchdog_task and not watchdog_task.done():
         watchdog_task.cancel()
 
-    # Stop multi-process pool
-    if _multi_process_pool is not None:
-        try:
-            _encoder.get_model().stop_multi_process_pool(_multi_process_pool)
-            logger.info("Multi-GPU pool stopped")
-        except Exception as e:
-            logger.warning("Error stopping multi-GPU pool: %s", e)
-
     logger.info("Shutting down embedding server")
     _encoder = None
-    _multi_process_pool = None
 
 
 async def _idle_watchdog() -> None:
@@ -228,57 +190,12 @@ async def _idle_watchdog() -> None:
             return
 
 
-def _cuda_available() -> bool:
-    """Check if CUDA is available."""
-    try:
-        import torch
-
-        return torch.cuda.is_available()
-    except ImportError:
-        return False
-
-
 def _encode_texts_sync(
     texts: list[str],
     normalize: bool,
     batch_size: int,
 ) -> Any:
-    """Synchronous encoding helper (runs in thread pool via asyncio.to_thread).
-
-    Checks multi-process pool health before using it.  Falls back to
-    single-GPU encoding if pool workers are dead.
-    """
-    import numpy as np
-
-    pool = _multi_process_pool
-
-    if pool is not None:
-        # Check if all pool workers are still alive
-        processes = pool.get("processes", [])
-        if processes and not all(p.is_alive() for p in processes):
-            alive_count = sum(1 for p in processes if p.is_alive())
-            logger.warning(
-                "Multi-GPU pool has dead workers (%d/%d alive), "
-                "falling back to single GPU",
-                alive_count,
-                len(processes),
-            )
-            _recover_from_pool_failure()
-            pool = None
-
-    if pool is not None:
-        model = _encoder.get_model()
-        embeddings = model.encode_multi_process(
-            texts,
-            pool,
-            normalize_embeddings=normalize,
-            batch_size=batch_size,
-        )
-        if not isinstance(embeddings, np.ndarray):
-            embeddings = np.array(embeddings)
-        return embeddings
-
-    # Single-GPU encoding fallback
+    """Synchronous encoding helper (runs in thread pool via asyncio.to_thread)."""
     model = _encoder.get_model()
     return model.encode(
         texts,
@@ -289,32 +206,12 @@ def _encode_texts_sync(
     )
 
 
-def _recover_from_pool_failure() -> None:
-    """Terminate dead multi-process pool and fall back to single GPU."""
-    global _multi_process_pool, _gpu_count
-
-    if _multi_process_pool is not None:
-        try:
-            processes = _multi_process_pool.get("processes", [])
-            for p in processes:
-                if p.is_alive():
-                    p.terminate()
-            logger.info("Terminated multi-GPU pool processes")
-        except Exception as e:
-            logger.warning("Error terminating pool: %s", e)
-        _multi_process_pool = None
-
-    if _gpu_count > 1:
-        _gpu_count = 1
-    logger.warning("Fell back to single-GPU encoding")
-
-
 def create_app() -> FastAPI:
     """Create FastAPI application."""
     app = FastAPI(
         title="IMAS Codex Embedding Server",
         description="GPU-accelerated embedding service for IMAS Codex",
-        version="1.0.0",
+        version="2.0.0",
         lifespan=lifespan,
     )
 
@@ -334,7 +231,6 @@ def create_app() -> FastAPI:
             device=_cached_device_info,
             gpu_name=_gpu_name,
             gpu_memory_mb=_gpu_memory_mb,
-            gpu_count=_gpu_count,
             uptime_seconds=time.time() - _startup_time,
             idle_seconds=time.time() - _last_request_time,
             idle_timeout=_idle_timeout,
@@ -383,13 +279,12 @@ def create_app() -> FastAPI:
                 _encode_timeout,
                 len(request.texts),
             )
-            _recover_from_pool_failure()
             raise HTTPException(
                 status_code=504,
                 detail=f"Encoding timed out after {_encode_timeout:.0f}s",
             ) from None
         except Exception as e:
-            logger.error(f"Embedding error: {e}")
+            logger.error("Embedding error: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @app.get("/info")
@@ -407,8 +302,6 @@ def create_app() -> FastAPI:
             "gpu": {
                 "name": _gpu_name,
                 "memory_mb": _gpu_memory_mb,
-                "count": _gpu_count,
-                "multi_process": _multi_process_pool is not None,
                 "cuda_available": _cuda_available(),
             },
             "config": {
@@ -419,9 +312,8 @@ def create_app() -> FastAPI:
                 "uptime_seconds": time.time() - _startup_time,
                 "idle_seconds": time.time() - _last_request_time,
                 "idle_timeout": _idle_timeout,
-                "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
                 "hostname": os.uname().nodename,
-                "version": "1.0.0",
+                "version": "2.0.0",
             },
         }
 

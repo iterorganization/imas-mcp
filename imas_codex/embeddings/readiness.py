@@ -3,20 +3,16 @@
 Single entry point for ensuring the remote embedding server is available
 before starting long-running operations (wiki discovery, signal enrichment, etc.).
 
-Handles the full lifecycle depending on where the client is running:
+Architecture::
 
-On ITER login node (98dci4-*):
-  1. Quick health check → return if already healthy
-  2. Call ensure_server() → submit SLURM job + TCP proxy + wait
-  3. Final health check
+    On ITER login node:
+      Client → localhost:18765 → embedding server (same machine, T4 GPU)
 
-Off ITER (workstation):
-  1. Quick health check → return if already healthy
-  2. Ensure SSH tunnel to ITER login node
-  3. Call ensure_server() → submit SLURM job + TCP proxy + wait (via SSH)
-  4. Final health check
+    Off ITER (WSL/workstation):
+      Client → localhost:18765 → SSH tunnel → ITER login:18765 → server
 
-Usage:
+Usage::
+
     from imas_codex.embeddings.readiness import ensure_embedding_ready
 
     ok, msg = ensure_embedding_ready()
@@ -28,7 +24,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import socket
 import subprocess
 import time
@@ -38,18 +33,39 @@ logger = logging.getLogger(__name__)
 
 def _is_on_iter() -> bool:
     """Check if running on an ITER cluster node."""
-    hostname = os.uname().nodename
-    if hostname.startswith("98dci4-"):
-        return True
-    return shutil.which("sbatch") is not None
+    return os.uname().nodename.startswith("98dci4-")
+
+
+def _try_start_service() -> bool:
+    """Attempt to start the embedding server via systemd user service.
+
+    Only works on ITER where the systemd service is installed.
+
+    Returns:
+        True if systemctl start was issued (doesn't guarantee server is ready)
+    """
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "start", "imas-codex-embed"],
+            timeout=10,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            logger.info("Started imas-codex-embed systemd service")
+            return True
+        logger.warning("systemctl start failed: %s", result.stderr.strip())
+        return False
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.debug("Cannot start systemd service: %s", e)
+        return False
 
 
 def _ensure_ssh_tunnel(port: int, ssh_host: str = "iter") -> bool:
     """Ensure SSH tunnel from workstation to ITER login node.
 
     Only needed when running off-ITER. The tunnel forwards
-    localhost:PORT → login:PORT, which chains through the TCP proxy
-    to reach the SLURM compute node.
+    localhost:PORT → login:PORT where the embedding server runs.
 
     Args:
         port: Port to forward
@@ -120,11 +136,8 @@ def ensure_embedding_ready(
     """Ensure the remote embedding server is available and ready.
 
     This is the **single entry point** for all CLI commands that need
-    embeddings. It handles the full lifecycle:
-
-    1. Quick health check — return immediately if server responds
-    2. SLURM auto-launch — submit job, set up TCP proxy, wait for ready
-    3. SSH tunnel — if running off-ITER, ensure SSH tunnel is active
+    embeddings. It checks server health and establishes SSH tunnel if
+    running off-ITER.
 
     Args:
         log_fn: Optional callback for status messages: log_fn(message, style)
@@ -157,7 +170,7 @@ def ensure_embedding_ready(
         log(f"Embedding server ready: {model} on {source}", "success")
         return True, f"Server ready: {model} on {source}"
 
-    log("Embedding server not responding, attempting auto-start...", "dim")
+    log("Embedding server not responding, checking connectivity...", "dim")
 
     # Step 2: If off-ITER, ensure SSH tunnel
     on_iter = _is_on_iter()
@@ -170,35 +183,12 @@ def ensure_embedding_ready(
                 "Or install autossh service: imas-codex serve tunnel service install"
             )
 
-    # Step 3: SLURM auto-launch via ensure_server()
-    # This works both on ITER (direct sbatch) and off-ITER (via SSH)
-    log("Ensuring SLURM embedding server is running...", "dim")
-    try:
-        from imas_codex.embeddings.slurm import ensure_server
-        from imas_codex.settings import get_imas_embedding_model
+    # Step 3: On ITER, try starting the systemd service
+    if on_iter:
+        log("Trying to start embedding service...", "dim")
+        _try_start_service()
 
-        model_name = get_imas_embedding_model()
-        ok = ensure_server(model_name=model_name)
-        if not ok:
-            return False, (
-                "SLURM auto-launch failed. The server could not be started.\n"
-                "Check SLURM queue: squeue -u $USER -n imas-codex-embed\n"
-                "Check logs: imas-codex serve embed logs\n"
-                "Submit manually: imas-codex serve embed submit"
-            )
-    except Exception as e:
-        logger.warning("SLURM auto-launch exception: %s", e)
-        # SLURM might not be available — fall through to health check
-        # (user might have started server some other way)
-
-    # Step 4: If we're off-ITER and just started the SLURM job, the SSH
-    # tunnel needs to be re-established since the TCP proxy destination
-    # may have changed (new compute node). Re-check the tunnel.
-    if not on_iter:
-        # Give a moment for TCP proxy to bind
-        time.sleep(1.0)
-
-    # Step 5: Final health check with generous timeout
+    # Step 4: Health check with retries (server might be starting)
     deadline = time.time() + timeout
     last_attempt = 0
     while time.time() < deadline:
@@ -215,11 +205,18 @@ def ensure_embedding_ready(
                 log(f"Waiting for server... ({remaining:.0f}s remaining)", "dim")
         time.sleep(2.0)
 
+    start_hint = (
+        "Start the server on ITER:\n"
+        "  ssh iter\n"
+        "  imas-codex serve embed start --gpu 1\n"
+        "Or install as systemd service:\n"
+        "  imas-codex serve embed service install\n"
+        "  imas-codex serve embed service start"
+    )
+
     return False, (
         f"Embedding server not available at {remote_url} after {timeout:.0f}s.\n"
-        "Check status: imas-codex serve embed status\n"
-        "Check logs: imas-codex serve embed logs\n"
-        "Submit manually: imas-codex serve embed submit"
+        f"{start_hint}"
     )
 
 
@@ -231,7 +228,7 @@ def _resolve_source_label(info) -> str:
     if not hostname:
         return "remote"
     if hostname.startswith("98dci4-gpu"):
-        return f"iter-titan ({hostname})"
+        return f"iter-gpu ({hostname})"
     if hostname.startswith("98dci4-srv"):
         return f"iter-login ({hostname})"
     return hostname

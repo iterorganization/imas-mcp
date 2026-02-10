@@ -2,11 +2,11 @@
 
 Supports multiple embedding backends:
 - local: Uses SentenceTransformer with optional GPU acceleration
-- remote: Connects to GPU server via HTTP (typically through SSH tunnel)
+- remote: Connects to GPU server via HTTP (ITER login node or SSH tunnel)
 - openrouter: Uses OpenRouter API for cloud embeddings
 
 Fallback chain for remote backend:
-  remote (SLURM GPU) → local (login node CPU) → openrouter (cloud API)
+  remote (login GPU server) → local (CPU) → openrouter (cloud API)
 
 Explicit local or openrouter backends have no fallback.
 The remote client has built-in retry logic for transient connection failures.
@@ -52,7 +52,7 @@ class Encoder:
     """Load a sentence transformer model and produce embeddings with optional caching.
 
     Fallback chain for remote backend:
-      remote (SLURM GPU) → local (login node CPU) → openrouter (cloud API)
+      remote (login GPU server) → local (CPU) → openrouter (cloud API)
 
     Explicit local or openrouter backends have no fallback.
     The remote client has built-in retry logic for transient connection failures.
@@ -101,7 +101,7 @@ class Encoder:
                 )
             self._remote_client = RemoteEmbeddingClient(self.config.remote_url)
             # Prepare fallback backends for remote:
-            #   remote (SLURM GPU) → local (login node CPU) → openrouter (cloud API)
+            #   remote (login GPU) → local (CPU) → openrouter (cloud API)
             self._openrouter_client = OpenRouterEmbeddingClient(
                 model_name=self.config.model_name,
             )
@@ -127,7 +127,6 @@ class Encoder:
         Tries multiple sources in order:
         1. /info endpoint (server.hostname) - requires updated server
         2. /health endpoint (hostname field) - simpler response
-        3. SLURM state file (~/.imas-codex/slurm-embed-node) - works with old servers
 
         Non-blocking best-effort: if nothing works, hostname
         will remain None and display will show 'remote'.
@@ -157,18 +156,6 @@ class Encoder:
         except Exception:
             pass
 
-        # Fallback: read SLURM state file (written by sbatch script)
-        try:
-            node_file = Path.home() / ".imas-codex" / "slurm-embed-node"
-            if node_file.exists():
-                node = node_file.read_text().strip()
-                if node:
-                    self._remote_hostname = node
-                    self.logger.debug("Resolved hostname from SLURM state: %s", node)
-                    return
-        except Exception:
-            pass
-
         # Fallback: if URL is localhost/127.0.0.1, server runs on this machine
         try:
             url = self.config.remote_url or ""
@@ -186,23 +173,14 @@ class Encoder:
     def _validate_remote_backend(self) -> None:
         """Validate remote backend is available and model matches.
 
-        Proactively ensures the SLURM embedding server is running before
-        checking health. SLURM is preferred over ad-hoc login node services
-        (systemd, manual) because it runs on dedicated GPU nodes.
-
-        If SLURM is not available (no sbatch), falls through to check
-        whatever server is already responding on the configured URL.
+        Checks server health with retries. If unavailable, falls back
+        through: local (CPU) → openrouter (cloud API).
         """
         if self._backend_validated:
             return
 
         if not self._remote_client:
             raise EmbeddingBackendError("Remote client not initialized")
-
-        # Proactively ensure SLURM server is running (preferred over login node).
-        # This is a no-op if SLURM is not accessible (no sbatch locally or via SSH).
-        # ensure_server() handles port conflicts with non-SLURM services.
-        self._try_slurm_auto_launch()
 
         # Verify server health with retries
         last_error = None
@@ -231,7 +209,7 @@ class Encoder:
                 f"{last_error}. "
                 "Fallback to local and OpenRouter also failed.\n"
                 "Ensure SSH tunnel is active: ssh -f -N -L 18765:127.0.0.1:18765 iter\n"
-                "Or submit a SLURM job: imas-codex serve embed submit\n"
+                "Start server on ITER: imas-codex serve embed start --gpu 1\n"
                 "Or set OPENROUTER_API_KEY for cloud fallback."
             )
 
@@ -255,7 +233,7 @@ class Encoder:
             if info.hostname:
                 self._remote_hostname = info.hostname
             else:
-                # Try /info and SLURM state fallbacks
+                # Try /info fallback
                 self._fetch_remote_hostname()
 
         # Log once per URL across all Encoder instances
@@ -278,73 +256,11 @@ class Encoder:
             )
         self._backend_validated = True
 
-    def _try_slurm_auto_launch(self) -> bool:
-        """Proactively ensure the SLURM embedding server is running.
-
-        Called before health checks to prefer SLURM GPU nodes over ad-hoc
-        services on the login node (systemd, manual). SLURM servers run
-        on titan partition with dedicated P100 GPUs.
-
-        If running off-ITER (no local sbatch), ensures SSH tunnel first
-        so that the health check after ensure_server() can reach the server.
-
-        Returns:
-            True if SLURM server is ready, False if SLURM unavailable
-        """
-        import shutil
-        import subprocess
-
-        has_local_sbatch = shutil.which("sbatch") is not None
-        has_remote_sbatch = False
-
-        if not has_local_sbatch:
-            # Check if sbatch available via SSH to ITER
-            try:
-                result = subprocess.run(
-                    [
-                        "ssh",
-                        "-o",
-                        "ConnectTimeout=3",
-                        "-o",
-                        "BatchMode=yes",
-                        "iter",
-                        "which sbatch",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                has_remote_sbatch = result.returncode == 0
-                if not has_remote_sbatch:
-                    self.logger.debug("SLURM not available locally or via SSH")
-                    return False
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                self.logger.debug("Cannot reach ITER via SSH for SLURM auto-launch")
-                return False
-
-        # If off-ITER, ensure SSH tunnel so localhost:PORT reaches login node
-        if not has_local_sbatch and has_remote_sbatch:
-            from imas_codex.embeddings.readiness import _ensure_ssh_tunnel
-            from imas_codex.settings import get_embed_server_port
-
-            port = get_embed_server_port()
-            _ensure_ssh_tunnel(port)
-
-        self.logger.info("Ensuring SLURM embedding server is running...")
-
-        try:
-            from imas_codex.embeddings.slurm import ensure_server
-
-            return ensure_server(model_name=self.config.model_name)
-        except Exception as e:
-            self.logger.warning("SLURM auto-launch failed: %s", e)
-            return False
-
     def _try_local_fallback(self) -> bool:
         """Attempt to use local SentenceTransformer as fallback for remote backend.
 
-        Tries to load the local embedding model on the login node CPU.
-        This is slower than GPU but doesn't require external services.
+        Tries to load the local embedding model on CPU.
+        This is slower than GPU but doesn't require the embedding server.
 
         Returns:
             True if local model is available and loaded successfully
@@ -367,7 +283,7 @@ class Encoder:
     def _try_openrouter_fallback(self) -> bool:
         """Attempt to use OpenRouter as final fallback for remote backend.
 
-        Used as last resort when both remote (SLURM) and local (login node)
+        Used as last resort when both remote (GPU server) and local (CPU)
         backends are unavailable.
 
         Returns:
@@ -548,7 +464,7 @@ class Encoder:
         """Embed ad-hoc texts (no caching).
 
         Uses the configured backend. For remote backend, falls back through:
-          remote (SLURM GPU) → local (login node CPU) → openrouter (cloud API)
+          remote (login GPU) → local (CPU) → openrouter (cloud API)
 
         Raises:
             EmbeddingBackendError: If all backends are unavailable.
@@ -840,10 +756,7 @@ class Encoder:
         1. Resolve model to local snapshot path (project cache or HF hub cache)
         2. Fall back to downloading from HuggingFace (requires internet)
 
-        For CUDA devices, uses float16 (P100 doesn't support bfloat16).
-        Multi-GPU throughput is handled at the server level via
-        ``encode_multi_process`` (one model replica per GPU), not via
-        ``device_map`` model splitting.
+        For CUDA devices, uses float16 for efficiency.
 
         Sets ``truncate_dim`` on the model so all encode calls
         (including ``encode_multi_process``) automatically truncate
@@ -868,8 +781,7 @@ class Encoder:
             cache_folder = str(self._get_cache_directory() / "models")
 
             # Try to resolve to a local directory path first.
-            # This bypasses all HuggingFace API calls and cache resolution,
-            # which is critical for air-gapped SLURM GPU nodes.
+            # This bypasses all HuggingFace API calls and cache resolution.
             resolved = self._resolve_model_path(
                 self.config.model_name, cache_folder=cache_folder
             )

@@ -61,7 +61,7 @@ def get_imas_embedding_model() -> str:
     Priority:
         1. IMAS_CODEX_EMBEDDING_MODEL environment variable
         2. pyproject.toml [tool.imas-codex] imas-embedding-model
-        3. Fallback default: Qwen/Qwen3-Embedding-4B
+        3. Fallback default: Qwen/Qwen3-Embedding-0.6B
 
     Returns:
         Model name string.
@@ -73,7 +73,7 @@ def get_imas_embedding_model() -> str:
     if model := settings.get("imas-embedding-model"):
         return model
 
-    return "Qwen/Qwen3-Embedding-4B"
+    return "Qwen/Qwen3-Embedding-0.6B"
 
 
 def get_imas_embedding_dimension() -> int:
@@ -196,8 +196,8 @@ def get_embedding_backend() -> str:
 
     Backend options:
         - "local": Local CPU/GPU via SentenceTransformer
-        - "remote": Remote GPU server (iter cluster via SSH tunnel)
-          Fallback chain: remote (SLURM GPU) → local (login node CPU) → openrouter
+        - "remote": Remote GPU server on ITER login node via SSH tunnel
+          Fallback chain: remote (login GPU) → local (CPU) → openrouter
         - "openrouter": OpenRouter API for cloud embeddings
 
     Priority:

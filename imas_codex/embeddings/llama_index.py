@@ -67,7 +67,7 @@ class EncoderLlamaEmbedding(BaseEmbedding):
     get_embedding_source() for progress display indicators.
     """
 
-    model_name: str = "Qwen/Qwen3-Embedding-4B"
+    model_name: str = "Qwen/Qwen3-Embedding-0.6B"
     _encoder: Encoder = PrivateAttr()
 
     def __init__(

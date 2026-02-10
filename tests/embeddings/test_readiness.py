@@ -1,4 +1,4 @@
-"""Tests for embedding readiness check and SLURM auto-launch integration."""
+"""Tests for embedding readiness check."""
 
 from unittest.mock import MagicMock, patch
 
@@ -33,55 +33,46 @@ class TestEnsureEmbeddingReady:
         client_instance = MagicMock()
         client_instance.is_available.return_value = True
         info = MagicMock()
-        info.model = "Qwen/Qwen3-Embedding-4B"
-        info.hostname = "98dci4-gpu-0001"
+        info.model = "Qwen/Qwen3-Embedding-0.6B"
+        info.hostname = "98dci4-srv-1001"
         client_instance.get_info.return_value = info
         mock_client.return_value = client_instance
 
         ok, msg = ensure_embedding_ready()
         assert ok is True
         assert "ready" in msg.lower()
-        # Should not try SLURM launch since server is already available
+        # Should not need further steps since server is already available
         client_instance.is_available.assert_called_once()
 
     @patch("imas_codex.embeddings.readiness._is_on_iter", return_value=True)
-    @patch("imas_codex.embeddings.slurm.ensure_server", return_value=True)
-    @patch(
-        "imas_codex.settings.get_imas_embedding_model",
-        return_value="Qwen/Qwen3-Embedding-4B",
-    )
+    @patch("imas_codex.embeddings.readiness._try_start_service", return_value=True)
     @patch("imas_codex.embeddings.client.RemoteEmbeddingClient")
     @patch("imas_codex.settings.get_embed_server_port", return_value=18765)
     @patch(
         "imas_codex.settings.get_embed_remote_url",
         return_value="http://localhost:18765",
     )
-    def test_calls_ensure_server_on_iter(
-        self, mock_url, mock_port, mock_client, mock_model, mock_ensure, mock_on_iter
+    def test_tries_systemd_service_on_iter(
+        self, mock_url, mock_port, mock_client, mock_start, mock_on_iter
     ):
-        """On ITER, should call ensure_server without SSH tunnel."""
+        """On ITER, should try starting systemd service when server not responding."""
         from imas_codex.embeddings.readiness import ensure_embedding_ready
 
         # First call: not available; subsequent calls: available
         client_instance = MagicMock()
         client_instance.is_available.side_effect = [False, True]
         info = MagicMock()
-        info.model = "Qwen/Qwen3-Embedding-4B"
-        info.hostname = "98dci4-gpu-0001"
+        info.model = "Qwen/Qwen3-Embedding-0.6B"
+        info.hostname = "98dci4-srv-1001"
         client_instance.get_info.return_value = info
         mock_client.return_value = client_instance
 
         ok, msg = ensure_embedding_ready(timeout=5.0)
         assert ok is True
-        mock_ensure.assert_called_once()
+        mock_start.assert_called_once()
 
     @patch("imas_codex.embeddings.readiness._is_on_iter", return_value=False)
     @patch("imas_codex.embeddings.readiness._ensure_ssh_tunnel", return_value=True)
-    @patch("imas_codex.embeddings.slurm.ensure_server", return_value=True)
-    @patch(
-        "imas_codex.settings.get_imas_embedding_model",
-        return_value="Qwen/Qwen3-Embedding-4B",
-    )
     @patch("imas_codex.embeddings.client.RemoteEmbeddingClient")
     @patch("imas_codex.settings.get_embed_server_port", return_value=18765)
     @patch(
@@ -93,26 +84,23 @@ class TestEnsureEmbeddingReady:
         mock_url,
         mock_port,
         mock_client,
-        mock_model,
-        mock_ensure,
         mock_tunnel,
         mock_on_iter,
     ):
-        """Off ITER, should create SSH tunnel before calling ensure_server."""
+        """Off ITER, should create SSH tunnel before retrying health check."""
         from imas_codex.embeddings.readiness import ensure_embedding_ready
 
         client_instance = MagicMock()
         client_instance.is_available.side_effect = [False, True]
         info = MagicMock()
-        info.model = "Qwen/Qwen3-Embedding-4B"
-        info.hostname = "98dci4-gpu-0001"
+        info.model = "Qwen/Qwen3-Embedding-0.6B"
+        info.hostname = "98dci4-srv-1001"
         client_instance.get_info.return_value = info
         mock_client.return_value = client_instance
 
         ok, msg = ensure_embedding_ready(timeout=5.0)
         assert ok is True
         mock_tunnel.assert_called_once_with(18765)
-        mock_ensure.assert_called_once()
 
     @patch("imas_codex.embeddings.readiness._is_on_iter", return_value=False)
     @patch("imas_codex.embeddings.readiness._ensure_ssh_tunnel", return_value=False)
@@ -137,21 +125,17 @@ class TestEnsureEmbeddingReady:
         assert "SSH tunnel" in msg
 
     @patch("imas_codex.embeddings.readiness._is_on_iter", return_value=True)
-    @patch("imas_codex.embeddings.slurm.ensure_server", return_value=False)
-    @patch(
-        "imas_codex.settings.get_imas_embedding_model",
-        return_value="Qwen/Qwen3-Embedding-4B",
-    )
+    @patch("imas_codex.embeddings.readiness._try_start_service", return_value=True)
     @patch("imas_codex.embeddings.client.RemoteEmbeddingClient")
     @patch("imas_codex.settings.get_embed_server_port", return_value=18765)
     @patch(
         "imas_codex.settings.get_embed_remote_url",
         return_value="http://localhost:18765",
     )
-    def test_fails_when_ensure_server_fails(
-        self, mock_url, mock_port, mock_client, mock_model, mock_ensure, mock_on_iter
+    def test_fails_when_server_never_responds(
+        self, mock_url, mock_port, mock_client, mock_start, mock_on_iter
     ):
-        """Should fail gracefully when SLURM ensure_server fails."""
+        """Should fail gracefully when server never becomes available."""
         from imas_codex.embeddings.readiness import ensure_embedding_ready
 
         client_instance = MagicMock()
@@ -160,7 +144,7 @@ class TestEnsureEmbeddingReady:
 
         ok, msg = ensure_embedding_ready(timeout=3.0)
         assert ok is False
-        assert "SLURM" in msg or "not available" in msg.lower()
+        assert "not available" in msg.lower()
 
     @patch("imas_codex.settings.get_embed_remote_url", return_value=None)
     def test_log_fn_callback_called(self, mock_url):
@@ -183,7 +167,7 @@ class TestEnsureEmbeddingReady:
         # GPU node
         info = MagicMock()
         info.hostname = "98dci4-gpu-0003"
-        assert "iter-titan" in _resolve_source_label(info)
+        assert "iter-gpu" in _resolve_source_label(info)
 
         # Login node
         info.hostname = "98dci4-srv-1001"
@@ -237,78 +221,63 @@ class TestEnsureSshTunnel:
         assert "18765:127.0.0.1:18765" in " ".join(cmd)
 
 
-class TestEncoderSlurmAutoLaunch:
-    """Tests for Encoder._try_slurm_auto_launch integration."""
+class TestTryStartService:
+    """Tests for systemd service start attempts."""
 
-    @patch("shutil.which", return_value=None)
-    def test_returns_false_when_no_sbatch_anywhere(self, mock_which):
-        """Should return False when sbatch not available locally or via SSH."""
-        from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
-        from imas_codex.embeddings.encoder import Encoder
+    @patch("imas_codex.embeddings.readiness.subprocess.run")
+    def test_returns_true_when_systemctl_succeeds(self, mock_run):
+        """Should return True when systemctl start succeeds."""
+        from imas_codex.embeddings.readiness import _try_start_service
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=1)  # No remote sbatch
+        mock_run.return_value = MagicMock(returncode=0)
+        assert _try_start_service() is True
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "systemctl" in cmd
+        assert "imas-codex-embed" in cmd
 
-            with patch.object(Encoder, "_initialize_backend"):
-                encoder = Encoder.__new__(Encoder)
-                encoder.config = EncoderConfig(
-                    backend=EmbeddingBackend.LOCAL,
-                    model_name="test-model",
-                )
-                encoder.logger = __import__("logging").getLogger("test")
-                encoder._model = None
-                encoder._remote_client = None
+    @patch("imas_codex.embeddings.readiness.subprocess.run")
+    def test_returns_false_when_systemctl_fails(self, mock_run):
+        """Should return False when systemctl start fails."""
+        from imas_codex.embeddings.readiness import _try_start_service
 
-            result = encoder._try_slurm_auto_launch()
-            assert result is False
+        mock_run.return_value = MagicMock(returncode=1, stderr="Unit not found")
+        assert _try_start_service() is False
 
-    @patch("shutil.which", return_value="/usr/bin/sbatch")
-    @patch("imas_codex.embeddings.slurm.ensure_server", return_value=True)
-    def test_calls_ensure_server_with_local_sbatch(self, mock_ensure, mock_which):
-        """Should call ensure_server when sbatch is available locally."""
-        from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
-        from imas_codex.embeddings.encoder import Encoder
+    @patch(
+        "imas_codex.embeddings.readiness.subprocess.run",
+        side_effect=FileNotFoundError,
+    )
+    def test_returns_false_when_systemctl_missing(self, mock_run):
+        """Should return False when systemctl is not available."""
+        from imas_codex.embeddings.readiness import _try_start_service
 
-        with patch.object(Encoder, "_initialize_backend"):
-            encoder = Encoder.__new__(Encoder)
-            encoder.config = EncoderConfig(
-                backend=EmbeddingBackend.LOCAL,
-                model_name="test-model",
-            )
-            encoder.logger = __import__("logging").getLogger("test")
-            encoder._model = None
-            encoder._remote_client = None
+        assert _try_start_service() is False
 
-        result = encoder._try_slurm_auto_launch()
-        assert result is True
-        mock_ensure.assert_called_once_with(model_name="test-model")
 
-    @patch("shutil.which", return_value=None)  # No local sbatch
-    @patch("imas_codex.embeddings.slurm.ensure_server", return_value=True)
-    @patch("imas_codex.embeddings.readiness._ensure_ssh_tunnel", return_value=True)
-    @patch("imas_codex.settings.get_embed_server_port", return_value=18765)
-    def test_ensures_ssh_tunnel_off_iter(
-        self, mock_port, mock_tunnel, mock_ensure, mock_which
-    ):
-        """Off ITER, should ensure SSH tunnel before calling ensure_server."""
-        from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
-        from imas_codex.embeddings.encoder import Encoder
+class TestIsOnIter:
+    """Tests for ITER detection."""
 
-        with patch("subprocess.run") as mock_run:
-            # SSH check: remote sbatch available
-            mock_run.return_value = MagicMock(returncode=0)
+    @patch("os.uname")
+    def test_detects_iter_login_node(self, mock_uname):
+        """Should detect ITER login node by hostname."""
+        from imas_codex.embeddings.readiness import _is_on_iter
 
-            with patch.object(Encoder, "_initialize_backend"):
-                encoder = Encoder.__new__(Encoder)
-                encoder.config = EncoderConfig(
-                    backend=EmbeddingBackend.LOCAL,
-                    model_name="test-model",
-                )
-                encoder.logger = __import__("logging").getLogger("test")
-                encoder._model = None
-                encoder._remote_client = None
+        mock_uname.return_value = MagicMock(nodename="98dci4-srv-1001")
+        assert _is_on_iter() is True
 
-            result = encoder._try_slurm_auto_launch()
-            assert result is True
-            mock_tunnel.assert_called_once()
-            mock_ensure.assert_called_once()
+    @patch("os.uname")
+    def test_detects_iter_gpu_node(self, mock_uname):
+        """Should detect ITER GPU node by hostname."""
+        from imas_codex.embeddings.readiness import _is_on_iter
+
+        mock_uname.return_value = MagicMock(nodename="98dci4-gpu-0003")
+        assert _is_on_iter() is True
+
+    @patch("os.uname")
+    def test_returns_false_for_workstation(self, mock_uname):
+        """Should return False for non-ITER hostnames."""
+        from imas_codex.embeddings.readiness import _is_on_iter
+
+        mock_uname.return_value = MagicMock(nodename="my-workstation")
+        assert _is_on_iter() is False
