@@ -505,7 +505,7 @@ def _print_discovery_summary(
 
     facility_upper = facility.upper()
     summary = Text()
-    panel_width = 100
+    panel_width = console.width or 100
 
     # Row 1: SCAN stats
     scanned = result["scanned"]

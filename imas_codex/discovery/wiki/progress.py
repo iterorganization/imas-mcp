@@ -376,11 +376,9 @@ class WikiProgressDisplay:
     - INGEST: Chunk and embed high-value pages (scored → ingested)
     """
 
-    # Layout constants - label widths are fixed, bars capped to prevent sprawl
+    # Layout constants - label widths are fixed, bars fill remaining space
     LABEL_WIDTH = 10  # "  SCORE   " etc
     MIN_WIDTH = 80
-    MAX_WIDTH = 140
-    MAX_BAR_WIDTH = 50  # Cap bar width to prevent excessive length
     METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
     GAUGE_METRICS_WIDTH = 28  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
 
@@ -407,15 +405,14 @@ class WikiProgressDisplay:
 
     @property
     def width(self) -> int:
-        """Get display width based on terminal size."""
+        """Get display width based on terminal size (fills terminal)."""
         term_width = self.console.width or 100
-        return max(self.MIN_WIDTH, min(self.MAX_WIDTH, term_width))
+        return max(self.MIN_WIDTH, term_width)
 
     @property
     def bar_width(self) -> int:
-        """Calculate progress bar width, capped to prevent excessive length."""
-        raw_width = self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
-        return min(raw_width, self.MAX_BAR_WIDTH)
+        """Calculate progress bar width to fill available space."""
+        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
 
     @property
     def gauge_width(self) -> int:
@@ -600,8 +597,10 @@ class WikiProgressDisplay:
             if self.state.ingest_rate and self.state.ingest_rate > 0:
                 section.append(f" {self.state.ingest_rate:>5.1f}/s", style="dim")
 
-        # ARTIFACTS row - progress bar showing ingested / (ingested + pending)
-        # Uses graph-based counts (like SCORE/INGEST) for accurate totals
+        # ARTIFACTS row - pipeline progress: scored+ingested / total processable
+        # Total processable = pending_score + scored + ingested (all supported types)
+        # Completed = scored + ingested (artifacts that have been through scoring)
+        # This ensures progress shows while scoring (even when most are skipped)
         section.append("\n")
         if self.state.scan_only:
             section.append("  ARTFCT  ", style="dim")
@@ -609,21 +608,26 @@ class WikiProgressDisplay:
             section.append("    disabled", style="dim italic")
         else:
             section.append("  ARTFCT  ", style="bold yellow")
+            scored = self.state.artifacts_scored
             ingested = self.state.artifacts_ingested
-            pending = self.state.pending_artifact_ingest
-            art_total = ingested + pending
+            pending_score = self.state.pending_artifact_score
+            completed = scored + ingested
+            art_total = pending_score + completed
             if art_total > 0:
-                art_ratio = min(ingested / art_total, 1.0)
+                art_ratio = min(completed / art_total, 1.0)
                 section.append(make_bar(art_ratio, bar_width), style="yellow")
-                section.append(f" {ingested:>6,}", style="bold")
-                art_pct = ingested / art_total * 100
+                section.append(f" {completed:>6,}", style="bold")
+                art_pct = completed / art_total * 100
                 section.append(f" {art_pct:>3.0f}%", style="cyan")
             else:
                 section.append("─" * bar_width, style="dim")
-                section.append(f" {ingested:>6,}", style="bold")
-            rate = self.state.artifact_rate
-            if rate and rate > 0:
-                section.append(f" {rate:>5.1f}/s", style="dim")
+                section.append(f" {completed:>6,}", style="bold")
+            # Show combined score+ingest rate
+            score_rate = self.state.artifact_score_rate
+            ingest_rate = self.state.artifact_rate
+            combined_rate = sum(r for r in [score_rate, ingest_rate] if r and r > 0)
+            if combined_rate > 0:
+                section.append(f" {combined_rate:>5.1f}/s", style="dim")
 
         return section
 

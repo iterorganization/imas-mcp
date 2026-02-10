@@ -255,11 +255,9 @@ class DataProgressDisplay:
     └──────────────────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    # Layout constants - label widths are fixed, bars capped to prevent sprawl
+    # Layout constants - label widths are fixed, bars fill remaining space
     LABEL_WIDTH = 10  # "  SCAN    " etc
     MIN_WIDTH = 80
-    MAX_WIDTH = 140
-    MAX_BAR_WIDTH = 50  # Cap bar width to prevent excessive length
     METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
     GAUGE_METRICS_WIDTH = 28  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
 
@@ -286,17 +284,14 @@ class DataProgressDisplay:
 
     @property
     def width(self) -> int:
-        """Get display width based on terminal size."""
+        """Get display width based on terminal size (fills terminal)."""
         term_width = self.console.width or 100
-        return max(self.MIN_WIDTH, min(self.MAX_WIDTH, term_width))
+        return max(self.MIN_WIDTH, term_width)
 
     @property
     def bar_width(self) -> int:
-        """Calculate progress bar width, capped to prevent excessive length."""
-        # Content width = width - 4 (panel border + padding)
-        # Bar width = content - label - metrics, capped at MAX_BAR_WIDTH
-        raw_width = self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
-        return min(raw_width, self.MAX_BAR_WIDTH)
+        """Calculate progress bar width to fill available space."""
+        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
 
     @property
     def gauge_width(self) -> int:
