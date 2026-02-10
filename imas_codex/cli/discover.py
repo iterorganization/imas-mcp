@@ -1908,6 +1908,16 @@ def wiki_run(
                         verify_ssl=False,
                     )
                     wiki_client.authenticate()
+                elif auth_type == "keycloak":
+                    from imas_codex.discovery.wiki.keycloak import (
+                        KeycloakWikiClient,
+                    )
+
+                    wiki_client = KeycloakWikiClient(
+                        base_url=base_url,
+                        credential_service=credential_service,
+                    )
+                    wiki_client.authenticate()
 
             if use_rich:
                 from rich.status import Status

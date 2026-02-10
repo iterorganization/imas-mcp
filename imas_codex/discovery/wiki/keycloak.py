@@ -135,6 +135,45 @@ class KeycloakSession:
             self._session = None
 
 
+class KeycloakWikiClient:
+    """Wrapper providing MediaWikiClient-compatible interface for Keycloak auth.
+
+    The MediaWikiAdapter needs ``wiki_client.session`` and optionally
+    ``wiki_client.authenticate()``.  This wraps :class:`KeycloakSession`
+    to provide that interface.
+    """
+
+    def __init__(self, base_url: str, credential_service: str) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.credential_service = credential_service
+        self._ks = KeycloakSession(credential_service)
+        self._authenticated = False
+
+    def authenticate(self) -> bool:
+        """Authenticate via Keycloak and return True on success."""
+        if self._authenticated:
+            return True
+        try:
+            self._ks.login(f"{self.base_url}/")
+            self._authenticated = True
+            return True
+        except Exception as e:
+            logger.warning("Keycloak auth failed for %s: %s", self.base_url, e)
+            return False
+
+    @property
+    def session(self) -> requests.Session:
+        """Return the authenticated requests.Session."""
+        if not self._authenticated:
+            self.authenticate()
+        return self._ks.session
+
+    def close(self) -> None:
+        """Close the session."""
+        self._ks.close()
+        self._authenticated = False
+
+
 class AsyncKeycloakSession:
     """Async Keycloak OIDC authentication via httpx.AsyncClient."""
 

@@ -37,7 +37,7 @@ _wiki_defaults: &wiki_defaults
   portal_page: Main_Page
   site_type: mediawiki
   access_method: direct      # Accessible via browser with login
-  auth_type: basic           # MediaWiki username/password login
+  auth_type: keycloak        # Keycloak OIDC via oauth2-proxy at auth.jetdata.eu
   credential_service: jet
   ssh_available: true        # SSH tunnel also possible via JET host
 

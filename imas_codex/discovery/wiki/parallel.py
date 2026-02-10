@@ -5150,6 +5150,14 @@ async def run_parallel_wiki_discovery(
                     verify_ssl=False,
                 )
                 sync_wiki_client.authenticate()
+            elif state.auth_type == "keycloak":
+                from imas_codex.discovery.wiki.keycloak import KeycloakWikiClient
+
+                sync_wiki_client = KeycloakWikiClient(
+                    base_url=base_url,
+                    credential_service=state.credential_service,
+                )
+                sync_wiki_client.authenticate()
 
         try:
             bulk_artifacts_discovered = await asyncio.to_thread(
