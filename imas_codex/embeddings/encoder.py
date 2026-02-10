@@ -259,13 +259,16 @@ class Encoder:
     def _try_local_fallback(self) -> bool:
         """Attempt to use local SentenceTransformer as fallback for remote backend.
 
-        Tries to load the local embedding model on CPU.
-        This is slower than GPU but doesn't require the embedding server.
+        Forces CPU device to avoid OOM on shared GPUs (e.g. GPU 0 used by
+        NoMachine on the ITER login node).  Slower than the dedicated GPU
+        server but safe.
 
         Returns:
             True if local model is available and loaded successfully
         """
         try:
+            # Force CPU to avoid loading onto a shared GPU
+            self.config.device = "cpu"
             self._load_model()
             self.logger.warning(
                 "Remote embedding server unavailable. "

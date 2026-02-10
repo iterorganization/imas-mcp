@@ -20,11 +20,13 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Default timeout for embedding requests (seconds)
-DEFAULT_TIMEOUT = 120.0
+DEFAULT_TIMEOUT = 300.0
 # Health check timeout (seconds)
 HEALTH_TIMEOUT = 5.0
 # Connection timeout (seconds)
 CONNECT_TIMEOUT = 3.0
+# Maximum texts per HTTP request (server processes in GPU sub-batches)
+MAX_TEXTS_PER_REQUEST = 500
 
 
 @dataclass
@@ -158,6 +160,10 @@ class RemoteEmbeddingClient:
     ) -> np.ndarray:
         """Embed texts using remote server with retry logic.
 
+        Automatically chunks large requests into sub-batches of
+        ``MAX_TEXTS_PER_REQUEST`` texts to avoid server-side and
+        client-side timeouts.
+
         Args:
             texts: List of texts to embed
             normalize: Whether to normalize embeddings
@@ -173,6 +179,56 @@ class RemoteEmbeddingClient:
         if not texts:
             return np.array([])
 
+        # Chunk large batches into sub-requests
+        if len(texts) > MAX_TEXTS_PER_REQUEST:
+            return self._embed_chunked(texts, normalize, max_retries)
+
+        return self._embed_single(texts, normalize, max_retries)
+
+    def _embed_chunked(
+        self,
+        texts: list[str],
+        normalize: bool,
+        max_retries: int,
+    ) -> np.ndarray:
+        """Embed a large batch by splitting into chunked HTTP requests."""
+        chunks = [
+            texts[i : i + MAX_TEXTS_PER_REQUEST]
+            for i in range(0, len(texts), MAX_TEXTS_PER_REQUEST)
+        ]
+        logger.info(
+            "Chunking %d texts into %d requests of ≤%d texts",
+            len(texts),
+            len(chunks),
+            MAX_TEXTS_PER_REQUEST,
+        )
+        start = time.time()
+        results = []
+        for i, chunk in enumerate(chunks):
+            logger.debug(
+                "Embedding chunk %d/%d (%d texts)",
+                i + 1,
+                len(chunks),
+                len(chunk),
+            )
+            result = self._embed_single(chunk, normalize, max_retries)
+            results.append(result)
+        elapsed = time.time() - start
+        logger.info(
+            "Remote embedding: %d texts in %.1fs (%d chunks)",
+            len(texts),
+            elapsed,
+            len(chunks),
+        )
+        return np.vstack(results)
+
+    def _embed_single(
+        self,
+        texts: list[str],
+        normalize: bool,
+        max_retries: int,
+    ) -> np.ndarray:
+        """Embed a single batch of texts with retry logic."""
         client = self._get_client()
         start = time.time()
         last_error: Exception | None = None
