@@ -1248,8 +1248,10 @@ def _fetch_html(
     Returns:
         HTML content string, or None if all methods fail
     """
-    # Always try direct HTTP first
-    html = _fetch_html_direct(url, timeout=timeout)
+    # For VPN sites, use a short timeout for direct — the server is almost
+    # certainly unreachable from the workstation.  Saves ~10s per page.
+    direct_timeout = 2.0 if access_method == "vpn" else timeout
+    html = _fetch_html_direct(url, timeout=direct_timeout)
     if html is not None:
         return html
 
@@ -1823,6 +1825,7 @@ class StaticHtmlAdapter(WikiAdapter):
         self._exclude_prefixes = exclude_prefixes or []
         self._ssh_host = ssh_host
         self._access_method = access_method
+        self._cached_pages: list[DiscoveredPage] | None = None
 
     def bulk_discover_pages(
         self,
@@ -1953,6 +1956,8 @@ class StaticHtmlAdapter(WikiAdapter):
         if on_progress:
             on_progress(f"discovered {len(pages)} pages", None)
 
+        # Cache for reuse in bulk_discover_artifacts (avoids re-crawling)
+        self._cached_pages = pages
         return pages
 
     def bulk_discover_artifacts(
@@ -1979,7 +1984,10 @@ class StaticHtmlAdapter(WikiAdapter):
         if not effective_base_url:
             return []
 
-        pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
+        # Use cached pages from prior bulk_discover_pages call if available
+        pages = self._cached_pages or self.bulk_discover_pages(
+            facility, base_url, on_progress=None
+        )
         if not pages:
             return []
 
