@@ -1375,20 +1375,28 @@ class TWikiStaticAdapter(WikiAdapter):
 
     def _get_artifact_type(self, filename: str) -> str:
         """Get artifact type from filename."""
-        filename_lower = filename.lower()
-        if filename_lower.endswith(".pdf"):
-            return "pdf"
-        if filename_lower.endswith((".doc", ".docx")):
-            return "document"
-        if filename_lower.endswith((".ppt", ".pptx")):
-            return "presentation"
-        if filename_lower.endswith((".xls", ".xlsx")):
-            return "spreadsheet"
-        if filename_lower.endswith(".ipynb"):
-            return "notebook"
-        if filename_lower.endswith((".h5", ".hdf5", ".mat")):
-            return "data"
+        return _get_artifact_type_from_filename(filename)
+
+
+def _get_artifact_type_from_filename(filename: str) -> str:
+    """Get artifact type from filename extension.
+
+    Shared utility for all adapters that discover artifacts.
+    """
+    filename_lower = filename.lower()
+    if filename_lower.endswith(".pdf"):
+        return "pdf"
+    if filename_lower.endswith((".doc", ".docx")):
         return "document"
+    if filename_lower.endswith((".ppt", ".pptx")):
+        return "presentation"
+    if filename_lower.endswith((".xls", ".xlsx")):
+        return "spreadsheet"
+    if filename_lower.endswith(".ipynb"):
+        return "notebook"
+    if filename_lower.endswith((".h5", ".hdf5", ".mat")):
+        return "data"
+    return "document"
 
 
 class StaticHtmlAdapter(WikiAdapter):
@@ -1565,11 +1573,106 @@ class StaticHtmlAdapter(WikiAdapter):
     ) -> list[DiscoveredArtifact]:
         """Discover artifacts by scanning discovered pages for file links.
 
-        Reuses the page crawl to find PDF, document, and data file links.
+        BFS-crawls the same pages as bulk_discover_pages and extracts
+        links to artifact files (PDF, Excel, PowerPoint, etc.).
+
+        Args:
+            facility: Facility ID
+            base_url: Base URL of the static site
+            on_progress: Progress callback (message, stats)
+
+        Returns:
+            List of discovered artifacts
         """
-        # Artifacts are discovered during the page scan in parallel.py
-        # via extract_artifacts_from_html, so return empty here
-        return []
+        from bs4 import BeautifulSoup
+
+        artifacts: list[DiscoveredArtifact] = []
+        seen_urls: set[str] = set()
+        effective_base_url = base_url or self._base_url
+        if not effective_base_url:
+            return []
+
+        effective_base_url = effective_base_url.rstrip("/")
+
+        artifact_extensions = (
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".ppt",
+            ".pptx",
+            ".xls",
+            ".xlsx",
+            ".ipynb",
+            ".h5",
+            ".hdf5",
+            ".mat",
+        )
+
+        pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
+
+        if on_progress:
+            on_progress(f"scanning {len(pages)} pages for artifacts", None)
+
+        try:
+            for i, page in enumerate(pages):
+                if not page.url:
+                    continue
+
+                html_text = _fetch_html(
+                    page.url,
+                    ssh_host=self._ssh_host,
+                    access_method=self._access_method,
+                )
+                if html_text is None:
+                    continue
+
+                soup = BeautifulSoup(html_text, "html.parser")
+
+                for link in soup.find_all("a", href=True):
+                    href = link["href"]
+                    href_lower = href.lower()
+
+                    if any(href_lower.endswith(ext) for ext in artifact_extensions):
+                        if href.startswith("http"):
+                            artifact_url = href
+                        elif href.startswith("/"):
+                            parsed_base = urllib.parse.urlparse(effective_base_url)
+                            artifact_url = (
+                                f"{parsed_base.scheme}://{parsed_base.netloc}{href}"
+                            )
+                        else:
+                            # Resolve relative to page URL
+                            artifact_url = urllib.parse.urljoin(page.url, href)
+
+                        if artifact_url in seen_urls:
+                            continue
+                        seen_urls.add(artifact_url)
+
+                        filename = artifact_url.split("/")[-1]
+                        artifact_type = _get_artifact_type_from_filename(filename)
+
+                        artifact = DiscoveredArtifact(
+                            filename=filename,
+                            url=artifact_url,
+                            artifact_type=artifact_type,
+                        )
+                        artifact.linked_pages.append(page.name)
+                        artifacts.append(artifact)
+
+                if on_progress and (i + 1) % 20 == 0:
+                    on_progress(
+                        f"scanned {i + 1}/{len(pages)} pages, "
+                        f"found {len(artifacts)} artifacts",
+                        None,
+                    )
+
+            if on_progress:
+                on_progress(f"discovered {len(artifacts)} artifacts", None)
+
+        except Exception as e:
+            logger.warning(f"Error during static HTML artifact discovery: {e}")
+
+        return artifacts
 
 
 class ConfluenceAdapter(WikiAdapter):

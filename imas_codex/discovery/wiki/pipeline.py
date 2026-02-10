@@ -1631,48 +1631,25 @@ class WikiArtifactPipeline:
         Returns:
             Ingestion stats
         """
-        import tempfile
-        from pathlib import Path
-
-        from openpyxl import load_workbook
-
         stats: ArtifactIngestionStats = {
             "chunks": 0,
             "content_preview": "",
             "artifact_type": "xlsx",
         }
 
-        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
-            f.write(content_bytes)
-            temp_path = Path(f.name)
+        from imas_codex.discovery.wiki.excel import extract_excel_full
 
-        try:
-            wb = load_workbook(temp_path, data_only=True)
-            text_parts = []
+        full_text = extract_excel_full(content_bytes)
 
-            for sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
-                sheet_text = [f"[Sheet: {sheet_name}]"]
-                for row in ws.iter_rows(values_only=True):
-                    row_values = [str(c) for c in row if c is not None]
-                    if row_values:
-                        sheet_text.append(" | ".join(row_values))
-                if len(sheet_text) > 1:  # Has content beyond header
-                    text_parts.append("\n".join(sheet_text))
-
-            full_text = "\n\n".join(text_parts)
-
-            if not full_text.strip():
-                logger.warning("No content extracted from XLSX: %s", artifact_id)
-                return stats
-
-            stats["content_preview"] = full_text[:300]
-            stats = await self._create_artifact_chunks(
-                artifact_id, full_text, "xlsx", stats
-            )
+        if not full_text.strip():
+            logger.warning("No content extracted from XLSX: %s", artifact_id)
             return stats
-        finally:
-            temp_path.unlink(missing_ok=True)
+
+        stats["content_preview"] = full_text[:300]
+        stats = await self._create_artifact_chunks(
+            artifact_id, full_text, "xlsx", stats
+        )
+        return stats
 
     async def ingest_notebook(
         self,

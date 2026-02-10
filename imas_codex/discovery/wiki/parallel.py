@@ -3427,23 +3427,9 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
 
     elif at in ("xlsx", "xls"):
         try:
-            from openpyxl import load_workbook
+            from imas_codex.discovery.wiki.excel import extract_excel_preview
 
-            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
-                f.write(content_bytes)
-                temp_path = Path(f.name)
-            try:
-                wb = load_workbook(temp_path, data_only=True)
-                text_parts = []
-                for sheet_name in wb.sheetnames[:3]:  # First 3 sheets
-                    ws = wb[sheet_name]
-                    for row in list(ws.iter_rows(values_only=True))[:30]:
-                        row_values = [str(c) for c in row if c is not None]
-                        if row_values:
-                            text_parts.append(" | ".join(row_values))
-                return "\n".join(text_parts)
-            finally:
-                temp_path.unlink(missing_ok=True)
+            return extract_excel_preview(content_bytes)
         except Exception:
             return ""
 
