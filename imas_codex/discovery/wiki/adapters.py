@@ -931,7 +931,7 @@ def _fetch_html_direct(url: str, timeout: float = 10.0) -> str | None:
         return None
 
 
-def _fetch_html_via_ssh(url: str, ssh_host: str, timeout: int = 30) -> str | None:
+def _fetch_html_via_ssh(url: str, ssh_host: str, timeout: int = 60) -> str | None:
     """Fetch HTML content via SSH-proxied curl.
 
     Used when the target URL is only reachable from the facility host,
@@ -940,12 +940,13 @@ def _fetch_html_via_ssh(url: str, ssh_host: str, timeout: int = 30) -> str | Non
     Args:
         url: URL to fetch
         ssh_host: SSH host to proxy through
-        timeout: Command timeout in seconds
+        timeout: Command timeout in seconds (default 60s to accommodate
+                 multi-hop SSH chains like iter->laptop->facility)
 
     Returns:
         HTML content string, or None on failure
     """
-    cmd = f'curl -sk --connect-timeout 15 "{url}"'
+    cmd = f'curl -sk --connect-timeout 20 "{url}"'
     try:
         result = subprocess.run(
             ["ssh", ssh_host, cmd],
