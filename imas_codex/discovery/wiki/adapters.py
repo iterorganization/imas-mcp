@@ -770,21 +770,69 @@ class MediaWikiAdapter(WikiAdapter):
 
 
 class TWikiAdapter(WikiAdapter):
-    """Adapter for TWiki sites.
+    """Adapter for live TWiki sites served via Apache/CGI.
 
-    Page discovery: /bin/view/Web/ listing
-    Artifact discovery: /pub/Web/ directory listing
+    Discovers pages by fetching /bin/view/<Web>/WebTopicList for each configured
+    web, then extracting topic links. Supports SSH-proxied access with proxy
+    bypass for sites behind corporate firewalls.
+
+    Page discovery: WebTopicList page per web
+    Artifact discovery: /pub/<Web>/ directory listing
     """
 
     site_type = "twiki"
 
-    def __init__(self, ssh_host: str | None = None):
+    def __init__(
+        self,
+        ssh_host: str | None = None,
+        webs: list[str] | None = None,
+        base_url: str | None = None,
+    ):
         """Initialize TWiki adapter.
 
         Args:
             ssh_host: SSH host for proxied commands
+            webs: TWiki webs to discover (default: ["Main"])
+            base_url: Base URL of TWiki installation (e.g. http://host/twiki)
         """
         self.ssh_host = ssh_host
+        self.webs = webs or ["Main"]
+        self._base_url = base_url
+
+    def _ssh_curl(self, url: str, timeout: int = 30) -> str | None:
+        """Fetch URL via SSH-proxied curl with proxy bypass.
+
+        Args:
+            url: URL to fetch
+            timeout: Command timeout in seconds
+
+        Returns:
+            Response body text, or None on failure
+        """
+        if not self.ssh_host:
+            logger.warning("TWiki adapter requires SSH host")
+            return None
+
+        cmd = f'curl -s --noproxy "*" --max-time {timeout} "{url}"'
+        try:
+            result = subprocess.run(
+                ["ssh", self.ssh_host, cmd],
+                capture_output=True,
+                text=True,
+                timeout=timeout + 15,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "SSH curl failed for %s (exit %d)", url, result.returncode
+                )
+                return None
+            return result.stdout
+        except subprocess.TimeoutExpired:
+            logger.warning("SSH curl timed out for %s", url)
+            return None
+        except Exception as e:
+            logger.warning("SSH curl error for %s: %s", url, e)
+            return None
 
     def bulk_discover_pages(
         self,
@@ -792,41 +840,69 @@ class TWikiAdapter(WikiAdapter):
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> list[DiscoveredPage]:
-        """Discover all pages via TWiki web listing."""
+        """Discover all pages from configured TWiki webs via WebTopicList.
+
+        For each web, fetches the WebTopicList page which contains links to
+        every topic. Extracts topic names from href attributes.
+
+        Args:
+            facility: Facility ID
+            base_url: TWiki base URL (e.g. http://host/twiki)
+            on_progress: Progress callback
+
+        Returns:
+            List of discovered pages across all webs
+        """
         if not self.ssh_host:
             logger.warning("TWiki adapter requires SSH host")
             return []
 
+        effective_url = self._base_url or base_url
         pages: list[DiscoveredPage] = []
 
-        # TWiki typically has webs like Main, Sandbox, etc.
-        # List topics via index
-        cmd = f'curl -sk "{base_url}/bin/view/Main" | grep -oP \'href="/twiki/bin/view/Main/[^"]+"\''
+        for web in self.webs:
+            topic_list_url = f"{effective_url}/bin/view/{web}/WebTopicList"
+            logger.info("Fetching topic list for web '%s' from %s", web, topic_list_url)
 
-        try:
-            result = subprocess.run(
-                ["ssh", self.ssh_host, cmd],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().split("\n"):
-                    if not line:
-                        continue
-                    # Extract topic name: href="/twiki/bin/view/Main/TopicName"
-                    match = re.search(r'/twiki/bin/view/(\w+/\w+)"', line)
-                    if match:
-                        topic = match.group(1)
-                        if not topic.startswith(("TWiki/", "Sandbox/")):
-                            url = f"{base_url}/bin/view/{topic}"
-                            pages.append(DiscoveredPage(name=topic, url=url))
+            html = self._ssh_curl(topic_list_url)
+            if not html:
+                logger.warning("Failed to fetch WebTopicList for web '%s'", web)
+                continue
 
+            # Extract topic links: href="/twiki/bin/view/<Web>/<Topic>"
+            pattern = rf'href="/twiki/bin/view/{re.escape(web)}/([^"]+)"'
+            seen: set[str] = set()
+            for match in re.finditer(pattern, html):
+                topic_name = match.group(1)
+                # Skip utility pages
+                if topic_name in (
+                    "WebTopicList",
+                    "WebIndex",
+                    "WebRss",
+                    "WebAtom",
+                    "WebNotify",
+                    "WebChanges",
+                    "WebSearch",
+                    "WebSearchAdvanced",
+                    "WebLeftBar",
+                    "WebTopBar",
+                    "WebPreferences",
+                ):
+                    continue
+                if topic_name in seen:
+                    continue
+                seen.add(topic_name)
+
+                page_name = f"{web}/{topic_name}"
+                page_url = f"{effective_url}/bin/view/{web}/{topic_name}"
+                pages.append(DiscoveredPage(name=page_name, url=page_url))
+
+            logger.info("Discovered %d topics in web '%s'", len(seen), web)
             if on_progress:
-                on_progress(f"discovered {len(pages)} pages", None)
+                on_progress(f"web {web}: {len(seen)} topics", None)
 
-        except Exception as e:
-            logger.warning(f"Error during TWiki page discovery: {e}")
+        if on_progress:
+            on_progress(f"discovered {len(pages)} pages total", None)
 
         return pages
 
@@ -836,52 +912,66 @@ class TWikiAdapter(WikiAdapter):
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> list[DiscoveredArtifact]:
-        """Discover all artifacts via TWiki pub directory listing."""
+        """Discover artifacts via TWiki pub directory listing.
+
+        For each configured web, fetches the /pub/<Web>/ directory listing
+        and extracts links to downloadable files.
+
+        Args:
+            facility: Facility ID
+            base_url: TWiki base URL
+            on_progress: Progress callback
+
+        Returns:
+            List of discovered artifacts
+        """
         if not self.ssh_host:
             logger.warning("TWiki adapter requires SSH host")
             return []
 
+        effective_url = self._base_url or base_url
         artifacts: list[DiscoveredArtifact] = []
 
-        # TWiki stores attachments in /pub/Web/Topic/filename
-        # List via directory listing if available
-        cmd = f'curl -sk "{base_url}/pub/Main/" | grep -oP \'href="[^"]+\\.(pdf|doc|docx|ppt|pptx|xls|xlsx|ipynb|h5|hdf5|mat)\'\''
+        for web in self.webs:
+            pub_url = f"{effective_url}/pub/{web}/"
+            # Fetch pub listing and extract file links
+            cmd = f'curl -s --noproxy "*" --max-time 15 "{pub_url}" | grep -oP \'href="[^"]+\\.(pdf|doc|docx|ppt|pptx|xls|xlsx|ipynb|h5|hdf5|mat)\'\''
 
-        try:
-            result = subprocess.run(
-                ["ssh", self.ssh_host, cmd],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode == 0:
-                for line in result.stdout.strip().split("\n"):
-                    if not line:
-                        continue
-                    # Extract filename from href
-                    match = re.search(r'href="([^"]+)"', line)
-                    if match:
-                        path = match.group(1)
-                        filename = path.split("/")[-1]
-                        if path.startswith("/"):
-                            url = f"{base_url.rsplit('/', 1)[0]}{path}"
-                        else:
-                            url = f"{base_url}/pub/Main/{path}"
+            try:
+                result = subprocess.run(
+                    ["ssh", self.ssh_host, cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split("\n"):
+                        if not line:
+                            continue
+                        match = re.search(r'href="([^"]+)"', line)
+                        if match:
+                            path = match.group(1)
+                            filename = path.split("/")[-1]
+                            if path.startswith("/"):
+                                url = f"{effective_url.rsplit('/twiki', 1)[0]}{path}"
+                            else:
+                                url = f"{effective_url}/pub/{web}/{path}"
 
-                        artifact_type = self._get_artifact_type(filename)
-                        artifacts.append(
-                            DiscoveredArtifact(
-                                filename=filename,
-                                url=url,
-                                artifact_type=artifact_type,
+                            artifact_type = self._get_artifact_type(filename)
+                            artifacts.append(
+                                DiscoveredArtifact(
+                                    filename=filename,
+                                    url=url,
+                                    artifact_type=artifact_type,
+                                )
                             )
-                        )
+            except Exception as e:
+                logger.warning(
+                    "Error during TWiki artifact discovery for web '%s': %s", web, e
+                )
 
-            if on_progress:
-                on_progress(f"discovered {len(artifacts)} artifacts", None)
-
-        except Exception as e:
-            logger.warning(f"Error during TWiki artifact discovery: {e}")
+        if on_progress:
+            on_progress(f"discovered {len(artifacts)} artifacts", None)
 
         return artifacts
 
@@ -1075,7 +1165,7 @@ def _fetch_html_via_ssh(url: str, ssh_host: str, timeout: int = 60) -> str | Non
     Returns:
         HTML content string, or None on failure
     """
-    cmd = f'curl -sk --connect-timeout 20 "{url}"'
+    cmd = f'curl -sk --noproxy "*" --connect-timeout 20 "{url}"'
     try:
         result = subprocess.run(
             ["ssh", ssh_host, cmd],
@@ -2035,6 +2125,7 @@ def get_adapter(
     pub_path: str | None = None,
     web_name: str = "Main",
     exclude_patterns: list[str] | None = None,
+    webs: list[str] | None = None,
 ) -> WikiAdapter:
     """Get the appropriate adapter for a wiki site type.
 
@@ -2051,6 +2142,7 @@ def get_adapter(
         pub_path: TWiki pub directory path (for twiki_raw)
         web_name: TWiki web name (for twiki_raw, default "Main")
         exclude_patterns: Topic name exclude patterns (for twiki_raw)
+        webs: TWiki web names to discover (for twiki, default ["Main"])
 
     Returns:
         WikiAdapter instance for the site type
@@ -2062,7 +2154,7 @@ def get_adapter(
             credential_service=credential_service,
         )
     elif site_type == "twiki":
-        return TWikiAdapter(ssh_host=ssh_host)
+        return TWikiAdapter(ssh_host=ssh_host, webs=webs, base_url=base_url)
     elif site_type == "twiki_static":
         return TWikiStaticAdapter(
             base_url=base_url, ssh_host=ssh_host, access_method=access_method

@@ -482,43 +482,51 @@ class MediaWikiExtractor(HTMLParser):
 
 
 def html_to_text(html: str) -> tuple[str, dict[str, str]]:
-    """Convert MediaWiki HTML to plain text with section extraction.
+    """Convert wiki HTML to plain text with section extraction.
 
-    Specifically designed for MediaWiki HTML structure, targeting the
-    bodyContent or mw-parser-output div and skipping navigation/sidebar content.
-
-    Supports both modern MediaWiki (mw-parser-output class) and older versions
-    (bodyContent id).
+    Supports MediaWiki, TWiki, and static HTML page structures:
+    - MediaWiki: bodyContent or mw-parser-output div
+    - TWiki: patternTopic div (live TWiki rendered pages)
+    - Fallback: full HTML with tag stripping
 
     Args:
-        html: Raw HTML content from MediaWiki page
+        html: Raw HTML content from wiki page
 
     Returns:
         Tuple of (full_text, sections_dict)
     """
     content_html = html
 
-    # Try older MediaWiki structure first (id="bodyContent") - common on many wikis
-    body_start = html.find('<div id="bodyContent">')
-    if body_start >= 0:
-        # End at printfooter (before footer/categories)
-        footer_start = html.find('<div class="printfooter">', body_start)
-        if footer_start > body_start:
-            content_html = html[body_start:footer_start]
-        else:
-            # No printfooter, try to find end of bodyContent div
-            # This is harder, so just take everything after bodyContent start
-            content_html = html[body_start:]
+    # Try TWiki structure first (class="patternTopic")
+    twiki_match = re.search(
+        r'class="patternTopic">(.*?)</div>\s*<!--\s*/patternTopic',
+        html,
+        re.DOTALL,
+    )
+    if twiki_match:
+        content_html = twiki_match.group(1)
     else:
-        # Try modern MediaWiki structure (class="mw-parser-output")
-        content_match = re.search(
-            r'<div[^>]*class="[^"]*mw-parser-output[^"]*"[^>]*>(.*?)</div>\s*'
-            r'(?:<div[^>]*class="[^"]*printfooter|$)',
-            html,
-            re.DOTALL | re.IGNORECASE,
-        )
-        if content_match:
-            content_html = content_match.group(1)
+        # Try older MediaWiki structure first (id="bodyContent") - common on many wikis
+        body_start = html.find('<div id="bodyContent">')
+        if body_start >= 0:
+            # End at printfooter (before footer/categories)
+            footer_start = html.find('<div class="printfooter">', body_start)
+            if footer_start > body_start:
+                content_html = html[body_start:footer_start]
+            else:
+                # No printfooter, try to find end of bodyContent div
+                # This is harder, so just take everything after bodyContent start
+                content_html = html[body_start:]
+        else:
+            # Try modern MediaWiki structure (class="mw-parser-output")
+            content_match = re.search(
+                r'<div[^>]*class="[^"]*mw-parser-output[^"]*"[^>]*>(.*?)</div>\s*'
+                r'(?:<div[^>]*class="[^"]*printfooter|$)',
+                html,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if content_match:
+                content_html = content_match.group(1)
 
     # Use simple tag stripping instead of complex parser
     # Remove script and style tags with their content

@@ -2176,6 +2176,68 @@ def bulk_discover_all_pages_twiki_static(
     return created
 
 
+def bulk_discover_all_pages_twiki(
+    facility: str,
+    base_url: str,
+    ssh_host: str,
+    webs: list[str] | None = None,
+    on_progress: Callable | None = None,
+) -> int:
+    """Bulk discover all pages from a live TWiki via WebTopicList HTTP pages.
+
+    Fetches /bin/view/<Web>/WebTopicList for each configured web via SSH-proxied
+    curl, extracts topic links, and creates WikiPage nodes with 'scanned' status.
+
+    Args:
+        facility: Facility ID
+        base_url: TWiki base URL (e.g. http://157.111.10.188/twiki)
+        ssh_host: SSH host for proxied access
+        webs: TWiki webs to discover (default: ["Main"])
+        on_progress: Progress callback
+
+    Returns:
+        Number of pages discovered
+    """
+    from imas_codex.discovery.wiki.adapters import TWikiAdapter
+    from imas_codex.discovery.wiki.scraper import canonical_page_id
+
+    logger.info(
+        "Starting bulk TWiki live discovery from %s (webs=%s)...", base_url, webs
+    )
+
+    adapter = TWikiAdapter(ssh_host=ssh_host, webs=webs, base_url=base_url)
+    pages = adapter.bulk_discover_pages(facility, base_url, on_progress)
+
+    if not pages:
+        logger.warning("No pages discovered from live TWiki")
+        return 0
+
+    logger.info("Discovered %d pages from live TWiki", len(pages))
+
+    # Create WikiPage nodes in graph
+    batch_data = []
+    for page in pages:
+        page_id = canonical_page_id(page.name, facility)
+        batch_data.append(
+            {
+                "id": page_id,
+                "title": page.name,
+                "url": page.url,
+            }
+        )
+
+    with GraphClient() as gc:
+        created = _bulk_create_wiki_pages(
+            gc, facility, batch_data, on_progress=on_progress
+        )
+
+    logger.info("Created/updated %d pages in graph (scanned status)", created)
+    if on_progress:
+        on_progress(f"created {created} pages", None)
+
+    return created
+
+
 def bulk_discover_all_pages_twiki_raw(
     facility: str,
     data_path: str,
@@ -4554,7 +4616,7 @@ async def _fetch_html(
 
     def _ssh_fetch() -> str:
         """Fetch via SSH proxy."""
-        cmd = f'curl -sk "{url}" 2>/dev/null'
+        cmd = f'curl -sk --noproxy "*" "{url}" 2>/dev/null'
         try:
             result = subprocess.run(
                 ["ssh", ssh_host, cmd],

@@ -1793,9 +1793,10 @@ def wiki_run(
                             f"Discovered {bulk_discovered} pages from {short_name}"
                         )
 
-            elif site_type in ("twiki_static", "twiki_raw", "static_html"):
+            elif site_type in ("twiki", "twiki_static", "twiki_raw", "static_html"):
                 from imas_codex.discovery.wiki.parallel import (
                     bulk_discover_all_pages_static_html,
+                    bulk_discover_all_pages_twiki,
                     bulk_discover_all_pages_twiki_raw,
                     bulk_discover_all_pages_twiki_static,
                 )
@@ -1803,7 +1804,12 @@ def wiki_run(
                 def twiki_progress_log(msg, _):
                     wiki_logger.info(f"BULK: {msg}")
 
-                if site_type == "twiki_static":
+                if site_type == "twiki":
+                    webs = site.get("webs", ["Main"])
+                    discover_func = bulk_discover_all_pages_twiki
+                    discover_args = (facility, base_url, ssh_host, webs)
+                    label = f"TWiki ({', '.join(webs)})"
+                elif site_type == "twiki_static":
                     discover_func = bulk_discover_all_pages_twiki_static
                     discover_args = (facility, base_url, ssh_host, access_method)
                     label = "TWiki"
