@@ -471,6 +471,10 @@ class MediaWikiAdapter(WikiAdapter):
                 logger.warning(f"Error during artifact discovery: {e}")
                 break
 
+        # Enrich artifacts with page links via prop=images API
+        if artifacts and api_url:
+            self._enrich_artifact_page_links_ssh(artifacts, api_url, on_progress)
+
         return artifacts
 
     def _discover_artifacts_http(
@@ -614,6 +618,10 @@ class MediaWikiAdapter(WikiAdapter):
                 logger.warning(f"Error during HTTP artifact discovery: {e}")
                 break
 
+        # Enrich artifacts with page links via prop=images API
+        if artifacts and api_url:
+            self._enrich_artifact_page_links_http(artifacts, api_url, on_progress)
+
         return artifacts
 
     def _parse_image_info(self, img: dict, facility: str) -> DiscoveredArtifact | None:
@@ -635,6 +643,192 @@ class MediaWikiAdapter(WikiAdapter):
             artifact_type=artifact_type,
             size_bytes=size,
             mime_type=mime,
+        )
+
+    def _enrich_artifact_page_links_ssh(
+        self,
+        artifacts: list[DiscoveredArtifact],
+        api_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> None:
+        """Enrich artifacts with page links via SSH using prop=images API.
+
+        The list=allimages API returns flat file metadata with no page linkage.
+        This method queries generator=allpages with prop=images to discover
+        which pages reference each image, then populates linked_pages.
+
+        Args:
+            artifacts: Discovered artifacts to enrich (modified in place)
+            api_url: Working MediaWiki API URL
+            on_progress: Optional progress callback
+        """
+        import json
+
+        # Build case-insensitive filename -> artifact lookup
+        artifact_by_name: dict[str, list[DiscoveredArtifact]] = {}
+        for a in artifacts:
+            key = a.filename.lower()
+            artifact_by_name.setdefault(key, []).append(a)
+
+        if not artifact_by_name:
+            return
+
+        linked_count = 0
+        batch = 0
+        continue_params: dict[str, str] = {}
+
+        while True:
+            params = {
+                "action": "query",
+                "generator": "allpages",
+                "gaplimit": "50",
+                "gapnamespace": "0",
+                "prop": "images",
+                "imlimit": "max",
+                "format": "json",
+                **continue_params,
+            }
+            param_str = "&".join(
+                f"{k}={urllib.parse.quote(str(v), safe='')}" for k, v in params.items()
+            )
+            url = f"{api_url}?{param_str}"
+            cmd = f'curl -sk "{url}"'
+
+            try:
+                result = subprocess.run(
+                    ["ssh", self.ssh_host, cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode != 0:
+                    break
+
+                stdout = result.stdout.strip()
+                if stdout.startswith("<!") or stdout.startswith("<html"):
+                    break
+
+                data = json.loads(stdout)
+            except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+                break
+
+            pages = data.get("query", {}).get("pages", {})
+            for page_data in pages.values():
+                page_title = page_data.get("title", "")
+                for img in page_data.get("images", []):
+                    # img["title"] is "File:Filename.ext"
+                    fname = img.get("title", "").removeprefix("File:").lower()
+                    if fname in artifact_by_name:
+                        for artifact in artifact_by_name[fname]:
+                            if page_title not in artifact.linked_pages:
+                                artifact.linked_pages.append(page_title)
+                                linked_count += 1
+
+            batch += 1
+            if on_progress and batch % 10 == 0:
+                on_progress(
+                    f"enriching page links: batch {batch}, {linked_count} links", None
+                )
+
+            if "continue" in data:
+                continue_params = {
+                    k: v for k, v in data["continue"].items() if k != "continue"
+                }
+            else:
+                break
+
+        logger.info(
+            "Enriched %d artifact-page links across %d API batches",
+            linked_count,
+            batch,
+        )
+
+    def _enrich_artifact_page_links_http(
+        self,
+        artifacts: list[DiscoveredArtifact],
+        api_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> None:
+        """Enrich artifacts with page links via HTTP using prop=images API.
+
+        Same logic as SSH variant but uses authenticated HTTP session.
+
+        Args:
+            artifacts: Discovered artifacts to enrich (modified in place)
+            api_url: Working MediaWiki API URL
+            on_progress: Optional progress callback
+        """
+        if not self.wiki_client:
+            return
+
+        # Build case-insensitive filename -> artifact lookup
+        artifact_by_name: dict[str, list[DiscoveredArtifact]] = {}
+        for a in artifacts:
+            key = a.filename.lower()
+            artifact_by_name.setdefault(key, []).append(a)
+
+        if not artifact_by_name:
+            return
+
+        linked_count = 0
+        batch = 0
+        continue_params: dict[str, str] = {}
+
+        while True:
+            params: dict[str, str | int] = {
+                "action": "query",
+                "generator": "allpages",
+                "gaplimit": 50,
+                "gapnamespace": 0,
+                "prop": "images",
+                "imlimit": "max",
+                "format": "json",
+                **continue_params,
+            }
+
+            try:
+                response = self.wiki_client.session.get(
+                    api_url, params=params, verify=False, timeout=60
+                )
+                if response.status_code != 200:
+                    break
+
+                content_type = response.headers.get("content-type", "")
+                if "text/html" in content_type:
+                    break
+
+                data = response.json()
+            except Exception:
+                break
+
+            pages = data.get("query", {}).get("pages", {})
+            for page_data in pages.values():
+                page_title = page_data.get("title", "")
+                for img in page_data.get("images", []):
+                    fname = img.get("title", "").removeprefix("File:").lower()
+                    if fname in artifact_by_name:
+                        for artifact in artifact_by_name[fname]:
+                            if page_title not in artifact.linked_pages:
+                                artifact.linked_pages.append(page_title)
+                                linked_count += 1
+
+            batch += 1
+            if on_progress and batch % 10 == 0:
+                on_progress(
+                    f"enriching page links: batch {batch}, {linked_count} links", None
+                )
+
+            if "continue" in data:
+                continue_params = {
+                    k: v for k, v in data["continue"].items() if k != "continue"
+                }
+            else:
+                break
+
+        logger.info(
+            "Enriched %d artifact-page links across %d API batches",
+            linked_count,
+            batch,
         )
 
     def _discover_artifacts_via_html(

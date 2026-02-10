@@ -280,22 +280,6 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
         if result:
             stats["tree_nodes_linked"] = result[0]["linked"]
 
-        # Link to IMASPaths
-        result = gc.query(
-            """
-            MATCH (c:WikiChunk {facility_id: $facility_id})
-            WHERE c.imas_paths_mentioned IS NOT NULL
-            UNWIND c.imas_paths_mentioned AS imas_path
-            MATCH (ip:IMASPath)
-            WHERE ip.full_path CONTAINS imas_path
-            MERGE (c)-[:MENTIONS_IMAS]->(ip)
-            RETURN count(*) AS linked
-            """,
-            facility_id=facility_id,
-        )
-        if result:
-            stats["imas_paths_linked"] = result[0]["linked"]
-
     return stats
 
 
@@ -813,7 +797,6 @@ class WikiIngestionPipeline:
 
         from .scraper import (
             extract_conventions,
-            extract_imas_paths,
             extract_mdsplus_paths,
             extract_units,
         )
@@ -864,7 +847,6 @@ class WikiIngestionPipeline:
         # Prepare batch data with pre-computed embeddings
         chunk_batch: list[dict] = []
         all_mdsplus: set[str] = set()
-        all_imas: set[str] = set()
 
         for i, node in enumerate(nodes):
             chunk_text: str = node.text  # type: ignore[attr-defined]
@@ -872,13 +854,11 @@ class WikiIngestionPipeline:
 
             # Extract entities from this chunk
             chunk_mdsplus = extract_mdsplus_paths(chunk_text)
-            chunk_imas = extract_imas_paths(chunk_text)
             chunk_units = extract_units(chunk_text)
             chunk_conventions = extract_conventions(chunk_text)
 
             # Track for stats
             all_mdsplus.update(chunk_mdsplus)
-            all_imas.update(chunk_imas)
             stats["units"] += len(chunk_units)
             stats["conventions"] += len(chunk_conventions)
 
@@ -891,7 +871,7 @@ class WikiIngestionPipeline:
                     "content": chunk_text,
                     "embedding": node.embedding,
                     "mdsplus_paths": chunk_mdsplus,
-                    "imas_paths": chunk_imas,
+                    "imas_paths": [],
                     "units": chunk_units,
                     "conventions": [c.get("name", "") for c in chunk_conventions],
                 }
@@ -988,23 +968,6 @@ class WikiIngestionPipeline:
                 )
                 if result and result[0]["linked"]:
                     stats["tree_nodes_linked"] = result[0]["linked"]
-
-            # Batch link chunks to IMASPaths
-            if all_imas:
-                result = gc.query(
-                    """
-                    MATCH (c:WikiChunk {wiki_page_id: $page_id})
-                    WHERE c.imas_paths_mentioned IS NOT NULL
-                    UNWIND c.imas_paths_mentioned AS imas_path
-                    MATCH (ip:IMASPath)
-                    WHERE ip.full_path CONTAINS imas_path
-                    MERGE (c)-[:MENTIONS_IMAS]->(ip)
-                    RETURN count(*) AS linked
-                    """,
-                    page_id=page_id,
-                )
-                if result and result[0]["linked"]:
-                    stats["imas_paths_linked"] = result[0]["linked"]
 
             # Create SignConvention nodes from page conventions (batch)
             if page.conventions:
@@ -1909,7 +1872,6 @@ class WikiArtifactPipeline:
 
         from .scraper import (
             extract_conventions,
-            extract_imas_paths,
             extract_mdsplus_paths,
             extract_units,
         )
@@ -1941,7 +1903,6 @@ class WikiArtifactPipeline:
             node.embedding = embeddings[i]
 
             chunk_mdsplus = extract_mdsplus_paths(chunk_text)
-            chunk_imas = extract_imas_paths(chunk_text)
             chunk_units = extract_units(chunk_text)
             chunk_conventions = extract_conventions(chunk_text)
 
@@ -1953,7 +1914,7 @@ class WikiArtifactPipeline:
                     "content": chunk_text,
                     "embedding": node.embedding,
                     "mdsplus_paths": chunk_mdsplus,
-                    "imas_paths": chunk_imas,
+                    "imas_paths": [],
                     "units": chunk_units,
                     "conventions": [c.get("name", "") for c in chunk_conventions],
                 }
