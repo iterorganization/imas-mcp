@@ -4746,7 +4746,7 @@ async def run_parallel_wiki_discovery(
     max_depth: int | None = None,
     focus: str | None = None,
     num_scan_workers: int = 1,
-    num_score_workers: int = 3,
+    num_score_workers: int = 1,
     num_ingest_workers: int = 4,
     scan_only: bool = False,
     score_only: bool = False,

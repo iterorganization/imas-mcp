@@ -1391,8 +1391,8 @@ def discover_code(facility: str, dry_run: bool) -> None:
 @click.option(
     "--score-workers",
     type=int,
-    default=3,
-    help="Number of parallel score workers (default: 3)",
+    default=1,
+    help="Number of parallel score workers (default: 1)",
 )
 @click.option(
     "--ingest-workers",
