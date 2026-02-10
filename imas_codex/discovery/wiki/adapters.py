@@ -953,6 +953,23 @@ def _ensure_socks_tunnel() -> bool:
 
     _socks_tunnel_checked = True
 
+    # First check if SOCKS port is already bound locally
+    try:
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(("127.0.0.1", _SOCKS_PORT))
+        sock.close()
+        if result == 0:
+            # Port is in use - assume our tunnel is running
+            _socks_tunnel_available = True
+            logger.debug("SOCKS tunnel already active on port %d", _SOCKS_PORT)
+            return True
+    except Exception:
+        pass
+
+    # Port not bound - try to establish tunnel via laptop
     # Check if laptop host is reachable (reverse tunnel must be active)
     try:
         result = subprocess.run(
@@ -968,15 +985,6 @@ def _ensure_socks_tunnel() -> bool:
         # Try to establish connection (will fail if reverse tunnel not active)
         try:
             result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=5", "-O", "exit", "laptop"],
-                capture_output=True,
-                timeout=10,
-            )
-        except Exception:
-            pass
-
-        try:
-            result = subprocess.run(
                 ["ssh", "-o", "ConnectTimeout=5", "-f", "-N", "laptop"],
                 capture_output=True,
                 timeout=15,
@@ -989,21 +997,6 @@ def _ensure_socks_tunnel() -> bool:
         logger.debug("Laptop reverse tunnel not available")
         _socks_tunnel_available = False
         return False
-
-    # Check if SOCKS port is already bound
-    try:
-        result = subprocess.run(
-            ["ssh", "laptop", f"ss -tln | grep -q ':{_SOCKS_PORT}'"],
-            capture_output=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            # Already have a SOCKS tunnel running
-            _socks_tunnel_available = True
-            logger.debug("SOCKS tunnel already active on port %d", _SOCKS_PORT)
-            return True
-    except Exception:
-        pass
 
     # Start SOCKS tunnel
     try:
