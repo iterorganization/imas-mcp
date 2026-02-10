@@ -248,8 +248,8 @@ def serve_embed() -> None:
 @click.option(
     "--host",
     envvar="EMBED_HOST",
-    default="127.0.0.1",
-    help="Host to bind (default: localhost only for security)",
+    default="0.0.0.0",
+    help="Host to bind (default: all interfaces for SLURM compute node access)",
 )
 @click.option(
     "--port",
@@ -488,7 +488,7 @@ Type=simple
 WorkingDirectory={Path.home()}
 Environment="PATH={Path.home()}/.local/bin:/usr/local/bin:/usr/bin"
 Environment="CUDA_VISIBLE_DEVICES={gpu}"
-ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex serve embed start --host 127.0.0.1 --port {port}
+ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex serve embed start --host 0.0.0.0 --port {port}
 ExecStop=/bin/kill -15 $MAINPID
 TimeoutStopSec=30
 Restart=on-failure

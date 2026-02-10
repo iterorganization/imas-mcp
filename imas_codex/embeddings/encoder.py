@@ -259,21 +259,47 @@ class Encoder:
     def _try_local_fallback(self) -> bool:
         """Attempt to use local SentenceTransformer as fallback for remote backend.
 
-        Forces CPU device to avoid OOM on shared GPUs (e.g. GPU 0 used by
-        NoMachine on the ITER login node).  Slower than the dedicated GPU
-        server but safe.
+        **Refuses CPU fallback on login nodes** to prevent destroying shared
+        resources.  CPU embedding of 19k+ texts uses 124% CPU / 21 GB RAM on
+        a 16-core login node shared by dozens of users.
+
+        Only allows CPU fallback when running inside a SLURM job (detected via
+        ``SLURM_JOB_ID`` env var) where we have dedicated compute resources,
+        or when ``IMAS_CODEX_ALLOW_CPU_FALLBACK=1`` is explicitly set.
 
         Returns:
             True if local model is available and loaded successfully
         """
+        import os
+
+        allow_cpu = os.environ.get("IMAS_CODEX_ALLOW_CPU_FALLBACK", "") == "1"
+        in_slurm = bool(os.environ.get("SLURM_JOB_ID"))
+
+        if not (allow_cpu or in_slurm):
+            self.logger.error(
+                "Remote GPU server failed. Refusing to fall back to CPU "
+                "embedding on the login node — this would consume 124%% CPU "
+                "and 21 GB RAM on shared infrastructure.\n"
+                "Options:\n"
+                "  1. Restart the embedding server: "
+                "imas-codex serve embed service restart\n"
+                "  2. Run from a SLURM job: "
+                "imas-codex compute run -- imas-codex imas build\n"
+                "  3. Force CPU fallback: "
+                "IMAS_CODEX_ALLOW_CPU_FALLBACK=1 imas-codex imas build"
+            )
+            return False
+
         try:
             # Force CPU to avoid loading onto a shared GPU
             self.config.device = "cpu"
             self._load_model()
+            where = "SLURM compute node" if in_slurm else "login node (forced)"
             self.logger.warning(
                 "Remote embedding server unavailable. "
-                "Falling back to local CPU embedding on login node. "
-                "This will be slower than GPU."
+                "Falling back to local CPU embedding on %s. "
+                "This will be slower than GPU.",
+                where,
             )
             self._using_fallback = True
             self._fallback_backend = "local"

@@ -1,15 +1,25 @@
 """FastAPI embedding server for GPU-accelerated remote embedding.
 
 Runs on the ITER login node using a T4 GPU and provides an HTTP API
-for embedding text.  Clients connect via localhost (on ITER) or SSH
-tunnel (from WSL/workstation).
+for embedding text.  Clients connect via localhost (on ITER) or the
+network (from SLURM compute nodes or workstation SSH tunnel).
+
+GPU Memory Protection:
+    The login node T4 GPUs are shared with NoMachine desktop sessions
+    (gnome-shell, firefox, paraview, etc.) which consume unpredictable
+    amounts of VRAM.  The server caps its memory fraction to 0.6 of
+    total VRAM, uses small batch sizes, and clears CUDA cache after
+    each batch to coexist safely with other GPU consumers.
 
 Start server::
 
     imas-codex serve embed start --gpu 1
 
-Client access (via SSH tunnel from workstation)::
+Client access (compute nodes or workstation)::
 
+    # From SLURM compute node (server bound to 0.0.0.0)
+    curl http://98dci4-srv-1001:18765/health
+    # From workstation via SSH tunnel
     ssh -L 18765:127.0.0.1:18765 iter
     curl http://localhost:18765/health
 """
@@ -120,6 +130,39 @@ async def lifespan(app: FastAPI):
     if cuda_visible:
         logger.info("CUDA_VISIBLE_DEVICES=%s", cuda_visible)
 
+    # GPU memory protection: cap our usage to coexist with NX desktops.
+    # The T4 GPUs on the login node are shared with NoMachine sessions
+    # that consume 1-11 GB of VRAM unpredictably.  Without capping,
+    # PyTorch grabs all available memory and then OOMs when NX allocates
+    # more, causing a cascade fallback to CPU that destroys the login node.
+    if device == "cuda":
+        try:
+            import torch
+
+            # Enable expandable segments to reduce fragmentation
+            # (recommended by PyTorch's own OOM error message)
+            os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+            # Cap our process to 60% of GPU memory.  On a 15 GB T4 this
+            # gives us ~9 GB which is plenty for Qwen3-0.6B (~1.2 GB model
+            # + batch workspace), while leaving ~6 GB for NX sessions.
+            mem_fraction = float(
+                os.environ.get("IMAS_CODEX_GPU_MEMORY_FRACTION", "0.6")
+            )
+            torch.cuda.set_per_process_memory_fraction(mem_fraction)
+            free_mb, total_mb = torch.cuda.mem_get_info(0)
+            logger.info(
+                "GPU memory cap: %.0f%% of %.0f MiB = %.0f MiB "
+                "(free: %.0f MiB, others using: %.0f MiB)",
+                mem_fraction * 100,
+                total_mb / 1024 / 1024,
+                mem_fraction * total_mb / 1024 / 1024,
+                free_mb / 1024 / 1024,
+                (total_mb - free_mb) / 1024 / 1024,
+            )
+        except Exception as e:
+            logger.warning("Failed to set GPU memory cap: %s", e)
+
     config = EncoderConfig(
         model_name=model_name,
         device=device,
@@ -129,8 +172,10 @@ async def lifespan(app: FastAPI):
         backend=EmbeddingBackend.LOCAL,
         normalize_embeddings=True,
         use_rich=False,
-        # 0.6B model is small enough for generous batch sizes on T4.
-        batch_size=64,
+        # Conservative batch size to limit peak VRAM.  Smaller batches
+        # reduce the memory high-water mark and allow empty_cache() to
+        # release blocks between batches for NX sessions.
+        batch_size=32,
     )
 
     _encoder = Encoder(config=config)
@@ -195,15 +240,60 @@ def _encode_texts_sync(
     normalize: bool,
     batch_size: int,
 ) -> Any:
-    """Synchronous encoding helper (runs in thread pool via asyncio.to_thread)."""
+    """Synchronous encoding helper (runs in thread pool via asyncio.to_thread).
+
+    Encodes in sub-batches and releases CUDA cache between batches so
+    freed GPU memory is returned to the driver for other processes
+    (especially NX desktop sessions on the shared login node T4).
+    """
+    import numpy as np
+
     model = _encoder.get_model()
-    return model.encode(
-        texts,
-        convert_to_numpy=True,
-        normalize_embeddings=normalize,
-        batch_size=batch_size,
-        show_progress_bar=False,
-    )
+
+    # For small requests, encode directly
+    if len(texts) <= batch_size:
+        result = model.encode(
+            texts,
+            convert_to_numpy=True,
+            normalize_embeddings=normalize,
+            batch_size=batch_size,
+            show_progress_bar=False,
+        )
+        _release_gpu_cache()
+        return result
+
+    # For larger requests, encode in sub-batches with cache release
+    results = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        embeddings = model.encode(
+            batch,
+            convert_to_numpy=True,
+            normalize_embeddings=normalize,
+            batch_size=batch_size,
+            show_progress_bar=False,
+        )
+        results.append(embeddings)
+        _release_gpu_cache()
+
+    return np.vstack(results)
+
+
+def _release_gpu_cache() -> None:
+    """Release unused CUDA cache back to the driver.
+
+    On a shared GPU, this is critical — PyTorch's caching allocator
+    holds freed blocks in a pool by default.  Without explicit release,
+    other processes (NX sessions) see no free memory even though our
+    model isn't actively using it.
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
