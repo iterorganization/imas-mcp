@@ -1495,6 +1495,8 @@ def wiki_run(
             backend = EmbeddingBackend.LOCAL
 
         if backend == EmbeddingBackend.REMOTE:
+            from rich.markup import escape as rich_escape
+
             from imas_codex.embeddings.readiness import ensure_embedding_ready
 
             _style_map = {
@@ -1508,11 +1510,11 @@ def wiki_run(
             def _readiness_log(msg: str, style: str = "info") -> None:
                 prefix = _style_map.get(style, "")
                 suffix = f"[/{style}]" if prefix else ""
-                log_print(f"{prefix}{msg}{suffix}")
+                log_print(f"{prefix}{rich_escape(msg)}{suffix}")
 
             ok, msg = ensure_embedding_ready(log_fn=_readiness_log, timeout=60.0)
             if not ok:
-                log_print(f"[red]{msg}[/red]")
+                log_print(f"[red]{rich_escape(msg)}[/red]")
                 log_print(
                     "[dim]Or use --scan-only / --score-only to skip embedding[/dim]"
                 )
