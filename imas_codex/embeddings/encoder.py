@@ -284,7 +284,7 @@ class Encoder:
                 "  1. Restart the embedding server: "
                 "imas-codex serve embed service restart\n"
                 "  2. Run from a SLURM job: "
-                "imas-codex compute run -- imas-codex imas build\n"
+                "imas-codex hpc run -- imas-codex imas build\n"
                 "  3. Force CPU fallback: "
                 "IMAS_CODEX_ALLOW_CPU_FALLBACK=1 imas-codex imas build"
             )

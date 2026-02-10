@@ -53,7 +53,7 @@ def main(ctx: click.Context, version: bool) -> None:
 def register_commands() -> None:
     """Register all command groups with the main CLI."""
     from imas_codex.cli.clusters import clusters
-    from imas_codex.cli.compute import compute
+    from imas_codex.cli.compute import hpc
     from imas_codex.cli.credentials import credentials
     from imas_codex.cli.data import data
     from imas_codex.cli.discover import discover
@@ -70,7 +70,7 @@ def register_commands() -> None:
 
     main.add_command(serve)
     main.add_command(data)
-    main.add_command(compute)
+    main.add_command(hpc)
     main.add_command(discover)
     main.add_command(embed)
     main.add_command(imas)

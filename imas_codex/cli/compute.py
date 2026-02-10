@@ -1,4 +1,4 @@
-"""CLI commands for managing SLURM compute jobs.
+"""CLI commands for managing SLURM HPC jobs.
 
 Provides interactive and batch job management to offload heavy work
 (imas build, ingest, discover) from the shared login node to dedicated
@@ -116,8 +116,8 @@ def _build_env_exports(login_hostname: str) -> str:
 
 
 @click.group()
-def compute():
-    """Manage SLURM compute jobs for heavy workloads.
+def hpc():
+    """Manage SLURM HPC jobs for heavy workloads.
 
     Offloads CPU-intensive tasks (imas build, ingest, discover) to
     dedicated SLURM compute nodes, keeping the shared login node
@@ -125,17 +125,17 @@ def compute():
 
     \b
     Examples:
-        imas-codex compute status           Show active compute jobs
-        imas-codex compute run -- imas-codex imas build
-        imas-codex compute shell            Interactive shell on compute node
-        imas-codex compute attach           Attach to running compute job
+        imas-codex hpc status           Show active HPC jobs
+        imas-codex hpc run -- imas-codex imas build
+        imas-codex hpc shell            Interactive shell on compute node
+        imas-codex hpc attach           Attach to running compute job
     """
     pass
 
 
-@compute.command("status")
-def compute_status():
-    """Show active SLURM compute jobs.
+@hpc.command("status")
+def hpc_status():
+    """Show active SLURM HPC jobs.
 
     Lists all running and pending jobs for the current user,
     highlighting imas-codex related jobs.
@@ -150,8 +150,8 @@ def compute_status():
         click.echo("No active SLURM jobs.")
         click.echo()
         click.echo("Start one with:")
-        click.echo("  imas-codex compute shell            # Interactive shell")
-        click.echo("  imas-codex compute run -- <command>  # Run a command")
+        click.echo("  imas-codex hpc shell            # Interactive shell")
+        click.echo("  imas-codex hpc run -- <command>  # Run a command")
         return
 
     click.echo(
@@ -168,7 +168,7 @@ def compute_status():
         )
 
 
-@compute.command("shell")
+@hpc.command("shell")
 @click.option(
     "--partition",
     "-p",
@@ -200,7 +200,7 @@ def compute_status():
     is_flag=True,
     help="Reserve an entire node exclusively",
 )
-def compute_shell(
+def hpc_shell(
     partition: str,
     cpus: int,
     mem: int,
@@ -224,10 +224,10 @@ def compute_shell(
 
     \b
     Examples:
-        imas-codex compute shell                    # Default 4 CPUs, 32GB
-        imas-codex compute shell -c 8 -m 64         # More resources
-        imas-codex compute shell --exclusive         # Full node
-        imas-codex compute shell -p rigel_debug      # Debug partition (1h max)
+        imas-codex hpc shell                    # Default 4 CPUs, 32GB
+        imas-codex hpc shell -c 8 -m 64         # More resources
+        imas-codex hpc shell --exclusive         # Full node
+        imas-codex hpc shell -p rigel_debug      # Debug partition (1h max)
     """
     if not _slurm_available():
         raise click.ClickException(
@@ -271,7 +271,7 @@ def compute_shell(
     os.execvp("srun", cmd)
 
 
-@compute.command("run")
+@hpc.command("run")
 @click.option(
     "--partition",
     "-p",
@@ -299,7 +299,7 @@ def compute_shell(
     help=f"Job name (default: {DEFAULT_JOB_NAME})",
 )
 @click.argument("command", nargs=-1, required=True)
-def compute_run(
+def hpc_run(
     partition: str,
     cpus: int,
     mem: int,
@@ -314,10 +314,10 @@ def compute_run(
 
     \b
     Examples:
-        imas-codex compute run -- imas-codex imas build
-        imas-codex compute run -- imas-codex ingest run tcv
-        imas-codex compute run -- imas-codex discover wiki jt60sa -c 25
-        imas-codex compute run -c 2 -m 16 -- uv run pytest tests/
+        imas-codex hpc run -- imas-codex imas build
+        imas-codex hpc run -- imas-codex ingest run tcv
+        imas-codex hpc run -- imas-codex discover wiki jt60sa -c 25
+        imas-codex hpc run -c 2 -m 16 -- uv run pytest tests/
     """
     if not _slurm_available():
         raise click.ClickException(
@@ -343,7 +343,7 @@ def compute_run(
     os.execvp("srun", srun_cmd)
 
 
-@compute.command("submit")
+@hpc.command("submit")
 @click.option(
     "--partition",
     "-p",
@@ -377,7 +377,7 @@ def compute_run(
     help="Output log file (default: codex-<jobid>.log)",
 )
 @click.argument("command", nargs=-1, required=True)
-def compute_submit(
+def hpc_submit(
     partition: str,
     cpus: int,
     mem: int,
@@ -392,8 +392,8 @@ def compute_submit(
 
     \b
     Examples:
-        imas-codex compute submit -- imas-codex imas build
-        imas-codex compute submit -o build.log -- imas-codex imas build --force
+        imas-codex hpc submit -- imas-codex imas build
+        imas-codex hpc submit -o build.log -- imas-codex imas build --force
     """
     if not _slurm_available():
         raise click.ClickException(
@@ -432,9 +432,9 @@ def compute_submit(
     click.echo(f"Output: {output_file}")
 
 
-@compute.command("attach")
+@hpc.command("attach")
 @click.argument("job_id", required=False)
-def compute_attach(job_id: str | None) -> None:
+def hpc_attach(job_id: str | None) -> None:
     """Attach to a running interactive SLURM job.
 
     Without a job ID, attaches to the most recent 'codex' job.
@@ -442,8 +442,8 @@ def compute_attach(job_id: str | None) -> None:
 
     \b
     Examples:
-        imas-codex compute attach           # Most recent codex job
-        imas-codex compute attach 893042    # Specific job
+        imas-codex hpc attach           # Most recent codex job
+        imas-codex hpc attach 893042    # Specific job
     """
     if not _slurm_available():
         raise click.ClickException(
@@ -457,7 +457,7 @@ def compute_attach(job_id: str | None) -> None:
         if not running:
             raise click.ClickException(
                 f"No running '{DEFAULT_JOB_NAME}' jobs found.\n"
-                "Start one with: imas-codex compute shell"
+                "Start one with: imas-codex hpc shell"
             )
         job_id = running[0]["job_id"]
         click.echo(f"Attaching to job {job_id} on {running[0]['node']}...")
@@ -465,17 +465,17 @@ def compute_attach(job_id: str | None) -> None:
     os.execvp("sattach", ["sattach", f"{job_id}.0"])
 
 
-@compute.command("cancel")
+@hpc.command("cancel")
 @click.argument("job_id", required=False)
 @click.option("--all", "cancel_all", is_flag=True, help="Cancel all codex jobs")
-def compute_cancel(job_id: str | None, cancel_all: bool) -> None:
-    """Cancel SLURM compute jobs.
+def hpc_cancel(job_id: str | None, cancel_all: bool) -> None:
+    """Cancel SLURM HPC jobs.
 
     \b
     Examples:
-        imas-codex compute cancel           # Cancel most recent codex job
-        imas-codex compute cancel 893042    # Cancel specific job
-        imas-codex compute cancel --all     # Cancel all codex jobs
+        imas-codex hpc cancel           # Cancel most recent codex job
+        imas-codex hpc cancel 893042    # Cancel specific job
+        imas-codex hpc cancel --all     # Cancel all codex jobs
     """
     if not _slurm_available():
         raise click.ClickException(
@@ -502,8 +502,8 @@ def compute_cancel(job_id: str | None, cancel_all: bool) -> None:
     click.echo(f"Cancelled job {job_id}")
 
 
-@compute.command("info")
-def compute_info() -> None:
+@hpc.command("info")
+def hpc_info() -> None:
     """Show SLURM cluster information relevant to imas-codex.
 
     Displays partition availability, idle nodes, and recommended
