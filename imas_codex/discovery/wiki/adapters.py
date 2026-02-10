@@ -903,6 +903,34 @@ class TWikiAdapter(WikiAdapter):
         return "document"
 
 
+def _fetch_html_direct(url: str, timeout: float = 10.0) -> str | None:
+    """Fetch HTML content via direct HTTP request.
+
+    Tries a quick direct connection first. This succeeds when:
+    - Running on a machine with VPN access (e.g., laptop)
+    - A SOCKS/port-forward tunnel makes the URL reachable locally
+
+    Uses a short timeout to fail fast when the URL isn't directly reachable.
+
+    Args:
+        url: URL to fetch
+        timeout: Connection timeout in seconds (kept short for fast fallback)
+
+    Returns:
+        HTML content string, or None on failure
+    """
+    try:
+        import httpx
+
+        with httpx.Client(verify=False, timeout=timeout) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            return response.text
+    except Exception as e:
+        logger.debug("Direct HTTP failed for %s: %s", url, e)
+        return None
+
+
 def _fetch_html_via_ssh(url: str, ssh_host: str, timeout: int = 30) -> str | None:
     """Fetch HTML content via SSH-proxied curl.
 
@@ -934,6 +962,53 @@ def _fetch_html_via_ssh(url: str, ssh_host: str, timeout: int = 30) -> str | Non
     except Exception as e:
         logger.warning("SSH curl error for %s: %s", url, e)
         return None
+
+
+def _fetch_html(
+    url: str, ssh_host: str | None = None, timeout: float = 10.0
+) -> str | None:
+    """Fetch HTML with automatic strategy selection.
+
+    Tries direct HTTP first (fast, works with VPN or port forwarding),
+    then falls back to SSH proxy if configured and direct fails.
+
+    Args:
+        url: URL to fetch
+        ssh_host: SSH host for fallback proxy access
+        timeout: Direct HTTP timeout in seconds
+
+    Returns:
+        HTML content string, or None if all methods fail
+    """
+    # Try direct HTTP first — works when VPN is active or tunnel is set up
+    html = _fetch_html_direct(url, timeout=timeout)
+    if html is not None:
+        return html
+
+    # Fall back to SSH proxy if configured
+    if ssh_host:
+        logger.debug("Direct HTTP failed, falling back to SSH proxy via %s", ssh_host)
+        return _fetch_html_via_ssh(url, ssh_host)
+
+    return None
+
+
+def _probe_direct_access(url: str, timeout: float = 10.0) -> bool:
+    """Probe whether direct HTTP access works for a URL.
+
+    Makes a single test request to determine if the URL is directly
+    reachable. Used to avoid repeated timeout penalties during bulk
+    operations like BFS crawling.
+
+    Args:
+        url: URL to probe
+        timeout: Connection timeout in seconds
+
+    Returns:
+        True if direct access works, False otherwise
+    """
+    result = _fetch_html_direct(url, timeout=timeout)
+    return result is not None
 
 
 class TWikiStaticAdapter(WikiAdapter):
@@ -1002,19 +1077,11 @@ class TWikiStaticAdapter(WikiAdapter):
             if on_progress:
                 on_progress("fetching WebTopicList.html", None)
 
-            # Fetch HTML: via SSH proxy if configured, else direct HTTP
-            if self._ssh_host:
-                html_text = _fetch_html_via_ssh(topic_list_url, self._ssh_host)
-                if html_text is None:
-                    logger.warning("Failed to fetch WebTopicList.html via SSH")
-                    return []
-            else:
-                import httpx
-
-                with httpx.Client(verify=False, timeout=30.0) as client:
-                    response = client.get(topic_list_url)
-                    response.raise_for_status()
-                    html_text = response.text
+            # Fetch HTML: try direct first, fall back to SSH proxy
+            html_text = _fetch_html(topic_list_url, ssh_host=self._ssh_host)
+            if html_text is None:
+                logger.warning("Failed to fetch WebTopicList.html")
+                return []
 
             soup = BeautifulSoup(html_text, "html.parser")
 
@@ -1104,21 +1171,21 @@ class TWikiStaticAdapter(WikiAdapter):
         if on_progress:
             on_progress(f"scanning {len(pages)} pages for artifacts", None)
 
-        def _fetch_page_html(url: str) -> str | None:
-            """Fetch a single page, via SSH or direct."""
-            if self._ssh_host:
-                return _fetch_html_via_ssh(url, self._ssh_host)
-            else:
-                import httpx
+        # Probe direct access once to avoid repeated timeouts
+        probe_url = f"{effective_base_url}/WebTopicList.html"
+        use_direct = _probe_direct_access(probe_url)
+        if use_direct:
+            logger.info("Direct HTTP access available for %s", effective_base_url)
+        elif self._ssh_host:
+            logger.info("Using SSH proxy via %s for artifact scan", self._ssh_host)
 
-                try:
-                    with httpx.Client(verify=False, timeout=30.0) as client:
-                        response = client.get(url)
-                        if response.status_code != 200:
-                            return None
-                        return response.text
-                except Exception:
-                    return None
+        def _fetch_page_html(url: str) -> str | None:
+            """Fetch a single page using probed strategy."""
+            if use_direct:
+                return _fetch_html_direct(url)
+            elif self._ssh_host:
+                return _fetch_html_via_ssh(url, self._ssh_host)
+            return None
 
         try:
             for i, page in enumerate(pages):
@@ -1279,27 +1346,24 @@ class StaticHtmlAdapter(WikiAdapter):
                 queue.append(url)
                 seen_urls.add(url)
 
-        def _fetch_url(url: str) -> tuple[str | None, str]:
-            """Fetch URL content and content-type, via SSH or direct."""
-            if self._ssh_host:
-                html_text = _fetch_html_via_ssh(url, self._ssh_host)
-                # SSH curl doesn't give us content-type, assume html
-                return html_text, "text/html"
-            else:
-                import httpx
+        # Probe direct access once to avoid repeated timeouts during BFS
+        probe_url = portal_candidates[0]
+        use_direct = _probe_direct_access(probe_url)
+        if use_direct:
+            logger.info("Direct HTTP access available for %s", effective_base_url)
+        elif self._ssh_host:
+            logger.info("Using SSH proxy via %s for BFS crawl", self._ssh_host)
 
-                try:
-                    with httpx.Client(
-                        verify=False, timeout=30.0, follow_redirects=True
-                    ) as client:
-                        response = client.get(url)
-                        if response.status_code != 200:
-                            return None, ""
-                        content_type = response.headers.get("content-type", "")
-                        return response.text, content_type
-                except Exception as e:
-                    logger.debug("Failed to fetch %s: %s", url, e)
-                    return None, ""
+        def _fetch_url(url: str) -> tuple[str | None, str]:
+            """Fetch URL content using probed strategy."""
+            if use_direct:
+                html_text = _fetch_html_direct(url)
+            elif self._ssh_host:
+                html_text = _fetch_html_via_ssh(url, self._ssh_host)
+            else:
+                html_text = _fetch_html_direct(url)
+            content_type = "text/html" if html_text else ""
+            return html_text, content_type
 
         try:
             while queue:
@@ -1308,7 +1372,7 @@ class StaticHtmlAdapter(WikiAdapter):
                 html_text, content_type = _fetch_url(current_url)
                 if html_text is None:
                     continue
-                if not self._ssh_host and "html" not in content_type:
+                if "html" not in content_type:
                     continue
 
                 # Extract page name from URL path

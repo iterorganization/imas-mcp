@@ -89,9 +89,14 @@ class TestTWikiStaticAdapterDiscovery:
 
         assert len(pages) == 0
 
+    @patch("imas_codex.discovery.wiki.adapters._fetch_html_direct")
     @patch("imas_codex.discovery.wiki.adapters._fetch_html_via_ssh")
-    def test_bulk_discover_pages_via_ssh(self, mock_ssh_fetch):
-        """Test that bulk_discover_pages uses SSH proxy when ssh_host is set."""
+    def test_bulk_discover_pages_via_ssh(self, mock_ssh_fetch, mock_direct_fetch):
+        """Test that bulk_discover_pages falls back to SSH when direct fails."""
+        # Direct HTTP fails (simulates no VPN/tunnel)
+        mock_direct_fetch.return_value = None
+
+        # SSH proxy succeeds
         mock_ssh_fetch.return_value = """
         <html>
         <body>
@@ -111,7 +116,8 @@ class TestTWikiStaticAdapterDiscovery:
             "test_facility", "https://example.org/twiki_html"
         )
 
-        # Should call SSH fetch, not httpx
+        # Direct tried first, then SSH fallback
+        mock_direct_fetch.assert_called()
         mock_ssh_fetch.assert_called_once_with(
             "https://example.org/twiki_html/WebTopicList.html", "myhost"
         )
@@ -123,9 +129,11 @@ class TestTWikiStaticAdapterDiscovery:
         assert "TopicBeta" in names
         assert "WebHome" not in names
 
+    @patch("imas_codex.discovery.wiki.adapters._fetch_html_direct")
     @patch("imas_codex.discovery.wiki.adapters._fetch_html_via_ssh")
-    def test_bulk_discover_pages_ssh_failure(self, mock_ssh_fetch):
-        """Test that SSH failure returns empty list."""
+    def test_bulk_discover_pages_ssh_failure(self, mock_ssh_fetch, mock_direct_fetch):
+        """Test that both methods failing returns empty list."""
+        mock_direct_fetch.return_value = None
         mock_ssh_fetch.return_value = None
 
         adapter = TWikiStaticAdapter(
