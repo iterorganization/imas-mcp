@@ -1887,19 +1887,27 @@ def wiki_run(
                 wiki_logger.info(f"ARTIFACTS: {msg}")
 
             wiki_client = None
-            if (
-                site_type == "mediawiki"
-                and auth_type == "tequila"
-                and credential_service
-            ):
-                from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+            if site_type == "mediawiki" and credential_service:
+                if auth_type == "tequila":
+                    from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
 
-                wiki_client = MediaWikiClient(
-                    base_url=base_url,
-                    credential_service=credential_service,
-                    verify_ssl=False,
-                )
-                wiki_client.authenticate()
+                    wiki_client = MediaWikiClient(
+                        base_url=base_url,
+                        credential_service=credential_service,
+                        verify_ssl=False,
+                    )
+                    wiki_client.authenticate()
+                elif auth_type == "basic":
+                    from imas_codex.discovery.wiki.mediawiki import (
+                        BasicAuthWikiClient,
+                    )
+
+                    wiki_client = BasicAuthWikiClient(
+                        base_url=base_url,
+                        credential_service=credential_service,
+                        verify_ssl=False,
+                    )
+                    wiki_client.authenticate()
 
             if use_rich:
                 from rich.status import Status

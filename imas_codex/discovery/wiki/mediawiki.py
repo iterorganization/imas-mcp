@@ -1217,6 +1217,123 @@ class AsyncMediaWikiClient:
             self._authenticated = False
 
 
+class BasicAuthWikiClient:
+    """HTTP client for MediaWiki sites with HTTP Basic authentication.
+
+    Provides the same interface as MediaWikiClient (.session, .authenticate(),
+    .close()) but uses HTTP Basic Auth instead of Tequila SSO.
+
+    This allows MediaWikiAdapter to work with any auth type — it just
+    needs ``wiki_client.session`` to make authenticated requests.
+
+    Example:
+        client = BasicAuthWikiClient(
+            base_url="https://wiki.jetdata.eu/pog",
+            credential_service="jet",
+        )
+        client.authenticate()
+        resp = client.session.get("https://wiki.jetdata.eu/pog/api.php?...")
+        client.close()
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        credential_service: str,
+        timeout: int = DEFAULT_TIMEOUT,
+        verify_ssl: bool = False,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.credential_service = credential_service
+        self.timeout = timeout
+        self.verify_ssl = verify_ssl
+        self._session: requests.Session | None = None
+        self._authenticated = False
+
+    def _get_session(self) -> requests.Session:
+        """Create and configure session with Basic auth credentials."""
+        if self._session is None:
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+
+            cred_mgr = CredentialManager()
+            creds = cred_mgr.get_credentials(
+                self.credential_service, prompt_if_missing=False
+            )
+            if not creds:
+                raise RuntimeError(
+                    f"No credentials for {self.credential_service}. "
+                    f"Set with: imas-codex credentials set {self.credential_service}"
+                )
+
+            username, password = creds
+            self._session = requests.Session()
+            self._session.auth = (username, password)
+            self._session.verify = self.verify_ssl
+
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=0.5,
+                status_forcelist=[500, 502, 503, 504],
+            )
+            adapter = HTTPAdapter(
+                max_retries=retry_strategy,
+                pool_connections=10,
+                pool_maxsize=20,
+            )
+            self._session.mount("https://", adapter)
+            self._session.mount("http://", adapter)
+
+            self._session.headers.update(
+                {
+                    "User-Agent": "imas-codex/1.0 (IMAS Data Mapping Tool)",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Encoding": "gzip, deflate",
+                    "Connection": "keep-alive",
+                }
+            )
+
+        return self._session
+
+    @property
+    def session(self) -> requests.Session:
+        """Public access to the authenticated session."""
+        return self._get_session()
+
+    def authenticate(self) -> bool:
+        """Validate credentials by making a test request.
+
+        Returns:
+            True if credentials are valid
+        """
+        if self._authenticated:
+            return True
+
+        session = self._get_session()
+        # Quick probe to verify credentials work
+        try:
+            resp = session.get(self.base_url, timeout=15, allow_redirects=True)
+            if resp.status_code == 401:
+                logger.warning(
+                    "HTTP 401 for %s — check credentials for %s",
+                    self.base_url,
+                    self.credential_service,
+                )
+                return False
+            self._authenticated = True
+            return True
+        except Exception as e:
+            logger.warning("Auth probe failed for %s: %s", self.base_url, e)
+            return False
+
+    def close(self) -> None:
+        """Close the session."""
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+            self._authenticated = False
+
+
 async def get_async_mediawiki_client(
     facility: str, site_index: int = 0
 ) -> AsyncMediaWikiClient:

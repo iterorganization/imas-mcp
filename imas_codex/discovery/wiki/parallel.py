@@ -5128,18 +5128,44 @@ async def run_parallel_wiki_discovery(
             if on_artifact_progress:
                 on_artifact_progress(f"bulk: {msg}", state.artifact_stats)
 
-        # Bulk discovery uses SSH when available, no async wiki client support yet
-        bulk_artifacts_discovered = await asyncio.to_thread(
-            bulk_discover_artifacts,
-            facility,
-            base_url,
-            site_type,
-            ssh_host,
-            None,  # wiki_client - removed, use SSH path
-            state.credential_service,
-            "vpn" if ssh_host else "direct",
-            artifact_progress,
-        )
+        # Create a sync wiki client for the adapter when auth requires it.
+        # The adapter uses wiki_client.session for HTTP requests, so we need
+        # a client that provides the right auth (Basic, Tequila, etc.)
+        sync_wiki_client = None
+        if site_type == "mediawiki" and state.credential_service:
+            if state.auth_type == "basic":
+                from imas_codex.discovery.wiki.mediawiki import BasicAuthWikiClient
+
+                sync_wiki_client = BasicAuthWikiClient(
+                    base_url=base_url,
+                    credential_service=state.credential_service,
+                    verify_ssl=False,
+                )
+            elif state.auth_type == "tequila":
+                from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+
+                sync_wiki_client = MediaWikiClient(
+                    base_url=base_url,
+                    credential_service=state.credential_service,
+                    verify_ssl=False,
+                )
+                sync_wiki_client.authenticate()
+
+        try:
+            bulk_artifacts_discovered = await asyncio.to_thread(
+                bulk_discover_artifacts,
+                facility,
+                base_url,
+                site_type,
+                ssh_host,
+                sync_wiki_client,
+                state.credential_service,
+                "vpn" if ssh_host else "direct",
+                artifact_progress,
+            )
+        finally:
+            if sync_wiki_client is not None:
+                sync_wiki_client.close()
 
         if bulk_artifacts_discovered:
             logger.info(f"Bulk discovery found {bulk_artifacts_discovered} artifacts")
