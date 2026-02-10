@@ -788,6 +788,7 @@ class TWikiAdapter(WikiAdapter):
         ssh_host: str | None = None,
         webs: list[str] | None = None,
         base_url: str | None = None,
+        pub_path: str | None = None,
     ):
         """Initialize TWiki adapter.
 
@@ -795,10 +796,15 @@ class TWikiAdapter(WikiAdapter):
             ssh_host: SSH host for proxied commands
             webs: TWiki webs to discover (default: ["Main"])
             base_url: Base URL of TWiki installation (e.g. http://host/twiki)
+            pub_path: Absolute path to TWiki pub/ directory on the server.
+                When set, artifact discovery uses fd over SSH to scan
+                pub/<web>/ for files, which is instant and provides
+                inherent topic→artifact linkage from the directory structure.
         """
         self.ssh_host = ssh_host
         self.webs = webs or ["Main"]
         self._base_url = base_url
+        self._pub_path = pub_path.rstrip("/") if pub_path else None
 
     def _ssh_curl(self, url: str, timeout: int = 30) -> str | None:
         """Fetch URL via SSH-proxied curl with proxy bypass.
@@ -913,85 +919,121 @@ class TWikiAdapter(WikiAdapter):
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> list[DiscoveredArtifact]:
-        """Discover artifacts via TWiki pub directory listing.
+        """Discover artifacts via fd scanning of the pub/ directory tree.
 
-        For each configured web, fetches the /pub/<Web>/ directory listing
-        and extracts links to downloadable files.
+        When pub_path is configured, uses a single SSH call with fd to list
+        all artifact files across all webs. The directory structure
+        pub/<web>/<topic>/<filename> provides inherent topic→artifact linkage.
+
+        Falls back to HTTP directory listing when pub_path is not available.
 
         Args:
             facility: Facility ID
-            base_url: TWiki base URL
+            base_url: TWiki base URL (used for building artifact URLs)
             on_progress: Progress callback
 
         Returns:
-            List of discovered artifacts
+            List of discovered artifacts with page linkage
         """
         if not self.ssh_host:
             logger.warning("TWiki adapter requires SSH host")
             return []
 
-        effective_url = self._base_url or base_url
+        if self._pub_path:
+            return self._discover_artifacts_via_fd(base_url, on_progress)
+
+        logger.info("No pub_path configured, skipping artifact discovery")
+        return []
+
+    def _discover_artifacts_via_fd(
+        self,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Discover artifacts by scanning the pub/ filesystem via fd over SSH.
+
+        Single SSH call using fd to find all artifact files. The TWiki pub/
+        directory structure (pub/<web>/<topic>/<filename>) maps each file
+        to its parent topic for page linkage.
+
+        Args:
+            base_url: TWiki base URL (for building web-accessible URLs)
+            on_progress: Progress callback
+
+        Returns:
+            List of discovered artifacts with topic linkage
+        """
+        effective_url = (self._base_url or base_url).rstrip("/")
         artifacts: list[DiscoveredArtifact] = []
 
         for web in self.webs:
-            pub_url = f"{effective_url}/pub/{web}/"
-            # Fetch pub listing and extract file links
-            cmd = f'curl -s --noproxy "*" --max-time 15 "{pub_url}" | grep -oP \'href="[^"]+\\.(pdf|doc|docx|ppt|pptx|xls|xlsx|ipynb|h5|hdf5|mat)\'\''
+            web_pub_path = f"{self._pub_path}/{web}"
+            ext_args = " ".join(f"-e {ext.lstrip('.')}" for ext in _ARTIFACT_EXTENSIONS)
+            cmd = f"fd {ext_args} . {shlex.quote(web_pub_path)}"
+
+            if on_progress:
+                on_progress(f"scanning {web_pub_path} via fd", None)
+
+            logger.info(
+                "Running fd artifact scan: %s via %s", web_pub_path, self.ssh_host
+            )
 
             try:
                 result = subprocess.run(
                     ["ssh", self.ssh_host, cmd],
                     capture_output=True,
-                    text=True,
                     timeout=60,
                 )
-                if result.returncode == 0:
-                    for line in result.stdout.strip().split("\n"):
-                        if not line:
-                            continue
-                        match = re.search(r'href="([^"]+)"', line)
-                        if match:
-                            path = match.group(1)
-                            filename = path.split("/")[-1]
-                            if path.startswith("/"):
-                                url = f"{effective_url.rsplit('/twiki', 1)[0]}{path}"
-                            else:
-                                url = f"{effective_url}/pub/{web}/{path}"
-
-                            artifact_type = self._get_artifact_type(filename)
-                            artifacts.append(
-                                DiscoveredArtifact(
-                                    filename=filename,
-                                    url=url,
-                                    artifact_type=artifact_type,
-                                )
-                            )
+            except subprocess.TimeoutExpired:
+                logger.warning("fd scan timed out for %s", web_pub_path)
+                continue
             except Exception as e:
-                logger.warning(
-                    "Error during TWiki artifact discovery for web '%s': %s", web, e
+                logger.warning("fd scan failed for %s: %s", web_pub_path, e)
+                continue
+
+            if result.returncode not in (0, 1):
+                stderr = result.stderr.decode("utf-8", errors="replace").strip()
+                if stderr:
+                    logger.warning("fd scan stderr: %s", stderr[:200])
+                continue
+
+            output = result.stdout.decode("utf-8", errors="replace")
+            for line in output.strip().split("\n"):
+                if not line:
+                    continue
+
+                filepath = line.strip()
+                # Extract topic and filename from pub/<web>/<topic>/<filename>
+                rel_path = filepath.replace(f"{self._pub_path}/{web}/", "")
+                parts = rel_path.split("/")
+                if len(parts) < 2:
+                    continue
+
+                topic_name = parts[0]
+                filename = parts[-1]
+                artifact_type = _get_artifact_type_from_filename(filename)
+
+                # Build web-accessible URL: /twiki/pub/<web>/<topic>/<filename>
+                url_path = f"/twiki/pub/{web}/{rel_path}"
+                parsed = urllib.parse.urlparse(effective_url)
+                artifact_url = f"{parsed.scheme}://{parsed.netloc}{url_path}"
+
+                artifact = DiscoveredArtifact(
+                    filename=filename,
+                    url=artifact_url,
+                    artifact_type=artifact_type,
                 )
+                artifact.linked_pages.append(f"{web}/{topic_name}")
+                artifacts.append(artifact)
+
+            logger.info(
+                "fd scan complete for web '%s': %d artifacts", web, len(artifacts)
+            )
 
         if on_progress:
             on_progress(f"discovered {len(artifacts)} artifacts", None)
 
         return artifacts
-
-    def _get_artifact_type(self, filename: str) -> str:
-        """Get artifact type from filename."""
-        filename_lower = filename.lower()
-        if filename_lower.endswith(".pdf"):
-            return "pdf"
-        if filename_lower.endswith((".doc", ".docx")):
-            return "document"
-        if filename_lower.endswith((".ppt", ".pptx")):
-            return "presentation"
-        if filename_lower.endswith((".xls", ".xlsx")):
-            return "spreadsheet"
-        if filename_lower.endswith(".ipynb"):
-            return "notebook"
-        if filename_lower.endswith((".h5", ".hdf5", ".mat")):
-            return "data"
-        return "document"
 
 
 def _fetch_html_direct(url: str, timeout: float = 10.0) -> str | None:
@@ -1246,6 +1288,7 @@ class TWikiStaticAdapter(WikiAdapter):
         base_url: str | None = None,
         ssh_host: str | None = None,
         access_method: str = "direct",
+        pub_path: str | None = None,
     ):
         """Initialize TWiki static adapter.
 
@@ -1253,10 +1296,14 @@ class TWikiStaticAdapter(WikiAdapter):
             base_url: Base URL of the static TWiki export
             ssh_host: SSH host for proxied access (only used when access_method="vpn")
             access_method: "direct" (auth-protected) or "vpn" (requires proxy)
+            pub_path: Absolute path to the static export's resource directory.
+                When set, artifact discovery uses fd over SSH instead of
+                curl+rg page scraping.
         """
         self._base_url = base_url
         self._ssh_host = ssh_host
         self._access_method = access_method
+        self._pub_path = pub_path.rstrip("/") if pub_path else None
 
     def bulk_discover_pages(
         self,
@@ -1371,13 +1418,15 @@ class TWikiStaticAdapter(WikiAdapter):
         if not effective_base_url:
             return []
 
-        # Get page list (single SSH call to fetch WebTopicList.html)
-        pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
-        if not pages:
-            return []
+        # Fastest path: fd scan of the resource directory on disk
+        if self._pub_path and self._ssh_host:
+            return self._discover_artifacts_via_fd(effective_base_url, on_progress)
 
         # Fast path: single SSH command with server-side curl + rg
         if self._ssh_host:
+            pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
+            if not pages:
+                return []
             if on_progress:
                 on_progress(
                     f"scanning {len(pages)} pages via SSH+rg (single connection)", None
@@ -1387,7 +1436,94 @@ class TWikiStaticAdapter(WikiAdapter):
             )
 
         # Slow fallback: per-page HTTP fetch (no SSH available)
+        pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
+        if not pages:
+            return []
         return self._discover_artifacts_per_page(pages, effective_base_url, on_progress)
+
+    def _discover_artifacts_via_fd(
+        self,
+        effective_base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Discover artifacts by scanning the resource directory via fd over SSH.
+
+        The static export stores resources in rsrc/<web>/<topic>/<filename>,
+        which maps directly to topic linkage.
+
+        Args:
+            effective_base_url: Base URL for building web-accessible URLs
+            on_progress: Progress callback
+
+        Returns:
+            List of discovered artifacts with topic linkage
+        """
+        ext_args = " ".join(f"-e {ext.lstrip('.')}" for ext in _ARTIFACT_EXTENSIONS)
+        cmd = f"fd {ext_args} . {shlex.quote(self._pub_path)}"
+
+        if on_progress:
+            on_progress(f"scanning {self._pub_path} via fd", None)
+
+        logger.info(
+            "Running fd artifact scan: %s via %s", self._pub_path, self._ssh_host
+        )
+
+        try:
+            result = subprocess.run(
+                ["ssh", self._ssh_host, cmd],
+                capture_output=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("fd scan timed out for %s", self._pub_path)
+            return []
+        except Exception as e:
+            logger.warning("fd scan failed for %s: %s", self._pub_path, e)
+            return []
+
+        if result.returncode not in (0, 1):
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            if stderr:
+                logger.warning("fd scan stderr: %s", stderr[:200])
+            return []
+
+        output = result.stdout.decode("utf-8", errors="replace")
+        artifacts: list[DiscoveredArtifact] = []
+
+        for line in output.strip().split("\n"):
+            if not line:
+                continue
+
+            filepath = line.strip()
+            # Extract web/topic/filename from rsrc/<web>/<topic>/<filename>
+            rel_path = filepath.replace(f"{self._pub_path}/", "")
+            parts = rel_path.split("/")
+            if len(parts) < 2:
+                continue
+
+            # First part is the web name, second is the topic
+            topic_name = parts[1] if len(parts) >= 3 else parts[0]
+            filename = parts[-1]
+            artifact_type = _get_artifact_type_from_filename(filename)
+
+            # Build web-accessible URL: base_url/rsrc/<rel_path>
+            artifact_url = f"{effective_base_url}/rsrc/{rel_path}"
+
+            artifact = DiscoveredArtifact(
+                filename=filename,
+                url=artifact_url,
+                artifact_type=artifact_type,
+            )
+            artifact.linked_pages.append(topic_name)
+            artifacts.append(artifact)
+
+        if on_progress:
+            on_progress(f"discovered {len(artifacts)} artifacts", None)
+
+        logger.info(
+            "fd scan complete: %d artifacts from %s", len(artifacts), self._pub_path
+        )
+        return artifacts
 
     def _discover_artifacts_per_page(
         self,
@@ -2325,10 +2461,15 @@ def get_adapter(
             credential_service=credential_service,
         )
     elif site_type == "twiki":
-        return TWikiAdapter(ssh_host=ssh_host, webs=webs, base_url=base_url)
+        return TWikiAdapter(
+            ssh_host=ssh_host, webs=webs, base_url=base_url, pub_path=pub_path
+        )
     elif site_type == "twiki_static":
         return TWikiStaticAdapter(
-            base_url=base_url, ssh_host=ssh_host, access_method=access_method
+            base_url=base_url,
+            ssh_host=ssh_host,
+            access_method=access_method,
+            pub_path=pub_path,
         )
     elif site_type == "twiki_raw":
         if not ssh_host:

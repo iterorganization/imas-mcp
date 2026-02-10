@@ -30,6 +30,7 @@ wiki_sites:
     site_type: twiki
     webs:
       - Main
+    pub_path: /var/www/html/twiki/pub  # Artifact discovery via fd over SSH
     access_method: vpn
     auth_type: none
     ssh_available: true
@@ -38,7 +39,8 @@ wiki_sites:
       (eGIS, eSLICE, eSURF), Eddb API documentation (C/Fortran/Python wrappers),
       AnalysisDB and ExperimentDB system docs, discharge parameter handbook,
       daily reports, shot reports, and operational reports.
-      ~5500 topics. Accessed via SSH-proxied curl to 157.111.10.188.
+      ~5500 topics, ~130 artifacts. Pages discovered via WebTopicList API,
+      artifacts via fd scanning pub/<web>/ on the filesystem.
     languages:
       - ja
       - en
@@ -46,13 +48,15 @@ wiki_sites:
   - url: https://nakasvr23.iferc.org/twiki_html
     portal_page: WebHome.html
     site_type: twiki_static
+    pub_path: /var/www/html/twiki_html/rsrc  # Artifact discovery via fd over SSH
     access_method: vpn   # Only accessible when IFERC VPN is active
     auth_type: none      # No credentials — VPN is the access gate
     ssh_available: true  # SSH to jt60sa host also possible via VPN
     description: >-
-      JT-60SA Code web - analysis code documentation.
-      Contains TOPICS, EDAS, SLICE, equilibrium codes, hardware specs.
-      Static HTML export. Mixed Japanese/English content.
+      JT-60SA Code web - analysis code documentation (standalone archive,
+      no Code web in live TWiki). Contains TOPICS, EDAS, SLICE, equilibrium
+      codes, hardware specs. Static HTML export, ~285 pages, ~644 artifacts.
+      Mixed Japanese/English content.
     languages:
       - ja
       - en
