@@ -19,6 +19,7 @@ Key concepts:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -1693,7 +1694,7 @@ async def persist_scan_results(
     with GraphClient() as gc:
         # Batch update first-scan paths (discovered → scanned)
         if first_scan_updates:
-            gc.query(
+            update_result = gc.query(
                 """
                 UNWIND $items AS item
                 MATCH (p:FacilityPath {id: item.id})
@@ -1716,13 +1717,26 @@ async def persist_scan_results(
                     p.tree_context = item.tree_context,
                     p.numeric_dir_ratio = item.numeric_dir_ratio,
                     p.patterns_detected = item.patterns_detected
+                RETURN count(p) AS updated
                 """,
                 items=first_scan_updates,
             )
+            updated = update_result[0]["updated"] if update_result else 0
+            if updated != len(first_scan_updates):
+                logger.warning(
+                    f"First-scan UNWIND: updated {updated}/{len(first_scan_updates)} "
+                    f"paths (IDs: {[i['id'] for i in first_scan_updates[:3]]}...)"
+                )
+            else:
+                logger.debug(f"First-scan UNWIND: updated {updated} paths")
+
+            # Yield to event loop so score workers can claim the
+            # newly-scanned paths while we handle excluded dirs, users, etc.
+            await asyncio.sleep(0)
 
         # Batch update expansion paths (scored stays scored, mark expanded)
         if expansion_updates:
-            gc.query(
+            expand_result = gc.query(
                 """
                 UNWIND $items AS item
                 MATCH (p:FacilityPath {id: item.id})
@@ -1744,9 +1758,15 @@ async def persist_scan_results(
                     p.tree_context = item.tree_context,
                     p.numeric_dir_ratio = item.numeric_dir_ratio,
                     p.patterns_detected = item.patterns_detected
+                RETURN count(p) AS updated
                 """,
                 items=expansion_updates,
             )
+            updated = expand_result[0]["updated"] if expand_result else 0
+            if updated != len(expansion_updates):
+                logger.warning(
+                    f"Expansion UNWIND: updated {updated}/{len(expansion_updates)} paths"
+                )
 
         # Batch create children
         if all_children:
@@ -1959,15 +1979,22 @@ async def persist_scan_results(
 
         # Handle excluded directories (create with status='skipped', terminal_reason='excluded')
         if excluded:
+            # Batch depth lookup: get all parent depths in one query
+            unique_parents = list({f"{facility}:{pp}" for _, pp, _ in excluded})
+            depth_result = gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (p:FacilityPath {id: id})
+                RETURN p.id AS id, p.depth AS depth
+                """,
+                ids=unique_parents,
+            )
+            depth_map = {r["id"]: r["depth"] or 0 for r in depth_result}
+
             excluded_nodes = []
             for path, parent_path, reason in excluded:
                 parent_id = f"{facility}:{parent_path}"
-                # Get parent depth
-                depth_result = gc.query(
-                    "MATCH (p:FacilityPath {id: $id}) RETURN p.depth AS depth",
-                    id=parent_id,
-                )
-                parent_depth = depth_result[0]["depth"] if depth_result else 0
+                parent_depth = depth_map.get(parent_id, 0)
 
                 excluded_nodes.append(
                     {
@@ -1975,7 +2002,7 @@ async def persist_scan_results(
                         "facility_id": facility,
                         "path": path,
                         "parent_id": parent_id,
-                        "depth": (parent_depth or 0) + 1,
+                        "depth": parent_depth + 1,
                         "status": PathStatus.skipped.value,
                         "terminal_reason": TerminalReason.excluded.value,
                         "skip_reason": reason,

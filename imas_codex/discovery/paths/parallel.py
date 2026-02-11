@@ -160,7 +160,8 @@ class DiscoveryState:
                     self.rescore_idle_count = 0
                     return False
             # Check for pending expansion work before terminating
-            if has_pending_work(self.facility):
+            pending = has_pending_work(self.facility)
+            if pending:
                 # Reset idle counts to force workers to re-poll for new work
                 self.scan_idle_count = 0
                 self.expand_idle_count = 0
@@ -168,6 +169,10 @@ class DiscoveryState:
                 self.enrich_idle_count = 0
                 self.rescore_idle_count = 0
                 return False
+            logger.debug(
+                f"Terminating: all idle, no pending work "
+                f"(scan={self.scan_stats.processed}, score={self.score_stats.processed})"
+            )
             return True
         return False
 
@@ -193,18 +198,31 @@ def has_pending_work(facility: str) -> bool:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE (p.status = $discovered AND p.score IS NULL
-                   AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff)))
-               OR (p.status = $scanned AND p.score IS NULL
-                   AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff)))
-               OR (p.status = $scored AND p.should_expand = true
-                   AND p.expanded_at IS NULL
-                   AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff)))
-               OR (p.status = $scored AND p.should_enrich = true
-                   AND (p.is_enriched IS NULL OR p.is_enriched = false)
-                   AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff)))
-               OR (p.is_enriched = true AND p.rescored_at IS NULL)
-            RETURN count(p) AS pending
+            WITH p,
+                 CASE WHEN p.status = $discovered AND p.score IS NULL
+                      AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
+                      THEN 'discovered' ELSE null END AS disc,
+                 CASE WHEN p.status = $scanned AND p.score IS NULL
+                      AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
+                      THEN 'scanned' ELSE null END AS scn,
+                 CASE WHEN p.status = $scored AND p.should_expand = true
+                      AND p.expanded_at IS NULL
+                      AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
+                      THEN 'expand' ELSE null END AS exp,
+                 CASE WHEN p.status = $scored AND p.should_enrich = true
+                      AND (p.is_enriched IS NULL OR p.is_enriched = false)
+                      AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
+                      THEN 'enrich' ELSE null END AS enr,
+                 CASE WHEN p.is_enriched = true AND p.rescored_at IS NULL
+                      THEN 'rescore' ELSE null END AS rsc
+            WHERE disc IS NOT NULL OR scn IS NOT NULL OR exp IS NOT NULL
+                  OR enr IS NOT NULL OR rsc IS NOT NULL
+            RETURN count(p) AS pending,
+                   count(disc) AS pending_discovered,
+                   count(scn) AS pending_scanned,
+                   count(exp) AS pending_expand,
+                   count(enr) AS pending_enrich,
+                   count(rsc) AS pending_rescore
             """,
             facility=facility,
             discovered=PathStatus.discovered.value,
@@ -212,7 +230,18 @@ def has_pending_work(facility: str) -> bool:
             scored=PathStatus.scored.value,
             cutoff=cutoff,
         )
-        return result[0]["pending"] > 0 if result else False
+        if result:
+            pending = result[0]["pending"]
+            if pending > 0:
+                logger.debug(
+                    f"Pending work: discovered={result[0]['pending_discovered']}, "
+                    f"scanned={result[0]['pending_scanned']}, "
+                    f"expand={result[0]['pending_expand']}, "
+                    f"enrich={result[0]['pending_enrich']}, "
+                    f"rescore={result[0]['pending_rescore']}"
+                )
+            return pending > 0
+        return False
 
 
 # ============================================================================
@@ -1013,6 +1042,11 @@ async def score_worker(
 
         if not paths:
             state.score_idle_count += 1
+            if state.score_idle_count <= 3:
+                logger.debug(
+                    f"Score worker idle ({state.score_idle_count}), "
+                    f"scan_processed={state.scan_stats.processed}"
+                )
             if on_progress:
                 on_progress("waiting for scanned paths", state.score_stats, None)
             # Wait before polling again
@@ -1020,6 +1054,7 @@ async def score_worker(
             continue
 
         state.score_idle_count = 0
+        logger.debug(f"Score worker claimed {len(paths)} paths")
 
         # Split paths into empty (auto-skip) and non-empty (need LLM)
         empty_paths = []
