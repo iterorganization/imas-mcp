@@ -1522,12 +1522,16 @@ def wiki_run(
     # Display wiki sites
     log_print(f"[bold]Documentation sources for {facility}:[/bold]")
     for i, site in enumerate(wiki_sites):
-        site_type_str = site.get("site_type", "mediawiki")
+        from urllib.parse import urlparse as _parse_url
+
         url = site.get("url", "")
         desc = site.get("description", "")
-        log_print(f"  [{i}] {site_type_str}: {url}")
-        if desc and verbose:
-            log_print(f"      {desc}")
+        parsed = _parse_url(url)
+        name = parsed.path.rstrip("/").rsplit("/", 1)[-1] or url
+        if desc:
+            log_print(f"  [{i}] {name}: {desc}")
+        else:
+            log_print(f"  [{i}] {url}")
 
     # Show aggregated auth info when all sites share the same auth
     _auth_types = {s.get("auth_type") for s in wiki_sites if s.get("auth_type")}
@@ -1623,9 +1627,13 @@ def wiki_run(
 
         parsed_url = _urlparse(base_url)
         short_name = parsed_url.path.rstrip("/").rsplit("/", 1)[-1] or base_url
+        site_desc = site.get("description", "")
 
         # Site header
-        log_print(f"\n[bold cyan]{short_name}[/bold cyan]")
+        if site_desc:
+            log_print(f"\n[bold cyan]{short_name}[/bold cyan] \u2014 {site_desc}")
+        else:
+            log_print(f"\n[bold cyan]{base_url}[/bold cyan]")
 
         if _show_per_site_auth:
             if site_type == "twiki":
