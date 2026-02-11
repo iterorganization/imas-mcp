@@ -1161,6 +1161,8 @@ class MediaWikiAdapter(WikiAdapter):
             return "image"
         if filename_lower.endswith((".ipynb", ".nb")):
             return "notebook"
+        if filename_lower.endswith(".json"):
+            return "json"
         if filename_lower.endswith((".h5", ".hdf5", ".mat", ".nc", ".cdf")):
             return "data"
         if filename_lower.endswith((".zip", ".tar", ".gz", ".tgz", ".7z")):
@@ -2184,6 +2186,7 @@ def _get_artifact_type_from_filename(filename: str) -> str:
     """Get artifact type from filename extension.
 
     Shared utility for all adapters that discover artifacts.
+    Returns semantic type names matching ArtifactType enum values.
     """
     filename_lower = filename.lower()
     if filename_lower.endswith(".pdf"):
@@ -2194,8 +2197,12 @@ def _get_artifact_type_from_filename(filename: str) -> str:
         return "presentation"
     if filename_lower.endswith((".xls", ".xlsx")):
         return "spreadsheet"
+    if filename_lower.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")):
+        return "image"
     if filename_lower.endswith(".ipynb"):
         return "notebook"
+    if filename_lower.endswith(".json"):
+        return "json"
     if filename_lower.endswith((".h5", ".hdf5", ".mat")):
         return "data"
     return "document"
@@ -2783,6 +2790,7 @@ class TWikiRawAdapter(WikiAdapter):
             ".xls",
             ".xlsx",
             ".ipynb",
+            ".json",
             ".h5",
             ".hdf5",
             ".mat",

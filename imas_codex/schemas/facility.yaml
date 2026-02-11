@@ -327,6 +327,8 @@ enums:
         description: Image files (.png, .jpg, .gif, .svg)
       notebook:
         description: Computational notebooks (.nb, .ipynb)
+      json:
+        description: JSON data files (.json)
       data:
         description: Data files (.mat, .hdf5, .nc)
       archive:

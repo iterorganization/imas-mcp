@@ -26,7 +26,9 @@ from imas_codex.graph import GraphClient
 from imas_codex.graph.models import WikiArtifactStatus, WikiPageStatus
 
 from .graph_ops import (
-    SUPPORTED_ARTIFACT_TYPES,
+    IMAGE_ARTIFACT_TYPES,
+    INGESTABLE_ARTIFACT_TYPES,
+    SCORABLE_ARTIFACT_TYPES,
     _bulk_create_wiki_artifacts,
     _bulk_create_wiki_pages,
     release_orphaned_claims,
@@ -894,16 +896,17 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
         total_artifacts = 0
         pending_artifact_score = 0
         pending_artifact_ingest = 0
-        supported = list(SUPPORTED_ARTIFACT_TYPES)
+        scorable = SCORABLE_ARTIFACT_TYPES
+        ingestable = INGESTABLE_ARTIFACT_TYPES | IMAGE_ARTIFACT_TYPES
         for r in artifact_result:
             total_artifacts += r["cnt"]
             st = r["status"]
             atype = r["atype"]
-            if st == WikiArtifactStatus.discovered.value and atype in supported:
+            if st == WikiArtifactStatus.discovered.value and atype in scorable:
                 pending_artifact_score += r["cnt"]
             elif (
                 st == WikiArtifactStatus.scored.value
-                and atype in supported
+                and atype in ingestable
                 and r["score"] is not None
                 and r["score"] >= 0.5
             ):

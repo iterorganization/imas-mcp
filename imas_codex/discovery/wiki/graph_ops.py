@@ -36,8 +36,32 @@ MAX_RETRY_ATTEMPTS = 5
 RETRY_BASE_DELAY = 0.1  # seconds
 RETRY_MAX_DELAY = 2.0  # seconds
 
-# Artifact types we can extract text from
-SUPPORTED_ARTIFACT_TYPES = {"pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "ipynb"}
+# Artifact type classification using semantic names (matching ArtifactType enum).
+# Adapters produce these names; all downstream code uses them consistently.
+
+# Types we can extract full text from for chunking and embedding
+INGESTABLE_ARTIFACT_TYPES = {
+    "pdf",
+    "document",
+    "presentation",
+    "spreadsheet",
+    "notebook",
+    "json",
+}
+
+# Types that should become Image nodes (routed to image pipeline, not text extraction)
+IMAGE_ARTIFACT_TYPES = {"image"}
+
+# All types worth scoring via LLM (metadata-only scoring for data/archive/other)
+SCORABLE_ARTIFACT_TYPES = (
+    INGESTABLE_ARTIFACT_TYPES
+    | IMAGE_ARTIFACT_TYPES
+    | {
+        "data",
+        "archive",
+        "other",
+    }
+)
 
 
 def _bulk_create_wiki_pages(
@@ -238,18 +262,19 @@ def has_pending_artifact_work(facility: str) -> bool:
     """Check if there are pending artifacts (scoring or ingestion).
 
     Artifacts are pending when:
-    - status = 'discovered' AND artifact_type in SUPPORTED_ARTIFACT_TYPES (needs scoring)
-    - status = 'scored' AND score >= 0.5 (needs ingestion)
+    - status = 'discovered' AND artifact_type in SCORABLE_ARTIFACT_TYPES (needs scoring)
+    - status = 'scored' AND score >= 0.5 AND ingestable/image type (needs ingestion)
     - claimed_at is null or expired
     """
+    ingestable = list(INGESTABLE_ARTIFACT_TYPES | IMAGE_ARTIFACT_TYPES)
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
             WHERE (
-                (wa.status = $discovered AND wa.artifact_type IN $types)
-                OR (wa.status = $scored AND wa.score >= 0.5 AND wa.artifact_type IN $types)
+                (wa.status = $discovered AND wa.artifact_type IN $scorable)
+                OR (wa.status = $scored AND wa.score >= 0.5 AND wa.artifact_type IN $ingestable)
               )
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
@@ -257,7 +282,8 @@ def has_pending_artifact_work(facility: str) -> bool:
             facility=facility,
             discovered=WikiArtifactStatus.discovered.value,
             scored=WikiArtifactStatus.scored.value,
-            types=list(SUPPORTED_ARTIFACT_TYPES),
+            scorable=list(SCORABLE_ARTIFACT_TYPES),
+            ingestable=ingestable,
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -268,7 +294,7 @@ def has_pending_artifact_score_work(facility: str) -> bool:
 
     Returns True if there are artifacts with:
     - status = 'discovered'
-    - artifact_type in SUPPORTED_ARTIFACT_TYPES
+    - artifact_type in SCORABLE_ARTIFACT_TYPES
     - claimed_at is null or expired
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
@@ -283,7 +309,7 @@ def has_pending_artifact_score_work(facility: str) -> bool:
             """,
             facility=facility,
             discovered=WikiArtifactStatus.discovered.value,
-            types=list(SUPPORTED_ARTIFACT_TYPES),
+            types=list(SCORABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -295,9 +321,10 @@ def has_pending_artifact_ingest_work(facility: str) -> bool:
     Returns True if there are artifacts with:
     - status = 'scored'
     - score >= 0.5
-    - artifact_type in SUPPORTED_ARTIFACT_TYPES
+    - artifact_type in INGESTABLE_ARTIFACT_TYPES or IMAGE_ARTIFACT_TYPES
     - claimed_at is null or expired
     """
+    ingestable = list(INGESTABLE_ARTIFACT_TYPES | IMAGE_ARTIFACT_TYPES)
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
@@ -311,7 +338,7 @@ def has_pending_artifact_ingest_work(facility: str) -> bool:
             """,
             facility=facility,
             scored=WikiArtifactStatus.scored.value,
-            types=list(SUPPORTED_ARTIFACT_TYPES),
+            types=ingestable,
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -866,10 +893,11 @@ def claim_artifacts_for_scoring(
 ) -> list[dict[str, Any]]:
     """Claim discovered artifacts for scoring.
 
-    Claims artifacts with status='discovered' and supported artifact_type.
-    Supported types: pdf, docx, pptx, xlsx, ipynb.
+    Claims artifacts with status='discovered' and any scorable artifact_type.
+    All artifact types are scored (text-based preview or metadata-only).
+    Image artifacts get a basic LLM score; VLM captioning happens separately.
 
-    Workflow: discovered + supported_type + unclaimed → set claimed_at
+    Workflow: discovered + scorable_type + unclaimed → set claimed_at
     Score worker extracts text preview and scores with LLM.
     After scoring: update status to 'scored' and set score/description/physics_domain.
 
@@ -896,7 +924,7 @@ def claim_artifacts_for_scoring(
             """,
             facility=facility,
             discovered=WikiArtifactStatus.discovered.value,
-            types=list(SUPPORTED_ARTIFACT_TYPES),
+            types=list(SCORABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
             limit=limit,
             token=claim_token,
@@ -932,7 +960,8 @@ def claim_artifacts_for_ingesting(
     """Claim scored artifacts for ingestion.
 
     Claims artifacts with status='scored' and score >= min_score.
-    Supported types: pdf, docx, pptx, xlsx, ipynb.
+    Includes both text-extractable types and image types (routed differently).
+    Data/archive types are scored but never claimed for ingestion.
 
     Workflow: scored + score >= threshold + unclaimed → set claimed_at
     After ingest: update status to 'ingested'.
@@ -941,6 +970,7 @@ def claim_artifacts_for_ingesting(
     """
     import uuid
 
+    ingestable = list(INGESTABLE_ARTIFACT_TYPES | IMAGE_ARTIFACT_TYPES)
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(uuid.uuid4())
 
@@ -962,7 +992,7 @@ def claim_artifacts_for_ingesting(
             facility=facility,
             scored=WikiArtifactStatus.scored.value,
             min_score=min_score,
-            types=list(SUPPORTED_ARTIFACT_TYPES),
+            types=ingestable,
             cutoff=cutoff,
             limit=limit,
             token=claim_token,

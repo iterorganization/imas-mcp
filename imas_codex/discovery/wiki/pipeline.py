@@ -28,7 +28,7 @@ import logging
 import re
 from collections.abc import Callable
 from html.parser import HTMLParser
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from llama_index.core import Document
 from llama_index.core.node_parser import SentenceSplitter
@@ -1622,10 +1622,84 @@ class WikiArtifactPipeline:
             stats = await self._create_artifact_chunks(
                 artifact_id, full_text, "pdf", stats
             )
+
+            # Extract embedded images for VLM captioning pipeline
+            try:
+                images = self._extract_pdf_images(pdf_bytes, artifact_id)
+                if images:
+                    stats["extracted_images"] = images
+            except Exception as e:
+                logger.debug("PDF image extraction failed for %s: %s", artifact_id, e)
+
             return stats
 
         finally:
             temp_path.unlink(missing_ok=True)
+
+    def _extract_pdf_images(
+        self,
+        pdf_bytes: bytes,
+        artifact_id: str,
+        max_images: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Extract embedded images from PDF for VLM processing.
+
+        Uses pypdf's image extraction to find significant figures.
+        Small decorative images are filtered out.
+
+        Args:
+            pdf_bytes: Raw PDF bytes
+            artifact_id: Parent artifact ID for context
+            max_images: Maximum images to extract per PDF
+
+        Returns:
+            List of dicts with image_bytes, page_num, width, height
+        """
+        import logging as _logging
+        import tempfile
+        from pathlib import Path
+
+        import pypdf
+
+        pypdf_logger = _logging.getLogger("pypdf")
+        original_level = pypdf_logger.level
+        pypdf_logger.setLevel(_logging.CRITICAL)
+
+        images: list[dict[str, Any]] = []
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                f.write(pdf_bytes)
+                temp_path = Path(f.name)
+
+            try:
+                reader = pypdf.PdfReader(temp_path)
+                for page_num, page in enumerate(reader.pages, 1):
+                    if len(images) >= max_images:
+                        break
+                    try:
+                        for img in page.images:
+                            if len(images) >= max_images:
+                                break
+                            img_bytes = img.data
+                            # Skip tiny images (likely icons/bullets)
+                            if len(img_bytes) < 2048:
+                                continue
+                            images.append(
+                                {
+                                    "image_bytes": img_bytes,
+                                    "page_num": page_num,
+                                    "name": getattr(img, "name", ""),
+                                }
+                            )
+                    except Exception:
+                        # Some pages may have unsupported image formats
+                        continue
+            finally:
+                temp_path.unlink(missing_ok=True)
+        finally:
+            pypdf_logger.setLevel(original_level)
+
+        return images
 
     async def ingest_docx(
         self,
@@ -1724,9 +1798,77 @@ class WikiArtifactPipeline:
             stats = await self._create_artifact_chunks(
                 artifact_id, full_text, "pptx", stats
             )
+
+            # Extract embedded images from slides for VLM captioning
+            try:
+                images = self._extract_pptx_images(content_bytes, artifact_id)
+                if images:
+                    stats["extracted_images"] = images
+            except Exception as e:
+                logger.debug("PPTX image extraction failed for %s: %s", artifact_id, e)
+
             return stats
         finally:
             temp_path.unlink(missing_ok=True)
+
+    def _extract_pptx_images(
+        self,
+        content_bytes: bytes,
+        artifact_id: str,
+        max_images: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Extract embedded images from PowerPoint for VLM processing.
+
+        Uses python-pptx to find Picture shapes across slides.
+        Small decorative images are filtered out.
+
+        Args:
+            content_bytes: Raw PPTX bytes
+            artifact_id: Parent artifact ID for context
+            max_images: Maximum images to extract
+
+        Returns:
+            List of dicts with image_bytes, slide_num, name
+        """
+        import tempfile
+        from pathlib import Path
+
+        from pptx import Presentation
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+        images: list[dict[str, Any]] = []
+
+        with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as f:
+            f.write(content_bytes)
+            temp_path = Path(f.name)
+
+        try:
+            prs = Presentation(temp_path)
+            for slide_num, slide in enumerate(prs.slides, 1):
+                if len(images) >= max_images:
+                    break
+                for shape in slide.shapes:
+                    if len(images) >= max_images:
+                        break
+                    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                        try:
+                            img_bytes = shape.image.blob
+                            if len(img_bytes) < 2048:
+                                continue
+                            images.append(
+                                {
+                                    "image_bytes": img_bytes,
+                                    "slide_num": slide_num,
+                                    "name": getattr(shape, "name", ""),
+                                    "content_type": shape.image.content_type,
+                                }
+                            )
+                        except Exception:
+                            continue
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+        return images
 
     async def ingest_xlsx(
         self,
@@ -1813,6 +1955,51 @@ class WikiArtifactPipeline:
         )
         return stats
 
+    async def ingest_json(
+        self,
+        artifact_id: str,
+        content_bytes: bytes,
+    ) -> ArtifactIngestionStats:
+        """Ingest a JSON artifact.
+
+        Parses JSON content and converts to readable text for chunking.
+        Handles both structured data and configuration-style JSON.
+
+        Args:
+            artifact_id: WikiArtifact node ID
+            content_bytes: Raw JSON content
+
+        Returns:
+            Ingestion stats
+        """
+        import json
+
+        stats: ArtifactIngestionStats = {
+            "chunks": 0,
+            "content_preview": "",
+            "artifact_type": "json",
+        }
+
+        try:
+            text = content_bytes.decode("utf-8", errors="replace")
+            data = json.loads(text)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.warning("Failed to parse JSON %s: %s", artifact_id, e)
+            return stats
+
+        # Pretty-print for chunking (preserves structure for LLM understanding)
+        full_text = json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+        if not full_text.strip():
+            logger.warning("No content extracted from JSON: %s", artifact_id)
+            return stats
+
+        stats["content_preview"] = full_text[:300]
+        stats = await self._create_artifact_chunks(
+            artifact_id, full_text, "json", stats
+        )
+        return stats
+
     async def ingest_artifact(
         self,
         artifact_id: str,
@@ -1821,10 +2008,12 @@ class WikiArtifactPipeline:
     ) -> ArtifactIngestionStats:
         """Dispatch to appropriate extraction method based on artifact type.
 
+        Uses semantic type names matching ArtifactType enum values.
+
         Args:
             artifact_id: WikiArtifact node ID
             content_bytes: Raw artifact content
-            artifact_type: Type of artifact (pdf, docx, pptx, xlsx, ipynb)
+            artifact_type: Semantic artifact type (pdf, document, presentation, etc.)
 
         Returns:
             Ingestion stats as dict
@@ -1834,13 +2023,11 @@ class WikiArtifactPipeline:
         """
         handlers = {
             "pdf": self.ingest_pdf,
-            "docx": self.ingest_docx,
-            "doc": self.ingest_docx,  # Try docx parser for .doc files
-            "pptx": self.ingest_pptx,
-            "ppt": self.ingest_pptx,  # Try pptx parser for .ppt files
-            "xlsx": self.ingest_xlsx,
-            "xls": self.ingest_xlsx,  # Try xlsx parser for .xls files
-            "ipynb": self.ingest_notebook,
+            "document": self.ingest_docx,
+            "presentation": self.ingest_pptx,
+            "spreadsheet": self.ingest_xlsx,
+            "notebook": self.ingest_notebook,
+            "json": self.ingest_json,
         }
 
         handler = handlers.get(artifact_type.lower())

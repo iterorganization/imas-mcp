@@ -410,7 +410,3 @@ class WikiDiscoveryState:
             except Exception:
                 pass
             self._basic_auth_client = None
-
-
-# Artifact types we can extract text from
-SUPPORTED_ARTIFACT_TYPES = {"pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "ipynb"}

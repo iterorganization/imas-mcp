@@ -67,6 +67,8 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
 
     Lightweight extraction for scoring preview. Does not use LlamaIndex
     to avoid heavyweight dependencies in the scoring path.
+
+    Uses semantic artifact type names matching ArtifactType enum values.
     """
     import tempfile
     from pathlib import Path
@@ -107,7 +109,7 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
         except Exception:
             return ""
 
-    elif at in ("docx", "doc"):
+    elif at == "document":
         try:
             from docx import Document as DocxDocument
 
@@ -123,7 +125,7 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
         except Exception:
             return ""
 
-    elif at in ("pptx", "ppt"):
+    elif at == "presentation":
         try:
             from pptx import Presentation
 
@@ -143,7 +145,7 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
         except Exception:
             return ""
 
-    elif at in ("xlsx", "xls"):
+    elif at == "spreadsheet":
         try:
             from imas_codex.discovery.wiki.excel import extract_excel_preview
 
@@ -151,7 +153,7 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
         except Exception:
             return ""
 
-    elif at == "ipynb":
+    elif at == "notebook":
         try:
             import json
 
@@ -163,6 +165,19 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
                 if source.strip():
                     text_parts.append(source)
             return "\n\n".join(text_parts)
+        except Exception:
+            return ""
+
+    elif at == "json":
+        try:
+            import json
+
+            text = content_bytes.decode("utf-8", errors="replace")
+            # Validate it's parseable JSON
+            data = json.loads(text)
+            # For large JSON, extract a structured preview
+            preview = json.dumps(data, indent=2, ensure_ascii=False, default=str)
+            return preview[:5000]  # Cap preview at 5000 chars
         except Exception:
             return ""
 

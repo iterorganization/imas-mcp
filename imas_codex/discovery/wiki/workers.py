@@ -21,7 +21,8 @@ from imas_codex.graph import GraphClient
 from imas_codex.graph.models import WikiPageStatus
 
 from .graph_ops import (
-    SUPPORTED_ARTIFACT_TYPES,
+    IMAGE_ARTIFACT_TYPES,
+    INGESTABLE_ARTIFACT_TYPES,
     _release_claimed_images,
     _release_claimed_pages,
     claim_artifacts_for_ingesting,
@@ -359,11 +360,13 @@ async def artifact_worker(
 ) -> None:
     """Artifact worker: Download and ingest wiki artifacts.
 
-    Transitions: discovered → ingesting → ingested
+    Transitions: scored → ingested
 
-    Claims discovered artifacts with supported types (pdf, docx, pptx, xlsx, ipynb),
-    downloads content, and extracts text.
-    Unsupported artifact types are marked as deferred.
+    Routes artifacts by type:
+    - Text-extractable (pdf, document, presentation, spreadsheet, notebook, json):
+      Download, extract text, chunk, embed. Also extract embedded images from PDF/PPTX.
+    - Image artifacts: Download, downsample, create Image nodes for VLM pipeline.
+    - Oversized files: Deferred with DEBUG-level logging (node preserved with metadata).
 
     Args:
         state: Shared discovery state
@@ -384,14 +387,12 @@ async def artifact_worker(
     )
 
     while not state.should_stop_artifact_worker():
-        # Increased batch size from 3 to 8 for better throughput
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         try:
             artifacts = await asyncio.to_thread(
                 claim_artifacts_for_ingesting, state.facility, limit=8
             )
         except Exception as e:
-            # Neo4j connection error - backoff and retry
             logger.warning("artifact_worker: claim failed: %s", e)
             await asyncio.sleep(5.0)
             continue
@@ -416,7 +417,29 @@ async def artifact_worker(
             filename = artifact.get("filename", "unknown")
 
             try:
-                # Check size before downloading
+                # Route image artifacts to Image node pipeline
+                if artifact_type.lower() in IMAGE_ARTIFACT_TYPES:
+                    await _ingest_image_artifact(
+                        artifact_id=artifact_id,
+                        url=url,
+                        filename=filename,
+                        facility=state.facility,
+                        ssh_host=getattr(state, "ssh_host", None),
+                    )
+                    results.append(
+                        {
+                            "id": artifact_id,
+                            "chunk_count": 0,
+                            "filename": filename,
+                            "artifact_type": artifact_type,
+                            "score": artifact.get("score"),
+                            "physics_domain": artifact.get("physics_domain"),
+                            "description": artifact.get("description", ""),
+                        }
+                    )
+                    continue
+
+                # Check size before downloading text-extractable artifacts
                 size_bytes = fetch_artifact_size(url, facility=state.facility)
 
                 if size_bytes is not None and size_bytes > max_size_bytes:
@@ -424,15 +447,19 @@ async def artifact_worker(
                     reason = (
                         f"File size {size_mb:.1f} MB exceeds limit {max_size_mb:.1f} MB"
                     )
-                    logger.info("Deferring oversized artifact %s: %s", filename, reason)
-                    # Run blocking Neo4j call in thread pool
+                    # Demote to DEBUG — node is preserved with metadata, just not ingested
+                    logger.debug(
+                        "Deferring oversized artifact %s: %s", filename, reason
+                    )
                     await asyncio.to_thread(mark_artifact_deferred, artifact_id, reason)
                     continue
 
-                # Check if type is supported
-                if artifact_type.lower() not in SUPPORTED_ARTIFACT_TYPES:
-                    reason = f"Artifact type '{artifact_type}' not supported"
-                    # Run blocking Neo4j call in thread pool
+                # Check if type is text-extractable
+                if artifact_type.lower() not in INGESTABLE_ARTIFACT_TYPES:
+                    reason = f"Artifact type '{artifact_type}' not text-extractable"
+                    logger.debug(
+                        "Deferring non-ingestable artifact %s: %s", filename, reason
+                    )
                     await asyncio.to_thread(mark_artifact_deferred, artifact_id, reason)
                     continue
 
@@ -441,6 +468,16 @@ async def artifact_worker(
                 stats = await pipeline.ingest_artifact(
                     artifact_id, content, artifact_type
                 )
+
+                # If pipeline extracted images (PDF/PPTX), create Image nodes
+                extracted_images = stats.get("extracted_images", [])
+                if extracted_images:
+                    await _persist_document_figures(
+                        extracted_images,
+                        artifact_id=artifact_id,
+                        facility=state.facility,
+                    )
+
                 results.append(
                     {
                         "id": artifact_id,
@@ -567,32 +604,25 @@ async def artifact_score_worker(
                 )
 
         # Separate artifacts with content from those where extraction failed.
-        # Artifacts without preview_text are released for retry.
-        artifacts_to_score = [a for a in artifacts_with_text if a.get("preview_text")]
-        artifacts_no_content = [
-            a for a in artifacts_with_text if not a.get("preview_text")
-        ]
-
-        if artifacts_no_content:
-            logger.info(
-                "artifact_score_worker %s: %d/%d artifacts had no content, "
-                "releasing for retry",
-                worker_id,
-                len(artifacts_no_content),
-                len(artifacts_with_text),
-            )
-            try:
-                with GraphClient() as gc:
-                    gc.query(
-                        """
-                        UNWIND $ids AS id
-                        MATCH (wa:WikiArtifact {id: id})
-                        SET wa.claimed_at = null
-                        """,
-                        ids=[a["id"] for a in artifacts_no_content],
-                    )
-            except Exception:
-                pass
+        # For types that can't have text preview (data, archive, image), use
+        # filename-based metadata as the preview rather than releasing for retry.
+        artifacts_to_score = []
+        for a in artifacts_with_text:
+            if a.get("preview_text"):
+                artifacts_to_score.append(a)
+            else:
+                # Generate metadata-only preview from filename and type
+                at = a.get("artifact_type", "unknown")
+                fn = a.get("filename", "unknown")
+                size = a.get("size_bytes")
+                size_str = f" ({size / (1024 * 1024):.1f} MB)" if size else ""
+                a["preview_text"] = (
+                    f"[No text content available — metadata only]\n"
+                    f"Filename: {fn}\n"
+                    f"Type: {at}{size_str}\n"
+                    f"This is a {at} file attached to a facility wiki page."
+                )
+                artifacts_to_score.append(a)
 
         if not artifacts_to_score:
             logger.debug(
@@ -880,6 +910,205 @@ async def _ingest_page(
     except Exception as e:
         logger.warning("Failed to ingest %s: %s", page_id, e)
         return 0
+
+
+# =============================================================================
+# Image Artifact Ingestion (standalone wiki image files)
+# =============================================================================
+
+
+async def _ingest_image_artifact(
+    artifact_id: str,
+    url: str,
+    filename: str,
+    facility: str,
+    ssh_host: str | None = None,
+) -> None:
+    """Convert an image-type WikiArtifact into an Image node.
+
+    Downloads the image, downsamples to WebP, creates an Image node with
+    status='ingested', and links it to both the WikiArtifact (HAS_IMAGE)
+    and any linked WikiPages.
+
+    Args:
+        artifact_id: WikiArtifact node ID
+        url: Image download URL
+        filename: Original filename
+        facility: Facility ID
+        ssh_host: Optional SSH host for proxied fetching
+    """
+    from imas_codex.discovery.wiki.image import downsample_image, make_image_id
+
+    # Fetch image bytes
+    image_bytes = await _fetch_image_bytes(url, ssh_host)
+    if not image_bytes or len(image_bytes) < 512:
+        logger.debug(
+            "Image artifact %s: insufficient bytes (%d)",
+            filename,
+            len(image_bytes) if image_bytes else 0,
+        )
+        return
+
+    # Downsample to WebP
+    result = downsample_image(image_bytes)
+    if result is None:
+        logger.debug("Image artifact %s: downsample failed", filename)
+        return
+
+    b64_data, stored_w, stored_h, orig_w, orig_h = result
+    image_id = make_image_id(facility, url)
+
+    # Persist Image node and link to WikiArtifact + facility
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MERGE (i:Image {id: $image_id})
+            ON CREATE SET i.facility_id = $facility,
+                          i.source_url = $url,
+                          i.source_type = 'wiki_file',
+                          i.status = 'ingested',
+                          i.filename = $filename,
+                          i.image_data = $b64_data,
+                          i.image_format = 'webp',
+                          i.image_width = $stored_w,
+                          i.image_height = $stored_h,
+                          i.original_width = $orig_w,
+                          i.original_height = $orig_h,
+                          i.ingested_at = datetime()
+            WITH i
+            MATCH (wa:WikiArtifact {id: $artifact_id})
+            MERGE (wa)-[:HAS_IMAGE]->(i)
+            WITH i
+            MATCH (f:Facility {id: $facility})
+            MERGE (i)-[:FACILITY_ID]->(f)
+            """,
+            image_id=image_id,
+            facility=facility,
+            url=url,
+            filename=filename,
+            artifact_id=artifact_id,
+            b64_data=b64_data,
+            stored_w=stored_w,
+            stored_h=stored_h,
+            orig_w=orig_w,
+            orig_h=orig_h,
+        )
+
+        # Also link to pages that reference this artifact
+        gc.query(
+            """
+            MATCH (wa:WikiArtifact {id: $artifact_id})<-[:HAS_ARTIFACT]-(wp:WikiPage)
+            MATCH (i:Image {id: $image_id})
+            MERGE (wp)-[:HAS_IMAGE]->(i)
+            """,
+            artifact_id=artifact_id,
+            image_id=image_id,
+        )
+
+    logger.debug("Created Image node %s from artifact %s", image_id, filename)
+
+
+async def _persist_document_figures(
+    extracted_images: list[dict[str, Any]],
+    artifact_id: str,
+    facility: str,
+) -> int:
+    """Persist images extracted from PDF/PPTX as Image nodes.
+
+    Creates Image nodes with source_type='document_figure' and links
+    them to the parent WikiArtifact via HAS_IMAGE.
+
+    Args:
+        extracted_images: List from pipeline._extract_pdf_images or _extract_pptx_images
+        artifact_id: WikiArtifact node ID
+        facility: Facility ID
+
+    Returns:
+        Number of Image nodes created
+    """
+    import hashlib
+
+    from imas_codex.discovery.wiki.image import downsample_image
+
+    images_to_persist: list[dict[str, Any]] = []
+
+    for img_data in extracted_images:
+        img_bytes = img_data.get("image_bytes")
+        if not img_bytes or len(img_bytes) < 2048:
+            continue
+
+        # Content-addressed ID from bytes hash
+        content_hash = hashlib.sha256(img_bytes).hexdigest()[:16]
+        image_id = f"{facility}:{content_hash}"
+
+        result = downsample_image(img_bytes)
+        if result is None:
+            continue
+
+        b64_data, stored_w, stored_h, orig_w, orig_h = result
+
+        # Build context from extraction metadata
+        page_num = img_data.get("page_num")
+        slide_num = img_data.get("slide_num")
+        name = img_data.get("name", "")
+        source_url = f"{artifact_id}#{'page' if page_num else 'slide'}{page_num or slide_num or 0}"
+
+        images_to_persist.append(
+            {
+                "id": image_id,
+                "facility_id": facility,
+                "source_url": source_url,
+                "source_type": "document_figure",
+                "status": "ingested",
+                "filename": name,
+                "image_data": b64_data,
+                "image_format": "webp",
+                "image_width": stored_w,
+                "image_height": stored_h,
+                "original_width": orig_w,
+                "original_height": orig_h,
+                "content_hash": content_hash,
+                "artifact_id": artifact_id,
+            }
+        )
+
+    if not images_to_persist:
+        return 0
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            UNWIND $images AS img
+            MERGE (i:Image {id: img.id})
+            ON CREATE SET i.facility_id = img.facility_id,
+                          i.source_url = img.source_url,
+                          i.source_type = img.source_type,
+                          i.status = img.status,
+                          i.filename = img.filename,
+                          i.image_data = img.image_data,
+                          i.image_format = img.image_format,
+                          i.image_width = img.image_width,
+                          i.image_height = img.image_height,
+                          i.original_width = img.original_width,
+                          i.original_height = img.original_height,
+                          i.content_hash = img.content_hash,
+                          i.ingested_at = datetime()
+            WITH i, img
+            MATCH (wa:WikiArtifact {id: img.artifact_id})
+            MERGE (wa)-[:HAS_IMAGE]->(i)
+            WITH i
+            MATCH (f:Facility {id: i.facility_id})
+            MERGE (i)-[:FACILITY_ID]->(f)
+            """,
+            images=images_to_persist,
+        )
+
+    logger.debug(
+        "Created %d document figure Image nodes from %s",
+        len(images_to_persist),
+        artifact_id,
+    )
+    return len(images_to_persist)
 
 
 # =============================================================================
