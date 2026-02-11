@@ -61,10 +61,6 @@ class DiscoveryState:
     enrich_idle_count: int = 0
     rescore_idle_count: int = 0
 
-    # Tracks when scan last produced new scanned paths.
-    # Prevents premature termination before scoring workers poll.
-    last_scan_output_time: float = 0.0
-
     # SSH retry tracking for exponential backoff
     ssh_retry_count: int = 0
     max_ssh_retries: int = 5
@@ -127,7 +123,17 @@ class DiscoveryState:
         return self.session_terminal_count >= self.path_limit
 
     def should_stop(self) -> bool:
-        """Check if discovery should terminate."""
+        """Check if discovery should terminate.
+
+        Termination requires BOTH conditions:
+        1. All workers idle for 3+ iterations
+        2. No pending or in-progress work in the graph
+
+        has_pending_work() counts BOTH unclaimed paths (waiting for work)
+        AND claimed paths (actively being processed by workers). This
+        prevents premature termination when a worker has claimed paths
+        but hasn't finished processing them yet.
+        """
         if self.stop_requested:
             return True
         if self.budget_exhausted:
@@ -143,23 +149,9 @@ class DiscoveryState:
             and self.rescore_idle_count >= 3
         )
         if all_idle:
-            # Grace period: after scan produces new work, give downstream
-            # workers enough time to wake from sleep and claim it.
-            # Score/enrich/rescore workers sleep 2s between polls, so we
-            # need at least 3s after the last scan output for them to
-            # have polled at least once.
-            if self.last_scan_output_time > 0:
-                elapsed_since_scan = time.time() - self.last_scan_output_time
-                if elapsed_since_scan < 4.0:
-                    # Not enough time for downstream workers to poll.
-                    # Reset idle counts so we keep looping.
-                    self.scan_idle_count = 0
-                    self.expand_idle_count = 0
-                    self.score_idle_count = 0
-                    self.enrich_idle_count = 0
-                    self.rescore_idle_count = 0
-                    return False
-            # Check for pending expansion work before terminating
+            # Check for any pending or in-progress work before terminating.
+            # has_pending_work counts both unclaimed AND claimed paths,
+            # so we won't terminate while a worker is mid-task.
             pending = has_pending_work(self.facility)
             if pending:
                 # Reset idle counts to force workers to re-poll for new work
@@ -182,36 +174,35 @@ CLAIM_TIMEOUT_SECONDS = 600  # 10 minutes
 
 
 def has_pending_work(facility: str) -> bool:
-    """Check if there's pending work in the graph.
+    """Check if there's pending or in-progress work in the graph.
 
     Returns True if any of:
-    - Discovered paths awaiting first scan (unclaimed or expired claim)
-    - Scanned paths awaiting scoring (unclaimed or expired claim)
+    - Discovered paths awaiting first scan (including actively claimed)
+    - Scanned paths awaiting scoring (including actively claimed)
     - Scored paths with should_expand=true that haven't been expanded yet
     - Scored paths with should_enrich=true that haven't been enriched yet
     - Enriched paths that haven't been rescored yet
+
+    Note: Unlike claim functions, this does NOT filter out claimed paths.
+    Claimed paths represent active work in progress and must count as
+    pending to prevent premature termination while workers are mid-task.
     """
     from imas_codex.graph import GraphClient
 
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
             WITH p,
                  CASE WHEN p.status = $discovered AND p.score IS NULL
-                      AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
                       THEN 'discovered' ELSE null END AS disc,
                  CASE WHEN p.status = $scanned AND p.score IS NULL
-                      AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
                       THEN 'scanned' ELSE null END AS scn,
                  CASE WHEN p.status = $scored AND p.should_expand = true
                       AND p.expanded_at IS NULL
-                      AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
                       THEN 'expand' ELSE null END AS exp,
                  CASE WHEN p.status = $scored AND p.should_enrich = true
                       AND (p.is_enriched IS NULL OR p.is_enriched = false)
-                      AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
                       THEN 'enrich' ELSE null END AS enr,
                  CASE WHEN p.is_enriched = true AND p.rescored_at IS NULL
                       THEN 'rescore' ELSE null END AS rsc
@@ -228,7 +219,6 @@ def has_pending_work(facility: str) -> bool:
             discovered=PathStatus.discovered.value,
             scanned=PathStatus.scanned.value,
             scored=PathStatus.scored.value,
-            cutoff=cutoff,
         )
         if result:
             pending = result[0]["pending"]
@@ -844,10 +834,6 @@ async def scan_worker(
         state.scan_stats.processed += stats["scanned"]
         state.scan_stats.errors += stats["errors"]
 
-        # Record that scan produced new work for downstream workers
-        if stats["scanned"] > 0:
-            state.last_scan_output_time = time.time()
-
         # Build detailed scan results for progress display
         scan_results = [
             {
@@ -973,10 +959,6 @@ async def expand_worker(
 
         state.expand_stats.processed += stats["scanned"]
         state.expand_stats.errors += stats["errors"]
-
-        # Record that expansion produced new work for downstream workers
-        if stats["scanned"] > 0:
-            state.last_scan_output_time = time.time()
 
         # Build detailed scan results for progress display
         scan_results = [

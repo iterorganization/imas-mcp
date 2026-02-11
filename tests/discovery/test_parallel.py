@@ -105,24 +105,21 @@ class TestDiscoveryState:
         state.rescore_idle_count = 3
         assert state.should_stop()
 
-    @patch("imas_codex.discovery.paths.parallel.has_pending_work", return_value=False)
-    def test_should_not_stop_during_grace_period(self, mock_has_pending):
-        """Test should_stop returns False during scan output grace period.
+    @patch("imas_codex.discovery.paths.parallel.has_pending_work", return_value=True)
+    def test_should_not_stop_when_pending_work(self, mock_has_pending):
+        """Test should_stop returns False when has_pending_work reports work.
 
-        When scan workers recently produced output, downstream workers
-        (score/enrich/rescore with 2s sleep) need time to wake up and
-        claim the new work. The grace period prevents premature termination.
+        Even when all workers are idle, should_stop must return False if
+        has_pending_work returns True. This covers the case where a worker
+        has claimed paths and is mid-task (e.g., LLM scoring call).
+        has_pending_work counts claimed paths as in-progress work.
         """
-        import time
-
         state = DiscoveryState(facility="test", cost_limit=10.0)
         state.scan_idle_count = 3
         state.expand_idle_count = 3
         state.score_idle_count = 3
         state.enrich_idle_count = 3
         state.rescore_idle_count = 3
-        # Simulate scan output just happened
-        state.last_scan_output_time = time.time()
         assert not state.should_stop()
         # Idle counts should have been reset
         assert state.scan_idle_count == 0
