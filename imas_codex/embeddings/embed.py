@@ -9,9 +9,9 @@ class internally, which handles:
 - Source tracking via get_embedding_source() for progress display
 
 Usage:
-    from imas_codex.embeddings.llama_index import get_llama_embed_model, get_embedding_source
+    from imas_codex.embeddings import get_embed_model, get_embedding_source
 
-    embed_model = get_llama_embed_model()  # Respects embedding-backend config
+    embed_model = get_embed_model()  # Respects embedding-backend config
     source = get_embedding_source()  # Returns "local", "remote", or "openrouter"
 """
 
@@ -55,7 +55,7 @@ def _set_embedding_source(source: str) -> None:
         _embedding_source = source
 
 
-class EncoderLlamaEmbedding(BaseEmbedding):
+class EncoderEmbedding(BaseEmbedding):
     """LlamaIndex embedding that uses Encoder internally.
 
     This wraps the Encoder class which has all the fallback logic:
@@ -100,7 +100,7 @@ class EncoderLlamaEmbedding(BaseEmbedding):
         self._update_source()
 
         logger.debug(
-            f"Initialized EncoderLlamaEmbedding: {model_name} "
+            f"Initialized EncoderEmbedding: {model_name} "
             f"(backend={config.backend}, source={get_embedding_source()})"
         )
 
@@ -110,7 +110,7 @@ class EncoderLlamaEmbedding(BaseEmbedding):
 
     @classmethod
     def class_name(cls) -> str:
-        return "EncoderLlamaEmbedding"
+        return "EncoderEmbedding"
 
     def _get_query_embedding(self, query: str) -> list[float]:
         """Get embedding for a query string."""
@@ -149,15 +149,11 @@ class EncoderLlamaEmbedding(BaseEmbedding):
         return self._encoder.cost_summary
 
 
-# Backwards compatibility alias
-RemoteLlamaEmbedding = EncoderLlamaEmbedding
-
-
 # Module-level cache for embed model singleton
 _cached_embed_model: BaseEmbedding | None = None
 
 
-def get_llama_embed_model(*, cached: bool = True) -> BaseEmbedding:
+def get_embed_model(*, cached: bool = True) -> BaseEmbedding:
     """Get LlamaIndex embedding model respecting embedding-backend config.
 
     Args:
@@ -165,7 +161,7 @@ def get_llama_embed_model(*, cached: bool = True) -> BaseEmbedding:
             reloading the model for each ingestion call.
 
     Returns:
-        BaseEmbedding: EncoderLlamaEmbedding that handles all backend types
+        BaseEmbedding: EncoderEmbedding that handles all backend types
         with automatic fallback for remote backend.
 
     The returned model uses the Encoder class internally which provides:
@@ -185,9 +181,9 @@ def get_llama_embed_model(*, cached: bool = True) -> BaseEmbedding:
     except ValueError:
         backend = EmbeddingBackend.LOCAL
 
-    logger.debug(f"Creating LlamaIndex embed model: {model_name} (backend={backend})")
+    logger.debug(f"Creating embed model: {model_name} (backend={backend})")
 
-    model = EncoderLlamaEmbedding(
+    model = EncoderEmbedding(
         model_name=model_name,
         backend=backend,
     )
@@ -199,8 +195,7 @@ def get_llama_embed_model(*, cached: bool = True) -> BaseEmbedding:
 
 
 __all__ = [
-    "EncoderLlamaEmbedding",
-    "RemoteLlamaEmbedding",  # Backwards compatibility
+    "EncoderEmbedding",
+    "get_embed_model",
     "get_embedding_source",
-    "get_llama_embed_model",
 ]

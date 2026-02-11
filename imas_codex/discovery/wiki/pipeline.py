@@ -711,9 +711,9 @@ def get_embed_model() -> BaseEmbedding:
 
     Delegates to the canonical cached singleton in imas_codex.embeddings.
     """
-    from imas_codex.embeddings.llama_index import get_llama_embed_model
+    from imas_codex.embeddings import get_embed_model
 
-    return get_llama_embed_model()
+    return get_embed_model()
 
 
 class WikiIngestionPipeline:
@@ -1593,11 +1593,13 @@ class WikiArtifactPipeline:
             temp_path = Path(f.name)
 
         try:
-            # Suppress pypdf's verbose internal warnings about corrupt PDF objects
-            # These are benign warnings about non-critical PDF structure issues
+            # Suppress pypdf's verbose warnings and errors.
+            # pypdf._cmap uses logger_error() for benign "Advanced
+            # encoding ... not implemented yet" messages, so ERROR
+            # level doesn't suppress them — use CRITICAL.
             pypdf_logger = logging.getLogger("pypdf")
             original_level = pypdf_logger.level
-            pypdf_logger.setLevel(logging.ERROR)
+            pypdf_logger.setLevel(logging.CRITICAL)
 
             try:
                 reader = PDFReader()

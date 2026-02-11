@@ -2,7 +2,7 @@
 
 import pytest
 
-from imas_codex.code_examples.mdsplus_extractor import (
+from imas_codex.ingestion.extractors.mdsplus import (
     MDSplusReference,
     extract_mdsplus_paths,
     normalize_mdsplus_path,

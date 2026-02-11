@@ -1,12 +1,12 @@
-"""Graph relationship creation for code examples.
+"""Graph relationship creation for ingested content.
 
-Post-ingestion processing to create relationships between CodeChunk nodes,
+Post-ingestion processing to create relationships between Chunk nodes,
 DataReference nodes, and data entities (TreeNode, TDIFunction, IMASPath).
 
 Architecture:
-    CodeChunk -[:CONTAINS_REF]-> DataReference -[:RESOLVES_TO_*]-> Entity
+    Chunk -[:CONTAINS_REF]-> DataReference -[:RESOLVES_TO_*]-> Entity
 
-DataReference nodes preserve the exact string found in code for provenance,
+DataReference nodes preserve the exact string found in content for provenance,
 while typed resolution relationships link to actual data entities.
 """
 
@@ -26,7 +26,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Pattern to strip channel/index suffixes for fuzzy matching
-# Matches: _001, _00, :CHANNEL_006, etc.
 CHANNEL_SUFFIX_PATTERN = re.compile(r"[_:](?:CHANNEL_?)?\d+$", re.IGNORECASE)
 
 
@@ -37,7 +36,6 @@ def _normalize_for_matching(raw_path: str) -> str:
     E.g., \\ATLAS::DT196_MHD_001:CHANNEL_006 -> \\ATLAS::DT196_MHD:CHANNEL
     """
     normalized = raw_path.upper().rstrip(":.")
-    # Iteratively strip channel/index suffixes
     while CHANNEL_SUFFIX_PATTERN.search(normalized):
         normalized = CHANNEL_SUFFIX_PATTERN.sub("", normalized)
     return normalized
@@ -52,16 +50,10 @@ def _generate_ref_id(facility: str, ref_type: str, raw_string: str) -> str:
 
 @contextlib.contextmanager
 def _get_client(graph_client: GraphClient | None = None) -> Iterator[GraphClient]:
-    """Context manager that uses provided client or creates a new one.
-
-    If a client is provided, yields it without managing its lifecycle.
-    If no client is provided, creates one and ensures it's closed.
-    """
+    """Context manager that uses provided client or creates a new one."""
     if graph_client is not None:
-        # Client provided - don't manage lifecycle
         yield graph_client
     else:
-        # Create and manage our own client
         from imas_codex.graph import GraphClient
 
         client = GraphClient()
@@ -74,9 +66,6 @@ def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
 
     Matches CodeChunk nodes that have related_ids metadata to
     existing IMASPath nodes (IDS-level paths where id = ids name).
-
-    Note: IMASPath nodes must already exist from DD ingestion.
-    This function does NOT create IMASPath nodes on-demand.
 
     Args:
         graph_client: Optional GraphClient instance. If None, creates one.
@@ -105,7 +94,7 @@ def link_examples_to_facility(graph_client: GraphClient | None = None) -> int:
     """Create FACILITY_ID relationships from CodeExample nodes.
 
     Args:
-        graph_client: Optional GraphClient instance. If None, creates one.
+        graph_client: Optional GraphClient instance.
 
     Returns:
         Number of relationships created
@@ -134,18 +123,14 @@ def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
     3. Computes normalized_path for fuzzy matching
     4. Creates RESOLVES_TO_TREE_NODE relationships from DataReference -> TreeNode
 
-    Uses case-insensitive name matching on the final path component
-    to handle path format variations.
-
     Args:
-        graph_client: Optional GraphClient instance. If None, creates one.
+        graph_client: Optional GraphClient instance.
 
     Returns:
         Number of DataReference nodes created or linked
     """
     with _get_client(graph_client) as client:
         # Step 1: Create DataReference nodes from mdsplus_paths
-        # This is idempotent - MERGE ensures no duplicates
         create_refs_simple = """
             MATCH (c:CodeChunk)
             WHERE c.mdsplus_paths IS NOT NULL
@@ -179,8 +164,7 @@ def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
         contains_count = result[0]["contains_created"] if result else 0
         logger.info("Created %d CONTAINS_REF relationships", contains_count)
 
-        # Step 2.5: Compute normalized_path for fuzzy matching (Python-side)
-        # Fetch refs without normalized_path, compute it, update in batch
+        # Step 2.5: Compute normalized_path for fuzzy matching
         refs_to_normalize = client.query("""
             MATCH (d:DataReference {ref_type: 'mdsplus_path'})
             WHERE d.normalized_path IS NULL
@@ -202,7 +186,6 @@ def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
             logger.info("Computed normalized_path for %d refs", len(updates))
 
         # Step 3: Create RESOLVES_TO_TREE_NODE relationships
-        # Uses multiple matching strategies for path format variations
         resolve_to_tree = """
             MATCH (d:DataReference {ref_type: 'mdsplus_path'})
             WHERE NOT (d)-[:RESOLVES_TO_TREE_NODE]->()
@@ -228,8 +211,69 @@ def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
         return refs_created
 
 
+def link_example_mdsplus_paths(
+    graph_client: GraphClient,
+    example_id: str,
+) -> int:
+    """Create DataReference nodes and link to TreeNodes for a specific example.
+
+    Args:
+        graph_client: GraphClient instance
+        example_id: ID of the CodeExample
+
+    Returns:
+        Number of DataReference nodes created/linked
+    """
+    # Create DataReference nodes and CONTAINS_REF relationships
+    result = graph_client.query(
+        """
+        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
+        WHERE c.mdsplus_paths IS NOT NULL AND e.facility_id IS NOT NULL
+        UNWIND c.mdsplus_paths AS path
+        WITH c, e.facility_id AS facility, path
+        MERGE (d:DataReference {raw_string: path, facility_id: facility})
+        ON CREATE SET
+            d.id = facility + ':mdsplus_path:' + path,
+            d.ref_type = 'mdsplus_path'
+        MERGE (c)-[:CONTAINS_REF]->(d)
+        RETURN count(DISTINCT d) AS refs_created
+        """,
+        example_id=example_id,
+    )
+    refs_created = result[0]["refs_created"] if result else 0
+
+    # Resolve to TreeNodes
+    graph_client.query(
+        """
+        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
+              -[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
+        WHERE NOT (d)-[:RESOLVES_TO_TREE_NODE]->()
+        MATCH (t:TreeNode)
+        WHERE t.path = d.raw_string
+           OR t.path ENDS WITH substring(d.raw_string, 1)
+           OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
+        MERGE (d)-[:RESOLVES_TO_TREE_NODE]->(t)
+        """,
+        example_id=example_id,
+    )
+
+    # Update ref_count
+    graph_client.query(
+        """
+        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
+              -[r:CONTAINS_REF]->(d:DataReference)
+        WITH c, count(r) AS ref_count
+        SET c.ref_count = ref_count
+        """,
+        example_id=example_id,
+    )
+
+    return refs_created
+
+
 __all__ = [
     "link_chunks_to_imas_paths",
     "link_chunks_to_tree_nodes",
+    "link_example_mdsplus_paths",
     "link_examples_to_facility",
 ]

@@ -1,7 +1,9 @@
-"""MDSplus path extraction transformation for LlamaIndex.
+"""MDSplus path extraction from text content.
 
-Custom TransformComponent that extracts MDSplus tree paths and TDI function
-calls from code chunks, enabling linking to TreeNode metadata.
+Extracts MDSplus tree paths and TDI function calls from code/text.
+Works on code, documents, and wiki pages.
+
+Can be used standalone or as a LlamaIndex TransformComponent.
 """
 
 import re
@@ -22,8 +24,7 @@ class MDSplusReference(NamedTuple):
 MDSPLUS_PATH_PATTERNS = [
     # Direct path strings: "\\RESULTS::I_P" or '\\results::thomson.profiles.auto:te'
     r'["\']\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)["\']',
-    # Python f-string suffixes: f"{tree}:PSI" extracts just the suffix (PSI)
-    # Handles both f"{eq_tree}:TIME_PSI" and f"{eq_tree}:I_PL"
+    # Python f-string suffixes: f"{tree}:PSI" extracts just the suffix
     r"\{[^}]+\}:([A-Za-z_][A-Za-z0-9_]+)",
     # Connection.get patterns: conn.get("\\path")
     r'\.get\(["\']\\\\?([^"\']+)["\']\)',
@@ -33,28 +34,23 @@ MDSPLUS_PATH_PATTERNS = [
 
 # TDI function call patterns (tcv_eq, tcv_get, etc.)
 TDI_FUNCTION_PATTERNS = [
-    # tcv_eq("I_P") or tcv_eq('PSI', 'LIUQE')
     r'tcv_eq\(["\']([A-Z_][A-Z0-9_]+)["\']',
-    # tcv_get("IP") or similar
     r'tcv_get\(["\']([A-Z_][A-Z0-9_]+)["\']',
-    # tcv_psitbx("AREA")
     r'tcv_psitbx\(["\']([A-Z_][A-Z0-9_]+)["\']',
-    # Generic TCV TDI: tcv_*(signal_name)
     r'tcv_\w+\(["\']([A-Z_][A-Z0-9_]+)["\']',
 ]
+
+# MDSplus path pattern for plain text (wiki pages, docs)
+MDSPLUS_TEXT_PATTERN = re.compile(
+    r"\\\\?[A-Z_][A-Z_0-9]*::[A-Z_][A-Z_0-9:]*",
+    re.IGNORECASE,
+)
 
 
 def normalize_mdsplus_path(path: str) -> str:
     """Normalize an MDSplus path to canonical form for graph storage.
 
-    Canonical form:
-    - Uppercase
-    - Single backslash prefix (stored as \\ in JSON/Python strings)
-    - Consistent :: separator
-    - Strip trailing separators (: or .)
-
-    Note: The returned string has a single logical backslash, which appears
-    as \\\\ when printed or stored in JSON due to escaping.
+    Canonical form: uppercase, single backslash prefix, consistent :: separator.
 
     Args:
         path: Raw MDSplus path
@@ -62,18 +58,21 @@ def normalize_mdsplus_path(path: str) -> str:
     Returns:
         Normalized path like \\RESULTS::I_P
     """
-    # Remove leading backslashes, then add single
     path = path.lstrip("\\")
-    # Uppercase
     path = path.upper()
-    # Strip trailing separators that indicate incomplete paths
     path = path.rstrip(":.")
-    # Ensure single backslash prefix
     return f"\\{path}"
 
 
+def compute_canonical_path(path: str) -> str:
+    """Compute canonical path for matching (alias for normalize_mdsplus_path)."""
+    return normalize_mdsplus_path(path)
+
+
 def extract_mdsplus_paths(text: str) -> list[MDSplusReference]:
-    """Extract MDSplus paths from code text.
+    """Extract MDSplus paths from code text using code-aware patterns.
+
+    Uses regex patterns tuned for source code (quoted strings, API calls).
 
     Args:
         text: Code text to scan
@@ -84,28 +83,22 @@ def extract_mdsplus_paths(text: str) -> list[MDSplusReference]:
     found: list[MDSplusReference] = []
     seen: set[str] = set()
 
-    # Extract direct paths and f-string suffixes
     for pattern in MDSPLUS_PATH_PATTERNS:
         for match in re.finditer(pattern, text, re.IGNORECASE):
             raw = match.group(1)
-            # Check if this is a full path (has ::) or just a suffix
             if "::" in raw:
                 normalized = normalize_mdsplus_path(raw)
                 ref_type = "mdsplus_path"
             else:
-                # F-string suffix like "TIME_PSI" from f"{eq_tree}:TIME_PSI"
-                # Create a partial path - will match via suffix
                 normalized = f"\\RESULTS::{raw.upper()}"
                 ref_type = "mdsplus_path"
             if normalized not in seen:
                 seen.add(normalized)
                 found.append(MDSplusReference(normalized, raw, ref_type))
 
-    # Extract TDI function calls
     for pattern in TDI_FUNCTION_PATTERNS:
         for match in re.finditer(pattern, text):
             quantity = match.group(1).upper()
-            # Create a pseudo-path for the quantity
             pseudo_path = f"\\RESULTS::{quantity}"
             if pseudo_path not in seen:
                 seen.add(pseudo_path)
@@ -114,33 +107,41 @@ def extract_mdsplus_paths(text: str) -> list[MDSplusReference]:
     return found
 
 
-class MDSplusExtractor(TransformComponent):
-    """Extract MDSplus paths from code chunks.
+def extract_mdsplus_paths_text(text: str) -> list[str]:
+    """Extract MDSplus paths from plain text (documents, wiki pages).
 
-    This LlamaIndex TransformComponent scans code text for MDSplus
-    path references and TDI function calls. Stores only counts in metadata
-    to avoid size limits; full references are stored in _mdsplus_refs for
-    graph linking.
+    Uses a simpler regex pattern suited for prose rather than code.
+
+    Args:
+        text: Plain text to scan
+
+    Returns:
+        Deduplicated list of normalized MDSplus paths
+    """
+    matches = MDSPLUS_TEXT_PATTERN.findall(text)
+    normalized = set()
+    for m in matches:
+        path = m.lstrip("\\")
+        path = "\\" + path.upper()
+        normalized.add(path)
+    return sorted(normalized)
+
+
+class MDSplusExtractor(TransformComponent):
+    """Extract MDSplus paths from LlamaIndex nodes.
+
+    Scans code/text for MDSplus path references and TDI function calls.
+    Stores counts in metadata; full references in _mdsplus_refs for graph linking.
     """
 
     def __call__(self, nodes: list[BaseNode], **kwargs: dict) -> list[BaseNode]:
-        """Process nodes and extract MDSplus references.
-
-        Args:
-            nodes: List of LlamaIndex nodes to process
-
-        Returns:
-            Nodes with updated metadata containing ref_count and _mdsplus_refs
-        """
+        """Process nodes and extract MDSplus references."""
         for node in nodes:
             content = node.get_content()
             refs = extract_mdsplus_paths(content)
 
             if refs:
-                # Store only count in metadata (avoids size limits)
                 node.metadata["mdsplus_ref_count"] = len(refs)
-                # Store full refs in private metadata for graph linking
-                # This is NOT persisted to vector store, only used during ingestion
                 node.metadata["_mdsplus_refs"] = refs
 
         return nodes
@@ -149,6 +150,8 @@ class MDSplusExtractor(TransformComponent):
 __all__ = [
     "MDSplusExtractor",
     "MDSplusReference",
+    "compute_canonical_path",
     "extract_mdsplus_paths",
+    "extract_mdsplus_paths_text",
     "normalize_mdsplus_path",
 ]

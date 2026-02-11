@@ -1,56 +1,47 @@
-"""LlamaIndex IngestionPipeline for code examples.
+"""Unified ingestion pipeline for all content types.
 
-Configures the pipeline with CodeSplitter, IDSExtractor, and
-Neo4jVectorStore for semantic code search.
-
-Features:
-- Graph-driven ingestion via SourceFile queue
+Graph-driven ingestion via SourceFile queue:
 - Automatic deduplication (skips already-ingested files)
 - Per-file atomic commits (interrupt-safe)
 - Auto-updates FacilityPath status to 'explored'
 - Links extracted MDSplus paths to TreeNode entities
+- Routes files to appropriate splitters based on language/type
+
+Replaces code_examples.pipeline.
 """
 
 import hashlib
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from llama_index.core import Document
-from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
 from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
 
-from imas_codex.embeddings.llama_index import get_llama_embed_model
+from imas_codex.embeddings import get_embed_model
 from imas_codex.graph import GraphClient
 from imas_codex.settings import get_embedding_dimension
 
-from .facility_reader import TEXT_SPLITTER_LANGUAGES, fetch_remote_files
-from .graph_linker import (
+from .extractors.ids import IDSExtractor
+from .extractors.mdsplus import MDSplusExtractor
+from .graph import (
     link_chunks_to_imas_paths,
     link_chunks_to_tree_nodes,
+    link_example_mdsplus_paths,
     link_examples_to_facility,
 )
-from .ids_extractor import IDSExtractor
-from .mdsplus_extractor import MDSplusExtractor
 from .queue import get_pending_files, update_source_file_status
+from .readers.remote import TEXT_SPLITTER_LANGUAGES, fetch_remote_files
 
 logger = logging.getLogger(__name__)
 
 # Progress callback type: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
-
-
-def get_embed_model() -> BaseEmbedding:
-    """Get the project's standard embedding model.
-
-    Delegates to the canonical cached singleton in imas_codex.embeddings.
-    Respects the embedding-backend config (local/remote).
-    """
-    return get_llama_embed_model()
 
 
 def create_vector_store(
@@ -88,11 +79,11 @@ def create_pipeline(
     max_chars: int = 10000,
     use_text_splitter: bool = False,
 ) -> IngestionPipeline:
-    """Create LlamaIndex ingestion pipeline for code examples.
+    """Create LlamaIndex ingestion pipeline.
 
     Args:
         vector_store: Optional pre-configured Neo4jVectorStore
-        language: Programming language for CodeSplitter (default: python)
+        language: Programming language for CodeSplitter
         chunk_lines: Target lines per chunk
         chunk_lines_overlap: Overlap between chunks
         max_chars: Maximum characters per chunk
@@ -103,12 +94,10 @@ def create_pipeline(
     """
     vs = vector_store or create_vector_store()
 
-    # Use text splitter for languages without tree-sitter support
-    # Use larger chunk size for text splitter to accommodate metadata
     if use_text_splitter or language in TEXT_SPLITTER_LANGUAGES:
         splitter = SentenceSplitter(
             chunk_size=max_chars,
-            chunk_overlap=chunk_lines_overlap * 60,  # Approx chars per line
+            chunk_overlap=chunk_lines_overlap * 60,
             separator="\n",
         )
     else:
@@ -139,8 +128,6 @@ def _generate_example_id(facility: str, remote_path: str) -> str:
 
 def _extract_author(path: str) -> str | None:
     """Extract username from path like /home/username/..."""
-    import re
-
     match = re.match(r"/home/(\w+)/", path)
     return match.group(1) if match else None
 
@@ -150,17 +137,7 @@ def _check_already_ingested(
     facility: str,
     remote_paths: list[str],
 ) -> tuple[list[str], list[str]]:
-    """Check which files are already ingested.
-
-    Args:
-        graph_client: GraphClient instance
-        facility: Facility ID
-        remote_paths: List of remote file paths to check
-
-    Returns:
-        Tuple of (paths_to_ingest, already_ingested_paths)
-    """
-    # Query for existing CodeExample nodes with matching source_file
+    """Check which files are already ingested."""
     result = graph_client.query(
         """
         MATCH (e:CodeExample)
@@ -183,17 +160,7 @@ def _update_facility_path_status(
     source_file: str,
     example_id: str,
 ) -> None:
-    """Update FacilityPath status to 'explored' and link to CodeExample.
-
-    Finds the FacilityPath that contains this source file and updates it.
-
-    Args:
-        graph_client: GraphClient instance
-        facility: Facility ID
-        source_file: Remote file path that was ingested
-        example_id: ID of the created CodeExample
-    """
-    # Find containing FacilityPath and update status
+    """Update FacilityPath status to 'explored' and link to CodeExample."""
     graph_client.query(
         """
         MATCH (p:FacilityPath {facility_id: $facility})
@@ -210,72 +177,7 @@ def _update_facility_path_status(
     )
 
 
-def _link_example_mdsplus_paths(
-    graph_client: GraphClient,
-    example_id: str,
-) -> int:
-    """Create DataReference nodes and link to TreeNodes for an example.
-
-    For chunks with mdsplus_paths metadata:
-    1. Creates DataReference nodes (deduplicated)
-    2. Creates CONTAINS_REF relationships from CodeChunk -> DataReference
-    3. Creates RESOLVES_TO_TREE_NODE relationships from DataReference -> TreeNode
-
-    Args:
-        graph_client: GraphClient instance
-        example_id: ID of the CodeExample
-
-    Returns:
-        Number of DataReference nodes created/linked
-    """
-    # Step 1: Create DataReference nodes and CONTAINS_REF relationships
-    result = graph_client.query(
-        """
-        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
-        WHERE c.mdsplus_paths IS NOT NULL AND e.facility_id IS NOT NULL
-        UNWIND c.mdsplus_paths AS path
-        WITH c, e.facility_id AS facility, path
-        MERGE (d:DataReference {raw_string: path, facility_id: facility})
-        ON CREATE SET
-            d.id = facility + ':mdsplus_path:' + path,
-            d.ref_type = 'mdsplus_path'
-        MERGE (c)-[:CONTAINS_REF]->(d)
-        RETURN count(DISTINCT d) AS refs_created
-        """,
-        example_id=example_id,
-    )
-    refs_created = result[0]["refs_created"] if result else 0
-
-    # Step 2: Resolve to TreeNodes (only unresolved ones)
-    graph_client.query(
-        """
-        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
-              -[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
-        WHERE NOT (d)-[:RESOLVES_TO_TREE_NODE]->()
-        MATCH (t:TreeNode)
-        WHERE t.path = d.raw_string
-           OR t.path ENDS WITH substring(d.raw_string, 1)
-           OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
-        MERGE (d)-[:RESOLVES_TO_TREE_NODE]->(t)
-        """,
-        example_id=example_id,
-    )
-
-    # Update ref_count on CodeChunk nodes
-    graph_client.query(
-        """
-        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
-              -[r:CONTAINS_REF]->(d:DataReference)
-        WITH c, count(r) AS ref_count
-        SET c.ref_count = ref_count
-        """,
-        example_id=example_id,
-    )
-
-    return refs_created
-
-
-async def ingest_code_files(
+async def ingest_files(
     facility: str,
     remote_paths: list[str] | None = None,
     description: str | None = None,
@@ -283,21 +185,17 @@ async def ingest_code_files(
     force: bool = False,
     limit: int | None = None,
 ) -> dict[str, int]:
-    """Ingest code files from a remote facility using LlamaIndex pipeline.
+    """Ingest files from a remote facility.
 
     Can be called in two modes:
     1. **Path list mode**: Provide remote_paths explicitly
     2. **Graph-driven mode**: Omit remote_paths to process queued SourceFile nodes
 
-    Fetches files via SSH, processes with IngestionPipeline, and creates
-    graph relationships for IMAS and MDSplus path linking. Files are grouped
-    by language and processed with language-specific CodeSplitter.
-
     Features:
-    - **Deduplication**: Skips files that are already ingested (unless force=True)
-    - **Interrupt-safe**: Each file is committed atomically
-    - **Auto status update**: SourceFile nodes are marked 'ingested'
-    - **MDSplus linking**: Extracted paths are linked to TreeNode entities
+    - Deduplication: Skips files that are already ingested (unless force=True)
+    - Interrupt-safe: Each file is committed atomically
+    - Auto status update: SourceFile nodes are marked 'ingested'
+    - MDSplus linking: Extracted paths are linked to TreeNode entities
 
     Args:
         facility: Facility SSH host alias (e.g., "tcv")
@@ -305,17 +203,10 @@ async def ingest_code_files(
         description: Optional description for all files
         progress_callback: Optional callback for progress reporting
         force: If True, re-ingest files even if already present
-        limit: Maximum files to process from graph queue (None = all queued files)
+        limit: Maximum files to process from graph queue
 
     Returns:
-        Dict with counts: {
-            "files": N,
-            "chunks": M,
-            "ids_found": K,
-            "mdsplus_paths": L,
-            "skipped": S,
-            "tree_nodes_linked": T
-        }
+        Dict with counts: files, chunks, ids_found, mdsplus_paths, skipped, tree_nodes_linked
     """
     stats = {
         "files": 0,
@@ -331,12 +222,11 @@ async def ingest_code_files(
             progress_callback(current, total, message)
         logger.info("[%d/%d] %s", current, total, message)
 
-    # Determine source of files: explicit paths or graph queue
-    source_file_ids: dict[str, str] = {}  # path -> source_file_id for status updates
+    # Determine source of files
+    source_file_ids: dict[str, str] = {}
 
     if remote_paths is None:
-        # Graph-driven mode: get pending files from queue
-        query_limit = limit if limit is not None else 10000  # Large number for "all"
+        query_limit = limit if limit is not None else 10000
         pending = get_pending_files(facility, limit=query_limit)
         if not pending:
             report(0, 0, "No pending files in queue")
@@ -349,10 +239,9 @@ async def ingest_code_files(
     total_files = len(remote_paths)
     report(0, total_files, f"Starting ingestion of {total_files} files")
 
-    # Create vector store (shared across all languages)
     vector_store = create_vector_store()
 
-    # Check for already-ingested files (deduplication)
+    # Deduplication check
     paths_to_ingest = remote_paths
     if not force:
         with GraphClient() as check_client:
@@ -371,12 +260,6 @@ async def ingest_code_files(
         report(total_files, total_files, "All files already ingested")
         return stats
 
-    # Update SourceFile status (they're about to be processed)
-    for path in paths_to_ingest:
-        if path in source_file_ids:
-            # Status is already 'discovered', no need to update
-            pass
-
     # Group documents by language
     docs_by_language: dict[str, list[Document]] = {}
     file_metadata: dict[str, dict[str, Any]] = {}
@@ -390,7 +273,6 @@ async def ingest_code_files(
         example_id = _generate_example_id(facility, remote_path)
         author = _extract_author(remote_path)
 
-        # Store metadata for CodeExample creation
         file_metadata[example_id] = {
             "facility_id": facility,
             "source_file": remote_path,
@@ -399,10 +281,9 @@ async def ingest_code_files(
             "description": description or f"Code example from {remote_path}",
             "author": author,
             "ingested_at": datetime.now(UTC).isoformat(),
-            "_source_file_id": source_file_ids.get(remote_path),  # For status update
+            "_source_file_id": source_file_ids.get(remote_path),
         }
 
-        # Create Document for pipeline
         doc = Document(
             text=content,
             metadata={
@@ -410,11 +291,10 @@ async def ingest_code_files(
                 "facility_id": facility,
                 "language": language,
                 "code_example_id": example_id,
-                "_full_doc_text": content,  # For line number calculation
+                "_full_doc_text": content,
             },
         )
 
-        # Group by language
         if language not in docs_by_language:
             docs_by_language[language] = []
         docs_by_language[language].append(doc)
@@ -423,24 +303,19 @@ async def ingest_code_files(
         report(total_files, total_files, "No files to process")
         return stats
 
-    # Calculate total files to process (fixed value for progress)
     total_to_process = sum(len(docs) for docs in docs_by_language.values())
-    stats["files"] = 0  # Will be incremented as files complete
+    stats["files"] = 0
 
-    # Process in micro-batches for better progress and interrupt safety
-    # Each batch: embed -> create graph nodes -> mark ready
-    BATCH_SIZE = 25  # Small batches for frequent progress updates
+    BATCH_SIZE = 25
 
     processed_files = 0
     for language, documents in docs_by_language.items():
-        # Create pipeline once per language
         try:
             pipeline = create_pipeline(vector_store=vector_store, language=language)
         except Exception as e:
             logger.error("Failed to create pipeline for %s: %s", language, e)
             continue
 
-        # Process documents in batches
         for batch_start in range(0, len(documents), BATCH_SIZE):
             batch_docs = documents[batch_start : batch_start + BATCH_SIZE]
             batch_end = min(batch_start + BATCH_SIZE, len(documents))
@@ -451,15 +326,6 @@ async def ingest_code_files(
                 f"Embedding {language} files {batch_start + 1}-{batch_end}/{len(documents)}",
             )
 
-            # Process documents in batches
-            report(
-                processed_files,
-                total_to_process,
-                f"Embedding {language} files {batch_start + 1}-{batch_end}/{len(documents)}",
-            )
-
-            # Status remains 'discovered' during processing
-
             try:
                 nodes = await pipeline.arun(documents=batch_docs)
             except Exception as e:
@@ -469,7 +335,6 @@ async def ingest_code_files(
                     e,
                 )
                 try:
-                    # Fallback to text-based splitting for unparseable code
                     fallback_pipeline = create_pipeline(
                         vector_store=vector_store,
                         language=language,
@@ -478,7 +343,6 @@ async def ingest_code_files(
                     nodes = await fallback_pipeline.arun(documents=batch_docs)
                 except Exception as e2:
                     logger.error("Failed to process %s batch: %s", language, e2)
-                    # Mark this batch as failed
                     for doc in batch_docs:
                         example_id = doc.metadata.get("code_example_id")
                         meta = file_metadata.get(example_id, {})
@@ -487,7 +351,7 @@ async def ingest_code_files(
                             update_source_file_status(sf_id, "failed", error=str(e2))
                     continue
 
-            # Count stats for this batch
+            # Count stats
             batch_ids_found = 0
             batch_mdsplus_paths = 0
             for node in nodes:
@@ -500,7 +364,7 @@ async def ingest_code_files(
             stats["ids_found"] += batch_ids_found
             stats["mdsplus_paths"] += batch_mdsplus_paths
 
-            # Commit this batch to graph immediately (interrupt-safe)
+            # Commit batch to graph (interrupt-safe)
             with GraphClient() as graph_client:
                 for doc in batch_docs:
                     example_id = doc.metadata.get("code_example_id")
@@ -508,10 +372,8 @@ async def ingest_code_files(
                     if not meta:
                         continue
 
-                    # Pop source_file_id for status update
                     source_file_id = meta.pop("_source_file_id", None)
 
-                    # Create CodeExample node
                     graph_client.query(
                         """
                         MERGE (e:CodeExample {id: $id})
@@ -521,18 +383,15 @@ async def ingest_code_files(
                         props=meta,
                     )
 
-                    # Update FacilityPath status
                     _update_facility_path_status(
                         graph_client, facility, meta["source_file"], example_id
                     )
 
-                    # Mark SourceFile as ingested
                     if source_file_id:
                         update_source_file_status(
                             source_file_id, "ingested", code_example_id=example_id
                         )
 
-                # Link chunks to examples for this batch
                 batch_example_ids = [
                     doc.metadata.get("code_example_id") for doc in batch_docs
                 ]
@@ -546,16 +405,15 @@ async def ingest_code_files(
                     example_ids=batch_example_ids,
                 )
 
-                # Link MDSplus paths for this batch
                 for example_id in batch_example_ids:
                     if example_id:
-                        linked = _link_example_mdsplus_paths(graph_client, example_id)
+                        linked = link_example_mdsplus_paths(graph_client, example_id)
                         stats["tree_nodes_linked"] += linked
 
             processed_files += len(batch_docs)
             stats["files"] = processed_files
 
-    # Final relationship linking (IMAS paths, facility)
+    # Final relationship linking
     report(processed_files, total_to_process, "Creating final graph relationships...")
 
     with GraphClient() as graph_client:
@@ -576,6 +434,5 @@ __all__ = [
     "ProgressCallback",
     "create_pipeline",
     "create_vector_store",
-    "get_embed_model",
-    "ingest_code_files",
+    "ingest_files",
 ]

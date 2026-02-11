@@ -108,9 +108,9 @@ def search_code_examples(query: str, limit: int = 5, min_score: float = 0.5) -> 
     print(f"Searching code examples for: {query}")
 
     try:
-        from imas_codex.code_examples.search import CodeExampleSearch
+        from imas_codex.ingestion.search import ChunkSearch
 
-        searcher = CodeExampleSearch()
+        searcher = ChunkSearch()
         results = searcher.search(query=query, top_k=limit, min_score=min_score)
 
         if not results:
@@ -284,7 +284,7 @@ def search_wiki(query: str, limit: int = 5, facility: str = "tcv") -> str:
     print(f"Searching wiki for: {query}")
 
     try:
-        from imas_codex.code_examples.pipeline import get_embed_model
+        from imas_codex.embeddings import get_embed_model
 
         embed_model = get_embed_model()
         query_embedding = embed_model.get_text_embedding(query)
@@ -465,7 +465,7 @@ class QueueFilesTool(Tool):
 
     def forward(self, file_paths: list[str], interest_score: float = 0.7) -> str:
         """Queue the files."""
-        from imas_codex.code_examples import queue_source_files
+        from imas_codex.ingestion import queue_source_files
 
         if not file_paths:
             return "No files provided"

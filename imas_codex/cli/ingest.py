@@ -85,7 +85,7 @@ def ingest_run(
     """
     import asyncio
 
-    from imas_codex.code_examples import get_pending_files, ingest_code_files
+    from imas_codex.ingestion import get_pending_files, ingest_files
 
     # Get pending files (discovered, not yet ingested)
     console.print(f"[cyan]Fetching discovered files for {facility}...[/cyan]")
@@ -131,7 +131,7 @@ def ingest_run(
 
         try:
             stats = asyncio.run(
-                ingest_code_files(
+                ingest_files(
                     facility=facility,
                     remote_paths=None,  # Use graph queue
                     progress_callback=progress_callback,
@@ -165,7 +165,7 @@ def ingest_status(facility: str) -> None:
     Examples:
         imas-codex ingest status tcv
     """
-    from imas_codex.code_examples import get_queue_stats
+    from imas_codex.ingestion import get_queue_stats
 
     stats = get_queue_stats(facility)
 
@@ -245,7 +245,7 @@ def ingest_queue(
         # Preview
         imas-codex ingest queue tcv /path/a.py --dry-run
     """
-    from imas_codex.code_examples import queue_source_files
+    from imas_codex.ingestion import queue_source_files
 
     # Read file paths from arguments, file, or stdin
     path_list: list[str] = []

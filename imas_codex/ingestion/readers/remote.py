@@ -1,7 +1,9 @@
 """Remote facility file fetching via SSH/SCP.
 
-Provides functions for transferring code files from remote facilities
+Provides functions for transferring files from remote facilities
 to local staging for ingestion into the knowledge graph.
+
+Supports both sequential SCP (small batches) and batch tar (large batches).
 """
 
 import io
@@ -20,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Threshold for switching to batch tar transfer
 TAR_BATCH_THRESHOLD = 10
 
-# Extension to language mapping
+# Extension to language mapping for code files
 # Languages with tree-sitter support: python, matlab, fortran, julia, cpp, c
 # Languages needing text splitter: tdi, idl
 EXTENSION_TO_LANGUAGE = {
@@ -39,12 +41,29 @@ EXTENSION_TO_LANGUAGE = {
     ".c": "c",
     ".h": "c",
     ".hpp": "cpp",
-    ".fun": "tdi",  # TDI (MDSplus Tree Data Interface)
-    ".FUN": "tdi",  # TDI (case sensitive filesystems)
+    ".fun": "tdi",
+    ".FUN": "tdi",
+}
+
+# Document extensions (not code — use text splitter or dedicated reader)
+DOCUMENT_EXTENSIONS = {
+    ".pdf": "pdf",
+    ".docx": "docx",
+    ".pptx": "pptx",
+    ".xlsx": "xlsx",
+    ".html": "html",
+    ".htm": "html",
+    ".md": "markdown",
+    ".rst": "rst",
+    ".txt": "text",
+    ".ipynb": "notebook",
 }
 
 # Languages that require text-based splitting (no tree-sitter grammar)
 TEXT_SPLITTER_LANGUAGES = {"tdi", "idl"}
+
+# All supported extensions
+ALL_SUPPORTED_EXTENSIONS = set(EXTENSION_TO_LANGUAGE) | set(DOCUMENT_EXTENSIONS)
 
 
 def detect_language(path: str) -> str:
@@ -54,10 +73,45 @@ def detect_language(path: str) -> str:
         path: File path
 
     Returns:
-        Language identifier for tree-sitter
+        Language identifier for tree-sitter, or document type
+    """
+    ext = Path(path).suffix
+    # Try case-sensitive first (for .F90 vs .f90)
+    if ext in EXTENSION_TO_LANGUAGE:
+        return EXTENSION_TO_LANGUAGE[ext]
+    # Then case-insensitive for code
+    ext_lower = ext.lower()
+    if ext_lower in EXTENSION_TO_LANGUAGE:
+        return EXTENSION_TO_LANGUAGE[ext_lower]
+    # Check document types
+    if ext_lower in DOCUMENT_EXTENSIONS:
+        return DOCUMENT_EXTENSIONS[ext_lower]
+    return "python"  # Default fallback
+
+
+def detect_file_category(path: str) -> str:
+    """Detect file category from extension.
+
+    Maps to FileCategory enum values: code, document, notebook, config, data, other.
+
+    Args:
+        path: File path
+
+    Returns:
+        Category string matching FileCategory enum
     """
     ext = Path(path).suffix.lower()
-    return EXTENSION_TO_LANGUAGE.get(ext, "python")
+    if ext in {k.lower() for k in EXTENSION_TO_LANGUAGE}:
+        return "code"
+    if ext == ".ipynb":
+        return "notebook"
+    if ext in {".pdf", ".docx", ".pptx", ".xlsx", ".html", ".htm", ".md", ".rst"}:
+        return "document"
+    if ext in {".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".json"}:
+        return "config"
+    if ext in {".csv", ".h5", ".hdf5", ".nc", ".mat"}:
+        return "data"
+    return "other"
 
 
 def _fetch_sequential(
@@ -98,7 +152,7 @@ def _fetch_batch_tar(
     """Fetch multiple files as a single tar stream.
 
     Significantly faster for 10+ files by eliminating per-file SCP overhead.
-    Falls back to sequential fetch if tar fails.
+    Falls back to sequential if tar fails.
 
     Args:
         facility: SSH host alias
@@ -107,7 +161,6 @@ def _fetch_batch_tar(
     Yields:
         Tuples of (remote_path, content, language)
     """
-    # Build tar command with quoted paths
     paths_arg = " ".join(shlex.quote(p) for p in remote_paths)
     cmd = f"tar -cf - {paths_arg} 2>/dev/null"
 
@@ -118,18 +171,15 @@ def _fetch_batch_tar(
             ["ssh", facility, cmd],
             capture_output=True,
             check=True,
-            timeout=300,  # 5 minute timeout
+            timeout=300,
         )
 
-        # Extract files from tar stream
         with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:") as tf:
             for member in tf.getmembers():
                 if not member.isfile():
                     continue
 
                 try:
-                    # Get original path from tar member name
-                    # tar stores paths without leading /
                     original_path = "/" + member.name.lstrip("/")
 
                     f = tf.extractfile(member)
@@ -162,7 +212,7 @@ def fetch_remote_files(
     """Fetch files from remote facility via SSH.
 
     Automatically selects optimal transfer strategy:
-    - Sequential SCP for small batches (≤10 files)
+    - Sequential SCP for small batches (<=10 files)
     - Batch tar for larger batches (>10 files)
 
     Args:
@@ -190,8 +240,12 @@ def fetch_remote_files(
 
 
 __all__ = [
-    "detect_language",
-    "fetch_remote_files",
+    "ALL_SUPPORTED_EXTENSIONS",
+    "DOCUMENT_EXTENSIONS",
     "EXTENSION_TO_LANGUAGE",
     "TAR_BATCH_THRESHOLD",
+    "TEXT_SPLITTER_LANGUAGES",
+    "detect_file_category",
+    "detect_language",
+    "fetch_remote_files",
 ]

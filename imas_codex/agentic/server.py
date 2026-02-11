@@ -147,10 +147,10 @@ def _init_repl() -> dict[str, Any]:
 
     logger.info("Initializing Python REPL...")
 
-    from imas_codex.code_examples.search import CodeExampleSearch
     from imas_codex.embeddings.config import EncoderConfig
     from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
     from imas_codex.graph import GraphClient
+    from imas_codex.ingestion.search import ChunkSearch
     from imas_codex.settings import get_embedding_backend
 
     gc = GraphClient()
@@ -479,15 +479,15 @@ def _init_repl() -> dict[str, Any]:
     # Code search utilities
     # =========================================================================
 
-    _code_searcher: CodeExampleSearch | None = None
+    _code_searcher: ChunkSearch | None = None
 
-    def _get_code_searcher() -> CodeExampleSearch:
-        """Get or create CodeExampleSearch, loading embedding model on first use."""
+    def _get_code_searcher() -> ChunkSearch:
+        """Get or create ChunkSearch, loading embedding model on first use."""
         nonlocal _code_searcher
         if _code_searcher is None:
-            logger.info("Initializing CodeExampleSearch (embedding loading)...")
-            _code_searcher = CodeExampleSearch()
-            logger.info("CodeExampleSearch ready")
+            logger.info("Initializing ChunkSearch (embedding loading)...")
+            _code_searcher = ChunkSearch()
+            logger.info("ChunkSearch ready")
         return _code_searcher
 
     def search_code(

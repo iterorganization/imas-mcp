@@ -1,7 +1,9 @@
-"""Source file discovery for the ingestion pipeline.
+"""Source file queue management for the ingestion pipeline.
 
-Scouts use queue_source_files() to mark files as discovered for ingestion.
-The CLI ingest command processes discovered files.
+Manages SourceFile node lifecycle in the graph:
+  discovered → ingested | failed | stale
+
+Scouts discover files via queue_source_files(). The CLI processes them.
 """
 
 import logging
@@ -11,7 +13,7 @@ from pathlib import Path
 
 from imas_codex.graph import GraphClient
 
-from .facility_reader import EXTENSION_TO_LANGUAGE
+from .readers.remote import EXTENSION_TO_LANGUAGE
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +89,6 @@ def queue_source_files(
 
     try:
         with GraphClient() as client:
-            # Check for existing SourceFile or CodeExample nodes
-            # Skip if already queued/ready or already has a CodeExample
             existing = client.query(
                 """
                 UNWIND $items AS item
@@ -101,7 +101,6 @@ def queue_source_files(
                 items=items,
             )
 
-            # Filter out existing files
             skip_ids = set()
             for row in existing:
                 if row["sf_status"] in ("discovered", "ingested"):
@@ -114,7 +113,6 @@ def queue_source_files(
             if not to_discover:
                 return {"discovered": 0, "skipped": len(skip_ids), "errors": []}
 
-            # Create SourceFile nodes with UNWIND
             client.query(
                 """
                 UNWIND $items AS item
@@ -127,7 +125,6 @@ def queue_source_files(
                 items=to_discover,
             )
 
-            # Link to parent FacilityPath if provided
             if in_directory:
                 client.query(
                     """
@@ -162,10 +159,7 @@ def get_pending_files(
 ) -> list[dict]:
     """Get pending SourceFile nodes for ingestion.
 
-    Returns files that need processing:
-    - discovered: Not yet processed
-    - failed: With retry count < 3 (will be retried)
-
+    Returns files with status 'discovered' or 'failed' (retry < 3).
     Ordered by interest_score descending.
 
     Args:
@@ -260,7 +254,7 @@ def get_queue_stats(facility: str) -> dict[str, int]:
         facility: Facility ID
 
     Returns:
-        Dict with counts by status: {"queued": N, "fetching": M, ...}
+        Dict with counts by status: {"discovered": N, "ingested": M, ...}
     """
     with GraphClient() as client:
         result = client.query(

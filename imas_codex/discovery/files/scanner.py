@@ -1,0 +1,350 @@
+"""File scanner for discovering source files in scored FacilityPaths.
+
+Enumerates files at remote facilities using SSH, filtering by supported
+extensions. Creates SourceFile nodes with status='discovered'.
+"""
+
+from __future__ import annotations
+
+import logging
+import subprocess
+from typing import TYPE_CHECKING
+
+from imas_codex.graph import GraphClient
+from imas_codex.ingestion.readers.remote import (
+    ALL_SUPPORTED_EXTENSIONS,
+    detect_file_category,
+    detect_language,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
+
+# Progress callback: (current, total, message) -> None
+ProgressCallback = Callable[[int, int, str], None]
+
+
+def _build_fd_extensions_arg() -> str:
+    """Build fd extension arguments for supported file types."""
+    exts = sorted({e.lstrip(".").lower() for e in ALL_SUPPORTED_EXTENSIONS})
+    return " ".join(f"-e {ext}" for ext in exts)
+
+
+def _scan_remote_path(
+    facility: str,
+    remote_path: str,
+    ssh_host: str | None = None,
+    max_depth: int = 5,
+    timeout: int = 60,
+) -> list[dict]:
+    """Scan a remote path for supported files via SSH.
+
+    Uses fd (fast finder) if available, falls back to find.
+
+    Args:
+        facility: Facility ID
+        remote_path: Remote directory path to scan
+        ssh_host: SSH host alias (defaults to facility)
+        max_depth: Maximum directory depth to scan
+        timeout: SSH command timeout in seconds
+
+    Returns:
+        List of file info dicts with path, language, category
+    """
+    host = ssh_host or facility
+    ext_args = _build_fd_extensions_arg()
+
+    # Try fd first (faster), fall back to find
+    fd_cmd = f"fd --type f --max-depth {max_depth} {ext_args} {remote_path} 2>/dev/null"
+    find_exts = " -o ".join(
+        f'-name "*.{e.lstrip(".").lower()}"' for e in sorted(ALL_SUPPORTED_EXTENSIONS)
+    )
+    find_cmd = (
+        f"find {remote_path} -maxdepth {max_depth} -type f "
+        f"\\( {find_exts} \\) 2>/dev/null"
+    )
+
+    cmd = f"{fd_cmd} || {find_cmd}"
+
+    try:
+        result = subprocess.run(
+            ["ssh", host, cmd],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+        files = []
+        for line in result.stdout.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            files.append(
+                {
+                    "path": line,
+                    "language": detect_language(line),
+                    "file_category": detect_file_category(line),
+                    "facility_id": facility,
+                }
+            )
+
+        return files
+
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "Scan timed out for %s:%s (timeout=%ds)", host, remote_path, timeout
+        )
+        return []
+    except subprocess.CalledProcessError as e:
+        logger.warning("Scan failed for %s:%s: %s", host, remote_path, e)
+        return []
+
+
+def _get_scannable_paths(
+    facility: str,
+    min_score: float = 0.5,
+    limit: int = 100,
+) -> list[dict]:
+    """Get scored FacilityPaths that are ready for file scanning.
+
+    Returns paths with status 'scored' and score >= min_score,
+    ordered by score descending.
+    """
+    with GraphClient() as client:
+        result = client.query(
+            """
+            MATCH (p:FacilityPath {facility_id: $facility})
+            WHERE p.status IN ['scored', 'explored']
+              AND coalesce(p.score, 0) >= $min_score
+              AND p.path IS NOT NULL
+            RETURN p.id AS id, p.path AS path, p.score AS score,
+                   p.purpose AS purpose, coalesce(p.files_scanned, 0) AS files_scanned
+            ORDER BY p.score DESC
+            LIMIT $limit
+            """,
+            facility=facility,
+            min_score=min_score,
+            limit=limit,
+        )
+        return list(result)
+
+
+def _persist_discovered_files(
+    facility: str,
+    files: list[dict],
+    source_path_id: str | None = None,
+) -> dict[str, int]:
+    """Create SourceFile nodes from scanned files.
+
+    Args:
+        facility: Facility ID
+        files: List of file info dicts
+        source_path_id: FacilityPath ID that contained these files
+
+    Returns:
+        Dict with discovered, skipped counts
+    """
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).isoformat()
+    items = []
+    for f in files:
+        file_id = f"{facility}:{f['path']}"
+        items.append(
+            {
+                "id": file_id,
+                "facility_id": facility,
+                "path": f["path"],
+                "language": f.get("language", "python"),
+                "file_category": f.get("file_category", "code"),
+                "status": "discovered",
+                "discovered_at": now,
+                "in_directory": source_path_id,
+            }
+        )
+
+    if not items:
+        return {"discovered": 0, "skipped": 0}
+
+    with GraphClient() as client:
+        # MERGE to skip already-discovered files
+        result = client.query(
+            """
+            UNWIND $items AS item
+            MERGE (sf:SourceFile {id: item.id})
+            ON CREATE SET sf += item
+            WITH sf, item
+            WHERE sf.status = 'discovered' AND sf.discovered_at = item.discovered_at
+            MATCH (f:Facility {id: item.facility_id})
+            MERGE (sf)-[:FACILITY_ID]->(f)
+            RETURN count(CASE WHEN sf.discovered_at = item.discovered_at THEN 1 END) AS discovered,
+                   count(CASE WHEN sf.discovered_at <> item.discovered_at THEN 1 END) AS skipped
+            """,
+            items=items,
+        )
+
+        counts = result[0] if result else {"discovered": 0, "skipped": 0}
+
+        # Link to parent FacilityPath
+        if source_path_id:
+            client.query(
+                """
+                UNWIND $items AS item
+                MATCH (sf:SourceFile {id: item.id})
+                MATCH (p:FacilityPath {id: $parent_id})
+                MERGE (p)-[:CONTAINS]->(sf)
+                """,
+                items=items,
+                parent_id=source_path_id,
+            )
+
+            # Update FacilityPath scan count
+            client.query(
+                """
+                MATCH (p:FacilityPath {id: $parent_id})
+                SET p.files_scanned = $count,
+                    p.last_file_scan_at = datetime()
+                """,
+                parent_id=source_path_id,
+                count=len(files),
+            )
+
+        return {
+            "discovered": counts.get("discovered", len(items)),
+            "skipped": counts.get("skipped", 0),
+        }
+
+
+def scan_facility_files(
+    facility: str,
+    min_score: float = 0.5,
+    max_paths: int = 100,
+    max_depth: int = 5,
+    ssh_host: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, int]:
+    """Scan scored FacilityPaths for source files.
+
+    Enumerates files in high-scoring directories, creates SourceFile nodes.
+
+    Args:
+        facility: Facility ID
+        min_score: Minimum FacilityPath score to scan
+        max_paths: Maximum paths to scan
+        max_depth: Maximum directory depth per path
+        ssh_host: SSH host override
+        progress_callback: Optional progress callback
+
+    Returns:
+        Dict with total_files, total_paths, new_files, skipped_files
+    """
+    stats = {
+        "total_files": 0,
+        "total_paths": 0,
+        "new_files": 0,
+        "skipped_files": 0,
+    }
+
+    def report(current: int, total: int, msg: str) -> None:
+        if progress_callback:
+            progress_callback(current, total, msg)
+        logger.info("[%d/%d] %s", current, total, msg)
+
+    # Get paths to scan
+    paths = _get_scannable_paths(facility, min_score=min_score, limit=max_paths)
+    if not paths:
+        report(0, 0, "No scored paths to scan")
+        return stats
+
+    total = len(paths)
+    report(0, total, f"Scanning {total} paths for source files")
+
+    for idx, path_info in enumerate(paths):
+        path = path_info["path"]
+        path_id = path_info["id"]
+        score = path_info.get("score", 0)
+
+        report(idx, total, f"Scanning {path} (score={score:.2f})")
+
+        files = _scan_remote_path(
+            facility, path, ssh_host=ssh_host, max_depth=max_depth
+        )
+
+        if files:
+            result = _persist_discovered_files(facility, files, source_path_id=path_id)
+            stats["new_files"] += result["discovered"]
+            stats["skipped_files"] += result["skipped"]
+            stats["total_files"] += len(files)
+
+        stats["total_paths"] += 1
+
+    report(
+        total,
+        total,
+        f"Scan complete: {stats['new_files']} new files in {stats['total_paths']} paths",
+    )
+    return stats
+
+
+def get_file_discovery_stats(facility: str) -> dict[str, int]:
+    """Get file discovery statistics for a facility.
+
+    Returns:
+        Dict with counts by status, total, plus path scan stats
+    """
+    with GraphClient() as client:
+        result = client.query(
+            """
+            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            RETURN sf.status AS status, count(*) AS count
+            """,
+            facility=facility,
+        )
+        stats = {row["status"]: row["count"] for row in result}
+        stats["total"] = sum(stats.values())
+
+        # Count by category
+        cat_result = client.query(
+            """
+            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            RETURN sf.file_category AS category, count(*) AS count
+            """,
+            facility=facility,
+        )
+        for row in cat_result:
+            if row["category"]:
+                stats[f"cat_{row['category']}"] = row["count"]
+
+        return stats
+
+
+def clear_facility_files(facility: str) -> dict[str, int]:
+    """Clear all SourceFile nodes for a facility.
+
+    Args:
+        facility: Facility ID
+
+    Returns:
+        Dict with count of deleted nodes
+    """
+    with GraphClient() as client:
+        result = client.query(
+            """
+            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            DETACH DELETE sf
+            RETURN count(*) AS deleted
+            """,
+            facility=facility,
+        )
+        count = result[0]["deleted"] if result else 0
+        logger.info("Deleted %d SourceFile nodes for %s", count, facility)
+        return {"deleted": count}
+
+
+__all__ = [
+    "clear_facility_files",
+    "get_file_discovery_stats",
+    "scan_facility_files",
+]

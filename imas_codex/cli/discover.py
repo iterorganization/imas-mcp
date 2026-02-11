@@ -49,6 +49,7 @@ def discover():
     \b
     Domain Subgroups (each has status, clear):
       paths              Directory structure discovery
+      files              Source file discovery from scored paths
       wiki               Wiki page discovery and ingestion
       signals            Facility signal discovery
 
@@ -56,9 +57,8 @@ def discover():
     Examples:
       imas-codex discover status jet          # All domains
       imas-codex discover paths jet            # Run paths discovery
-      imas-codex discover paths status jet     # Paths status only
+      imas-codex discover files jet            # Scan + score files
       imas-codex discover wiki jet             # Run wiki discovery
-      imas-codex discover wiki clear jet       # Clear wiki only
       imas-codex discover signals jet          # Run signals discovery
       imas-codex discover clear jet            # Clear ALL domains
 
@@ -139,6 +139,33 @@ def signals():
 
 
 discover.add_command(signals)
+
+
+# =============================================================================
+# Files Subgroup
+# =============================================================================
+
+
+@click.group(cls=DefaultGroup)
+def files():
+    """Source file discovery from scored paths.
+
+    Bridges from scored FacilityPaths to source file ingestion.
+    Scans directories for code/documents, scores with LLM, and creates
+    SourceFile nodes ready for `ingest run`.
+
+    \b
+    Examples:
+      imas-codex discover files tcv                # Full scan + score
+      imas-codex discover files tcv --scan-only    # Scan only
+      imas-codex discover files tcv --score-only   # Score only
+      imas-codex discover files status tcv         # Show statistics
+      imas-codex discover files clear tcv          # Clear file data
+    """
+    pass
+
+
+discover.add_command(files)
 
 
 # =============================================================================
@@ -1252,6 +1279,20 @@ def _clear_facility_domain(
                     ("signals + epochs", signal_total, clear_facility_signals)
                 )
 
+        # Files domain
+        if domain is None or domain == "files":
+            from imas_codex.discovery.files.scanner import (
+                clear_facility_files,
+                get_file_discovery_stats,
+            )
+
+            file_stats = get_file_discovery_stats(facility)
+            file_total = file_stats.get("total", 0)
+            if file_total > 0:
+                items_to_clear.append(
+                    ("source files", file_total, clear_facility_files)
+                )
+
         if not items_to_clear:
             domain_msg = f" {domain}" if domain else ""
             click.echo(f"No{domain_msg} discovery data to clear for {facility}")
@@ -1316,40 +1357,302 @@ def discover_seed(facility: str, path: tuple[str, ...]) -> None:
         raise SystemExit(1) from e
 
 
-# Placeholder Discovery Commands
+# =============================================================================
+# Files Commands
+# =============================================================================
 
 
-@discover.command("code")
+@files.command("run", hidden=True)
 @click.argument("facility")
-@click.option("--dry-run", is_flag=True, help="Show what would be discovered")
-def discover_code(facility: str, dry_run: bool) -> None:
-    """Discover source files in scored paths.
+@click.option(
+    "--min-score",
+    "-s",
+    type=float,
+    default=0.5,
+    help="Minimum FacilityPath score to scan (default: 0.5)",
+)
+@click.option(
+    "--max-paths",
+    "-p",
+    type=int,
+    default=100,
+    help="Maximum paths to scan (default: 100)",
+)
+@click.option(
+    "--focus",
+    "-f",
+    type=str,
+    help="Natural language focus (e.g., 'equilibrium reconstruction codes')",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    type=float,
+    default=5.0,
+    help="Maximum LLM spend for scoring in USD (default: $5)",
+)
+@click.option(
+    "--score-batch-size",
+    type=int,
+    default=50,
+    help="Files per LLM scoring call (default: 50)",
+)
+@click.option(
+    "--scan-only",
+    is_flag=True,
+    default=False,
+    help="Only scan for files, skip LLM scoring",
+)
+@click.option(
+    "--score-only",
+    is_flag=True,
+    default=False,
+    help="Only score already-discovered files",
+)
+@click.option(
+    "--no-rich",
+    is_flag=True,
+    default=False,
+    help="Use logging output instead of rich progress display",
+)
+def files_run(
+    facility: str,
+    min_score: float,
+    max_paths: int,
+    focus: str | None,
+    cost_limit: float,
+    score_batch_size: int,
+    scan_only: bool,
+    score_only: bool,
+    no_rich: bool,
+) -> None:
+    """Discover source files in scored FacilityPaths.
 
-    NOT YET IMPLEMENTED. Use 'imas-codex ingest queue' to manually
-    queue source files for ingestion.
+    Bridges from path discovery to file ingestion. Two-stage pipeline:
+
+    \b
+    Pipeline:
+      1. SCAN: SSH enumerate files in high-scoring FacilityPaths
+      2. SCORE: LLM batch scores files for relevance
+
+    After scoring, files become SourceFile nodes ready for ingestion
+    via `imas-codex ingest run <facility>`.
+
+    \b
+    Examples:
+      # Full discovery (scan + score)
+      imas-codex discover files tcv
+
+      # Focus on equilibrium codes
+      imas-codex discover files tcv -f "equilibrium reconstruction"
+
+      # Scan only, skip scoring
+      imas-codex discover files tcv --scan-only
+
+      # Score already-discovered files
+      imas-codex discover files tcv --score-only -c 10.0
+
+      # Scan high-value paths only
+      imas-codex discover files tcv -s 0.7 -p 50
     """
+    from imas_codex.discovery.base.facility import get_facility as get_facility_config
+    from imas_codex.discovery.files.scanner import (
+        get_file_discovery_stats,
+        scan_facility_files,
+    )
+    from imas_codex.discovery.files.scorer import score_facility_files
+
+    use_rich = not no_rich and sys.stdout.isatty()
+
+    if use_rich:
+        console = Console()
+    else:
+        console = None
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            datefmt="%H:%M:%S",
+        )
+
+    def log_print(msg: str, style: str = "") -> None:
+        clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
+        if console:
+            console.print(msg)
+        else:
+            logger.info(clean_msg)
+
+    # Get facility config
+    try:
+        config = get_facility_config(facility)
+        ssh_host = config.get("ssh_host", facility)
+    except Exception as e:
+        log_print(f"[red]Error loading facility config: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Check prerequisites
     from imas_codex.discovery import get_discovery_stats
 
-    console = Console()
-    stats = get_discovery_stats(facility)
+    path_stats = get_discovery_stats(facility)
+    scored_paths = path_stats.get("scored", 0) + path_stats.get("explored", 0)
 
-    if stats.get("scored", 0) == 0:
-        console.print(
-            f"[yellow]⚠ No scored paths found for {facility.upper()}[/yellow]\n"
+    if not score_only and scored_paths == 0:
+        log_print(f"[yellow]No scored paths found for {facility.upper()}[/yellow]\n")
+        log_print("Discovery pipeline:")
+        log_print(
+            "  1. [bold]discover paths[/bold] → 2. [bold]discover files[/bold] → 3. ingest run"
         )
-        console.print("Discovery pipeline:")
-        console.print(
-            "  1. [bold]discover paths[/bold] → 2. discover code → 3. ingest code"
-        )
-        console.print(f"\nNext step: [cyan]imas-codex discover paths {facility}[/cyan]")
+        log_print(f"\nNext step: [cyan]imas-codex discover paths {facility}[/cyan]")
         raise SystemExit(1)
 
-    console.print("[yellow]discover code: Not yet implemented[/yellow]")
-    console.print(f"\nCurrent paths status for {facility.upper()}:")
-    console.print(f"  Scored paths: {stats.get('scored', 0)}")
-    console.print(f"  High-value (≥0.7): {stats.get('high_value', 'unknown')}")
-    console.print("\nThis feature will scan scored paths for source files.")
-    raise SystemExit(1)
+    # Stage 1: Scan
+    if not score_only:
+        log_print(
+            f"[cyan]Stage 1: Scanning files in {facility.upper()} paths (min_score={min_score})...[/cyan]"
+        )
+
+        def scan_progress(current: int, total: int, msg: str) -> None:
+            log_print(f"  [{current}/{total}] {msg}")
+
+        scan_stats = scan_facility_files(
+            facility=facility,
+            min_score=min_score,
+            max_paths=max_paths,
+            ssh_host=ssh_host,
+            progress_callback=scan_progress,
+        )
+
+        log_print(
+            f"[green]Scan complete:[/green] {scan_stats['new_files']} new files in {scan_stats['total_paths']} paths"
+        )
+
+        if scan_stats["new_files"] == 0 and not scan_only:
+            log_print("[yellow]No new files found to score[/yellow]")
+            # Check if there are already-discovered files to score
+            file_stats = get_file_discovery_stats(facility)
+            if file_stats.get("discovered", 0) == 0:
+                return
+
+    if scan_only:
+        return
+
+    # Stage 2: Score
+    log_print(f"[cyan]Stage 2: LLM scoring files (cost_limit=${cost_limit})...[/cyan]")
+
+    if focus:
+        log_print(f"[dim]Focus: {focus}[/dim]")
+
+    def score_progress(current: int, total: int, msg: str) -> None:
+        log_print(f"  [{current}/{total}] {msg}")
+
+    score_stats = score_facility_files(
+        facility=facility,
+        focus=focus,
+        batch_size=score_batch_size,
+        cost_limit=cost_limit,
+        progress_callback=score_progress,
+    )
+
+    log_print(
+        f"[green]Scoring complete:[/green] {score_stats['total_scored']} scored, "
+        f"{score_stats['total_skipped']} skipped"
+    )
+    if score_stats.get("cost", 0) > 0:
+        log_print(f"[dim]LLM cost: ${score_stats['cost']:.2f}[/dim]")
+
+    # Summary
+    log_print("")
+    file_stats = get_file_discovery_stats(facility)
+    log_print(f"[bold]File discovery summary for {facility.upper()}:[/bold]")
+    for status, count in sorted(file_stats.items()):
+        if status not in ("total",) and not status.startswith("cat_"):
+            log_print(f"  {status}: {count}")
+    log_print(f"  total: {file_stats.get('total', 0)}")
+
+    # Next steps
+    discovered = file_stats.get("discovered", 0)
+    if discovered > 0:
+        log_print(f"\n[dim]Next: imas-codex ingest run {facility}[/dim]")
+
+
+@files.command("status")
+@click.argument("facility")
+def files_status(facility: str) -> None:
+    """Show file discovery statistics.
+
+    Examples:
+        imas-codex discover files status tcv
+    """
+    from imas_codex.discovery.files.scanner import get_file_discovery_stats
+
+    console = Console()
+    stats = get_file_discovery_stats(facility)
+
+    if not stats or stats.get("total", 0) == 0:
+        console.print(f"[yellow]No SourceFile nodes for {facility.upper()}[/yellow]")
+        console.print(f"\nRun: [cyan]imas-codex discover files {facility}[/cyan]")
+        return
+
+    table = Table(title=f"File Discovery: {facility.upper()}")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Count", justify="right", style="green")
+
+    # Status breakdown
+    for status in ("discovered", "ingested", "failed", "stale", "skipped"):
+        count = stats.get(status, 0)
+        if count > 0:
+            table.add_row(status, str(count))
+
+    table.add_row("─" * 12, "─" * 5)
+    table.add_row("Total", str(stats["total"]), style="bold")
+
+    # Category breakdown
+    categories = {
+        k.removeprefix("cat_"): v for k, v in stats.items() if k.startswith("cat_")
+    }
+    if categories:
+        table.add_row("", "")
+        table.add_row("[dim]By category[/dim]", "")
+        for cat, count in sorted(categories.items()):
+            table.add_row(f"  {cat}", str(count))
+
+    console.print(table)
+
+
+@files.command("clear")
+@click.argument("facility")
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+def files_clear(facility: str, force: bool) -> None:
+    """Clear all SourceFile nodes for a facility.
+
+    Examples:
+        imas-codex discover files clear tcv
+    """
+    from imas_codex.discovery.files.scanner import (
+        clear_facility_files,
+        get_file_discovery_stats,
+    )
+
+    console = Console()
+    stats = get_file_discovery_stats(facility)
+    total = stats.get("total", 0)
+
+    if total == 0:
+        console.print(f"[yellow]No SourceFile nodes to clear for {facility}[/yellow]")
+        return
+
+    if not force:
+        click.confirm(
+            f"Delete {total} SourceFile nodes for {facility}?",
+            abort=True,
+        )
+
+    result = clear_facility_files(facility)
+    console.print(f"[green]Deleted {result['deleted']} SourceFile nodes[/green]")
 
 
 @wiki.command("run", hidden=True)

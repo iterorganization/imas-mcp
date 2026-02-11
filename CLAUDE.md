@@ -14,7 +14,7 @@ imas_codex/
 ├── agentic/             # LlamaIndex agents, MCP server
 ├── graph/               # Neo4j knowledge graph
 ├── schemas/             # LinkML schemas (source of truth)
-├── code_examples/       # Code ingestion pipeline
+├── ingestion/           # Unified ingestion pipeline
 ├── remote/              # SSH execution, tool installation
 └── ...
 ```

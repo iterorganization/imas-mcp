@@ -1,4 +1,4 @@
-"""Semantic search over code examples using LlamaIndex.
+"""Semantic search over ingested code chunks.
 
 Uses Neo4jVectorStore for similarity search with optional
 IDS and facility filtering via Neo4j's native metadata filtering.
@@ -17,14 +17,33 @@ from llama_index.core.vector_stores.types import (
 )
 from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
 
-from .pipeline import create_vector_store, get_embed_model
+from imas_codex.embeddings import get_embed_model
+from imas_codex.settings import get_embedding_dimension
 
 logger = logging.getLogger(__name__)
 
 
+def _create_vector_store(
+    neo4j_uri: str = "bolt://localhost:7687",
+    neo4j_user: str = "neo4j",
+    neo4j_password: str = "imas-codex",
+) -> Neo4jVectorStore:
+    """Create Neo4jVectorStore for code chunks."""
+    return Neo4jVectorStore(
+        username=neo4j_user,
+        password=neo4j_password,
+        url=neo4j_uri,
+        embedding_dimension=get_embedding_dimension(),
+        index_name="code_chunk_embedding",
+        node_label="CodeChunk",
+        text_node_property="content",
+        embedding_node_property="embedding",
+    )
+
+
 @dataclass
-class CodeSearchResult:
-    """A code search result with relevance score."""
+class ChunkSearchResult:
+    """A chunk search result with relevance score."""
 
     chunk_id: str
     content: str
@@ -38,10 +57,11 @@ class CodeSearchResult:
 
 
 @dataclass
-class CodeExampleSearch:
-    """Search code examples using LlamaIndex VectorStoreIndex.
+class ChunkSearch:
+    """Search ingested code chunks using vector similarity.
 
     Uses the embedding-backend config to choose local or remote embedding.
+    Replaces CodeExampleSearch.
     """
 
     embed_model: BaseEmbedding = field(default_factory=get_embed_model)
@@ -51,7 +71,7 @@ class CodeExampleSearch:
     def _get_index(self) -> VectorStoreIndex:
         """Get or create the VectorStoreIndex."""
         if self._index is None:
-            vs = self.vector_store or create_vector_store()
+            vs = self.vector_store or _create_vector_store()
             self._index = VectorStoreIndex.from_vector_store(
                 vector_store=vs,
                 embed_model=self.embed_model,
@@ -65,10 +85,8 @@ class CodeExampleSearch:
         ids_filter: list[str] | None = None,
         facility: str | None = None,
         min_score: float = 0.5,
-    ) -> list[CodeSearchResult]:
-        """Search for code examples matching the query.
-
-        Uses Neo4jVectorStore's native metadata filtering (requires Neo4j 5.18+).
+    ) -> list[ChunkSearchResult]:
+        """Search for code chunks matching the query.
 
         Args:
             query: Natural language search query
@@ -78,14 +96,12 @@ class CodeExampleSearch:
             min_score: Minimum similarity score threshold
 
         Returns:
-            List of CodeSearchResult objects ordered by relevance
+            List of ChunkSearchResult objects ordered by relevance
         """
         index = self._get_index()
 
-        # Build metadata filters for Neo4jVectorStore
         filters = self._build_filters(facility, ids_filter)
 
-        # Use retriever with native filtering when possible
         retriever = index.as_retriever(
             similarity_top_k=top_k,
             filters=filters,
@@ -97,7 +113,6 @@ class CodeExampleSearch:
             logger.warning("Vector search failed: %s", e)
             return []
 
-        # Convert to results
         results = []
         for node_with_score in nodes_with_scores:
             node = node_with_score.node
@@ -109,7 +124,7 @@ class CodeExampleSearch:
             metadata = node.metadata or {}
 
             results.append(
-                CodeSearchResult(
+                ChunkSearchResult(
                     chunk_id=node.node_id,
                     content=node.get_content(),
                     function_name=metadata.get("function_name"),
@@ -129,15 +144,7 @@ class CodeExampleSearch:
         facility: str | None,
         ids_filter: list[str] | None,
     ) -> MetadataFilters | None:
-        """Build MetadataFilters for Neo4jVectorStore.
-
-        Args:
-            facility: Optional facility ID to filter by
-            ids_filter: Optional list of IDS names to filter by
-
-        Returns:
-            MetadataFilters object or None if no filters
-        """
+        """Build MetadataFilters for Neo4jVectorStore."""
         if not facility and not ids_filter:
             return None
 
@@ -153,8 +160,6 @@ class CodeExampleSearch:
             )
 
         if ids_filter:
-            # Filter chunks that have ANY of the specified IDS in related_ids
-            # Use ANY operator for list membership check
             filter_list.append(
                 MetadataFilter(
                     key="related_ids",
@@ -163,7 +168,6 @@ class CodeExampleSearch:
                 )
             )
 
-        # Use AND condition when both facility and IDS filters are present
         return MetadataFilters(
             filters=filter_list,
             condition=FilterCondition.AND
@@ -172,4 +176,7 @@ class CodeExampleSearch:
         )
 
 
-__all__ = ["CodeExampleSearch", "CodeSearchResult"]
+__all__ = [
+    "ChunkSearch",
+    "ChunkSearchResult",
+]
