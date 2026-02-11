@@ -1520,64 +1520,23 @@ def wiki_run(
                 raise SystemExit(1)
 
     # Display wiki sites
-    multi_site_table = use_rich and len(wiki_sites) > 3
-    if multi_site_table:
-        from urllib.parse import urlparse as _parse_url
+    log_print(f"[bold]Documentation sources for {facility}:[/bold]")
+    for i, site in enumerate(wiki_sites):
+        site_type_str = site.get("site_type", "mediawiki")
+        url = site.get("url", "")
+        desc = site.get("description", "")
+        log_print(f"  [{i}] {site_type_str}: {url}")
+        if desc and verbose:
+            log_print(f"      {desc}")
 
-        site_table = Table(
-            show_header=True,
-            header_style="bold",
-            border_style="dim",
-            padding=(0, 1),
-        )
-        site_table.add_column("Site", style="cyan", no_wrap=True)
-        site_table.add_column("Description", style="white")
-
-        for site in wiki_sites:
-            parsed = _parse_url(site.get("url", ""))
-            name = parsed.path.rstrip("/").rsplit("/", 1)[-1] or site.get("url", "")
-            desc = site.get("description", "")
-            site_table.add_row(name, desc)
-
-        console.print(site_table)
-
-        # Show auth info once (aggregated across all sites)
-        auth_types = {s.get("auth_type") for s in wiki_sites if s.get("auth_type")}
-        cred_services = {
-            s.get("credential_service")
-            for s in wiki_sites
-            if s.get("credential_service")
-        }
-        if auth_types and cred_services:
-            if "basic" in auth_types:
-                auth_label = f"HTTP Basic ({', '.join(sorted(cred_services))})"
-            elif "tequila" in auth_types:
-                auth_label = "Tequila"
-            else:
-                auth_label = ", ".join(sorted(auth_types))
-            console.print(f"[dim]Auth: {auth_label}[/dim]")
+    # Show aggregated auth info when all sites share the same auth
+    _auth_types = {s.get("auth_type") for s in wiki_sites if s.get("auth_type")}
+    _show_per_site_auth = len(_auth_types) > 1
+    if _auth_types and not _show_per_site_auth:
+        auth_label = next(iter(_auth_types))
+        log_print(f"[dim]Auth: {auth_label}[/dim]")
+    if use_rich:
         console.print()
-    else:
-        log_print(f"[bold]Documentation sources for {facility}:[/bold]")
-        if len(wiki_sites) > 3 and not verbose:
-            from urllib.parse import urlparse as _parse_url
-
-            names = []
-            for site in wiki_sites:
-                parsed = _parse_url(site.get("url", ""))
-                name = parsed.path.rstrip("/").rsplit("/", 1)[-1] or site.get("url", "")
-                names.append(name)
-            log_print(f"  {len(wiki_sites)} sites: {', '.join(names)}")
-        else:
-            for i, site in enumerate(wiki_sites):
-                site_type_str = site.get("site_type", "mediawiki")
-                url = site.get("url", "")
-                desc = site.get("description", "")
-                log_print(f"  [{i}] {site_type_str}: {url}")
-                if desc and verbose:
-                    log_print(f"      {desc}")
-        if use_rich:
-            console.print()
 
     site_indices = list(range(len(wiki_sites)))
     if source:
@@ -1665,20 +1624,20 @@ def wiki_run(
         parsed_url = _urlparse(base_url)
         short_name = parsed_url.path.rstrip("/").rsplit("/", 1)[-1] or base_url
 
-        # Site header - skip if sites table was already displayed
-        if not multi_site_table:
-            log_print(f"\n[bold cyan]{base_url}[/bold cyan]")
+        # Site header
+        log_print(f"\n[bold cyan]{short_name}[/bold cyan]")
 
+        if _show_per_site_auth:
             if site_type == "twiki":
-                log_print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
+                log_print("  [dim]TWiki via SSH[/dim]")
             elif auth_type in ("tequila", "session"):
-                log_print("[cyan]Using Tequila authentication[/cyan]")
+                log_print("  [dim]Tequila auth[/dim]")
             elif auth_type == "basic" and credential_service:
-                log_print(
-                    f"[cyan]Using HTTP Basic authentication ({credential_service})[/cyan]"
-                )
+                log_print(f"  [dim]HTTP Basic ({credential_service})[/dim]")
+            elif auth_type == "keycloak":
+                log_print("  [dim]keycloak[/dim]")
             elif access_method == "vpn" and ssh_host:
-                log_print(f"[cyan]VPN access via {ssh_host}[/cyan]")
+                log_print(f"  [dim]VPN via {ssh_host}[/dim]")
 
         # Validate credentials once per credential_service
         if auth_type in ("tequila", "session", "basic") and credential_service:
@@ -1698,7 +1657,7 @@ def wiki_run(
                         f"  export {cred_mgr._env_var_name(credential_service, 'password')}=your_password"
                     )
                     raise SystemExit(1)
-                log_print(f"[dim]Authenticated as: {creds[0]}[/dim]")
+                log_print(f"  [dim]Authenticated as: {creds[0]}[/dim]")
                 validated_cred_services.add(credential_service)
 
         # Bulk page discovery
@@ -1758,15 +1717,13 @@ def wiki_run(
                     )
 
                 if bulk_discovered > 0:
-                    log_print(f"[green]Discovered {bulk_discovered:,} pages[/green]")
+                    log_print(f"  [green]{bulk_discovered:,} pages[/green]")
             else:
                 bulk_discovered = bulk_discover_pages(
                     **discover_kwargs, on_progress=bulk_progress_log
                 )
                 if bulk_discovered > 0:
-                    wiki_logger.info(
-                        f"Discovered {bulk_discovered} pages from {base_url}"
-                    )
+                    wiki_logger.info(f"{short_name}: {bulk_discovered} pages")
 
         # Artifact scanning (all site types — adapters handle platform differences)
         # Run artifact discovery when: --rescan-artifacts, or new pages discovered,
@@ -1862,10 +1819,7 @@ def wiki_run(
                 wiki_client.close()
 
             if artifacts_discovered > 0:
-                n_pages = len(page_artifacts)
-                log_print(
-                    f"[green]Discovered {artifacts_discovered:,} artifacts across {n_pages:,} pages[/green]"
-                )
+                log_print(f"  [green]{artifacts_discovered:,} artifacts[/green]")
 
         site_configs.append(
             {
