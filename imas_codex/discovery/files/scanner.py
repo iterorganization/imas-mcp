@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from imas_codex.graph import GraphClient
 from imas_codex.ingestion.readers.remote import (
@@ -16,9 +16,6 @@ from imas_codex.ingestion.readers.remote import (
     detect_file_category,
     detect_language,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
