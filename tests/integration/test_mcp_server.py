@@ -7,6 +7,7 @@ in-memory testing patterns.
 """
 
 import os
+from unittest.mock import patch
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -94,7 +95,8 @@ class TestMCPServer:
         assert hasattr(server, "run")
         assert callable(server.run)
 
-    def test_multiple_server_instances_isolation(self, server):
+    @patch("imas_codex.server.Embeddings")
+    def test_multiple_server_instances_isolation(self, mock_embeddings, server):
         """Test multiple server instances don't interfere."""
         # Create second server using the same mocked environment as the fixture
         server2 = Server(ids_set={"equilibrium"})
