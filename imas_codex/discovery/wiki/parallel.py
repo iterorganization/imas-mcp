@@ -305,6 +305,7 @@ class WikiDiscoveryState:
     ingest_stats: WorkerStats = field(default_factory=WorkerStats)
     artifact_stats: WorkerStats = field(default_factory=WorkerStats)
     artifact_score_stats: WorkerStats = field(default_factory=WorkerStats)
+    image_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
@@ -313,6 +314,7 @@ class WikiDiscoveryState:
     ingest_idle_count: int = 0
     artifact_idle_count: int = 0
     artifact_score_idle_count: int = 0
+    image_idle_count: int = 0
 
     # SSH retry tracking
     ssh_retry_count: int = 0
@@ -352,7 +354,7 @@ class WikiDiscoveryState:
 
     @property
     def total_cost(self) -> float:
-        return self.score_stats.cost + self.ingest_stats.cost
+        return self.score_stats.cost + self.ingest_stats.cost + self.image_stats.cost
 
     @property
     def budget_exhausted(self) -> bool:
@@ -378,10 +380,13 @@ class WikiDiscoveryState:
             and self.ingest_idle_count >= 3
             and self.artifact_idle_count >= 3
             and self.artifact_score_idle_count >= 3
+            and self.image_idle_count >= 3
         )
         if all_idle:
-            if has_pending_work(self.facility) or has_pending_artifact_work(
-                self.facility
+            if (
+                has_pending_work(self.facility)
+                or has_pending_artifact_work(self.facility)
+                or has_pending_image_work(self.facility)
             ):
                 # Reset idle counts to force workers to re-poll
                 self.scan_idle_count = 0
@@ -389,6 +394,7 @@ class WikiDiscoveryState:
                 self.ingest_idle_count = 0
                 self.artifact_idle_count = 0
                 self.artifact_score_idle_count = 0
+                self.image_idle_count = 0
                 return False
             return True
         return False
@@ -465,6 +471,27 @@ class WikiDiscoveryState:
             return True
         if self.artifact_score_idle_count >= 3 and not has_pending_artifact_score_work(
             self.facility
+        ):
+            return True
+        return False
+
+    def should_stop_image_scoring(self) -> bool:
+        """Check if image score workers should stop.
+
+        Image score workers stop when budget exhausted or no pending images.
+        They continue after page ingestion completes since page ingestion
+        creates the Image nodes.
+        """
+        if self.stop_requested:
+            return True
+        if self.budget_exhausted:
+            return True
+        # Only stop if ingestion is also done AND no pending images
+        ingestion_done = self.ingest_idle_count >= 3
+        if (
+            self.image_idle_count >= 3
+            and ingestion_done
+            and not has_pending_image_work(self.facility)
         ):
             return True
         return False
@@ -980,7 +1007,7 @@ def mark_pages_scored(
         item = {
             "id": page_id,
             "score": r.get("score", 0.0),
-            "page_purpose": r.get("page_purpose", "other"),
+            "purpose": r.get("purpose", r.get("page_purpose", "other")),
             "description": (r.get("description", "") or "")[:150],
             "reasoning": r.get("reasoning", ""),
             "keywords": r.get("keywords", []),
@@ -992,6 +1019,8 @@ def mark_pages_scored(
             "score_data_access": r.get("score_data_access", 0.0),
             "score_calibration": r.get("score_calibration", 0.0),
             "score_imas_relevance": r.get("score_imas_relevance", 0.0),
+            "should_ingest": r.get("should_ingest", True),
+            "skip_reason": r.get("skip_reason"),
             "is_physics": r.get("is_physics", False),
             "score_cost": r.get("score_cost", 0.0),
         }
@@ -1011,9 +1040,9 @@ def mark_pages_scored(
                 MATCH (wp:WikiPage {id: item.id})
                 SET wp.status = $status,
                     wp.score = item.score,
-                    wp.page_purpose = item.page_purpose,
+                    wp.purpose = item.purpose,
                     wp.description = item.description,
-                    wp.score_reasoning = item.reasoning,
+                    wp.reasoning = item.reasoning,
                     wp.keywords = item.keywords,
                     wp.physics_domain = item.physics_domain,
                     wp.preview_text = item.preview_text,
@@ -1023,6 +1052,8 @@ def mark_pages_scored(
                     wp.score_data_access = item.score_data_access,
                     wp.score_calibration = item.score_calibration,
                     wp.score_imas_relevance = item.score_imas_relevance,
+                    wp.should_ingest = item.should_ingest,
+                    wp.skip_reason = item.skip_reason,
                     wp.is_physics_content = item.is_physics,
                     wp.score_cost = item.score_cost,
                     wp.scored_at = datetime(),
@@ -1523,6 +1554,159 @@ def mark_artifact_deferred(artifact_id: str, reason: str) -> None:
             artifact_id,
             e,
         )
+
+
+# =============================================================================
+# Image Claim/Mark Functions
+# =============================================================================
+
+
+def has_pending_image_work(facility: str) -> bool:
+    """Check if there are images pending scoring (status=ingested, no caption)."""
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (img:Image {facility_id: $facility})
+                WHERE img.status = 'ingested'
+                  AND img.caption IS NULL
+                RETURN count(img) > 0 AS has_work
+                """,
+                facility=facility,
+            )
+            rows = list(result)
+            return rows[0]["has_work"] if rows else False
+    except Exception:
+        return False
+
+
+@retry_on_deadlock()
+def claim_images_for_scoring(
+    facility: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Claim ingested images for VLM scoring.
+
+    Images with status='ingested' and no caption are ready for VLM processing.
+    Uses same claim token pattern as page/artifact claiming.
+    """
+    import uuid
+
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(uuid.uuid4())
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (img:Image {facility_id: $facility})
+            WHERE img.status = 'ingested'
+              AND img.caption IS NULL
+              AND (img.claimed_at IS NULL
+                   OR img.claimed_at < datetime() - duration($cutoff))
+            WITH img
+            ORDER BY rand()
+            LIMIT $limit
+            SET img.claimed_at = datetime(), img.claim_token = $token
+            """,
+            facility=facility,
+            cutoff=cutoff,
+            limit=limit,
+            token=claim_token,
+        )
+
+        result = gc.query(
+            """
+            MATCH (img:Image {facility_id: $facility, claim_token: $token})
+            RETURN img.id AS id,
+                   img.source_url AS source_url,
+                   img.image_data AS image_data,
+                   img.image_format AS image_format,
+                   img.page_title AS page_title,
+                   img.section AS section,
+                   img.surrounding_text AS surrounding_text,
+                   img.alt_text AS alt_text
+            """,
+            facility=facility,
+            token=claim_token,
+        )
+        claimed = list(result)
+
+        logger.debug(
+            "claim_images_for_scoring: requested %d, won %d (token=%s)",
+            limit,
+            len(claimed),
+            claim_token[:8],
+        )
+        return claimed
+
+
+@retry_on_deadlock()
+def mark_images_scored(
+    facility: str,
+    results: list[dict[str, Any]],
+) -> int:
+    """Mark images as captioned with VLM scoring results.
+
+    Updates image status to 'captioned' and persists caption + scoring fields.
+    Uses batched UNWIND for efficient graph updates.
+    """
+    if not results:
+        return 0
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            UNWIND $batch AS item
+            MATCH (img:Image {id: item.id})
+            SET img.status = 'captioned',
+                img.caption = item.caption,
+                img.ocr_text = item.ocr_text,
+                img.purpose = item.purpose,
+                img.description = item.description,
+                img.score = item.score,
+                img.score_data_documentation = item.score_data_documentation,
+                img.score_physics_content = item.score_physics_content,
+                img.score_code_documentation = item.score_code_documentation,
+                img.score_data_access = item.score_data_access,
+                img.score_calibration = item.score_calibration,
+                img.score_imas_relevance = item.score_imas_relevance,
+                img.reasoning = item.reasoning,
+                img.keywords = item.keywords,
+                img.physics_domain = item.physics_domain,
+                img.should_ingest = item.should_ingest,
+                img.skip_reason = item.skip_reason,
+                img.score_cost = item.score_cost,
+                img.scored_at = datetime(),
+                img.captioned_at = datetime(),
+                img.claimed_at = null
+            """,
+            batch=results,
+        )
+
+    logger.info(
+        "mark_images_scored: updated %d images to captioned for %s",
+        len(results),
+        facility,
+    )
+    return len(results)
+
+
+def _release_claimed_images(image_ids: list[str]) -> None:
+    """Release claimed images back to pool (e.g., on VLM failure)."""
+    if not image_ids:
+        return
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (img:Image {id: id})
+                SET img.claimed_at = null
+                """,
+                ids=image_ids,
+            )
+    except Exception as e:
+        logger.warning("Could not release %d claimed images: %s", len(image_ids), e)
 
 
 # =============================================================================
@@ -2837,6 +3021,299 @@ async def _score_artifacts_batch(
 
 
 # =============================================================================
+# Image Score Worker (VLM caption + scoring in single pass)
+# =============================================================================
+
+
+async def image_score_worker(
+    state: WikiDiscoveryState,
+    on_progress: Callable | None = None,
+) -> None:
+    """Image score worker: VLM captioning + scoring in single pass.
+
+    Transitions: ingested → captioned
+
+    Claims images that have been ingested (image_data stored) but not yet
+    captioned/scored. Sends image bytes + context to VLM, receives
+    caption + scoring in one pass.
+    """
+    from imas_codex.agentic.agents import get_model_for_task
+
+    worker_id = id(asyncio.current_task())
+    logger.info(f"image_score_worker started (task={worker_id})")
+
+    while not state.should_stop_image_scoring():
+        try:
+            images = await asyncio.to_thread(
+                claim_images_for_scoring, state.facility, 10
+            )
+        except Exception as e:
+            logger.warning("image_score_worker %s: claim failed: %s", worker_id, e)
+            await asyncio.sleep(5.0)
+            continue
+
+        if not images:
+            state.image_idle_count += 1
+            if on_progress:
+                on_progress("idle", state.image_stats)
+            await asyncio.sleep(2.0)
+            continue
+
+        state.image_idle_count = 0
+
+        # Filter out images without stored image_data
+        images_with_data = [img for img in images if img.get("image_data")]
+        images_no_data = [img for img in images if not img.get("image_data")]
+
+        if images_no_data:
+            logger.info(
+                "image_score_worker: %d/%d images have no image_data, releasing",
+                len(images_no_data),
+                len(images),
+            )
+            await asyncio.to_thread(
+                _release_claimed_images, [img["id"] for img in images_no_data]
+            )
+
+        if not images_with_data:
+            continue
+
+        if on_progress:
+            on_progress(f"scoring {len(images_with_data)} images", state.image_stats)
+
+        try:
+            model = get_model_for_task("vlm")
+            results, cost = await _score_images_batch(
+                images_with_data, model, state.focus
+            )
+
+            # Persist to graph
+            await asyncio.to_thread(mark_images_scored, state.facility, results)
+            state.image_stats.processed += len(results)
+            state.image_stats.cost += cost
+
+            if on_progress:
+                on_progress(
+                    f"scored {len(results)} images",
+                    state.image_stats,
+                    results=results,
+                )
+
+        except ValueError as e:
+            logger.warning(
+                "VLM failed for batch of %d images: %s. Images released for retry.",
+                len(images_with_data),
+                e,
+            )
+            state.image_stats.errors = getattr(state.image_stats, "errors", 0) + 1
+            await asyncio.to_thread(
+                _release_claimed_images,
+                [img["id"] for img in images_with_data],
+            )
+
+
+async def _score_images_batch(
+    images: list[dict[str, Any]],
+    model: str,
+    focus: str | None = None,
+) -> tuple[list[dict[str, Any]], float]:
+    """Score a batch of images using VLM with structured output.
+
+    Sends image bytes + context to VLM and receives caption + scoring
+    in a single pass. Uses ImageScoreBatch Pydantic model.
+
+    Returns:
+        (results, cost) tuple
+    """
+    import os
+    import re
+
+    import litellm
+
+    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.wiki.models import (
+        ImageScoreBatch,
+        grounded_image_score,
+    )
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY environment variable not set.")
+
+    model_id = model
+    if not model_id.startswith("openrouter/"):
+        model_id = f"openrouter/{model_id}"
+
+    # Build system prompt
+    context: dict[str, Any] = {}
+    if focus:
+        context["focus"] = focus
+    system_prompt = render_prompt("wiki/image-captioner", context)
+
+    # Build user message with image content
+    user_content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": f"Score and caption these {len(images)} images from fusion facility documentation.\n",
+        }
+    ]
+
+    for i, img in enumerate(images, 1):
+        # Add text context for this image
+        context_parts = [f"\n## Image {i}", f"ID: {img['id']}"]
+        if img.get("page_title"):
+            context_parts.append(f"Page: {img['page_title']}")
+        if img.get("section"):
+            context_parts.append(f"Section: {img['section']}")
+        if img.get("surrounding_text"):
+            context_parts.append(f"Context: {img['surrounding_text'][:500]}")
+        if img.get("alt_text"):
+            context_parts.append(f"Alt text: {img['alt_text']}")
+
+        user_content.append({"type": "text", "text": "\n".join(context_parts)})
+
+        # Add image data
+        img_format = img.get("image_format", "webp")
+        mime_type = f"image/{img_format}"
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{img['image_data']}",
+                },
+            }
+        )
+
+    user_content.append(
+        {
+            "type": "text",
+            "text": "\n\nReturn results for each image in order. "
+            "The response format is enforced by the schema.",
+        }
+    )
+
+    # Retry loop
+    max_retries = 5
+    retry_base_delay = 4.0
+    last_error = None
+    total_cost = 0.0
+
+    for attempt in range(max_retries):
+        try:
+            response = await litellm.acompletion(
+                model=model_id,
+                api_key=api_key,
+                response_format=ImageScoreBatch,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=0.3,
+                max_tokens=32000,
+                timeout=180,  # VLM may need more time for images
+            )
+
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+
+            if (
+                hasattr(response, "_hidden_params")
+                and "response_cost" in response._hidden_params
+            ):
+                cost = response._hidden_params["response_cost"]
+            else:
+                # Fallback VLM rates
+                cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+
+            total_cost += cost
+
+            content = response.choices[0].message.content
+            if not content:
+                return [], total_cost
+
+            content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
+            content = content.encode("utf-8", errors="surrogateescape").decode(
+                "utf-8", errors="replace"
+            )
+
+            batch = ImageScoreBatch.model_validate_json(content)
+            llm_results = batch.results
+            break
+
+        except Exception as e:
+            last_error = e
+            error_msg = str(e).lower()
+            is_retryable = any(
+                x in error_msg
+                for x in [
+                    "overloaded",
+                    "rate",
+                    "429",
+                    "503",
+                    "timeout",
+                    "eof",
+                    "json",
+                    "truncated",
+                    "validation",
+                ]
+            )
+            if is_retryable and attempt < max_retries - 1:
+                delay = retry_base_delay * (2**attempt)
+                logger.debug(
+                    "VLM error (attempt %d/%d): %s. Retrying in %.1fs...",
+                    attempt + 1,
+                    max_retries,
+                    str(e)[:100],
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise ValueError(f"VLM failed after {attempt + 1} attempts: {e}") from e
+    else:
+        raise last_error  # type: ignore[misc]
+
+    # Convert to result dicts with grounded scoring
+    cost_per_image = total_cost / len(images) if images else 0.0
+    results = []
+
+    for r in llm_results[: len(images)]:
+        scores = {
+            "score_data_documentation": r.score_data_documentation,
+            "score_physics_content": r.score_physics_content,
+            "score_code_documentation": r.score_code_documentation,
+            "score_data_access": r.score_data_access,
+            "score_calibration": r.score_calibration,
+            "score_imas_relevance": r.score_imas_relevance,
+        }
+        combined_score = grounded_image_score(scores, r.purpose)
+
+        results.append(
+            {
+                "id": r.id,
+                "caption": r.caption,
+                "ocr_text": r.ocr_text,
+                "purpose": r.purpose.value,
+                "description": r.description[:150],
+                "score": combined_score,
+                "score_data_documentation": r.score_data_documentation,
+                "score_physics_content": r.score_physics_content,
+                "score_code_documentation": r.score_code_documentation,
+                "score_data_access": r.score_data_access,
+                "score_calibration": r.score_calibration,
+                "score_imas_relevance": r.score_imas_relevance,
+                "reasoning": r.reasoning[:80],
+                "keywords": r.keywords[:5],
+                "physics_domain": r.physics_domain.value if r.physics_domain else None,
+                "should_ingest": r.should_ingest,
+                "skip_reason": r.skip_reason or None,
+                "score_cost": cost_per_image,
+            }
+        )
+
+    return results, total_cost
+
+
+# =============================================================================
 # Worker Helpers
 # =============================================================================
 
@@ -3210,7 +3687,7 @@ async def _score_pages_batch(
             {
                 "id": r.id,
                 "score": combined_score,
-                "page_purpose": r.page_purpose.value,
+                "purpose": r.page_purpose.value,
                 "description": r.description[:150],
                 "reasoning": r.reasoning[:80],
                 "keywords": r.keywords[:5],
@@ -3433,6 +3910,7 @@ async def run_parallel_wiki_discovery(
     on_ingest_progress: Callable | None = None,
     on_artifact_progress: Callable | None = None,
     on_artifact_score_progress: Callable | None = None,
+    on_image_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
 ) -> dict[str, Any]:
     """Run parallel wiki discovery with async workers.
@@ -3649,6 +4127,21 @@ async def run_parallel_wiki_discovery(
                 )
             )
 
+        # Image score worker: VLM caption + scoring for ingested images
+        image_score_status = worker_group.create_status("image_score_worker")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    image_score_worker,
+                    "image_score_worker",
+                    state,
+                    state.should_stop_image_scoring,
+                    on_progress=on_image_progress,
+                    status_tracker=image_score_status,
+                )
+            )
+        )
+
     logger.info(
         f"Started {worker_group.get_active_count()} workers: "
         f"score_only={score_only}, scan_only={scan_only}, "
@@ -3714,6 +4207,7 @@ async def run_parallel_wiki_discovery(
         "scored": state.score_stats.processed,
         "ingested": state.ingest_stats.processed,
         "artifacts": state.artifact_stats.processed,
+        "images_scored": state.image_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_rate": state.scan_stats.rate,

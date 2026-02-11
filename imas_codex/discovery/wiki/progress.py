@@ -12,7 +12,9 @@ Design principles (matching paths parallel_progress.py):
 Display layout: WORKERS → PROGRESS → ACTIVITY → RESOURCES
 - WORKERS: Live worker status showing counts by task and state
 - SCORE: Content-aware LLM scoring (fetches content, scores with LLM)
-- INGEST: Chunk and embed high-value pages (score >= 0.5)
+- PAGE: Chunk and embed high-value pages (score >= 0.5)
+- ARTFCT: Artifact scoring and ingestion pipeline
+- IMAGE: VLM captioning and scoring of wiki images
 
 Progress is tracked against total pages in graph, not just this session.
 ETA/ETC metrics calculated like paths discovery.
@@ -91,6 +93,18 @@ class ArtifactItem:
     is_score: bool = False  # True if scoring, False if ingesting
 
 
+@dataclass
+class ImageItem:
+    """Current image VLM activity."""
+
+    image_id: str
+    caption: str = ""
+    score: float | None = None
+    physics_domain: str | None = None
+    description: str = ""
+    purpose: str = ""
+
+
 # =============================================================================
 # Progress State
 # =============================================================================
@@ -140,6 +154,12 @@ class ProgressState:
     artifact_score_rate: float | None = None
     _run_artifact_score_cost: float = 0.0
 
+    # Image stats
+    images_scored: int = 0  # From graph
+    run_images_scored: int = 0
+    image_score_rate: float | None = None
+    _run_image_score_cost: float = 0.0
+
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
 
@@ -157,14 +177,18 @@ class ProgressState:
     _offset_artifact_score_cost: float = 0.0
     _offset_artifacts: int = 0
     _offset_artifacts_scored: int = 0
+    _offset_images_scored: int = 0
+    _offset_image_score_cost: float = 0.0
 
     # Current items (and their processing state)
     current_score: ScoreItem | None = None
     current_ingest: IngestItem | None = None
     current_artifact: ArtifactItem | None = None
+    current_image: ImageItem | None = None
     score_processing: bool = False
     ingest_processing: bool = False
     artifact_processing: bool = False
+    image_processing: bool = False
 
     # Streaming queues - adaptive rate based on worker speed
     score_queue: StreamQueue = field(
@@ -187,6 +211,11 @@ class ProgressState:
             rate=0.3, max_rate=1.0, min_display_time=0.5
         )
     )
+    image_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.3, max_rate=1.0, min_display_time=0.5
+        )
+    )
 
     # Tracking
     start_time: float = field(default_factory=time.time)
@@ -199,6 +228,9 @@ class ProgressState:
     pending_artifact_score: int = 0  # discovered artifacts awaiting scoring
     pending_artifact_ingest: int = 0  # scored artifacts awaiting ingestion
 
+    # Image pending counts (from graph refresh)
+    pending_image_score: int = 0  # ingested images awaiting VLM scoring
+
     @property
     def run_cost(self) -> float:
         """Total cost for entire run including previous sites."""
@@ -209,6 +241,8 @@ class ProgressState:
             + self._run_ingest_cost
             + self._offset_artifact_score_cost
             + self._run_artifact_score_cost
+            + self._offset_image_score_cost
+            + self._run_image_score_cost
         )
 
     @property
@@ -232,13 +266,20 @@ class ProgressState:
         return self._offset_artifacts_scored + self.run_artifacts_scored
 
     @property
+    def total_run_images_scored(self) -> int:
+        """Total images scored across all sites."""
+        return self._offset_images_scored + self.run_images_scored
+
+    @property
     def total_score_cost(self) -> float:
-        """Total page+artifact scoring cost across all sites."""
+        """Total page+artifact+image scoring cost across all sites."""
         return (
             self._offset_score_cost
             + self._run_score_cost
             + self._offset_artifact_score_cost
             + self._run_artifact_score_cost
+            + self._offset_image_score_cost
+            + self._run_image_score_cost
         )
 
     @property
@@ -280,6 +321,15 @@ class ProgressState:
         """Average LLM cost per scored artifact."""
         total = self.total_run_artifacts_scored
         cost = self._offset_artifact_score_cost + self._run_artifact_score_cost
+        if total > 0:
+            return cost / total
+        return None
+
+    @property
+    def cost_per_image_score(self) -> float | None:
+        """Average VLM cost per scored image."""
+        total = self.total_run_images_scored
+        cost = self._offset_image_score_cost + self._run_image_score_cost
         if total > 0:
             return cost / total
         return None
@@ -337,6 +387,14 @@ class ProgressState:
         ):
             worker_etas.append(self.pending_artifact_ingest / self.artifact_rate)
 
+        # Image scoring ETA
+        if (
+            self.pending_image_score > 0
+            and self.image_score_rate
+            and self.image_score_rate > 0
+        ):
+            worker_etas.append(self.pending_image_score / self.image_score_rate)
+
         if worker_etas:
             return max(worker_etas)
 
@@ -358,11 +416,11 @@ class WikiProgressDisplay:
     │                           Focus: diagnostics                                                     │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
     │  SCORE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────    388  5%   0.6/s              │
-    │  INGEST ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────     136  35%  0.3/s              │
+    │  PAGE   ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────     136  35%  0.3/s              │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
     │  SCORE 0.70 Microwave_lab/software                                                               │
     │    [physics domain] Power supply calibration for gyrotron system                                 │
-    │  INGEST Service_Mécanique/Information_TCV/Connexion_dans_l                                       │
+    │  PAGE  Service_Mécanique/Information_TCV/Connexion_dans_l                                        │
     │    0.65 [equilibrium] Vacuum vessel port documentation with coordinates                          │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
     │  TIME    ━━━━━━━━━━━━━━━━━━━━━━  7m     ETA 2h 15m                                              │
@@ -373,7 +431,9 @@ class WikiProgressDisplay:
 
     Workflow:
     - SCORE: Content-aware LLM scoring (scanned → scored)
-    - INGEST: Chunk and embed high-value pages (scored → ingested)
+    - PAGE: Chunk and embed high-value pages (scored → ingested)
+    - ARTFCT: Score and ingest wiki artifacts (PDFs, CSVs, etc.)
+    - IMAGE: VLM captioning + scoring (ingested → captioned)
     """
 
     # Layout constants - label widths are fixed, bars fill remaining space
@@ -462,22 +522,25 @@ class WikiProgressDisplay:
         task_groups: dict[str, list[tuple[str, WorkerState]]] = {
             "scan": [],
             "score": [],
-            "ingest": [],
+            "page": [],
             "artifact": [],
+            "image": [],
         }
 
         for name, status in wg.workers.items():
             # Determine task type from worker name
-            # Check "artifact" before "score"/"ingest" since artifact workers
-            # may contain those substrings (e.g. artifact_score_worker)
-            if "artifact" in name:
+            # Check "image" and "artifact" before "score"/"ingest" since those
+            # workers may contain those substrings (e.g. artifact_score_worker)
+            if "image" in name:
+                task_groups["image"].append((name, status.state))
+            elif "artifact" in name:
                 task_groups["artifact"].append((name, status.state))
             elif "scan" in name:
                 task_groups["scan"].append((name, status.state))
             elif "score" in name:
                 task_groups["score"].append((name, status.state))
             elif "ingest" in name:
-                task_groups["ingest"].append((name, status.state))
+                task_groups["page"].append((name, status.state))
 
         # Display each task group
         for task, workers in task_groups.items():
@@ -485,7 +548,7 @@ class WikiProgressDisplay:
                 continue  # Skip scan in score-only mode
             if (
                 not workers
-                and task in ("score", "ingest", "artifact")
+                and task in ("score", "page", "artifact", "image")
                 and self.state.scan_only
             ):
                 continue  # Skip scoring workers in scan-only mode
@@ -574,7 +637,7 @@ class WikiProgressDisplay:
                 section.append(f" {self.state.score_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # INGEST row - ingestion progress against scored pages
+        # PAGE row - ingestion progress against scored pages
         # Total to ingest = pages that qualify for ingestion (score >= 0.5)
         # For simplicity, use pages_scored + pages_ingested as denominator
         ingest_total = self.state.pages_scored + self.state.pages_ingested
@@ -583,11 +646,11 @@ class WikiProgressDisplay:
         ingest_pct = self.state.pages_ingested / ingest_total * 100
 
         if self.state.scan_only:
-            section.append("  INGEST  ", style="dim")
+            section.append("  PAGE    ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
-            section.append("  INGEST  ", style="bold magenta")
+            section.append("  PAGE    ", style="bold magenta")
             ingest_ratio = min(self.state.pages_ingested / ingest_total, 1.0)
             section.append(make_bar(ingest_ratio, bar_width), style="magenta")
             section.append(f" {self.state.pages_ingested:>6,}", style="bold")
@@ -626,6 +689,29 @@ class WikiProgressDisplay:
             combined_rate = sum(r for r in [score_rate, ingest_rate] if r and r > 0)
             if combined_rate > 0:
                 section.append(f" {combined_rate:>5.1f}/s", style="dim")
+
+        # IMAGE row - VLM captioning + scoring progress
+        section.append("\n")
+        if self.state.scan_only:
+            section.append("  IMAGE   ", style="dim")
+            section.append("─" * bar_width, style="dim")
+            section.append("    disabled", style="dim italic")
+        else:
+            section.append("  IMAGE   ", style="bold green")
+            img_scored = self.state.images_scored
+            img_pending = self.state.pending_image_score
+            img_total = img_scored + img_pending
+            if img_total > 0:
+                img_ratio = min(img_scored / img_total, 1.0)
+                section.append(make_bar(img_ratio, bar_width), style="green")
+                section.append(f" {img_scored:>6,}", style="bold")
+                img_pct = img_scored / img_total * 100
+                section.append(f" {img_pct:>3.0f}%", style="cyan")
+            else:
+                section.append("─" * bar_width, style="dim")
+                section.append(f" {img_scored:>6,}", style="bold")
+            if self.state.image_score_rate and self.state.image_score_rate > 0:
+                section.append(f" {self.state.image_score_rate:>5.1f}/s", style="dim")
 
         return section
 
@@ -735,9 +821,9 @@ class WikiProgressDisplay:
                 section.append("\n    ", style="dim")
             section.append("\n")
 
-        # INGEST section - 2 lines: title, then score + domain + description
+        # PAGE section - 2 lines: title, then score + domain + description
         if not self.state.scan_only:
-            section.append("  INGEST  ", style="bold magenta")
+            section.append("  PAGE    ", style="bold magenta")
             if ingest:
                 # Line 1: Page title (clipped to fit remaining space)
                 title_width = content_width - self.LABEL_WIDTH
@@ -880,6 +966,69 @@ class WikiProgressDisplay:
                 section.append("...", style="dim italic")
                 section.append("\n    ", style="dim")
 
+        # IMAGE section - 2 lines: image id, then score + domain + caption
+        image = self.state.current_image
+        if not self.state.scan_only:
+            section.append("\n")
+            section.append("  IMAGE   ", style="bold green")
+            if image:
+                # Line 1: Image ID (clipped)
+                title_width = content_width - self.LABEL_WIDTH
+                section.append(
+                    self._clip_title(image.image_id, title_width), style="white"
+                )
+                section.append("\n")
+
+                # Line 2: Score, physics domain, caption/description
+                section.append("    ", style="dim")
+                score_str = ""
+                if image.score is not None:
+                    if image.score >= 0.7:
+                        style = "bold green"
+                    elif image.score >= 0.4:
+                        style = "yellow"
+                    else:
+                        style = "red"
+                    score_str = f"{image.score:.2f}"
+                    section.append(f"{score_str}  ", style=style)
+
+                domain_str = ""
+                if image.physics_domain:
+                    domain_str = image.physics_domain
+                    section.append(f"{domain_str}  ", style="cyan")
+
+                desc = image.caption or image.description
+                if desc:
+                    desc = clean_text(desc)
+                    used = (
+                        4
+                        + (len(score_str) + 2 if score_str else 0)
+                        + (len(domain_str) + 2 if domain_str else 0)
+                    )
+                    desc_width = content_width - used
+                    section.append(
+                        clip_text(desc, max(10, desc_width)), style="italic dim"
+                    )
+            elif self.state.image_processing:
+                section.append("processing...", style="cyan italic")
+                section.append("\n    ", style="dim")
+            elif not self.state.image_queue.is_empty():
+                queued = len(self.state.image_queue)
+                section.append(f"streaming {queued} items...", style="cyan italic")
+                section.append("\n    ", style="dim")
+            elif is_worker_complete("image"):
+                section.append("complete", style="green")
+                section.append("\n    ", style="dim")
+            elif should_show_idle(
+                self.state.image_processing,
+                self.state.image_queue,
+            ):
+                section.append("idle", style="dim italic")
+                section.append("\n    ", style="dim")
+            else:
+                section.append("...", style="dim italic")
+                section.append("\n    ", style="dim")
+
         return section
 
     def _build_resources_section(self) -> Text:
@@ -944,6 +1093,9 @@ class WikiProgressDisplay:
                 cpa = self.state.cost_per_artifact_score
                 if cpa and cpa > 0 and self.state.pending_artifact_score > 0:
                     etc += self.state.pending_artifact_score * cpa
+                cpi = self.state.cost_per_image_score
+                if cpi and cpi > 0 and self.state.pending_image_score > 0:
+                    etc += self.state.pending_image_score * cpi
 
                 if etc > 0:
                     section.append_text(
@@ -966,7 +1118,7 @@ class WikiProgressDisplay:
         section.append(f"  ingested={self.state.pages_ingested}", style="magenta")
         section.append(f"  skipped={self.state.pages_skipped}", style="yellow")
 
-        # Pending work by worker type (combined page + artifact)
+        # Pending work by worker type (combined page + artifact + image)
         pending_score = self.state.pending_score + self.state.pending_artifact_score
         pending_ingest = self.state.pending_ingest + self.state.pending_artifact_ingest
         pending_parts = []
@@ -974,6 +1126,8 @@ class WikiProgressDisplay:
             pending_parts.append(f"score:{pending_score}")
         if pending_ingest > 0:
             pending_parts.append(f"ingest:{pending_ingest}")
+        if self.state.pending_image_score > 0:
+            pending_parts.append(f"image:{self.state.pending_image_score}")
         if pending_parts:
             section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
@@ -1076,6 +1230,17 @@ class WikiProgressDisplay:
                 description=item.get("description", ""),
                 chunk_count=item.get("chunk_count", 0),
                 is_score=False,
+            )
+
+        # Pop from image queue
+        if item := self.state.image_queue.pop():
+            self.state.current_image = ImageItem(
+                image_id=item.get("id", ""),
+                caption=item.get("caption", ""),
+                score=item.get("score"),
+                physics_domain=item.get("physics_domain"),
+                description=item.get("description", ""),
+                purpose=item.get("purpose", ""),
             )
 
         self._refresh()
@@ -1263,6 +1428,46 @@ class WikiProgressDisplay:
 
         self._refresh()
 
+    def update_image(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update image VLM worker state."""
+        self.state.run_images_scored = stats.processed
+        self.state.image_score_rate = stats.rate
+        self.state._run_image_score_cost = stats.cost
+
+        # Track processing state
+        if "waiting" in message.lower() or message == "idle":
+            self.state.image_processing = False
+        elif "scoring" in message.lower():
+            self.state.image_processing = True
+        elif "scored" in message.lower() and results:
+            self.state.image_processing = not self.state.image_queue.is_empty()
+        else:
+            self.state.image_processing = False
+
+        # Queue results for streaming
+        if results:
+            items = [
+                {
+                    "id": r.get("id", "unknown"),
+                    "caption": r.get("caption", ""),
+                    "score": r.get("score"),
+                    "physics_domain": r.get("physics_domain"),
+                    "description": r.get("description", ""),
+                    "purpose": r.get("purpose", ""),
+                }
+                for r in results
+            ]
+            max_display_rate = 1.0
+            display_rate = min(stats.rate, max_display_rate) if stats.rate else 0.5
+            self.state.image_queue.add(items, display_rate)
+
+        self._refresh()
+
     def update_from_graph(
         self,
         total_pages: int = 0,
@@ -1293,6 +1498,11 @@ class WikiProgressDisplay:
             self.state.artifacts_ingested = kwargs["artifacts_ingested"]
         if "artifacts_scored" in kwargs:
             self.state.artifacts_scored = kwargs["artifacts_scored"]
+        # Update graph-based image counts if provided
+        if "images_scored" in kwargs:
+            self.state.images_scored = kwargs["images_scored"]
+        if "pending_image_score" in kwargs:
+            self.state.pending_image_score = kwargs["pending_image_score"]
         self._refresh()
 
     def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
@@ -1322,6 +1532,8 @@ class WikiProgressDisplay:
         self.state._offset_artifact_score_cost += self.state._run_artifact_score_cost
         self.state._offset_artifacts += self.state.run_artifacts
         self.state._offset_artifacts_scored += self.state.run_artifacts_scored
+        self.state._offset_images_scored += self.state.run_images_scored
+        self.state._offset_image_score_cost += self.state._run_image_score_cost
 
         # Reset per-site counters (new workers will fill these)
         self.state.run_scored = 0
@@ -1331,18 +1543,23 @@ class WikiProgressDisplay:
         self.state._run_artifact_score_cost = 0.0
         self.state.run_artifacts = 0
         self.state.run_artifacts_scored = 0
+        self.state.run_images_scored = 0
+        self.state._run_image_score_cost = 0.0
         self.state.score_rate = None
         self.state.ingest_rate = None
         self.state.artifact_rate = None
         self.state.artifact_score_rate = None
+        self.state.image_score_rate = None
 
         # Reset activity displays
         self.state.current_score = None
         self.state.current_ingest = None
         self.state.current_artifact = None
+        self.state.current_image = None
         self.state.score_processing = False
         self.state.ingest_processing = False
         self.state.artifact_processing = False
+        self.state.image_processing = False
 
         # Reset worker group (set by new run_parallel_wiki_discovery)
         self.state.worker_group = None
@@ -1358,6 +1575,9 @@ class WikiProgressDisplay:
             rate=0.3, max_rate=1.0, min_display_time=0.5
         )
         self.state.artifact_score_queue = StreamQueue(
+            rate=0.3, max_rate=1.0, min_display_time=0.5
+        )
+        self.state.image_queue = StreamQueue(
             rate=0.3, max_rate=1.0, min_display_time=0.5
         )
 
@@ -1400,9 +1620,9 @@ class WikiProgressDisplay:
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # INGEST stats (pages + artifacts combined)
+        # PAGE stats (pages + artifacts combined)
         total_ingested = self.state.pages_ingested
-        summary.append("  INGEST", style="bold magenta")
+        summary.append("  PAGE  ", style="bold magenta")
         summary.append(f"  ingested={total_ingested:,}", style="magenta")
         artifacts_ingested = self.state.total_run_artifacts
         if artifacts_ingested > 0:
@@ -1410,6 +1630,15 @@ class WikiProgressDisplay:
         if self.state.ingest_rate:
             summary.append(f"  {self.state.ingest_rate:.1f}/s", style="dim")
         summary.append("\n")
+
+        # IMAGE stats
+        images_scored = self.state.total_run_images_scored
+        if images_scored > 0:
+            summary.append("  IMAGE ", style="bold green")
+            summary.append(f"  scored={images_scored:,}", style="green")
+            if self.state.image_score_rate:
+                summary.append(f"  {self.state.image_score_rate:.1f}/s", style="dim")
+            summary.append("\n")
 
         # USAGE stats
         summary.append("  USAGE ", style="bold white")

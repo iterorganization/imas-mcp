@@ -2149,6 +2149,22 @@ def wiki_run(
                         ]
                     display.update_artifact_score(msg, stats, result_dicts)
 
+                def on_image(msg, stats, results=None):
+                    result_dicts = None
+                    if results:
+                        result_dicts = [
+                            {
+                                "id": r.get("id", "unknown"),
+                                "caption": r.get("caption", ""),
+                                "score": r.get("score"),
+                                "physics_domain": r.get("physics_domain"),
+                                "description": r.get("description", ""),
+                                "purpose": r.get("purpose", ""),
+                            }
+                            for r in results[:5]
+                        ]
+                    display.update_image(msg, stats, result_dicts)
+
                 def on_worker_status(worker_group):
                     display.update_worker_status(worker_group)
 
@@ -2189,6 +2205,7 @@ def wiki_run(
                                 on_ingest_progress=on_ingest,
                                 on_artifact_progress=on_artifact,
                                 on_artifact_score_progress=on_artifact_score,
+                                on_image_progress=on_image,
                                 on_worker_status=on_worker_status,
                             )
                         except Exception as e:
@@ -2200,6 +2217,7 @@ def wiki_run(
                             "scored",
                             "ingested",
                             "artifacts",
+                            "images_scored",
                         ):
                             combined[key] += result.get(key, 0)
                         combined["cost"] += result.get("cost", 0)

@@ -387,6 +387,40 @@ enums:
       system:
         description: OS/infrastructure resources (/var, /tmp, /opt/modules)
 
+  ContentPurpose:
+    description: >-
+      Content classification taxonomy shared across wiki pages, artifacts,
+      and images. Determines ingestion priority and processing strategy.
+      Used by LLM scorers for structured output.
+    permissible_values:
+      # High-value technical content (priority multiplier 1.0)
+      data_source:
+        description: Signal tables, node lists, shot databases — direct IMAS mapping targets
+      diagnostic:
+        description: Diagnostic documentation (Thomson, CXRS, ECE, bolometry, etc.)
+      code:
+        description: Software/code documentation (LIUQE, ASTRA, CHEASE, etc.)
+      calibration:
+        description: Calibration procedures, conversion factors, sensor specifications
+      data_access:
+        description: How to access data — MDSplus paths, TDI expressions, APIs
+      # Medium-value content (priority multiplier 0.8)
+      physics_analysis:
+        description: Physics methodology, analysis techniques, interpretation guides
+      experimental_procedure:
+        description: Experimental procedures, operational guides, safety protocols
+      tutorial:
+        description: Tutorials, how-tos, getting started guides
+      reference:
+        description: General reference material, tables, constants
+      # Low-value content (priority multiplier 0.3)
+      administrative:
+        description: Meeting notes, schedules, project management
+      personal:
+        description: User pages, personal notes, sandboxes
+      other:
+        description: Uncategorized content
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -438,6 +472,74 @@ classes:
         range: integer
       llm_at:
         description: When LLM operation was performed
+        range: datetime
+
+  ContentScoring:
+    description: >-
+      Mixin for content-aware scoring shared across wiki pages, artifacts,
+      and images. All resource types use the same scoring dimensions and
+      purpose taxonomy so that scores are comparable cross-type.
+      
+      The six scoring dimensions map to ContentPurpose categories:
+      - data_documentation: data_source, data_access
+      - physics_content: diagnostic, physics_analysis
+      - code_documentation: code
+      - calibration: calibration
+      - imas_relevance: cross-cutting IMAS integration
+      
+      Combined score is max(dimensions) * purpose_multiplier.
+      Purpose multipliers: high=1.0, medium=0.8, low=0.3.
+    mixin: true
+    class_uri: common:ContentScoring
+    attributes:
+      purpose:
+        description: >-
+          Content classification. Shared taxonomy across pages, artifacts,
+          and images. Determines ingestion priority multiplier.
+        range: ContentPurpose
+      description:
+        description: Concise description of content (1-2 sentences, max 150 chars)
+      score:
+        description: >-
+          Combined relevance score (0.0-1.0). Computed as
+          max(dimension_scores) * purpose_multiplier.
+        range: float
+      score_data_documentation:
+        description: Signal tables, node lists, shot databases (0.0-1.0)
+        range: float
+      score_physics_content:
+        description: Physics explanations, methodology, theory (0.0-1.0)
+        range: float
+      score_code_documentation:
+        description: Software docs, API references, usage guides (0.0-1.0)
+        range: float
+      score_data_access:
+        description: MDSplus paths, TDI expressions, access methods (0.0-1.0)
+        range: float
+      score_calibration:
+        description: Calibration info, conversion factors, sensor specs (0.0-1.0)
+        range: float
+      score_imas_relevance:
+        description: IMAS integration, IDS references, mapping hints (0.0-1.0)
+        range: float
+      reasoning:
+        description: Brief explanation for the score (max 80 chars)
+      keywords:
+        description: Searchable keywords (max 5)
+        multivalued: true
+      physics_domain:
+        description: Primary physics domain inferred from content
+        range: PhysicsDomain
+      score_cost:
+        description: LLM/VLM cost in USD for scoring (batch cost / batch size)
+        range: float
+      should_ingest:
+        description: LLM decision on whether to ingest this content
+        range: boolean
+      skip_reason:
+        description: Why the content was skipped (if should_ingest=false)
+      scored_at:
+        description: When scoring was completed
         range: datetime
 
   DiscoveryProvenance:

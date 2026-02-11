@@ -608,35 +608,50 @@ def _provide_physics_domains() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _provide_wiki_page_purposes() -> dict[str, Any]:
-    """Provide WikiPagePurpose enum values grouped by priority."""
-    from imas_codex.discovery.wiki.models import WikiPagePurpose
+    """Provide ContentPurpose enum values grouped by priority."""
+    from imas_codex.graph.models import ContentPurpose
 
     # Group by value tier
     high_value = {
-        WikiPagePurpose.data_source,
-        WikiPagePurpose.diagnostic,
-        WikiPagePurpose.code,
-        WikiPagePurpose.calibration,
-        WikiPagePurpose.data_access,
+        ContentPurpose.data_source,
+        ContentPurpose.diagnostic,
+        ContentPurpose.code,
+        ContentPurpose.calibration,
+        ContentPurpose.data_access,
     }
     medium_value = {
-        WikiPagePurpose.physics_analysis,
-        WikiPagePurpose.experimental_procedure,
-        WikiPagePurpose.tutorial,
-        WikiPagePurpose.reference,
+        ContentPurpose.physics_analysis,
+        ContentPurpose.experimental_procedure,
+        ContentPurpose.tutorial,
+        ContentPurpose.reference,
     }
     low_value = {
-        WikiPagePurpose.administrative,
-        WikiPagePurpose.personal,
-        WikiPagePurpose.other,
+        ContentPurpose.administrative,
+        ContentPurpose.personal,
+        ContentPurpose.other,
     }
 
-    def purpose_to_dict(p: WikiPagePurpose) -> dict[str, str]:
-        # Use the description property which accesses _WIKI_PURPOSE_DESCRIPTIONS
-        return {"value": p.value, "description": p.description}
+    # Descriptions from the LinkML schema (stored in enum docstrings)
+    _descriptions: dict[ContentPurpose, str] = {
+        ContentPurpose.data_source: "Signal tables, node lists, shot databases — direct IMAS mapping targets",
+        ContentPurpose.diagnostic: "Diagnostic documentation (Thomson, CXRS, ECE, bolometry, etc.)",
+        ContentPurpose.code: "Software/code documentation (LIUQE, ASTRA, CHEASE, etc.)",
+        ContentPurpose.calibration: "Calibration procedures, conversion factors, sensor specifications",
+        ContentPurpose.data_access: "How to access data — MDSplus paths, TDI expressions, APIs",
+        ContentPurpose.physics_analysis: "Physics methodology, analysis techniques, interpretation guides",
+        ContentPurpose.experimental_procedure: "Experimental procedures, operational guides, safety protocols",
+        ContentPurpose.tutorial: "Tutorials, how-tos, getting started guides",
+        ContentPurpose.reference: "General reference material, tables, constants",
+        ContentPurpose.administrative: "Meeting notes, schedules, project management",
+        ContentPurpose.personal: "User pages, personal notes, sandboxes",
+        ContentPurpose.other: "Uncategorized content",
+    }
+
+    def purpose_to_dict(p: ContentPurpose) -> dict[str, str]:
+        return {"value": p.value, "description": _descriptions.get(p, p.value)}
 
     return {
-        "wiki_purposes": [purpose_to_dict(p) for p in WikiPagePurpose],
+        "wiki_purposes": [purpose_to_dict(p) for p in ContentPurpose],
         "wiki_purposes_high": [purpose_to_dict(p) for p in high_value],
         "wiki_purposes_medium": [purpose_to_dict(p) for p in medium_value],
         "wiki_purposes_low": [purpose_to_dict(p) for p in low_value],
@@ -689,13 +704,13 @@ def _provide_artifact_scoring_schema() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _provide_image_caption_schema() -> dict[str, Any]:
-    """Provide ImageCaptionBatch Pydantic schema for VLM prompts."""
-    from imas_codex.discovery.wiki.models import ImageCaptionBatch, ImageCaptionResult
+    """Provide ImageScoreBatch Pydantic schema for VLM prompts."""
+    from imas_codex.discovery.wiki.models import ImageScoreBatch, ImageScoreResult
 
     return {
-        "image_caption_schema_example": get_pydantic_schema_json(ImageCaptionBatch),
+        "image_caption_schema_example": get_pydantic_schema_json(ImageScoreBatch),
         "image_caption_schema_fields": get_pydantic_schema_description(
-            ImageCaptionResult
+            ImageScoreResult
         ),
     }
 

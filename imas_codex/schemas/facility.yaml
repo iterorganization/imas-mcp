@@ -424,24 +424,6 @@ enums:
       failed:
         description: Error during processing (check error field)
 
-  WikiPageType:
-    description: LLM-classified page type for content-aware scoring
-    permissible_values:
-      data_source:
-        description: Database, dataset, or data catalog
-      documentation:
-        description: Technical documentation, manuals, guides
-      code:
-        description: Code documentation, API reference, examples
-      process:
-        description: Administrative processes, workflows
-      meeting:
-        description: Meeting notes, presentations, announcements
-      portal:
-        description: Index page, navigation hub
-      other:
-        description: Uncategorized content
-
   WikiArtifactStatus:
     description: >-
       Lifecycle status for wiki artifacts (PDFs, presentations, etc.).
@@ -472,24 +454,24 @@ enums:
 
   ImageStatus:
     description: >-
-      Lifecycle for image processing. Images are discovered during parent
-      resource ingestion, downloaded and stored as downsampled bytes, then
-      captioned by a VLM. No scoring step — we caption all images.
+      Lifecycle for image processing. Images are discovered during page
+      ingestion, downloaded and stored as downsampled bytes, then scored
+      and captioned by a VLM in a single pass.
       
       Workflow: discovered → ingested → captioned
       - discovered: Image reference found during parent ingestion
       - ingested: Downloaded, downsampled to WebP 768px, bytes stored in graph
-      - captioned: VLM caption generated with fusion-domain context
-      - failed: Error during fetch, downsample, or captioning (retryable)
+      - captioned: VLM caption + score generated (single pass)
+      - failed: Error during processing (retryable)
     permissible_values:
       discovered:
         description: Image reference found during parent resource ingestion
       ingested:
         description: Downloaded, downsampled, and stored as bytes in graph
       captioned:
-        description: VLM caption generated and stored
+        description: VLM caption and score generated
       failed:
-        description: Error during processing (check error field). Reset to discovered for retry.
+        description: Error during processing (check error field). Reset to ingested for retry.
 
   ImageSourceType:
     description: >-
@@ -2341,6 +2323,7 @@ classes:
       - LLMProvenance
       - LLMOperation
       - DiscoveryProvenance
+      - ContentScoring
     class_uri: facility:WikiPage
     attributes:
       id:
@@ -2390,18 +2373,10 @@ classes:
           If set and older than timeout (5 min), page is reclaimed.
         range: datetime
       
-      # Scoring field (set once during content-aware scoring)
-      score:
-        description: >-
-          Page score (0.0-1.0). Set once based on content preview.
-          Pages with score >= 0.5 proceed to ingestion.
-        range: float
-      score_reasoning:
-        description: LLM explanation for score assignment
-      skip_reason:
-        description: >-
-          Why the agent marked this page as skipped. Grounded in metrics.
-          Examples: "in_degree=0, no pages reference this", "administrative page"
+      # Scoring (inherited from ContentScoring mixin: purpose, score,
+      # Scoring inherited from ContentScoring mixin: purpose, score,
+      # score dimensions, should_ingest, skip_reason, scored_at.
+      # See common.yaml ContentScoring for full list.
       
       # Content preview (fetched during scoring)
       preview_text:
@@ -2414,25 +2389,14 @@ classes:
       preview_fetch_error:
         description: Error message if preview fetch failed (auth, timeout, etc.)
       
-      # Enhanced scoring fields (LLM-based content analysis)
-      page_type:
-        description: >-
-          LLM-classified page type. One of: data_source, documentation, code,
-          process, meeting, portal, other
-        range: WikiPageType
+      # Legacy scoring field (kept for backwards compat with existing graph data)
       is_physics_content:
         description: Whether page contains fusion/plasma physics content
         range: boolean
-      value_rating:
-        description: LLM-assigned scientific value rating (0-10)
-        range: integer
       
       # Discovery metadata
       discovered_at:
         description: When this page was first scanned
-        range: datetime
-      scored_at:
-        description: When the score field was last updated
         range: datetime
       
       # Ingestion fields
@@ -2519,6 +2483,7 @@ classes:
     class_uri: facility:WikiArtifact
     mixins:
       - DiscoveryProvenance
+      - ContentScoring
     attributes:
       id:
         identifier: true
@@ -2558,56 +2523,14 @@ classes:
         description: Minimum link depth of pages linking to this artifact
         range: integer
       
-      # Scoring fields (set by score worker - aligns with WikiPage)
-      score:
-        description: >-
-          Content-aware score (0.0-1.0) based on preview text analysis.
-          Artifacts with score >= 0.5 proceed to ingestion.
-        range: float
+      # Scoring (inherited from ContentScoring mixin: purpose, score,
+      # score_data_documentation, etc. See common.yaml for full list.)
+      # Additional artifact-specific scoring fields:
       artifact_purpose:
         description: Classification of artifact content (manual, presentation, data, etc.)
-        range: WikiPageType
-      description:
-        description: Concise description of artifact contents (1-2 sentences)
-      embedding:
-        description: Vector embedding of description for semantic search
-        multivalued: true
-        range: float
-      reasoning:
-        description: Brief explanation for the score assignment (max 80 chars)
+        range: ContentPurpose
       preview_text:
         description: Extracted text preview from first pages (for scoring context)
-      keywords:
-        description: Searchable keywords extracted from content
-        multivalued: true
-      physics_domain:
-        description: Primary physics domain inferred from content
-        range: PhysicsDomain
-      should_ingest:
-        description: LLM decision on whether to fully ingest (score >= 0.5 override)
-        range: boolean
-      skip_reason:
-        description: Why the artifact was marked as skipped (if should_ingest=false)
-      
-      # Per-dimension scores (same dimensions as WikiPage for consistency)
-      score_data_documentation:
-        description: Signal tables, node lists, shot databases (0.0-1.0)
-        range: float
-      score_physics_content:
-        description: Physics explanations, methodology, theory (0.0-1.0)
-        range: float
-      score_code_documentation:
-        description: Software docs, API references, usage guides (0.0-1.0)
-        range: float
-      score_data_access:
-        description: MDSplus paths, TDI expressions, access methods (0.0-1.0)
-        range: float
-      score_calibration:
-        description: Calibration info, conversion factors, sensor specs (0.0-1.0)
-        range: float
-      score_imas_relevance:
-        description: IMAS integration, IDS references, mapping hints (0.0-1.0)
-        range: float
       
       # Size and resource tracking
       size_bytes:
@@ -2623,9 +2546,6 @@ classes:
       # Timestamps
       discovered_at:
         description: When this artifact was first discovered
-        range: datetime
-      scored_at:
-        description: When the score worker completed scoring
         range: datetime
       ingested_at:
         description: When content was extracted and embedded
@@ -2647,7 +2567,7 @@ classes:
       - Stores downsampled image bytes in graph (WebP, 768px longest side)
         so captioning works offline without facility access
       - Content-addressed ID for deduplication across pages
-      - Caption-first: VLM caption is the primary searchable content
+      - VLM caption + score in single pass (same dimensions as wiki pages)
       - Embedding generated separately by embed-update CLI, not workers
       
       Relationships:
@@ -2662,6 +2582,7 @@ classes:
     mixins:
       - DiscoveryProvenance
       - LLMOperation
+      - ContentScoring
     attributes:
       id:
         identifier: true
@@ -2727,6 +2648,11 @@ classes:
         description: Original alt text from HTML source (if available)
       ocr_text:
         description: Text extracted via OCR from image (for diagrams with labels)
+      
+      # VLM scoring inherited from ContentScoring mixin: purpose, score,
+      # score dimensions, description, reasoning, keywords, physics_domain,
+      # should_ingest, skip_reason, score_cost, scored_at.
+      # See common.yaml ContentScoring for full list.
       
       # Embedding (populated by embed-update CLI, not by workers)
       embedding:
