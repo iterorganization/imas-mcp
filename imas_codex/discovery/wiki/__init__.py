@@ -22,6 +22,10 @@ from imas_codex.discovery.wiki.confluence import (
     ConfluenceSpace,
     detect_site_type,
 )
+from imas_codex.discovery.wiki.graph_ops import (
+    release_orphaned_claims,
+    reset_transient_pages,
+)
 from imas_codex.discovery.wiki.mediawiki import (
     MediaWikiClient,
     MediaWikiPage,
@@ -36,7 +40,6 @@ from imas_codex.discovery.wiki.monitor import (
 from imas_codex.discovery.wiki.parallel import (
     bulk_discover_pages,
     get_wiki_discovery_stats,
-    release_orphaned_claims,
     run_parallel_wiki_discovery,
 )
 from imas_codex.discovery.wiki.pipeline import (
@@ -60,6 +63,7 @@ from imas_codex.discovery.wiki.scraper import (
     extract_units,
     fetch_wiki_page,
 )
+from imas_codex.discovery.wiki.state import WikiDiscoveryState
 
 __all__ = [
     # Authentication
@@ -87,6 +91,8 @@ __all__ = [
     "bulk_discover_pages",
     "get_wiki_discovery_stats",
     "release_orphaned_claims",
+    "reset_transient_pages",
+    "WikiDiscoveryState",
     "run_parallel_wiki_discovery",
     # Ingestion pipeline
     "WikiArtifactPipeline",

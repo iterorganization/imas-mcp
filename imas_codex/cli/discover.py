@@ -1740,10 +1740,8 @@ def wiki_run(
     """
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki import get_wiki_stats
-    from imas_codex.discovery.wiki.parallel import (
-        reset_transient_pages,
-        run_parallel_wiki_discovery,
-    )
+    from imas_codex.discovery.wiki.graph_ops import reset_transient_pages
+    from imas_codex.discovery.wiki.parallel import run_parallel_wiki_discovery
 
     # Auto-detect if rich can run (TTY check) or use no_rich flag
     use_rich = not no_rich and sys.stdout.isatty()
