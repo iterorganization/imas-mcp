@@ -287,6 +287,12 @@ class WikiDiscoveryState:
     # Default 30 keeps us well under httpx pool max_connections=50.
     _http_fetch_semaphore: Any = field(default=None, repr=False)
 
+    # SSH fetch semaphore — bounds concurrent SSH subprocess calls.
+    # SSH multiplexes over ControlMaster, but too many concurrent ssh
+    # processes can race during master establishment or create load.
+    # Default 4 keeps footprint low on remote hosts.
+    _ssh_fetch_semaphore: Any = field(default=None, repr=False)
+
     # Limits
     cost_limit: float = 10.0
     page_limit: int | None = None
@@ -324,6 +330,25 @@ class WikiDiscoveryState:
         if self._http_fetch_semaphore is None:
             self._http_fetch_semaphore = asyncio.Semaphore(30)
         return self._http_fetch_semaphore
+
+    @property
+    def ssh_fetch_semaphore(self) -> asyncio.Semaphore:
+        """Shared semaphore bounding concurrent SSH subprocess calls.
+
+        SSH ControlMaster multiplexes over a single TCP connection, but
+        too many concurrent ssh processes can race during establishment
+        or create unnecessary load on remote hosts. Limit to 4.
+        """
+        if self._ssh_fetch_semaphore is None:
+            self._ssh_fetch_semaphore = asyncio.Semaphore(4)
+        return self._ssh_fetch_semaphore
+
+    @property
+    def effective_fetch_semaphore(self) -> asyncio.Semaphore:
+        """Return SSH semaphore for SSH-based sites, HTTP semaphore otherwise."""
+        if self.ssh_host and self.auth_type in (None, "none"):
+            return self.ssh_fetch_semaphore
+        return self.http_fetch_semaphore
 
     @property
     def total_cost(self) -> float:
@@ -2777,8 +2802,10 @@ async def scan_worker(
 
     Uses concurrent SSH calls with bounded parallelism (max 10 concurrent).
     """
-    # Semaphore to limit concurrent SSH connections
-    ssh_semaphore = asyncio.Semaphore(10)
+    # Semaphore to limit concurrent SSH connections.
+    # Keep low (4) — SSH ControlMaster multiplexes over one TCP connection
+    # but concurrent subprocess spawns can race during master establishment.
+    ssh_semaphore = asyncio.Semaphore(4)
 
     async def process_page(page: dict) -> dict | None:
         """Process a single page with semaphore-bounded concurrency."""
@@ -2885,10 +2912,10 @@ async def score_worker(
     worker_id = id(asyncio.current_task())
     logger.info(f"score_worker started (task={worker_id})")
 
-    # Use shared HTTP fetch semaphore from state to bound total concurrent
-    # wiki requests across ALL workers (score + ingest). This prevents
-    # httpx PoolTimeout when multiple workers compete for connections.
-    fetch_semaphore = state.http_fetch_semaphore
+    # Use effective semaphore: SSH semaphore (4) for SSH-based sites,
+    # HTTP semaphore (30) for direct HTTP. Prevents overwhelming remote
+    # hosts with concurrent SSH subprocess calls.
+    fetch_semaphore = state.effective_fetch_semaphore
 
     # Get shared async wiki client for Tequila auth (native async HTTP)
     logger.debug(f"score_worker {worker_id}: getting async wiki client")
@@ -3085,10 +3112,10 @@ async def ingest_worker(
         await state.get_basic_auth_client() if state.auth_type == "basic" else None
     )
 
-    # Use shared HTTP fetch semaphore from state for wiki HTTP requests.
-    # This bounds total concurrent wiki fetches across ALL workers to prevent
-    # httpx PoolTimeout when multiple workers compete for connections.
-    http_semaphore = state.http_fetch_semaphore
+    # Use effective semaphore: SSH semaphore (4) for SSH-based sites,
+    # HTTP semaphore (30) for direct HTTP. Prevents overwhelming remote
+    # hosts with concurrent SSH subprocess calls.
+    http_semaphore = state.effective_fetch_semaphore
 
     async def process_single_page(page: dict) -> dict | None:
         """Process a single page with semaphore-limited concurrency."""
@@ -4815,6 +4842,32 @@ async def run_parallel_wiki_discovery(
         max_depth=max_depth,
         focus=focus,
     )
+
+    # Pre-warm SSH ControlMaster if using SSH transport.
+    # Ensures the master connection is established before concurrent workers
+    # spawn multiple ssh subprocesses (which would race to create it).
+    if ssh_host:
+        logger.info("Pre-warming SSH ControlMaster to %s...", ssh_host)
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                ["ssh", "-O", "check", ssh_host],
+                capture_output=True,
+                timeout=10,
+            )
+            logger.info("SSH ControlMaster active for %s", ssh_host)
+        except Exception:
+            # No master yet — establish one with a quick command
+            try:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    ["ssh", ssh_host, "true"],
+                    capture_output=True,
+                    timeout=30,
+                )
+                logger.info("SSH ControlMaster established for %s", ssh_host)
+            except Exception as e:
+                logger.warning("Failed to pre-warm SSH to %s: %s", ssh_host, e)
 
     # Create worker group for status tracking
     worker_group = SupervisedWorkerGroup()
