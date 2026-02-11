@@ -61,14 +61,16 @@ class TestServerComponents:
         assert server.started_at is not None
         assert isinstance(server.started_at, datetime)
 
-    def test_server_with_ids_set(self):
+    @patch("imas_codex.server.Embeddings")
+    def test_server_with_ids_set(self, mock_embeddings):
         """Server initializes with ids_set filter."""
         server = Server(ids_set={"equilibrium", "core_profiles"})
 
         assert server.ids_set == {"equilibrium", "core_profiles"}
         assert server.tools is not None
 
-    def test_server_use_rich_config(self):
+    @patch("imas_codex.server.Embeddings")
+    def test_server_use_rich_config(self, mock_embeddings):
         """Server respects use_rich config."""
         server = Server(use_rich=False)
 
