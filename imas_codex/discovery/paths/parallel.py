@@ -61,6 +61,10 @@ class DiscoveryState:
     enrich_idle_count: int = 0
     rescore_idle_count: int = 0
 
+    # Tracks when scan last produced new scanned paths.
+    # Prevents premature termination before scoring workers poll.
+    last_scan_output_time: float = 0.0
+
     # SSH retry tracking for exponential backoff
     ssh_retry_count: int = 0
     max_ssh_retries: int = 5
@@ -139,6 +143,22 @@ class DiscoveryState:
             and self.rescore_idle_count >= 3
         )
         if all_idle:
+            # Grace period: after scan produces new work, give downstream
+            # workers enough time to wake from sleep and claim it.
+            # Score/enrich/rescore workers sleep 2s between polls, so we
+            # need at least 3s after the last scan output for them to
+            # have polled at least once.
+            if self.last_scan_output_time > 0:
+                elapsed_since_scan = time.time() - self.last_scan_output_time
+                if elapsed_since_scan < 4.0:
+                    # Not enough time for downstream workers to poll.
+                    # Reset idle counts so we keep looping.
+                    self.scan_idle_count = 0
+                    self.expand_idle_count = 0
+                    self.score_idle_count = 0
+                    self.enrich_idle_count = 0
+                    self.rescore_idle_count = 0
+                    return False
             # Check for pending expansion work before terminating
             if has_pending_work(self.facility):
                 # Reset idle counts to force workers to re-poll for new work
@@ -795,6 +815,10 @@ async def scan_worker(
         state.scan_stats.processed += stats["scanned"]
         state.scan_stats.errors += stats["errors"]
 
+        # Record that scan produced new work for downstream workers
+        if stats["scanned"] > 0:
+            state.last_scan_output_time = time.time()
+
         # Build detailed scan results for progress display
         scan_results = [
             {
@@ -920,6 +944,10 @@ async def expand_worker(
 
         state.expand_stats.processed += stats["scanned"]
         state.expand_stats.errors += stats["errors"]
+
+        # Record that expansion produced new work for downstream workers
+        if stats["scanned"] > 0:
+            state.last_scan_output_time = time.time()
 
         # Build detailed scan results for progress display
         scan_results = [

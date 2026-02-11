@@ -1701,6 +1701,7 @@ async def persist_scan_results(
                     p.claimed_at = null,
                     p.listed_at = item.listed_at,
                     p.skip_reason = item.skip_reason,
+                    p.terminal_reason = item.terminal_reason,
                     p.total_files = item.total_files,
                     p.total_dirs = item.total_dirs,
                     p.has_readme = item.has_readme,
@@ -1710,7 +1711,11 @@ async def persist_scan_results(
                     p.git_head_commit = item.git_head_commit,
                     p.git_branch = item.git_branch,
                     p.git_root_commit = item.git_root_commit,
-                    p.child_names = item.child_names
+                    p.child_names = item.child_names,
+                    p.file_type_counts = item.file_type_counts,
+                    p.tree_context = item.tree_context,
+                    p.numeric_dir_ratio = item.numeric_dir_ratio,
+                    p.patterns_detected = item.patterns_detected
                 """,
                 items=first_scan_updates,
             )
@@ -1734,7 +1739,11 @@ async def persist_scan_results(
                     p.git_head_commit = item.git_head_commit,
                     p.git_branch = item.git_branch,
                     p.git_root_commit = item.git_root_commit,
-                    p.child_names = item.child_names
+                    p.child_names = item.child_names,
+                    p.file_type_counts = item.file_type_counts,
+                    p.tree_context = item.tree_context,
+                    p.numeric_dir_ratio = item.numeric_dir_ratio,
+                    p.patterns_detected = item.patterns_detected
                 """,
                 items=expansion_updates,
             )
