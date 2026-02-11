@@ -24,15 +24,12 @@ IMAS_CODEX_EMBEDDING_MODEL = get_imas_embedding_model()
 class EmbeddingBackend(Enum):
     """Embedding backend selection.
 
-    Remote backend includes a fallback chain:
-      remote (login GPU) → local (CPU) → openrouter (cloud API)
-
-    Explicit local or openrouter backends have no fallback.
+    No silent fallback: if the configured backend is unavailable, an error
+    is raised immediately.
     """
 
     LOCAL = "local"  # Local CPU/GPU via SentenceTransformer
     REMOTE = "remote"  # Remote GPU server (iter cluster via SSH tunnel)
-    OPENROUTER = "openrouter"  # OpenRouter API for Qwen embeddings
 
 
 @dataclass
@@ -48,9 +45,6 @@ class EncoderConfig:
 
     # Remote configuration (for REMOTE backend)
     remote_url: str | None = None
-
-    # OpenRouter configuration (for OPENROUTER backend)
-    openrouter_api_key: str | None = None
 
     # Generation settings
     batch_size: int = 250
@@ -87,13 +81,6 @@ class EncoderConfig:
         # Load remote URL for remote backend
         if self.backend == EmbeddingBackend.REMOTE and self.remote_url is None:
             self.remote_url = get_embed_remote_url()
-
-        # Load OpenRouter API key for openrouter backend
-        if (
-            self.backend == EmbeddingBackend.OPENROUTER
-            and self.openrouter_api_key is None
-        ):
-            self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 
     def generate_cache_key(self) -> str | None:
         """

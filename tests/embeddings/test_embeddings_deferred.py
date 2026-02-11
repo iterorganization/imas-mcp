@@ -35,12 +35,11 @@ def test_embeddings_encoder_config_exposed(monkeypatch):
 
 def test_embeddings_lazy_build(monkeypatch):
     monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
 
     ds = DocumentStore()
     with patch(
         "imas_codex.embeddings.embeddings.Encoder",
-        return_value=_mock_encoder("openai/text-embedding-3-small"),
+        return_value=_mock_encoder(),
     ):
         emb = Embeddings(document_store=ds, load_embeddings=False)
     assert emb._embeddings is None
@@ -53,11 +52,10 @@ def test_embeddings_lazy_build(monkeypatch):
 @pytest.mark.asyncio
 async def test_health_endpoint_deferred(monkeypatch):
     monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
 
     with patch(
         "imas_codex.embeddings.embeddings.Encoder",
-        return_value=_mock_encoder("openai/text-embedding-3-small"),
+        return_value=_mock_encoder(),
     ):
         from imas_codex.server import Server
 

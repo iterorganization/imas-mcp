@@ -1,15 +1,12 @@
 """Embedding encoder providing model loading, cached corpus build, and ad-hoc embedding.
 
-Supports multiple embedding backends:
+Supports two embedding backends:
 - local: Uses SentenceTransformer with optional GPU acceleration
 - remote: Connects to GPU server via HTTP (ITER login node or SSH tunnel)
-- openrouter: Uses OpenRouter API for cloud embeddings
 
-Fallback chain for remote backend:
-  remote (login GPU server) → local (CPU) → openrouter (cloud API)
-
-Explicit local or openrouter backends have no fallback.
-The remote client has built-in retry logic for transient connection failures.
+No silent fallback: if the configured backend is unavailable, an error is raised.
+All embeddings must use the same model (Qwen3-Embedding-0.6B) to ensure
+vector compatibility across the knowledge graph.
 """
 
 from __future__ import annotations
@@ -35,11 +32,7 @@ from imas_codex.settings import get_embedding_dimension
 from .cache import EmbeddingCache
 from .client import RemoteEmbeddingClient
 from .config import EmbeddingBackend, EncoderConfig
-from .openrouter_embed import (
-    EmbeddingCostTracker,
-    EmbeddingResult,
-    OpenRouterEmbeddingClient,
-)
+from .openrouter_embed import EmbeddingResult
 
 
 class EmbeddingBackendError(Exception):
@@ -51,11 +44,9 @@ class EmbeddingBackendError(Exception):
 class Encoder:
     """Load a sentence transformer model and produce embeddings with optional caching.
 
-    Fallback chain for remote backend:
-      remote (login GPU server) → local (CPU) → openrouter (cloud API)
-
-    Explicit local or openrouter backends have no fallback.
-    The remote client has built-in retry logic for transient connection failures.
+    No silent fallback: if the configured backend is unavailable, an error is
+    raised immediately. This prevents mixing embeddings from different models
+    which would corrupt vector indexes.
     """
 
     # Class-level: track which remote URLs have already logged validation
@@ -65,7 +56,6 @@ class Encoder:
     def __init__(
         self,
         config: EncoderConfig | None = None,
-        cost_tracker: EmbeddingCostTracker | None = None,
     ):
         self.config = config or EncoderConfig()
         self.logger = logging.getLogger(__name__)
@@ -74,15 +64,8 @@ class Encoder:
         self._cache_path: Path | None = None
         self._lock = threading.RLock()
         self._remote_client: RemoteEmbeddingClient | None = None
-        self._openrouter_client: OpenRouterEmbeddingClient | None = None
         self._backend_validated: bool = False
-        self._fallback_warned: bool = False
-        self._using_fallback: bool = False
-        self._fallback_backend: str | None = None  # "local" or "openrouter"
         self._remote_hostname: str | None = None
-
-        # Cost tracking for OpenRouter backend
-        self.cost_tracker = cost_tracker or EmbeddingCostTracker()
 
         # Initialize based on backend selection
         self._initialize_backend()
@@ -100,24 +83,8 @@ class Encoder:
                     "Set IMAS_CODEX_EMBED_REMOTE_URL or embed-remote-url in pyproject.toml."
                 )
             self._remote_client = RemoteEmbeddingClient(self.config.remote_url)
-            # Prepare fallback backends for remote:
-            #   remote (login GPU) → local (CPU) → openrouter (cloud API)
-            self._openrouter_client = OpenRouterEmbeddingClient(
-                model_name=self.config.model_name,
-            )
-            # Validate remote on first use (lazy), but eagerly fetch hostname
-            # for progress display source resolution.
+            # Eagerly fetch hostname for progress display source resolution.
             self._fetch_remote_hostname()
-        elif backend == EmbeddingBackend.OPENROUTER:
-            # Direct OpenRouter mode (no remote fallback)
-            self._openrouter_client = OpenRouterEmbeddingClient(
-                model_name=self.config.model_name,
-            )
-            if not self._openrouter_client.is_available():
-                raise EmbeddingBackendError(
-                    "OpenRouter backend selected but API key not configured. "
-                    "Set OPENROUTER_API_KEY or OPENAI_API_KEY environment variable."
-                )
         else:
             raise EmbeddingBackendError(f"Unknown backend: {backend}")
 
@@ -173,8 +140,8 @@ class Encoder:
     def _validate_remote_backend(self) -> None:
         """Validate remote backend is available and model matches.
 
-        Checks server health with retries. If unavailable, falls back
-        through: local (CPU) → openrouter (cloud API).
+        Checks server health with retries. Raises EmbeddingBackendError
+        if the server is unavailable — no silent fallback.
         """
         if self._backend_validated:
             return
@@ -194,23 +161,12 @@ class Encoder:
             if attempt < 2:
                 time.sleep(1.0 + attempt)
         else:
-            # Remote unavailable - try fallback chain: local → openrouter
-            self.logger.warning(
-                "Remote embedding server not available at %s. %s",
-                self.config.remote_url,
-                last_error,
-            )
-            if self._try_local_fallback():
-                return
-            if self._try_openrouter_fallback():
-                return
             raise EmbeddingBackendError(
                 f"Remote embedding server not available at {self.config.remote_url}. "
-                f"{last_error}. "
-                "Fallback to local and OpenRouter also failed.\n"
+                f"{last_error}.\n"
                 "Ensure SSH tunnel is active: ssh -f -N -L 18765:127.0.0.1:18765 iter\n"
                 "Start server on ITER: imas-codex serve embed start --gpu 1\n"
-                "Or set OPENROUTER_API_KEY for cloud fallback."
+                "Check server health: curl http://localhost:18765/health"
             )
 
         info = self._remote_client.get_info()
@@ -256,141 +212,6 @@ class Encoder:
             )
         self._backend_validated = True
 
-    def _try_local_fallback(self) -> bool:
-        """Attempt to use local SentenceTransformer as fallback for remote backend.
-
-        **Refuses CPU fallback on login nodes** to prevent destroying shared
-        resources.  CPU embedding of 19k+ texts uses 124% CPU / 21 GB RAM on
-        a 16-core login node shared by dozens of users.
-
-        Only allows CPU fallback when running inside a SLURM job (detected via
-        ``SLURM_JOB_ID`` env var) where we have dedicated compute resources,
-        or when ``IMAS_CODEX_ALLOW_CPU_FALLBACK=1`` is explicitly set.
-
-        Returns:
-            True if local model is available and loaded successfully
-        """
-        import os
-
-        allow_cpu = os.environ.get("IMAS_CODEX_ALLOW_CPU_FALLBACK", "") == "1"
-        in_slurm = bool(os.environ.get("SLURM_JOB_ID"))
-
-        if not (allow_cpu or in_slurm):
-            self.logger.error(
-                "Remote GPU server failed. Refusing to fall back to CPU "
-                "embedding on the login node — this would consume 124%% CPU "
-                "and 21 GB RAM on shared infrastructure.\n"
-                "Options:\n"
-                "  1. Restart the embedding server: "
-                "imas-codex serve embed service restart\n"
-                "  2. Run from a SLURM job: "
-                "imas-codex hpc run -- imas-codex imas build\n"
-                "  3. Force CPU fallback: "
-                "IMAS_CODEX_ALLOW_CPU_FALLBACK=1 imas-codex imas build"
-            )
-            return False
-
-        try:
-            # Force CPU to avoid loading onto a shared GPU
-            self.config.device = "cpu"
-            self._load_model()
-            where = "SLURM compute node" if in_slurm else "login node (forced)"
-            self.logger.warning(
-                "Remote embedding server unavailable. "
-                "Falling back to local CPU embedding on %s. "
-                "This will be slower than GPU.",
-                where,
-            )
-            self._using_fallback = True
-            self._fallback_backend = "local"
-            self._backend_validated = True
-            return True
-        except Exception as e:
-            self.logger.debug("Local fallback unavailable: %s", e)
-            return False
-
-    def _try_openrouter_fallback(self) -> bool:
-        """Attempt to use OpenRouter as final fallback for remote backend.
-
-        Used as last resort when both remote (GPU server) and local (CPU)
-        backends are unavailable.
-
-        Returns:
-            True if fallback is available and configured
-        """
-        if not self._openrouter_client:
-            return False
-
-        if not self._openrouter_client.is_available():
-            return False
-
-        # Warn once on first fallback
-        if not self._fallback_warned:
-            self.logger.warning(
-                "Remote and local embedding unavailable. "
-                f"Falling back to OpenRouter API ({self._openrouter_client.model_name}). "
-                "Costs will be tracked."
-            )
-            self._fallback_warned = True
-
-        self._using_fallback = True
-        self._fallback_backend = "openrouter"
-        self._backend_validated = True
-        return True
-
-    def _embed_via_openrouter(self, texts: list[str]) -> np.ndarray:
-        """Embed texts using OpenRouter fallback with cost tracking.
-
-        Args:
-            texts: List of texts to embed
-
-        Returns:
-            Numpy array of embeddings
-
-        Raises:
-            EmbeddingBackendError: If OpenRouter unavailable or fails
-        """
-        if not self._openrouter_client:
-            raise EmbeddingBackendError("OpenRouter client not initialized")
-
-        result = self._openrouter_client.embed_with_cost(
-            texts,
-            normalize=self.config.normalize_embeddings,
-            cost_tracker=self.cost_tracker,
-        )
-        return result.embeddings
-
-    def _embed_via_fallback(self, texts: list[str], **kwargs) -> np.ndarray:
-        """Embed texts using the active fallback backend (local or openrouter).
-
-        Args:
-            texts: List of texts to embed
-
-        Returns:
-            Numpy array of embeddings
-
-        Raises:
-            EmbeddingBackendError: If fallback backend fails
-        """
-        if self._fallback_backend == "local":
-            model = self.get_model()
-            # truncate_dim is set on the model at init, so ST handles
-            # truncation before normalization (correct Matryoshka ordering).
-            encode_kwargs = {
-                "convert_to_numpy": True,
-                "normalize_embeddings": self.config.normalize_embeddings,
-                "batch_size": self.config.batch_size,
-                "show_progress_bar": False,
-                **kwargs,
-            }
-            return model.encode(texts, **encode_kwargs)
-        elif self._fallback_backend == "openrouter":
-            return self._embed_via_openrouter(texts)
-        else:
-            raise EmbeddingBackendError(
-                f"Unknown fallback backend: {self._fallback_backend}"
-            )
-
     def _truncate_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
         """Truncate embeddings from a remote server to configured dimension.
 
@@ -416,25 +237,15 @@ class Encoder:
         return truncated / norms
 
     @property
-    def is_using_fallback(self) -> bool:
-        """Check if currently using OpenRouter fallback."""
-        return self._using_fallback
-
-    @property
     def current_source(self) -> str:
         """Get current embedding source identifier.
 
         Returns:
-            'local', 'remote', 'openrouter', or host-specific
-            like 'iter-login' or 'iter-titan'
+            'local', 'remote', or host-specific like 'iter-login' or 'iter-titan'
         """
-        if self._using_fallback:
-            return self._fallback_backend or "fallback"
         backend = self.config.backend or EmbeddingBackend.LOCAL
         if backend == EmbeddingBackend.REMOTE:
             return self._resolve_remote_source()
-        elif backend == EmbeddingBackend.OPENROUTER:
-            return "openrouter"
         return "local"
 
     def _resolve_remote_source(self) -> str:
@@ -451,11 +262,6 @@ class Encoder:
         # Generic: strip domain, use short hostname
         short = hn.split(".")[0]
         return f"iter-{short}" if "iter" in hn.lower() or "98dci4" in hn else short
-
-    @property
-    def cost_summary(self) -> str:
-        """Get human-readable cost summary for OpenRouter usage."""
-        return self.cost_tracker.summary()
 
     def build_document_embeddings(
         self,
@@ -492,11 +298,10 @@ class Encoder:
     def embed_texts(self, texts: list[str], **kwargs) -> np.ndarray:
         """Embed ad-hoc texts (no caching).
 
-        Uses the configured backend. For remote backend, falls back through:
-          remote (login GPU) → local (CPU) → openrouter (cloud API)
+        Uses the configured backend (local or remote).
 
         Raises:
-            EmbeddingBackendError: If all backends are unavailable.
+            EmbeddingBackendError: If the backend is unavailable.
         """
         backend = self.config.backend or EmbeddingBackend.LOCAL
 
@@ -504,29 +309,10 @@ class Encoder:
             with self._lock:
                 self._validate_remote_backend()
 
-            # If validation activated a fallback, route through it
-            if self._using_fallback:
-                return self._embed_via_fallback(texts, **kwargs)
-
-            try:
-                embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                    texts, normalize=self.config.normalize_embeddings
-                )
-                return self._truncate_embeddings(embeddings)
-            except (ConnectionError, RuntimeError) as e:
-                # Remote failed at runtime - try fallback chain
-                self.logger.warning("Remote embedding failed: %s", e)
-                if self._try_local_fallback():
-                    return self._embed_via_fallback(texts, **kwargs)
-                if self._try_openrouter_fallback():
-                    return self._embed_via_fallback(texts, **kwargs)
-                raise EmbeddingBackendError(
-                    f"Remote embedding failed: {e}. "
-                    "Fallback to local and OpenRouter also failed."
-                ) from e
-
-        elif backend == EmbeddingBackend.OPENROUTER:
-            return self._embed_via_openrouter(texts)
+            embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                texts, normalize=self.config.normalize_embeddings
+            )
+            return self._truncate_embeddings(embeddings)
 
         # Local backend — truncate_dim set on model at init
         model = self.get_model()
@@ -540,17 +326,15 @@ class Encoder:
         return model.encode(texts, **encode_kwargs)
 
     def embed_texts_with_result(self, texts: list[str], **kwargs) -> EmbeddingResult:
-        """Embed ad-hoc texts and return result with source and cost tracking.
+        """Embed ad-hoc texts and return result with source tracking.
 
         Returns EmbeddingResult with:
-        - source: "local", "remote", or "openrouter"
-        - cost_usd: 0.0 for local/remote, actual cost for openrouter
-        - total_tokens: 0 for local/remote, actual tokens for openrouter
-
-        Uses the configured backend with transparent fallback for remote.
+        - source: "local" or "remote"
+        - cost_usd: always 0.0 (local/remote are free)
+        - total_tokens: always 0
 
         Raises:
-            EmbeddingBackendError: If all backends are unavailable.
+            EmbeddingBackendError: If the backend is unavailable.
         """
         if not texts:
             return EmbeddingResult(
@@ -569,60 +353,19 @@ class Encoder:
             with self._lock:
                 self._validate_remote_backend()
 
-            # If validation activated a fallback, route through it
-            if self._using_fallback:
-                embeddings = self._embed_via_fallback(texts, **kwargs)
-                elapsed = time.time() - start
-                source = self._fallback_backend or "fallback"
-                cost = 0.0
-                tokens = 0
-                if source == "openrouter":
-                    # Cost tracked via cost_tracker, report last batch
-                    pass
-                return EmbeddingResult(
-                    embeddings=embeddings,
-                    total_tokens=tokens,
-                    cost_usd=cost,
-                    model=self.config.model_name,
-                    elapsed_seconds=elapsed,
-                    source=source,
-                )
-
-            try:
-                embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                    texts, normalize=self.config.normalize_embeddings
-                )
-                embeddings = self._truncate_embeddings(embeddings)
-                elapsed = time.time() - start
-                return EmbeddingResult(
-                    embeddings=embeddings,
-                    total_tokens=0,
-                    cost_usd=0.0,
-                    model=self.config.model_name,
-                    elapsed_seconds=elapsed,
-                    source="remote",
-                )
-            except (ConnectionError, RuntimeError) as e:
-                # Remote failed at runtime - try fallback chain
-                self.logger.warning("Remote embedding failed: %s", e)
-                if self._try_local_fallback() or self._try_openrouter_fallback():
-                    embeddings = self._embed_via_fallback(texts, **kwargs)
-                    elapsed = time.time() - start
-                    return EmbeddingResult(
-                        embeddings=embeddings,
-                        total_tokens=0,
-                        cost_usd=0.0,
-                        model=self.config.model_name,
-                        elapsed_seconds=elapsed,
-                        source=self._fallback_backend or "fallback",
-                    )
-                raise EmbeddingBackendError(
-                    f"Remote embedding failed: {e}. "
-                    "Fallback to local and OpenRouter also failed."
-                ) from e
-
-        elif backend == EmbeddingBackend.OPENROUTER:
-            return self._embed_via_openrouter_with_result(texts)
+            embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                texts, normalize=self.config.normalize_embeddings
+            )
+            embeddings = self._truncate_embeddings(embeddings)
+            elapsed = time.time() - start
+            return EmbeddingResult(
+                embeddings=embeddings,
+                total_tokens=0,
+                cost_usd=0.0,
+                model=self.config.model_name,
+                elapsed_seconds=elapsed,
+                source=self._resolve_remote_source(),
+            )
 
         # Local backend — truncate_dim set on model at init
         model = self.get_model()
@@ -643,28 +386,6 @@ class Encoder:
             elapsed_seconds=elapsed,
             source="local",
         )
-
-    def _embed_via_openrouter_with_result(self, texts: list[str]) -> EmbeddingResult:
-        """Embed texts using OpenRouter with full result and cost tracking.
-
-        Args:
-            texts: List of texts to embed
-
-        Returns:
-            EmbeddingResult with embeddings, actual cost, and source="openrouter"
-
-        Raises:
-            EmbeddingBackendError: If OpenRouter unavailable or fails
-        """
-        if not self._openrouter_client:
-            raise EmbeddingBackendError("OpenRouter client not initialized")
-
-        result = self._openrouter_client.embed_with_cost(
-            texts,
-            normalize=self.config.normalize_embeddings,
-            cost_tracker=self.cost_tracker,
-        )
-        return result
 
     @property
     def is_using_remote(self) -> bool:
@@ -869,59 +590,23 @@ class Encoder:
         return str(self._model.device)
 
     def _generate_embeddings(self, texts: list[str]) -> np.ndarray:
-        """Generate embeddings for texts using configured backend."""
+        """Generate embeddings for texts using configured backend.
+
+        Raises:
+            EmbeddingBackendError: If the configured backend is unavailable.
+        """
         backend = self.config.backend or EmbeddingBackend.LOCAL
 
         if backend == EmbeddingBackend.REMOTE:
             self._validate_remote_backend()
 
-            # If validation activated a fallback, route through it
-            if self._using_fallback:
-                self.logger.debug(
-                    "Generating embeddings via %s fallback for %d texts...",
-                    self._fallback_backend,
-                    len(texts),
-                )
-                embeddings = self._embed_via_fallback(texts)
-                if self.config.use_half_precision:
-                    embeddings = embeddings.astype(np.float16)
-                self.logger.debug(
-                    f"Generated embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}"
-                )
-                return embeddings
-
-            try:
-                self.logger.debug(
-                    f"Generating embeddings remotely for {len(texts)} texts..."
-                )
-                embeddings = self._remote_client.embed(  # type: ignore[union-attr]
-                    texts, normalize=self.config.normalize_embeddings
-                )
-                embeddings = self._truncate_embeddings(embeddings)
-                if self.config.use_half_precision:
-                    embeddings = embeddings.astype(np.float16)
-                self.logger.debug(
-                    f"Generated embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}"
-                )
-                return embeddings
-            except (ConnectionError, RuntimeError) as e:
-                # Remote failed at runtime - try fallback chain
-                self.logger.warning("Remote embedding failed: %s", e)
-                if self._try_local_fallback() or self._try_openrouter_fallback():
-                    embeddings = self._embed_via_fallback(texts)
-                    if self.config.use_half_precision:
-                        embeddings = embeddings.astype(np.float16)
-                    return embeddings
-                raise EmbeddingBackendError(
-                    f"Remote embedding failed: {e}. "
-                    "Fallback to local and OpenRouter also failed."
-                ) from e
-
-        elif backend == EmbeddingBackend.OPENROUTER:
             self.logger.debug(
-                f"Generating embeddings via OpenRouter for {len(texts)} texts..."
+                f"Generating embeddings remotely for {len(texts)} texts..."
             )
-            embeddings = self._embed_via_openrouter(texts)
+            embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                texts, normalize=self.config.normalize_embeddings
+            )
+            embeddings = self._truncate_embeddings(embeddings)
             if self.config.use_half_precision:
                 embeddings = embeddings.astype(np.float16)
             self.logger.debug(

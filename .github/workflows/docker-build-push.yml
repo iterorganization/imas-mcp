@@ -38,8 +38,8 @@ jobs:
         run: |
           # Extract imas-embedding-model from pyproject.toml [tool.imas-codex] section
           MODEL=$(grep -A10 '\[tool.imas-codex\]' pyproject.toml | grep 'imas-embedding-model' | cut -d'"' -f2)
-          echo "imas_model=${MODEL:-openai/text-embedding-3-large}" >> $GITHUB_OUTPUT
-          echo "Using IMAS embedding model: ${MODEL:-openai/text-embedding-3-large}"
+          echo "imas_model=${MODEL:-Qwen/Qwen3-Embedding-0.6B}" >> $GITHUB_OUTPUT
+          echo "Using IMAS embedding model: ${MODEL:-Qwen/Qwen3-Embedding-0.6B}"
 
       - name: Extract exclusion settings from pyproject.toml
         id: exclusion-settings

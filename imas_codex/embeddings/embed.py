@@ -2,17 +2,15 @@
 
 This provides a LlamaIndex BaseEmbedding implementation that uses the Encoder
 class internally, which handles:
-- Backend selection (local, remote, openrouter)
-- Transparent fallback from remote to OpenRouter when unavailable
-- Single warning on first fallback, then silent operation
-- Cost tracking for OpenRouter usage
+- Backend selection (local or remote)
+- No silent fallback: if the configured backend is unavailable, an error is raised
 - Source tracking via get_embedding_source() for progress display
 
 Usage:
     from imas_codex.embeddings import get_embed_model, get_embedding_source
 
     embed_model = get_embed_model()  # Respects embedding-backend config
-    source = get_embedding_source()  # Returns "local", "remote", or "openrouter"
+    source = get_embedding_source()  # Returns "local" or "remote"
 """
 
 import logging
@@ -42,7 +40,7 @@ def get_embedding_source() -> str:
     """Get the current embedding source for progress display.
 
     Returns:
-        Source identifier: "local", "remote", or "openrouter"
+        Source identifier: "local" or "remote"
     """
     with _embedding_source_lock:
         return _embedding_source
@@ -58,10 +56,8 @@ def _set_embedding_source(source: str) -> None:
 class EncoderEmbedding(BaseEmbedding):
     """LlamaIndex embedding that uses Encoder internally.
 
-    This wraps the Encoder class which has all the fallback logic:
-    - For remote backend: tries remote server, falls back to OpenRouter
-    - For local backend: uses SentenceTransformer
-    - For openrouter backend: uses OpenRouter API directly
+    No silent fallback: if the configured backend (local or remote) is
+    unavailable, an error is raised immediately.
 
     The embedding source is tracked globally and can be queried via
     get_embedding_source() for progress display indicators.
@@ -138,16 +134,6 @@ class EncoderEmbedding(BaseEmbedding):
         _set_embedding_source(self._encoder.current_source)
         return result.embeddings.tolist()
 
-    @property
-    def is_using_fallback(self) -> bool:
-        """Check if currently using OpenRouter fallback."""
-        return self._encoder.is_using_fallback
-
-    @property
-    def cost_summary(self) -> str:
-        """Get cost summary for OpenRouter usage."""
-        return self._encoder.cost_summary
-
 
 # Module-level cache for embed model singleton
 _cached_embed_model: BaseEmbedding | None = None
@@ -161,13 +147,8 @@ def get_embed_model(*, cached: bool = True) -> BaseEmbedding:
             reloading the model for each ingestion call.
 
     Returns:
-        BaseEmbedding: EncoderEmbedding that handles all backend types
-        with automatic fallback for remote backend.
-
-    The returned model uses the Encoder class internally which provides:
-    - Transparent fallback from remote to OpenRouter when unavailable
-    - Cost tracking for OpenRouter usage
-    - Source tracking for progress display
+        BaseEmbedding: EncoderEmbedding that handles local and remote backends.
+        No silent fallback — if the backend is unavailable, an error is raised.
     """
     global _cached_embed_model
     if cached and _cached_embed_model is not None:

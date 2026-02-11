@@ -197,8 +197,7 @@ def get_embedding_backend() -> str:
     Backend options:
         - "local": Local CPU/GPU via SentenceTransformer
         - "remote": Remote GPU server on ITER login node via SSH tunnel
-          Fallback chain: remote (login GPU) → local (CPU) → openrouter
-        - "openrouter": OpenRouter API for cloud embeddings
+          No silent fallback — raises error if unavailable.
 
     Priority:
         1. IMAS_CODEX_EMBEDDING_BACKEND environment variable
