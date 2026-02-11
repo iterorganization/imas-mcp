@@ -428,13 +428,112 @@ class MediaWikiAdapter(WikiAdapter):
         Example API call:
         /api.php?action=query&list=allimages&ailimit=500&aiprop=url|size|mime&format=json
         """
-        if self.wiki_client:
+        if self.session:
+            return self._discover_artifacts_via_session(facility, base_url, on_progress)
+        elif self.wiki_client:
             return self._discover_artifacts_http(facility, base_url, on_progress)
         elif self.ssh_host:
             return self._discover_artifacts_ssh(facility, base_url, on_progress)
         else:
             logger.warning("No SSH host or wiki client configured")
             return []
+
+    def _discover_artifacts_via_session(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Discover artifacts via pre-authenticated session (Keycloak, Basic auth).
+
+        Uses the same allimages API + fileusage enrichment as the wiki_client
+        path, but with the pre-authenticated requests.Session directly.
+        """
+        if not self.session:
+            return []
+
+        artifacts: list[DiscoveredArtifact] = []
+
+        # Find working API URL
+        parsed = urllib.parse.urlparse(base_url)
+        api_candidates = [f"{base_url}/api.php"]
+        root_api = f"{parsed.scheme}://{parsed.netloc}/api.php"
+        if root_api != api_candidates[0]:
+            api_candidates.append(root_api)
+
+        api_url = None
+        for candidate in api_candidates:
+            try:
+                probe = self.session.get(
+                    candidate,
+                    params={"action": "query", "meta": "siteinfo", "format": "json"},
+                    verify=False,
+                    timeout=15,
+                )
+                ct = probe.headers.get("content-type", "")
+                if probe.status_code == 200 and "json" in ct:
+                    api_url = candidate
+                    break
+            except Exception:
+                continue
+
+        if not api_url:
+            logger.debug(
+                "No working API URL found for session-based artifact discovery"
+            )
+            return []
+
+        params = {
+            "action": "query",
+            "list": "allimages",
+            "ailimit": 500,
+            "aiprop": "url|size|mime",
+            "format": "json",
+        }
+        continue_token = None
+        batch = 0
+
+        while True:
+            if continue_token:
+                params["aicontinue"] = continue_token
+
+            try:
+                response = self.session.get(
+                    api_url, params=params, verify=False, timeout=60
+                )
+                if response.status_code != 200:
+                    break
+
+                content_type = response.headers.get("content-type", "")
+                if "text/html" in content_type:
+                    break
+
+                data = response.json()
+                images = data.get("query", {}).get("allimages", [])
+
+                for img in images:
+                    artifact = self._parse_image_info(img, facility)
+                    if artifact:
+                        artifacts.append(artifact)
+
+                batch += 1
+                if on_progress:
+                    on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
+
+                if "continue" in data:
+                    continue_token = data["continue"].get("aicontinue")
+                else:
+                    break
+
+            except Exception as e:
+                logger.warning(f"Error during session artifact discovery: {e}")
+                break
+
+        # Enrich artifacts with page links via prop=fileusage API
+        if artifacts and api_url:
+            self._enrich_artifact_page_links_http(artifacts, api_url, on_progress)
+
+        return artifacts
 
     def _discover_artifacts_ssh(
         self,
@@ -698,7 +797,7 @@ class MediaWikiAdapter(WikiAdapter):
                 logger.warning(f"Error during HTTP artifact discovery: {e}")
                 break
 
-        # Enrich artifacts with page links via prop=images API
+        # Enrich artifacts with page links via prop=fileusage API
         if artifacts and api_url:
             self._enrich_artifact_page_links_http(artifacts, api_url, on_progress)
 
@@ -731,11 +830,11 @@ class MediaWikiAdapter(WikiAdapter):
         api_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> None:
-        """Enrich artifacts with page links via SSH using prop=images API.
+        """Enrich artifacts with page links via SSH using prop=fileusage API.
 
-        The list=allimages API returns flat file metadata with no page linkage.
-        This method queries generator=allpages with prop=images to discover
-        which pages reference each image, then populates linked_pages.
+        Queries which pages use each file by batching artifact filenames
+        into prop=fileusage requests (50 files per batch). This is
+        O(num_artifacts / 50) instead of O(all_pages * images_per_page).
 
         Args:
             artifacts: Discovered artifacts to enrich (modified in place)
@@ -753,69 +852,84 @@ class MediaWikiAdapter(WikiAdapter):
         if not artifact_by_name:
             return
 
+        # Build list of File: titles to query
+        all_filenames = sorted(artifact_by_name.keys())
+        file_titles = [f"File:{fn}" for fn in all_filenames]
+
         linked_count = 0
         batch = 0
-        continue_params: dict[str, str] = {}
+        batch_size = 50  # MediaWiki titles limit per request
 
-        while True:
-            params = {
-                "action": "query",
-                "generator": "allpages",
-                "gaplimit": "50",
-                "gapnamespace": "0",
-                "prop": "images",
-                "imlimit": "max",
-                "format": "json",
-                **continue_params,
-            }
-            param_str = "&".join(
-                f"{k}={urllib.parse.quote(str(v), safe='')}" for k, v in params.items()
-            )
-            url = f"{api_url}?{param_str}"
-            cmd = f'curl -sk "{url}"'
+        for i in range(0, len(file_titles), batch_size):
+            title_batch = file_titles[i : i + batch_size]
+            titles_param = "|".join(title_batch)
 
-            try:
-                result = subprocess.run(
-                    ["ssh", self.ssh_host, cmd],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-                if result.returncode != 0:
-                    break
+            # Use prop=fileusage to find pages that embed these files
+            continue_params: dict[str, str] = {}
 
-                stdout = result.stdout.strip()
-                if stdout.startswith("<!") or stdout.startswith("<html"):
-                    break
-
-                data = json.loads(stdout)
-            except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
-                break
-
-            pages = data.get("query", {}).get("pages", {})
-            for page_data in pages.values():
-                page_title = page_data.get("title", "")
-                for img in page_data.get("images", []):
-                    # img["title"] is "File:Filename.ext"
-                    fname = img.get("title", "").removeprefix("File:").lower()
-                    if fname in artifact_by_name:
-                        for artifact in artifact_by_name[fname]:
-                            if page_title not in artifact.linked_pages:
-                                artifact.linked_pages.append(page_title)
-                                linked_count += 1
-
-            batch += 1
-            if on_progress and batch % 10 == 0:
-                on_progress(
-                    f"enriching page links: batch {batch}, {linked_count} links", None
-                )
-
-            if "continue" in data:
-                continue_params = {
-                    k: v for k, v in data["continue"].items() if k != "continue"
+            while True:
+                params = {
+                    "action": "query",
+                    "titles": titles_param,
+                    "prop": "fileusage",
+                    "fulimit": "500",
+                    "funamespace": "0",
+                    "format": "json",
+                    **continue_params,
                 }
-            else:
-                break
+                param_str = "&".join(
+                    f"{k}={urllib.parse.quote(str(v), safe='|:')}"
+                    for k, v in params.items()
+                )
+                url = f"{api_url}?{param_str}"
+                cmd = f'curl -sk "{url}"'
+
+                try:
+                    result = subprocess.run(
+                        ["ssh", self.ssh_host, cmd],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    if result.returncode != 0:
+                        break
+
+                    stdout = result.stdout.strip()
+                    if stdout.startswith("<!") or stdout.startswith("<html"):
+                        break
+
+                    data = json.loads(stdout)
+                except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+                    break
+
+                pages = data.get("query", {}).get("pages", {})
+                for page_data in pages.values():
+                    file_title = page_data.get("title", "")
+                    fname = file_title.removeprefix("File:").lower()
+                    for usage in page_data.get("fileusage", []):
+                        page_title = usage.get("title", "")
+                        if fname in artifact_by_name and page_title:
+                            for artifact in artifact_by_name[fname]:
+                                if page_title not in artifact.linked_pages:
+                                    artifact.linked_pages.append(page_title)
+                                    linked_count += 1
+
+                batch += 1
+
+                if "continue" in data:
+                    continue_params = {
+                        k: v for k, v in data["continue"].items() if k != "continue"
+                    }
+                else:
+                    break
+
+            if on_progress and (i // batch_size) % 5 == 0:
+                on_progress(
+                    f"enriching page links: batch {i // batch_size + 1}/"
+                    f"{(len(file_titles) + batch_size - 1) // batch_size}, "
+                    f"{linked_count} links",
+                    None,
+                )
 
         logger.info(
             "Enriched %d artifact-page links across %d API batches",
@@ -829,16 +943,24 @@ class MediaWikiAdapter(WikiAdapter):
         api_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> None:
-        """Enrich artifacts with page links via HTTP using prop=images API.
+        """Enrich artifacts with page links via HTTP using prop=fileusage API.
 
-        Same logic as SSH variant but uses authenticated HTTP session.
+        Queries which pages use each file by batching artifact filenames
+        into prop=fileusage requests (50 files per batch). This is
+        O(num_artifacts / 50) instead of O(all_pages * images_per_page).
 
         Args:
             artifacts: Discovered artifacts to enrich (modified in place)
             api_url: Working MediaWiki API URL
             on_progress: Optional progress callback
         """
-        if not self.wiki_client:
+        if not self.wiki_client and not self.session:
+            return
+
+        session = self.session or (
+            self.wiki_client.session if self.wiki_client else None
+        )
+        if not session:
             return
 
         # Build case-insensitive filename -> artifact lookup
@@ -850,60 +972,74 @@ class MediaWikiAdapter(WikiAdapter):
         if not artifact_by_name:
             return
 
+        # Build list of File: titles to query
+        all_filenames = sorted(artifact_by_name.keys())
+        file_titles = [f"File:{fn}" for fn in all_filenames]
+
         linked_count = 0
         batch = 0
-        continue_params: dict[str, str] = {}
+        batch_size = 50  # MediaWiki titles limit per request
 
-        while True:
-            params: dict[str, str | int] = {
-                "action": "query",
-                "generator": "allpages",
-                "gaplimit": 50,
-                "gapnamespace": 0,
-                "prop": "images",
-                "imlimit": "max",
-                "format": "json",
-                **continue_params,
-            }
+        for i in range(0, len(file_titles), batch_size):
+            title_batch = file_titles[i : i + batch_size]
+            titles_param = "|".join(title_batch)
 
-            try:
-                response = self.wiki_client.session.get(
-                    api_url, params=params, verify=False, timeout=60
-                )
-                if response.status_code != 200:
-                    break
+            continue_params: dict[str, str] = {}
 
-                content_type = response.headers.get("content-type", "")
-                if "text/html" in content_type:
-                    break
-
-                data = response.json()
-            except Exception:
-                break
-
-            pages = data.get("query", {}).get("pages", {})
-            for page_data in pages.values():
-                page_title = page_data.get("title", "")
-                for img in page_data.get("images", []):
-                    fname = img.get("title", "").removeprefix("File:").lower()
-                    if fname in artifact_by_name:
-                        for artifact in artifact_by_name[fname]:
-                            if page_title not in artifact.linked_pages:
-                                artifact.linked_pages.append(page_title)
-                                linked_count += 1
-
-            batch += 1
-            if on_progress and batch % 10 == 0:
-                on_progress(
-                    f"enriching page links: batch {batch}, {linked_count} links", None
-                )
-
-            if "continue" in data:
-                continue_params = {
-                    k: v for k, v in data["continue"].items() if k != "continue"
+            while True:
+                params: dict[str, str | int] = {
+                    "action": "query",
+                    "titles": titles_param,
+                    "prop": "fileusage",
+                    "fulimit": 500,
+                    "funamespace": 0,
+                    "format": "json",
+                    **continue_params,
                 }
-            else:
-                break
+
+                try:
+                    response = session.get(
+                        api_url, params=params, verify=False, timeout=60
+                    )
+                    if response.status_code != 200:
+                        break
+
+                    content_type = response.headers.get("content-type", "")
+                    if "text/html" in content_type:
+                        break
+
+                    data = response.json()
+                except Exception:
+                    break
+
+                pages = data.get("query", {}).get("pages", {})
+                for page_data in pages.values():
+                    file_title = page_data.get("title", "")
+                    fname = file_title.removeprefix("File:").lower()
+                    for usage in page_data.get("fileusage", []):
+                        page_title = usage.get("title", "")
+                        if fname in artifact_by_name and page_title:
+                            for artifact in artifact_by_name[fname]:
+                                if page_title not in artifact.linked_pages:
+                                    artifact.linked_pages.append(page_title)
+                                    linked_count += 1
+
+                batch += 1
+
+                if "continue" in data:
+                    continue_params = {
+                        k: v for k, v in data["continue"].items() if k != "continue"
+                    }
+                else:
+                    break
+
+            if on_progress and (i // batch_size) % 5 == 0:
+                on_progress(
+                    f"enriching page links: batch {i // batch_size + 1}/"
+                    f"{(len(file_titles) + batch_size - 1) // batch_size}, "
+                    f"{linked_count} links",
+                    None,
+                )
 
         logger.info(
             "Enriched %d artifact-page links across %d API batches",
@@ -2079,12 +2215,16 @@ class StaticHtmlAdapter(WikiAdapter):
 
     site_type = "static_html"
 
+    # Maximum pages to crawl before stopping (safety limit for large sites)
+    DEFAULT_MAX_PAGES = 500
+
     def __init__(
         self,
         base_url: str | None = None,
         exclude_prefixes: list[str] | None = None,
         ssh_host: str | None = None,
         access_method: str = "direct",
+        max_pages: int | None = None,
     ):
         """Initialize static HTML adapter.
 
@@ -2094,11 +2234,14 @@ class StaticHtmlAdapter(WikiAdapter):
                 (e.g., ["/twiki_html"] to avoid overlapping with a TWiki site)
             ssh_host: SSH host for proxied access (only used when access_method="vpn")
             access_method: "direct" (auth-protected) or "vpn" (requires proxy)
+            max_pages: Maximum pages to crawl (default: 500). Prevents runaway
+                BFS on large sites with many same-origin links.
         """
         self._base_url = base_url
         self._exclude_prefixes = exclude_prefixes or []
         self._ssh_host = ssh_host
         self._access_method = access_method
+        self._max_pages = max_pages or self.DEFAULT_MAX_PAGES
         self._cached_pages: list[DiscoveredPage] | None = None
 
     def bulk_discover_pages(
@@ -2160,7 +2303,7 @@ class StaticHtmlAdapter(WikiAdapter):
                 logger.info("Using SSH proxy via %s for BFS crawl", self._ssh_host)
 
         try:
-            while queue:
+            while queue and len(pages) < self._max_pages:
                 current_url = queue.pop(0)
 
                 html_text = _fetch_html(
@@ -2223,6 +2366,13 @@ class StaticHtmlAdapter(WikiAdapter):
                     on_progress(
                         f"crawled {len(pages)} pages, {len(queue)} queued", None
                     )
+
+            if len(pages) >= self._max_pages:
+                logger.info(
+                    "BFS crawl stopped at max_pages=%d (queue had %d remaining)",
+                    self._max_pages,
+                    len(queue),
+                )
 
         except Exception as e:
             logger.warning(f"Error during static HTML discovery: {e}")

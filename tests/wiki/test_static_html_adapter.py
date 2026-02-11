@@ -265,3 +265,44 @@ class TestStaticHtmlAdapterArtifactDiscovery:
         assert type_map["d.xlsx"] == "spreadsheet"
         assert type_map["e.ipynb"] == "notebook"
         assert type_map["f.h5"] == "data"
+
+
+# ---------------------------------------------------------------------------
+# StaticHtmlAdapter BFS max_pages limit
+# ---------------------------------------------------------------------------
+
+
+class TestStaticHtmlAdapterMaxPages:
+    @patch("imas_codex.discovery.wiki.adapters._fetch_html")
+    def test_bfs_respects_max_pages_limit(self, mock_fetch):
+        """BFS crawl stops after max_pages is reached."""
+        adapter = StaticHtmlAdapter(
+            base_url="https://example.org",
+            max_pages=3,
+        )
+
+        # Each page links to two more, creating exponential growth
+        def fake_fetch(url, **kwargs):
+            # Return HTML with links to other pages
+            n = len(mock_fetch.call_args_list)
+            return f"""<html>
+            <a href="page{n * 2}.html">Next</a>
+            <a href="page{n * 2 + 1}.html">Another</a>
+            </html>"""
+
+        mock_fetch.side_effect = fake_fetch
+
+        pages = adapter.bulk_discover_pages("test", "https://example.org")
+
+        # Should stop at max_pages=3
+        assert len(pages) <= 3
+
+    def test_default_max_pages_is_500(self):
+        """Default max_pages is 500."""
+        adapter = StaticHtmlAdapter(base_url="https://example.org")
+        assert adapter._max_pages == 500
+
+    def test_custom_max_pages(self):
+        """Custom max_pages is respected."""
+        adapter = StaticHtmlAdapter(base_url="https://example.org", max_pages=100)
+        assert adapter._max_pages == 100
