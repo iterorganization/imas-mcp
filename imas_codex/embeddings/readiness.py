@@ -24,16 +24,50 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import socket
 import subprocess
 import time
 
 logger = logging.getLogger(__name__)
 
+# ITER login node hostname — embedding server and Neo4j run here.
+# Compute nodes redirect localhost URLs to this host.
+ITER_LOGIN_HOST = "98dci4-srv-1001"
+
 
 def _is_on_iter() -> bool:
-    """Check if running on an ITER cluster node."""
+    """Check if running on an ITER cluster node (login or compute)."""
     return os.uname().nodename.startswith("98dci4-")
+
+
+def _is_on_iter_login() -> bool:
+    """Check if running on an ITER login node."""
+    return os.uname().nodename.startswith("98dci4-srv-")
+
+
+def _is_on_iter_compute() -> bool:
+    """Check if running on an ITER compute node.
+
+    Compute nodes have no systemd user session (no D-Bus) and cannot
+    run the embedding server locally.  Services are on the login node.
+    """
+    return os.uname().nodename.startswith("98dci4-clu-")
+
+
+def _resolve_url_for_compute(url: str) -> str:
+    """On compute nodes, redirect localhost URLs to the login node.
+
+    The embedding server runs on the login node.  When pyproject.toml
+    or env vars specify localhost, compute nodes need to reach the
+    login node instead.
+    """
+    if _is_on_iter_compute() and url:
+        resolved = re.sub(r"localhost|127\.0\.0\.1", ITER_LOGIN_HOST, url)
+        if resolved != url:
+            logger.info("Compute node: redirecting %s → %s", url, resolved)
+        return resolved
+    return url
 
 
 def _try_start_service() -> bool:
@@ -159,6 +193,9 @@ def ensure_embedding_ready(
     if not remote_url:
         return False, "Remote embedding URL not configured (embed-remote-url)"
 
+    # On compute nodes, localhost URLs must point to the login node
+    remote_url = _resolve_url_for_compute(remote_url)
+
     port = get_embed_server_port()
     client = RemoteEmbeddingClient(remote_url)
 
@@ -183,10 +220,16 @@ def ensure_embedding_ready(
                 "Or install autossh service: imas-codex serve tunnel service install"
             )
 
-    # Step 3: On ITER, try starting the systemd service
-    if on_iter:
+    # Step 3: On ITER login node, try starting the systemd service.
+    # Skip on compute nodes — no D-Bus/systemd user session there.
+    if on_iter and _is_on_iter_login():
         log("Trying to start embedding service...", "dim")
         _try_start_service()
+    elif on_iter and _is_on_iter_compute():
+        log(
+            f"On compute node — embedding server expected on {ITER_LOGIN_HOST}",
+            "dim",
+        )
 
     # Step 4: Health check with retries (server might be starting)
     deadline = time.time() + timeout

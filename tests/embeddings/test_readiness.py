@@ -44,6 +44,7 @@ class TestEnsureEmbeddingReady:
         # Should not need further steps since server is already available
         client_instance.is_available.assert_called_once()
 
+    @patch("imas_codex.embeddings.readiness._is_on_iter_login", return_value=True)
     @patch("imas_codex.embeddings.readiness._is_on_iter", return_value=True)
     @patch("imas_codex.embeddings.readiness._try_start_service", return_value=True)
     @patch("imas_codex.embeddings.client.RemoteEmbeddingClient")
@@ -53,9 +54,9 @@ class TestEnsureEmbeddingReady:
         return_value="http://localhost:18765",
     )
     def test_tries_systemd_service_on_iter(
-        self, mock_url, mock_port, mock_client, mock_start, mock_on_iter
+        self, mock_url, mock_port, mock_client, mock_start, mock_on_iter, mock_login
     ):
-        """On ITER, should try starting systemd service when server not responding."""
+        """On ITER login node, should try starting systemd service when server not responding."""
         from imas_codex.embeddings.readiness import ensure_embedding_ready
 
         # First call: not available; subsequent calls: available
@@ -281,3 +282,80 @@ class TestIsOnIter:
 
         mock_uname.return_value = MagicMock(nodename="my-workstation")
         assert _is_on_iter() is False
+
+
+class TestIsOnIterLoginAndCompute:
+    """Tests for ITER login vs compute node detection."""
+
+    @patch("os.uname")
+    def test_login_node_detected(self, mock_uname):
+        from imas_codex.embeddings.readiness import _is_on_iter_login
+
+        mock_uname.return_value = MagicMock(nodename="98dci4-srv-1001")
+        assert _is_on_iter_login() is True
+
+    @patch("os.uname")
+    def test_compute_node_not_login(self, mock_uname):
+        from imas_codex.embeddings.readiness import _is_on_iter_login
+
+        mock_uname.return_value = MagicMock(nodename="98dci4-clu-0042")
+        assert _is_on_iter_login() is False
+
+    @patch("os.uname")
+    def test_compute_node_detected(self, mock_uname):
+        from imas_codex.embeddings.readiness import _is_on_iter_compute
+
+        mock_uname.return_value = MagicMock(nodename="98dci4-clu-0042")
+        assert _is_on_iter_compute() is True
+
+    @patch("os.uname")
+    def test_login_node_not_compute(self, mock_uname):
+        from imas_codex.embeddings.readiness import _is_on_iter_compute
+
+        mock_uname.return_value = MagicMock(nodename="98dci4-srv-1001")
+        assert _is_on_iter_compute() is False
+
+    @patch("os.uname")
+    def test_workstation_not_compute(self, mock_uname):
+        from imas_codex.embeddings.readiness import _is_on_iter_compute
+
+        mock_uname.return_value = MagicMock(nodename="my-workstation")
+        assert _is_on_iter_compute() is False
+
+
+class TestResolveUrlForCompute:
+    """Tests for compute node URL redirection."""
+
+    @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=True)
+    def test_rewrites_localhost(self, mock_compute):
+        from imas_codex.embeddings.readiness import (
+            ITER_LOGIN_HOST,
+            _resolve_url_for_compute,
+        )
+
+        result = _resolve_url_for_compute("http://localhost:18765")
+        assert result == f"http://{ITER_LOGIN_HOST}:18765"
+
+    @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=True)
+    def test_rewrites_127_0_0_1(self, mock_compute):
+        from imas_codex.embeddings.readiness import (
+            ITER_LOGIN_HOST,
+            _resolve_url_for_compute,
+        )
+
+        result = _resolve_url_for_compute("http://127.0.0.1:18765")
+        assert result == f"http://{ITER_LOGIN_HOST}:18765"
+
+    @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=True)
+    def test_no_rewrite_for_remote_url(self, mock_compute):
+        from imas_codex.embeddings.readiness import _resolve_url_for_compute
+
+        url = "http://some-server:18765"
+        assert _resolve_url_for_compute(url) == url
+
+    @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=False)
+    def test_no_rewrite_off_compute(self, mock_compute):
+        from imas_codex.embeddings.readiness import _resolve_url_for_compute
+
+        url = "http://localhost:18765"
+        assert _resolve_url_for_compute(url) == url

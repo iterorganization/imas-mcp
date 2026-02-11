@@ -1316,6 +1316,7 @@ dependencies = [
     { name = "numpy" },
     { name = "openai" },
     { name = "openpyxl" },
+    { name = "pillow" },
     { name = "pint" },
     { name = "pydantic" },
     { name = "pykakasi" },
@@ -1421,6 +1422,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.3.1" },
     { name = "openai", specifier = ">=2.14.0" },
     { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "pillow", specifier = ">=11.0.0" },
     { name = "pint", specifier = ">=0.24.4,<0.25.0" },
     { name = "pydantic", specifier = ">=2.11.4,<3.0.0" },
     { name = "pykakasi", specifier = ">=2.3.0" },
@@ -4767,6 +4769,7 @@ dependencies = [
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-1-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:7fbbf409143a4fe0812a40c0b46a436030a7e1d14fe8c5234dfbe44df47f617e" },
+    { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-2-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:358bd7125cbec6e692d60618a5eec7f55a51b29e3652a849fd42af021d818023" },
     { url = "https://download.pytorch.org/whl/cpu/torch-2.10.0-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:45a1c5057629444aeb1c452c18298fa7f30f2f7aeadd4dc41f9d340980294407" },
 ]
 
