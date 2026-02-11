@@ -428,6 +428,10 @@ class TestEncoder:
 
 
 @pytest.mark.slow
+@pytest.mark.skipif(
+    not _has_sentence_transformers,
+    reason="sentence-transformers not installed",
+)
 def test_encoder_embed_texts_basic(monkeypatch):
     """Integration test: embed texts with local backend."""
     monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
@@ -441,6 +445,10 @@ def test_encoder_embed_texts_basic(monkeypatch):
 
 
 @pytest.mark.slow
+@pytest.mark.skipif(
+    not _has_sentence_transformers,
+    reason="sentence-transformers not installed",
+)
 def test_encoder_build_document_embeddings_cache_integration(tmp_path, monkeypatch):
     """Integration test: build and cache embeddings with local backend."""
     monkeypatch.setattr(EncoderConfig, "cache_dir", "embeddings_test")

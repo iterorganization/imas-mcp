@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import field
+from dataclasses import dataclass, field
 from typing import Any
 
 from imas_codex.discovery.base.progress import WorkerStats
@@ -25,6 +25,7 @@ def _get_graph_ops():
     return graph_ops
 
 
+@dataclass
 class WikiDiscoveryState:
     """Shared state for parallel wiki discovery."""
 
