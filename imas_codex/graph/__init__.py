@@ -10,10 +10,18 @@ For query-only usage, import just GraphClient:
 
 For schema operations (admin, build scripts), import schema utilities:
     from imas_codex.graph import get_schema, GraphSchema
+
+Auto-regenerates models if schemas are newer than models.py (dev installs only).
 """
 
-from imas_codex.graph.client import GraphClient
-from imas_codex.graph.models import (
+# Must run before importing models — regenerates if stale
+from imas_codex.graph._ensure_models import ensure_models_fresh as _ensure_fresh
+
+_ensure_fresh()
+del _ensure_fresh
+
+from imas_codex.graph.client import GraphClient  # noqa: E402
+from imas_codex.graph.models import (  # noqa: E402
     AnalysisCode,
     AnalysisCodeType,
     Diagnostic,
@@ -29,7 +37,7 @@ from imas_codex.graph.models import (
     TreeNode,
     TreeNodeType,
 )
-from imas_codex.graph.schema import (
+from imas_codex.graph.schema import (  # noqa: E402
     GraphSchema,
     Relationship,
     get_schema,
