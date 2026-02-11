@@ -8,14 +8,29 @@
 [Unit]
 Description=Neo4j Graph Database (IMAS Codex)
 After=network.target
+# Limit restart attempts: 5 in 10 minutes, then stop trying
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=simple
 
-# Cleanup stale locks and orphaned processes before starting
+# 1. Kill orphaned Apptainer/Neo4j processes
 ExecStartPre=-/bin/bash -c 'pkill -9 -f "neo4j_2025.*community.sif" 2>/dev/null || true'
-ExecStartPre=-/bin/bash -c 'rm -f %h/.local/share/imas-codex/neo4j/data/databases/store_lock %h/.local/share/imas-codex/neo4j/data/databases/*/database_lock 2>/dev/null || true'
-ExecStartPre=-/bin/bash -c 'sleep 2'
+ExecStartPre=-/bin/bash -c 'sleep 3'
+# 2. Break GPFS/NFS stale file locks via copy-replace on neostore files
+#    On networked filesystems, POSIX locks can survive process death.
+#    Replacing the inode releases the stale lock.
+ExecStartPre=-/bin/bash -c '\
+  DATA=%h/.local/share/imas-codex/neo4j/data/databases; \
+  for db in system neo4j; do \
+    for f in "$DATA/$db"/neostore*; do \
+      [ -f "$f" ] || continue; \
+      cp "$f" "${f}.unlock" && mv -f "${f}.unlock" "$f"; \
+    done; \
+  done; \
+  rm -f "$DATA"/store_lock "$DATA"/*/database_lock 2>/dev/null; \
+  echo "GPFS lock cleanup complete"'
 
 ExecStart=/usr/bin/apptainer exec \
     --bind %h/.local/share/imas-codex/neo4j/data:/data \
