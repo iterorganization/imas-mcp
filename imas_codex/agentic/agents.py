@@ -75,6 +75,7 @@ def _load_model_config() -> dict[str, str]:
                 "enrichment": models.get("enrichment", DEFAULT_MODEL),
                 "exploration": models.get("exploration", DEFAULT_MODEL),
                 "score": models.get("score", DEFAULT_MODEL),
+                "captioning": models.get("captioning", DEFAULT_MODEL),
                 "presets": models.get("presets", {}),
             }
     except Exception:
@@ -86,6 +87,7 @@ def _load_model_config() -> dict[str, str]:
         "enrichment": DEFAULT_MODEL,
         "exploration": DEFAULT_MODEL,
         "score": DEFAULT_MODEL,
+        "captioning": DEFAULT_MODEL,
         "presets": {},
     }
 

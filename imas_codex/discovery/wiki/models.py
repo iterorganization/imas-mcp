@@ -29,6 +29,9 @@ __all__ = [
     "ArtifactScoreBatch",
     "grounded_artifact_score",
     "ScoredArtifact",
+    # Image captioning
+    "ImageCaptionResult",
+    "ImageCaptionBatch",
 ]
 
 
@@ -607,3 +610,49 @@ class ScoredArtifact:
             "skip_reason": self.skip_reason,
             "score_cost": self.score_cost,
         }
+
+
+# ============================================================================
+# Image Captioning Pydantic Models (VLM Structured Output)
+# ============================================================================
+
+
+class ImageCaptionResult(BaseModel):
+    """VLM captioning result for a single image.
+
+    This Pydantic model is passed to LiteLLM's response_format parameter
+    to ensure structured, parseable output from the VLM.
+
+    The VLM receives the image bytes + context (page_title, section,
+    surrounding_text) and returns a fusion-domain-aware caption.
+    """
+
+    id: str = Field(description="The image ID (echo from input)")
+
+    caption: str = Field(
+        description="Detailed physics-aware description of image content. "
+        "Include specific quantities, diagnostics, tree paths, conventions. "
+        "Describe what the image shows in fusion physics terms, not visual appearance."
+    )
+
+    ocr_text: str = Field(
+        default="",
+        description="All visible text in the image: axis labels, legends, titles, "
+        "MDSplus paths, parameter values. Empty string if no text visible.",
+    )
+
+    physics_domain: PhysicsDomain = Field(
+        default=PhysicsDomain.GENERAL,
+        description="Primary physics domain (use 'general' if ambiguous)",
+    )
+
+
+class ImageCaptionBatch(BaseModel):
+    """Batch of image captioning results from VLM.
+
+    This is the top-level model passed to LiteLLM's response_format.
+    """
+
+    results: list[ImageCaptionResult] = Field(
+        description="List of captioning results, one per input image, in order"
+    )

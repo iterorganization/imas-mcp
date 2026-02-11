@@ -688,6 +688,19 @@ def _provide_artifact_scoring_schema() -> dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
+def _provide_image_caption_schema() -> dict[str, Any]:
+    """Provide ImageCaptionBatch Pydantic schema for VLM prompts."""
+    from imas_codex.discovery.wiki.models import ImageCaptionBatch, ImageCaptionResult
+
+    return {
+        "image_caption_schema_example": get_pydantic_schema_json(ImageCaptionBatch),
+        "image_caption_schema_fields": get_pydantic_schema_description(
+            ImageCaptionResult
+        ),
+    }
+
+
+@lru_cache(maxsize=1)
 def _provide_signal_enrichment_schema() -> dict[str, Any]:
     """Provide SignalEnrichmentBatch Pydantic schema for LLM prompts.
 
@@ -723,6 +736,8 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "wiki_score_dimensions": _provide_wiki_score_dimensions,
     "wiki_scoring_schema": _provide_wiki_scoring_schema,
     "artifact_scoring_schema": _provide_artifact_scoring_schema,
+    # Image captioning
+    "image_caption_schema": _provide_image_caption_schema,
     # Signal enrichment
     "signal_enrichment_schema": _provide_signal_enrichment_schema,
 }
@@ -755,6 +770,10 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "wiki_page_purposes",
         "wiki_score_dimensions",
         "artifact_scoring_schema",
+        "physics_domains",
+    ],
+    "wiki/image-captioner": [
+        "image_caption_schema",
         "physics_domains",
     ],
 }
