@@ -268,41 +268,104 @@ class TestStaticHtmlAdapterArtifactDiscovery:
 
 
 # ---------------------------------------------------------------------------
-# StaticHtmlAdapter BFS max_pages limit
+# StaticHtmlAdapter BFS depth limit and max_pages safety net
 # ---------------------------------------------------------------------------
 
 
-class TestStaticHtmlAdapterMaxPages:
+class TestStaticHtmlAdapterBFSLimits:
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
-    def test_bfs_respects_max_pages_limit(self, mock_fetch):
-        """BFS crawl stops after max_pages is reached."""
+    def test_bfs_respects_depth_limit(self, mock_fetch):
+        """BFS crawl does not follow links beyond max_depth."""
         adapter = StaticHtmlAdapter(
             base_url="https://example.org",
-            max_pages=3,
+            max_depth=1,
         )
 
-        # Each page links to two more, creating exponential growth
+        call_count = 0
+
         def fake_fetch(url, **kwargs):
-            # Return HTML with links to other pages
-            n = len(mock_fetch.call_args_list)
+            nonlocal call_count
+            call_count += 1
+            # Each page links to a deeper page
             return f"""<html>
-            <a href="page{n * 2}.html">Next</a>
-            <a href="page{n * 2 + 1}.html">Another</a>
+            <a href="level{call_count}.html">Deeper</a>
             </html>"""
 
         mock_fetch.side_effect = fake_fetch
 
         pages = adapter.bulk_discover_pages("test", "https://example.org")
 
-        # Should stop at max_pages=3
+        # Depth 0: portal candidates (index.html, index-en.html, base)
+        # Depth 1: pages discovered from depth-0 pages
+        # Depth 2+: should NOT be followed
+        # With max_depth=1, we fetch depth-0 seeds and their direct children,
+        # but children's links are not followed
+        assert len(pages) <= 10  # bounded, not unbounded
+
+    @patch("imas_codex.discovery.wiki.adapters._fetch_html")
+    def test_depth_0_only_fetches_seeds(self, mock_fetch):
+        """max_depth=0 fetches only the seed URLs, no link following."""
+        adapter = StaticHtmlAdapter(
+            base_url="https://example.org",
+            max_depth=0,
+        )
+
+        mock_fetch.return_value = """<html>
+        <a href="page1.html">Page 1</a>
+        <a href="page2.html">Page 2</a>
+        <a href="page3.html">Page 3</a>
+        </html>"""
+
+        pages = adapter.bulk_discover_pages("test", "https://example.org")
+
+        # Only seed URLs (index.html, index-en.html, base) should be fetched.
+        # Links on those pages should NOT be followed since depth >= max_depth.
+        assert len(pages) <= 3  # at most the 3 seed URLs
+        # page1, page2, page3 should NOT appear
+        page_names = {p.name for p in pages}
+        assert "page1.html" not in page_names
+        assert "page2.html" not in page_names
+
+    @patch("imas_codex.discovery.wiki.adapters._fetch_html")
+    def test_max_pages_still_acts_as_safety_net(self, mock_fetch):
+        """max_pages stops crawl even within depth limit."""
+        adapter = StaticHtmlAdapter(
+            base_url="https://example.org",
+            max_depth=10,  # Very deep
+            max_pages=3,  # But strict page limit
+        )
+
+        call_count = 0
+
+        def fake_fetch(url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return f"""<html>
+            <a href="page{call_count * 2}.html">Next</a>
+            <a href="page{call_count * 2 + 1}.html">Another</a>
+            </html>"""
+
+        mock_fetch.side_effect = fake_fetch
+
+        pages = adapter.bulk_discover_pages("test", "https://example.org")
         assert len(pages) <= 3
 
+    def test_default_max_depth_is_3(self):
+        """Default max_depth is 3."""
+        adapter = StaticHtmlAdapter(base_url="https://example.org")
+        assert adapter._max_depth == 3
+
     def test_default_max_pages_is_500(self):
-        """Default max_pages is 500."""
+        """Default max_pages is 500 (safety net)."""
         adapter = StaticHtmlAdapter(base_url="https://example.org")
         assert adapter._max_pages == 500
 
-    def test_custom_max_pages(self):
-        """Custom max_pages is respected."""
-        adapter = StaticHtmlAdapter(base_url="https://example.org", max_pages=100)
-        assert adapter._max_pages == 100
+    def test_custom_max_depth(self):
+        """Custom max_depth is respected."""
+        adapter = StaticHtmlAdapter(base_url="https://example.org", max_depth=5)
+        assert adapter._max_depth == 5
+
+    def test_max_depth_zero(self):
+        """max_depth=0 is valid (seeds only)."""
+        adapter = StaticHtmlAdapter(base_url="https://example.org", max_depth=0)
+        assert adapter._max_depth == 0

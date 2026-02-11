@@ -2215,7 +2215,9 @@ class StaticHtmlAdapter(WikiAdapter):
 
     site_type = "static_html"
 
-    # Maximum pages to crawl before stopping (safety limit for large sites)
+    # Depth limit for BFS crawl (primary control)
+    DEFAULT_MAX_DEPTH = 3
+    # Maximum pages to crawl (secondary safety net)
     DEFAULT_MAX_PAGES = 500
 
     def __init__(
@@ -2224,6 +2226,7 @@ class StaticHtmlAdapter(WikiAdapter):
         exclude_prefixes: list[str] | None = None,
         ssh_host: str | None = None,
         access_method: str = "direct",
+        max_depth: int | None = None,
         max_pages: int | None = None,
     ):
         """Initialize static HTML adapter.
@@ -2234,13 +2237,18 @@ class StaticHtmlAdapter(WikiAdapter):
                 (e.g., ["/twiki_html"] to avoid overlapping with a TWiki site)
             ssh_host: SSH host for proxied access (only used when access_method="vpn")
             access_method: "direct" (auth-protected) or "vpn" (requires proxy)
-            max_pages: Maximum pages to crawl (default: 500). Prevents runaway
-                BFS on large sites with many same-origin links.
+            max_depth: Maximum BFS depth from portal page (default: 3).
+                Pages at depth 0 are seed URLs, depth 1 are directly linked
+                from seeds, etc. This is the primary crawl control — it keeps
+                discovery focused near the portal page.
+            max_pages: Maximum pages to crawl (default: 500). Secondary safety
+                net to prevent runaway BFS even within the depth limit.
         """
         self._base_url = base_url
         self._exclude_prefixes = exclude_prefixes or []
         self._ssh_host = ssh_host
         self._access_method = access_method
+        self._max_depth = max_depth if max_depth is not None else self.DEFAULT_MAX_DEPTH
         self._max_pages = max_pages or self.DEFAULT_MAX_PAGES
         self._cached_pages: list[DiscoveredPage] | None = None
 
@@ -2278,13 +2286,12 @@ class StaticHtmlAdapter(WikiAdapter):
         parsed_base = urllib.parse.urlparse(effective_base_url)
         origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
 
-        # BFS state
+        # BFS state — queue tracks (url, depth) tuples
         seen_urls: set[str] = set()
-        queue: list[str] = []
+        queue: list[tuple[str, int]] = []
         pages: list[DiscoveredPage] = []
 
-        # Seed with common entry points
-        # Include both language versions if they exist
+        # Seed with common entry points at depth 0
         portal_candidates = [
             f"{effective_base_url}/index.html",
             f"{effective_base_url}/index-en.html",
@@ -2292,7 +2299,7 @@ class StaticHtmlAdapter(WikiAdapter):
         ]
         for url in portal_candidates:
             if url not in seen_urls:
-                queue.append(url)
+                queue.append((url, 0))
                 seen_urls.add(url)
 
         # Log access method (only for VPN sites that need proxying)
@@ -2302,9 +2309,10 @@ class StaticHtmlAdapter(WikiAdapter):
             elif self._ssh_host:
                 logger.info("Using SSH proxy via %s for BFS crawl", self._ssh_host)
 
+        max_depth_reached = False
         try:
             while queue and len(pages) < self._max_pages:
-                current_url = queue.pop(0)
+                current_url, depth = queue.pop(0)
 
                 html_text = _fetch_html(
                     current_url,
@@ -2320,6 +2328,11 @@ class StaticHtmlAdapter(WikiAdapter):
                 name = path.split("/")[-1] if path else "index.html"
 
                 pages.append(DiscoveredPage(name=name, url=current_url))
+
+                # Only follow links if we haven't reached max depth
+                if depth >= self._max_depth:
+                    max_depth_reached = True
+                    continue
 
                 # Parse links
                 soup = BeautifulSoup(html_text, "html.parser")
@@ -2360,11 +2373,13 @@ class StaticHtmlAdapter(WikiAdapter):
 
                     if full_url not in seen_urls:
                         seen_urls.add(full_url)
-                        queue.append(full_url)
+                        queue.append((full_url, depth + 1))
 
                 if on_progress and len(pages) % 10 == 0:
                     on_progress(
-                        f"crawled {len(pages)} pages, {len(queue)} queued", None
+                        f"crawled {len(pages)} pages (depth {depth}), "
+                        f"{len(queue)} queued",
+                        None,
                     )
 
             if len(pages) >= self._max_pages:
@@ -2372,6 +2387,12 @@ class StaticHtmlAdapter(WikiAdapter):
                     "BFS crawl stopped at max_pages=%d (queue had %d remaining)",
                     self._max_pages,
                     len(queue),
+                )
+            if max_depth_reached:
+                logger.info(
+                    "BFS crawl reached max_depth=%d, discovered %d pages",
+                    self._max_depth,
+                    len(pages),
                 )
 
         except Exception as e:
@@ -2867,6 +2888,7 @@ def get_adapter(
     webs: list[str] | None = None,
     session: Any = None,
     exclude_prefixes: list[str] | None = None,
+    max_depth: int | None = None,
 ) -> WikiAdapter:
     """Get the appropriate adapter for a wiki site type.
 
@@ -2886,6 +2908,7 @@ def get_adapter(
         webs: TWiki web names to discover (for twiki, default ["Main"])
         session: Pre-authenticated requests.Session (Keycloak, Basic auth)
         exclude_prefixes: URL path prefixes to exclude (for static_html)
+        max_depth: BFS depth limit (for static_html, default 3)
 
     Returns:
         WikiAdapter instance for the site type
@@ -2926,6 +2949,7 @@ def get_adapter(
             ssh_host=ssh_host,
             access_method=access_method,
             exclude_prefixes=exclude_prefixes,
+            max_depth=max_depth,
         )
     elif site_type == "confluence":
         return ConfluenceAdapter(api_token=api_token, ssh_host=ssh_host)

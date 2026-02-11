@@ -105,6 +105,7 @@ def bulk_discover_pages(
     web_name: str = "Main",
     exclude_patterns: list[str] | None = None,
     exclude_prefixes: list[str] | None = None,
+    max_depth: int | None = None,
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all wiki pages for a site using the appropriate adapter.
@@ -126,6 +127,7 @@ def bulk_discover_pages(
         web_name: TWiki web name (for twiki_raw, default "Main")
         exclude_patterns: Topic name regex patterns to skip (for twiki_raw)
         exclude_prefixes: URL path prefixes to exclude (for static_html)
+        max_depth: BFS depth limit (for static_html, default 3)
         on_progress: Progress callback(msg, stats)
 
     Returns:
@@ -206,6 +208,7 @@ def bulk_discover_pages(
         adapter_kwargs["base_url"] = base_url
         adapter_kwargs["access_method"] = access_method
         adapter_kwargs["exclude_prefixes"] = exclude_prefixes
+        adapter_kwargs["max_depth"] = max_depth
 
     try:
         adapter = get_adapter(site_type, **adapter_kwargs)
@@ -450,10 +453,12 @@ async def run_parallel_wiki_discovery(
                 if not data_path.startswith("/"):
                     data_path = "/" + data_path
 
-        # Compute exclude prefixes for static_html
+        # Compute exclude prefixes and max_depth for static_html
         exclude_prefixes = None
+        bfs_max_depth = None
         if site_type == "static_html":
             exclude_prefixes = _get_exclude_prefixes(facility, base_url)
+            bfs_max_depth = _get_site_max_depth(facility, base_url)
 
         bulk_discovered = await asyncio.to_thread(
             bulk_discover_pages,
@@ -465,6 +470,7 @@ async def run_parallel_wiki_discovery(
             credential_service=state.credential_service,
             data_path=data_path,
             exclude_prefixes=exclude_prefixes,
+            max_depth=bfs_max_depth,
             on_progress=bulk_progress,
         )
 
@@ -727,6 +733,32 @@ def _get_exclude_prefixes(facility: str, current_base_url: str) -> list[str]:
         )
 
     return prefixes
+
+
+def _get_site_max_depth(facility: str, current_base_url: str) -> int | None:
+    """Get BFS max_depth from the wiki_sites config entry, if specified.
+
+    Args:
+        facility: Facility ID
+        current_base_url: Base URL of the site being crawled
+
+    Returns:
+        max_depth value from config, or None to use adapter default
+    """
+    try:
+        from imas_codex.discovery.base.facility import get_facility
+
+        config = get_facility(facility)
+        wiki_sites = config.get("wiki_sites", [])
+    except Exception:
+        return None
+
+    for site in wiki_sites:
+        site_url = site.get("url", "").rstrip("/")
+        if site_url == current_base_url.rstrip("/"):
+            return site.get("max_depth")
+
+    return None
 
 
 def _seed_portal_page(
