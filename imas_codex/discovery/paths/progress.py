@@ -1321,6 +1321,23 @@ def print_discovery_status(
                 output(f"├─ Scored:    {wiki_scored:,}")
                 output(f"├─ Ingested:  {wiki_ingested:,}")
                 output(f"└─ Skipped:   {wiki_skipped:,}")
+
+                # Artifact stats
+                total_artifacts = wiki_stats.get("total_artifacts", 0)
+                if total_artifacts > 0:
+                    art_scored = wiki_stats.get("artifacts_scored", 0)
+                    art_ingested = wiki_stats.get("artifacts_ingested", 0)
+                    art_pending_score = wiki_stats.get("pending_artifact_score", 0)
+                    art_pending_ingest = wiki_stats.get("pending_artifact_ingest", 0)
+                    output(f"\nArtifacts: {total_artifacts:,}")
+                    output(f"├─ Scored:    {art_scored:,}")
+                    output(f"├─ Ingested:  {art_ingested:,}")
+                    output(
+                        f"└─ Pending:   "
+                        f"score={art_pending_score:,}, "
+                        f"ingest={art_pending_ingest:,}"
+                    )
+
                 output(f"Accumulated cost: ${wiki_cost:.2f}")
             elif domain == "wiki":
                 output("No wiki pages discovered")

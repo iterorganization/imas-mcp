@@ -47,6 +47,7 @@ ProgressCallback = Callable[[int, int, str], None]
 def get_embed_model() -> BaseEmbedding:
     """Get the project's standard embedding model.
 
+    Delegates to the canonical cached singleton in imas_codex.embeddings.
     Respects the embedding-backend config (local/remote).
     """
     return get_llama_embed_model()

@@ -706,21 +706,14 @@ def _strip_twiki_formatting(text: str) -> str:
     return text.strip()
 
 
-# Global cached embed model to avoid reloading for each page
-_CACHED_EMBED_MODEL: BaseEmbedding | None = None
-
-
 def get_embed_model() -> BaseEmbedding:
     """Get embedding model respecting embedding-backend config (local/remote).
 
-    Uses global caching to avoid reloading model for each page ingestion.
+    Delegates to the canonical cached singleton in imas_codex.embeddings.
     """
     from imas_codex.embeddings.llama_index import get_llama_embed_model
 
-    global _CACHED_EMBED_MODEL
-    if _CACHED_EMBED_MODEL is None:
-        _CACHED_EMBED_MODEL = get_llama_embed_model()
-    return _CACHED_EMBED_MODEL
+    return get_llama_embed_model()
 
 
 class WikiIngestionPipeline:

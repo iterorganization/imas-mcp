@@ -99,12 +99,13 @@ class WikiAdapter(ABC):
 class MediaWikiAdapter(WikiAdapter):
     """Adapter for MediaWiki sites.
 
-    Page discovery: Special:AllPages
+    Page discovery: Special:AllPages (HTML scraping) or allpages API (JSON)
     Artifact discovery: list=allimages API
 
-    Can use either:
+    Supports multiple auth backends:
     - SSH proxy for shell commands
-    - HTTP client with Tequila auth
+    - HTTP client with Tequila auth (MediaWikiClient)
+    - Pre-authenticated session (Keycloak OIDC, HTTP Basic, etc.)
     """
 
     site_type = "mediawiki"
@@ -114,17 +115,20 @@ class MediaWikiAdapter(WikiAdapter):
         ssh_host: str | None = None,
         wiki_client: MediaWikiClient | None = None,
         credential_service: str | None = None,
+        session: Any = None,
     ):
         """Initialize MediaWiki adapter.
 
         Args:
-            ssh_host: SSH host for proxied commands (mutually exclusive with wiki_client)
+            ssh_host: SSH host for proxied commands
             wiki_client: Authenticated MediaWikiClient (for Tequila auth)
             credential_service: Keyring service name (used with wiki_client)
+            session: Pre-authenticated requests.Session (Keycloak, Basic auth, etc.)
         """
         self.ssh_host = ssh_host
         self.wiki_client = wiki_client
         self.credential_service = credential_service
+        self.session = session
 
     def bulk_discover_pages(
         self,
@@ -132,12 +136,16 @@ class MediaWikiAdapter(WikiAdapter):
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> list[DiscoveredPage]:
-        """Discover all pages via Special:AllPages.
+        """Discover all pages via Special:AllPages or MediaWiki API.
 
-        Prefers authenticated HTTP client over SSH when both are available,
-        since SSH uses unauthenticated curl which fails with SSO (e.g. Tequila).
+        Priority: session (API) > wiki_client (HTML) > SSH (HTML).
+        The API path (api.php?action=query&list=allpages) is preferred
+        when a session is available (Keycloak, Basic auth) because it
+        handles pagination reliably via JSON.
         """
-        if self.wiki_client:
+        if self.session:
+            return self._discover_pages_api(facility, base_url, on_progress)
+        elif self.wiki_client:
             return self._discover_pages_http(facility, base_url, on_progress)
         elif self.ssh_host:
             return self._discover_pages_ssh(facility, base_url, on_progress)
@@ -219,6 +227,78 @@ class MediaWikiAdapter(WikiAdapter):
                 unique_pages.append(page)
 
         return unique_pages
+
+    def _discover_pages_api(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredPage]:
+        """Discover pages via MediaWiki allpages API with pre-authenticated session.
+
+        Uses api.php?action=query&list=allpages which is the most reliable
+        method. Works with any session that has valid auth cookies/headers
+        (Keycloak OIDC, HTTP Basic, etc.).
+        """
+        import json as json_mod
+        import urllib.parse
+
+        if not self.session:
+            return []
+
+        all_pages: set[str] = set()
+        apcontinue: str | None = None
+        _SKIP_PREFIXES = (
+            "Special:",
+            "File:",
+            "Talk:",
+            "User:",
+            "Template:",
+            "Category:",
+            "Help:",
+            "MediaWiki:",
+        )
+
+        while True:
+            api_url = (
+                f"{base_url}/api.php?action=query&list=allpages&aplimit=500&format=json"
+            )
+            if apcontinue:
+                api_url += f"&apcontinue={urllib.parse.quote(apcontinue)}"
+
+            try:
+                response = self.session.get(api_url, timeout=30)
+                if response.status_code != 200:
+                    logger.warning(
+                        "API returned HTTP %d for %s", response.status_code, base_url
+                    )
+                    break
+                data = json_mod.loads(response.text)
+            except Exception as e:
+                logger.warning("Error fetching API for %s: %s", base_url, e)
+                break
+
+            pages = data.get("query", {}).get("allpages", [])
+            for page in pages:
+                title = page.get("title", "")
+                if title and not any(title.startswith(p) for p in _SKIP_PREFIXES):
+                    all_pages.add(title)
+
+            if on_progress:
+                on_progress(f"{len(all_pages)} pages discovered", None)
+
+            cont = data.get("continue", {})
+            apcontinue = cont.get("apcontinue")
+            if not apcontinue:
+                break
+
+        # Convert to DiscoveredPage objects
+        discovered = []
+        for title in sorted(all_pages):
+            url = f"{base_url}/{urllib.parse.quote(title, safe='/')}"
+            discovered.append(DiscoveredPage(name=title, url=url))
+
+        return discovered
 
     def _discover_pages_http(
         self,

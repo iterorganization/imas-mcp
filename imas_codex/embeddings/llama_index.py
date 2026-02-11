@@ -153,8 +153,16 @@ class EncoderLlamaEmbedding(BaseEmbedding):
 RemoteLlamaEmbedding = EncoderLlamaEmbedding
 
 
-def get_llama_embed_model() -> BaseEmbedding:
+# Module-level cache for embed model singleton
+_cached_embed_model: BaseEmbedding | None = None
+
+
+def get_llama_embed_model(*, cached: bool = True) -> BaseEmbedding:
     """Get LlamaIndex embedding model respecting embedding-backend config.
+
+    Args:
+        cached: If True (default), return a cached singleton to avoid
+            reloading the model for each ingestion call.
 
     Returns:
         BaseEmbedding: EncoderLlamaEmbedding that handles all backend types
@@ -165,6 +173,10 @@ def get_llama_embed_model() -> BaseEmbedding:
     - Cost tracking for OpenRouter usage
     - Source tracking for progress display
     """
+    global _cached_embed_model
+    if cached and _cached_embed_model is not None:
+        return _cached_embed_model
+
     backend_str = get_embedding_backend()
     model_name = get_imas_embedding_model()
 
@@ -175,10 +187,15 @@ def get_llama_embed_model() -> BaseEmbedding:
 
     logger.debug(f"Creating LlamaIndex embed model: {model_name} (backend={backend})")
 
-    return EncoderLlamaEmbedding(
+    model = EncoderLlamaEmbedding(
         model_name=model_name,
         backend=backend,
     )
+
+    if cached:
+        _cached_embed_model = model
+
+    return model
 
 
 __all__ = [
