@@ -1654,11 +1654,11 @@ def wiki_run(
         credential_service = site.get("credential_service")
         access_method = site.get("access_method", "direct")
 
-        # Determine SSH host (only used for VPN-protected sites)
+        # Determine SSH host (used for VPN access and as fallback for auth sites)
         ssh_host = None
-        if access_method == "vpn":
+        if access_method == "vpn" or site.get("ssh_available", False):
             ssh_host = site.get("ssh_host")
-            if not ssh_host and site.get("ssh_available", False):
+            if not ssh_host:
                 ssh_host = config.get("ssh_host")
 
         # Short name for multi-site display (e.g. "pog" from URL path)
@@ -1906,6 +1906,16 @@ def wiki_run(
                         base_url=base_url,
                         credential_service=credential_service,
                         verify_ssl=False,
+                    )
+                    wiki_client.authenticate()
+                elif auth_type == "keycloak":
+                    from imas_codex.discovery.wiki.keycloak import (
+                        KeycloakWikiClient,
+                    )
+
+                    wiki_client = KeycloakWikiClient(
+                        base_url=base_url,
+                        credential_service=credential_service,
                     )
                     wiki_client.authenticate()
 
