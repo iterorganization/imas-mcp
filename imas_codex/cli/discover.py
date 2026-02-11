@@ -1531,15 +1531,13 @@ def wiki_run(
             padding=(0, 1),
         )
         site_table.add_column("Site", style="cyan", no_wrap=True)
-        site_table.add_column("Type", style="dim")
         site_table.add_column("Description", style="white")
 
         for site in wiki_sites:
             parsed = _parse_url(site.get("url", ""))
             name = parsed.path.rstrip("/").rsplit("/", 1)[-1] or site.get("url", "")
-            site_type_str = site.get("site_type", "mediawiki")
             desc = site.get("description", "")
-            site_table.add_row(name, site_type_str, desc)
+            site_table.add_row(name, desc)
 
         console.print(site_table)
 
@@ -1706,171 +1704,69 @@ def wiki_run(
         # Bulk page discovery
         bulk_discovered = 0
         if should_bulk_discover and not score_only:
-            if site_type == "mediawiki":
+            from imas_codex.discovery.wiki.parallel import bulk_discover_pages
+
+            # Build common kwargs for bulk_discover_pages
+            discover_kwargs: dict = {
+                "facility": facility,
+                "site_type": site_type,
+                "base_url": base_url,
+                "ssh_host": ssh_host,
+                "auth_type": auth_type or "none",
+                "credential_service": credential_service,
+                "access_method": access_method,
+            }
+
+            # Site-type-specific kwargs
+            if site_type == "twiki":
+                discover_kwargs["webs"] = site.get("webs", ["Main"])
+            elif site_type == "twiki_raw":
+                discover_kwargs["data_path"] = site.get("data_path", base_url)
+                discover_kwargs["web_name"] = site.get("web_name", "Main")
+                discover_kwargs["exclude_patterns"] = site.get("exclude_patterns")
+            elif site_type == "static_html":
                 from imas_codex.discovery.wiki.parallel import (
-                    bulk_discover_all_pages_basic_auth,
-                    bulk_discover_all_pages_http,
-                    bulk_discover_all_pages_keycloak,
-                    bulk_discover_all_pages_mediawiki,
+                    _get_exclude_prefixes,
                 )
 
-                def bulk_progress_log(msg, _):
-                    wiki_logger.info(f"BULK: {msg}")
-
-                if use_rich:
-                    from rich.status import Status
-
-                    with Status(
-                        f"[cyan]Bulk discovery: {base_url}...[/cyan]",
-                        console=console,
-                        spinner="dots",
-                    ) as status:
-
-                        def bulk_progress_rich(msg, _, _url=base_url):
-                            if "pages" in msg:
-                                status.update(f"[cyan]{_url}: {msg}[/cyan]")
-                            elif "creating" in msg:
-                                status.update(f"[cyan]{_url}: {msg}[/cyan]")
-                            elif "created" in msg:
-                                status.update(f"[green]{_url}: {msg}[/green]")
-
-                        if auth_type == "tequila" and credential_service:
-                            bulk_discovered = bulk_discover_all_pages_http(
-                                facility,
-                                base_url,
-                                credential_service,
-                                bulk_progress_rich,
-                            )
-                        elif auth_type == "basic" and credential_service:
-                            bulk_discovered = bulk_discover_all_pages_basic_auth(
-                                facility,
-                                base_url,
-                                credential_service,
-                                bulk_progress_rich,
-                            )
-                        elif auth_type == "keycloak" and credential_service:
-                            bulk_discovered = bulk_discover_all_pages_keycloak(
-                                facility,
-                                base_url,
-                                credential_service,
-                                bulk_progress_rich,
-                            )
-                        elif ssh_host:
-                            bulk_discovered = bulk_discover_all_pages_mediawiki(
-                                facility, base_url, ssh_host, bulk_progress_rich
-                            )
-
-                    if bulk_discovered > 0:
-                        log_print(
-                            f"[green]Discovered {bulk_discovered:,} pages[/green]"
-                        )
-                else:
-                    if auth_type == "tequila" and credential_service:
-                        bulk_discovered = bulk_discover_all_pages_http(
-                            facility,
-                            base_url,
-                            credential_service,
-                            bulk_progress_log,
-                        )
-                    elif auth_type == "basic" and credential_service:
-                        bulk_discovered = bulk_discover_all_pages_basic_auth(
-                            facility,
-                            base_url,
-                            credential_service,
-                            bulk_progress_log,
-                        )
-                    elif auth_type == "keycloak" and credential_service:
-                        bulk_discovered = bulk_discover_all_pages_keycloak(
-                            facility,
-                            base_url,
-                            credential_service,
-                            bulk_progress_log,
-                        )
-                    elif ssh_host:
-                        bulk_discovered = bulk_discover_all_pages_mediawiki(
-                            facility, base_url, ssh_host, bulk_progress_log
-                        )
-                    if bulk_discovered > 0:
-                        wiki_logger.info(
-                            f"Discovered {bulk_discovered} pages from {base_url}"
-                        )
-
-            elif site_type in ("twiki", "twiki_static", "twiki_raw", "static_html"):
-                from imas_codex.discovery.wiki.parallel import (
-                    bulk_discover_all_pages_static_html,
-                    bulk_discover_all_pages_twiki,
-                    bulk_discover_all_pages_twiki_raw,
-                    bulk_discover_all_pages_twiki_static,
+                discover_kwargs["exclude_prefixes"] = _get_exclude_prefixes(
+                    facility, base_url
                 )
 
-                def twiki_progress_log(msg, _):
-                    wiki_logger.info(f"BULK: {msg}")
+            def bulk_progress_log(msg, _):
+                wiki_logger.info(f"BULK: {msg}")
 
-                if site_type == "twiki":
-                    webs = site.get("webs", ["Main"])
-                    discover_func = bulk_discover_all_pages_twiki
-                    discover_args = (facility, base_url, ssh_host, webs)
-                    label = f"TWiki ({', '.join(webs)})"
-                elif site_type == "twiki_static":
-                    discover_func = bulk_discover_all_pages_twiki_static
-                    discover_args = (facility, base_url, ssh_host, access_method)
-                    label = "TWiki"
-                elif site_type == "twiki_raw":
-                    # For twiki_raw, base_url is the data directory path
-                    data_path = site.get("data_path", base_url)
-                    web_name = site.get("web_name", "Main")
-                    exclude_pats = site.get("exclude_patterns")
-                    discover_func = bulk_discover_all_pages_twiki_raw
-                    discover_args = (
-                        facility,
-                        data_path,
-                        ssh_host,
-                        web_name,
-                        exclude_pats,
-                    )
-                    label = f"TWiki Raw ({web_name})"
-                else:
-                    from imas_codex.discovery.wiki.parallel import (
-                        _get_exclude_prefixes,
-                    )
+            if use_rich:
+                from rich.status import Status
 
-                    exclude_prefixes = _get_exclude_prefixes(facility, base_url)
-                    discover_func = bulk_discover_all_pages_static_html
-                    discover_args = (
-                        facility,
-                        base_url,
-                        exclude_prefixes,
-                        ssh_host,
-                        access_method,
-                    )
-                    label = "Static HTML"
+                with Status(
+                    f"[cyan]Bulk discovery: {base_url}...[/cyan]",
+                    console=console,
+                    spinner="dots",
+                ) as status:
 
-                if use_rich:
-                    from rich.status import Status
-
-                    with Status(
-                        f"[cyan]{label} discovery: {base_url}...[/cyan]",
-                        console=console,
-                        spinner="dots",
-                    ) as status:
-
-                        def twiki_progress_rich(msg, _, _url=base_url):
+                    def bulk_progress_rich(msg, _, _url=base_url):
+                        if "pages" in msg:
                             status.update(f"[cyan]{_url}: {msg}[/cyan]")
+                        elif "creating" in msg:
+                            status.update(f"[cyan]{_url}: {msg}[/cyan]")
+                        elif "created" in msg:
+                            status.update(f"[green]{_url}: {msg}[/green]")
 
-                        bulk_discovered = discover_func(
-                            *discover_args, twiki_progress_rich
-                        )
+                    bulk_discovered = bulk_discover_pages(
+                        **discover_kwargs, on_progress=bulk_progress_rich
+                    )
 
-                    if bulk_discovered > 0:
-                        log_print(
-                            f"[green]Discovered {bulk_discovered:,} pages[/green]"
-                        )
-                else:
-                    bulk_discovered = discover_func(*discover_args, twiki_progress_log)
-                    if bulk_discovered > 0:
-                        wiki_logger.info(
-                            f"Discovered {bulk_discovered} pages from {base_url}"
-                        )
+                if bulk_discovered > 0:
+                    log_print(f"[green]Discovered {bulk_discovered:,} pages[/green]")
+            else:
+                bulk_discovered = bulk_discover_pages(
+                    **discover_kwargs, on_progress=bulk_progress_log
+                )
+                if bulk_discovered > 0:
+                    wiki_logger.info(
+                        f"Discovered {bulk_discovered} pages from {base_url}"
+                    )
 
         # Artifact scanning (all site types — adapters handle platform differences)
         # Run artifact discovery when: --rescan-artifacts, or new pages discovered,
@@ -1966,14 +1862,10 @@ def wiki_run(
                 wiki_client.close()
 
             if artifacts_discovered > 0:
+                n_pages = len(page_artifacts)
                 log_print(
-                    f"[green]Discovered {artifacts_discovered:,} artifacts[/green]"
+                    f"[green]Discovered {artifacts_discovered:,} artifacts across {n_pages:,} pages[/green]"
                 )
-                # Print page → artifacts summary
-                for page_name in sorted(page_artifacts):
-                    art_list = page_artifacts[page_name]
-                    names = ", ".join(art_list)
-                    log_print(f"  [dim]{page_name}[/dim]: {names}")
 
         site_configs.append(
             {

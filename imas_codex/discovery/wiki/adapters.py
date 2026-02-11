@@ -2715,6 +2715,8 @@ def get_adapter(
     web_name: str = "Main",
     exclude_patterns: list[str] | None = None,
     webs: list[str] | None = None,
+    session: Any = None,
+    exclude_prefixes: list[str] | None = None,
 ) -> WikiAdapter:
     """Get the appropriate adapter for a wiki site type.
 
@@ -2732,6 +2734,8 @@ def get_adapter(
         web_name: TWiki web name (for twiki_raw, default "Main")
         exclude_patterns: Topic name exclude patterns (for twiki_raw)
         webs: TWiki web names to discover (for twiki, default ["Main"])
+        session: Pre-authenticated requests.Session (Keycloak, Basic auth)
+        exclude_prefixes: URL path prefixes to exclude (for static_html)
 
     Returns:
         WikiAdapter instance for the site type
@@ -2741,6 +2745,7 @@ def get_adapter(
             ssh_host=ssh_host,
             wiki_client=wiki_client,
             credential_service=credential_service,
+            session=session,
         )
     elif site_type == "twiki":
         return TWikiAdapter(
@@ -2767,7 +2772,10 @@ def get_adapter(
         )
     elif site_type == "static_html":
         return StaticHtmlAdapter(
-            base_url=base_url, ssh_host=ssh_host, access_method=access_method
+            base_url=base_url,
+            ssh_host=ssh_host,
+            access_method=access_method,
+            exclude_prefixes=exclude_prefixes,
         )
     elif site_type == "confluence":
         return ConfluenceAdapter(api_token=api_token, ssh_host=ssh_host)

@@ -1688,12 +1688,10 @@ def bulk_discover_pages(
     elif site_type == "static_html":
         adapter_kwargs["base_url"] = base_url
         adapter_kwargs["access_method"] = access_method
+        adapter_kwargs["exclude_prefixes"] = exclude_prefixes
 
     try:
         adapter = get_adapter(site_type, **adapter_kwargs)
-        # For static_html, set exclude_prefixes if provided
-        if site_type == "static_html" and exclude_prefixes:
-            adapter.exclude_prefixes = exclude_prefixes
 
         pages = adapter.bulk_discover_pages(facility, base_url, on_progress)
 
@@ -1706,153 +1704,6 @@ def bulk_discover_pages(
     finally:
         if close_session and session is not None:
             session.close()
-
-
-# Legacy aliases for backwards compatibility with CLI imports
-def bulk_discover_all_pages_mediawiki(
-    facility: str,
-    base_url: str,
-    ssh_host: str,
-    on_progress: Callable | None = None,
-) -> int:
-    """Deprecated: use bulk_discover_pages(site_type='mediawiki')."""
-    return bulk_discover_pages(
-        facility,
-        "mediawiki",
-        base_url,
-        ssh_host=ssh_host,
-        on_progress=on_progress,
-    )
-
-
-def bulk_discover_all_pages_http(
-    facility: str,
-    base_url: str,
-    credential_service: str,
-    on_progress: Callable | None = None,
-) -> int:
-    """Deprecated: use bulk_discover_pages(site_type='mediawiki', auth_type='tequila')."""
-    return bulk_discover_pages(
-        facility,
-        "mediawiki",
-        base_url,
-        auth_type="tequila",
-        credential_service=credential_service,
-        on_progress=on_progress,
-    )
-
-
-def bulk_discover_all_pages_keycloak(
-    facility: str,
-    base_url: str,
-    credential_service: str,
-    on_progress: Callable | None = None,
-    session: Any = None,
-) -> int:
-    """Deprecated: use bulk_discover_pages(site_type='mediawiki', auth_type='keycloak')."""
-    return bulk_discover_pages(
-        facility,
-        "mediawiki",
-        base_url,
-        auth_type="keycloak",
-        credential_service=credential_service,
-        on_progress=on_progress,
-    )
-
-
-def bulk_discover_all_pages_basic_auth(
-    facility: str,
-    base_url: str,
-    credential_service: str,
-    on_progress: Callable | None = None,
-    session: Any = None,
-) -> int:
-    """Deprecated: use bulk_discover_pages(site_type='mediawiki', auth_type='basic')."""
-    return bulk_discover_pages(
-        facility,
-        "mediawiki",
-        base_url,
-        auth_type="basic",
-        credential_service=credential_service,
-        on_progress=on_progress,
-    )
-
-
-def bulk_discover_all_pages_twiki_static(
-    facility: str,
-    base_url: str,
-    ssh_host: str | None = None,
-    access_method: str = "direct",
-    on_progress: Callable | None = None,
-) -> int:
-    """Deprecated: use bulk_discover_pages(site_type='twiki_static')."""
-    return bulk_discover_pages(
-        facility,
-        "twiki_static",
-        base_url,
-        ssh_host=ssh_host,
-        access_method=access_method,
-        on_progress=on_progress,
-    )
-
-
-def bulk_discover_all_pages_twiki(
-    facility: str,
-    base_url: str,
-    ssh_host: str,
-    webs: list[str] | None = None,
-    on_progress: Callable | None = None,
-) -> int:
-    """Deprecated: use bulk_discover_pages(site_type='twiki')."""
-    return bulk_discover_pages(
-        facility,
-        "twiki",
-        base_url,
-        ssh_host=ssh_host,
-        webs=webs,
-        on_progress=on_progress,
-    )
-
-
-def bulk_discover_all_pages_twiki_raw(
-    facility: str,
-    data_path: str,
-    ssh_host: str,
-    web_name: str = "Main",
-    exclude_patterns: list[str] | None = None,
-    on_progress: Callable | None = None,
-) -> int:
-    """Deprecated: use bulk_discover_pages(site_type='twiki_raw')."""
-    return bulk_discover_pages(
-        facility,
-        "twiki_raw",
-        "",
-        ssh_host=ssh_host,
-        data_path=data_path,
-        web_name=web_name,
-        exclude_patterns=exclude_patterns,
-        on_progress=on_progress,
-    )
-
-
-def bulk_discover_all_pages_static_html(
-    facility: str,
-    base_url: str,
-    exclude_prefixes: list[str] | None = None,
-    ssh_host: str | None = None,
-    access_method: str = "direct",
-    on_progress: Callable | None = None,
-) -> int:
-    """Deprecated: use bulk_discover_pages(site_type='static_html')."""
-    return bulk_discover_pages(
-        facility,
-        "static_html",
-        base_url,
-        ssh_host=ssh_host,
-        access_method=access_method,
-        exclude_prefixes=exclude_prefixes,
-        on_progress=on_progress,
-    )
 
 
 # =============================================================================
@@ -2175,8 +2026,8 @@ async def score_worker(
             # LLM validation error (e.g., truncated JSON) - release pages and continue
             # Don't stop the whole process; pages will be reclaimed after timeout
             logger.warning(
-                "LLM validation error for batch of %d pages: %s. "
-                "Releasing pages for retry.",
+                "LLM failed for batch of %d pages: %s. "
+                "Pages reverted to scanned status for retry.",
                 len(pages),
                 e,
             )
@@ -2596,8 +2447,8 @@ async def artifact_score_worker(
 
         except ValueError as e:
             logger.warning(
-                "LLM validation error for artifact batch of %d: %s. "
-                "Releasing artifacts for retry.",
+                "LLM failed for artifact batch of %d: %s. "
+                "Artifacts reverted to discovered status for retry.",
                 len(artifacts),
                 e,
             )
@@ -2848,8 +2699,8 @@ async def _score_artifacts_batch(
     user_prompt = "\n".join(lines)
 
     # Retry loop
-    max_retries = 3
-    retry_base_delay = 2.0
+    max_retries = 5
+    retry_base_delay = 4.0
     last_error = None
     total_cost = 0.0
 
@@ -2916,7 +2767,7 @@ async def _score_artifacts_batch(
 
             if is_retryable and attempt < max_retries - 1:
                 delay = retry_base_delay * (2**attempt)
-                logger.warning(
+                logger.debug(
                     "LLM error (attempt %d/%d): %s. Retrying in %.1fs...",
                     attempt + 1,
                     max_retries,
@@ -2926,11 +2777,16 @@ async def _score_artifacts_batch(
                 await asyncio.sleep(delay)
             else:
                 logger.error(
-                    "LLM validation error for artifact batch of %d: %s",
+                    "LLM failed for artifact batch of %d after %d attempts: %s. "
+                    "Artifacts reverted to discovered status for retry.",
                     len(artifacts),
+                    attempt + 1,
                     e,
                 )
-                raise ValueError(f"LLM response validation failed: {e}") from e
+                raise ValueError(
+                    f"LLM failed after {attempt + 1} attempts: {e}. "
+                    f"Artifacts reverted to discovered status."
+                ) from e
     else:
         raise last_error  # type: ignore[misc]
 
@@ -3235,8 +3091,8 @@ async def _score_pages_batch(
     user_prompt = "\n".join(lines)
 
     # Retry loop for rate limiting and JSON parsing errors (truncated responses)
-    max_retries = 3
-    retry_base_delay = 2.0
+    max_retries = 5
+    retry_base_delay = 4.0
     last_error = None
     total_cost = 0.0
 
@@ -3308,7 +3164,7 @@ async def _score_pages_batch(
 
             if is_retryable and attempt < max_retries - 1:
                 delay = retry_base_delay * (2**attempt)
-                logger.warning(
+                logger.debug(
                     "LLM error (attempt %d/%d): %s. Retrying in %.1fs...",
                     attempt + 1,
                     max_retries,
@@ -3319,12 +3175,16 @@ async def _score_pages_batch(
             else:
                 # Last attempt or non-retryable error
                 logger.error(
-                    "LLM validation error for batch of %d pages: %s. "
-                    "Pages will be reverted to scanned status.",
+                    "LLM failed for batch of %d pages after %d attempts: %s. "
+                    "Pages reverted to scanned status for retry.",
                     len(pages),
+                    attempt + 1,
                     e,
                 )
-                raise ValueError(f"LLM response validation failed: {e}") from e
+                raise ValueError(
+                    f"LLM failed after {attempt + 1} attempts: {e}. "
+                    f"Pages reverted to scanned status."
+                ) from e
     else:
         raise last_error  # type: ignore[misc]
 
