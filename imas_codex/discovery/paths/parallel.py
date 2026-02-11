@@ -1411,10 +1411,6 @@ def _rescore_with_llm(
         Tuple of (rescore_results, cost)
     """
     import json
-    import os
-    import time
-
-    import litellm
 
     from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.agentic.prompt_loader import render_prompt
@@ -1509,71 +1505,34 @@ def _rescore_with_llm(
 
     user_prompt = "\n".join(lines)
 
-    # Get model and API key
+    # Get model
     model = get_model_for_task("score")  # Use same model as scorer
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise ValueError("OPENROUTER_API_KEY environment variable not set")
 
-    model_id = f"openrouter/{model}" if not model.startswith("openrouter/") else model
+    # Call LLM with shared retry+parse loop — retries on both API errors
+    # and JSON/validation errors (same resilience as wiki pipeline).
+    # Rescore uses smaller max_tokens since output is compact per-path adjustments.
+    from imas_codex.discovery.base.llm import call_llm_structured
 
-    # Retry loop for rate limiting
-    max_retries = 5
-    retry_base_delay = 5.0
-    last_error = None
-
-    for attempt in range(max_retries):
-        try:
-            response = litellm.completion(
-                model=model_id,
-                api_key=api_key,
-                max_tokens=8000,
-                response_format=RescoreBatch,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            )
-            break
-        except Exception as e:
-            last_error = e
-            error_msg = str(e).lower()
-            if any(x in error_msg for x in ["overloaded", "rate", "429", "503"]):
-                delay = retry_base_delay * (2**attempt)
-                logger.debug(f"Rescore rate limited, waiting {delay:.1f}s...")
-                time.sleep(delay)
-            else:
-                raise
-    else:
-        raise last_error  # type: ignore[misc]
-
-    # Calculate cost
-    input_tokens = response.usage.prompt_tokens
-    output_tokens = response.usage.completion_tokens
-
-    if (
-        hasattr(response, "_hidden_params")
-        and "response_cost" in response._hidden_params
-    ):
-        cost = response._hidden_params["response_cost"]
-    else:
-        # Fallback: Claude Sonnet 4.5 rates
-        cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
-
-    # Parse results
     try:
-        batch = RescoreBatch.model_validate_json(response.choices[0].message.content)
-    except Exception:
-        # Fallback: return original scores
-        results = [
+        batch, cost, _tokens = call_llm_structured(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_model=RescoreBatch,
+            max_tokens=8000,
+        )
+    except ValueError:
+        # All retries exhausted — return original scores as fallback
+        return [
             {
                 "path": p["path"],
                 "score": p.get("score", 0.5),
                 "adjustment_reason": "parse error",
             }
             for p in paths
-        ]
-        return results, cost
+        ], 0.0
 
     # Build results dict with per-dimension updates
     path_to_result = {r.path: r for r in batch.results}

@@ -21,6 +21,15 @@ from imas_codex.discovery.base.facility import (
     update_metadata,
     validate_no_private_fields,
 )
+from imas_codex.discovery.base.llm import (
+    acall_llm,
+    acall_llm_structured,
+    call_llm,
+    call_llm_structured,
+    extract_cost,
+    get_model_limits,
+    suppress_litellm_noise,
+)
 from imas_codex.discovery.base.progress import (
     BaseProgressDisplay,
     BaseProgressState,
@@ -79,6 +88,14 @@ __all__ = [
     # Executor
     "ParallelExecutor",
     "CommandResult",
+    # LLM
+    "call_llm",
+    "call_llm_structured",
+    "acall_llm",
+    "acall_llm_structured",
+    "extract_cost",
+    "get_model_limits",
+    "suppress_litellm_noise",
     # Progress
     "ProgressConfig",
     "BaseProgressState",

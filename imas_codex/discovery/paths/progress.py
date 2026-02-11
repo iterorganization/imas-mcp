@@ -529,9 +529,11 @@ class ParallelProgressDisplay:
             return not processing and queue.is_empty()
 
         # SCAN section - always 2 lines for consistent height
-        section.append("  SCAN ", style="bold blue")
+        section.append("  SCAN    ", style="bold blue")
         if scan:
-            section.append(clip_path(scan.path, self.width - 10), style="white")
+            section.append(
+                clip_path(scan.path, self.width - self.LABEL_WIDTH - 4), style="white"
+            )
             section.append("\n")
             # Stats indented below
             section.append("    ", style="dim")
@@ -555,10 +557,10 @@ class ParallelProgressDisplay:
 
         # SCORE section - always 2 lines for consistent height (skip in scan_only mode)
         if not self.state.scan_only:
-            section.append("  SCORE ", style="bold green")
+            section.append("  SCORE   ", style="bold green")
             if score:
                 # Show path with terminal indicator
-                path_display = clip_path(score.path, self.width - 20)
+                path_display = clip_path(score.path, self.width - self.LABEL_WIDTH - 14)
                 section.append(path_display, style="white")
                 if not score.should_expand:
                     section.append(" terminal", style="magenta")
@@ -622,11 +624,14 @@ class ParallelProgressDisplay:
         if not self.state.scan_only:
             enrich = self.state.current_enrich
             queue_empty = self.state.enrich_queue.is_empty()
-            section.append("  ENRICH", style="bold magenta")
+            section.append("  ENRICH  ", style="bold magenta")
             # Show current item if queue still has items OR we're still processing
             # Once queue is drained and worker is idle, show "idle" instead of stale item
             if enrich and (not queue_empty or self.state.enrich_processing):
-                section.append(clip_path(enrich.path, self.width - 11), style="white")
+                section.append(
+                    clip_path(enrich.path, self.width - self.LABEL_WIDTH - 4),
+                    style="white",
+                )
                 section.append("\n")
                 # Stats indented below
                 section.append("    ", style="dim")
@@ -653,15 +658,15 @@ class ParallelProgressDisplay:
                         style="dim",
                     )
             elif self.state.enrich_processing:
-                section.append(" processing batch...", style="cyan italic")
+                section.append("processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
             elif queue_empty:
                 # Queue drained and not processing - truly idle
-                section.append(" idle", style="dim italic")
+                section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")  # Empty second line
             else:
                 # Queue has items but nothing displayed yet (waiting for rate limit)
-                section.append(" ...", style="dim italic")
+                section.append("...", style="dim italic")
                 section.append("\n    ", style="dim")
 
         return section

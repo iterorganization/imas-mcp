@@ -3500,6 +3500,11 @@ async def _score_pages_batch(
     Uses litellm.acompletion with WikiScoreBatch Pydantic model for
     structured output. Content-based scoring with per-dimension scores.
 
+    The retry loop includes response parsing because JSON/validation
+    errors from truncated responses are retryable — a fresh LLM call
+    often returns valid output. Cost is accumulated across all attempts
+    since API calls are billed regardless of parsing success.
+
     Args:
         pages: List of page dicts with id, title, summary, preview_text, etc.
         model: Model identifier from get_model_for_task()
@@ -3508,29 +3513,12 @@ async def _score_pages_batch(
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
     """
-    import os
-    import re
-
-    import litellm
-
     from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.wiki.models import (
         WikiScoreBatch,
         grounded_wiki_score,
     )
-
-    # Get API key - same pattern as discovery/scorer.py
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "OPENROUTER_API_KEY environment variable not set. "
-            "Set it in .env or export it."
-        )
-
-    # Ensure OpenRouter prefix
-    model_id = model
-    if not model_id.startswith("openrouter/"):
-        model_id = f"openrouter/{model_id}"
 
     # Build system prompt using dynamic template with schema injection
     context: dict[str, Any] = {}
@@ -3567,103 +3555,20 @@ async def _score_pages_batch(
 
     user_prompt = "\n".join(lines)
 
-    # Retry loop for rate limiting and JSON parsing errors (truncated responses)
-    max_retries = 5
-    retry_base_delay = 4.0
-    last_error = None
-    total_cost = 0.0
+    # Shared retry+parse loop handles both API errors and JSON/validation
+    # errors from truncated responses. Cost accumulated across retries.
+    # Model-aware token limits + timeout applied automatically.
+    batch, total_cost, _tokens = await acall_llm_structured(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_model=WikiScoreBatch,
+        temperature=0.3,
+    )
 
-    for attempt in range(max_retries):
-        try:
-            response = await litellm.acompletion(
-                model=model_id,
-                api_key=api_key,
-                response_format=WikiScoreBatch,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.3,
-                max_tokens=32000,
-                timeout=120,  # 2 minute timeout to prevent indefinite hangs
-            )
-
-            # Extract actual cost from OpenRouter response
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
-
-            if (
-                hasattr(response, "_hidden_params")
-                and "response_cost" in response._hidden_params
-            ):
-                cost = response._hidden_params["response_cost"]
-            else:
-                # Fallback: Claude Sonnet rates via OpenRouter ($3/$15 per 1M tokens)
-                cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
-
-            total_cost += cost
-
-            # Parse response using Pydantic structured output
-            content = response.choices[0].message.content
-            if not content:
-                logger.warning("LLM returned empty response, returning empty results")
-                return [], total_cost
-
-            # Sanitize: remove control characters (except newline/tab)
-            content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
-            content = content.encode("utf-8", errors="surrogateescape").decode(
-                "utf-8", errors="replace"
-            )
-
-            batch = WikiScoreBatch.model_validate_json(content)
-            llm_results = batch.results
-            break  # Success - exit retry loop
-
-        except Exception as e:
-            last_error = e
-            error_msg = str(e).lower()
-
-            # Retry on rate limiting, server errors, OR JSON parsing errors
-            is_retryable = any(
-                x in error_msg
-                for x in [
-                    "overloaded",
-                    "rate",
-                    "429",
-                    "503",
-                    "timeout",
-                    "eof",  # EOF while parsing JSON
-                    "json",  # JSON parsing errors
-                    "truncated",
-                    "validation",
-                ]
-            )
-
-            if is_retryable and attempt < max_retries - 1:
-                delay = retry_base_delay * (2**attempt)
-                logger.debug(
-                    "LLM error (attempt %d/%d): %s. Retrying in %.1fs...",
-                    attempt + 1,
-                    max_retries,
-                    str(e)[:100],
-                    delay,
-                )
-                await asyncio.sleep(delay)
-            else:
-                # Last attempt or non-retryable error
-                logger.error(
-                    "LLM failed for batch of %d pages after %d attempts: %s. "
-                    "Pages reverted to scanned status for retry.",
-                    len(pages),
-                    attempt + 1,
-                    e,
-                )
-                raise ValueError(
-                    f"LLM failed after {attempt + 1} attempts: {e}. "
-                    f"Pages reverted to scanned status."
-                ) from e
-    else:
-        raise last_error  # type: ignore[misc]
+    llm_results = batch.results
 
     # Convert to result dicts, computing combined scores
     cost_per_page = total_cost / len(pages) if pages else 0.0
@@ -3709,7 +3614,7 @@ async def _score_pages_batch(
             }
         )
 
-    return results, cost
+    return results, total_cost
 
 
 def _score_pages_heuristic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:

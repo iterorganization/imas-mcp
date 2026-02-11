@@ -19,17 +19,11 @@ Retry logic handles rate limiting (OpenRouter "Overloaded" errors).
 from __future__ import annotations
 
 import logging
-import os
-import time
 from dataclasses import dataclass
 from typing import Any
 
-# Suppress litellm verbose output BEFORE importing litellm
-# These environment variables prevent the "Give Feedback" and "Provider List" messages
-os.environ.setdefault("LITELLM_LOG", "ERROR")
-os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
-
 from imas_codex.agentic.agents import get_model_for_task
+from imas_codex.discovery.base.llm import suppress_litellm_noise
 from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
     ResourcePurpose,
@@ -41,16 +35,8 @@ from imas_codex.discovery.paths.models import (
 
 logger = logging.getLogger(__name__)
 
-# Suppress all litellm logging to ERROR level
-# This prevents INFO-level help messages from cluttering the progress display
-logging.getLogger("LiteLLM").setLevel(logging.ERROR)
-logging.getLogger("LiteLLM Proxy").setLevel(logging.ERROR)
-logging.getLogger("LiteLLM Router").setLevel(logging.ERROR)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-# Retry configuration for rate limiting
-MAX_RETRIES = 5
-RETRY_BASE_DELAY = 5.0  # seconds, doubles each retry (5, 10, 20, 40, 80)
+# Suppress litellm noise on import (print-based + logger-based)
+suppress_litellm_noise()
 
 # Container expansion threshold (lower than default to explore containers)
 CONTAINER_THRESHOLD = 0.1
@@ -217,7 +203,7 @@ class DirectoryScorer:
         Returns:
             ScoredBatch with results and cost
         """
-        import litellm
+        from imas_codex.discovery.base.llm import call_llm_structured
 
         if not directories:
             return ScoredBatch(
@@ -231,80 +217,24 @@ class DirectoryScorer:
         system_prompt = self._build_system_prompt(focus)
         user_prompt = self._build_user_prompt(directories)
 
-        # Get API key for OpenRouter
-        api_key = os.environ.get("OPENROUTER_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OPENROUTER_API_KEY environment variable not set. "
-                "Set it in .env or export it."
-            )
-
-        # Call LLM via LiteLLM (OpenRouter prefix) with structured output
-        model_id = self.model
-        if not model_id.startswith("openrouter/"):
-            model_id = f"openrouter/{model_id}"
-
-        # Retry loop for rate limiting / overloaded errors
-        last_error = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                # max_tokens=32000 supports batches of 50+ directories
-                # Sonnet 4.5 has 200k context, output is ~250 tokens/dir
-                # response_format ensures schema is enforced by LLM provider
-                response = litellm.completion(
-                    model=model_id,
-                    api_key=api_key,
-                    max_tokens=32000,
-                    response_format=ScoreBatch,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                )
-                break  # Success, exit retry loop
-            except Exception as e:
-                last_error = e
-                error_msg = str(e).lower()
-                # Retry on rate limiting, overloaded, or transient errors
-                if any(
-                    x in error_msg
-                    for x in ["overloaded", "rate", "429", "503", "timeout"]
-                ):
-                    delay = RETRY_BASE_DELAY * (2**attempt)
-                    # Use debug level to reduce noise - rate limits are expected
-                    logger.debug(
-                        f"LLM rate limited (attempt {attempt + 1}/{MAX_RETRIES}), "
-                        f"waiting {delay:.1f}s..."
-                    )
-                    time.sleep(delay)
-                else:
-                    # Non-retryable error
-                    raise
-        else:
-            # All retries exhausted
-            raise last_error  # type: ignore[misc]
-
-        # Calculate cost from LiteLLM response
-        input_tokens = response.usage.prompt_tokens
-        output_tokens = response.usage.completion_tokens
-        total_tokens = input_tokens + output_tokens
-
-        # Cost calculation - LiteLLM may provide this, fallback to Claude Sonnet rates
-        if (
-            hasattr(response, "_hidden_params")
-            and "response_cost" in response._hidden_params
-        ):
-            cost = response._hidden_params["response_cost"]
-        else:
-            # Fallback: Claude Sonnet 4.5 via OpenRouter: $3/$15 per 1M tokens
-            cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+        # Call LLM with shared retry+parse loop (retries on both API
+        # errors and JSON/validation errors from truncated responses).
+        # Model-aware token limits applied automatically.
+        batch, cost, total_tokens = call_llm_structured(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_model=ScoreBatch,
+        )
 
         # Calculate cost per path for tracking
         cost_per_path = cost / len(directories) if directories else 0.0
 
-        # Parse response using structured output
-        scored_dirs = self._parse_structured_response(
-            response, directories, threshold, cost_per_path
+        # Map parsed results to ScoredDirectory objects
+        scored_dirs = self._map_scored_directories(
+            batch, directories, threshold, cost_per_path
         )
 
         return ScoredBatch(
@@ -437,20 +367,21 @@ class DirectoryScorer:
 
         return "\n".join(lines)
 
-    def _parse_structured_response(
+    def _map_scored_directories(
         self,
-        response,
+        batch: ScoreBatch,
         directories: list[dict[str, Any]],
         threshold: float,
         cost_per_path: float = 0.0,
     ) -> list[ScoredDirectory]:
-        """Parse structured LLM response into ScoredDirectory objects.
+        """Map parsed ScoreBatch to ScoredDirectory objects.
 
-        Uses LiteLLM's structured output - the response is already validated
-        against the ScoreBatch Pydantic model.
+        JSON parsing and sanitization are handled by call_llm_structured().
+        This method applies grounded scoring, expansion logic, and enrichment
+        decisions to the already-validated Pydantic model.
 
         Args:
-            response: LiteLLM response object
+            batch: Parsed ScoreBatch from LLM response
             directories: Input directory info dicts
             threshold: Minimum score to expand
             cost_per_path: LLM cost per path (batch_cost / batch_size)
@@ -459,29 +390,8 @@ class DirectoryScorer:
             List of ScoredDirectory objects with scores and cost_per_path set
         """
         import json as json_module
-        import re
 
-        try:
-            # LiteLLM returns content as JSON string when using response_format
-            content = response.choices[0].message.content
-            # Sanitize: remove control characters (except newline/tab) and surrogates
-            # LLM sometimes includes invalid Unicode from file paths
-            content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
-            content = content.encode("utf-8", errors="surrogateescape").decode(
-                "utf-8", errors="replace"
-            )
-            batch = ScoreBatch.model_validate_json(content)
-            results = batch.results
-        except Exception as e:
-            # CRITICAL: Validation error means LLM response was malformed.
-            # DO NOT create ScoredDirectory objects that will be persisted.
-            # Instead, raise the error so score_worker can revert paths to 'scanned'
-            # status for retry in the next batch.
-            logger.error(
-                f"LLM validation error for batch of {len(directories)} paths: {e}. "
-                "Paths will be reverted to scanned status."
-            )
-            raise ValueError(f"LLM response validation failed: {e}") from e
+        results = batch.results
 
         scored = []
         for i, result in enumerate(results[: len(directories)]):
