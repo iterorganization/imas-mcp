@@ -4,18 +4,20 @@ import re
 
 import pytest
 
-from imas_codex.discovery.wiki.scraper import (
+from imas_codex.discovery.wiki.entity_extraction import (
     COCOS_PATTERN,
-    IMAS_PATH_PATTERN,
     MDSPLUS_PATH_PATTERN,
     SIGN_CONVENTION_PATTERN,
     UNIT_PATTERN,
-    WikiPage,
+    _build_imas_pattern,
     extract_conventions,
     extract_imas_paths,
     extract_mdsplus_paths,
     extract_units,
 )
+from imas_codex.discovery.wiki.scraper import WikiPage
+
+IMAS_PATH_PATTERN = _build_imas_pattern()
 
 
 class TestMDSplusPathPattern:

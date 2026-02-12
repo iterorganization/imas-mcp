@@ -20,21 +20,10 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 
-# Re-export extraction functions from entity_extraction for backward compat.
-# New code should import directly from entity_extraction.
-from .entity_extraction import (  # noqa: F401
-    COCOS_PATTERN,
-    MDSPLUS_PATH_PATTERN,
-    SIGN_CONVENTION_PATTERN,
-    UNIT_PATTERN,
-    ExtractionResult,
-    FacilityEntityExtractor,
-    _build_imas_pattern as _build_imas_pattern,
+from .entity_extraction import (
     extract_conventions,
-    extract_facility_tool_mentions,
     extract_imas_paths,
     extract_mdsplus_paths,
-    extract_ppf_paths,
     extract_units,
 )
 
@@ -42,10 +31,6 @@ logger = logging.getLogger(__name__)
 
 # Base URL for the TCV wiki
 WIKI_BASE_URL = "https://spcwiki.epfl.ch/wiki"
-
-# Legacy IMAS_PATH_PATTERN kept for backward compatibility in tests.
-# New code should use extract_imas_paths() which uses the full DD IDS list.
-IMAS_PATH_PATTERN = _build_imas_pattern()
 
 
 # =============================================================================
@@ -164,37 +149,11 @@ def _fetch_confluence_page(
             title=page.title,
             content_html=page.content_html,
             content_text=page.content_text,
+            mdsplus_paths=extract_mdsplus_paths(page.content_text),
+            imas_paths=extract_imas_paths(page.content_text),
+            units=extract_units(page.content_text),
+            conventions=extract_conventions(page.content_text),
         )
-
-        # Extract entities
-        wiki_page.mdsplus_paths = list(
-            set(MDSPLUS_PATH_PATTERN.findall(page.content_text))
-        )
-        wiki_page.imas_paths = list(set(IMAS_PATH_PATTERN.findall(page.content_text)))
-        wiki_page.units = list(set(UNIT_PATTERN.findall(page.content_text)))
-
-        # Extract conventions
-        cocos_matches = COCOS_PATTERN.findall(page.content_text)
-        for match in cocos_matches:
-            cocos_num = next((m for m in match if m), None)
-            if cocos_num:
-                wiki_page.conventions.append(
-                    {
-                        "type": "cocos",
-                        "value": f"COCOS {cocos_num}",
-                    }
-                )
-
-        sign_matches = SIGN_CONVENTION_PATTERN.findall(page.content_text)
-        for match in sign_matches:
-            convention_text = next((m for m in match if m), None)
-            if convention_text:
-                wiki_page.conventions.append(
-                    {
-                        "type": "sign",
-                        "value": convention_text,
-                    }
-                )
 
         client.close()
         return wiki_page

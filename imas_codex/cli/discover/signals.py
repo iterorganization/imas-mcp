@@ -126,30 +126,29 @@ def signals(
         log_print(f"[red]No SSH host configured for {facility}[/red]")
         raise SystemExit(1)
 
-    # Auto-configure TDI path from facility config
+    # Auto-configure TDI path and reference shot from schema-backed config
+    data_sources = config.get("data_sources", {})
+    tdi_config = data_sources.get("tdi", {})
+    mdsplus_config = data_sources.get("mdsplus", {})
+
     if tdi_path is None:
-        tdi_paths = config.get("tdi_paths", [])
-        mdsplus = config.get("mdsplus", {})
-        if tdi_paths:
-            tdi_path = tdi_paths[0] if len(tdi_paths) == 1 else None
-        elif mdsplus.get("tdi_path"):
-            tdi_path = mdsplus["tdi_path"]
+        tdi_path = tdi_config.get("primary_path")
 
     if tdi_path is None:
         log_print(
             f"[red]No TDI path configured for {facility}.[/red]\n"
-            "Specify with --tdi-path or configure tdi_paths in facility YAML"
+            "Specify with --tdi-path or configure data_sources.tdi.primary_path "
+            "in facility YAML"
         )
         raise SystemExit(1)
 
-    # Get reference shot for enrichment
-    reference_shot = None
-    mdsplus = config.get("mdsplus", {})
-    if mdsplus.get("reference_shot"):
-        reference_shot = mdsplus["reference_shot"]
-    elif mdsplus.get("reference_shots"):
-        shots = mdsplus["reference_shots"]
-        reference_shot = shots[0] if shots else None
+    # Get reference shot from TDI config (primary) or MDSplus config (fallback)
+    reference_shot = tdi_config.get("reference_shot") or mdsplus_config.get(
+        "reference_shot"
+    )
+
+    # Get exclude functions for TDI scanning
+    exclude_functions = tdi_config.get("exclude_functions", [])
 
     log_print(f"\n[bold]Signal Discovery: {facility}[/bold]")
     log_print(f"  TDI path: {tdi_path}")
@@ -162,6 +161,8 @@ def signals(
     if focus:
         log_print(f"  Focus: {focus}")
     log_print(f"  Workers: {enrich_workers} enrich, {check_workers} check")
+    if exclude_functions:
+        log_print(f"  Exclude functions: {len(exclude_functions)}")
     log_print("")
 
     try:
@@ -189,11 +190,11 @@ def signals(
                     cost_limit=cost_limit,
                     signal_limit=signal_limit,
                     focus=focus,
-                    scan_only=scan_only,
+                    discover_only=scan_only,
                     enrich_only=enrich_only,
                     num_enrich_workers=enrich_workers,
                     num_check_workers=check_workers,
-                    on_scan_progress=log_on_scan,
+                    on_discover_progress=log_on_scan,
                     on_enrich_progress=log_on_enrich,
                     on_check_progress=log_on_check,
                 )
@@ -264,15 +265,14 @@ def signals(
                             cost_limit=cost_limit,
                             signal_limit=signal_limit,
                             focus=focus,
-                            scan_only=scan_only,
+                            discover_only=scan_only,
                             enrich_only=enrich_only,
                             num_enrich_workers=enrich_workers,
                             num_check_workers=check_workers,
-                            on_scan_progress=on_scan,
+                            on_discover_progress=on_scan,
                             on_enrich_progress=on_enrich,
                             on_check_progress=on_check,
                             on_worker_status=on_worker_status,
-                            service_monitor=service_monitor,
                         )
                     finally:
                         ticker_task.cancel()
