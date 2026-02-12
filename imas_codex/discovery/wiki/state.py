@@ -158,31 +158,62 @@ class WikiDiscoveryState:
         """Check if ALL workers should terminate.
 
         Used by the main loop to determine when discovery is complete.
+
+        When budget is exhausted, LLM-dependent workers (score, artifact_score,
+        image) exit their loops immediately — their idle counts may stay at 0.
+        We treat them as implicitly "done" so the main loop doesn't hang
+        waiting for idle counts that can never increment.  I/O workers
+        (ingest, artifact) continue draining their queues normally.
         """
         if self.stop_requested:
             return True
-        # Stop if all workers idle for 3+ iterations AND no pending work
+
+        budget_done = self.budget_exhausted
+
+        # LLM workers: idle OR budget-stopped counts as "done"
+        score_done = self.score_idle_count >= 3 or budget_done
+        artifact_score_done = self.artifact_score_idle_count >= 3 or budget_done
+        image_done = self.image_idle_count >= 3 or budget_done
+
+        # I/O workers: must be genuinely idle
         all_idle = (
             self.scan_idle_count >= 3
-            and self.score_idle_count >= 3
+            and score_done
             and self.ingest_idle_count >= 3
             and self.artifact_idle_count >= 3
-            and self.artifact_score_idle_count >= 3
-            and self.image_idle_count >= 3
+            and artifact_score_done
+            and image_done
         )
         if all_idle:
-            if (
-                _get_graph_ops().has_pending_work(self.facility)
-                or _get_graph_ops().has_pending_artifact_work(self.facility)
-                or _get_graph_ops().has_pending_image_work(self.facility)
-            ):
-                # Reset idle counts to force workers to re-poll
-                self.scan_idle_count = 0
-                self.score_idle_count = 0
-                self.ingest_idle_count = 0
-                self.artifact_idle_count = 0
-                self.artifact_score_idle_count = 0
-                self.image_idle_count = 0
+            # Check for remaining work.  When budget is exhausted only
+            # check I/O queues — LLM-dependent pending work (scanned pages
+            # needing scoring, images needing VLM) cannot be processed.
+            graph_ops = _get_graph_ops()
+            if budget_done:
+                has_work = graph_ops.has_pending_ingest_work(
+                    self.facility
+                ) or graph_ops.has_pending_artifact_ingest_work(self.facility)
+            else:
+                has_work = (
+                    graph_ops.has_pending_work(self.facility)
+                    or graph_ops.has_pending_artifact_work(self.facility)
+                    or graph_ops.has_pending_image_work(self.facility)
+                )
+
+            if has_work:
+                # Reset only I/O worker idle counts when budget is exhausted
+                # (LLM workers are already stopped and won't re-poll).
+                # Reset all idle counts when budget is not exhausted.
+                if budget_done:
+                    self.ingest_idle_count = 0
+                    self.artifact_idle_count = 0
+                else:
+                    self.scan_idle_count = 0
+                    self.score_idle_count = 0
+                    self.ingest_idle_count = 0
+                    self.artifact_idle_count = 0
+                    self.artifact_score_idle_count = 0
+                    self.image_idle_count = 0
                 return False
             return True
         return False

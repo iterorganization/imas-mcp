@@ -580,16 +580,26 @@ class WikiProgressDisplay:
                 state_counts[state] = state_counts.get(state, 0) + 1
 
             # Determine overall style based on states (grayed out when paused)
+            # LLM-dependent task groups stopped by budget get yellow instead
+            # of green so the user can distinguish "done" from "budget".
+            is_llm_task = task in ("score", "image")
+            all_stopped = state_counts.get(WorkerState.stopped, 0) == count
+            budget_stopped = (
+                all_stopped and is_llm_task and self.state.cost_limit_reached
+            )
+
             if is_paused:
                 style = "dim"
             elif state_counts.get(WorkerState.crashed, 0) > 0:
                 style = "red"
             elif state_counts.get(WorkerState.backoff, 0) > 0:
                 style = "yellow"
+            elif budget_stopped:
+                style = "yellow"  # Budget-stopped, not naturally complete
             elif state_counts.get(WorkerState.running, 0) > 0:
                 style = "green"
-            elif state_counts.get(WorkerState.stopped, 0) == count:
-                style = "green"  # All workers completed
+            elif all_stopped:
+                style = "green"  # All workers completed naturally
             else:
                 style = "dim"
 
@@ -600,7 +610,9 @@ class WikiProgressDisplay:
             backing_off = state_counts.get(WorkerState.backoff, 0)
             failed = state_counts.get(WorkerState.crashed, 0)
 
-            if backing_off > 0 or failed > 0:
+            if budget_stopped:
+                section.append(" (budget)", style="yellow dim")
+            elif backing_off > 0 or failed > 0:
                 parts = []
                 if running > 0:
                     parts.append(f"{running} active")
@@ -842,7 +854,10 @@ class WikiProgressDisplay:
                 section.append(f"streaming {queued} items...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif is_worker_complete("score"):
-                section.append("complete", style="green")
+                if self.state.cost_limit_reached:
+                    section.append("cost limit", style="yellow")
+                else:
+                    section.append("complete", style="green")
                 section.append("\n    ", style="dim")
             elif should_show_idle(self.state.score_processing, self.state.score_queue):
                 if is_paused:
@@ -997,7 +1012,10 @@ class WikiProgressDisplay:
                 section.append(f"streaming {queued} items...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif is_worker_complete("artifact"):
-                section.append("complete", style="green")
+                if self.state.cost_limit_reached:
+                    section.append("cost limit", style="yellow")
+                else:
+                    section.append("complete", style="green")
                 section.append("\n    ", style="dim")
             elif should_show_idle(
                 self.state.artifact_processing,
@@ -1066,7 +1084,10 @@ class WikiProgressDisplay:
                 section.append(f"streaming {queued} items...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif is_worker_complete("image"):
-                section.append("complete", style="green")
+                if self.state.cost_limit_reached:
+                    section.append("cost limit", style="yellow")
+                else:
+                    section.append("complete", style="green")
                 section.append("\n    ", style="dim")
             elif should_show_idle(
                 self.state.image_processing,
