@@ -726,7 +726,7 @@ async def scan_worker(
         on_progress: Progress callback
         batch_size: Paths per SSH call (default 50)
     """
-    from imas_codex.discovery.paths.scanner import scan_paths
+    from imas_codex.discovery.paths.scanner import async_scan_paths
 
     while not state.should_stop():
         # Claim work from graph
@@ -748,19 +748,11 @@ async def scan_worker(
         if on_progress:
             on_progress(f"scanning {len(paths)} paths", state.scan_stats, None, None)
 
-        # Run scan in thread pool (blocking SSH call)
-        # Capture variables for lambda to avoid late binding issue
-        loop = asyncio.get_running_loop()
+        # Async SSH scan — fully cancellable, no thread executor
         start = time.time()
-        facility, paths_to_scan = state.facility, path_strs
-        # Use enable_rg=False and enable_size=False for speed
-        # Pattern detection is expensive and not needed for basic discovery
         try:
-            results = await loop.run_in_executor(
-                None,
-                lambda fac=facility, pts=paths_to_scan: scan_paths(
-                    fac, pts, enable_rg=False, enable_size=False
-                ),
+            results = await async_scan_paths(
+                state.facility, path_strs, enable_rg=False, enable_size=False
             )
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
             # Transient failure (timeout or SSH connection error)
@@ -892,7 +884,7 @@ async def expand_worker(
         on_progress: Progress callback
         batch_size: Paths per SSH call (default 50)
     """
-    from imas_codex.discovery.paths.scanner import scan_paths
+    from imas_codex.discovery.paths.scanner import async_scan_paths
 
     while not state.should_stop():
         # Claim expansion work from graph - paths with should_expand=true
@@ -914,17 +906,11 @@ async def expand_worker(
         if on_progress:
             on_progress(f"expanding {len(paths)} paths", state.expand_stats, None, None)
 
-        # Run scan in thread pool (blocking SSH call)
-        loop = asyncio.get_running_loop()
+        # Async SSH scan — fully cancellable, no thread executor
         start = time.time()
-        facility, paths_to_scan = state.facility, path_strs
-
         try:
-            results = await loop.run_in_executor(
-                None,
-                lambda fac=facility, pts=paths_to_scan: scan_paths(
-                    fac, pts, enable_rg=False, enable_size=False
-                ),
+            results = await async_scan_paths(
+                state.facility, path_strs, enable_rg=False, enable_size=False
             )
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
             # Transient failure - revert paths for retry
@@ -1121,22 +1107,13 @@ async def score_worker(
         if on_progress:
             on_progress(f"scoring {len(paths_to_score)} paths", state.score_stats, None)
 
-        # Run scoring in thread pool (blocking LLM call)
-        loop = asyncio.get_running_loop()
+        # Async LLM scoring — fully cancellable
         start = time.time()
-        dirs_to_score, focus_val, thresh_val = (
-            paths_to_score,
-            state.focus,
-            state.threshold,
-        )
         try:
-            result = await loop.run_in_executor(
-                None,
-                lambda d=dirs_to_score, f=focus_val, t=thresh_val: scorer.score_batch(
-                    directories=d,
-                    focus=f,
-                    threshold=t,
-                ),
+            result = await scorer.async_score_batch(
+                directories=paths_to_score,
+                focus=state.focus,
+                threshold=state.threshold,
             )
             state.score_stats.last_batch_time = time.time() - start
             state.score_stats.cost += result.total_cost
@@ -1262,7 +1239,7 @@ async def enrich_worker(
     """
     # Use local claim_paths_for_enriching and mark_enrichment_complete
     # (defined above in this module with root_filter support)
-    from imas_codex.discovery.paths.enrichment import enrich_paths
+    from imas_codex.discovery.paths.enrichment import async_enrich_paths
 
     loop = asyncio.get_running_loop()
 
@@ -1291,14 +1268,11 @@ async def enrich_worker(
         if on_progress:
             on_progress(f"enriching {len(paths)} paths", state.enrich_stats, None)
 
-        # Run enrichment in thread pool (blocking SSH call)
+        # Async SSH enrichment — fully cancellable
         start = time.time()
         try:
-            results = await loop.run_in_executor(
-                None,
-                lambda fac=state.facility,
-                pts=path_strs,
-                pp=path_purposes: enrich_paths(fac, pts, path_purposes=pp),
+            results = await async_enrich_paths(
+                state.facility, path_strs, path_purposes=path_purposes
             )
             state.enrich_stats.last_batch_time = time.time() - start
 
@@ -1390,10 +1364,7 @@ async def rescore_worker(
         try:
             # LLM rescoring uses enrichment data for intelligent score refinement
             # Pass facility for cross-facility example injection
-            llm_results, cost = await loop.run_in_executor(
-                None,
-                lambda p=paths, f=state.facility: _rescore_with_llm(p, f),
-            )
+            llm_results, cost = await _async_rescore_with_llm(paths, state.facility)
 
             # Add should_expand from original data and cost tracking
             rescore_results = []
@@ -1572,6 +1543,198 @@ def _rescore_with_llm(
 
     try:
         batch, cost, _tokens = call_llm_structured(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_model=RescoreBatch,
+            max_tokens=8000,
+        )
+    except ValueError:
+        # All retries exhausted — return original scores as fallback
+        return [
+            {
+                "path": p["path"],
+                "score": p.get("score", 0.5),
+                "adjustment_reason": "parse error",
+            }
+            for p in paths
+        ], 0.0
+
+    # Build results dict with per-dimension updates
+    path_to_result = {r.path: r for r in batch.results}
+    results = []
+
+    for p in paths:
+        if p["path"] in path_to_result:
+            r = path_to_result[p["path"]]
+            result: dict = {
+                "path": p["path"],
+                "score": max(0.0, min(1.5, r.new_score)),
+                "adjustment_reason": (r.adjustment_reason[:80] or ""),
+            }
+
+            # Add per-dimension scores (use original if LLM returned None)
+            for dim in [
+                "score_modeling_code",
+                "score_analysis_code",
+                "score_operations_code",
+                "score_modeling_data",
+                "score_experimental_data",
+                "score_data_access",
+                "score_workflow",
+                "score_visualization",
+                "score_documentation",
+                "score_imas",
+            ]:
+                llm_value = getattr(r, dim, None)
+                if llm_value is not None:
+                    result[dim] = max(0.0, llm_value)  # Allow scores > 1.0
+                else:
+                    # Keep original value
+                    result[dim] = p.get(dim, 0.0)
+
+            results.append(result)
+        else:
+            # Path not in response, keep original
+            results.append(
+                {
+                    "path": p["path"],
+                    "score": p.get("score", 0.5),
+                    "adjustment_reason": "not in response",
+                }
+            )
+
+    return results, cost
+
+
+async def _async_rescore_with_llm(
+    paths: list[dict],
+    facility: str | None = None,
+) -> tuple[list[dict], float]:
+    """Rescore paths using LLM with enrichment data (async/cancellable).
+
+    Async version of _rescore_with_llm using acall_llm_structured for
+    native async LLM calls that respond to asyncio.cancel().
+
+    Injects cross-facility enriched examples into the prompt for
+    consistent scoring calibration across facilities.
+
+    Args:
+        paths: List of path dicts with enrichment data
+        facility: Current facility for preferring same-facility examples
+
+    Returns:
+        Tuple of (rescore_results, cost)
+    """
+    import json
+
+    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.paths.frontier import sample_enriched_paths
+    from imas_codex.discovery.paths.models import RescoreBatch
+    from imas_codex.settings import get_model
+
+    # Build prompt context with enriched examples
+    context: dict = {}
+
+    # Sample enriched paths for calibration (cross-facility)
+    enriched_examples = sample_enriched_paths(
+        facility=facility,
+        per_category=2,
+        cross_facility=True,
+    )
+    has_examples = any(enriched_examples.get(cat) for cat in enriched_examples)
+    if has_examples:
+        context["enriched_examples"] = enriched_examples
+
+    # Render prompt with examples
+    system_prompt = render_prompt("discovery/rescorer", context)
+
+    # Build user prompt with FULL context: initial scoring + enrichment data
+    lines_prompt = ["Rescore these directories using their enrichment metrics:\n"]
+    for p in paths:
+        # Parse language breakdown if it's a JSON string
+        lang = p.get("language_breakdown")
+        if isinstance(lang, str):
+            try:
+                lang = json.loads(lang)
+            except json.JSONDecodeError:
+                lang = {}
+
+        lines_prompt.append(f"\n## Path: {p['path']}")
+
+        # Initial scoring context (what the scorer saw and decided)
+        lines_prompt.append(f"Purpose: {p.get('path_purpose', 'unknown')}")
+        if p.get("description"):
+            lines_prompt.append(f"Description: {p['description']}")
+        if p.get("keywords"):
+            keywords = p["keywords"]
+            if isinstance(keywords, list):
+                keywords = ", ".join(keywords)
+            lines_prompt.append(f"Keywords: {keywords}")
+        if p.get("expansion_reason"):
+            lines_prompt.append(f"Expansion reason: {p['expansion_reason']}")
+
+        # Child contents (truncated) - helps understand what's in the directory
+        child_names = p.get("child_names")
+        if child_names:
+            if isinstance(child_names, str):
+                # Truncate long child lists
+                if len(child_names) > 200:
+                    child_names = child_names[:200] + "..."
+            lines_prompt.append(f"Contents: {child_names}")
+
+        # Enrichment metrics (new data from deep analysis)
+        lines_prompt.append("\nEnrichment data:")
+        lines_prompt.append(f"  Total lines: {p.get('total_lines') or 0}")
+        lines_prompt.append(f"  Total bytes: {p.get('total_bytes') or 0}")
+        lines_prompt.append(f"  Language breakdown: {lang or {}}")
+        lines_prompt.append(f"  Is multiformat: {p.get('is_multiformat', False)}")
+
+        # Initial per-dimension scores (what we're potentially adjusting)
+        # Use `or 0.0` since .get() returns None if key exists with None value
+        lines_prompt.append("\nInitial scores:")
+        lines_prompt.append(
+            f"  score_modeling_code: {p.get('score_modeling_code') or 0.0:.2f}"
+        )
+        lines_prompt.append(
+            f"  score_analysis_code: {p.get('score_analysis_code') or 0.0:.2f}"
+        )
+        lines_prompt.append(
+            f"  score_operations_code: {p.get('score_operations_code') or 0.0:.2f}"
+        )
+        lines_prompt.append(
+            f"  score_modeling_data: {p.get('score_modeling_data') or 0.0:.2f}"
+        )
+        lines_prompt.append(
+            f"  score_experimental_data: {p.get('score_experimental_data') or 0.0:.2f}"
+        )
+        lines_prompt.append(
+            f"  score_data_access: {p.get('score_data_access') or 0.0:.2f}"
+        )
+        lines_prompt.append(f"  score_workflow: {p.get('score_workflow') or 0.0:.2f}")
+        lines_prompt.append(
+            f"  score_visualization: {p.get('score_visualization') or 0.0:.2f}"
+        )
+        lines_prompt.append(
+            f"  score_documentation: {p.get('score_documentation') or 0.0:.2f}"
+        )
+        lines_prompt.append(f"  score_imas: {p.get('score_imas') or 0.0:.2f}")
+        lines_prompt.append(f"  combined_score: {p.get('score') or 0.0:.2f}")
+
+    user_prompt = "\n".join(lines_prompt)
+
+    # Get model
+    model = get_model("language")  # Use same model as scorer
+
+    # Call LLM with shared retry+parse loop — retries on both API errors
+    # and JSON/validation errors (same resilience as wiki pipeline).
+    # Rescore uses smaller max_tokens since output is compact per-path adjustments.
+    from imas_codex.discovery.base.llm import acall_llm_structured
+
+    try:
+        batch, cost, _tokens = await acall_llm_structured(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
