@@ -107,15 +107,16 @@ def _build_env_exports(login_hostname: str) -> str:
 
     Sets up the compute node environment so imas-codex commands can
     reach the login node's embedding server and Neo4j instance.
-    Uses the configured graph password from centralized settings.
+    Uses the active graph profile for port and password resolution.
     """
-    from imas_codex.settings import get_graph_password
+    from imas_codex.graph.profiles import resolve_graph
 
-    password = get_graph_password()
+    profile = resolve_graph()
     return (
         f'export IMAS_CODEX_EMBED_REMOTE_URL="http://{login_hostname}:18765"\n'
-        f'export NEO4J_URI="bolt://{login_hostname}:7687"\n'
-        f'export NEO4J_PASSWORD="{password}"\n'
+        f'export NEO4J_URI="bolt://{login_hostname}:{profile.bolt_port}"\n'
+        f'export NEO4J_PASSWORD="{profile.password}"\n'
+        f'export IMAS_CODEX_GRAPH="{profile.name}"\n'
         'export IMAS_CODEX_EMBEDDING_BACKEND="remote"\n'
     )
 

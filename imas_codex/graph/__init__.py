@@ -37,6 +37,11 @@ from imas_codex.graph.models import (  # noqa: E402
     TreeNode,
     TreeNodeType,
 )
+from imas_codex.graph.profiles import (  # noqa: E402
+    GraphProfile,
+    list_profiles,
+    resolve_graph,
+)
 from imas_codex.graph.schema import (  # noqa: E402
     GraphSchema,
     Relationship,
@@ -49,6 +54,10 @@ from imas_codex.graph.schema import (  # noqa: E402
 __all__ = [
     # Client (fast import)
     "GraphClient",
+    # Graph profiles
+    "GraphProfile",
+    "resolve_graph",
+    "list_profiles",
     # Schema-driven utilities
     "GraphSchema",
     "Relationship",

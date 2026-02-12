@@ -3,14 +3,18 @@
 This module provides a high-level client for interacting with the Neo4j
 knowledge graph, including schema initialization and CRUD operations.
 
-The graph structure is derived from the LinkML schema (schemas/facility.yaml)
-via the GraphSchema class, which is the single source of truth.
+Connection settings resolve via named graph profiles — see
+:mod:`imas_codex.graph.profiles` for the full resolution chain.
 
 Example:
     >>> from imas_codex.graph import GraphClient
     >>> with GraphClient() as client:
     ...     client.initialize_schema()
     ...     client.create_node("Facility", "tcv", {"name": "EPFL/TCV"})
+
+    >>> # Connect to a specific graph profile
+    >>> with GraphClient.from_profile("tcv") as client:
+    ...     print(client.get_stats())
 """
 
 import logging
@@ -21,6 +25,7 @@ from typing import Any, Self
 
 from neo4j import Driver, GraphDatabase, Session
 
+from imas_codex.graph.profiles import resolve_graph
 from imas_codex.graph.schema import GraphSchema, get_schema
 from imas_codex.settings import (
     get_embedding_dimension,
@@ -33,6 +38,8 @@ from imas_codex.settings import (
 # These are harmless (e.g., retry_count doesn't exist until first failure)
 logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class GraphClient:
@@ -41,29 +48,59 @@ class GraphClient:
     The graph structure is derived from the LinkML schema (schemas/facility.yaml)
     via GraphSchema, which provides node labels, relationship types, and constraints.
 
-    Connection settings are resolved via centralized settings with this priority:
-        1. Environment variables (NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD)
-        2. pyproject.toml [tool.imas-codex.graph] section
-        3. Built-in defaults (bolt://localhost:7687, neo4j, imas-codex)
+    Connection settings are resolved via named graph profiles:
+        1. ``IMAS_CODEX_GRAPH`` env selects the profile (default: ``"iter"``)
+        2. Profiles map to ports by convention (iter→7687, tcv→7688, …)
+        3. ``NEO4J_URI`` / ``NEO4J_PASSWORD`` env vars override any profile
+
+    Construct with no arguments to use the active profile, or pass a
+    profile name explicitly::
+
+        GraphClient()                        # active profile
+        GraphClient.from_profile("tcv")      # specific profile
 
     Attributes:
         uri: Neo4j Bolt URI
         username: Neo4j username (default: neo4j)
         password: Neo4j password
+        profile_name: Name of the resolved graph profile
     """
 
     uri: str = field(default_factory=get_graph_uri)
     username: str = field(default_factory=get_graph_username)
     password: str = field(default_factory=get_graph_password)
+    profile_name: str = field(default="")
     _driver: Driver | None = field(default=None, init=False, repr=False)
     _schema: GraphSchema | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize the Neo4j driver."""
+        if not self.profile_name:
+            from imas_codex.graph.profiles import get_active_graph_name
+
+            self.profile_name = get_active_graph_name()
         self._driver = GraphDatabase.driver(
             self.uri, auth=(self.username, self.password)
         )
         self._schema = get_schema()
+
+    @classmethod
+    def from_profile(cls, name: str) -> "GraphClient":
+        """Create a GraphClient connected to a specific named graph profile.
+
+        Args:
+            name: Profile name (e.g. ``"tcv"``, ``"jt60sa"``).
+
+        Returns:
+            GraphClient connected to the resolved profile.
+        """
+        profile = resolve_graph(name)
+        return cls(
+            uri=profile.uri,
+            username=profile.username,
+            password=profile.password,
+            profile_name=profile.name,
+        )
 
     @property
     def schema(self) -> GraphSchema:

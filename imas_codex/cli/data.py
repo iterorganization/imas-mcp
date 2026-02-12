@@ -344,11 +344,11 @@ def require_gh() -> None:
         )
 
 
-def is_neo4j_running() -> bool:
+def is_neo4j_running(http_port: int = 7474) -> bool:
     try:
         import urllib.request
 
-        urllib.request.urlopen("http://localhost:7474/", timeout=2)
+        urllib.request.urlopen(f"http://localhost:{http_port}/", timeout=2)
         return True
     except Exception:
         return False
@@ -375,14 +375,14 @@ def is_port_bound_by_tunnel(port: int = 7687) -> bool:
         return False
 
 
-def check_graph_conflict() -> str | None:
+def check_graph_conflict(bolt_port: int = 7687) -> str | None:
     """Check for conflicting graph configurations.
 
     Returns an error message if a conflict is detected, None otherwise.
     """
-    if is_port_bound_by_tunnel(7687):
+    if is_port_bound_by_tunnel(bolt_port):
         return (
-            "Port 7687 is bound by an SSH tunnel (likely forwarding ITER Neo4j).\n"
+            f"Port {bolt_port} is bound by an SSH tunnel.\n"
             "Starting a local Neo4j would create two separate graphs.\n"
             "\n"
             "To use the remote graph via tunnel:\n"
@@ -550,19 +550,31 @@ def data_db() -> None:
 
 
 @data_db.command("start")
+@click.option(
+    "--graph",
+    "-g",
+    envvar="IMAS_CODEX_GRAPH",
+    default=None,
+    help="Graph profile name (default: active profile)",
+)
 @click.option("--image", envvar="NEO4J_IMAGE", default=None)
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
 def db_start(
-    image: str | None, data_dir: str | None, password: str | None, foreground: bool
+    graph: str | None,
+    image: str | None,
+    data_dir: str | None,
+    password: str | None,
+    foreground: bool,
 ) -> None:
     """Start Neo4j server via Apptainer."""
     import platform
 
-    from imas_codex.settings import get_graph_password
+    from imas_codex.graph.profiles import resolve_graph
 
-    password = password or get_graph_password()
+    profile = resolve_graph(graph)
+    password = password or profile.password
 
     if platform.system() in ("Windows", "Darwin"):
         click.echo("On Windows/Mac, use Docker: docker compose up -d neo4j", err=True)
@@ -571,12 +583,12 @@ def db_start(
     require_apptainer()
 
     # Check for conflicting tunnel before starting
-    conflict = check_graph_conflict()
+    conflict = check_graph_conflict(profile.bolt_port)
     if conflict:
         raise click.ClickException(conflict)
 
     image_path = Path(image) if image else NEO4J_IMAGE
-    data_path = Path(data_dir) if data_dir else DATA_DIR
+    data_path = Path(data_dir) if data_dir else profile.data_dir
 
     if not image_path.exists():
         raise click.ClickException(
@@ -584,8 +596,10 @@ def db_start(
             "Pull: apptainer pull docker://neo4j:2025.11-community"
         )
 
-    if is_neo4j_running():
-        click.echo("Neo4j is already running on port 7474")
+    if is_neo4j_running(profile.http_port):
+        click.echo(
+            f"Neo4j [{profile.name}] is already running on port {profile.http_port}"
+        )
         return
 
     for subdir in ["data", "logs", "conf", "import"]:
@@ -603,12 +617,18 @@ def db_start(
         "--writable-tmpfs",
         "--env",
         f"NEO4J_AUTH=neo4j/{password}",
+        "--env",
+        f"NEO4J_server_bolt_listen__address=:{profile.bolt_port}",
+        "--env",
+        f"NEO4J_server_http_listen__address=:{profile.http_port}",
         str(image_path),
         "neo4j",
         "console",
     ]
 
-    click.echo(f"Starting Neo4j from {image_path}")
+    click.echo(
+        f"Starting Neo4j [{profile.name}] (bolt:{profile.bolt_port}, http:{profile.http_port})"
+    )
 
     if foreground:
         subprocess.run(cmd)
@@ -627,8 +647,10 @@ def db_start(
         import time
 
         for _ in range(30):
-            if is_neo4j_running():
-                click.echo("Neo4j ready at http://localhost:7474")
+            if is_neo4j_running(profile.http_port):
+                click.echo(
+                    f"Neo4j [{profile.name}] ready at http://localhost:{profile.http_port}"
+                )
                 return
             time.sleep(1)
 
@@ -659,18 +681,49 @@ def db_stop(data_dir: str | None) -> None:
 
 
 @data_db.command("status")
-def db_status() -> None:
+@click.option(
+    "--graph", "-g", envvar="IMAS_CODEX_GRAPH", default=None, help="Graph profile name"
+)
+def db_status(graph: str | None) -> None:
     """Check Neo4j server status."""
+    from imas_codex.graph.profiles import resolve_graph
+
+    profile = resolve_graph(graph)
     try:
         import urllib.request
 
-        with urllib.request.urlopen("http://localhost:7474/", timeout=5) as resp:
+        with urllib.request.urlopen(
+            f"http://localhost:{profile.http_port}/", timeout=5
+        ) as resp:
             resp_data = json.loads(resp.read().decode())
-            click.echo("Neo4j is running")
+            click.echo(f"Neo4j [{profile.name}] is running")
             click.echo(f"  Version: {resp_data.get('neo4j_version', 'unknown')}")
             click.echo(f"  Edition: {resp_data.get('neo4j_edition', 'unknown')}")
+            click.echo(f"  Bolt: localhost:{profile.bolt_port}")
+            click.echo(f"  HTTP: localhost:{profile.http_port}")
+            click.echo(f"  Data: {profile.data_dir}")
     except Exception:
-        click.echo("Neo4j is not responding on port 7474")
+        click.echo(
+            f"Neo4j [{profile.name}] is not responding on port {profile.http_port}"
+        )
+
+
+@data_db.command("profiles")
+def db_profiles() -> None:
+    """List available graph profiles and their port assignments."""
+    from imas_codex.graph.profiles import get_active_graph_name, list_profiles
+
+    active = get_active_graph_name()
+    profiles = list_profiles()
+
+    click.echo("Graph profiles:")
+    for p in profiles:
+        marker = "→" if p.name == active else " "
+        running = "running" if is_neo4j_running(p.http_port) else "stopped"
+        click.echo(
+            f"  {marker} {p.name:<10s}  bolt:{p.bolt_port}  http:{p.http_port}  "
+            f"{p.data_dir}  [{running}]"
+        )
 
 
 @data_db.command("shell")
@@ -1391,20 +1444,141 @@ def data_load(
     click.echo("✓ Load complete")
 
 
+# ============================================================================
+# Embedding Update (pre-push hook)
+# ============================================================================
+
+# Node types with description + embedding fields, updated before push
+_DESCRIPTION_EMBEDDABLE_LABELS = [
+    "FacilitySignal",
+    "FacilityPath",
+    "TreeNode",
+    "WikiArtifact",
+]
+
+
+def _update_description_embeddings() -> None:
+    """Update description embeddings for all embeddable node types.
+
+    Called before graph dump in `data push` to ensure all description
+    fields have up-to-date embeddings. Uses the same logic as
+    `imas-codex embed update` but runs for all labels in sequence.
+    """
+    from imas_codex.embeddings.description import embed_descriptions_batch
+    from imas_codex.graph.client import GraphClient
+
+    with GraphClient() as gc:
+        for label in _DESCRIPTION_EMBEDDABLE_LABELS:
+            # Count nodes needing update
+            result = gc.query(
+                f"MATCH (n:{label}) "
+                f"WHERE n.description IS NOT NULL "
+                f"  AND n.description <> '' "
+                f"  AND n.embedding IS NULL "
+                f"RETURN count(n) AS total"
+            )
+            total = result[0]["total"] if result else 0
+            if total == 0:
+                click.echo(f"  {label}: all descriptions embedded ✓")
+                continue
+
+            click.echo(f"  {label}: embedding {total} descriptions...")
+            processed = 0
+            batch_size = 100
+
+            while True:
+                rows = gc.query(
+                    f"MATCH (n:{label}) "
+                    f"WHERE n.description IS NOT NULL "
+                    f"  AND n.description <> '' "
+                    f"  AND n.embedding IS NULL "
+                    f"RETURN n.id AS id, n.description AS description "
+                    f"LIMIT $batch_size",
+                    batch_size=batch_size,
+                )
+                if not rows:
+                    break
+
+                items = [{"id": r["id"], "description": r["description"]} for r in rows]
+                items = embed_descriptions_batch(items)
+                gc.query(
+                    f"UNWIND $items AS item "
+                    f"MATCH (n:{label} {{id: item.id}}) "
+                    f"SET n.embedding = item.embedding",
+                    items=items,
+                )
+                processed += len(items)
+
+            click.echo(f"  {label}: embedded {processed} descriptions ✓")
+
+
+def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> None:
+    """Fire a repository_dispatch event to trigger graph quality CI.
+
+    Uses the GitHub CLI (gh) to dispatch a graph-pushed event.
+    Silently skips if gh is not available or the dispatch fails.
+    """
+    if not shutil.which("gh"):
+        return
+
+    owner = git_info.get("remote_owner", "iterorganization")
+    repo = "imas-codex"
+
+    payload = json.dumps(
+        {
+            "tag": version_tag,
+            "registry": registry,
+            "commit": git_info.get("commit", ""),
+        }
+    )
+
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/dispatches",
+                "-f",
+                "event_type=graph-pushed",
+                "-f",
+                f"client_payload={payload}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            click.echo("✓ Dispatched graph-quality CI")
+        else:
+            click.echo(
+                f"Warning: graph-quality dispatch failed: {result.stderr.strip()}",
+                err=True,
+            )
+    except (subprocess.TimeoutExpired, Exception) as e:
+        click.echo(f"Warning: graph-quality dispatch skipped: {e}", err=True)
+
+
 @data.command("push")
 @click.option("--dev", is_flag=True, help="Push as dev-{commit} tag")
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 @click.option("--token", envvar="GHCR_TOKEN")
 @click.option("--dry-run", is_flag=True, help="Show what would be pushed")
 @click.option("--skip-private", is_flag=True, help="Skip private YAML gist sync")
+@click.option("--skip-embed", is_flag=True, help="Skip description embedding update")
 def data_push(
     dev: bool,
     registry: str | None,
     token: str | None,
     dry_run: bool,
     skip_private: bool,
+    skip_embed: bool,
 ) -> None:
-    """Push graph archive to GHCR and private facility configs to Gist."""
+    """Push graph archive to GHCR and private facility configs to Gist.
+
+    Before dumping, updates description embeddings for all node types
+    that have description fields (FacilitySignal, FacilityPath, TreeNode,
+    WikiArtifact). Use --skip-embed to skip this step.
+    """
     require_oras()
 
     git_info = get_git_info()
@@ -1421,9 +1595,16 @@ def data_push(
 
     if dry_run:
         click.echo("\n[DRY RUN] Would:")
-        click.echo("  1. Dump graph (auto stop/start Neo4j)")
-        click.echo(f"  2. Push to {target_registry}/imas-codex-graph:{version_tag}")
+        click.echo("  1. Update description embeddings")
+        click.echo("  2. Dump graph (auto stop/start Neo4j)")
+        click.echo(f"  3. Push to {target_registry}/imas-codex-graph:{version_tag}")
         return
+
+    # Step 1: Update description embeddings before dump
+    if not skip_embed:
+        _update_description_embeddings()
+    else:
+        click.echo("Skipped embedding update (--skip-embed)")
 
     archive_path = Path(f"imas-codex-graph-{version_tag}.tar.gz")
 
@@ -1502,6 +1683,9 @@ def data_push(
                 click.echo("✓ Private YAML synced to Gist")
     elif skip_private:
         click.echo("\nSkipped private YAML sync (--skip-private)")
+
+    # Dispatch graph quality CI
+    _dispatch_graph_quality(git_info, version_tag, target_registry)
 
 
 @data.command("pull")
@@ -1848,7 +2032,8 @@ def _resolve_token(token: str | None) -> str:
         return result.stdout.strip()
 
     raise click.ClickException(
-        "No GitHub token found. Provide --token, set GHCR_TOKEN, or run 'gh auth login'."
+        "No GitHub token found. Provide --token, set GHCR_TOKEN,"
+        " or run 'gh auth login'."
     )
 
 

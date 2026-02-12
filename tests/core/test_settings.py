@@ -205,6 +205,7 @@ class TestModuleLevelConstants:
         assert hasattr(settings, "GRAPH_URI")
         assert hasattr(settings, "GRAPH_USERNAME")
         assert hasattr(settings, "GRAPH_PASSWORD")
+        assert hasattr(settings, "GRAPH_NAME")
 
     def test_module_constants_have_correct_types(self):
         """Module-level constants have correct types."""
@@ -216,6 +217,7 @@ class TestModuleLevelConstants:
         assert isinstance(settings.GRAPH_URI, str)
         assert isinstance(settings.GRAPH_USERNAME, str)
         assert isinstance(settings.GRAPH_PASSWORD, str)
+        assert isinstance(settings.GRAPH_NAME, str)
 
 
 class TestGraphSettings:
@@ -281,3 +283,33 @@ class TestGraphSettings:
         assert "bolt://" in uri
         assert username == "neo4j"
         assert password == "imas-codex"
+
+    def test_get_graph_name_default(self, monkeypatch):
+        """get_graph_name returns active profile name."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.delenv("IMAS_CODEX_GRAPH", raising=False)
+        name = settings.get_graph_name()
+        assert name == "iter"
+
+    def test_get_graph_name_env_override(self, monkeypatch):
+        """IMAS_CODEX_GRAPH env var switches the active profile."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.setenv("IMAS_CODEX_GRAPH", "tcv")
+        monkeypatch.delenv("NEO4J_URI", raising=False)
+        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
+        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+        name = settings.get_graph_name()
+        assert name == "tcv"
+        # URI should reflect the tcv profile port
+        uri = settings.get_graph_uri()
+        assert ":7688" in uri
+
+    def test_get_graph_profile_returns_profile(self, monkeypatch):
+        """get_graph_profile returns a GraphProfile object."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.delenv("IMAS_CODEX_GRAPH", raising=False)
+        monkeypatch.delenv("NEO4J_URI", raising=False)
+        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+        profile = settings.get_graph_profile()
+        assert profile.name == "iter"
+        assert profile.bolt_port == 7687

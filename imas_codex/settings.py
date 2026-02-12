@@ -184,36 +184,39 @@ def get_embed_server_port() -> int:
 
 
 # ─── Graph settings (Neo4j) ────────────────────────────────────────────────
+# Resolved via named graph profiles.  See imas_codex.graph.profiles for
+# the full resolution chain (IMAS_CODEX_GRAPH → profiles → convention).
+
+
+def get_graph_profile():  # type: ignore[return]
+    """Get the fully resolved :class:`GraphProfile` for the active graph.
+
+    This is the canonical entry point — all other ``get_graph_*()``
+    accessors delegate here.
+    """
+    from imas_codex.graph.profiles import resolve_graph
+
+    return resolve_graph()
 
 
 def get_graph_uri() -> str:
-    """Get the Neo4j connection URI.
-
-    Priority: NEO4J_URI env → [graph].uri → 'bolt://localhost:7687'.
-    """
-    if env := os.getenv("NEO4J_URI"):
-        return env
-    return _get_section("graph").get("uri", "bolt://localhost:7687")
+    """Get the Neo4j bolt URI for the active graph profile."""
+    return get_graph_profile().uri
 
 
 def get_graph_username() -> str:
-    """Get the Neo4j username.
-
-    Priority: NEO4J_USERNAME env → [graph].username → 'neo4j'.
-    """
-    if env := os.getenv("NEO4J_USERNAME"):
-        return env
-    return _get_section("graph").get("username", "neo4j")
+    """Get the Neo4j username for the active graph profile."""
+    return get_graph_profile().username
 
 
 def get_graph_password() -> str:
-    """Get the Neo4j password.
+    """Get the Neo4j password for the active graph profile."""
+    return get_graph_profile().password
 
-    Priority: NEO4J_PASSWORD env → [graph].password → 'imas-codex'.
-    """
-    if env := os.getenv("NEO4J_PASSWORD"):
-        return env
-    return _get_section("graph").get("password", "imas-codex")
+
+def get_graph_name() -> str:
+    """Get the active graph profile name (e.g. ``"iter"``, ``"tcv"``)."""
+    return get_graph_profile().name
 
 
 # ─── Data dictionary settings ──────────────────────────────────────────────
@@ -303,3 +306,4 @@ EMBEDDING_DIMENSION = get_embedding_dimension()
 GRAPH_URI = get_graph_uri()
 GRAPH_USERNAME = get_graph_username()
 GRAPH_PASSWORD = get_graph_password()
+GRAPH_NAME = get_graph_name()

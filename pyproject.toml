@@ -193,9 +193,14 @@ imas-dd-version = ""
 [tool.imas-codex]
 
 [tool.imas-codex.graph]
-uri = "bolt://localhost:7687"
+default = "iter"
 username = "neo4j"
 password = "imas-codex"
+
+# Explicit profile overrides (convention handles standard cases):
+# [tool.imas-codex.graph.profiles.remote-tcv]
+# uri = "bolt://tcv-server.epfl.ch:7687"
+# password = "tcv-specific-password"
 
 [tool.imas-codex.data-dictionary]
 version = "4.1.0"
@@ -270,6 +275,7 @@ addopts = [
     "--verbose",
     "--durations=10",
     "--cache-clear",
+    "-m", "not graph",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
@@ -281,6 +287,7 @@ markers = [
     "fast: marks tests as fast-running unit tests",
     "performance: marks tests that focus on performance",
     "timeout: marks tests with timeout constraints (requires pytest-timeout)",
+    "graph: marks tests requiring a live Neo4j connection (excluded by default)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
