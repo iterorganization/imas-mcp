@@ -120,14 +120,17 @@ discovery_roots:
 # Site 0: Live TWiki Main web - EDAS manuals, API docs, shot reports, daily reports (~5500 topics)
 # Site 1: TWiki static export - analysis code documentation (Code web, ~285 topics)
 # Site 2: Server landing page - hardware, software, login, batch jobs, compilers
+#
+# Access: Use browser URLs from port_forwards section when tunnels are active.
+# Original URLs retained for documentation and direct VPN access.
 wiki_sites:
-  - url: http://157.111.10.188/twiki
-    name: twiki_main
+  - name: twiki_main
+    url: http://157.111.10.188/twiki
     site_type: twiki
     webs:
       - Main
     pub_path: /var/www/html/twiki/pub  # Artifact discovery via fd over SSH
-    access_method: vpn
+    access_method: tunnel              # Use port forward (browser.services[twiki_main])
     auth_type: none
     ssh_available: true
     description: >-
@@ -141,13 +144,14 @@ wiki_sites:
       - ja
       - en
 
-  - url: https://nakasvr23.iferc.org/twiki_html
+  - name: twiki_code
+    url: https://nakasvr23.iferc.org/twiki_html
     portal_page: WebHome.html
     site_type: twiki_static
     pub_path: /var/www/html/twiki_html/rsrc  # Artifact discovery via fd over SSH
-    access_method: vpn   # Only accessible when IFERC VPN is active
-    auth_type: none      # No credentials — VPN is the access gate
-    ssh_available: true  # SSH to jt60sa host also possible via VPN
+    access_method: tunnel              # Use port forward (browser.services[twiki_code])
+    auth_type: none
+    ssh_available: true
     description: >-
       JT-60SA Code web - analysis code documentation (standalone archive,
       no Code web in live TWiki). Contains TOPICS, EDAS, SLICE, equilibrium
@@ -157,10 +161,11 @@ wiki_sites:
       - ja
       - en
 
-  - url: https://nakasvr23.iferc.org
+  - name: server_docs
+    url: https://nakasvr23.iferc.org
     portal_page: index-en.html
     site_type: static_html
-    access_method: vpn
+    access_method: tunnel              # Use port forward (browser.services[server_docs])
     auth_type: none
     ssh_available: true
     description: >-
@@ -184,3 +189,61 @@ user_info:
     - getent
     - passwd
     - id
+
+# =============================================================================
+# Port Forwards - Local SSH tunnels for service access
+# =============================================================================
+# JT-60SA services are behind IFERC VPN. Access from workstation requires:
+# 1. VPN active (OpenVPN to iferc.org)
+# 2. SSH tunnels via autossh systemd service (jt60sa-twiki-forward.service)
+#
+# Port convention: base 88xx for jt60sa, last digit = wiki site index
+# wiki_sites[0] -> port 8800, wiki_sites[1] -> port 8801, etc.
+#
+# The reverse tunnel (iter-reverse-tunnel.service) exposes these ports to ITER
+# workers via RemoteForward, allowing discovery from both workstation and ITER.
+
+port_forwards:
+  port_base: 8800
+  ssh_host: jt60sa  # SSH to jt60sa, then LocalForward to wiki servers
+  forwards:
+    - name: twiki_main
+      local_port: 8800
+      remote_host: 157.111.10.188
+      remote_port: 80
+      protocol: http
+      description: JT-60SA Main TWiki web (live Apache/CGI, ~5500 topics)
+
+    - name: twiki_code
+      local_port: 8801
+      remote_host: nakasvr23.iferc.org
+      remote_port: 443
+      protocol: https
+      description: JT-60SA Code web static export (~285 pages)
+
+    - name: server_docs
+      local_port: 8802
+      remote_host: nakasvr23.iferc.org
+      remote_port: 443
+      protocol: https
+      description: nakasvr23 server documentation (hardware, software, login)
+
+# =============================================================================
+# Browser URLs - Localhost access with active port forwards
+# =============================================================================
+# These URLs work when the jt60sa-twiki-forward.service is running.
+# From ITER workers, use the same URLs (iter-reverse-tunnel exposes them).
+
+browser:
+  services:
+    - name: twiki_main
+      url: http://localhost:8800/twiki
+      description: Main TWiki web - EDAS manuals, API docs, shot reports
+
+    - name: twiki_code
+      url: https://localhost:8801/twiki_html
+      description: Code web static - TOPICS, equilibrium codes, hardware specs
+
+    - name: server_docs
+      url: https://localhost:8802/
+      description: Server documentation - login, batch jobs, compilers

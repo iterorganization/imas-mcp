@@ -102,11 +102,8 @@ def neo4j_health_check() -> tuple[bool, str]:
         with GraphClient() as gc:
             result = gc.query("RETURN 1 AS ok")
             if result and result[0]["ok"] == 1:
-                # Get URI for display
-                from imas_codex.graph.client import _get_neo4j_uri
-
-                uri = _get_neo4j_uri()
-                return True, uri
+                # Return the URI from the client for display
+                return True, gc.uri
         return False, "query returned unexpected result"
     except Exception as e:
         return False, str(e)[:100]

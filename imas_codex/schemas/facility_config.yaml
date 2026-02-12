@@ -60,6 +60,16 @@ enums:
       netcdf:
         description: NetCDF scientific data format
 
+  LocalForwardProtocol:
+    description: Protocol for local port forwards
+    permissible_values:
+      http:
+        description: HTTP (plain)
+      https:
+        description: HTTPS (TLS)
+      ssh:
+        description: SSH tunnel endpoint
+
   WikiSiteType:
     description: Types of wiki/documentation sites
     permissible_values:
@@ -168,6 +178,18 @@ classes:
       user_info:
         description: User info discovery configuration
         range: UserInfoConfig
+      port_forwards:
+        description: >-
+          Port forward configuration for accessing facility services from workstation.
+          Each facility uses a base port range (e.g., 88xx for jt60sa). Individual
+          services increment the last digit (0=wiki1, 1=wiki2, etc). Workstation
+          SSH config establishes LocalForwards; autossh systemd services maintain them.
+        range: PortForwardsConfig
+      browser:
+        description: >-
+          Browser-accessible URLs for facility services accessible via port forwards.
+          Maps service names to localhost URLs for documentation and quick access.
+        range: BrowserConfig
 
       # --- Private fields (in <facility>_private.yaml) ---
       hostnames:
@@ -249,8 +271,12 @@ classes:
       to enumerate pages and artifacts.
     class_uri: fc:WikiSiteConfig
     attributes:
+      name:
+        description: >-
+          Unique identifier for cross-referencing with port_forwards and browser config.
+          Should match LocalForwardConfig.name and BrowserServiceConfig.name.
       url:
-        description: Base URL of the wiki site
+        description: Base URL of the wiki site (original URL, may require VPN)
         required: true
       portal_page:
         description: Main portal/landing page name (e.g., "Main_Page", "Portal:TCV")
@@ -262,7 +288,9 @@ classes:
         range: WikiSiteType
         ifabsent: "mediawiki"
       access_method:
-        description: How the site is accessed (direct, ssh_tunnel)
+        description: >-
+          How the site is accessed. Values: direct (public), vpn (VPN required),
+          tunnel (use port forward from browser config), ssh_tunnel (SSH only).
         ifabsent: "direct"
       auth_type:
         description: Authentication method
@@ -477,3 +505,89 @@ classes:
       notes:
         description: Free-form notes about data access at this facility
         multivalued: true
+
+  PortForwardsConfig:
+    description: >-
+      Port forward configuration for accessing facility services from workstation.
+      Each facility uses a base port range (e.g., 88xx for jt60sa). Individual services
+      use ports within that range: port_base+0 for first wiki, port_base+1 for second, etc.
+      This convention allows internal tracking of which ports belong to which machines.
+    class_uri: fc:PortForwardsConfig
+    attributes:
+      port_base:
+        description: >-
+          Base port number for this facility (e.g., 8800 for jt60sa, 8810 for jet).
+          All local ports for this facility fall within port_base to port_base+99.
+          Different facilities use different hundreds to avoid conflicts.
+        range: integer
+        required: true
+      ssh_host:
+        description: >-
+          SSH host alias to tunnel through. If different from facility's ssh_host,
+          this specifies the intermediate hop (e.g., "iter" when facility is behind ITER).
+      forwards:
+        description: List of local port forwards to establish
+        multivalued: true
+        range: LocalForwardConfig
+
+  LocalForwardConfig:
+    description: >-
+      Configuration for a single SSH local port forward (LocalForward in ssh_config).
+      Maps a localhost port to a remote host:port accessible from the tunnel endpoint.
+    class_uri: fc:LocalForwardConfig
+    attributes:
+      name:
+        description: >-
+          Service name for identification (e.g., "twiki_main", "twiki_code", "api").
+          Used in browser config and logs.
+        required: true
+      local_port:
+        description: >-
+          Local port number on workstation (e.g., 8880). Should follow facility convention:
+          port_base + service_index where wiki sites use indices 0, 1, 2, etc.
+        range: integer
+        required: true
+      remote_host:
+        description: >-
+          Remote hostname accessible from SSH tunnel endpoint. Can be IP, hostname,
+          or localhost if the service runs on the SSH target host itself.
+        required: true
+      remote_port:
+        description: Remote port number (e.g., 80 for HTTP, 443 for HTTPS)
+        range: integer
+        required: true
+      protocol:
+        description: Protocol for documentation and browser config
+        range: LocalForwardProtocol
+        ifabsent: "http"
+      description:
+        description: Brief description of what service this forward provides
+
+  BrowserConfig:
+    description: >-
+      Browser-accessible URLs for facility services. After port forwards are established,
+      these URLs work in a local browser. Used by agents and documentation to construct
+      working URLs from wiki_sites[].name references.
+    class_uri: fc:BrowserConfig
+    attributes:
+      services:
+        description: >-
+          Map of service names to localhost URLs. Keys match LocalForwardConfig.name
+          and WikiSiteConfig.name. Values are full URLs including protocol and port.
+        multivalued: true
+        range: BrowserServiceConfig
+
+  BrowserServiceConfig:
+    description: Browser-accessible URL for a single service
+    class_uri: fc:BrowserServiceConfig
+    attributes:
+      name:
+        description: Service name (matches WikiSiteConfig.name or LocalForwardConfig.name)
+        required: true
+      url:
+        description: >-
+          Full localhost URL for browser access (e.g., "http://localhost:8880/twiki").
+          Protocol derived from port forward config or explicit if no forward.
+        required: true
+      description:
+        description: Brief description of the service
