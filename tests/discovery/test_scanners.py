@@ -67,7 +67,9 @@ class TestGetScannersForFacility:
         )
         # Pre-populate registry
         _registry.clear()
-        scanner = get_scanner.__wrapped__ if hasattr(get_scanner, "__wrapped__") else None
+        scanner = (
+            get_scanner.__wrapped__ if hasattr(get_scanner, "__wrapped__") else None
+        )
 
         # Just test that the registry works with manual registration
         from imas_codex.discovery.data.scanners.tdi import TDIScanner
@@ -84,7 +86,9 @@ class TestGetScannersForFacility:
             async def scan(self, facility, ssh_host, config, reference_shot=None):
                 return ScanResult()
 
-            async def check(self, facility, ssh_host, signals, config, reference_shot=None):
+            async def check(
+                self, facility, ssh_host, signals, config, reference_shot=None
+            ):
                 return []
 
         register_scanner(CustomScanner())

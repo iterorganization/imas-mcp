@@ -58,9 +58,7 @@ class CustomBuildHook(BuildHookInterface):
 
         # Check if any schema is newer than the oldest output
         oldest_output_mtime = min(f.stat().st_mtime for f in existing_outputs)
-        return all(
-            f.stat().st_mtime <= oldest_output_mtime for f in existing_schemas
-        )
+        return all(f.stat().st_mtime <= oldest_output_mtime for f in existing_schemas)
 
     def _generate_graph_models(self, package_root: Path) -> None:
         """Generate graph Pydantic models from LinkML schema."""
