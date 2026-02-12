@@ -2541,15 +2541,77 @@ class ConfluenceAdapter(WikiAdapter):
 
     site_type = "confluence"
 
-    def __init__(self, api_token: str | None = None, ssh_host: str | None = None):
+    def __init__(
+        self,
+        api_token: str | None = None,
+        ssh_host: str | None = None,
+        session: Any = None,
+    ):
         """Initialize Confluence adapter.
 
         Args:
             api_token: API token for REST API authentication
             ssh_host: SSH host for proxied commands (alternative to token)
+            session: Authenticated requests.Session for direct HTTP
         """
         self.api_token = api_token
         self.ssh_host = ssh_host
+        self.session = session
+
+    def _fetch_page_batch(
+        self,
+        api_url: str,
+        start: int,
+        limit: int,
+    ) -> dict[str, Any] | None:
+        """Fetch a batch of pages from the Confluence REST API.
+
+        Args:
+            api_url: Base API content URL
+            start: Pagination offset
+            limit: Page size
+
+        Returns:
+            JSON response dict or None on failure
+        """
+        import json
+
+        url = f"{api_url}?type=page&start={start}&limit={limit}&expand=space"
+
+        if self.ssh_host:
+            cmd = f'curl -sk "{url}"'
+            try:
+                result = subprocess.run(
+                    ["ssh", self.ssh_host, cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode != 0:
+                    logger.warning(
+                        "SSH curl failed (rc=%d): %s",
+                        result.returncode,
+                        result.stderr[:200],
+                    )
+                    return None
+                return json.loads(result.stdout)
+            except Exception as e:
+                logger.warning("Error during Confluence SSH discovery: %s", e)
+                return None
+
+        if self.session:
+            try:
+                response = self.session.get(url, timeout=60)
+                response.raise_for_status()
+                return response.json()
+            except Exception as e:
+                logger.warning("Error during Confluence HTTP discovery: %s", e)
+                return None
+
+        logger.warning(
+            "Confluence discovery requires either ssh_host or an authenticated session"
+        )
+        return None
 
     def bulk_discover_pages(
         self,
@@ -2558,8 +2620,6 @@ class ConfluenceAdapter(WikiAdapter):
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> list[DiscoveredPage]:
         """Discover all pages via Confluence REST API."""
-        import json
-
         pages: list[DiscoveredPage] = []
 
         # Confluence REST API endpoint
@@ -2568,26 +2628,8 @@ class ConfluenceAdapter(WikiAdapter):
         limit = 100
 
         while True:
-            url = f"{api_url}?type=page&start={start}&limit={limit}&expand=space"
-
-            if self.ssh_host:
-                cmd = f'curl -sk "{url}"'
-                try:
-                    result = subprocess.run(
-                        ["ssh", self.ssh_host, cmd],
-                        capture_output=True,
-                        text=True,
-                        timeout=60,
-                    )
-                    if result.returncode != 0:
-                        break
-                    data = json.loads(result.stdout)
-                except Exception as e:
-                    logger.warning(f"Error during Confluence discovery: {e}")
-                    break
-            else:
-                # Direct HTTP (would need auth header)
-                logger.warning("Confluence direct HTTP not implemented")
+            data = self._fetch_page_batch(api_url, start, limit)
+            if data is None:
                 break
 
             results = data.get("results", [])
@@ -2960,6 +3002,8 @@ def get_adapter(
             max_depth=max_depth,
         )
     elif site_type == "confluence":
-        return ConfluenceAdapter(api_token=api_token, ssh_host=ssh_host)
+        return ConfluenceAdapter(
+            api_token=api_token, ssh_host=ssh_host, session=session
+        )
     else:
         raise ValueError(f"Unknown site type: {site_type}")

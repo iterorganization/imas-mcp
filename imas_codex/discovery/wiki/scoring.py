@@ -673,6 +673,7 @@ async def _fetch_html(
     async_wiki_client: Any = None,
     keycloak_client: Any = None,
     basic_auth_client: Any = None,
+    confluence_client: Any = None,
 ) -> str:
     """Fetch HTML content from URL.
 
@@ -684,6 +685,7 @@ async def _fetch_html(
         async_wiki_client: Shared AsyncMediaWikiClient for Tequila auth
         keycloak_client: Shared httpx.AsyncClient for Keycloak auth
         basic_auth_client: Shared httpx.AsyncClient with HTTP Basic auth
+        confluence_client: Shared ConfluenceClient for Confluence session auth
 
     Returns:
         HTML content string or empty string on error
@@ -782,8 +784,35 @@ async def _fetch_html(
             logger.debug("Basic auth fetch failed for %s: %s", url, e)
             return ""
 
+    async def _async_confluence_fetch() -> str:
+        """Fetch via Confluence REST API using authenticated ConfluenceClient."""
+        if confluence_client is None:
+            logger.warning("No Confluence client available for %s", url)
+            return ""
+        try:
+            import urllib.parse as urlparse
+
+            # Extract pageId from viewpage.action URL
+            parsed = urlparse.urlparse(url)
+            params = urlparse.parse_qs(parsed.query)
+            page_id = params.get("pageId", [None])[0]
+
+            if not page_id:
+                logger.debug("Cannot extract pageId from Confluence URL: %s", url)
+                return ""
+
+            page = await asyncio.to_thread(confluence_client.get_page_content, page_id)
+            if page and page.content_html:
+                return page.content_html
+            return ""
+        except Exception as e:
+            logger.debug("Confluence REST API fetch failed for %s: %s", url, e)
+            return ""
+
     # Determine fetch strategy - prefer direct HTTP over SSH when credentials available
-    if auth_type in ("tequila", "session"):
+    if auth_type == "session" and confluence_client:
+        return await _async_confluence_fetch()
+    elif auth_type in ("tequila", "session"):
         return await _async_tequila_fetch()
     elif auth_type == "keycloak" and keycloak_client:
         return await _async_keycloak_fetch()
@@ -812,6 +841,7 @@ async def _fetch_and_summarize(
     async_wiki_client: Any = None,
     keycloak_client: Any = None,
     basic_auth_client: Any = None,
+    confluence_client: Any = None,
 ) -> str:
     """Fetch page content and extract text preview.
 
@@ -830,6 +860,7 @@ async def _fetch_and_summarize(
         async_wiki_client=async_wiki_client,
         keycloak_client=keycloak_client,
         basic_auth_client=basic_auth_client,
+        confluence_client=confluence_client,
     )
 
     if html:

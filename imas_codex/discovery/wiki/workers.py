@@ -99,8 +99,12 @@ async def score_worker(
     # Get shared async wiki client for Tequila auth (native async HTTP)
     logger.debug(f"score_worker {worker_id}: getting async wiki client")
     shared_async_wiki_client = (
-        await state.get_async_wiki_client()
-        if state.auth_type in ("tequila", "session")
+        await state.get_async_wiki_client() if state.auth_type == "tequila" else None
+    )
+    # Get shared Confluence client for session auth (REST API)
+    shared_confluence_client = (
+        await state.get_confluence_client()
+        if state.auth_type == "session" and state.site_type == "confluence"
         else None
     )
     # Get shared Keycloak client for keycloak auth (OIDC via oauth2-proxy)
@@ -127,6 +131,7 @@ async def score_worker(
                     async_wiki_client=shared_async_wiki_client,  # Native async HTTP
                     keycloak_client=shared_keycloak_client,
                     basic_auth_client=shared_basic_auth_client,
+                    confluence_client=shared_confluence_client,
                 )
                 return {
                     "id": page["id"],
@@ -302,8 +307,12 @@ async def ingest_worker(
 
     # Get shared async wiki client for Tequila auth (native async HTTP)
     shared_async_wiki_client = (
-        await state.get_async_wiki_client()
-        if state.auth_type in ("tequila", "session")
+        await state.get_async_wiki_client() if state.auth_type == "tequila" else None
+    )
+    # Get shared Confluence client for session auth (REST API)
+    shared_confluence_client = (
+        await state.get_confluence_client()
+        if state.auth_type == "session" and state.site_type == "confluence"
         else None
     )
     # Get shared Keycloak client for keycloak auth (OIDC via oauth2-proxy)
@@ -338,6 +347,7 @@ async def ingest_worker(
                     async_wiki_client=shared_async_wiki_client,
                     keycloak_client=shared_keycloak_client,
                     basic_auth_client=shared_basic_auth_client,
+                    confluence_client=shared_confluence_client,
                 )
                 return {
                     "id": page_id,
@@ -956,6 +966,7 @@ async def _ingest_page(
     async_wiki_client: Any = None,
     keycloak_client: Any = None,
     basic_auth_client: Any = None,
+    confluence_client: Any = None,
 ) -> int:
     """Ingest a page: fetch content, chunk, and embed.
 
@@ -972,6 +983,7 @@ async def _ingest_page(
         async_wiki_client: Optional shared AsyncMediaWikiClient for Tequila auth
         keycloak_client: Optional shared httpx.AsyncClient for Keycloak auth
         basic_auth_client: Optional shared httpx.AsyncClient with HTTP Basic auth
+        confluence_client: Optional shared ConfluenceClient for Confluence auth
 
     Returns:
         Number of chunks created
@@ -1015,6 +1027,7 @@ async def _ingest_page(
             async_wiki_client=async_wiki_client,
             keycloak_client=keycloak_client,
             basic_auth_client=basic_auth_client,
+            confluence_client=confluence_client,
         )
     if not html or len(html) < 100:
         logger.warning("Insufficient content for %s", page_id)

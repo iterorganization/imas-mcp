@@ -56,6 +56,10 @@ class WikiDiscoveryState:
     _basic_auth_client: Any = field(default=None, repr=False)
     _basic_auth_client_lock: Any = field(default=None, repr=False)
 
+    # Shared Confluence client for session-based auth (uses REST API)
+    _confluence_client: Any = field(default=None, repr=False)
+    _confluence_client_lock: Any = field(default=None, repr=False)
+
     # Shared HTTP fetch semaphore — bounds total concurrent wiki HTTP requests
     # across ALL workers (score + ingest) to prevent httpx PoolTimeout.
     # Default 30 keeps us well under httpx pool max_connections=50.
@@ -413,6 +417,52 @@ class WikiDiscoveryState:
             except Exception:
                 pass
             self._async_wiki_client = None
+
+    async def get_confluence_client(self):
+        """Get shared ConfluenceClient for session-based Confluence auth.
+
+        Lazily initializes a ConfluenceClient that authenticates via
+        username/password and persists the session. The client is
+        synchronous (uses requests) but is invoked via asyncio.to_thread.
+
+        Returns:
+            Authenticated ConfluenceClient or None if auth fails.
+        """
+        if self._confluence_client is None:
+            from imas_codex.discovery.wiki.confluence import ConfluenceClient
+
+            if self._confluence_client_lock is None:
+                self._confluence_client_lock = asyncio.Lock()
+
+            async with self._confluence_client_lock:
+                if self._confluence_client is None:
+                    client = ConfluenceClient(
+                        base_url=self.base_url,
+                        credential_service=self.credential_service or self.facility,
+                    )
+                    authenticated = await asyncio.to_thread(client.authenticate)
+                    if authenticated:
+                        self._confluence_client = client
+                        logger.info(
+                            "Initialized shared ConfluenceClient for %s",
+                            self.base_url,
+                        )
+                    else:
+                        logger.warning(
+                            "Failed to authenticate ConfluenceClient for %s",
+                            self.base_url,
+                        )
+
+        return self._confluence_client
+
+    async def close_confluence_client(self):
+        """Close the shared Confluence client."""
+        if self._confluence_client is not None:
+            try:
+                self._confluence_client.close()
+            except Exception:
+                pass
+            self._confluence_client = None
 
     async def get_keycloak_client(self) -> Any:
         """Get shared AsyncKeycloakSession for Keycloak OIDC auth.

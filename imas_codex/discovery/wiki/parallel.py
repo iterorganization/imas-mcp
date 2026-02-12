@@ -149,11 +149,25 @@ def bulk_discover_pages(
         "credential_service": credential_service,
     }
 
-    # MediaWiki auth session setup
+    # Auth session setup
     session = None
     close_session = False
 
-    if site_type == "mediawiki":
+    if site_type == "confluence":
+        if auth_type == "session" and credential_service:
+            from imas_codex.discovery.wiki.confluence import ConfluenceClient
+
+            confluence_client = ConfluenceClient(
+                base_url=base_url,
+                credential_service=credential_service,
+            )
+            if not confluence_client.authenticate():
+                logger.error("Confluence session auth failed for %s", base_url)
+                return 0
+            session = confluence_client._get_session()
+            adapter_kwargs["session"] = session
+            close_session = True
+    elif site_type == "mediawiki":
         if auth_type == "tequila" and credential_service:
             # Tequila uses MediaWikiClient (handled by adapter)
             from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
@@ -696,6 +710,7 @@ async def run_parallel_wiki_discovery(
 
     # Clean up async wiki client
     await state.close_async_wiki_client()
+    await state.close_confluence_client()
     await state.close_keycloak_client()
     await state.close_basic_auth_client()
 
