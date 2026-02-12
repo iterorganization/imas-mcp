@@ -2455,8 +2455,7 @@ classes:
         required: true
         range: Facility
       chunk_index:
-        description: Zero-based position in parent page (0, 1, 2, ...)
-        required: true
+        description: Zero-based position in parent document (0, 1, 2, ...)
         range: integer
       section:
         description: Section heading this chunk belongs to

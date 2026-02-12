@@ -77,6 +77,10 @@ enums:
         description: 2D array of complex
       CPX_3D:
         description: 3D array of complex
+      CPX_4D:
+        description: 4D array of complex
+      CPX_5D:
+        description: 5D array of complex
       STRUCTURE:
         description: Container structure (no data)
       STRUCT_ARRAY:
@@ -91,6 +95,8 @@ enums:
         description: Data not varying within the IDS
       static:
         description: Data not varying between IDSs
+      none:
+        description: No time-variation character assigned
 
   PhysicsDomainDD:
     description: Physics domains for IMAS data paths
@@ -133,6 +139,10 @@ enums:
         description: Lifecycle status changed (e.g., obsolete)
       maxoccur:
         description: Maximum occurrences changed
+      node_type:
+        description: Time-variation character (node type) changed
+      data_type:
+        description: Data type changed (e.g., FLT_1D to FLT_2D)
 
   SemanticChangeType:
     description: Physics significance of documentation changes
@@ -209,7 +219,7 @@ classes:
         description: IDS description from DD documentation
       physics_domain:
         description: Primary physics domain
-        range: PhysicsDomainDD
+        range: PhysicsDomain
       path_count:
         description: Number of paths in this IDS (current version)
         range: integer
@@ -277,7 +287,7 @@ classes:
         range: DDNodeType
       physics_domain:
         description: Physics domain (derived from path/IDS)
-        range: PhysicsDomainDD
+        range: PhysicsDomain
       maxoccur:
         description: Maximum occurrences (for struct arrays)
         range: integer
@@ -367,7 +377,7 @@ classes:
         description: Extended description of the cluster concept
       physics_domain:
         description: Primary physics domain of cluster members
-        range: PhysicsDomainDD
+        range: PhysicsDomain
       path_count:
         description: Number of paths in this cluster
         range: integer

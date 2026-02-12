@@ -1,0 +1,217 @@
+name: Graph Quality
+
+on:
+  repository_dispatch:
+    types: [graph-pushed]
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Graph version tag to test (default: latest)'
+        required: false
+        default: 'latest'
+      registry:
+        description: 'GHCR registry (default: ghcr.io/iterorganization)'
+        required: false
+        default: 'ghcr.io/iterorganization'
+
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        default: 'latest'
+      registry:
+        type: string
+        default: 'ghcr.io/iterorganization'
+
+concurrency:
+  group: graph-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEO4J_PASSWORD: imas-codex
+  NEO4J_URI: bolt://localhost:7687
+
+jobs:
+  graph-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      neo4j:
+        image: neo4j:2025.11-community
+        ports:
+          - 7474:7474
+          - 7687:7687
+        env:
+          NEO4J_AUTH: neo4j/imas-codex
+          NEO4J_PLUGINS: '["apoc"]'
+          NEO4J_server_memory_heap_initial__size: 512m
+          NEO4J_server_memory_heap_max__size: 1G
+        options: >-
+          --health-cmd "curl -f http://localhost:7474/ || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install oras CLI
+        run: |
+          ORAS_VERSION="1.2.0"
+          curl -LO "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/
+          oras version
+
+      - name: Resolve graph tag
+        id: resolve-tag
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            TAG="${{ github.event.client_payload.tag }}"
+            REGISTRY="${{ github.event.client_payload.registry || 'ghcr.io/iterorganization' }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+            REGISTRY="${{ github.event.inputs.registry }}"
+          else
+            TAG="${{ inputs.tag || 'latest' }}"
+            REGISTRY="${{ inputs.registry || 'ghcr.io/iterorganization' }}"
+          fi
+          echo "tag=${TAG:-latest}" >> $GITHUB_OUTPUT
+          echo "registry=${REGISTRY:-ghcr.io/iterorganization}" >> $GITHUB_OUTPUT
+          echo "Graph: ${REGISTRY}/imas-codex-graph:${TAG}"
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GHCR_TOKEN }}" | oras login ghcr.io -u token --password-stdin
+
+      - name: Pull graph dump from GHCR
+        run: |
+          ARTIFACT="${{ steps.resolve-tag.outputs.registry }}/imas-codex-graph:${{ steps.resolve-tag.outputs.tag }}"
+          echo "Pulling: ${ARTIFACT}"
+          mkdir -p /tmp/graph-dump
+          oras pull "${ARTIFACT}" -o /tmp/graph-dump
+          ls -la /tmp/graph-dump/
+
+      - name: Wait for Neo4j to be ready
+        run: |
+          echo "Waiting for Neo4j..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:7474/ > /dev/null 2>&1; then
+              echo "Neo4j is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Stop Neo4j for dump load
+        run: |
+          # Stop Neo4j service container to load dump
+          docker stop $(docker ps -q --filter "ancestor=neo4j:2025.11-community") || true
+          sleep 3
+
+      - name: Load graph dump into Neo4j
+        run: |
+          set -euo pipefail
+          ARCHIVE=$(ls /tmp/graph-dump/*.tar.gz | head -1)
+          echo "Loading archive: ${ARCHIVE}"
+
+          # Extract archive
+          mkdir -p /tmp/graph-extracted
+          tar -xzf "${ARCHIVE}" -C /tmp/graph-extracted
+
+          # Find the graph.dump file
+          DUMP_FILE=$(find /tmp/graph-extracted -name "graph.dump" | head -1)
+          if [ -z "${DUMP_FILE}" ]; then
+            echo "ERROR: No graph.dump found in archive"
+            ls -laR /tmp/graph-extracted/
+            exit 1
+          fi
+          echo "Found dump: ${DUMP_FILE}"
+
+          # Get the Neo4j container ID for data volume
+          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2025.11-community" | head -1)
+          NEO4J_DATA_VOLUME=$(docker inspect "${NEO4J_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
+
+          # Load into Neo4j using a fresh container
+          docker run --rm \
+            -v "${NEO4J_DATA_VOLUME}:/data" \
+            -v "$(dirname ${DUMP_FILE}):/dump" \
+            neo4j:2025.11-community \
+            neo4j-admin database load neo4j \
+              --from-path=/dump \
+              --overwrite-destination=true
+
+      - name: Start Neo4j with loaded data
+        run: |
+          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2025.11-community" | head -1)
+          docker start "${NEO4J_CONTAINER}"
+
+          # Wait for Neo4j to come back up
+          echo "Waiting for Neo4j to restart..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:7474/ > /dev/null 2>&1; then
+              echo "Neo4j is ready with loaded graph"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "ERROR: Neo4j did not restart in time"
+              docker logs "${NEO4J_CONTAINER}" --tail 50
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Reset Neo4j password
+        run: |
+          # After dump load, auth is reset. Set the password.
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2025.11-community" | head -1)
+          docker exec "${NEO4J_CONTAINER}" neo4j-admin dbms set-initial-password imas-codex 2>/dev/null || true
+
+      - name: Verify graph is loaded
+        run: |
+          # Quick sanity check with cypher-shell
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2025.11-community" | head -1)
+          docker exec "${NEO4J_CONTAINER}" cypher-shell \
+            -u neo4j -p imas-codex \
+            "MATCH (n) RETURN count(n) AS nodes, labels(n)[0] AS label ORDER BY nodes DESC LIMIT 10"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra test
+        env:
+          HATCH_BUILD_NO_HOOKS: true
+
+      - name: Build generated models
+        run: uv run build-models --force
+
+      - name: Run graph quality tests
+        run: |
+          uv run pytest tests/graph/ -m graph \
+            --tb=short \
+            --junit-xml=graph-quality-results.xml \
+            -v
+        env:
+          CI: true
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USERNAME: neo4j
+          NEO4J_PASSWORD: imas-codex
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: graph-quality-results
+          path: graph-quality-results.xml
+          retention-days: 30

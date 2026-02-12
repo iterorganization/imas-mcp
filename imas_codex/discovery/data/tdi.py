@@ -443,6 +443,9 @@ async def ingest_tdi_functions(
         MERGE (tf:TDIFunction {id: f.id})
         SET tf += f,
             tf.updated_at = datetime()
+        WITH tf, f
+        MATCH (fac:Facility {id: f.facility_id})
+        MERGE (tf)-[:FACILITY_ID]->(fac)
         """,
         functions=func_dicts,
     )
@@ -468,12 +471,15 @@ async def ingest_tdi_signals(
         # Convert to dicts
         signal_dicts = [s.model_dump(exclude_none=True, by_alias=True) for s in batch]
 
-        # Batch merge
+        # Batch merge with FACILITY_ID edge
         gc.query(
             """
             UNWIND $signals AS s
             MERGE (fs:FacilitySignal {id: s.id})
             SET fs += s
+            WITH fs, s
+            MATCH (f:Facility {id: s.facility_id})
+            MERGE (fs)-[:FACILITY_ID]->(f)
             """,
             signals=signal_dicts,
         )

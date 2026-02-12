@@ -768,7 +768,7 @@ def ingest_epochs(
                             }
                         )
 
-                    # Create signals and INTRODUCED_IN edges atomically
+                    # Create signals and INTRODUCED_IN + FACILITY_ID edges atomically
                     result = gc.query(
                         """
                         UNWIND $signals AS sig
@@ -779,6 +779,9 @@ def ingest_epochs(
                         WITH s, sig
                         MATCH (v:TreeModelVersion {id: sig.epoch_id})
                         MERGE (s)-[:INTRODUCED_IN]->(v)
+                        WITH s, sig
+                        MATCH (f:Facility {id: sig.facility_id})
+                        MERGE (s)-[:FACILITY_ID]->(f)
                         RETURN count(s) AS created
                         """,
                         signals=signals,
@@ -1066,6 +1069,9 @@ def ingest_discovered_signals(signals: list[dict]) -> int:
                 WHERE sig.epoch_id IS NOT NULL
                 MATCH (v:TreeModelVersion {id: sig.epoch_id})
                 MERGE (s)-[:INTRODUCED_IN]->(v)
+                WITH s, sig
+                MATCH (f:Facility {id: sig.facility_id})
+                MERGE (s)-[:FACILITY_ID]->(f)
                 """,
                 signals=signals,
             )

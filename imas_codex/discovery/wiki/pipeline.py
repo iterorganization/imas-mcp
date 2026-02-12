@@ -241,6 +241,9 @@ def persist_chunks_batch(chunks: list[dict]) -> int:
             WITH c, chunk
             MATCH (p:WikiPage {id: chunk.wiki_page_id})
             MERGE (p)-[:HAS_CHUNK]->(c)
+            WITH c, chunk
+            MATCH (f:Facility {id: chunk.facility_id})
+            MERGE (c)-[:FACILITY_ID]->(f)
             """,
             chunks=chunks,
         )
@@ -966,6 +969,9 @@ class WikiIngestionPipeline:
                     WITH c, chunk
                     MATCH (p:WikiPage {id: chunk.wiki_page_id})
                     MERGE (p)-[:HAS_CHUNK]->(c)
+                    WITH c, chunk
+                    MATCH (f:Facility {id: chunk.facility_id})
+                    MERGE (c)-[:FACILITY_ID]->(f)
                     """,
                     chunks=batch,
                 )
@@ -2178,6 +2184,9 @@ class WikiArtifactPipeline:
                     WITH c, chunk
                     MATCH (wa:WikiArtifact {id: chunk.artifact_id})
                     MERGE (wa)-[:HAS_CHUNK]->(c)
+                    WITH c, chunk
+                    MATCH (f:Facility {id: chunk.facility_id})
+                    MERGE (c)-[:FACILITY_ID]->(f)
                     """,
                     chunks=batch,
                 )
