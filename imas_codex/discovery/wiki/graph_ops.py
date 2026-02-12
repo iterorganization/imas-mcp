@@ -1300,6 +1300,8 @@ def mark_images_scored(
             SET img.status = 'captioned',
                 img.caption = item.caption,
                 img.ocr_text = item.ocr_text,
+                img.ocr_mdsplus_paths = item.ocr_mdsplus_paths,
+                img.ocr_tool_mentions = item.ocr_tool_mentions,
                 img.purpose = item.purpose,
                 img.description = item.description,
                 img.score = item.score,

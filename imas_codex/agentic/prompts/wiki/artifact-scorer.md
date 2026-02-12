@@ -58,6 +58,45 @@ Prioritize artifacts related to: **{{ focus }}**
 Boost scores by ~0.2 for artifacts matching this focus.
 {% endif %}
 
+{% if data_access_patterns %}
+## Facility Data Access Patterns
+
+This facility uses **{{ data_access_patterns.primary_method }}** as its primary data access method.
+{% if data_access_patterns.shot_identifier %}Shots are called "{{ data_access_patterns.shot_identifier }}".{% endif %}
+
+{% if data_access_patterns.signal_naming %}
+**Signal naming:** {{ data_access_patterns.signal_naming }}
+{% endif %}
+
+{% if data_access_patterns.tree_organization %}
+**Data organization:** {{ data_access_patterns.tree_organization }}
+{% endif %}
+
+{% if data_access_patterns.key_tools %}
+**Key tools/APIs:** {{ data_access_patterns.key_tools | join(', ') }}
+
+Artifacts documenting these tools are high-value. Boost `score_data_access` and `score_code_documentation` by ~0.2 when these appear in content.
+{% endif %}
+
+{% if data_access_patterns.wiki_signal_patterns %}
+**Signal documentation patterns to look for:**
+{% for pattern in data_access_patterns.wiki_signal_patterns %}
+- {{ pattern }}
+{% endfor %}
+
+Artifacts matching these patterns contain core signal documentation. Boost `score_data_documentation` accordingly.
+{% endif %}
+
+{% if data_access_patterns.code_import_patterns %}
+**Code patterns indicating data access:**
+{% for pattern in data_access_patterns.code_import_patterns %}
+- `{{ pattern }}`
+{% endfor %}
+
+Artifacts containing these code patterns document data access workflows. Boost `score_code_documentation` and `score_data_access`.
+{% endif %}
+{% endif %}
+
 ## Ingestion Decision
 
 Set `should_ingest=true` when the artifact contains content worth embedding for search.

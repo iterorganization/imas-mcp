@@ -35,6 +35,35 @@ For each image, provide in a **single pass**:
 
 **Transcribe all visible text.** Axis labels, legend entries, title text, MDSplus paths (like `\RESULTS::PSI`), parameter values — capture everything readable. Put this in `ocr_text`.
 
+{% if data_access_patterns %}
+## Facility Data Access Patterns
+
+This facility uses **{{ data_access_patterns.primary_method }}** as its primary data access method.
+
+{% if data_access_patterns.signal_naming %}
+**Signal naming convention:** {{ data_access_patterns.signal_naming }}
+When transcribing OCR text, look for signal names following this convention.
+{% endif %}
+
+{% if data_access_patterns.key_tools %}
+**Key tools/APIs to recognize:** {{ data_access_patterns.key_tools | join(', ') }}
+
+If any of these tool names, function calls, or API references appear in the image (code screenshots, workflow diagrams, GUI windows), transcribe them in `ocr_text` and boost `score_data_access` and `score_code_documentation`.
+{% endif %}
+
+{% if data_access_patterns.tree_organization %}
+**Data tree organization:** {{ data_access_patterns.tree_organization }}
+Look for tree paths, node names, or hierarchical data references matching this structure.
+{% endif %}
+
+{% if data_access_patterns.wiki_signal_patterns %}
+**Signal patterns to recognize in images:**
+{% for pattern in data_access_patterns.wiki_signal_patterns %}
+- {{ pattern }}
+{% endfor %}
+{% endif %}
+{% endif %}
+
 {% include "schema/physics-domains.md" %}
 
 ## Scoring Dimensions

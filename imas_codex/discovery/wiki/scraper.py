@@ -235,6 +235,52 @@ def extract_conventions(text: str) -> list[dict[str, str]]:
     return conventions
 
 
+def extract_facility_tool_mentions(
+    text: str,
+    key_tools: list[str] | None = None,
+    code_import_patterns: list[str] | None = None,
+) -> list[str]:
+    """Extract facility-specific tool/API mentions from text.
+
+    Matches against the facility's configured key_tools and
+    code_import_patterns from DataAccessPatternsConfig. This
+    complements the generic MDSplus/IMAS regex patterns with
+    facility-specific tool recognition.
+
+    Args:
+        text: Raw text content (chunk text, OCR text, etc.)
+        key_tools: Facility key_tools list (e.g., ['ppfget', 'tdiExecute'])
+        code_import_patterns: Facility code patterns (e.g., ['import ppf'])
+
+    Returns:
+        Deduplicated list of matched tool/pattern names found in text
+    """
+    if not text:
+        return []
+
+    mentions: set[str] = set()
+    text_lower = text.lower()
+
+    # Match key_tools (case-insensitive word boundary match)
+    for tool in key_tools or []:
+        # Normalize tool name for matching (strip parens, dots for search)
+        tool_clean = tool.rstrip("(").split(".")[-1]
+        if len(tool_clean) < 2:
+            continue
+        # Use word boundary matching to avoid false positives
+        # e.g., "sal" should match "import sal" but not "universal"
+        pattern = re.compile(r"\b" + re.escape(tool_clean) + r"\b", re.IGNORECASE)
+        if pattern.search(text):
+            mentions.add(tool)
+
+    # Match code_import_patterns (substring match)
+    for pattern in code_import_patterns or []:
+        if pattern.lower() in text_lower:
+            mentions.add(pattern)
+
+    return sorted(mentions)
+
+
 # =============================================================================
 # Wiki Fetching
 # =============================================================================

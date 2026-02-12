@@ -590,6 +590,27 @@ async def artifact_score_worker(
     worker_id = id(asyncio.current_task())
     logger.info(f"artifact_score_worker started (task={worker_id})")
 
+    # Load facility-specific data access patterns for scorer context
+    facility_access_patterns: dict[str, Any] | None = None
+    try:
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(state.facility)
+        facility_access_patterns = facility_config.get("data_access_patterns")
+        if facility_access_patterns:
+            logger.info(
+                "artifact_score_worker %s: loaded data_access_patterns for %s "
+                "(primary_method=%s, %d key_tools)",
+                worker_id,
+                state.facility,
+                facility_access_patterns.get("primary_method", "unknown"),
+                len(facility_access_patterns.get("key_tools") or []),
+            )
+    except Exception as e:
+        logger.debug(
+            "artifact_score_worker %s: no data_access_patterns: %s", worker_id, e
+        )
+
     while not state.should_stop_artifact_scoring():
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
@@ -699,7 +720,7 @@ async def artifact_score_worker(
             # Step 2: Score batch with LLM (only artifacts that have content)
             model = get_model("language")
             results, cost = await _score_artifacts_batch(
-                artifacts_to_score, model, state.focus
+                artifacts_to_score, model, state.focus, facility_access_patterns
             )
 
             # Add preview_text to results for persistence
@@ -769,6 +790,25 @@ async def image_score_worker(
     worker_id = id(asyncio.current_task())
     logger.info(f"image_score_worker started (task={worker_id})")
 
+    # Load facility-specific data access patterns for VLM context
+    facility_access_patterns: dict[str, Any] | None = None
+    try:
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(state.facility)
+        facility_access_patterns = facility_config.get("data_access_patterns")
+        if facility_access_patterns:
+            logger.info(
+                "image_score_worker %s: loaded data_access_patterns for %s "
+                "(primary_method=%s, %d key_tools)",
+                worker_id,
+                state.facility,
+                facility_access_patterns.get("primary_method", "unknown"),
+                len(facility_access_patterns.get("key_tools") or []),
+            )
+    except Exception as e:
+        logger.debug("image_score_worker %s: no data_access_patterns: %s", worker_id, e)
+
     consecutive_failures = 0
     MAX_CONSECUTIVE_FAILURES = 3
 
@@ -828,7 +868,7 @@ async def image_score_worker(
         try:
             model = get_model("vision")
             results, cost = await _score_images_batch(
-                images_with_data, model, state.focus
+                images_with_data, model, state.focus, facility_access_patterns
             )
 
             # Persist to graph

@@ -790,9 +790,24 @@ class WikiIngestionPipeline:
 
         from .scraper import (
             extract_conventions,
+            extract_facility_tool_mentions,
             extract_mdsplus_paths,
             extract_units,
         )
+
+        # Load facility-specific key_tools for tool mention extraction
+        facility_key_tools: list[str] | None = None
+        facility_code_patterns: list[str] | None = None
+        try:
+            from imas_codex.discovery.base.facility import get_facility
+
+            config = get_facility(self.facility_id)
+            dap = config.get("data_access_patterns")
+            if dap:
+                facility_key_tools = dap.get("key_tools")
+                facility_code_patterns = dap.get("code_import_patterns")
+        except Exception:
+            pass  # Facility config not available — use generic extraction only
 
         stats: PageIngestionStats = {
             "chunks": 0,
@@ -849,6 +864,9 @@ class WikiIngestionPipeline:
             chunk_mdsplus = extract_mdsplus_paths(chunk_text)
             chunk_units = extract_units(chunk_text)
             chunk_conventions = extract_conventions(chunk_text)
+            chunk_tool_mentions = extract_facility_tool_mentions(
+                chunk_text, facility_key_tools, facility_code_patterns
+            )
 
             # Track for stats
             all_mdsplus.update(chunk_mdsplus)
@@ -867,6 +885,7 @@ class WikiIngestionPipeline:
                     "imas_paths": [],
                     "units": chunk_units,
                     "conventions": [c.get("name", "") for c in chunk_conventions],
+                    "tool_mentions": chunk_tool_mentions,
                 }
             )
 
@@ -920,7 +939,8 @@ class WikiIngestionPipeline:
                         c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
                         c.imas_paths_mentioned = chunk.imas_paths,
                         c.units_mentioned = chunk.units,
-                        c.conventions_mentioned = chunk.conventions
+                        c.conventions_mentioned = chunk.conventions,
+                        c.tool_mentions = chunk.tool_mentions
                     WITH c, chunk
                     MATCH (p:WikiPage {id: chunk.wiki_page_id})
                     MERGE (p)-[:HAS_CHUNK]->(c)
@@ -2046,6 +2066,8 @@ class WikiArtifactPipeline:
         """Create chunks from extracted text and persist to graph.
 
         Common implementation used by all artifact type extractors.
+        Performs entity extraction including facility-aware tool mention
+        matching from DataAccessPatternsConfig.
 
         IMPORTANT: Blocking I/O operations (embedding) are wrapped in
         asyncio.to_thread() to avoid blocking the event loop.
@@ -2054,9 +2076,24 @@ class WikiArtifactPipeline:
 
         from .scraper import (
             extract_conventions,
+            extract_facility_tool_mentions,
             extract_mdsplus_paths,
             extract_units,
         )
+
+        # Load facility-specific key_tools for tool mention extraction
+        facility_key_tools: list[str] | None = None
+        facility_code_patterns: list[str] | None = None
+        try:
+            from imas_codex.discovery.base.facility import get_facility
+
+            config = get_facility(self.facility_id)
+            dap = config.get("data_access_patterns")
+            if dap:
+                facility_key_tools = dap.get("key_tools")
+                facility_code_patterns = dap.get("code_import_patterns")
+        except Exception:
+            pass  # Facility config not available — use generic extraction only
 
         # Split into chunks
         combined_doc = Document(
@@ -2087,6 +2124,9 @@ class WikiArtifactPipeline:
             chunk_mdsplus = extract_mdsplus_paths(chunk_text)
             chunk_units = extract_units(chunk_text)
             chunk_conventions = extract_conventions(chunk_text)
+            chunk_tool_mentions = extract_facility_tool_mentions(
+                chunk_text, facility_key_tools, facility_code_patterns
+            )
 
             chunk_batch.append(
                 {
@@ -2099,6 +2139,7 @@ class WikiArtifactPipeline:
                     "imas_paths": [],
                     "units": chunk_units,
                     "conventions": [c.get("name", "") for c in chunk_conventions],
+                    "tool_mentions": chunk_tool_mentions,
                 }
             )
 
@@ -2131,7 +2172,8 @@ class WikiArtifactPipeline:
                         c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
                         c.imas_paths_mentioned = chunk.imas_paths,
                         c.units_mentioned = chunk.units,
-                        c.conventions_mentioned = chunk.conventions
+                        c.conventions_mentioned = chunk.conventions,
+                        c.tool_mentions = chunk.tool_mentions
                     WITH c, chunk
                     MATCH (wa:WikiArtifact {id: chunk.artifact_id})
                     MERGE (wa)-[:HAS_CHUNK]->(c)

@@ -188,6 +188,7 @@ async def _score_artifacts_batch(
     artifacts: list[dict[str, Any]],
     model: str,
     focus: str | None = None,
+    data_access_patterns: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
     """Score a batch of artifacts using LLM with structured output.
 
@@ -198,6 +199,9 @@ async def _score_artifacts_batch(
         artifacts: List of artifact dicts with id, filename, preview_text, etc.
         model: Model identifier from get_model()
         focus: Optional focus area for scoring
+        data_access_patterns: Optional facility-specific data access patterns
+            from facility config. When provided, injected into the prompt
+            template so the LLM can boost artifacts matching facility tools/APIs.
 
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
@@ -225,6 +229,8 @@ async def _score_artifacts_batch(
     context: dict[str, Any] = {}
     if focus:
         context["focus"] = focus
+    if data_access_patterns:
+        context["data_access_patterns"] = data_access_patterns
 
     system_prompt = render_prompt("wiki/artifact-scorer", context)
 
@@ -405,11 +411,21 @@ async def _score_images_batch(
     images: list[dict[str, Any]],
     model: str,
     focus: str | None = None,
+    data_access_patterns: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
     """Score a batch of images using VLM with structured output.
 
     Sends image bytes + context to VLM and receives caption + scoring
     in a single pass. Uses ImageScoreBatch Pydantic model.
+
+    Args:
+        images: List of image dicts with id, image_data, page_title, etc.
+        model: Model identifier from get_model()
+        focus: Optional focus area for scoring
+        data_access_patterns: Optional facility-specific data access patterns
+            from facility config. When provided, injected into the prompt
+            template so the VLM can recognize facility-specific path formats
+            and tool references in OCR text.
 
     Returns:
         (results, cost) tuple
@@ -437,6 +453,8 @@ async def _score_images_batch(
     context: dict[str, Any] = {}
     if focus:
         context["focus"] = focus
+    if data_access_patterns:
+        context["data_access_patterns"] = data_access_patterns
     system_prompt = render_prompt("wiki/image-captioner", context)
 
     # Build user message with image content
@@ -565,6 +583,18 @@ async def _score_images_batch(
     cost_per_image = total_cost / len(images) if images else 0.0
     results = []
 
+    # Load facility key_tools for OCR text pattern matching
+    _facility_key_tools: list[str] | None = None
+    _facility_code_patterns: list[str] | None = None
+    if data_access_patterns:
+        _facility_key_tools = data_access_patterns.get("key_tools")
+        _facility_code_patterns = data_access_patterns.get("code_import_patterns")
+
+    from imas_codex.discovery.wiki.scraper import (
+        extract_facility_tool_mentions,
+        extract_mdsplus_paths,
+    )
+
     for r in llm_results[: len(images)]:
         scores = {
             "score_data_documentation": r.score_data_documentation,
@@ -576,11 +606,22 @@ async def _score_images_batch(
         }
         combined_score = grounded_image_score(scores, r.purpose)
 
+        # Extract structured entities from VLM OCR text
+        ocr_mdsplus_paths: list[str] = []
+        ocr_tool_mentions: list[str] = []
+        if r.ocr_text:
+            ocr_mdsplus_paths = extract_mdsplus_paths(r.ocr_text)
+            ocr_tool_mentions = extract_facility_tool_mentions(
+                r.ocr_text, _facility_key_tools, _facility_code_patterns
+            )
+
         results.append(
             {
                 "id": r.id,
                 "caption": r.caption,
                 "ocr_text": r.ocr_text,
+                "ocr_mdsplus_paths": ocr_mdsplus_paths,
+                "ocr_tool_mentions": ocr_tool_mentions,
                 "purpose": r.purpose.value,
                 "description": r.description[:150],
                 "score": combined_score,
