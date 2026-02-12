@@ -14,6 +14,7 @@ from functools import lru_cache
 from imas_codex.agentic.agents import (
     DEFAULT_MODEL,
     MODELS,
+    PRESETS,
     get_model_for_task,
     get_model_id,
 )
@@ -21,6 +22,7 @@ from imas_codex.agentic.agents import (
 __all__ = [
     "DEFAULT_MODEL",
     "MODELS",
+    "PRESETS",
     "get_model_for_task",
     "get_model_id",
     "get_llm",

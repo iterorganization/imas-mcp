@@ -11,14 +11,14 @@ from dotenv import load_dotenv
 from imas_codex.settings import (
     get_embed_remote_url,
     get_embedding_backend,
-    get_imas_embedding_model,
+    get_embedding_model,
 )
 
 load_dotenv(override=True)  # Load .env file values, overriding existing env vars
 
 
 # Define constants - uses pyproject.toml defaults with env var override
-IMAS_CODEX_EMBEDDING_MODEL = get_imas_embedding_model()
+IMAS_CODEX_EMBEDDING_MODEL = get_embedding_model()
 
 
 class EmbeddingBackend(Enum):

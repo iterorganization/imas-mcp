@@ -18,6 +18,7 @@ The CodeAgents write Python code to invoke tools, enabling:
 from imas_codex.agentic.agents import (
     DEFAULT_MODEL,
     MODELS,
+    PRESETS,
     AgentConfig,
     create_agent,
     create_litellm_model,
@@ -94,6 +95,7 @@ __all__ = [
     "get_model_id",
     "DEFAULT_MODEL",
     "MODELS",
+    "PRESETS",
     # Enrichment
     "EnrichmentResult",
     "BatchProgress",

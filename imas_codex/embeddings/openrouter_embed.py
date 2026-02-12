@@ -31,7 +31,7 @@ from dataclasses import dataclass
 import httpx
 import numpy as np
 
-from imas_codex.settings import get_embedding_dimension, get_imas_embedding_model
+from imas_codex.settings import get_embedding_dimension, get_embedding_model
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +252,7 @@ class OpenRouterEmbeddingClient:
                        dimension from settings.
         """
         if model_name is None:
-            model_name = get_imas_embedding_model()
+            model_name = get_embedding_model()
 
         self.api_key = (
             api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -577,7 +577,7 @@ def get_openrouter_client(
         Client instance or None if not configured
     """
     if model_name is None:
-        model_name = get_imas_embedding_model()
+        model_name = get_embedding_model()
 
     client = OpenRouterEmbeddingClient(api_key=api_key, model_name=model_name)
     if client.is_available():

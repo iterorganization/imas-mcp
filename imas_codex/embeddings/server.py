@@ -120,9 +120,9 @@ async def lifespan(app: FastAPI):
     # Import here to avoid circular imports
     from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
     from imas_codex.embeddings.encoder import Encoder
-    from imas_codex.settings import get_imas_embedding_model
+    from imas_codex.settings import get_embedding_model
 
-    model_name = get_imas_embedding_model()
+    model_name = get_embedding_model()
     device = "cuda" if _cuda_available() else "cpu"
 
     # Log CUDA device selection

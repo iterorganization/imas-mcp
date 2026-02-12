@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from llama_index.core.embeddings import BaseEmbedding
 from pydantic import PrivateAttr
 
-from imas_codex.settings import get_embedding_backend, get_imas_embedding_model
+from imas_codex.settings import get_embedding_backend, get_embedding_model
 
 from .config import EmbeddingBackend, EncoderConfig
 from .encoder import Encoder
@@ -79,7 +79,7 @@ class EncoderEmbedding(BaseEmbedding):
             backend: Explicit backend selection (None uses config)
             **kwargs: Additional BaseEmbedding arguments
         """
-        model_name = model_name or get_imas_embedding_model()
+        model_name = model_name or get_embedding_model()
         super().__init__(model_name=model_name, **kwargs)
 
         # Create encoder config
@@ -155,7 +155,7 @@ def get_embed_model(*, cached: bool = True) -> BaseEmbedding:
         return _cached_embed_model
 
     backend_str = get_embedding_backend()
-    model_name = get_imas_embedding_model()
+    model_name = get_embedding_model()
 
     try:
         backend = EmbeddingBackend(backend_str)

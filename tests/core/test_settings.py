@@ -7,8 +7,17 @@ from imas_codex.settings import _parse_bool
 class TestSettingsFunctions:
     """Tests for settings module functions."""
 
-    def test_get_imas_embedding_model_env_override(self, monkeypatch):
+    def test_get_embedding_model_env_override(self, monkeypatch):
         """Environment variable overrides embedding model setting."""
+        settings._load_pyproject_settings.cache_clear()
+
+        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "test-model")
+        result = settings.get_embedding_model()
+
+        assert result == "test-model"
+
+    def test_get_embedding_model_alias(self, monkeypatch):
+        """Backward compat alias works."""
         settings._load_pyproject_settings.cache_clear()
 
         monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "test-model")
@@ -52,12 +61,12 @@ class TestSettingsFunctions:
 
         assert result is True
 
-    def test_get_imas_embedding_model_default(self, monkeypatch):
-        """get_imas_embedding_model returns default when env not set."""
+    def test_get_embedding_model_default(self, monkeypatch):
+        """get_embedding_model returns default when env not set."""
         settings._load_pyproject_settings.cache_clear()
 
         monkeypatch.delenv("IMAS_CODEX_EMBEDDING_MODEL", raising=False)
-        result = settings.get_imas_embedding_model()
+        result = settings.get_embedding_model()
 
         assert isinstance(result, str)
         assert len(result) > 0
@@ -99,6 +108,30 @@ class TestSettingsFunctions:
         result = settings.get_include_error_fields()
 
         assert isinstance(result, bool)
+
+
+class TestModelForTask:
+    """Tests for unified task model routing."""
+
+    def test_language_tasks_return_language_model(self):
+        """Language tasks route to the language section."""
+        for task in ("discovery", "score", "enrichment", "vlm"):
+            model = settings.get_model_for_task(task)
+            assert isinstance(model, str)
+            assert "/" in model
+
+    def test_agent_tasks_return_agent_model(self):
+        """Agent tasks route to the agent section."""
+        for task in ("exploration", "scout", "summarization", "default"):
+            model = settings.get_model_for_task(task)
+            assert isinstance(model, str)
+            assert "/" in model
+
+    def test_unknown_task_falls_back(self):
+        """Unknown task falls back to agent default."""
+        model = settings.get_model_for_task("nonexistent_task")
+        default = settings.get_model_for_task("default")
+        assert model == default
 
 
 class TestParseBool:

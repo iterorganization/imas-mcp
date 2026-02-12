@@ -477,10 +477,10 @@ def generate_embeddings_batch(
     """
     from imas_codex.embeddings.config import EncoderConfig
     from imas_codex.embeddings.encoder import Encoder
-    from imas_codex.settings import get_imas_embedding_model
+    from imas_codex.settings import get_embedding_model
 
     if model_name is None:
-        model_name = get_imas_embedding_model()
+        model_name = get_embedding_model()
 
     config = EncoderConfig(
         model_name=model_name,
@@ -669,9 +669,9 @@ def update_path_embeddings(
         return {"updated": 0, "cached": 0, "total": 0, "changes": 0}
 
     # Resolve model name early for hash computation
-    from imas_codex.settings import get_imas_embedding_model
+    from imas_codex.settings import get_embedding_model
 
-    resolved_model = model_name or get_imas_embedding_model()
+    resolved_model = model_name or get_embedding_model()
 
     # Step 1: Generate embedding text and compute hashes for all paths
     # Hash includes model name so changing model invalidates cached embeddings
