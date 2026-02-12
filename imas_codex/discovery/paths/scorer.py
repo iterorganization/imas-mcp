@@ -507,6 +507,19 @@ class DirectoryScorer:
                 and purpose not in SUPPRESSED_PURPOSES
             )
 
+            # CRITICAL: Containers with many subdirectories (e.g., /home with
+            # 1000+ user dirs) MUST be expanded regardless of score or LLM
+            # decision. The whole point of a container is that its children
+            # are the interesting paths. Without this, /home scored at 0.0
+            # would never be expanded to discover user home directories.
+            total_dirs = directories[i].get("total_dirs", 0) or 0
+            if (
+                purpose in CONTAINER_PURPOSES
+                and total_dirs >= 5
+                and purpose not in SUPPRESSED_PURPOSES
+            ):
+                should_expand = True
+
             # CRITICAL: Never expand git repos (code is available via git clone)
             # Even private repos don't need child expansion - files are at repo root
             if has_git:
@@ -694,6 +707,15 @@ class DirectoryScorer:
                 and result.get("should_expand", False)
                 and purpose not in SUPPRESSED_PURPOSES
             )
+
+            # Force-expand containers with many subdirectories (e.g., /home)
+            total_dirs = directories[i].get("total_dirs", 0) or 0
+            if (
+                purpose in CONTAINER_PURPOSES
+                and total_dirs >= 5
+                and purpose not in SUPPRESSED_PURPOSES
+            ):
+                should_expand = True
 
             # Never expand git repos
             if has_git:
