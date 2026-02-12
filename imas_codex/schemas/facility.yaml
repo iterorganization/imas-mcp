@@ -2473,6 +2473,30 @@ classes:
         description: Vector embedding for semantic search (256-dim, Qwen3-Embedding-8B)
         multivalued: true
         range: float
+      mdsplus_paths_mentioned:
+        description: MDSplus paths found in this chunk (e.g., ATLAS::IP). Only populated for MDSplus-capable facilities.
+        multivalued: true
+        range: string
+      imas_paths_mentioned:
+        description: IMAS DD paths found in this chunk (e.g., equilibrium/time_slice/profiles_1d/psi). Universal across all facilities.
+        multivalued: true
+        range: string
+      ppf_paths_mentioned:
+        description: JET PPF DDA/Dtype paths found in this chunk (e.g., EFIT/Q95). Only populated for PPF-capable facilities.
+        multivalued: true
+        range: string
+      units_mentioned:
+        description: Physical unit symbols found in this chunk (e.g., eV, Tesla, MA)
+        multivalued: true
+        range: string
+      conventions_mentioned:
+        description: Sign/coordinate convention names found in this chunk (e.g., COCOS 11)
+        multivalued: true
+        range: string
+      tool_mentions:
+        description: Facility-specific tool/API mentions found in this chunk (e.g., tdiExecute, ppfget)
+        multivalued: true
+        range: string
 
   WikiArtifact:
     description: >-

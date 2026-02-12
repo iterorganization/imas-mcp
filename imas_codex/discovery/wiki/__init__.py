@@ -22,6 +22,15 @@ from imas_codex.discovery.wiki.confluence import (
     ConfluenceSpace,
     detect_site_type,
 )
+from imas_codex.discovery.wiki.entity_extraction import (
+    ExtractionResult,
+    FacilityEntityExtractor,
+    extract_conventions,
+    extract_imas_paths,
+    extract_mdsplus_paths,
+    extract_ppf_paths,
+    extract_units,
+)
 from imas_codex.discovery.wiki.graph_ops import (
     release_orphaned_claims,
     reset_transient_pages,
@@ -57,10 +66,6 @@ from imas_codex.discovery.wiki.pipeline import (
 from imas_codex.discovery.wiki.progress import WikiProgressDisplay
 from imas_codex.discovery.wiki.scraper import (
     WikiPage,
-    extract_conventions,
-    extract_imas_paths,
-    extract_mdsplus_paths,
-    extract_units,
     fetch_wiki_page,
 )
 from imas_codex.discovery.wiki.state import WikiDiscoveryState
@@ -99,9 +104,12 @@ __all__ = [
     "WikiIngestionPipeline",
     "WikiPage",
     # Extraction utilities
+    "ExtractionResult",
+    "FacilityEntityExtractor",
     "extract_conventions",
     "extract_imas_paths",
     "extract_mdsplus_paths",
+    "extract_ppf_paths",
     "extract_units",
     "fetch_wiki_page",
     # Queue management

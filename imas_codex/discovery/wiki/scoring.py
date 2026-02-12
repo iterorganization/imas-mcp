@@ -412,6 +412,7 @@ async def _score_images_batch(
     model: str,
     focus: str | None = None,
     data_access_patterns: dict[str, Any] | None = None,
+    facility_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
     """Score a batch of images using VLM with structured output.
 
@@ -426,6 +427,7 @@ async def _score_images_batch(
             from facility config. When provided, injected into the prompt
             template so the VLM can recognize facility-specific path formats
             and tool references in OCR text.
+        facility_id: Facility identifier for entity extraction (e.g., 'tcv')
 
     Returns:
         (results, cost) tuple
@@ -590,10 +592,19 @@ async def _score_images_batch(
         _facility_key_tools = data_access_patterns.get("key_tools")
         _facility_code_patterns = data_access_patterns.get("code_import_patterns")
 
-    from imas_codex.discovery.wiki.scraper import (
-        extract_facility_tool_mentions,
-        extract_mdsplus_paths,
-    )
+    # Build facility-aware extractor for OCR entity extraction
+    _extractor = None
+    if facility_id:
+        from imas_codex.discovery.wiki.entity_extraction import (
+            FacilityEntityExtractor,
+        )
+
+        _extractor = FacilityEntityExtractor(facility_id)
+    else:
+        from imas_codex.discovery.wiki.entity_extraction import (
+            extract_facility_tool_mentions,
+            extract_mdsplus_paths,
+        )
 
     for r in llm_results[: len(images)]:
         scores = {
@@ -609,11 +620,20 @@ async def _score_images_batch(
         # Extract structured entities from VLM OCR text
         ocr_mdsplus_paths: list[str] = []
         ocr_tool_mentions: list[str] = []
+        ocr_imas_paths: list[str] = []
+        ocr_ppf_paths: list[str] = []
         if r.ocr_text:
-            ocr_mdsplus_paths = extract_mdsplus_paths(r.ocr_text)
-            ocr_tool_mentions = extract_facility_tool_mentions(
-                r.ocr_text, _facility_key_tools, _facility_code_patterns
-            )
+            if _extractor:
+                ocr_entities = _extractor.extract(r.ocr_text)
+                ocr_mdsplus_paths = ocr_entities.mdsplus_paths
+                ocr_imas_paths = ocr_entities.imas_paths
+                ocr_ppf_paths = ocr_entities.ppf_paths
+                ocr_tool_mentions = ocr_entities.tool_mentions
+            else:
+                ocr_mdsplus_paths = extract_mdsplus_paths(r.ocr_text)
+                ocr_tool_mentions = extract_facility_tool_mentions(
+                    r.ocr_text, _facility_key_tools, _facility_code_patterns
+                )
 
         results.append(
             {
@@ -621,6 +641,8 @@ async def _score_images_batch(
                 "caption": r.caption,
                 "ocr_text": r.ocr_text,
                 "ocr_mdsplus_paths": ocr_mdsplus_paths,
+                "ocr_imas_paths": ocr_imas_paths,
+                "ocr_ppf_paths": ocr_ppf_paths,
                 "ocr_tool_mentions": ocr_tool_mentions,
                 "purpose": r.purpose.value,
                 "description": r.description[:150],

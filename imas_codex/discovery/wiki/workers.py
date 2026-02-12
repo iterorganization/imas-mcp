@@ -868,7 +868,11 @@ async def image_score_worker(
         try:
             model = get_model("vision")
             results, cost = await _score_images_batch(
-                images_with_data, model, state.focus, facility_access_patterns
+                images_with_data,
+                model,
+                state.focus,
+                facility_access_patterns,
+                facility_id=state.facility,
             )
 
             # Persist to graph

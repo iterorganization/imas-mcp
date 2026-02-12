@@ -250,16 +250,19 @@ def persist_chunks_batch(chunks: list[dict]) -> int:
 def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
     """Create DOCUMENTS and MENTIONS relationships from chunk metadata.
 
-    Uses batched queries to link WikiChunks to TreeNodes and IMASPaths
-    based on the paths stored in chunk properties during ingestion.
+    Uses batched queries to link WikiChunks to graph entities based on
+    the paths stored in chunk properties during ingestion:
+    - MDSplus paths → TreeNode (DOCUMENTS relationship)
+    - IMAS paths → IMASPath (MENTIONS_IMAS relationship)
+    - PPF paths → FacilitySignal (DOCUMENTS relationship)
 
     Args:
         facility_id: Facility to process
 
     Returns:
-        Dict with counts: {tree_nodes_linked, imas_paths_linked}
+        Dict with counts: {tree_nodes_linked, imas_paths_linked, ppf_signals_linked}
     """
-    stats = {"tree_nodes_linked": 0, "imas_paths_linked": 0}
+    stats = {"tree_nodes_linked": 0, "imas_paths_linked": 0, "ppf_signals_linked": 0}
 
     with GraphClient() as gc:
         # Link to TreeNodes via MDSplus paths
@@ -267,6 +270,7 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
             """
             MATCH (c:WikiChunk {facility_id: $facility_id})
             WHERE c.mdsplus_paths_mentioned IS NOT NULL
+               AND size(c.mdsplus_paths_mentioned) > 0
             UNWIND c.mdsplus_paths_mentioned AS mds_path
             MATCH (t:TreeNode)
             WHERE t.path = mds_path
@@ -279,6 +283,44 @@ def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
         )
         if result:
             stats["tree_nodes_linked"] = result[0]["linked"]
+
+        # Link to IMASPath nodes via IMAS DD paths
+        result = gc.query(
+            """
+            MATCH (c:WikiChunk {facility_id: $facility_id})
+            WHERE c.imas_paths_mentioned IS NOT NULL
+               AND size(c.imas_paths_mentioned) > 0
+            UNWIND c.imas_paths_mentioned AS imas_path
+            MATCH (ip:IMASPath)
+            WHERE ip.id = imas_path
+               OR ip.id STARTS WITH imas_path + '/'
+            WITH c, ip
+            LIMIT 1000
+            MERGE (c)-[:MENTIONS_IMAS]->(ip)
+            RETURN count(*) AS linked
+            """,
+            facility_id=facility_id,
+        )
+        if result:
+            stats["imas_paths_linked"] = result[0]["linked"]
+
+        # Link to FacilitySignal nodes via PPF paths (JET)
+        result = gc.query(
+            """
+            MATCH (c:WikiChunk {facility_id: $facility_id})
+            WHERE c.ppf_paths_mentioned IS NOT NULL
+               AND size(c.ppf_paths_mentioned) > 0
+            UNWIND c.ppf_paths_mentioned AS ppf_path
+            MATCH (fs:FacilitySignal {facility_id: $facility_id})
+            WHERE fs.id ENDS WITH ppf_path
+               OR fs.name = ppf_path
+            MERGE (c)-[:DOCUMENTS]->(fs)
+            RETURN count(*) AS linked
+            """,
+            facility_id=facility_id,
+        )
+        if result:
+            stats["ppf_signals_linked"] = result[0]["linked"]
 
     return stats
 
@@ -788,26 +830,11 @@ class WikiIngestionPipeline:
         """
         import asyncio
 
-        from .scraper import (
-            extract_conventions,
-            extract_facility_tool_mentions,
-            extract_mdsplus_paths,
-            extract_units,
-        )
+        from .entity_extraction import FacilityEntityExtractor
 
-        # Load facility-specific key_tools for tool mention extraction
-        facility_key_tools: list[str] | None = None
-        facility_code_patterns: list[str] | None = None
-        try:
-            from imas_codex.discovery.base.facility import get_facility
-
-            config = get_facility(self.facility_id)
-            dap = config.get("data_access_patterns")
-            if dap:
-                facility_key_tools = dap.get("key_tools")
-                facility_code_patterns = dap.get("code_import_patterns")
-        except Exception:
-            pass  # Facility config not available — use generic extraction only
+        # Build facility-aware extractor (loads config once, selects patterns
+        # based on facility data_systems — MDSplus, PPF, IMAS, etc.)
+        extractor = FacilityEntityExtractor(self.facility_id)
 
         stats: PageIngestionStats = {
             "chunks": 0,
@@ -855,23 +882,21 @@ class WikiIngestionPipeline:
         # Prepare batch data with pre-computed embeddings
         chunk_batch: list[dict] = []
         all_mdsplus: set[str] = set()
+        all_imas: set[str] = set()
 
         for i, node in enumerate(nodes):
             chunk_text: str = node.text  # type: ignore[attr-defined]
             node.embedding = embeddings[i]
 
-            # Extract entities from this chunk
-            chunk_mdsplus = extract_mdsplus_paths(chunk_text)
-            chunk_units = extract_units(chunk_text)
-            chunk_conventions = extract_conventions(chunk_text)
-            chunk_tool_mentions = extract_facility_tool_mentions(
-                chunk_text, facility_key_tools, facility_code_patterns
-            )
+            # Extract entities using facility-aware extractor
+            entities = extractor.extract(chunk_text)
+            props = extractor.to_chunk_properties(entities)
 
             # Track for stats
-            all_mdsplus.update(chunk_mdsplus)
-            stats["units"] += len(chunk_units)
-            stats["conventions"] += len(chunk_conventions)
+            all_mdsplus.update(entities.mdsplus_paths)
+            all_imas.update(entities.imas_paths)
+            stats["units"] += len(entities.units)
+            stats["conventions"] += len(entities.conventions)
 
             chunk_batch.append(
                 {
@@ -881,11 +906,7 @@ class WikiIngestionPipeline:
                     "chunk_index": i,
                     "content": chunk_text,
                     "embedding": node.embedding,
-                    "mdsplus_paths": chunk_mdsplus,
-                    "imas_paths": [],
-                    "units": chunk_units,
-                    "conventions": [c.get("name", "") for c in chunk_conventions],
-                    "tool_mentions": chunk_tool_mentions,
+                    **props,
                 }
             )
 
@@ -938,6 +959,7 @@ class WikiIngestionPipeline:
                         c.embedding = chunk.embedding,
                         c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
                         c.imas_paths_mentioned = chunk.imas_paths,
+                        c.ppf_paths_mentioned = chunk.ppf_paths,
                         c.units_mentioned = chunk.units,
                         c.conventions_mentioned = chunk.conventions,
                         c.tool_mentions = chunk.tool_mentions
@@ -2074,26 +2096,11 @@ class WikiArtifactPipeline:
         """
         import asyncio
 
-        from .scraper import (
-            extract_conventions,
-            extract_facility_tool_mentions,
-            extract_mdsplus_paths,
-            extract_units,
-        )
+        from .entity_extraction import FacilityEntityExtractor
 
-        # Load facility-specific key_tools for tool mention extraction
-        facility_key_tools: list[str] | None = None
-        facility_code_patterns: list[str] | None = None
-        try:
-            from imas_codex.discovery.base.facility import get_facility
-
-            config = get_facility(self.facility_id)
-            dap = config.get("data_access_patterns")
-            if dap:
-                facility_key_tools = dap.get("key_tools")
-                facility_code_patterns = dap.get("code_import_patterns")
-        except Exception:
-            pass  # Facility config not available — use generic extraction only
+        # Build facility-aware extractor (loads config once, selects patterns
+        # based on facility data_systems — MDSplus, PPF, IMAS, etc.)
+        extractor = FacilityEntityExtractor(self.facility_id)
 
         # Split into chunks
         combined_doc = Document(
@@ -2121,12 +2128,9 @@ class WikiArtifactPipeline:
             chunk_text: str = node.text  # type: ignore[attr-defined]
             node.embedding = embeddings[i]
 
-            chunk_mdsplus = extract_mdsplus_paths(chunk_text)
-            chunk_units = extract_units(chunk_text)
-            chunk_conventions = extract_conventions(chunk_text)
-            chunk_tool_mentions = extract_facility_tool_mentions(
-                chunk_text, facility_key_tools, facility_code_patterns
-            )
+            # Extract entities using facility-aware extractor
+            entities = extractor.extract(chunk_text)
+            props = extractor.to_chunk_properties(entities)
 
             chunk_batch.append(
                 {
@@ -2135,11 +2139,7 @@ class WikiArtifactPipeline:
                     "facility_id": self.facility_id,
                     "content": chunk_text,
                     "embedding": node.embedding,
-                    "mdsplus_paths": chunk_mdsplus,
-                    "imas_paths": [],
-                    "units": chunk_units,
-                    "conventions": [c.get("name", "") for c in chunk_conventions],
-                    "tool_mentions": chunk_tool_mentions,
+                    **props,
                 }
             )
 
@@ -2171,6 +2171,7 @@ class WikiArtifactPipeline:
                         c.embedding = chunk.embedding,
                         c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
                         c.imas_paths_mentioned = chunk.imas_paths,
+                        c.ppf_paths_mentioned = chunk.ppf_paths,
                         c.units_mentioned = chunk.units,
                         c.conventions_mentioned = chunk.conventions,
                         c.tool_mentions = chunk.tool_mentions

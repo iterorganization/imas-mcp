@@ -20,63 +20,32 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 
+# Re-export extraction functions from entity_extraction for backward compat.
+# New code should import directly from entity_extraction.
+from .entity_extraction import (  # noqa: F401
+    COCOS_PATTERN,
+    MDSPLUS_PATH_PATTERN,
+    SIGN_CONVENTION_PATTERN,
+    UNIT_PATTERN,
+    ExtractionResult,
+    FacilityEntityExtractor,
+    _build_imas_pattern as _build_imas_pattern,
+    extract_conventions,
+    extract_facility_tool_mentions,
+    extract_imas_paths,
+    extract_mdsplus_paths,
+    extract_ppf_paths,
+    extract_units,
+)
+
 logger = logging.getLogger(__name__)
 
 # Base URL for the TCV wiki
 WIKI_BASE_URL = "https://spcwiki.epfl.ch/wiki"
 
-# =============================================================================
-# Entity Extraction Patterns
-# =============================================================================
-
-# MDSplus path patterns: \TREE::NODE or \\TREE::NODE:PATH
-MDSPLUS_PATH_PATTERN = re.compile(
-    r"\\\\?[A-Z_][A-Z_0-9]*::[A-Z_][A-Z_0-9:]*",
-    re.IGNORECASE,
-)
-
-# IMAS path patterns: ids/path/to/field or ids.path.to.field
-IMAS_PATH_PATTERN = re.compile(
-    r"\b(equilibrium|core_profiles|magnetics|thomson_scattering|"
-    r"charge_exchange|ece|interferometer|bolometer|nbi|mhd|"
-    r"edge_profiles|polarimeter)[./][a-z_0-9./]+",
-    re.IGNORECASE,
-)
-
-# Physical units (common in fusion data)
-UNIT_PATTERN = re.compile(
-    r"\b(eV|keV|MeV|GeV|"  # Energy
-    r"m\^?-?[123]|cm\^?-?[123]|mm|"  # Length/density
-    r"Tesla|T|Wb|Weber|"  # Magnetic
-    r"Amp(?:ere)?s?|A|MA|kA|"  # Current
-    r"Ohm|ohm|Ω|"  # Resistance
-    r"Volt|V|kV|"  # Voltage
-    r"Watt|W|MW|kW|"  # Power
-    r"m/s|m\.s\^-1|"  # Velocity
-    r"rad|radian|degrees?|°|"  # Angle
-    r"seconds?|s|ms|μs|ns|"  # Time
-    r"Hz|kHz|MHz|GHz|"  # Frequency
-    r"Pa|kPa|MPa|bar|mbar|Torr)\b",
-    re.IGNORECASE,
-)
-
-# COCOS convention patterns
-COCOS_PATTERN = re.compile(
-    r"COCOS\s*(\d{1,2})|"  # COCOS 11, COCOS 3
-    r"cocos\s*=\s*(\d{1,2})|"  # cocos=11
-    r"coordinate\s+convention[s]?\s+(\d{1,2})",
-    re.IGNORECASE,
-)
-
-# Sign convention patterns
-SIGN_CONVENTION_PATTERN = re.compile(
-    r"(positive|negative)\s+(clockwise|counter-?clockwise|outward|inward|"
-    r"upward|downward|toroidal|poloidal|radial)|"
-    r"(sign\s+convention)|"
-    r"(I_?[pP]\s*[><]=?\s*0)|"  # Ip > 0
-    r"(B_?[tTφ]\s*[><]=?\s*0)",  # Bt > 0
-    re.IGNORECASE,
-)
+# Legacy IMAS_PATH_PATTERN kept for backward compatibility in tests.
+# New code should use extract_imas_paths() which uses the full DD IDS list.
+IMAS_PATH_PATTERN = _build_imas_pattern()
 
 
 # =============================================================================
@@ -140,145 +109,6 @@ class WikiPage:
 
         raw = self.url.split("/wiki/")[-1] if "/wiki/" in self.url else self.url
         return urllib.parse.unquote(raw)
-
-
-# =============================================================================
-# Entity Extraction Functions
-# =============================================================================
-
-
-def extract_mdsplus_paths(text: str) -> list[str]:
-    """Extract MDSplus paths from text.
-
-    Args:
-        text: Raw text content
-
-    Returns:
-        Deduplicated list of MDSplus paths found
-    """
-    matches = MDSPLUS_PATH_PATTERN.findall(text)
-    # Normalize: ensure single backslash prefix, uppercase
-    normalized = set()
-    for m in matches:
-        path = m.lstrip("\\")
-        path = "\\" + path.upper()
-        normalized.add(path)
-    return sorted(normalized)
-
-
-def extract_imas_paths(text: str) -> list[str]:
-    """Extract IMAS data dictionary paths from text.
-
-    Args:
-        text: Raw text content
-
-    Returns:
-        Deduplicated list of IMAS paths found
-    """
-    matches = IMAS_PATH_PATTERN.findall(text)
-    # Normalize: lowercase, use / separator
-    normalized = set()
-    for m in matches:
-        path = m.lower().replace(".", "/")
-        normalized.add(path)
-    return sorted(normalized)
-
-
-def extract_units(text: str) -> list[str]:
-    """Extract physical units from text.
-
-    Args:
-        text: Raw text content
-
-    Returns:
-        Deduplicated list of unit symbols found
-    """
-    matches = UNIT_PATTERN.findall(text)
-    return sorted(set(matches))
-
-
-def extract_conventions(text: str) -> list[dict[str, str]]:
-    """Extract sign and coordinate conventions from text.
-
-    Args:
-        text: Raw text content
-
-    Returns:
-        List of convention dicts with type, name, and description
-    """
-    conventions = []
-
-    # Find COCOS references
-    for match in COCOS_PATTERN.finditer(text):
-        cocos_num = match.group(1) or match.group(2) or match.group(3)
-        if cocos_num:
-            conventions.append(
-                {
-                    "type": "cocos",
-                    "name": f"COCOS {cocos_num}",
-                    "cocos_index": int(cocos_num),
-                    "context": text[max(0, match.start() - 50) : match.end() + 50],
-                }
-            )
-
-    # Find sign conventions
-    for match in SIGN_CONVENTION_PATTERN.finditer(text):
-        matched_text = match.group(0)
-        conventions.append(
-            {
-                "type": "sign",
-                "name": matched_text.strip(),
-                "context": text[max(0, match.start() - 50) : match.end() + 50],
-            }
-        )
-
-    return conventions
-
-
-def extract_facility_tool_mentions(
-    text: str,
-    key_tools: list[str] | None = None,
-    code_import_patterns: list[str] | None = None,
-) -> list[str]:
-    """Extract facility-specific tool/API mentions from text.
-
-    Matches against the facility's configured key_tools and
-    code_import_patterns from DataAccessPatternsConfig. This
-    complements the generic MDSplus/IMAS regex patterns with
-    facility-specific tool recognition.
-
-    Args:
-        text: Raw text content (chunk text, OCR text, etc.)
-        key_tools: Facility key_tools list (e.g., ['ppfget', 'tdiExecute'])
-        code_import_patterns: Facility code patterns (e.g., ['import ppf'])
-
-    Returns:
-        Deduplicated list of matched tool/pattern names found in text
-    """
-    if not text:
-        return []
-
-    mentions: set[str] = set()
-    text_lower = text.lower()
-
-    # Match key_tools (case-insensitive word boundary match)
-    for tool in key_tools or []:
-        # Normalize tool name for matching (strip parens, dots for search)
-        tool_clean = tool.rstrip("(").split(".")[-1]
-        if len(tool_clean) < 2:
-            continue
-        # Use word boundary matching to avoid false positives
-        # e.g., "sal" should match "import sal" but not "universal"
-        pattern = re.compile(r"\b" + re.escape(tool_clean) + r"\b", re.IGNORECASE)
-        if pattern.search(text):
-            mentions.add(tool)
-
-    # Match code_import_patterns (substring match)
-    for pattern in code_import_patterns or []:
-        if pattern.lower() in text_lower:
-            mentions.add(pattern)
-
-    return sorted(mentions)
 
 
 # =============================================================================
