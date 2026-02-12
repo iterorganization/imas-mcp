@@ -17,10 +17,6 @@ from imas_codex.settings import (
 load_dotenv(override=True)  # Load .env file values, overriding existing env vars
 
 
-# Define constants - uses pyproject.toml defaults with env var override
-IMAS_CODEX_EMBEDDING_MODEL = get_embedding_model()
-
-
 class EmbeddingBackend(Enum):
     """Embedding backend selection.
 
@@ -66,7 +62,7 @@ class EncoderConfig:
         # Load model name: explicit param > env var > fallback
         if self.model_name is None:
             self.model_name = os.getenv(
-                "IMAS_CODEX_EMBEDDING_MODEL", IMAS_CODEX_EMBEDDING_MODEL
+                "IMAS_CODEX_EMBEDDING_MODEL", get_embedding_model()
             )
 
         # Load backend from settings if not explicitly set

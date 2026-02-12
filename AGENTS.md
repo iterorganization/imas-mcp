@@ -13,6 +13,23 @@ Greenfield project under active development. No backwards compatibility.
 - Exploration notes go in facility YAML, not markdown files
 - `docs/` is for mature infrastructure only
 
+## Model & Tool Configuration
+
+All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. No backward-compatible aliases — use the canonical accessors from `imas_codex.settings`.
+
+**Sections** (each with a `model` parameter):
+
+| Section | Purpose | Accessor |
+|---------|---------|----------|
+| `[embedding]` | Embedding model, dimension, backend | `get_embedding_model()` |
+| `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_language_model(task)` |
+| `[vision]` | Image/document tasks | `get_vision_model(task)` |
+| `[agent]` | Planning, exploration, autonomous tasks | `get_agent_model(task)` |
+| `[compaction]` | Summarization/compaction | `get_compaction_model(task)` |
+| `[data-dictionary]` | DD version, include-ggd, include-error-fields | `get_dd_version()` |
+
+**Task routing:** `get_model_for_task(task)` dispatches to the correct section. Valid tasks: `discovery`, `score`, `enrichment`, `captioning`, `labeling` → language; `vision` → vision; `exploration`, `scout` → agent; `compaction` → compaction.
+
 ## Schema System
 
 All graph node types, relationships, and properties are defined in LinkML schemas — the single source of truth.

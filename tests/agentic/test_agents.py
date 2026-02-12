@@ -39,9 +39,10 @@ class TestModelConfiguration:
 
     def test_task_models_defined(self):
         """Verify task models are defined via get_model_for_task."""
-        assert get_model_for_task("default") is not None
         assert get_model_for_task("enrichment") is not None
         assert get_model_for_task("exploration") is not None
+        assert get_model_for_task("vision") is not None
+        assert get_model_for_task("compaction") is not None
 
     def test_get_model_for_task_known(self):
         """Get model for known task."""
@@ -50,10 +51,12 @@ class TestModelConfiguration:
         assert "/" in model  # Model should have provider/name format
 
     def test_get_model_for_task_unknown(self):
-        """Unknown task falls back to default."""
+        """Unknown task falls back to agent default."""
+        from imas_codex.settings import get_agent_model
+
         model = get_model_for_task("unknown_task")
-        default_model = get_model_for_task("default")
-        assert model == default_model
+        agent_default = get_agent_model()
+        assert model == agent_default
 
     @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
     def test_create_litellm_model_adds_prefix(self):
@@ -237,7 +240,7 @@ class TestAgentConfig:
         config = AgentConfig(name="test")
 
         assert config.name == "test"
-        assert config.task == "default"
+        assert config.task is None
         assert config.max_steps == 20
         assert config.temperature == 0.3
         assert config.cost_limit_usd is None

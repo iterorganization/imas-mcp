@@ -777,7 +777,7 @@ async def image_score_worker(
             on_progress(f"scoring {len(images_with_data)} images", state.image_stats)
 
         try:
-            model = get_model_for_task("vlm")
+            model = get_model_for_task("vision")
             results, cost = await _score_images_batch(
                 images_with_data, model, state.focus
             )

@@ -71,7 +71,7 @@ def serve() -> None:
     default=None,
     help=(
         "IMAS Data Dictionary version to use (env: IMAS_DD_VERSION). "
-        "Defaults to [tool.imas-codex].default-dd-version in pyproject.toml."
+        "Defaults to [tool.imas-codex.data-dictionary].version in pyproject.toml."
     ),
 )
 def serve_imas(

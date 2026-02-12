@@ -1,10 +1,13 @@
 """Project settings loaded from pyproject.toml [tool.imas-codex] section.
 
 Configuration is organized into subsections:
-  [tool.imas-codex]           — general settings (dd-version, include-ggd, etc.)
-  [tool.imas-codex.embedding] — embedding model, dimension, backend
-  [tool.imas-codex.language]  — language models for structured output tasks
-  [tool.imas-codex.agent]     — agent models for planning/exploration tasks
+  [tool.imas-codex]                — general settings
+  [tool.imas-codex.data-dictionary] — DD version, include-ggd, include-error-fields
+  [tool.imas-codex.embedding]      — embedding model, dimension, backend
+  [tool.imas-codex.language]       — language models, batch-size for structured output
+  [tool.imas-codex.vision]         — vision models for image/document tasks
+  [tool.imas-codex.agent]          — agent models for planning/exploration tasks
+  [tool.imas-codex.compaction]     — compaction models for summarization tasks
 
 All settings support environment variable overrides (IMAS_CODEX_* prefix).
 """
@@ -73,9 +76,15 @@ LANGUAGE_TASKS = frozenset(
         "discovery",
         "score",
         "enrichment",
-        "vlm",
         "captioning",
         "labeling",
+    }
+)
+
+# Tasks routed to [tool.imas-codex.vision]
+VISION_TASKS = frozenset(
+    {
+        "vision",
     }
 )
 
@@ -84,8 +93,13 @@ AGENT_TASKS = frozenset(
     {
         "exploration",
         "scout",
-        "summarization",
-        "default",
+    }
+)
+
+# Tasks routed to [tool.imas-codex.compaction]
+COMPACTION_TASKS = frozenset(
+    {
+        "compaction",
     }
 )
 
@@ -158,13 +172,32 @@ def get_language_model(task: str | None = None) -> str:
     Used for high-volume tasks: scoring, discovery, enrichment, labeling.
 
     Args:
-        task: Optional task override (e.g. 'vlm'). Falls back to section default.
+        task: Optional task override. Falls back to section default.
 
     Priority: IMAS_CODEX_LANGUAGE_MODEL env → [language].{task} → [language].model.
     """
     if env := os.getenv("IMAS_CODEX_LANGUAGE_MODEL"):
         return env
     section = _get_section("language")
+    if task and (model := section.get(task)):
+        return model
+    return section.get("model", "google/gemini-3-flash-preview")
+
+
+# ─── Vision model settings ─────────────────────────────────────────────────
+
+
+def get_vision_model(task: str | None = None) -> str:
+    """Get the vision model for image/document tasks.
+
+    Args:
+        task: Optional task override. Falls back to section default.
+
+    Priority: IMAS_CODEX_VISION_MODEL env → [vision].{task} → [vision].model.
+    """
+    if env := os.getenv("IMAS_CODEX_VISION_MODEL"):
+        return env
+    section = _get_section("vision")
     if task and (model := section.get(task)):
         return model
     return section.get("model", "google/gemini-3-flash-preview")
@@ -177,13 +210,30 @@ def get_agent_model(task: str | None = None) -> str:
     """Get the agent model for planning and exploration tasks.
 
     Args:
-        task: Optional task key (e.g. 'summarization', 'default').
+        task: Optional task key (e.g. 'scout').
               Falls back to section default (capable model).
     """
     section = _get_section("agent")
     if task and (model := section.get(task)):
         return model
     return section.get("model", "anthropic/claude-sonnet-4.5")
+
+
+# ─── Compaction model settings ─────────────────────────────────────────────
+
+
+def get_compaction_model(task: str | None = None) -> str:
+    """Get the compaction model for summarization tasks.
+
+    Args:
+        task: Optional task key. Falls back to section default.
+    """
+    if env := os.getenv("IMAS_CODEX_COMPACTION_MODEL"):
+        return env
+    section = _get_section("compaction")
+    if task and (model := section.get(task)):
+        return model
+    return section.get("model", "anthropic/claude-haiku-4.5")
 
 
 # ─── Unified task routing ──────────────────────────────────────────────────
@@ -193,15 +243,60 @@ def get_model_for_task(task: str) -> str:
     """Get the configured model for a task type.
 
     Routes to the appropriate config section:
-      Language tasks (discovery, score, enrichment, vlm) → [language]
-      Agent tasks (exploration, scout, summarization, default) → [agent]
+      Language tasks (discovery, score, enrichment) → [language]
+      Vision tasks (vision) → [vision]
+      Agent tasks (exploration, scout) → [agent]
+      Compaction tasks (compaction) → [compaction]
     """
     if task in LANGUAGE_TASKS:
         return get_language_model(task)
+    if task in VISION_TASKS:
+        return get_vision_model(task)
     if task in AGENT_TASKS:
         return get_agent_model(task)
+    if task in COMPACTION_TASKS:
+        return get_compaction_model(task)
     # Unknown task → agent default
-    return get_agent_model("default")
+    return get_agent_model()
+
+
+# ─── Data dictionary settings ──────────────────────────────────────────────
+
+
+def get_dd_version() -> str:
+    """Get the default data dictionary version.
+
+    Priority: IMAS_DD_VERSION env → [data-dictionary].version → '4.1.0'.
+    """
+    if env := os.getenv("IMAS_DD_VERSION"):
+        return env
+    return _get_section("data-dictionary").get("version", "4.1.0")
+
+
+def get_include_ggd() -> bool:
+    """Get whether to include GGD (Grid Geometry Description) paths.
+
+    Priority: IMAS_CODEX_INCLUDE_GGD env → [data-dictionary].include-ggd → True.
+    """
+    if env := os.getenv("IMAS_CODEX_INCLUDE_GGD"):
+        return _parse_bool(env)
+    val = _get_section("data-dictionary").get("include-ggd")
+    if val is not None:
+        return _parse_bool(val)
+    return True
+
+
+def get_include_error_fields() -> bool:
+    """Get whether to include error fields (_error_upper, _error_lower, etc.).
+
+    Priority: IMAS_CODEX_INCLUDE_ERROR_FIELDS env → [data-dictionary].include-error-fields → False.
+    """
+    if env := os.getenv("IMAS_CODEX_INCLUDE_ERROR_FIELDS"):
+        return _parse_bool(env)
+    val = _get_section("data-dictionary").get("include-error-fields")
+    if val is not None:
+        return _parse_bool(val)
+    return False
 
 
 # ─── General settings ──────────────────────────────────────────────────────
@@ -210,12 +305,11 @@ def get_model_for_task(task: str) -> str:
 def get_labeling_batch_size() -> int:
     """Get batch size for cluster labeling.
 
-    Priority: IMAS_CODEX_LABELING_BATCH_SIZE env → [tool.imas-codex] → 50.
+    Priority: IMAS_CODEX_LABELING_BATCH_SIZE env → [language].batch-size → 50.
     """
     if env := os.getenv("IMAS_CODEX_LABELING_BATCH_SIZE"):
         return int(env)
-    settings = _load_pyproject_settings()
-    if (val := settings.get("labeling-batch-size")) is not None:
+    if (val := _get_section("language").get("batch-size")) is not None:
         return int(val)
     return 50
 
@@ -225,32 +319,6 @@ def _parse_bool(value: str | bool) -> bool:
     if isinstance(value, bool):
         return value
     return value.lower() in ("true", "1", "yes")
-
-
-def get_include_ggd() -> bool:
-    """Get whether to include GGD (Grid Geometry Description) paths.
-
-    Priority: IMAS_CODEX_INCLUDE_GGD env → [tool.imas-codex] → True.
-    """
-    if env := os.getenv("IMAS_CODEX_INCLUDE_GGD"):
-        return _parse_bool(env)
-    settings = _load_pyproject_settings()
-    if (val := settings.get("include-ggd")) is not None:
-        return _parse_bool(val)
-    return True
-
-
-def get_include_error_fields() -> bool:
-    """Get whether to include error fields (_error_upper, _error_lower, etc.).
-
-    Priority: IMAS_CODEX_INCLUDE_ERROR_FIELDS env → [tool.imas-codex] → False.
-    """
-    if env := os.getenv("IMAS_CODEX_INCLUDE_ERROR_FIELDS"):
-        return _parse_bool(env)
-    settings = _load_pyproject_settings()
-    if (val := settings.get("include-error-fields")) is not None:
-        return _parse_bool(val)
-    return False
 
 
 # ─── Native model dimensions (for validation only) ─────────────────────────
@@ -267,16 +335,8 @@ MODEL_NATIVE_DIMENSIONS: dict[str, int] = {
 MODEL_DIMENSIONS = MODEL_NATIVE_DIMENSIONS
 
 
-# ─── Backward compatibility aliases ────────────────────────────────────────
-
-get_imas_embedding_model = get_embedding_model
-get_imas_embedding_dimension = get_embedding_dimension
-
-
 # ─── Module-level constants ────────────────────────────────────────────────
 
-IMAS_CODEX_EMBEDDING_MODEL = get_embedding_model()
-IMAS_CODEX_LANGUAGE_MODEL = get_language_model()
 LABELING_BATCH_SIZE = get_labeling_batch_size()
 INCLUDE_GGD = get_include_ggd()
 INCLUDE_ERROR_FIELDS = get_include_error_fields()
@@ -284,4 +344,3 @@ EMBEDDING_BACKEND = get_embedding_backend()
 EMBED_REMOTE_URL = get_embed_remote_url()
 EMBED_SERVER_PORT = get_embed_server_port()
 EMBEDDING_DIMENSION = get_embedding_dimension()
-IMAS_EMBEDDING_DIMENSION = get_embedding_dimension()

@@ -189,7 +189,9 @@ ids-filter = ""
 imas-dd-version = ""
 
 [tool.imas-codex]
-default-dd-version = "4.1.0"
+
+[tool.imas-codex.data-dictionary]
+version = "4.1.0"
 include-ggd = true
 include-error-fields = false
 
@@ -200,22 +202,18 @@ backend = "remote"
 remote-url = "http://localhost:18765"
 server-port = 18765
 
-# Language model for high-volume structured output tasks
-# (scoring, discovery, enrichment, labeling, image captioning)
-#
-# Model study (2026-01-23, 35 dirs, 14 purpose categories):
-#   Flash:  89%/94% accuracy, $0.0006/path
-#   Sonnet: 97%/94% accuracy, $0.0033/path
-#   Opus:  100%/97% accuracy, $0.0052/path
 [tool.imas-codex.language]
 model = "google/gemini-3-flash-preview"
-vlm = "google/gemini-3-flash-preview"
+batch-size = 50
 
-# Agent model for planning, exploration, and autonomous tasks
+[tool.imas-codex.vision]
+model = "google/gemini-3-flash-preview"
+
 [tool.imas-codex.agent]
 model = "anthropic/claude-sonnet-4.5"
-default = "anthropic/claude-haiku-4.5"
-summarization = "anthropic/claude-haiku-4.5"
+
+[tool.imas-codex.compaction]
+model = "anthropic/claude-haiku-4.5"
 
 [tool.hatch.envs.test]
 dependencies = [

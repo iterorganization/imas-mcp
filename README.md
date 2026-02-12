@@ -98,15 +98,15 @@ The IMAS Data Dictionary version determines which schema definitions are used. T
 |----------|--------|-------------|
 | 1 | `--dd-version` CLI option | Highest priority, explicit override |
 | 2 | `IMAS_DD_VERSION` env var | Environment-based override |
-| 3 | `pyproject.toml` default | Configured default from `[tool.imas-codex].default-dd-version` |
+| 3 | `pyproject.toml` default | Configured default from `[tool.imas-codex.data-dictionary].version` |
 
 **Configuration:**
 
 Set the default DD version in `pyproject.toml`:
 
 ```toml
-[tool.imas-codex]
-default-dd-version = "4.1.0"
+[tool.imas-codex.data-dictionary]
+version = "4.1.0"
 ```
 
 **Runtime Override:**

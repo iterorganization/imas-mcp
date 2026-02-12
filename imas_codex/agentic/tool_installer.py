@@ -252,7 +252,7 @@ def get_tool_installer_agent(
         Configured CodeAgent
     """
     llm = create_litellm_model(
-        model=model or get_model_for_task("default"),
+        model=model or get_model_for_task("exploration"),
         temperature=0.1,
         max_tokens=4096,
     )

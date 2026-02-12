@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING
 
 from imas_codex.agentic.llm import (
     get_llm as _get_llm_factory,
-    get_model_for_task,
     get_model_id,
 )
+from imas_codex.settings import get_model_for_task
 
 if TYPE_CHECKING:
     from llama_index.llms.openrouter import OpenRouter

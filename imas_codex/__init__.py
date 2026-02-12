@@ -34,7 +34,7 @@ from pathlib import Path  # noqa: E402
 
 @lru_cache(maxsize=1)
 def _get_default_dd_version_from_pyproject() -> str:
-    """Read default-dd-version from pyproject.toml [tool.imas-codex] section."""
+    """Read version from pyproject.toml [tool.imas-codex.data-dictionary] section."""
     try:
         import tomllib
 
@@ -45,7 +45,8 @@ def _get_default_dd_version_from_pyproject() -> str:
             return (
                 data.get("tool", {})
                 .get("imas-codex", {})
-                .get("default-dd-version", "4.1.0")
+                .get("data-dictionary", {})
+                .get("version", "4.1.0")
             )
     except Exception:
         pass
@@ -108,7 +109,7 @@ def _get_dd_version(cli_version: str | None = None) -> str:
     Priority order:
     1. CLI argument (if provided)
     2. IMAS_DD_VERSION environment variable
-    3. default-dd-version from pyproject.toml [tool.imas-codex]
+    3. version from pyproject.toml [tool.imas-codex.data-dictionary]
     4. imas-data-dictionary package __version__ (git dev package, fallback)
 
     Validates that the resolved version doesn't exceed the installed package version.

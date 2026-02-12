@@ -25,7 +25,7 @@ WORKDIR /app
 # Add build args for IDS filter and transport
 ARG IDS_FILTER=""
 ARG TRANSPORT="streamable-http"
-# IMAS_DD_VERSION: Optional. If empty, Python code reads default from pyproject.toml [tool.imas-codex].default-dd-version
+# IMAS_DD_VERSION: Optional. If empty, Python code reads default from pyproject.toml [tool.imas-codex.data-dictionary].version
 # This ensures a single source of truth. Pass explicitly only to override.
 ARG IMAS_DD_VERSION=""
 

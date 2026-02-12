@@ -16,15 +16,6 @@ class TestSettingsFunctions:
 
         assert result == "test-model"
 
-    def test_get_embedding_model_alias(self, monkeypatch):
-        """Backward compat alias works."""
-        settings._load_pyproject_settings.cache_clear()
-
-        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "test-model")
-        result = settings.get_imas_embedding_model()
-
-        assert result == "test-model"
-
     def test_get_language_model_env_override(self, monkeypatch):
         """Environment variable overrides language model setting."""
         settings._load_pyproject_settings.cache_clear()
@@ -33,6 +24,24 @@ class TestSettingsFunctions:
         result = settings.get_language_model()
 
         assert result == "test-llm"
+
+    def test_get_vision_model_env_override(self, monkeypatch):
+        """Environment variable overrides vision model setting."""
+        settings._load_pyproject_settings.cache_clear()
+
+        monkeypatch.setenv("IMAS_CODEX_VISION_MODEL", "test-vlm")
+        result = settings.get_vision_model()
+
+        assert result == "test-vlm"
+
+    def test_get_compaction_model_env_override(self, monkeypatch):
+        """Environment variable overrides compaction model setting."""
+        settings._load_pyproject_settings.cache_clear()
+
+        monkeypatch.setenv("IMAS_CODEX_COMPACTION_MODEL", "test-compact")
+        result = settings.get_compaction_model()
+
+        assert result == "test-compact"
 
     def test_get_labeling_batch_size_env_override(self, monkeypatch):
         """Environment variable overrides labeling batch size."""
@@ -60,6 +69,15 @@ class TestSettingsFunctions:
         result = settings.get_include_error_fields()
 
         assert result is True
+
+    def test_get_dd_version_env_override(self, monkeypatch):
+        """Environment variable overrides DD version."""
+        settings._load_pyproject_settings.cache_clear()
+
+        monkeypatch.setenv("IMAS_DD_VERSION", "3.99.0")
+        result = settings.get_dd_version()
+
+        assert result == "3.99.0"
 
     def test_get_embedding_model_default(self, monkeypatch):
         """get_embedding_model returns default when env not set."""
@@ -115,23 +133,35 @@ class TestModelForTask:
 
     def test_language_tasks_return_language_model(self):
         """Language tasks route to the language section."""
-        for task in ("discovery", "score", "enrichment", "vlm"):
+        for task in ("discovery", "score", "enrichment"):
             model = settings.get_model_for_task(task)
             assert isinstance(model, str)
             assert "/" in model
 
+    def test_vision_tasks_return_vision_model(self):
+        """Vision tasks route to the vision section."""
+        model = settings.get_model_for_task("vision")
+        assert isinstance(model, str)
+        assert "/" in model
+
     def test_agent_tasks_return_agent_model(self):
         """Agent tasks route to the agent section."""
-        for task in ("exploration", "scout", "summarization", "default"):
+        for task in ("exploration", "scout"):
             model = settings.get_model_for_task(task)
             assert isinstance(model, str)
             assert "/" in model
+
+    def test_compaction_tasks_return_compaction_model(self):
+        """Compaction tasks route to the compaction section."""
+        model = settings.get_model_for_task("compaction")
+        assert isinstance(model, str)
+        assert "/" in model
 
     def test_unknown_task_falls_back(self):
         """Unknown task falls back to agent default."""
         model = settings.get_model_for_task("nonexistent_task")
-        default = settings.get_model_for_task("default")
-        assert model == default
+        agent_default = settings.get_agent_model()
+        assert model == agent_default
 
 
 class TestParseBool:
@@ -162,16 +192,16 @@ class TestModuleLevelConstants:
 
     def test_module_constants_exist(self):
         """Module-level constants are defined."""
-        assert hasattr(settings, "IMAS_CODEX_EMBEDDING_MODEL")
-        assert hasattr(settings, "IMAS_CODEX_LANGUAGE_MODEL")
         assert hasattr(settings, "LABELING_BATCH_SIZE")
         assert hasattr(settings, "INCLUDE_GGD")
         assert hasattr(settings, "INCLUDE_ERROR_FIELDS")
+        assert hasattr(settings, "EMBEDDING_BACKEND")
+        assert hasattr(settings, "EMBEDDING_DIMENSION")
 
     def test_module_constants_have_correct_types(self):
         """Module-level constants have correct types."""
-        assert isinstance(settings.IMAS_CODEX_EMBEDDING_MODEL, str)
-        assert isinstance(settings.IMAS_CODEX_LANGUAGE_MODEL, str)
         assert isinstance(settings.LABELING_BATCH_SIZE, int)
         assert isinstance(settings.INCLUDE_GGD, bool)
         assert isinstance(settings.INCLUDE_ERROR_FIELDS, bool)
+        assert isinstance(settings.EMBEDDING_BACKEND, str)
+        assert isinstance(settings.EMBEDDING_DIMENSION, int)

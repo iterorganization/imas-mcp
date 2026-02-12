@@ -14,8 +14,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.graph import GraphClient
-
-from ..llm import get_model_for_task
+from imas_codex.settings import get_model_for_task
 
 if TYPE_CHECKING:
     from llama_index.core.agent import ReActAgent
@@ -380,7 +379,7 @@ class ScoutSession:
 
     def get_summary_model(self) -> str:
         """Get the cheap model for summarization."""
-        return get_model_for_task("summarization")
+        return get_model_for_task("compaction")
 
     def _on_agent_step(self, step_num: int, action: str) -> None:
         """Callback for each agent step - updates state and checks limits."""

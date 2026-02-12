@@ -34,7 +34,7 @@ from smolagents import CodeAgent, LiteLLMModel, Tool
 
 from imas_codex.agentic.monitor import AgentMonitor, create_step_callback
 from imas_codex.agentic.prompt_loader import load_prompts
-from imas_codex.settings import get_model_for_task
+from imas_codex.settings import get_agent_model, get_model_for_task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -54,9 +54,6 @@ def _get_prompt(name: str) -> str:
     return prompt.content
 
 
-# Default model fallback if config loading fails
-DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
-
 # Short preset aliases for interactive use (e.g. LLMSession, get_llm)
 PRESETS: dict[str, str] = {
     "gemini-flash": "google/gemini-3-flash-preview",
@@ -66,9 +63,6 @@ PRESETS: dict[str, str] = {
     "claude-opus": "anthropic/claude-opus-4.5",
 }
 
-# Backward compat alias
-MODELS = PRESETS
-
 
 def get_model_id(preset: str) -> str:
     """Resolve a preset alias to a full model ID, or pass through."""
@@ -77,7 +71,7 @@ def get_model_id(preset: str) -> str:
 
 def create_litellm_model(
     model: str | None = None,
-    task: str = "default",
+    task: str | None = None,
     temperature: float = 0.3,
     max_tokens: int = 16384,
 ) -> LiteLLMModel:
@@ -94,7 +88,7 @@ def create_litellm_model(
     """
     # Resolve model from task config if not specified
     if model is None:
-        model = get_model_for_task(task)
+        model = get_model_for_task(task) if task else get_agent_model()
 
     # OpenRouter requires 'openrouter/' prefix for LiteLLM
     if not model.startswith("openrouter/"):
@@ -139,7 +133,7 @@ class AgentConfig:
     instructions: str = ""
     tools: list[Tool] = field(default_factory=list)
     model: str | None = None
-    task: str = "default"
+    task: str | None = None
     temperature: float = 0.3
     max_tokens: int = 16384
     max_steps: int = 20
@@ -319,10 +313,6 @@ def get_scout_agent(
         verbose=verbose,
     )
     return create_agent(config)
-
-
-# Backward compatibility alias (deprecated)
-get_exploration_agent = get_scout_agent
 
 
 # =============================================================================

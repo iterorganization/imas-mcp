@@ -16,8 +16,6 @@ The CodeAgents write Python code to invoke tools, enabling:
 
 # Agent creation and configuration
 from imas_codex.agentic.agents import (
-    DEFAULT_MODEL,
-    MODELS,
     PRESETS,
     AgentConfig,
     create_agent,
@@ -25,7 +23,6 @@ from imas_codex.agentic.agents import (
     create_orchestrator,
     get_agent_monitor,
     get_enrichment_agent,
-    get_exploration_agent,  # Deprecated, use get_scout_agent
     get_model_for_task,
     get_model_id,
     get_scout_agent,
@@ -89,12 +86,9 @@ __all__ = [
     "create_orchestrator",
     "get_agent_monitor",
     "get_enrichment_agent",
-    "get_exploration_agent",  # Deprecated, use get_scout_agent
     "get_scout_agent",
     "get_model_for_task",
     "get_model_id",
-    "DEFAULT_MODEL",
-    "MODELS",
     "PRESETS",
     # Enrichment
     "EnrichmentResult",

@@ -1,29 +1,17 @@
-"""
-LLM configuration - compatibility shim.
+"""LLM configuration for LlamaIndex agents.
 
-This module is deprecated. Import from imas_codex.agentic.agents instead.
-
-For LlamaIndex agents (legacy wiki code), use get_llm() which returns OpenRouter.
 For smolagents (recommended), use create_litellm_model() from agents.py.
+For LlamaIndex agents (legacy wiki code), use get_llm() which returns OpenRouter.
 """
 
 import os
 from functools import lru_cache
 
-# Re-export from agents.py for compatibility
-from imas_codex.agentic.agents import (
-    DEFAULT_MODEL,
-    MODELS,
-    PRESETS,
-    get_model_for_task,
-    get_model_id,
-)
+from imas_codex.agentic.agents import PRESETS, get_model_id
+from imas_codex.settings import get_agent_model
 
 __all__ = [
-    "DEFAULT_MODEL",
-    "MODELS",
     "PRESETS",
-    "get_model_for_task",
     "get_model_id",
     "get_llm",
 ]
@@ -31,7 +19,7 @@ __all__ = [
 
 @lru_cache(maxsize=8)
 def get_llm(
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     temperature: float = 0.3,
     context_window: int = 1_000_000,
     max_tokens: int = 4096,
@@ -57,7 +45,7 @@ def get_llm(
     from llama_index.llms.openrouter import OpenRouter
 
     # Resolve preset names
-    resolved_model = get_model_id(model)
+    resolved_model = get_model_id(model or get_agent_model())
 
     api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
