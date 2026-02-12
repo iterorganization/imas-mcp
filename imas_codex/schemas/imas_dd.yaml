@@ -395,6 +395,8 @@ classes:
           first match clusters by centroid, then search within cluster.
         multivalued: true
         range: float
+        annotations:
+          vector_index_name: cluster_centroid
       similarity_score:
         description: Average intra-cluster cosine similarity (0-1)
         range: float

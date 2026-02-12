@@ -165,6 +165,68 @@ class GraphSchema:
             and "description" in self.get_all_slots(label)
         )
 
+    @cached_property
+    def vector_indexes(self) -> list[tuple[str, str, str]]:
+        """Derive vector indexes from schema based on embedding/centroid slots.
+
+        Returns list of (index_name, node_label, property_name) tuples.
+
+        Index naming:
+        - Uses `vector_index_name` annotation if present on slot
+        - Otherwise follows convention:
+          - Classes with embedding + description: {label_snake}_desc_embedding
+          - Classes with embedding only: {label_snake}_embedding
+          - Classes with centroid: {label_snake}_centroid
+        """
+        import re
+
+        def to_snake(name: str) -> str:
+            """Convert CamelCase to snake_case, handling acronyms."""
+            # Handle IMAS specially - it's an acronym
+            name = name.replace("IMAS", "Imas")
+            # Insert underscore before uppercase letters, then lowercase
+            s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+            return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+        def get_vector_annotation(slot) -> str | None:
+            """Get vector_index_name annotation if present."""
+            annotations = getattr(slot, "annotations", None) or {}
+            ann = (
+                annotations.get("vector_index_name")
+                if isinstance(annotations, dict)
+                else getattr(annotations, "vector_index_name", None)
+            )
+            return ann.value if ann and hasattr(ann, "value") else None
+
+        indexes = []
+        for label in self.node_labels:
+            label_snake = to_snake(label)
+
+            for slot in self._view.class_induced_slots(label):
+                slot_name = slot.name
+
+                # Check for embedding or centroid slots
+                if slot_name not in ("embedding", "centroid"):
+                    continue
+
+                # Check for explicit index name annotation
+                custom_name = get_vector_annotation(slot)
+                if custom_name:
+                    index_name = custom_name
+                elif slot_name == "embedding":
+                    slots = self.get_all_slots(label)
+                    has_desc = "description" in slots
+                    if has_desc:
+                        index_name = f"{label_snake}_desc_embedding"
+                    else:
+                        index_name = f"{label_snake}_embedding"
+                else:  # centroid
+                    index_name = f"{label_snake}_centroid"
+
+                indexes.append((index_name, label, slot_name))
+
+        return indexes
+
     def get_identifier(self, class_name: str) -> str | None:
         """Get the identifier field for a class.
 

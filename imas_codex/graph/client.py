@@ -42,27 +42,35 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Vector Index Configuration
+# Vector Index Configuration (Schema-Derived)
 # =============================================================================
 
-# Facility schema vector indexes - created by ensure_vector_indexes()
-# Each tuple: (index_name, node_label, property_name)
-FACILITY_VECTOR_INDEXES = [
-    ("code_chunk_embedding", "CodeChunk", "embedding"),
-    ("facility_signal_desc_embedding", "FacilitySignal", "embedding"),
-    ("facility_path_desc_embedding", "FacilityPath", "embedding"),
-    ("tree_node_desc_embedding", "TreeNode", "embedding"),
-    ("wiki_artifact_desc_embedding", "WikiArtifact", "embedding"),
-]
 
-# DD schema vector indexes - created by build_dd_graph()
-DD_VECTOR_INDEXES = [
-    ("imas_path_embedding", "IMASPath", "embedding"),
-    ("cluster_centroid", "IMASSemanticCluster", "centroid"),
-]
+def _get_all_vector_indexes() -> list[tuple[str, str, str]]:
+    """Derive all expected vector indexes from LinkML schemas.
 
-# All expected vector indexes (imports from tests can use this)
-EXPECTED_VECTOR_INDEXES = FACILITY_VECTOR_INDEXES + DD_VECTOR_INDEXES
+    Returns list of (index_name, node_label, property_name) tuples.
+    Combines facility.yaml and imas_dd.yaml schemas, deduplicating.
+    """
+    from pathlib import Path
+
+    from imas_codex.graph.schema import GraphSchema
+
+    schemas_dir = Path(__file__).parent.parent / "schemas"
+
+    # Collect from both schemas
+    indexes = {}
+    for schema_file in ["facility.yaml", "imas_dd.yaml"]:
+        gs = GraphSchema(schemas_dir / schema_file)
+        for idx in gs.vector_indexes:
+            # Deduplicate by index name (same index may appear in both)
+            indexes[idx[0]] = idx
+
+    return list(indexes.values())
+
+
+# Cache the result (computed once at module load)
+EXPECTED_VECTOR_INDEXES: list[tuple[str, str, str]] = _get_all_vector_indexes()
 
 
 # =============================================================================
@@ -217,15 +225,10 @@ class GraphClient:
     def ensure_vector_indexes(self) -> None:
         """Create vector indexes for semantic search if they don't exist.
 
-        Creates vector indexes defined in FACILITY_VECTOR_INDEXES on:
-        - CodeChunk.embedding - code semantic search
-        - FacilitySignal.embedding - signal description search
-        - FacilityPath.embedding - path description search
-        - TreeNode.embedding - tree node description search
-        - WikiArtifact.embedding - artifact description search
-
-        Note: DD indexes (imas_path_embedding, cluster_centroid) are created
-        by build_dd_graph() since they require the DD to be populated first.
+        Creates all vector indexes derived from LinkML schemas (classes with
+        embedding or centroid slots). Index configuration comes from:
+        - GraphSchema.vector_indexes property (schema-derived)
+        - vector_index_name annotation for custom index names
 
         Requires Neo4j 5.x+ with vector index support.
         """
@@ -235,11 +238,11 @@ class GraphClient:
             # Get existing indexes
             result = sess.run(
                 "SHOW INDEXES YIELD name WHERE name IN $names RETURN name",
-                names=[idx[0] for idx in FACILITY_VECTOR_INDEXES],
+                names=[idx[0] for idx in EXPECTED_VECTOR_INDEXES],
             )
             existing = {record["name"] for record in result}
 
-            for index_name, label, prop in FACILITY_VECTOR_INDEXES:
+            for index_name, label, prop in EXPECTED_VECTOR_INDEXES:
                 if index_name in existing:
                     continue  # Index already exists
 
