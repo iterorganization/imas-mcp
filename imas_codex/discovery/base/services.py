@@ -90,11 +90,37 @@ class ServiceStatus:
 # =============================================================================
 
 
+def get_graph_location() -> str:
+    """Get the configured graph location display name.
+
+    Reads from config/graph.yaml and returns the display name for the
+    current location (e.g., 'iter-login', 'local', 'docker').
+
+    Returns:
+        Location display name, or 'unknown' if not configured.
+    """
+    from importlib.resources import files
+
+    import yaml
+
+    try:
+        config_path = files("imas_codex.config").joinpath("graph.yaml")
+        with config_path.open() as f:
+            config = yaml.safe_load(f)
+        location = config.get("location", "local")
+        locations = config.get("locations", {})
+        loc_config = locations.get(location, {})
+        return loc_config.get("display_name", location)
+    except Exception:
+        return "unknown"
+
+
 def neo4j_health_check() -> tuple[bool, str]:
     """Check Neo4j connectivity via bolt protocol.
 
     Returns:
-        (healthy, detail) tuple
+        (healthy, detail) tuple where detail is the graph location
+        (e.g., 'iter-login') instead of the raw bolt URI.
     """
     try:
         from imas_codex.graph.client import GraphClient
@@ -102,8 +128,8 @@ def neo4j_health_check() -> tuple[bool, str]:
         with GraphClient() as gc:
             result = gc.query("RETURN 1 AS ok")
             if result and result[0]["ok"] == 1:
-                # Return the URI from the client for display
-                return True, gc.uri
+                # Return the location display name instead of raw URI
+                return True, get_graph_location()
         return False, "query returned unexpected result"
     except Exception as e:
         return False, str(e)[:100]
@@ -466,6 +492,7 @@ def create_service_monitor(
     facility: str | None = None,
     ssh_host: str | None = None,
     access_method: str | None = None,
+    auth_type: str | None = None,
     check_graph: bool = True,
     check_embed: bool = True,
     check_ssh: bool = True,
@@ -477,9 +504,10 @@ def create_service_monitor(
         facility: Facility ID (for loading config)
         ssh_host: SSH host alias for connectivity check
         access_method: Access method ("vpn", "direct", etc.)
+        auth_type: Web auth type ("tequila", "keycloak", "basic", etc.)
         check_graph: Include Neo4j health check
         check_embed: Include embedding server health check
-        check_ssh: Include SSH connectivity check
+        check_ssh: Include SSH/access connectivity check
         poll_interval: Default polling interval in seconds
 
     Returns:
@@ -504,13 +532,25 @@ def create_service_monitor(
         )
 
     if check_ssh and ssh_host:
-        auth_label = "vpn" if access_method == "vpn" else "ssh"
+        # Build descriptive access label showing both SSH and web auth
+        access_label = "vpn" if access_method == "vpn" else None
+
+        # Create access check that returns descriptive detail
+        def access_check(host=ssh_host, auth=auth_type):
+            healthy, detail = ssh_health_check(host)
+            if healthy:
+                # Show SSH host + auth type when healthy
+                if auth:
+                    return True, f"{host}+{auth}"
+                return True, host
+            return healthy, detail
+
         monitor.add_check(
-            "ssh",
-            lambda host=ssh_host: ssh_health_check(host),
-            auth_label=auth_label,
+            "access",
+            access_check,
+            auth_label=access_label,
             poll_interval=poll_interval,
-            critical=True,  # Workers need SSH to fetch content
+            critical=True,  # Workers need access to fetch content
         )
 
     return monitor
@@ -569,6 +609,7 @@ __all__ = [
     "build_servers_row",
     "create_service_monitor",
     "embed_health_check",
+    "get_graph_location",
     "neo4j_health_check",
     "ssh_health_check",
 ]

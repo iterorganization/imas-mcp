@@ -1,0 +1,40 @@
+# Graph database configuration
+#
+# Specifies where the Neo4j graph is running and how to access it.
+# Used by service monitoring to display meaningful location instead of raw URI.
+#
+# Locations:
+#   iter-login: ITER SDCC login node (production)
+#   local: localhost development instance
+#   docker: Docker container on current host
+
+# Current graph location
+location: iter-login
+
+# Connection settings
+bolt:
+  port: 7687
+  uri: bolt://localhost:7687  # After port forwarding
+
+# Port forwarding required to reach the graph
+# Run: ssh -L 7687:localhost:7687 iter
+local_forwards:
+  - name: neo4j-bolt
+    local_port: 7687
+    remote_port: 7687
+    ssh_host: iter
+
+# Location-specific display names
+locations:
+  iter-login:
+    display_name: iter-login
+    description: Production graph on ITER SDCC login node
+    ssh_host: iter
+  local:
+    display_name: local
+    description: Local development instance
+    ssh_host: null
+  docker:
+    display_name: docker
+    description: Docker container
+    ssh_host: null

@@ -833,7 +833,7 @@ class WikiProgressDisplay:
                     reason = score.skip_reason[:40] if score.skip_reason else ""
                     section.append(f"skipped: {reason}", style="yellow dim")
             elif self.state.score_processing:
-                section.append("processing batch...", style="cyan italic")
+                section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif not self.state.score_queue.is_empty():
                 # Items in queue but not yet popped - show waiting state
@@ -898,7 +898,7 @@ class WikiProgressDisplay:
                         clip_text(desc, max(10, desc_width)), style="italic dim"
                     )
             elif self.state.ingest_processing:
-                section.append("processing batch...", style="cyan italic")
+                section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif not self.state.ingest_queue.is_empty():
                 # Items in queue but not yet popped - show waiting state

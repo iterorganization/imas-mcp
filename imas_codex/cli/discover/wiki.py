@@ -52,8 +52,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--score-workers",
     type=int,
-    default=1,
-    help="Number of parallel score workers (default: 1)",
+    default=2,
+    help="Number of parallel score workers (default: 2)",
 )
 @click.option(
     "--ingest-workers",
@@ -688,12 +688,14 @@ def wiki(
             # Determine SSH host and access method for service monitor
             _first_ssh_host = _site_configs[0].get("ssh_host")
             _first_access = None
+            _first_auth_type = None
             for _sc in _site_configs:
                 if _sc.get("ssh_host"):
                     _first_ssh_host = _sc["ssh_host"]
                     for _ws in wiki_sites:
                         if _ws.get("url") == _sc.get("base_url"):
                             _first_access = _ws.get("access_method", "direct")
+                            _first_auth_type = _ws.get("auth_type")
                             break
                     break
 
@@ -701,6 +703,7 @@ def wiki(
                 facility=_facility,
                 ssh_host=_first_ssh_host,
                 access_method=_first_access,
+                auth_type=_first_auth_type,
                 check_graph=True,
                 check_embed=not (_scan_only or _score_only),
                 check_ssh=bool(_first_ssh_host),

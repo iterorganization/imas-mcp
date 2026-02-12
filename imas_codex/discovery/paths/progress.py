@@ -550,7 +550,7 @@ class ParallelProgressDisplay:
                 section.append("  ", style="dim")
                 section.append("code project", style="green dim")
         elif self.state.scan_processing:
-            section.append("processing batch...", style="cyan italic")
+            section.append("processing...", style="cyan italic")
             section.append("\n    ", style="dim")  # Empty second line
         elif should_show_idle(self.state.scan_processing, self.state.scan_queue):
             section.append("idle", style="dim italic")
@@ -615,7 +615,7 @@ class ParallelProgressDisplay:
                             f"  {clip_text(reason, desc_width)}", style="dim"
                         )
             elif self.state.score_processing:
-                section.append("processing batch...", style="cyan italic")
+                section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
             elif should_show_idle(self.state.score_processing, self.state.score_queue):
                 section.append("idle", style="dim italic")
@@ -664,7 +664,7 @@ class ParallelProgressDisplay:
                         style="dim",
                     )
             elif self.state.enrich_processing:
-                section.append("processing batch...", style="cyan italic")
+                section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
             elif queue_empty:
                 # Queue drained and not processing - truly idle
