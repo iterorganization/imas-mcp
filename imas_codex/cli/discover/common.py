@@ -10,6 +10,7 @@ Usage:
         output_options,
         phase_options,
         facility_argument,
+        create_discovery_monitor,
     )
 
     @paths.command()
@@ -24,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import functools
+import logging
 import sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -33,9 +35,10 @@ from rich.console import Console
 from rich.table import Table
 
 if TYPE_CHECKING:
-    pass
+    from imas_codex.discovery.base.services import ServiceMonitor
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 # Type for decorated functions
 F = TypeVar("F", bound=Callable[..., Any])
@@ -328,6 +331,92 @@ def print_cost_summary(
         rows.append(("Time limit", f"{time_limit}m ({pct:.0f}% used)"))
 
     print_summary_table("Resource Usage", rows, no_rich=no_rich)
+
+
+# =============================================================================
+# Service Monitor Factory
+# =============================================================================
+
+
+def create_discovery_monitor(
+    facility_config: dict,
+    *,
+    check_graph: bool = True,
+    check_embed: bool = True,
+    check_ssh: bool = True,
+    check_auth: bool = True,
+    poll_interval: float = 15.0,
+) -> ServiceMonitor:
+    """Create a service monitor from a facility config dict.
+
+    Extracts SSH host, access method, auth type, and primary wiki URL
+    from the facility config and delegates to
+    :func:`~imas_codex.discovery.base.services.create_service_monitor`.
+
+    This is the **single factory** that all ``discover`` CLI commands
+    should use — it avoids duplicating config extraction logic across
+    wiki.py, signals.py, paths.py, and files.py.
+
+    Args:
+        facility_config: Dict returned by ``get_facility(name)``
+        check_graph: Include Neo4j check
+        check_embed: Include embedding server check
+        check_ssh: Include SSH connectivity check
+        check_auth: Include wiki page reachability check
+        poll_interval: Polling interval for live checks
+
+    Returns:
+        Configured (but not started) ServiceMonitor
+    """
+    from imas_codex.discovery.base.services import create_service_monitor
+
+    # Derive SSH host — first wiki site with ssh_available, else facility id
+    facility_id = facility_config.get("id", "")
+    ssh_host: str | None = None
+    access_method: str | None = None
+    auth_type: str | None = None
+    wiki_url: str | None = None
+
+    wiki_sites = facility_config.get("wiki_sites") or []
+    for site in wiki_sites:
+        site_cfg = site if isinstance(site, dict) else {}
+        if site_cfg.get("ssh_available"):
+            ssh_host = ssh_host or facility_id
+            access_method = access_method or site_cfg.get("access_method")
+            auth_type = auth_type or site_cfg.get("auth_type")
+            wiki_url = wiki_url or site_cfg.get("url")
+
+    # Fall back to facility-level SSH host
+    if not ssh_host and facility_config.get("ssh_available", False):
+        ssh_host = facility_id
+
+    if not wiki_url and wiki_sites:
+        first = wiki_sites[0] if isinstance(wiki_sites[0], dict) else {}
+        wiki_url = first.get("url")
+        access_method = access_method or first.get("access_method")
+        auth_type = auth_type or first.get("auth_type")
+
+    logger.debug(
+        "create_discovery_monitor: facility=%s ssh=%s access=%s auth=%s url=%s",
+        facility_id,
+        ssh_host,
+        access_method,
+        auth_type,
+        wiki_url,
+    )
+
+    return create_service_monitor(
+        facility=facility_id,
+        ssh_host=ssh_host,
+        access_method=access_method,
+        auth_type=auth_type,
+        wiki_url=wiki_url,
+        check_graph=check_graph,
+        check_embed=check_embed,
+        check_ssh=check_ssh,
+        check_auth=check_auth,
+        poll_interval=poll_interval,
+    )
 
 
 class CostTimeTracker:

@@ -680,33 +680,15 @@ def wiki(
                 return combined
 
             # Rich mode: single unified display across all sites
-            from imas_codex.discovery.base.services import create_service_monitor
+            from imas_codex.cli.discover.common import create_discovery_monitor
             from imas_codex.discovery.wiki.progress import WikiProgressDisplay
 
             multi_site = len(_site_configs) > 1
 
-            # Determine SSH host and access method for service monitor
-            _first_ssh_host = _site_configs[0].get("ssh_host")
-            _first_access = None
-            _first_auth_type = None
-            for _sc in _site_configs:
-                if _sc.get("ssh_host"):
-                    _first_ssh_host = _sc["ssh_host"]
-                    for _ws in wiki_sites:
-                        if _ws.get("url") == _sc.get("base_url"):
-                            _first_access = _ws.get("access_method", "direct")
-                            _first_auth_type = _ws.get("auth_type")
-                            break
-                    break
-
-            service_monitor = create_service_monitor(
-                facility=_facility,
-                ssh_host=_first_ssh_host,
-                access_method=_first_access,
-                auth_type=_first_auth_type,
+            service_monitor = create_discovery_monitor(
+                config,
                 check_graph=True,
                 check_embed=not (_scan_only or _score_only),
-                check_ssh=bool(_first_ssh_host),
             )
 
             # Suppress noisy INFO logs during rich display

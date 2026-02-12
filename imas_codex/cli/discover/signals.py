@@ -201,15 +201,14 @@ def signals(
             )
         else:
             # Rich progress display
-            from imas_codex.discovery.base.services import create_service_monitor
+            from imas_codex.cli.discover.common import create_discovery_monitor
             from imas_codex.discovery.data.progress import DataProgressDisplay
 
-            service_monitor = create_service_monitor(
-                facility=facility,
-                ssh_host=ssh_host,
+            service_monitor = create_discovery_monitor(
+                config,
                 check_graph=True,
                 check_embed=not scan_only,
-                check_ssh=True,
+                check_auth=False,  # Signals don't access wikis
             )
 
             # Suppress noisy INFO during rich display

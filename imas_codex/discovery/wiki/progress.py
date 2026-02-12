@@ -833,7 +833,10 @@ class WikiProgressDisplay:
                     reason = score.skip_reason[:40] if score.skip_reason else ""
                     section.append(f"skipped: {reason}", style="yellow dim")
             elif self.state.score_processing:
-                section.append("processing...", style="cyan italic")
+                if is_paused:
+                    section.append("paused", style="yellow italic")
+                else:
+                    section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif not self.state.score_queue.is_empty():
                 # Items in queue but not yet popped - show waiting state
@@ -898,7 +901,10 @@ class WikiProgressDisplay:
                         clip_text(desc, max(10, desc_width)), style="italic dim"
                     )
             elif self.state.ingest_processing:
-                section.append("processing...", style="cyan italic")
+                if is_paused:
+                    section.append("paused", style="yellow italic")
+                else:
+                    section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif not self.state.ingest_queue.is_empty():
                 # Items in queue but not yet popped - show waiting state
@@ -978,7 +984,10 @@ class WikiProgressDisplay:
                         clip_text(desc, max(10, desc_width)), style="italic dim"
                     )
             elif self.state.artifact_processing:
-                section.append("processing...", style="cyan italic")
+                if is_paused:
+                    section.append("paused", style="yellow italic")
+                else:
+                    section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif (
                 not self.state.artifact_queue.is_empty()
@@ -1049,7 +1058,10 @@ class WikiProgressDisplay:
                         clip_text(desc, max(10, desc_width)), style="italic dim"
                     )
             elif self.state.image_processing:
-                section.append("processing...", style="cyan italic")
+                if is_paused:
+                    section.append("paused", style="yellow italic")
+                else:
+                    section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
             elif not self.state.image_queue.is_empty():
                 queued = len(self.state.image_queue)

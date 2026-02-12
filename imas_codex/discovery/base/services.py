@@ -136,11 +136,31 @@ def neo4j_health_check() -> tuple[bool, str]:
         return False, str(e)[:100]
 
 
+def _kill_ssh_controlmaster(ssh_host: str) -> None:
+    """Kill a stale SSH ControlMaster socket.
+
+    When VPN drops, the ControlMaster socket becomes stale and all new
+    ssh connections multiplex through the dead socket.  Killing it
+    forces the next ssh to establish a fresh connection.
+    """
+    try:
+        subprocess.run(
+            ["ssh", "-O", "exit", ssh_host],
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception:
+        pass  # Best-effort cleanup
+
+
 def ssh_health_check(ssh_host: str, timeout: int = 10) -> tuple[bool, str]:
     """Check SSH connectivity to a remote host.
 
     For VPN-gated hosts (like jt60sa), this implicitly validates VPN
     status since SSH will fail if the VPN tunnel is down.
+
+    On failure after a previous success, kills the ControlMaster socket
+    so recovery can establish a fresh connection.
 
     Args:
         ssh_host: SSH host alias (from ~/.ssh/config)
@@ -165,12 +185,69 @@ def ssh_health_check(ssh_host: str, timeout: int = 10) -> tuple[bool, str]:
         )
         if result.returncode == 0 and b"ok" in result.stdout:
             return True, ssh_host
+        # SSH failed — kill stale ControlMaster so recovery can reconnect
+        _kill_ssh_controlmaster(ssh_host)
         stderr = result.stderr.decode("utf-8", errors="replace").strip()[:100]
         return False, stderr or f"exit code {result.returncode}"
     except subprocess.TimeoutExpired:
+        _kill_ssh_controlmaster(ssh_host)
         return False, f"timeout ({timeout}s)"
     except Exception as e:
+        _kill_ssh_controlmaster(ssh_host)
         return False, str(e)[:100]
+
+
+def wiki_auth_check(
+    url: str, ssh_host: str | None = None, timeout: int = 10
+) -> tuple[bool, str]:
+    """Check that a wiki URL is reachable.
+
+    Tests HTTP access to the primary wiki page.  For tunnel/VPN sites
+    this goes through the local port-forward; for SSH sites it curls
+    via the remote host.
+
+    Args:
+        url: Primary wiki URL to probe
+        ssh_host: If set, fetch via ``ssh <host> curl``
+        timeout: Connection timeout in seconds
+
+    Returns:
+        (healthy, detail) tuple
+    """
+    try:
+        if ssh_host:
+            cmd = f'curl -sk --noproxy "*" -o /dev/null -w "%{{http_code}}" "{url}" 2>/dev/null'
+            result = subprocess.run(
+                [
+                    "ssh",
+                    "-o",
+                    f"ConnectTimeout={timeout}",
+                    "-o",
+                    "BatchMode=yes",
+                    ssh_host,
+                    cmd,
+                ],
+                capture_output=True,
+                timeout=timeout + 15,
+            )
+            if result.returncode == 0:
+                code = result.stdout.decode().strip()
+                if code.startswith(("2", "3")):
+                    return True, url
+                return False, f"HTTP {code}"
+            return False, "ssh+curl failed"
+        else:
+            import urllib.request
+
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if 200 <= resp.status < 400:
+                    return True, url
+                return False, f"HTTP {resp.status}"
+    except subprocess.TimeoutExpired:
+        return False, f"timeout ({timeout}s)"
+    except Exception as e:
+        return False, str(e)[:80]
 
 
 def embed_health_check() -> tuple[bool, str]:
@@ -312,6 +389,25 @@ class ServiceMonitor:
     def all_healthy(self) -> bool:
         """True if all services are healthy."""
         return not self.paused
+
+    def is_service_healthy(self, *names: str) -> bool:
+        """Check whether specific services are healthy.
+
+        Workers that only depend on a subset of services can check
+        just those instead of the global ``all_healthy``.
+
+        Args:
+            names: Service names to check (e.g., "ssh", "auth")
+
+        Returns:
+            True if ALL named services are currently healthy.
+        """
+        with self._lock:
+            for name in names:
+                status = self._status.get(name)
+                if status is not None and not status.is_healthy:
+                    return False
+            return True
 
     # ------------------------------------------------------------------
     # Worker gating (async)
@@ -495,21 +591,32 @@ def create_service_monitor(
     ssh_host: str | None = None,
     access_method: str | None = None,
     auth_type: str | None = None,
+    wiki_url: str | None = None,
     check_graph: bool = True,
     check_embed: bool = True,
     check_ssh: bool = True,
+    check_auth: bool = True,
     poll_interval: float = 15.0,
 ) -> ServiceMonitor:
     """Create a ServiceMonitor with standard checks for discovery CLIs.
 
+    Registers separate checks for each concern:
+
+    - ``graph``: Neo4j connectivity
+    - ``embed``: Embedding server health
+    - ``ssh``: SSH connectivity to remote host (critical — workers pause)
+    - ``auth``: Wiki page reachability via HTTP (critical — workers pause)
+
     Args:
         facility: Facility ID (for loading config)
         ssh_host: SSH host alias for connectivity check
-        access_method: Access method ("vpn", "direct", etc.)
-        auth_type: Web auth type ("tequila", "keycloak", "basic", etc.)
+        access_method: Access method ("vpn", "tunnel", "direct", etc.)
+        auth_type: Web auth type ("tequila", "keycloak", "basic", "vpn", etc.)
+        wiki_url: Primary wiki URL for auth/reachability probing
         check_graph: Include Neo4j health check
         check_embed: Include embedding server health check
-        check_ssh: Include SSH/access connectivity check
+        check_ssh: Include SSH connectivity check
+        check_auth: Include wiki auth/reachability check
         poll_interval: Default polling interval in seconds
 
     Returns:
@@ -534,30 +641,48 @@ def create_service_monitor(
         )
 
     if check_ssh and ssh_host:
-        # Build descriptive access label (vpn/tunnel access is VPN-gated)
-        if access_method in ("vpn", "tunnel"):
-            access_label = "vpn"
-            effective_auth = auth_type if auth_type and auth_type != "none" else "vpn"
-        else:
-            access_label = None
-            effective_auth = auth_type
+        monitor.add_check(
+            "ssh",
+            lambda host=ssh_host: ssh_health_check(host),
+            poll_interval=poll_interval,
+            critical=True,  # Workers need SSH to fetch content
+        )
 
-        # Create access check that returns descriptive detail
-        def access_check(host=ssh_host, auth=effective_auth):
-            healthy, detail = ssh_health_check(host)
+    if check_auth and wiki_url:
+        # Determine effective auth label for display
+        if access_method in ("vpn", "tunnel"):
+            effective_auth = "vpn"
+        elif auth_type and auth_type != "none":
+            effective_auth = auth_type
+        else:
+            effective_auth = "http"
+
+        # Determine whether wiki probe goes through SSH or direct HTTP.
+        # Tunnel and VPN sites both curl via SSH (workers do the same),
+        # so the auth check should validate the same path.
+        if access_method in ("tunnel", "vpn") and ssh_host:
+            _probe_ssh = ssh_host
+        elif ssh_host and access_method not in ("direct",):
+            _probe_ssh = ssh_host  # SSH-only sites curl via SSH
+        else:
+            _probe_ssh = None  # Direct HTTP sites
+
+        def _auth_check(
+            url: str = wiki_url,
+            host: str | None = _probe_ssh,
+            label: str = effective_auth,
+        ) -> tuple[bool, str]:
+            healthy, detail = wiki_auth_check(url, host)
             if healthy:
-                # Show ssh-host auth (e.g., "ssh-tcv tequila")
-                if auth:
-                    return True, f"ssh-{host} {auth}"
-                return True, f"ssh-{host}"
-            return healthy, detail
+                return True, label  # Display label, not URL
+            return False, detail
 
         monitor.add_check(
-            "access",
-            access_check,
-            auth_label=access_label,
+            "auth",
+            _auth_check,
+            auth_label=effective_auth,
             poll_interval=poll_interval,
-            critical=True,  # Workers need access to fetch content
+            critical=True,  # Workers need wiki access
         )
 
     return monitor

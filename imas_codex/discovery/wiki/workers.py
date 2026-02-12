@@ -148,6 +148,8 @@ async def score_worker(
     while not state.should_stop_scoring():
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
+            if on_progress:
+                on_progress("paused", state.score_stats)
             await state.service_monitor.await_services_ready()
             if state.should_stop_scoring():
                 break
@@ -203,6 +205,13 @@ async def score_worker(
             logger.debug(
                 f"score_worker {worker_id}: no pages with content, skipping LLM"
             )
+            # All fetches failed — likely a connectivity issue.
+            # Re-check service health before claiming more work so we
+            # don't flood with timeout errors.
+            if state.service_monitor and not state.service_monitor.all_healthy:
+                if on_progress:
+                    on_progress("paused", state.score_stats)
+                await state.service_monitor.await_services_ready()
             continue
 
         if on_progress:
@@ -348,6 +357,8 @@ async def ingest_worker(
     while not state.should_stop_ingesting():
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
+            if on_progress:
+                on_progress("paused", state.ingest_stats)
             await state.service_monitor.await_services_ready()
             if state.should_stop_ingesting():
                 break
@@ -435,6 +446,8 @@ async def artifact_worker(
     while not state.should_stop_artifact_worker():
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
+            if on_progress:
+                on_progress("paused", state.artifact_stats)
             await state.service_monitor.await_services_ready()
             if state.should_stop_artifact_worker():
                 break
@@ -614,6 +627,8 @@ async def artifact_score_worker(
     while not state.should_stop_artifact_scoring():
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
+            if on_progress:
+                on_progress("paused", state.artifact_score_stats)
             await state.service_monitor.await_services_ready()
             if state.should_stop_artifact_scoring():
                 break
@@ -823,6 +838,8 @@ async def image_score_worker(
 
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
+            if on_progress:
+                on_progress("paused", state.image_stats)
             await state.service_monitor.await_services_ready()
             if state.should_stop_image_scoring():
                 break
