@@ -134,6 +134,7 @@ class WorkerStatus:
     """Status of a single supervised worker."""
 
     name: str
+    group: str = ""  # Functional group: "score" (LLM/VLM) or "ingest" (I/O)
     state: WorkerState = WorkerState.starting
     restart_count: int = 0
     max_restarts: int = DEFAULT_MAX_RESTARTS
@@ -334,9 +335,16 @@ class SupervisedWorkerGroup:
         """Access to worker status dict for display."""
         return self._workers
 
-    def create_status(self, name: str) -> WorkerStatus:
-        """Create and register a worker status tracker."""
-        status = WorkerStatus(name=name)
+    def create_status(self, name: str, group: str = "") -> WorkerStatus:
+        """Create and register a worker status tracker.
+
+        Args:
+            name: Unique worker name (e.g., "score_worker_0")
+            group: Functional group for display grouping.
+                   Convention: "score" for LLM/VLM workers,
+                   "ingest" for I/O/embed workers.
+        """
+        status = WorkerStatus(name=name, group=group)
         self._workers[name] = status
         return status
 

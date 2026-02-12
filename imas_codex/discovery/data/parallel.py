@@ -1636,7 +1636,7 @@ async def run_parallel_data_discovery(
     # Start scan worker (unless enrich_only)
     if not enrich_only:
         worker_name = "scan_worker_0"
-        status = worker_group.create_status(worker_name)
+        status = worker_group.create_status(worker_name, group="ingest")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
@@ -1678,7 +1678,7 @@ async def run_parallel_data_discovery(
     # Start enrich workers
     for i in range(num_enrich_workers):
         worker_name = f"enrich_worker_{i}"
-        status = worker_group.create_status(worker_name)
+        status = worker_group.create_status(worker_name, group="score")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
@@ -1696,7 +1696,7 @@ async def run_parallel_data_discovery(
     if not enrich_only:
         for i in range(num_check_workers):
             worker_name = f"check_worker_{i}"
-            status = worker_group.create_status(worker_name)
+            status = worker_group.create_status(worker_name, group="ingest")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(

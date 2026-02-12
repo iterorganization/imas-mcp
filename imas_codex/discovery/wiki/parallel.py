@@ -521,7 +521,7 @@ async def run_parallel_wiki_discovery(
     if not score_only:
         for i in range(num_score_workers):
             worker_name = f"score_worker_{i}"
-            status = worker_group.create_status(worker_name)
+            status = worker_group.create_status(worker_name, group="score")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
@@ -537,7 +537,7 @@ async def run_parallel_wiki_discovery(
 
         for i in range(num_ingest_workers):
             worker_name = f"ingest_worker_{i}"
-            ingest_status = worker_group.create_status(worker_name)
+            ingest_status = worker_group.create_status(worker_name, group="ingest")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
@@ -554,7 +554,9 @@ async def run_parallel_wiki_discovery(
         # Artifact workers: score→ingest pipeline for discovered artifacts
         if ingest_artifacts:
             # Artifact score worker: LLM scoring with text preview extraction
-            artifact_score_status = worker_group.create_status("artifact_score_worker")
+            artifact_score_status = worker_group.create_status(
+                "artifact_score_worker", group="score"
+            )
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
@@ -569,7 +571,9 @@ async def run_parallel_wiki_discovery(
             )
 
             # Artifact ingest worker: download and embed scored artifacts
-            artifact_ingest_status = worker_group.create_status("artifact_worker")
+            artifact_ingest_status = worker_group.create_status(
+                "artifact_worker", group="ingest"
+            )
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
@@ -584,7 +588,9 @@ async def run_parallel_wiki_discovery(
             )
 
         # Image score worker: VLM caption + scoring for ingested images
-        image_score_status = worker_group.create_status("image_score_worker")
+        image_score_status = worker_group.create_status(
+            "image_score_worker", group="score"
+        )
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(

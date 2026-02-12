@@ -32,6 +32,7 @@ from imas_codex.discovery.base.progress import (
     METRICS_WIDTH,
     MIN_WIDTH,
     StreamQueue,
+    build_worker_status_section,
     clean_text,
     clip_text,
     compute_bar_width,
@@ -42,7 +43,6 @@ from imas_codex.discovery.base.progress import (
 )
 from imas_codex.discovery.base.supervision import (
     SupervisedWorkerGroup,
-    WorkerState,
 )
 
 if TYPE_CHECKING:
@@ -323,65 +323,16 @@ class DataProgressDisplay:
         return header
 
     def _build_worker_section(self) -> Text:
-        """Build worker status section."""
-        section = Text()
-        section.append("  WORKERS", style="bold green")
+        """Build worker status section using unified builder.
 
-        wg = self.state.worker_group
-        if not wg:
-            section.append("  no status available", style="dim italic")
-            return section
-
-        task_groups: dict[str, list[tuple[str, WorkerState]]] = {
-            "scan": [],
-            "enrich": [],
-            "check": [],
-        }
-
-        for name, status in wg.workers.items():
-            if "discover" in name or "scan" in name:
-                task_groups["scan"].append((name, status.state))
-            elif "enrich" in name:
-                task_groups["enrich"].append((name, status.state))
-            elif "check" in name:
-                task_groups["check"].append((name, status.state))
-
-        for task, workers in task_groups.items():
-            if not workers:
-                section.append(f"  {task}:0", style="dim")
-                continue
-
-            count = len(workers)
-            state_counts: dict[WorkerState, int] = {}
-            for _, state in workers:
-                state_counts[state] = state_counts.get(state, 0) + 1
-
-            if state_counts.get(WorkerState.crashed, 0) > 0:
-                style = "red"
-            elif state_counts.get(WorkerState.backoff, 0) > 0:
-                style = "yellow"
-            elif state_counts.get(WorkerState.running, 0) > 0:
-                style = "green"
-            else:
-                style = "dim"
-
-            section.append(f"  {task}:{count}", style=style)
-
-            running = state_counts.get(WorkerState.running, 0)
-            backing_off = state_counts.get(WorkerState.backoff, 0)
-            failed = state_counts.get(WorkerState.crashed, 0)
-
-            if backing_off > 0 or failed > 0:
-                parts = []
-                if running > 0:
-                    parts.append(f"{running} active")
-                if backing_off > 0:
-                    parts.append(f"{backing_off} backoff")
-                if failed > 0:
-                    parts.append(f"{failed} failed")
-                section.append(f" ({', '.join(parts)})", style="dim")
-
-        return section
+        Workers are grouped by their ``group`` field (score vs ingest)
+        set during creation in data/parallel.py.
+        """
+        return build_worker_status_section(
+            self.state.worker_group,
+            budget_exhausted=self.state.cost_limit_reached,
+            budget_sensitive_groups={"score"},
+        )
 
     def _build_progress_section(self) -> Text:
         """Build the main progress bars.

@@ -428,6 +428,102 @@ def build_worker_row(config: WorkerRowConfig, bar_width: int = 40) -> Text:
 # =============================================================================
 
 
+def build_worker_status_section(
+    worker_group: Any | None,
+    *,
+    budget_exhausted: bool = False,
+    is_paused: bool = False,
+    budget_sensitive_groups: set[str] | None = None,
+    extra_indicators: list[tuple[str, str]] | None = None,
+) -> Text:
+    """Build WORKERS status section grouped by functional role.
+
+    Groups workers by their ``group`` field (set during ``create_status()``).
+    Shows count, state, and budget/failure annotations per group.
+
+    Workers without a group are grouped by name heuristic (legacy fallback).
+
+    Args:
+        worker_group: ``SupervisedWorkerGroup`` with status tracking.
+        budget_exhausted: True when cost limit reached.
+        is_paused: True when services are degraded (all dimmed).
+        budget_sensitive_groups: Group names that stop on budget
+            exhaustion.  Default: ``{"score"}``.
+        extra_indicators: Additional indicators to append after
+            worker groups, e.g. ``[("embed:remote", "green")]``.
+    """
+    from imas_codex.discovery.base.supervision import WorkerState
+
+    if budget_sensitive_groups is None:
+        budget_sensitive_groups = {"score"}
+
+    section = Text()
+    section.append("  WORKERS", style="dim" if is_paused else "bold green")
+
+    if not worker_group:
+        section.append("  starting...", style="dim italic")
+        return section
+
+    # Collect workers into groups
+    groups: dict[str, list[tuple[str, WorkerState]]] = {}
+    for name, status in worker_group.workers.items():
+        grp = status.group or name.split("_worker")[0]
+        groups.setdefault(grp, []).append((name, status.state))
+
+    # Render each group
+    for grp, workers in groups.items():
+        count = len(workers)
+        state_counts: dict[WorkerState, int] = {}
+        for _, st in workers:
+            state_counts[st] = state_counts.get(st, 0) + 1
+
+        all_stopped = state_counts.get(WorkerState.stopped, 0) == count
+        is_budget_group = grp in budget_sensitive_groups
+        budget_stopped = all_stopped and is_budget_group and budget_exhausted
+
+        # Determine display style
+        if is_paused:
+            style = "dim"
+        elif state_counts.get(WorkerState.crashed, 0) > 0:
+            style = "red"
+        elif state_counts.get(WorkerState.backoff, 0) > 0:
+            style = "yellow"
+        elif budget_stopped:
+            style = "yellow"
+        elif state_counts.get(WorkerState.running, 0) > 0:
+            style = "green"
+        elif all_stopped:
+            style = "green"
+        else:
+            style = "dim"
+
+        section.append(f"  {grp}:{count}", style=style)
+
+        # Annotations
+        running = state_counts.get(WorkerState.running, 0)
+        backing_off = state_counts.get(WorkerState.backoff, 0)
+        failed = state_counts.get(WorkerState.crashed, 0)
+
+        if budget_stopped:
+            section.append(" (budget)", style="yellow dim")
+        elif backing_off > 0 or failed > 0:
+            parts: list[str] = []
+            if running > 0:
+                parts.append(f"{running} active")
+            if backing_off > 0:
+                parts.append(f"{backing_off} backoff")
+            if failed > 0:
+                parts.append(f"{failed} failed")
+            section.append(f" ({', '.join(parts)})", style="dim")
+
+    # Extra indicators (e.g. embed source)
+    if extra_indicators:
+        for label, style in extra_indicators:
+            section.append(f"  {label}", style=style)
+
+    return section
+
+
 def build_servers_section(
     statuses: list | None = None,
 ) -> Text | None:

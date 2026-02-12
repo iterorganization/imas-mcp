@@ -40,6 +40,7 @@ from imas_codex.discovery.base.progress import (
     MIN_WIDTH,
     StreamQueue,
     build_servers_section,
+    build_worker_status_section,
     clean_text,
     clip_text,
     compute_bar_width,
@@ -516,132 +517,44 @@ class WikiProgressDisplay:
         return header
 
     def _build_worker_section(self) -> Text:
-        """Build worker status section showing counts by task and state.
+        """Build worker status section grouped by functional role.
 
-        Format:
-          WORKERS  score:2 (1 active, 1 backing off)  page:4  artifact:2  image:1
+        Uses the unified builder from base.progress. Workers are grouped
+        by their ``group`` field (score vs ingest) set during creation
+        in parallel.py.
 
-        When paused, workers are shown grayed out but still visible.
-        Scan workers are omitted (bulk discovery replaces link-crawling).
+        Appends embedding source indicator when no service monitor is
+        providing that information.
         """
-        section = Text()
-
-        # Check if workers are paused due to service issues
         monitor = self.state.service_monitor
         is_paused = monitor is not None and monitor.paused
 
-        section.append("  WORKERS", style="dim" if is_paused else "bold green")
-
-        wg = self.state.worker_group
-        if not wg:
-            section.append("  starting...", style="dim italic")
-            return section
-
-        # Group workers by task type (scan omitted — replaced by bulk discovery)
-        task_groups: dict[str, list[tuple[str, WorkerState]]] = {
-            "score": [],
-            "page": [],
-            "artifact": [],
-            "image": [],
-        }
-
-        for name, status in wg.workers.items():
-            # Determine task type from worker name
-            # Check "image" and "artifact" before "score"/"ingest" since those
-            # workers may contain those substrings (e.g. artifact_score_worker)
-            if "image" in name:
-                task_groups["image"].append((name, status.state))
-            elif "artifact" in name:
-                task_groups["artifact"].append((name, status.state))
-            elif "scan" in name:
-                continue  # Scan workers no longer used
-            elif "score" in name:
-                task_groups["score"].append((name, status.state))
-            elif "ingest" in name:
-                task_groups["page"].append((name, status.state))
-
-        # Display each task group
-        for task, workers in task_groups.items():
-            if (
-                not workers
-                and task in ("score", "page", "artifact", "image")
-                and self.state.scan_only
-            ):
-                continue  # Skip scoring workers in scan-only mode
-
-            count = len(workers)
-            if count == 0:
-                section.append(f"  {task}:0", style="dim")
-                continue
-
-            # Count by state
-            state_counts = {}
-            for _, state in workers:
-                state_counts[state] = state_counts.get(state, 0) + 1
-
-            # Determine overall style based on states (grayed out when paused)
-            # LLM-dependent task groups stopped by budget get yellow instead
-            # of green so the user can distinguish "done" from "budget".
-            is_llm_task = task in ("score", "image")
-            all_stopped = state_counts.get(WorkerState.stopped, 0) == count
-            budget_stopped = (
-                all_stopped and is_llm_task and self.state.cost_limit_reached
-            )
-
-            if is_paused:
-                style = "dim"
-            elif state_counts.get(WorkerState.crashed, 0) > 0:
-                style = "red"
-            elif state_counts.get(WorkerState.backoff, 0) > 0:
-                style = "yellow"
-            elif budget_stopped:
-                style = "yellow"  # Budget-stopped, not naturally complete
-            elif state_counts.get(WorkerState.running, 0) > 0:
-                style = "green"
-            elif all_stopped:
-                style = "green"  # All workers completed naturally
-            else:
-                style = "dim"
-
-            section.append(f"  {task}:{count}", style=style)
-
-            # Add state breakdown if not all running
-            running = state_counts.get(WorkerState.running, 0)
-            backing_off = state_counts.get(WorkerState.backoff, 0)
-            failed = state_counts.get(WorkerState.crashed, 0)
-
-            if budget_stopped:
-                section.append(" (budget)", style="yellow dim")
-            elif backing_off > 0 or failed > 0:
-                parts = []
-                if running > 0:
-                    parts.append(f"{running} active")
-                if backing_off > 0:
-                    parts.append(f"{backing_off} backoff")
-                if failed > 0:
-                    parts.append(f"{failed} failed")
-                section.append(f" ({', '.join(parts)})", style="dim")
-
-        # Embedding source indicator (only when no service monitor provides it)
+        # Build extra indicators (embedding source)
+        extra: list[tuple[str, str]] = []
         if self.state.service_monitor is None:
             embed_health = get_embed_status()
             if embed_health != "ready":
-                # Server is down — show resilience status instead of source
-                section.append(f"  embed:{embed_health}", style="red")
+                extra.append((f"embed:{embed_health}", "red"))
             else:
                 embed_source = get_embedding_source()
                 if embed_source.startswith("iter-"):
-                    section.append(f"  embed:{embed_source}", style="green")
+                    extra.append((f"embed:{embed_source}", "green"))
                 elif embed_source == "remote":
-                    section.append("  embed:remote", style="green")
+                    extra.append(("embed:remote", "green"))
                 elif embed_source == "openrouter":
-                    section.append("  embed:openrouter", style="yellow")
+                    extra.append(("embed:openrouter", "yellow"))
                 elif embed_source == "local":
-                    section.append("  embed:local", style="cyan")
+                    extra.append(("embed:local", "cyan"))
                 else:
-                    section.append(f"  embed:{embed_source}", style="dim")
+                    extra.append((f"embed:{embed_source}", "dim"))
 
-        return section
+        return build_worker_status_section(
+            self.state.worker_group,
+            budget_exhausted=self.state.cost_limit_reached,
+            is_paused=is_paused,
+            budget_sensitive_groups={"score"},
+            extra_indicators=extra or None,
+        )
 
     def _build_progress_section(self) -> Text:
         """Build the main progress bars for SCORE and INGEST.
