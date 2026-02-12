@@ -19,6 +19,17 @@ data_systems:
   - imas   # IMAS data format
   - mdsplus  # MDSplus (limited use)
 
+# Discovery root paths for path discovery pipeline
+# These are seeded as starting points for directory scanning
+discovery_roots:
+  - /home                          # User home directories
+  - /work                          # Work area (shared scratch/projects)
+  - /common                        # Shared resources
+  - /common/IMAS                   # IMAS installation and tools
+  - /common/EFDA-CODES             # EUROfusion shared codes
+  - /jet/share                     # JET shared codes and tools
+  - /jet/share/src                 # JET source code repository
+
 # User info discovery configuration
 # GECOS = General Comprehensive Operating System (5th field in /etc/passwd)
 user_info:

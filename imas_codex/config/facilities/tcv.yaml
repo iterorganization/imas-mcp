@@ -17,6 +17,16 @@ data_systems:
   - mdsplus
   - tdi
 
+# Discovery root paths for path discovery pipeline
+# These are seeded as starting points for directory scanning
+discovery_roots:
+  - /home                          # User home directories
+  - /home/codes                    # Shared analysis/modeling codes
+  - /usr/local/CRPP/tdi            # TDI expression library
+  - /usr/local/mdsplus/trees       # MDSplus tree definitions
+  - /videoanalysis                 # Video analysis code
+  - /videodata                     # Video data
+
 # Data source configuration for signal discovery
 # Used by: imas-codex discover signals tcv
 data_sources:

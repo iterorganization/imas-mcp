@@ -45,6 +45,7 @@ class DiscoveryState:
     threshold: float = 0.7
     root_filter: list[str] | None = None  # Restrict work to these roots
     auto_enrich_threshold: float | None = None  # Also enrich paths scoring >= this
+    deadline: float | None = None  # Unix timestamp when discovery should stop
 
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -112,6 +113,15 @@ class DiscoveryState:
         return self.total_cost >= self.cost_limit
 
     @property
+    def deadline_expired(self) -> bool:
+        """Check if the deadline has been reached."""
+        if self.deadline is None:
+            return False
+        import time
+
+        return time.time() >= self.deadline
+
+    @property
     def path_limit_reached(self) -> bool:
         """Check if path limit reached using session terminal count.
 
@@ -139,6 +149,8 @@ class DiscoveryState:
         if self.budget_exhausted:
             return True
         if self.path_limit_reached:
+            return True
+        if self.deadline_expired:
             return True
         # Stop if all workers idle for 3+ iterations AND no pending work
         all_idle = (
@@ -1701,6 +1713,7 @@ async def run_parallel_discovery(
     on_rescore_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
     graceful_shutdown_timeout: float = 5.0,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Run parallel discovery with all worker types.
 
@@ -1737,10 +1750,12 @@ async def run_parallel_discovery(
         on_rescore_progress: Callback for rescore progress
         graceful_shutdown_timeout: Seconds to wait for workers to finish after
             limit reached before cancelling (default: 5.0)
+        deadline: Unix timestamp when discovery should stop (optional)
 
     Terminates when:
     - Cost limit reached
     - Path limit reached (if set)
+    - Deadline expired (if set)
     - All workers idle (no more work)
 
     Returns:
@@ -1771,6 +1786,7 @@ async def run_parallel_discovery(
         threshold=threshold,
         root_filter=root_filter,
         auto_enrich_threshold=auto_enrich_threshold,
+        deadline=deadline,
     )
 
     # Pre-set idle counts for disabled workers so should_stop() works correctly

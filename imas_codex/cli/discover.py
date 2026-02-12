@@ -442,6 +442,8 @@ def _run_iterative_discovery(
         log_print(f"Cost limit: ${budget:.2f}")
     if limit:
         log_print(f"Path limit: {limit}")
+    if timeout_minutes is not None:
+        log_print(f"Timeout: {timeout_minutes} min")
     if not scan_only:
         log_print(f"Model: {model_name}")
 
@@ -477,6 +479,7 @@ def _run_iterative_discovery(
                 use_rich=use_rich,
                 root_filter=root_filter,
                 auto_enrich_threshold=enrich_threshold,
+                deadline=deadline,
             )
         )
 
@@ -759,6 +762,7 @@ async def _async_discovery_loop(
     use_rich: bool = True,
     root_filter: list[str] | None = None,
     auto_enrich_threshold: float = 0.75,
+    deadline: float | None = None,
 ) -> tuple[dict, set[str]]:
     """Async discovery loop with parallel scan/score workers."""
     from imas_codex.discovery.paths.parallel import run_parallel_discovery
@@ -829,6 +833,7 @@ async def _async_discovery_loop(
                     on_score_progress=on_score,
                     on_enrich_progress=on_enrich,
                     on_rescore_progress=on_rescore,
+                    deadline=deadline,
                 )
             finally:
                 refresh_task.cancel()
@@ -877,6 +882,7 @@ async def _async_discovery_loop(
             num_score_workers=num_score_workers,
             on_scan_progress=on_scan_log,
             on_score_progress=on_score_log,
+            deadline=deadline,
         )
         enrichment_aggregates = {}
 

@@ -19,6 +19,18 @@ data_systems:
   - mdsplus  # MDSplus available via modules
   - uda      # UDA available via modules
 
+# Discovery root paths for path discovery pipeline
+# These are seeded as starting points for directory scanning
+discovery_roots:
+  - /home                          # User home directories
+  - /analysis/src                  # Analysis source code
+  - /analysis/bin                  # Analysis binaries and scripts
+  - /analysis/data                 # Analysis data outputs
+  - /analysis/manual               # Documentation
+  - /work/edas                     # EDAS work area
+  - /analysis_DB/EDASDB            # EDAS database
+  - /analysis_DB/MBDB              # MB database
+
 # Wiki/documentation sites
 # JT60SA documentation is hosted on nakasvr23 behind IFERC VPN.
 # Site 0: Live TWiki Main web - EDAS manuals, API docs, shot reports, daily reports (~5500 topics)

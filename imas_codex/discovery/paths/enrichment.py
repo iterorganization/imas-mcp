@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Patterns are grouped by the score dimension they primarily inform.
 
 # -- Data Access Patterns (score_data_access) --
-# Facility-native data systems: MDSplus, PPF, UFile, shotfiles
+# Facility-native data systems: MDSplus, PPF, UFile, shotfiles, UDA, EDAS
 DATA_ACCESS_PATTERNS = {
     "mdsplus": r"(mdsconnect|mdsopen|mdsvalue|MDSplus|TdiExecute|connection\.openTree|TreeNode)",
     "ppf": r"(ppf\.read|ppfget|jet\.ppf|ppfuid|ppfgo|ppfdat)",
@@ -46,6 +46,10 @@ DATA_ACCESS_PATTERNS = {
     "shotfile": r"(shotfile\.open|sfread|dd\.shotfile|kk\()",
     "hdf5": r"(h5py\.File|hdf5\.open|\.h5\"|\.hdf5\"|HDFStore)",
     "netcdf": r"(xr\.open|xarray\.open|netCDF4|\.nc\"|Dataset)",
+    # UDA - Universal Data Access (JET, MAST, JT-60SA)
+    "uda": r"(uda\.|pyuda|UDA_client|getdata|getData|getIdamData|Client\(\)\.get)",
+    # EDAS - JT-60SA Experimental Data Acquisition System
+    "edas": r"(eddb\.|eGIS|eSLICE|eSURF|EDASDB|edas_read|edas\.get|labcom)",
 }
 
 # -- IMAS Patterns (score_imas) --

@@ -219,8 +219,8 @@ def extract_cost(response: Any) -> float:
 def _sanitize_content(content: str) -> str:
     """Sanitize LLM response content for JSON parsing.
 
-    Removes control characters and fixes surrogate encoding issues
-    that LLMs sometimes produce from file paths or Unicode content.
+    Removes control characters, strips markdown code fences, and fixes
+    surrogate encoding issues that LLMs sometimes produce.
 
     Args:
         content: Raw LLM response content string.
@@ -228,7 +228,15 @@ def _sanitize_content(content: str) -> str:
     Returns:
         Cleaned string safe for JSON/Pydantic parsing.
     """
+    # Strip markdown code fences (```json ... ``` or ``` ... ```)
+    # LLMs sometimes wrap JSON in code blocks despite instructions
+    content = re.sub(r"^```(?:json)?\s*\n?", "", content.strip())
+    content = re.sub(r"\n?```\s*$", "", content)
+
+    # Remove control characters
     content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
+
+    # Fix surrogate encoding issues
     content = content.encode("utf-8", errors="surrogateescape").decode(
         "utf-8", errors="replace"
     )
