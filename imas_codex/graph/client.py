@@ -206,6 +206,9 @@ class GraphClient:
         - Unique constraints on identifier fields
         - Indexes for common query patterns
         - Vector indexes for semantic search
+
+        Handles conflicts where a RANGE index exists with the same name
+        as a constraint (e.g., from DD build) by dropping the index first.
         """
         # Get constraints from schema (derived from identifier fields)
         constraints = self.schema.constraint_statements()
@@ -214,7 +217,37 @@ class GraphClient:
         indexes = self.schema.index_statements()
 
         with self.session() as sess:
-            for stmt in constraints + indexes:
+            # Get existing indexes and constraints to detect conflicts
+            existing_indexes = {
+                r["name"]
+                for r in sess.run(
+                    "SHOW INDEXES YIELD name, type WHERE type <> 'LOOKUP' RETURN name, type"
+                )
+                if r["type"] != "UNIQUENESS"  # Constraint-backed indexes are fine
+            }
+            existing_constraints = {
+                r["name"] for r in sess.run("SHOW CONSTRAINTS YIELD name RETURN name")
+            }
+
+            for stmt in constraints:
+                # Extract constraint name from "CREATE CONSTRAINT <name> IF NOT EXISTS ..."
+                parts = stmt.split()
+                if (
+                    len(parts) >= 3
+                    and parts[0] == "CREATE"
+                    and parts[1] == "CONSTRAINT"
+                ):
+                    constraint_name = parts[2]
+                    # Drop conflicting RANGE index if it exists
+                    if (
+                        constraint_name in existing_indexes
+                        and constraint_name not in existing_constraints
+                    ):
+                        sess.run(f"DROP INDEX {constraint_name}")
+                        logger.debug(f"Dropped conflicting index: {constraint_name}")
+                sess.run(stmt)
+
+            for stmt in indexes:
                 sess.run(stmt)
 
         # Create vector indexes for semantic search

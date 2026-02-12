@@ -77,6 +77,8 @@ enums:
         description: Error during processing (check error, terminal_reason)
       stale:
         description: Path may have changed, needs re-discovery
+      excluded:
+        description: Alias or symlink path excluded in favor of canonical path
 
   TerminalReason:
     description: >-

@@ -86,17 +86,37 @@ class TestWikiHierarchy:
         )
 
     def test_wiki_artifacts_have_parent_page(self, graph_client, label_counts):
-        """Every WikiArtifact must belong to a WikiPage via HAS_ARTIFACT."""
+        """WikiArtifacts discovered via page crawling should link to a parent WikiPage.
+
+        Bulk-discovered artifacts (bulk_discovered=true) may not have parent
+        page links until page crawling enriches them. Only non-bulk artifacts
+        are expected to have HAS_ARTIFACT relationships.
+        """
         if not label_counts.get("WikiArtifact"):
             pytest.skip("No WikiArtifact nodes in graph")
 
+        # Check non-bulk artifacts (should always have parent)
         result = graph_client.query(
             "MATCH (a:WikiArtifact) "
-            "WHERE NOT (:WikiPage)-[:HAS_ARTIFACT]->(a) "
+            "WHERE (a.bulk_discovered IS NULL OR a.bulk_discovered = false) "
+            "AND NOT (:WikiPage)-[:HAS_ARTIFACT]->(a) "
             "RETURN count(a) AS cnt"
         )
-        count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} WikiArtifact nodes without parent WikiPage"
+        non_bulk_orphans = result[0]["cnt"] if result else 0
+
+        # Check overall linkage rate for all artifacts (informational)
+        result = graph_client.query(
+            "MATCH (a:WikiArtifact) "
+            "RETURN count(a) AS total, "
+            "count(CASE WHEN (:WikiPage)-[:HAS_ARTIFACT]->(a) THEN 1 END) AS linked"
+        )
+        total = result[0]["total"] if result else 0
+        linked = result[0]["linked"] if result else 0
+
+        assert non_bulk_orphans == 0, (
+            f"{non_bulk_orphans} non-bulk WikiArtifact nodes without parent WikiPage. "
+            f"Overall: {linked}/{total} artifacts linked to pages."
+        )
 
 
 class TestCodeHierarchy:

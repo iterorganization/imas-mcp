@@ -204,6 +204,9 @@ classes:
       clusters_count:
         description: Number of clusters for this version
         range: integer
+      created_at:
+        description: Timestamp when DDVersion node was created in the graph
+        range: datetime
 
   IDS:
     description: >-
@@ -232,6 +235,8 @@ classes:
       documentation_coverage:
         description: Fraction of paths with documentation (0.0-1.0)
         range: float
+      dd_version:
+        description: Data Dictionary version string this IDS definition belongs to
       introduced_version:
         description: DD version where this IDS was introduced
         range: DDVersion

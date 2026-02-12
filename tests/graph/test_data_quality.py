@@ -164,7 +164,10 @@ class TestDescriptionEmbeddingCoverage:
 
     @pytest.mark.parametrize("label", get_description_embeddable_labels())
     def test_description_embedding_coverage(self, graph_client, label, label_counts):
-        """All nodes with descriptions should have embeddings."""
+        """All nodes with descriptions should have embeddings.
+
+        Skips if no embeddings exist at all for this label (embed step not run).
+        """
 
         if not label_counts.get(label):
             pytest.skip(f"No {label} nodes in graph")
@@ -184,6 +187,9 @@ class TestDescriptionEmbeddingCoverage:
 
         if with_desc == 0:
             pytest.skip(f"No {label} nodes with descriptions")
+
+        if with_emb == 0:
+            pytest.skip(f"No {label} embeddings found — run `data push --embed` first")
 
         coverage = with_emb / with_desc
         assert coverage >= 0.95, (

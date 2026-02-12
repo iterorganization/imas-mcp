@@ -267,6 +267,8 @@ enums:
         description: Generated/cached files (__pycache__, .venv, node_modules)
       system:
         description: OS/infrastructure directories (/var, /tmp, /opt/modules)
+      empty_directory:
+        description: Empty directory with no files or subdirectories
 
   DiscoveryStatus:
     description: >-
@@ -540,6 +542,9 @@ classes:
       data_systems:
         description: Data systems available (e.g., "mdsplus", "uda")
         multivalued: true
+      created_at:
+        description: Timestamp when Facility node was first created in the graph
+        range: datetime
 
       # === PRIVATE FIELDS (<facility>_private.yaml only, never graphed) ===
       ssh_host:
@@ -717,6 +722,8 @@ classes:
           MATCH (alias)-[:ALIAS_OF]->(real) WHERE alias.path = $search_path
           RETURN real  -- gets the actual content node
         range: FacilityPath
+        annotations:
+          relationship_type: ALIAS_OF
       canonicality:
         description: >-
           Path preference score (higher = more canonical). Used to decide which
@@ -931,6 +938,28 @@ classes:
       score_cost:
         description: LLM cost in USD for scoring this path
         range: float
+      # Enrichment properties (set during deep analysis)
+      has_readme:
+        description: Whether directory contains a README file (md/rst/txt)
+        range: boolean
+      has_makefile:
+        description: Whether directory contains a Makefile or CMakeLists.txt
+        range: boolean
+      pattern_categories:
+        description: JSON-encoded dict of data access pattern category to match count
+      read_matches:
+        description: Total count of data-read pattern matches across all categories
+        range: integer
+      write_matches:
+        description: Total count of data-write pattern matches across all categories
+        range: integer
+      # Rescoring properties (set during LLM rescore with enrichment evidence)
+      adjustment_reason:
+        description: Brief explanation of main score adjustment during rescoring
+      primary_evidence:
+        description: JSON-encoded list of key pattern categories informing score adjustment
+      evidence_summary:
+        description: Brief summary of pattern evidence (e.g., "15 MDSplus, 3 IMAS writes")
 
 # =============================================================================
 # Evidence Class (Linked semantic indicators, reusable across node types)
@@ -1494,6 +1523,28 @@ classes:
         description: >-
           JSON-encoded map of category to quantity names.
           E.g., {"shape": ["AMIN", "KAPPA", "DELTA"], "energy": ["WE", "W_MHD"]}
+      # TDI introspection results
+      id:
+        description: Composite key as facility:tdi:name (e.g., "tcv:tdi:tcv_eq")
+      path:
+        description: Filesystem path to the .FUN source file
+      source_code:
+        description: Full .FUN file content for LLM enrichment context
+      has_shot_conditional:
+        description: Whether function contains shot-conditional branching logic
+        range: boolean
+      mdsplus_trees:
+        description: MDSplus tree names referenced by this function
+        multivalued: true
+      tdi_dependencies:
+        description: Other TDI functions called by this function
+        multivalued: true
+      quantity_count:
+        description: Number of quantities this TDI function exposes
+        range: integer
+      updated_at:
+        description: Timestamp of last graph update
+        range: datetime
 
   ShotRange:
     description: A range of shot numbers with common characteristics
@@ -1753,6 +1804,19 @@ classes:
         ifabsent: "false"
       validation_error:
         description: Error message if validation failed
+      # Enrichment tracking
+      checked:
+        description: Whether signal data access has been validated
+        range: boolean
+      checked_at:
+        description: Timestamp when signal data access was validated
+        range: datetime
+      enriched_at:
+        description: Timestamp when LLM enrichment (description, domain) was completed
+        range: datetime
+      enrichment_cost:
+        description: LLM cost in USD for enriching this signal
+        range: float
 
   DataAccess:
     description: >-
@@ -2466,6 +2530,11 @@ classes:
           Timestamp when a worker claimed this page. Used for orphan recovery.
           If set and older than timeout (5 min), page is reclaimed.
         range: datetime
+      claim_token:
+        description: UUID token for atomic work claiming between parallel workers
+      bulk_discovered:
+        description: Flag set when page was created by bulk Special:AllPages discovery
+        range: boolean
       
       # Scoring (inherited from ContentScoring mixin: purpose, score,
       # Scoring inherited from ContentScoring mixin: purpose, score,
@@ -2656,6 +2725,13 @@ classes:
           Timestamp when a worker claimed this artifact for processing.
           Null when not being processed. Used for orphan recovery (>5min = reclaim).
         range: datetime
+      claim_token:
+        description: UUID token for atomic work claiming between parallel workers
+      bulk_discovered:
+        description: Flag set when artifact was created by bulk discovery scan
+        range: boolean
+      mime_type:
+        description: MIME type of the artifact file (e.g., "application/pdf", "image/png")
       score_exempt:
         description: >-
           When true, artifact bypasses LLM text scoring and goes directly
@@ -2778,6 +2854,12 @@ classes:
       image_height:
         description: Height of stored (downsampled) image in pixels
         range: integer
+      width:
+        description: Width of stored image in pixels (alias of image_width)
+        range: integer
+      height:
+        description: Height of stored image in pixels (alias of image_height)
+        range: integer
       original_width:
         description: Width of original image in pixels (before downsample)
         range: integer
@@ -2800,6 +2882,18 @@ classes:
         description: Original alt text from HTML source (if available)
       ocr_text:
         description: Text extracted via OCR from image (for diagrams with labels)
+      ocr_imas_paths:
+        description: IMAS data paths extracted via OCR from image text/labels
+        multivalued: true
+      ocr_mdsplus_paths:
+        description: MDSplus tree paths extracted via OCR from image text/labels
+        multivalued: true
+      ocr_ppf_paths:
+        description: JET PPF paths extracted via OCR from image text/labels
+        multivalued: true
+      ocr_tool_mentions:
+        description: Facility tool/code names extracted via OCR from image text/labels
+        multivalued: true
       
       # VLM scoring inherited from ContentScoring mixin: purpose, score,
       # score dimensions, description, reasoning, keywords, physics_domain,
@@ -2831,6 +2925,8 @@ classes:
           Timestamp when a worker claimed this image for processing.
           Null when not being processed. Used for orphan recovery (>5min = reclaim).
         range: datetime
+      claim_token:
+        description: UUID token for atomic work claiming between parallel workers
       
       # Timestamps
       discovered_at:

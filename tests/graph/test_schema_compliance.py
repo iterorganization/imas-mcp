@@ -2,6 +2,7 @@
 
 Verifies that the graph structure matches the LinkML schema definitions:
 - All labels and relationship types are schema-defined
+- No undeclared properties exist on nodes
 - Constraints and indexes exist
 - Required fields are populated
 - Enum values are valid
@@ -11,6 +12,7 @@ Verifies that the graph structure matches the LinkML schema definitions:
 import pytest
 
 from imas_codex.graph.client import EXPECTED_RELATIONSHIP_TYPES
+from imas_codex.graph.schema import GraphSchema
 
 pytestmark = pytest.mark.graph
 
@@ -23,8 +25,6 @@ class TestLabelsAndRelationships:
 
     def test_all_labels_in_schema(self, graph_labels, schema):
         """Every label in the graph must be defined in the schema."""
-        from imas_codex.graph.schema import GraphSchema
-
         dd_schema = GraphSchema(schema_path="imas_codex/schemas/imas_dd.yaml")
         expected = (
             set(schema.node_labels) | set(dd_schema.node_labels) | self.INTERNAL_LABELS
@@ -43,17 +43,68 @@ class TestLabelsAndRelationships:
             f"Add them as slots with relationship_type annotation in LinkML schemas."
         )
 
+    def test_no_undeclared_properties(self, graph_client, graph_labels, schema):
+        """Every property on a graph node must be declared in its schema class.
+
+        Properties that exist on nodes but are not in the LinkML schema
+        indicate drift between code and schema definitions.
+        """
+        dd_schema = GraphSchema(schema_path="imas_codex/schemas/imas_dd.yaml")
+
+        # Internal properties added by Neo4j or our infrastructure
+        INTERNAL_PROPERTIES = {"embedding", "centroid"}
+
+        violations = []
+        for label in sorted(graph_labels):
+            if label.startswith("_"):
+                continue
+
+            # Determine which schema owns this label
+            if label in schema.node_labels:
+                s = schema
+            elif label in dd_schema.node_labels:
+                s = dd_schema
+            else:
+                continue  # Covered by test_all_labels_in_schema
+
+            # Get declared slots (properties) for this label
+            declared = set(s.get_all_slots(label).keys())
+
+            # Get actual properties from graph (sample for performance)
+            result = graph_client.query(
+                f"MATCH (n:{label}) "
+                f"WITH keys(n) AS props LIMIT 100 "
+                f"UNWIND props AS p "
+                f"RETURN DISTINCT p AS property"
+            )
+            actual = {r["property"] for r in result}
+
+            undeclared = actual - declared - INTERNAL_PROPERTIES
+            if undeclared:
+                violations.append(
+                    f"{label}: undeclared properties {sorted(undeclared)}"
+                )
+
+        assert not violations, (
+            "Graph nodes have properties not in schema:\n  "
+            + "\n  ".join(violations)
+            + "\n\nAdd these properties to the LinkML schema or remove them from the graph."
+        )
+
 
 class TestConstraints:
     """Verify expected constraints exist in the graph."""
 
     def test_constraints_created(self, graph_constraints, schema):
-        """All schema-derived constraints should be present."""
+        """All schema-derived constraints should be present (facility + DD)."""
+        dd_schema = GraphSchema(schema_path="imas_codex/schemas/imas_dd.yaml")
+
         expected_names = set()
-        for label in schema.node_labels:
-            id_field = schema.get_identifier(label)
-            if id_field:
-                expected_names.add(f"{label.lower()}_{id_field}")
+        for s in [schema, dd_schema]:
+            for label in s.node_labels:
+                id_field = s.get_identifier(label)
+                if id_field:
+                    expected_names.add(f"{label.lower()}_{id_field}")
 
         existing_names = {c["name"] for c in graph_constraints}
         missing = expected_names - existing_names
