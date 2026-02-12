@@ -88,6 +88,7 @@ class DataDiscoveryState:
 
     # Control
     stop_requested: bool = False
+    enrich_only: bool = False  # When True, discover/check workers not started
     discover_idle_count: int = 0
     enrich_idle_count: int = 0
     check_idle_count: int = 0
@@ -110,13 +111,27 @@ class DataDiscoveryState:
         """Check if ALL workers should terminate."""
         if self.stop_requested:
             return True
+
+        limit_done = self.budget_exhausted or self.signal_limit_reached
+
+        # LLM workers: idle OR limit-stopped counts as "done"
+        enrich_done = self.enrich_idle_count >= 3 or limit_done
+
         all_idle = (
-            self.discover_idle_count >= 3
-            and self.enrich_idle_count >= 3
-            and self.check_idle_count >= 3
+            self.discover_idle_count >= 3 and enrich_done and self.check_idle_count >= 3
         )
         if all_idle:
-            if has_pending_work(self.facility):
+            # In enrich_only mode, skip pending work checks for workers that
+            # don't exist (discover/check).  Only check enrichment work.
+            if self.enrich_only:
+                if limit_done:
+                    return True
+                if has_pending_enrich_work(self.facility):
+                    self.enrich_idle_count = 0
+                    return False
+                return True
+
+            if not limit_done and has_pending_work(self.facility):
                 self.discover_idle_count = 0
                 self.enrich_idle_count = 0
                 self.check_idle_count = 0
@@ -1628,6 +1643,7 @@ async def run_parallel_data_discovery(
         cost_limit=cost_limit,
         signal_limit=signal_limit,
         focus=focus,
+        enrich_only=enrich_only,
     )
 
     # Create worker group
@@ -1709,6 +1725,16 @@ async def run_parallel_data_discovery(
                     )
                 )
             )
+    else:
+        # In enrich_only mode, discover and check workers are not started.
+        # Set idle counts high so should_stop() doesn't block on them.
+        state.discover_idle_count = 10
+        state.check_idle_count = 10
+
+    # In enrich_only mode, scan worker was already skipped above.
+    # Set discover_idle_count for the general case too.
+    if enrich_only:
+        state.discover_idle_count = 10
 
     # Report worker status
     if on_worker_status:

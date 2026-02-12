@@ -82,6 +82,7 @@ class WikiDiscoveryState:
 
     # Control
     stop_requested: bool = False
+    score_only: bool = False  # When True, ingest workers are not started
     scan_idle_count: int = 0
     score_idle_count: int = 0
     ingest_idle_count: int = 0
@@ -159,21 +160,24 @@ class WikiDiscoveryState:
 
         Used by the main loop to determine when discovery is complete.
 
-        When budget is exhausted, LLM-dependent workers (score, artifact_score,
-        image) exit their loops immediately — their idle counts may stay at 0.
-        We treat them as implicitly "done" so the main loop doesn't hang
-        waiting for idle counts that can never increment.  I/O workers
-        (ingest, artifact) continue draining their queues normally.
+        When budget is exhausted or page limit reached, LLM-dependent workers
+        (score, artifact_score, image) exit their loops immediately — their
+        idle counts may stay at 0.  We treat them as implicitly "done" so
+        the main loop doesn't hang waiting for idle counts that can never
+        increment.  I/O workers (ingest, artifact) continue draining their
+        queues normally.
         """
         if self.stop_requested:
             return True
 
         budget_done = self.budget_exhausted
+        # Page limit also stops LLM workers (score workers check this too)
+        limit_done = budget_done or self.page_limit_reached
 
-        # LLM workers: idle OR budget-stopped counts as "done"
-        score_done = self.score_idle_count >= 3 or budget_done
-        artifact_score_done = self.artifact_score_idle_count >= 3 or budget_done
-        image_done = self.image_idle_count >= 3 or budget_done
+        # LLM workers: idle OR limit-stopped counts as "done"
+        score_done = self.score_idle_count >= 3 or limit_done
+        artifact_score_done = self.artifact_score_idle_count >= 3 or limit_done
+        image_done = self.image_idle_count >= 3 or limit_done
 
         # I/O workers: must be genuinely idle
         all_idle = (
@@ -185,11 +189,21 @@ class WikiDiscoveryState:
             and image_done
         )
         if all_idle:
-            # Check for remaining work.  When budget is exhausted only
+            # Check for remaining work.  When limits are hit only
             # check I/O queues — LLM-dependent pending work (scanned pages
             # needing scoring, images needing VLM) cannot be processed.
+            # In score_only mode, no ingest workers run so skip I/O checks.
             graph_ops = _get_graph_ops()
-            if budget_done:
+            if self.score_only:
+                # No ingest workers — pending ingest work is expected and
+                # irrelevant.  Only check if LLM workers still have work.
+                if limit_done:
+                    has_work = False
+                else:
+                    has_work = graph_ops.has_pending_work(
+                        self.facility
+                    ) or graph_ops.has_pending_image_work(self.facility)
+            elif limit_done:
                 has_work = graph_ops.has_pending_ingest_work(
                     self.facility
                 ) or graph_ops.has_pending_artifact_ingest_work(self.facility)
@@ -201,10 +215,10 @@ class WikiDiscoveryState:
                 )
 
             if has_work:
-                # Reset only I/O worker idle counts when budget is exhausted
+                # Reset only I/O worker idle counts when limits are hit
                 # (LLM workers are already stopped and won't re-poll).
-                # Reset all idle counts when budget is not exhausted.
-                if budget_done:
+                # Reset all idle counts when no limit is hit.
+                if limit_done:
                     self.ingest_idle_count = 0
                     self.artifact_idle_count = 0
                 else:
@@ -262,7 +276,11 @@ class WikiDiscoveryState:
         # BUT don't exit early if scoring is still running - pages may arrive soon
         if self.ingest_idle_count >= 3:
             # Only stop if scoring is also idle AND no pending ingest work
-            scoring_done = self.score_idle_count >= 3 or self.budget_exhausted
+            scoring_done = (
+                self.score_idle_count >= 3
+                or self.budget_exhausted
+                or self.page_limit_reached
+            )
             if scoring_done and not _get_graph_ops().has_pending_ingest_work(
                 self.facility
             ):

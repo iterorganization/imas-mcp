@@ -410,6 +410,7 @@ async def run_parallel_wiki_discovery(
         max_depth=max_depth,
         focus=focus,
         service_monitor=service_monitor,
+        score_only=score_only,
     )
 
     # Pre-warm SSH ControlMaster if using SSH transport.
@@ -517,24 +518,80 @@ async def run_parallel_wiki_discovery(
     # Start supervised workers with status tracking
     # Note: scan_worker was removed — bulk_discover_pages() replaces link-crawling.
     # num_scan_workers and scan_only params are kept for CLI backwards compat.
+    #
+    # --scan-only: return immediately (bulk discovery already ran above)
+    # --score-only: start score + artifact_score + image_score workers only
+    # default: start all workers (score, ingest, artifact, image)
 
-    if not score_only:
-        for i in range(num_score_workers):
-            worker_name = f"score_worker_{i}"
-            status = worker_group.create_status(worker_name, group="score")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        score_worker,
-                        worker_name,
-                        state,
-                        state.should_stop_scoring,
-                        on_progress=on_score_progress,
-                        status_tracker=status,
-                    )
+    if scan_only:
+        # Bulk discovery already ran above — nothing more to do.
+        elapsed = time.time() - start_time
+        return {
+            "scanned": state.scan_stats.processed,
+            "scored": 0,
+            "ingested": 0,
+            "artifacts": 0,
+            "images_scored": 0,
+            "cost": 0.0,
+            "elapsed_seconds": elapsed,
+            "scan_rate": state.scan_stats.rate,
+            "score_rate": 0.0,
+        }
+
+    # --- LLM scoring workers (run in both default and score_only modes) ---
+
+    for i in range(num_score_workers):
+        worker_name = f"score_worker_{i}"
+        status = worker_group.create_status(worker_name, group="score")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    score_worker,
+                    worker_name,
+                    state,
+                    state.should_stop_scoring,
+                    on_progress=on_score_progress,
+                    status_tracker=status,
                 )
             )
+        )
 
+    if ingest_artifacts:
+        # Artifact score worker: LLM scoring with text preview extraction
+        artifact_score_status = worker_group.create_status(
+            "artifact_score_worker", group="score"
+        )
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    artifact_score_worker,
+                    "artifact_score_worker",
+                    state,
+                    state.should_stop_artifact_scoring,
+                    on_progress=on_artifact_score_progress,
+                    status_tracker=artifact_score_status,
+                )
+            )
+        )
+
+    # Image score worker: VLM caption + scoring for ingested images
+    image_score_status = worker_group.create_status("image_score_worker", group="score")
+    worker_group.add_task(
+        asyncio.create_task(
+            supervised_worker(
+                image_score_worker,
+                "image_score_worker",
+                state,
+                state.should_stop_image_scoring,
+                on_progress=on_image_progress,
+                status_tracker=image_score_status,
+            )
+        )
+    )
+
+    # --- I/O ingest workers (skipped in score_only mode) ---
+
+    if not score_only:
         for i in range(num_ingest_workers):
             worker_name = f"ingest_worker_{i}"
             ingest_status = worker_group.create_status(worker_name, group="ingest")
@@ -551,25 +608,7 @@ async def run_parallel_wiki_discovery(
                 )
             )
 
-        # Artifact workers: score→ingest pipeline for discovered artifacts
         if ingest_artifacts:
-            # Artifact score worker: LLM scoring with text preview extraction
-            artifact_score_status = worker_group.create_status(
-                "artifact_score_worker", group="score"
-            )
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        artifact_score_worker,
-                        "artifact_score_worker",
-                        state,
-                        state.should_stop_artifact_scoring,
-                        on_progress=on_artifact_score_progress,
-                        status_tracker=artifact_score_status,
-                    )
-                )
-            )
-
             # Artifact ingest worker: download and embed scored artifacts
             artifact_ingest_status = worker_group.create_status(
                 "artifact_worker", group="ingest"
@@ -586,23 +625,15 @@ async def run_parallel_wiki_discovery(
                     )
                 )
             )
+    else:
+        # In score_only mode, mark I/O workers as idle so should_stop()
+        # doesn't hang waiting for workers that were never started.
+        state.ingest_idle_count = 10
+        state.artifact_idle_count = 10
 
-        # Image score worker: VLM caption + scoring for ingested images
-        image_score_status = worker_group.create_status(
-            "image_score_worker", group="score"
-        )
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    image_score_worker,
-                    "image_score_worker",
-                    state,
-                    state.should_stop_image_scoring,
-                    on_progress=on_image_progress,
-                    status_tracker=image_score_status,
-                )
-            )
-        )
+    # Scan workers were removed (replaced by bulk discovery above).
+    # Set idle count high so should_stop() doesn't block on a non-existent worker.
+    state.scan_idle_count = 10
 
     logger.info(
         f"Started {worker_group.get_active_count()} workers: "
