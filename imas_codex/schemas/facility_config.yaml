@@ -1,0 +1,364 @@
+# Facility Configuration Schema
+#
+# Defines the structure of per-facility YAML config files (tcv.yaml, jet.yaml, etc.).
+# Validates both public and private configuration sections.
+#
+# Public config: <facility>.yaml (git-tracked, visible to LLMs/agents)
+# Private config: <facility>_private.yaml (gitignored, infrastructure secrets)
+#
+# Generated models: imas_codex/config/models.py
+# To regenerate: uv run build-models --force
+#
+# Usage:
+#   from imas_codex.config.models import FacilityConfig
+#   config = FacilityConfig.model_validate(yaml_data)
+
+id: https://imas.iter.org/schemas/facility_config
+name: facility_config
+title: Facility Configuration Schema
+description: >-
+  Schema for per-facility YAML configuration files. Defines required and
+  optional fields for both public and private config sections. Agents should
+  edit these files via MCP tools (update_facility_infrastructure, add_exploration_note)
+  which enforce this schema.
+
+license: MIT
+version: 0.4.0
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  fc: https://imas.iter.org/schemas/facility_config/
+
+default_prefix: fc
+default_range: string
+
+imports:
+  - linkml:types
+
+# =============================================================================
+# Enums
+# =============================================================================
+
+enums:
+  DataSystemType:
+    description: Types of data systems available at facilities
+    permissible_values:
+      mdsplus:
+        description: MDSplus tree-based data system
+      tdi:
+        description: TDI function-based data access layer
+      uda:
+        description: Universal Data Access (UDA) system
+      imas:
+        description: IMAS native data format
+      ppf:
+        description: JET Processed Pulse File system
+      edas:
+        description: JT-60SA EDAS data system
+      hdf5:
+        description: HDF5 file-based storage
+      netcdf:
+        description: NetCDF scientific data format
+
+  WikiSiteType:
+    description: Types of wiki/documentation sites
+    permissible_values:
+      mediawiki:
+        description: MediaWiki-based sites (Wikipedia, SPCwiki)
+      confluence:
+        description: Atlassian Confluence
+      twiki:
+        description: TWiki/Foswiki installation
+      twiki_static:
+        description: TWiki static HTML export
+      static:
+        description: Static HTML documentation site
+      static_html:
+        description: Static HTML site (alias for static)
+
+  WikiAuthType:
+    description: Authentication methods for wiki sites
+    permissible_values:
+      none:
+        description: No authentication required
+      tequila:
+        description: EPFL Tequila SSO
+      keycloak:
+        description: Keycloak OIDC (JET)
+      basic:
+        description: HTTP Basic authentication
+      session:
+        description: Session-based auth (login form, cookies)
+      ssh_proxy:
+        description: Access only via SSH tunnel
+
+  NameFormat:
+    description: Format of user names in GECOS field
+    permissible_values:
+      first_last:
+        description: First Last format
+      last_first:
+        description: Last, First format
+      username:
+        description: Username only (no real name)
+
+# =============================================================================
+# Classes - Config File Structure
+# =============================================================================
+
+classes:
+  # -------------------------------------------------------------------------
+  # Public Config (in <facility>.yaml)
+  # -------------------------------------------------------------------------
+
+  FacilityConfig:
+    description: >-
+      Root configuration for a facility. Combines public and private fields.
+      Public fields go in <facility>.yaml, private in <facility>_private.yaml.
+      Validation merges both files before checking required fields.
+      
+      Note: The loader renames 'facility' to 'id', so either is accepted.
+    class_uri: fc:FacilityConfig
+    tree_root: true
+    attributes:
+      # --- Facility identifier (one of these is required) ---
+      facility:
+        description: Facility identifier in YAML files (e.g., "tcv", "jet")
+      id:
+        description: Facility identifier after loading (alias of facility)
+      name:
+        description: Human-readable facility name
+        required: true
+      machine:
+        description: Tokamak/stellarator machine name
+        required: true
+      description:
+        description: Brief facility description
+
+      # --- Optional public fields ---
+      location:
+        description: Geographic location
+      ssh_host:
+        description: SSH host alias for connection (configured in ~/.ssh/config)
+      data_systems:
+        description: >-
+          Data systems available. Can be list of strings ["mdsplus", "uda"]
+          or dict with details {mdsplus: {available: true, ...}}.
+
+      # --- Nested config sections ---
+      discovery_roots:
+        description: >-
+          Root paths for discovery pipeline seeding. Can be simple strings
+          ["/home", "/work"] or structured [{path: "/home", category: "container"}].
+      data_sources:
+        description: Data source configuration for signal discovery
+        range: DataSourcesConfig
+      wiki_sites:
+        description: Wiki/documentation sites
+        multivalued: true
+        range: WikiSiteConfig
+      user_info:
+        description: User info discovery configuration
+        range: UserInfoConfig
+
+      # --- Private fields (in <facility>_private.yaml) ---
+      hostnames:
+        description: Network hostnames for this facility
+        multivalued: true
+        annotations:
+          is_private: true
+      nfs_mounts:
+        description: NFS mount points (list of {source, target, options})
+        annotations:
+          is_private: true
+      paths:
+        description: Key filesystem paths (nested dict structure)
+        annotations:
+          is_private: true
+      svn:
+        description: SVN repository URLs
+        annotations:
+          is_private: true
+      excludes:
+        description: Paths/patterns to exclude during exploration
+        annotations:
+          is_private: true
+      tools:
+        description: Tool availability map (tool -> version)
+        annotations:
+          is_private: true
+      os_info:
+        description: Operating system details
+        annotations:
+          is_private: true
+      python_info:
+        description: Python environment details
+        annotations:
+          is_private: true
+      compilers:
+        description: Compiler availability
+        annotations:
+          is_private: true
+      containers:
+        description: Available container images
+        annotations:
+          is_private: true
+      exploration_notes:
+        description: Free-form exploration notes (timestamped)
+        multivalued: true
+        annotations:
+          is_private: true
+
+  # -------------------------------------------------------------------------
+  # Nested Config Types
+  # -------------------------------------------------------------------------
+
+  DiscoveryRootConfig:
+    description: >-
+      Structured configuration for a discovery root path. Used in private
+      configs to provide category and priority hints for discovery seeding.
+      Public configs may use simple string paths instead.
+    class_uri: fc:DiscoveryRootConfig
+    attributes:
+      path:
+        description: Absolute filesystem path to seed
+        required: true
+      category:
+        description: >-
+          Discovery category for balanced seeding. Values: container, modeling_code,
+          analysis_code, data_access, workflow, experimental_data, documentation.
+      description:
+        description: Brief description of what this root contains
+      priority:
+        description: Seeding priority (high, medium, low)
+      expand_depth:
+        description: Maximum depth to expand from this root
+        range: integer
+
+  WikiSiteConfig:
+    description: >-
+      Configuration for a wiki/documentation site. Used by wiki discovery
+      to enumerate pages and artifacts.
+    class_uri: fc:WikiSiteConfig
+    attributes:
+      url:
+        description: Base URL of the wiki site
+        required: true
+      portal_page:
+        description: Main portal/landing page name (e.g., "Main_Page", "Portal:TCV")
+        ifabsent: "Main_Page"
+      description:
+        description: Brief description of the wiki content
+      site_type:
+        description: Type of wiki software
+        range: WikiSiteType
+        ifabsent: "mediawiki"
+      access_method:
+        description: How the site is accessed (direct, ssh_tunnel)
+        ifabsent: "direct"
+      auth_type:
+        description: Authentication method
+        range: WikiAuthType
+        ifabsent: "none"
+      credential_service:
+        description: Keyring service name for credentials
+      ssh_available:
+        description: Whether SSH tunnel is available as fallback
+        range: boolean
+
+  DataSourcesConfig:
+    description: >-
+      Data source configuration for signal discovery. Specifies how to
+      enumerate signals from each data system.
+    class_uri: fc:DataSourcesConfig
+    attributes:
+      tdi:
+        description: TDI function configuration
+        range: TDIConfig
+      mdsplus:
+        description: MDSplus configuration
+        range: MDSplusConfig
+      hdf5:
+        description: HDF5 file configuration
+        range: HDF5Config
+      imas:
+        description: IMAS configuration
+        range: IMASConfig
+
+  TDIConfig:
+    description: TDI function data source configuration
+    class_uri: fc:TDIConfig
+    attributes:
+      primary_path:
+        description: Primary TDI directory path
+      additional_paths:
+        description: Additional TDI directories to scan
+        multivalued: true
+      reference_shot:
+        description: Reference shot for TDI accessor validation
+        range: integer
+
+  MDSplusConfig:
+    description: MDSplus data source configuration
+    class_uri: fc:MDSplusConfig
+    attributes:
+      connection_tree:
+        description: Default tree for TDI context
+      trees:
+        description: MDSplus tree names to scan
+        multivalued: true
+      reference_shot:
+        description: Shot number for tree introspection
+        range: integer
+
+  HDF5Config:
+    description: HDF5 file data source configuration
+    class_uri: fc:HDF5Config
+    attributes:
+      paths:
+        description: HDF5 file/directory paths to scan
+        multivalued: true
+
+  IMASConfig:
+    description: IMAS data source configuration
+    class_uri: fc:IMASConfig
+    attributes:
+      backends:
+        description: Available IMAS backends
+        multivalued: true
+
+  UserInfoConfig:
+    description: >-
+      Configuration for user info discovery. Specifies how to extract
+      user names from system (GECOS field, LDAP, etc.).
+    class_uri: fc:UserInfoConfig
+    attributes:
+      name_format:
+        description: Format of user names in GECOS field
+        range: NameFormat
+        ifabsent: "first_last"
+      lookup_tools:
+        description: Ordered list of tools to try for name lookup
+        multivalued: true
+        ifabsent: "[getent, passwd, id]"
+
+  ExcludesConfig:
+    description: >-
+      Exclusion patterns for discovery. Prevents scanning of large directories
+      that would hang or produce low-value results.
+    class_uri: fc:ExcludesConfig
+    attributes:
+      large_dirs:
+        description: >-
+          Directories that caused timeouts (absolute paths).
+          Discovery skips these entirely.
+        multivalued: true
+      depth_limits:
+        description: >-
+          Per-path depth limits (map of path -> max_depth).
+          Limits recursion in specific subtrees.
+      patterns:
+        description: >-
+          Glob patterns to exclude (e.g., "**/node_modules", "**/.git").
+          Applied during directory enumeration.
+        multivalued: true

@@ -43,6 +43,31 @@ add_to_graph("SourceFile", [sf.model_dump()])
 
 **Extending schemas:** Edit LinkML YAML → `uv run build-models --force` → import from `imas_codex.graph.models`. Schema changes are additive only — add properties, never rename or remove.
 
+## Facility Configuration
+
+Per-facility YAML configs define discovery roots, wiki sites, data sources, and infrastructure details. Schema enforced via LinkML (`imas_codex/schemas/facility_config.yaml`).
+
+**Files:**
+- `imas_codex/config/facilities/<facility>.yaml` - Public config (git-tracked)
+- `imas_codex/config/facilities/<facility>_private.yaml` - Private config (gitignored)
+
+**Editing configs:** Always use MCP tools rather than direct file editing:
+
+```python
+# Add seeding paths, wiki URLs, or exploration notes
+update_facility_infrastructure('tcv', {'discovery_roots': ['/new/path']})
+add_exploration_note('tcv', 'Found equilibrium codes at /home/codes/liuqe')
+```
+
+**Validation:** Configs are validated against schema at load time. Check compliance:
+
+```python
+from imas_codex.discovery.base.facility import validate_facility_config
+errors = validate_facility_config('tcv')  # Returns list of error strings
+```
+
+**Schema access:** The config schema is exposed via `get_graph_schema()` MCP tool — agents can query it to understand required/optional fields before editing.
+
 ## Graph State Machine
 
 Status enums represent **durable states only**. No transient states like `scanning`, `scoring`, or `ingesting`.

@@ -14,13 +14,16 @@ Key functions:
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 from imas_codex.graph.schema import get_schema
+
+if TYPE_CHECKING:
+    from imas_codex.config.models import FacilityConfig
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +155,71 @@ def get_facility(facility_id: str) -> dict[str, Any]:
         merged["id"] = merged.pop("facility")
 
     return merged
+
+
+def validate_facility_config(
+    facility_id: str, *, raise_on_error: bool = False
+) -> list[str]:
+    """Validate facility config against LinkML-generated schema.
+
+    Checks that the facility YAML files conform to the schema defined in
+    imas_codex/schemas/facility_config.yaml. Unknown keys are allowed
+    (for YAML anchors and forward compatibility).
+
+    Args:
+        facility_id: Facility identifier (e.g., "tcv", "iter")
+        raise_on_error: If True, raise ValidationError; if False, return error list
+
+    Returns:
+        List of validation error messages (empty = valid)
+
+    Raises:
+        pydantic.ValidationError: If raise_on_error=True and validation fails
+
+    Examples:
+        >>> errors = validate_facility_config('tcv')
+        >>> if errors:
+        ...     print(f"Config issues: {errors}")
+    """
+    from pydantic import ValidationError
+
+    from imas_codex.config.models import FacilityConfig
+
+    config = get_facility(facility_id)
+
+    try:
+        FacilityConfig.model_validate(config)
+        return []
+    except ValidationError as e:
+        if raise_on_error:
+            raise
+        return [str(err) for err in e.errors()]
+
+
+def get_facility_validated(facility_id: str) -> "FacilityConfig":
+    """Load and validate facility config, returning typed Pydantic model.
+
+    Use this when you need type-safe access to config fields.
+    Raises ValidationError if config is invalid.
+
+    Args:
+        facility_id: Facility identifier (e.g., "tcv", "iter")
+
+    Returns:
+        FacilityConfig model instance with validated fields
+
+    Raises:
+        pydantic.ValidationError: If config doesn't match schema
+
+    Examples:
+        >>> config = get_facility_validated('tcv')
+        >>> for root in config.discovery_roots or []:
+        ...     print(root)
+    """
+    from imas_codex.config.models import FacilityConfig
+
+    config = get_facility(facility_id)
+    return FacilityConfig.model_validate(config)
 
 
 def get_facility_metadata(facility_id: str) -> dict[str, Any]:
