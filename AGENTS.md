@@ -396,7 +396,8 @@ Multiple agents may be working on this repository simultaneously. Assume another
 
 - **Only stage files you modified** — never `git add -A` or `git add .`
 - **Never `git checkout` or `git restore` files you didn't change** — this silently discards another agent's work
-- **Pull before push** if push is rejected: `git pull --rebase origin main && git push origin main`
+- **Never rebase** — rebase rewrites history and clobbers parallel agents' work
+- **Pull before push** if push is rejected: `git pull --no-rebase origin main && git push origin main`
 - **Avoid broad formatting runs** (`ruff format .`) unless you are the only agent active — prefer formatting only your changed files
 
 ### Session Completion

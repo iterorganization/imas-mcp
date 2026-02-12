@@ -2006,6 +2006,7 @@ async def persist_scan_results(
                         "status": PathStatus.skipped.value,
                         "terminal_reason": TerminalReason.excluded.value,
                         "skip_reason": reason,
+                        "path_type": "code_directory",
                         "discovered_at": now,
                     }
                 )
@@ -2017,6 +2018,7 @@ async def persist_scan_results(
                     MERGE (p:FacilityPath {id: node.id})
                     ON CREATE SET p.facility_id = node.facility_id,
                                   p.path = node.path,
+                                  p.path_type = node.path_type,
                                   p.status = node.status,
                                   p.terminal_reason = node.terminal_reason,
                                   p.skip_reason = node.skip_reason,

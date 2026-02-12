@@ -341,6 +341,7 @@ class ScoutSession:
                     MERGE (ar:AgentRun {id: $session_id})
                     SET ar += $props,
                         ar.run_type = 'scout',
+                        ar.agent_type = 'scout',
                         ar.last_checkpoint_at = $ts
                     WITH ar
                     MATCH (f:Facility {id: $facility})

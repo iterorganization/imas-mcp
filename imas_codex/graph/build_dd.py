@@ -1530,9 +1530,11 @@ def _batch_upsert_ids_nodes(
         SET ids.description = ids_data.description,
             ids.physics_domain = ids_data.physics_domain,
             ids.path_count = ids_data.path_count,
-            ids.leaf_count = ids_data.leaf_count
+            ids.leaf_count = ids_data.leaf_count,
+            ids.dd_version = $version
     """,
         ids_list=ids_list,
+        version=version,
     )
 
     # Batch create INTRODUCED_IN relationships for first version
@@ -1600,7 +1602,8 @@ def _batch_create_path_nodes(
                 path.ndim = p.ndim,
                 path.node_type = p.node_type,
                 path.physics_domain = p.physics_domain,
-                path.maxoccur = p.maxoccur
+                path.maxoccur = p.maxoccur,
+                path.ids = p.ids_name
         """,
             paths=batch,
         )
@@ -1956,6 +1959,7 @@ def _import_clusters(
                 )
                 return existing_count
             cluster_count = 0
+            missing_centroids = 0
 
             for cluster in cluster_data:
                 cluster_id = cluster.get("id", cluster_count)
@@ -1987,6 +1991,9 @@ def _import_clusters(
                     else None,
                     "ids_names": ids_names if ids_names else [],
                 }
+
+                if cluster_props["centroid"] is None:
+                    missing_centroids += 1
 
                 # Create IMASSemanticCluster node with all properties
                 # Use CASE expressions to handle null centroid
@@ -2033,6 +2040,14 @@ def _import_clusters(
                     )
 
                 cluster_count += 1
+
+            if missing_centroids > 0:
+                logger.warning(
+                    "%d/%d clusters imported without centroid vectors — "
+                    "rebuild clusters with embeddings to fix",
+                    missing_centroids,
+                    cluster_count,
+                )
 
             # Update DDVersion with cluster metadata
             client.query(

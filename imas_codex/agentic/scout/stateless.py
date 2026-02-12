@@ -273,7 +273,7 @@ def compute_interest_score(
 def discover_path(
     facility: str,
     path: str,
-    path_type: str = "directory",
+    path_type: str = "code_directory",
     interest_score: InterestScore | None = None,
     interest_reason: str | None = None,
 ) -> dict[str, Any]:
@@ -285,7 +285,7 @@ def discover_path(
     Args:
         facility: Facility ID
         path: Absolute path on the facility
-        path_type: 'directory' or 'file'
+        path_type: PathType enum value (e.g. 'code_directory', 'data_directory')
         interest_score: Multi-dimensional interest score
         interest_reason: LLM-generated reason for interest level
 
@@ -339,6 +339,7 @@ def discover_path(
             client.query(
                 """
                 MERGE (f:Facility {id: $facility})
+                ON CREATE SET f.name = $facility
                 MERGE (p:FacilityPath {id: $id})
                 SET p += $props
                 MERGE (p)-[:FACILITY_ID]->(f)
@@ -870,7 +871,7 @@ class StatelessScout:
                 result = discover_path(
                     self.config.facility,
                     path,
-                    path_type="directory",
+                    path_type="code_directory",
                     interest_reason="Root exploration path",
                 )
                 results.append(result)

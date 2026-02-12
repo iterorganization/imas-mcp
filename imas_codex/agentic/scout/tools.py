@@ -147,7 +147,7 @@ class DiscoverPathTool(Tool):
         result = discover_path(
             facility=self.facility,
             path=path,
-            path_type=path_type or "directory",
+            path_type=path_type or "code_directory",
             interest_score=score,
             interest_reason=interest_reason,
         )

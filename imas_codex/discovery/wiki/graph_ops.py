@@ -193,12 +193,15 @@ def _bulk_create_wiki_artifacts(
             page_links.append({"artifact_id": artifact_id, "page_id": page_id})
 
     if page_links:
-        # Link artifacts to existing pages (pages discovered via bulk discovery)
+        # Link artifacts to their parent pages
+        # Use MERGE for WikiPage to handle cases where the page hasn't been
+        # fully ingested yet — creates a stub node that will be enriched later
+        # when the page is actually crawled and ingested.
         gc.query(
             """
             UNWIND $links AS link
             MATCH (wa:WikiArtifact {id: link.artifact_id})
-            MATCH (wp:WikiPage {id: link.page_id})
+            MERGE (wp:WikiPage {id: link.page_id})
             MERGE (wp)-[:HAS_ARTIFACT]->(wa)
             """,
             links=page_links,

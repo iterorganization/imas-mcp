@@ -239,6 +239,7 @@ def ingest_tdi_functions(
                 client.query(
                     """
                     MERGE (f:Facility {id: $facility_id})
+                    ON CREATE SET f.name = $facility_id
                     CREATE (t:TDIFunction {
                         name: $name,
                         facility_id: $facility_id,
