@@ -31,13 +31,19 @@ class CustomBuildHook(BuildHookInterface):
         """Check if graph models exist and are up to date."""
         package_root = Path(__file__).parent
         schemas_dir = package_root / "imas_codex" / "schemas"
-        models_file = package_root / "imas_codex" / "graph" / "models.py"
 
         # Check all schema files that contribute to generated models
         schema_files = [
             schemas_dir / "facility.yaml",
             schemas_dir / "common.yaml",
             schemas_dir / "imas_dd.yaml",
+            schemas_dir / "facility_config.yaml",
+        ]
+
+        # All generated output files that must exist
+        output_files = [
+            package_root / "imas_codex" / "graph" / "models.py",
+            package_root / "imas_codex" / "config" / "models.py",
         ]
 
         # If no schema files exist yet, nothing to generate
@@ -45,13 +51,16 @@ class CustomBuildHook(BuildHookInterface):
         if not existing_schemas:
             return True
 
-        # Check if models file exists
-        if not models_file.exists():
+        # Check if all output files exist
+        existing_outputs = [f for f in output_files if f.exists()]
+        if len(existing_outputs) != len(output_files):
             return False
 
-        # Check if any schema is newer than models
-        models_mtime = models_file.stat().st_mtime
-        return all(f.stat().st_mtime <= models_mtime for f in existing_schemas)
+        # Check if any schema is newer than the oldest output
+        oldest_output_mtime = min(f.stat().st_mtime for f in existing_outputs)
+        return all(
+            f.stat().st_mtime <= oldest_output_mtime for f in existing_schemas
+        )
 
     def _generate_graph_models(self, package_root: Path) -> None:
         """Generate graph Pydantic models from LinkML schema."""
