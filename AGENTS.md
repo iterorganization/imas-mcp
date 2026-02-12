@@ -42,7 +42,13 @@ All graph node types, relationships, and properties are defined in LinkML schema
 **Build pipeline:**
 - Models auto-generated during `uv sync` via hatch build hook
 - Regenerate manually: `uv run build-models --force`
-- Output: `imas_codex/graph/models.py`, `imas_codex/graph/dd_models.py`
+- Output: `imas_codex/graph/models.py`, `imas_codex/graph/dd_models.py`, `imas_codex/config/models.py`
+
+**CRITICAL: Never commit auto-generated files.** These are gitignored and rebuilt on `uv sync`. If `git status` shows a generated model file as untracked or modified, do NOT stage it. Generated files:
+- `imas_codex/graph/models.py`
+- `imas_codex/graph/dd_models.py`
+- `imas_codex/config/models.py`
+- `imas_codex/core/physics_domain.py`
 
 Always import enums and classes from generated models. Never hardcode status values:
 
@@ -318,6 +324,7 @@ uv run ruff check --fix .
 uv run ruff format .
 
 # 2. Stage specific files (never git add -A)
+# NEVER stage auto-generated files (models.py, dd_models.py, physics_domain.py)
 git add <file1> <file2> ...
 
 # 3. Commit with conventional format
