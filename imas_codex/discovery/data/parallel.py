@@ -1168,11 +1168,6 @@ async def scan_worker(
         on_progress("scan complete", state.discover_stats)
 
 
-# Retry configuration for rate limiting
-_ENRICH_MAX_RETRIES = 5
-_ENRICH_RETRY_BASE_DELAY = 5.0  # seconds, doubles each retry
-
-
 async def enrich_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
@@ -1181,33 +1176,17 @@ async def enrich_worker(
 
     Groups signals by TDI function and includes function source code as context.
     Uses Jinja2 prompt template with schema-injected physics domains.
-    Uses centralized LLM access via get_model_for_task() with OpenRouter.
+    Uses centralized LLM access via acall_llm_structured() from base.llm.
     """
-    import os
     from collections import defaultdict
-
-    import litellm
 
     from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.data.models import SignalEnrichmentBatch
 
-    # Suppress LiteLLM verbose output
-    logging.getLogger("LiteLLM").setLevel(logging.ERROR)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-
-    # Get API key - same pattern as wiki/paths discovery
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "OPENROUTER_API_KEY environment variable not set. "
-            "Set it in .env or export it."
-        )
-
-    # Get model and ensure OpenRouter prefix
-    # Using enrichment task - configured in pyproject.toml
+    # Get model configured for enrichment task
     model = get_model_for_task("enrichment")
-    model_id = model if model.startswith("openrouter/") else f"openrouter/{model}"
 
     # Render system prompt once (contains physics domains from schema)
     system_prompt = render_prompt("discovery/signal-enrichment")
@@ -1303,81 +1282,43 @@ async def enrich_worker(
 
         user_prompt = "\n".join(user_lines)
 
-        # Retry loop for rate limiting / overloaded errors
-        last_error = None
-        response = None
-        for attempt in range(_ENRICH_MAX_RETRIES):
-            try:
-                # Call LLM with structured output for batch
-                # max_tokens=32000 supports large batches
-                response = await litellm.acompletion(
-                    model=model_id,
-                    api_key=api_key,
-                    max_tokens=32000,
-                    response_format=SignalEnrichmentBatch,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0.3,
-                )
-                break  # Success
-            except Exception as e:
-                last_error = e
-                error_msg = str(e).lower()
-                if any(
-                    x in error_msg
-                    for x in ["overloaded", "rate", "429", "503", "timeout"]
-                ):
-                    delay = _ENRICH_RETRY_BASE_DELAY * (2**attempt)
-                    logger.debug(
-                        f"LLM rate limited (attempt {attempt + 1}/{_ENRICH_MAX_RETRIES}), "
-                        f"waiting {delay:.1f}s..."
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    # Non-retryable error - release all claims and continue
-                    logger.warning("LLM error (non-retryable): %s", e)
-                    for signal in signals:
-                        await asyncio.to_thread(release_signal_claim, signal["id"])
-                    break
-
-        if response is None:
-            if last_error:
-                logger.warning(
-                    "All LLM retries exhausted for batch of %d signals: %s",
-                    len(signals),
-                    last_error,
-                )
-            for signal in signals:
-                await asyncio.to_thread(release_signal_claim, signal["id"])
-            continue
-
-        # Log token usage for debugging truncation issues
-        if hasattr(response, "usage"):
-            output_tokens = response.usage.completion_tokens
-            logger.debug(
-                "LLM response: %d output tokens for %d signals",
-                output_tokens,
-                len(signals),
-            )
-
-        # Parse structured response
-        raw_content = response.choices[0].message.content
+        # Call LLM with structured output using shared base infrastructure
+        # acall_llm_structured handles: retry, backoff, noise suppression,
+        # API key, model prefix, JSON sanitization, cost tracking
         try:
-            batch_result = SignalEnrichmentBatch.model_validate_json(raw_content)
-        except Exception as e:
-            # Log truncated content for debugging (first 500 chars)
-            content_preview = raw_content[:500] if raw_content else "<empty>"
+            batch_result, batch_cost, total_tokens = await acall_llm_structured(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_model=SignalEnrichmentBatch,
+                temperature=0.3,
+            )
+        except ValueError as e:
             logger.warning(
-                "Failed to parse LLM response (len=%d, preview=%s...): %s",
-                len(raw_content) if raw_content else 0,
-                content_preview,
+                "LLM enrichment failed for batch of %d signals: %s",
+                len(signals),
                 e,
             )
             for signal in signals:
                 await asyncio.to_thread(release_signal_claim, signal["id"])
             continue
+        except Exception as e:
+            logger.warning("LLM error (non-retryable): %s", e)
+            for signal in signals:
+                await asyncio.to_thread(release_signal_claim, signal["id"])
+            continue
+
+        # Track cost
+        state.enrich_stats.cost += batch_cost
+
+        logger.debug(
+            "LLM response: %d tokens for %d signals (cost=$%.4f)",
+            total_tokens,
+            len(signals),
+            batch_cost,
+        )
 
         # Match results back to signals by index (1-based signal_index)
         enriched = []
@@ -1405,23 +1346,6 @@ async def enrich_worker(
         for idx, signal in enumerate(signals):
             if idx not in matched_indices:
                 await asyncio.to_thread(release_signal_claim, signal["id"])
-
-        # Track cost
-        batch_cost = 0.0
-        if hasattr(response, "usage"):
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
-
-            if (
-                hasattr(response, "_hidden_params")
-                and "response_cost" in response._hidden_params
-            ):
-                batch_cost = response._hidden_params["response_cost"]
-            else:
-                # Fallback: Gemini Flash rates via OpenRouter ($0.10/$0.40 per 1M tokens)
-                batch_cost = (input_tokens * 0.10 + output_tokens * 0.40) / 1_000_000
-
-            state.enrich_stats.cost += batch_cost
 
         # Update graph with enrichment cost for historical tracking
         if enriched:

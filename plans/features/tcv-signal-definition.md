@@ -1,4 +1,52 @@
-# TCV Signal Definition Strategy
+# Signal Definition Strategy
+
+## Current Status (June 2025)
+
+### Implementation Progress
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 1: Wiki Signal Tables | **Not started** | WikiChunk nodes exist in graph (8,369 chunks), but no wiki→signal extraction implemented |
+| Phase 2: TDI Source Mapping | **Complete (TCV)** | 375 TDI signals discovered, 253 enriched+checked, 73 failed (shot-dependent). Cost: $0.09 |
+| Phase 3: Runtime Validation | **Working** | check_worker validates via `tdiExecute()`. All bugs fixed (JSON contamination, stdout pollution) |
+| Phase 4: Signal ID Schema | **Implemented** | Format: `facility:physics_domain/signal_name` |
+| Phase 5: IMAS Mapping | **Not started** | No `tcv_get_ids_*.m` parsing |
+| Multi-facility architecture | **Designed** | Plugin-based data source scanners |
+
+### Graph State (post-pipeline run)
+
+- **253 FacilitySignal nodes**: 180 checked + 73 failed (shot-dependent signals like staticgreen, staticwinding)
+- 21 TDIFunction nodes with source code cached
+- 7 DataAccess nodes: `tcv:tdi:functions`, `tcv:mdsplus:tree_tdi`, `tcv:matlab:mdsplus`, `jet:sal:ppf`, `jet:matlab:ppf`, `jet:idl:ppf`, `jet:cli:getdat`
+- 564 WikiPage nodes, 8,369 WikiChunk nodes (TCV wiki)
+- Physics domain distribution: equilibrium (127), general (55), magnetic_field_diagnostics (44), EM wave diagnostics (24), edge plasma (15), transport (11), machine ops (10)
+
+### Bugs Fixed
+
+1. **JSON contamination in `run_python_script`**: stderr was appended to stdout, corrupting JSON output from remote scripts when MDSplus/TDI functions printed warnings (e.g., libvaccess.so loading errors). Fix: stderr is now logged separately, never mixed into stdout.
+
+2. **stdout pollution from TDI functions**: Functions like `tile_store` print debug output and try to load hardware libraries (`libvaccess.so`) when executed via `tdiExecute()`. Fix: `check_signals_batch.py` now captures stdout/stderr during TDI execution using fd-level redirection.
+
+3. **Operational functions in signal catalog**: Hardware control functions (`tile_store`, `beckhoff_setstate`, `acq_lente_trigger`, etc.) were being discovered as physics signals. Fix: `OPERATIONAL_TDI_FUNCTIONS` exclusion set in `tdi.py`. 69 stale signals cleaned from graph.
+
+4. **Duplicated LLM infrastructure**: `enrich_worker` reimplemented retry logic, API key management, noise suppression, and cost tracking. Fix: refactored to use `acall_llm_structured()` from `discovery.base.llm`.
+
+### Architecture
+
+The data discovery module (`imas_codex/discovery/data/`) uses the same parallel worker pattern as paths/wiki discovery:
+
+```
+scan_worker → enrich_worker → check_worker
+(SSH/TDI)     (LLM)           (SSH/MDSplus)
+```
+
+Workers coordinate via `claimed_at` timestamps in Neo4j. Status transitions: `discovered → enriched → checked | failed`.
+
+Base infrastructure from `imas_codex/discovery/base/` now shared:
+- `acall_llm_structured` — LLM calls with retry, cost tracking, structured output
+- `SupervisedWorkerGroup` / `supervised_worker` — crash recovery with backoff
+- `WorkerStats` — rate/cost tracking
+- `get_facility()` — facility config resolution
 
 ## Context
 
@@ -161,9 +209,148 @@ Available IDS mappings: `core_profiles`, `equilibrium`, `nbi`, `summary`, `thoms
 | `units_of()` runtime | ✗ | ✓ for `tcv_eq` | ✗ | Reliable for TreePath results only |
 | `tcv_get_ids_*.m` | ✗ | ✗ | ✗ | Has IMAS path mappings only |
 
+## Multi-Facility Architecture
+
+### Data Access Methods by Facility
+
+| Facility | Primary | Secondary | Graph State |
+|----------|---------|-----------|-------------|
+| **TCV** | MDSplus + TDI functions | Matlab gdat/tcvget, IMAS bridge | 253 signals, 2 DataAccess |
+| **JET** | PPF (SAL REST), PPF (Matlab/IDL), getdat CLI | IMAS, MDSplus (limited) | 0 signals, 4 DataAccess |
+| **JT-60SA** | EDAS (C/Fortran/Python wrappers) | IMAS (modules), MDSplus, UDA | 0 signals, 0 DataAccess |
+| **ITER** | IMAS (native) | MDSplus | 0 signals, 0 DataAccess |
+
+### Plugin Architecture
+
+The scan_worker currently handles only TDI function extraction. For multi-facility support, the scan phase needs **data source plugins** — each facility config declares which plugins to use via `data_sources`:
+
+```yaml
+# tcv.yaml
+data_sources:
+  tdi:
+    primary_path: /usr/local/CRPP/tdi/tcv
+    reference_shot: 85000
+
+# jet.yaml (future)
+data_sources:
+  ppf:
+    sal_endpoint: https://sal.jet.uk/rest/ppf
+    reference_pulse: 99999
+  imas:
+    db_name: jet
+    reference_pulse: 99999
+
+# jt60sa.yaml (future)
+data_sources:
+  edas:
+    api_library: /analysis/src/edas
+    reference_shot: 1000
+  imas:
+    module_name: imas/3.x
+    reference_shot: 1000
+
+# iter.yaml (future)
+data_sources:
+  imas:
+    db_name: iter
+    reference_shot: 100000
+```
+
+### Scanner Interface
+
+Each data source type needs a scanner that produces `FacilitySignal` nodes with a common schema:
+
+```python
+class DataSourceScanner(Protocol):
+    """Interface for data source-specific signal discovery."""
+
+    async def scan(
+        self,
+        facility: str,
+        ssh_host: str,
+        config: dict,            # data_sources.{type} config
+        reference_shot: int,
+    ) -> list[FacilitySignal]:
+        """Discover signals from this data source."""
+        ...
+
+    async def check(
+        self,
+        facility: str,
+        ssh_host: str,
+        signals: list[FacilitySignal],
+        reference_shot: int,
+    ) -> list[dict]:
+        """Validate signals return data for reference shot."""
+        ...
+```
+
+**Existing scanners to extract:**
+- `TDIScanner` — current scan_worker logic (TCV)
+- `PPFScanner` — JET PPF catalog via SAL REST API
+- `EDASScanner` — JT-60SA EDAS signal catalog (parse C header files)
+- `IMASScanner` — IMAS IDS signal enumeration
+
+**Shared across all scanners:**
+- Enrichment (enrich_worker) — LLM physics domain classification is facility-agnostic
+- Signal ID schema — `facility:physics_domain/signal_name`
+- Graph persistence — FacilitySignal, DataAccess, MAPS_TO_IMAS relationships
+
+### Implementation Sequence
+
+1. **Extract TDI scanner** from scan_worker into `discovery/data/scanners/tdi.py`
+2. **Add `data_sources` config** to JET, JT-60SA, ITER facility YAMLs
+3. **Implement PPF scanner** for JET (SAL REST API is most accessible)
+4. **Implement EDAS scanner** for JT-60SA
+5. **Wire scanner dispatch** in scan_worker based on `data_sources` config keys
+
+### JET Signal Discovery Plan
+
+JET has 4 DataAccess methods already in the graph. The SAL REST API is the most accessible:
+
+```
+GET https://sal.jet.uk/rest/ppf/{pulse}/{uid}/{dda}/{dtype}
+```
+
+PPF is organized: Source → DDA (Diagnostic Data Area) → Node. Key DDAs:
+- `EFIT`: Equilibrium (R, Z, Psi, q, p, j profiles)
+- `KG1V`: FIR interferometer (ne line-averaged)
+- `KK3A`: ECE electron temperature
+- `HRTS`: Thomson scattering
+- `CXFM`: CXRS ion temperature/rotation
+- `BOLO`: Bolometry
+- `NB`: Neutral beam power
+- `NBR`: ICRF heating power
+
+**Step 1:** Query SAL catalog for all DDAs with signal metadata.
+**Step 2:** Enrich with LLM (same enrich_worker).
+**Step 3:** Validate data retrieval for a reference pulse.
+
+## Development Direction
+
+### Immediate (this sprint)
+
+1. **Wiki signal table extraction** (Phase 1) — parse Tcvget and Frequently Used Results Nodes wiki chunks to create authoritative signal records with descriptions, units, MDSplus paths. Cross-reference with discovered TDI signals.
+2. **Re-run with all signals** — current run has 73 failed signals from shot-dependent functions. Try different reference shots or mark as conditional.
+3. **IMAS mapping** (Phase 5) — SSH to TCV, read `tcv_get_ids_*.m` files, parse signal→IDS path mappings, store as `MAPS_TO_IMAS` graph relationships.
+
+### Short-term (next 2 sprints)
+
+4. **Extract TDI scanner** into plugin structure for multi-facility support.
+5. **JET PPF discovery** — implement PPF scanner using SAL REST API. JET already has 4 DataAccess nodes in graph.
+6. **Signal embeddings** — once catalog is stable, embed signal descriptions for semantic search.
+
+### Medium-term
+
+7. **JT-60SA EDAS discovery** — EDAS has C header files with signal definitions.
+8. **Cross-facility signal alignment** — link equivalent signals across facilities (e.g., TCV `tcv_get('IP')` ↔ JET `PPF/MAGN/IPLA` ↔ IMAS `magnetics/ip_plasma`).
+9. **Matlab wrapper parsing** — extract `gdat.m`/`tcvget.m` signal catalogs for TCV.
+
 ## Open Questions
 
 1. **LAC machine access** — Can we SSH to a LAC (lac911.epfl.ch) to read `tcv_get_ids_*.m` files, or do we need to find them via another route?
 2. **Parametric function enumeration** — Functions like `ts_fitdata(quantity)` accept arguments. How do we enumerate all valid arguments? Source parsing of the called function's `case()` blocks is one approach.
 3. **Shot-dependent nodes** — Some RESULTS nodes (proffit, ASTRA, chie) are written per-trial-index. Do we represent each trial as a separate signal, or note the trial dimension?
 4. **CONF subtree** — `\results::conf:*` nodes exist but queries returned NNF for shot 85000. These are written by `chie_tcv_to_nodes` and may not be filled for all shots.
+5. **JET SAL access** — Is the SAL REST API accessible from the JET login nodes, or does it require a specific network route?
+6. **JT-60SA EDAS headers** — Where are the EDAS signal definition header files on the analysis servers?

@@ -36,6 +36,35 @@ from imas_codex.remote.executor import run_python_script
 
 logger = logging.getLogger(__name__)
 
+# TDI functions that are hardware control / operational dispatch, not physics data.
+# These either try to load hardware libraries (e.g., libvaccess.so), print debug
+# output to stdout, or perform machine-control actions. They should be excluded
+# from signal discovery.
+OPERATIONAL_TDI_FUNCTIONS: frozenset[str] = frozenset(
+    {
+        # Hardware / vacuum / tile control
+        "tile_store",
+        "tile_init_action",
+        "tile_cycle",
+        "tile_counter",
+        "tile_status",
+        # Acquisition / triggering
+        "acq_lente_trigger",
+        "acq_lente_init",
+        # Beckhoff PLC / hardware state
+        "beckhoff_setstate",
+        "beckhoff_getstate",
+        # Shot management / sequencing
+        "shot_close",
+        "shot_open",
+        "shot_init",
+        # Initialization / action dispatch (void functions)
+        "init_action",
+        "close_action",
+        "store_action",
+    }
+)
+
 
 @dataclass
 class TDIQuantity:
@@ -241,6 +270,11 @@ async def discover_tdi_signals(
     for func in functions:
         # Skip internal/utility functions (start with _)
         if func.name.startswith("_"):
+            continue
+
+        # Skip operational/hardware functions that don't return physics data
+        if func.name.lower() in OPERATIONAL_TDI_FUNCTIONS:
+            logger.debug("Skipping operational TDI function: %s", func.name)
             continue
 
         func_has_signals = False

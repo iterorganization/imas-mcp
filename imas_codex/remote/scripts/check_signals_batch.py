@@ -60,6 +60,8 @@ def check_signal_group(
     """Check all signals for a single tree/shot combination.
 
     Opens the tree once and checks all signals, minimizing MDSplus overhead.
+    Captures stdout/stderr during TDI execution to prevent pollution from
+    functions like tile_store that print debug output.
 
     Args:
         tree_name: MDSplus tree name
@@ -70,6 +72,9 @@ def check_signal_group(
     Returns:
         List of result dicts with id, success, and shape/dtype or error
     """
+    import io
+    import os
+
     results = []
 
     # Set timeout for entire group
@@ -92,8 +97,21 @@ def check_signal_group(
                     results.append(result)
                     continue
 
-                # Execute TDI and get data
-                data = tree.tdiExecute(accessor).data()
+                # Capture stdout during TDI execution to prevent pollution
+                # from functions like tile_store that print debug output
+                old_stdout = sys.stdout
+                sys.stdout = io.StringIO()
+                # Also redirect fd 1 for C-level prints
+                old_fd = os.dup(1)
+                devnull_fd = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull_fd, 1)
+                try:
+                    data = tree.tdiExecute(accessor).data()
+                finally:
+                    os.dup2(old_fd, 1)
+                    os.close(old_fd)
+                    os.close(devnull_fd)
+                    sys.stdout = old_stdout
 
                 result["success"] = True
 
@@ -112,6 +130,9 @@ def check_signal_group(
                     result["dtype"] = type(data).__name__
 
             except Exception as e:
+                # Ensure stdout is restored even if exception occurs mid-redirect
+                if sys.stdout != sys.__stdout__ and hasattr(sys.stdout, "getvalue"):
+                    sys.stdout = old_stdout  # type: ignore[possibly-undefined]
                 result["error"] = str(e)[:200]
 
             results.append(result)
@@ -148,6 +169,14 @@ def check_signal_group(
 
 def main() -> None:
     """Read config from stdin, validate signals in batches, output JSON to stdout."""
+    # Redirect stderr to suppress MDSplus library loading noise
+    # (e.g., libvaccess.so, TDI function debug output like tile_store).
+    # This prevents contamination of JSON output on stdout.
+    import os
+
+    _original_stderr = sys.stderr
+    sys.stderr = open(os.devnull, "w")  # noqa: SIM115
+
     try:
         config = json.load(sys.stdin)
     except json.JSONDecodeError as e:

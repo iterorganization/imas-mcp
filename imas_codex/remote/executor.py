@@ -696,9 +696,18 @@ def run_python_script(
             timeout=timeout,
         )
 
+    # Return only stdout — stderr must not contaminate structured JSON output.
+    # Remote Python scripts (check_signals_batch, extract_tdi_functions, etc.)
+    # return JSON on stdout. MDSplus and other libraries may print warnings to
+    # stderr (e.g., libvaccess.so loading, TDI function debug output).
     output = result.stdout
+
     if result.stderr:
-        output += f"\n[stderr]: {result.stderr}"
+        logger.debug(
+            "run_python_script(%s) stderr: %s",
+            script_name,
+            result.stderr[:500],
+        )
 
     if result.returncode != 0:
         raise subprocess.CalledProcessError(
