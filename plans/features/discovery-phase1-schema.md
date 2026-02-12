@@ -433,7 +433,7 @@ class DiscoveryGraphOps:
         """Get discovery statistics for facility.
         
         Query:
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WITH p.status AS status, count(*) AS cnt
             RETURN {
               total: sum(cnt),

@@ -1144,7 +1144,7 @@ async def _ingest_image_artifact(
             MERGE (wa)-[:HAS_IMAGE]->(i)
             WITH i
             MATCH (f:Facility {id: $facility})
-            MERGE (i)-[:FACILITY_ID]->(f)
+            MERGE (i)-[:AT_FACILITY]->(f)
             """,
             image_id=image_id,
             facility=facility,
@@ -1262,7 +1262,7 @@ async def _persist_document_figures(
             MERGE (wa)-[:HAS_IMAGE]->(i)
             WITH i
             MATCH (f:Facility {id: i.facility_id})
-            MERGE (i)-[:FACILITY_ID]->(f)
+            MERGE (i)-[:AT_FACILITY]->(f)
             """,
             images=images_to_persist,
         )
@@ -1555,7 +1555,7 @@ async def _extract_and_persist_images(
             MERGE (wp)-[:HAS_IMAGE]->(i)
             WITH i
             MATCH (f:Facility {id: i.facility_id})
-            MERGE (i)-[:FACILITY_ID]->(f)
+            MERGE (i)-[:AT_FACILITY]->(f)
             """,
             images=images_to_persist,
         )

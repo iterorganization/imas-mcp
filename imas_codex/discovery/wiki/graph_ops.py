@@ -73,7 +73,7 @@ def _bulk_create_wiki_pages(
 ) -> int:
     """Create WikiPage nodes with FACILITY_ID relationship in batches.
 
-    Every WikiPage gets a [:FACILITY_ID]->(:Facility) relationship at creation
+    Every WikiPage gets a [:AT_FACILITY]->(:Facility) relationship at creation
     time, not deferred to ingestion.
 
     Args:
@@ -104,7 +104,7 @@ def _bulk_create_wiki_pages(
             ON MATCH SET wp.bulk_discovered = true
             WITH wp
             MATCH (f:Facility {id: $facility})
-            MERGE (wp)-[:FACILITY_ID]->(f)
+            MERGE (wp)-[:AT_FACILITY]->(f)
             RETURN count(wp) AS count
             """,
             pages=batch,
@@ -170,7 +170,7 @@ def _bulk_create_wiki_artifacts(
             ON MATCH SET wa.bulk_discovered = true
             WITH wa
             MATCH (f:Facility {id: $facility})
-            MERGE (wa)-[:FACILITY_ID]->(f)
+            MERGE (wa)-[:AT_FACILITY]->(f)
             RETURN count(wa) AS count
             """,
             artifacts=batch,

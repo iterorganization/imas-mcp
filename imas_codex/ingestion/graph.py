@@ -103,7 +103,7 @@ def link_examples_to_facility(graph_client: GraphClient | None = None) -> int:
         MATCH (e:CodeExample)
         WHERE e.facility_id IS NOT NULL
         MATCH (f:Facility {id: e.facility_id})
-        MERGE (e)-[:FACILITY_ID]->(f)
+        MERGE (e)-[:AT_FACILITY]->(f)
         RETURN count(*) AS created
     """
 

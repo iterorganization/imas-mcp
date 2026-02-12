@@ -120,7 +120,7 @@ def queue_source_files(
                 SET sf += item
                 WITH sf, item
                 MATCH (f:Facility {id: item.facility_id})
-                MERGE (sf)-[:FACILITY_ID]->(f)
+                MERGE (sf)-[:AT_FACILITY]->(f)
                 """,
                 items=to_discover,
             )
@@ -173,7 +173,7 @@ def get_pending_files(
     with GraphClient() as client:
         result = client.query(
             """
-            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
                OR (sf.status = 'failed' AND coalesce(sf.retry_count, 0) < 3)
             AND coalesce(sf.interest_score, 0.5) >= $min_score
@@ -259,7 +259,7 @@ def get_queue_stats(facility: str) -> dict[str, int]:
     with GraphClient() as client:
         result = client.query(
             """
-            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             RETURN sf.status AS status, count(*) AS count
             """,
             facility=facility,

@@ -13,7 +13,7 @@ class TestFacilityOwnership:
     """Facility-owned nodes must link to a valid Facility."""
 
     def test_facility_id_edges_exist(self, graph_client, schema, graph_labels):
-        """Every node with required facility_id must have a FACILITY_ID edge."""
+        """Every node with required facility_id must have an AT_FACILITY edge."""
         violations = []
         for label in sorted(graph_labels):
             if label.startswith("_"):
@@ -28,14 +28,14 @@ class TestFacilityOwnership:
             result = graph_client.query(
                 f"MATCH (n:{label}) "
                 f"WHERE n.facility_id IS NOT NULL "
-                f"AND NOT (n)-[:FACILITY_ID]->(:Facility) "
+                f"AND NOT (n)-[:AT_FACILITY]->(:Facility) "
                 f"RETURN count(n) AS cnt"
             )
             count = result[0]["cnt"] if result else 0
             if count > 0:
-                violations.append(f"{label}: {count} nodes without FACILITY_ID edge")
+                violations.append(f"{label}: {count} nodes without AT_FACILITY edge")
 
-        assert not violations, "Missing FACILITY_ID relationships:\n  " + "\n  ".join(
+        assert not violations, "Missing AT_FACILITY relationships:\n  " + "\n  ".join(
             violations
         )
 
@@ -55,7 +55,7 @@ class TestFacilityOwnership:
                 continue
 
             result = graph_client.query(
-                f"MATCH (n:{label})-[:FACILITY_ID]->(f:Facility) "
+                f"MATCH (n:{label})-[:AT_FACILITY]->(f:Facility) "
                 f"WHERE n.facility_id <> f.id "
                 f"RETURN count(n) AS cnt"
             )
@@ -125,7 +125,7 @@ class TestIMASLinks:
             pytest.skip("No IMASPath nodes in graph")
 
         result = graph_client.query(
-            "MATCH (p:IMASPath) WHERE NOT (p)-[:IDS]->(:IDS) RETURN count(p) AS cnt"
+            "MATCH (p:IMASPath) WHERE NOT (p)-[:IN_IDS]->(:IDS) RETURN count(p) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, f"{count} IMASPath nodes without IDS link"
@@ -182,16 +182,16 @@ class TestRelationshipDirection:
     """Verify relationships go in the correct direction."""
 
     def test_facility_id_direction(self, graph_client, graph_relationship_types):
-        """FACILITY_ID edges point FROM entity TO Facility, never reversed."""
-        if "FACILITY_ID" not in graph_relationship_types:
-            pytest.skip("No FACILITY_ID relationships in graph")
+        """AT_FACILITY edges point FROM entity TO Facility, never reversed."""
+        if "AT_FACILITY" not in graph_relationship_types:
+            pytest.skip("No AT_FACILITY relationships in graph")
 
         result = graph_client.query(
-            "MATCH (f:Facility)-[:FACILITY_ID]->(n) RETURN count(f) AS cnt"
+            "MATCH (f:Facility)-[:AT_FACILITY]->(n) RETURN count(f) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
-            f"{count} reversed FACILITY_ID edges (Facility->something). "
+            f"{count} reversed AT_FACILITY edges (Facility->something). "
             f"Should always be entity->Facility."
         )
 

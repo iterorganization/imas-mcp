@@ -28,13 +28,13 @@ class TestLabelsAndRelationships:
         "HAS_ARTIFACT",  # WikiPage -> WikiArtifact
         "HAS_IMAGE",  # WikiPage/WikiArtifact -> Image
         "NEXT_CHUNK",  # WikiChunk -> WikiChunk (ordering)
-        "IDS",  # IMASPath -> IDS
+        "IN_IDS",  # IMASPath -> IDS
         "INTRODUCED_IN",  # IMASPath -> DDVersion
         "DEPRECATED_IN",  # IMASPath -> DDVersion
         "HAS_COORDINATE",  # IMASPath -> IMASCoordinateSpec
         "HAS_UNIT",  # IMASPath -> Unit
         "HAS_ERROR",  # IMASPath -> IMASPath (error bounds)
-        "PARENT",  # IMASPath -> IMASPath (hierarchy)
+        "HAS_PARENT",  # IMASPath -> IMASPath (hierarchy)
         "IN_CLUSTER",  # IMASPath -> IMASSemanticCluster
         "INSTANCE_OF",  # Entity -> SoftwareRepo/PhysicsDomain
         "OWNS",  # FacilityUser -> FacilityPath

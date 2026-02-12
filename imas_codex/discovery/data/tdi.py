@@ -445,7 +445,7 @@ async def ingest_tdi_functions(
             tf.updated_at = datetime()
         WITH tf, f
         MATCH (fac:Facility {id: f.facility_id})
-        MERGE (tf)-[:FACILITY_ID]->(fac)
+        MERGE (tf)-[:AT_FACILITY]->(fac)
         """,
         functions=func_dicts,
     )
@@ -479,7 +479,7 @@ async def ingest_tdi_signals(
             SET fs += s
             WITH fs, s
             MATCH (f:Facility {id: s.facility_id})
-            MERGE (fs)-[:FACILITY_ID]->(f)
+            MERGE (fs)-[:AT_FACILITY]->(f)
             """,
             signals=signal_dicts,
         )

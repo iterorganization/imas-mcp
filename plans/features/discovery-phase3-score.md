@@ -485,7 +485,7 @@ def get_discovery_stats(graph_client, facility: str) -> dict:
     """Get current discovery statistics from graph.
     
     Cypher:
-        MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+        MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
         WITH p.status AS status, count(*) AS cnt
         RETURN {
           total: sum(cnt),
@@ -510,7 +510,7 @@ def get_expansion_depth(graph_client, facility: str) -> int:
     """Get current maximum depth explored.
     
     Cypher:
-        MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+        MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
         RETURN max(p.depth)
     """
     pass

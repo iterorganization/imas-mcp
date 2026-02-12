@@ -70,7 +70,7 @@ ReAct agents loop autonomously with budget controls; VS Code chat requires human
 1. **No hardcoded paths**: All facility paths in `config/facilities/<facility>.yaml`
 2. **Tool abstraction**: Required tools defined at project level, not per-facility
 3. **Pattern composition**: Base patterns + facility-specific overrides
-4. **Graph isolation**: Each facility in separate FACILITY_ID namespace
+4. **Graph isolation**: Each facility in separate AT_FACILITY namespace
 
 ---
 
@@ -424,7 +424,7 @@ required_tools:
 - [x] Streaming file fetch via SSH
 - [x] Tree-sitter parsing for Python
 - [x] Parallel embedding with batching
-- [x] CodeChunk node creation with FACILITY_ID relationships
+- [x] CodeChunk node creation with AT_FACILITY relationships
 
 ### Phase 4: Multi-Facility ⬜
 - [ ] Incremental discovery scheduling

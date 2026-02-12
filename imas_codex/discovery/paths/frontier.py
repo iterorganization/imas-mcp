@@ -268,7 +268,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             RETURN
                 count(p) AS total,
                 sum(CASE WHEN p.status = $discovered THEN 1 ELSE 0 END) AS discovered,
@@ -328,7 +328,7 @@ def get_purpose_distribution(facility: str) -> dict[str, int]:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.status = 'scored' AND p.path_purpose IS NOT NULL
             RETURN p.path_purpose AS purpose, count(*) AS count
             ORDER BY count DESC
@@ -373,7 +373,7 @@ def get_frontier(
     with GraphClient() as gc:
         result = gc.query(
             f"""
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE {where_clause}
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.status AS status, p.in_directory AS in_directory
@@ -398,7 +398,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.status = $scanned AND p.score IS NULL
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
@@ -1272,7 +1272,7 @@ def get_high_value_paths(
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.score >= $min_score
             RETURN p.id AS id, p.path AS path, p.score AS score,
                    p.description AS description, p.path_purpose AS path_purpose,
@@ -1318,7 +1318,7 @@ def get_top_paths_by_purpose(
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.path_purpose = $purpose AND p.score > 0
             RETURN p.path AS path, p.score AS score, p.description AS description
             ORDER BY p.score DESC
@@ -1377,7 +1377,7 @@ def clear_facility_paths(facility: str, batch_size: int = 5000) -> dict[str, int
         while True:
             result = gc.query(
                 """
-                MATCH (fu:FacilityUser)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (fu:FacilityUser)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WITH fu LIMIT $batch_size
                 DETACH DELETE fu
                 RETURN count(fu) AS deleted
@@ -1394,7 +1394,7 @@ def clear_facility_paths(facility: str, batch_size: int = 5000) -> dict[str, int
             # Delete a batch and return count
             result = gc.query(
                 """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WITH p LIMIT $batch_size
                 DETACH DELETE p
                 RETURN count(p) AS deleted
@@ -1834,7 +1834,7 @@ async def persist_scan_results(
                                       c.in_directory = child.parent_id,
                                       c.discovered_at = child.discovered_at,
                                       c.device_inode = child.device_inode
-                        MERGE (c)-[:FACILITY_ID]->(f)
+                        MERGE (c)-[:AT_FACILITY]->(f)
                         MERGE (c)-[:IN_DIRECTORY]->(parent)
                     )
 
@@ -1855,7 +1855,7 @@ async def persist_scan_results(
                                       alias.device_inode = child.device_inode,
                                       alias.canonicality = child.canonicality,
                                       alias.alias_of_id = existing.id
-                        MERGE (alias)-[:FACILITY_ID]->(f)
+                        MERGE (alias)-[:AT_FACILITY]->(f)
                         MERGE (alias)-[:IN_DIRECTORY]->(parent)
                         MERGE (alias)-[:ALIAS_OF]->(existing)
                     )
@@ -1877,7 +1877,7 @@ async def persist_scan_results(
                                       c.discovered_at = child.discovered_at,
                                       c.device_inode = child.device_inode,
                                       c.canonicality = child.canonicality
-                        MERGE (c)-[:FACILITY_ID]->(f)
+                        MERGE (c)-[:AT_FACILITY]->(f)
                         MERGE (c)-[:IN_DIRECTORY]->(parent)
                     )
                     """,
@@ -1928,7 +1928,7 @@ async def persist_scan_results(
                                   c.is_symlink = true,
                                   c.realpath = child.realpath,
                                   c.device_inode = child.device_inode
-                    MERGE (c)-[:FACILITY_ID]->(f)
+                    MERGE (c)-[:AT_FACILITY]->(f)
                     MERGE (c)-[:IN_DIRECTORY]->(parent)
                     """,
                     children=symlink_children,
@@ -1966,7 +1966,7 @@ async def persist_scan_results(
                                       target.discovered_at = child.discovered_at,
                                       target.is_symlink = false,
                                       target.device_inode = child.device_inode
-                        MERGE (target)-[:FACILITY_ID]->(f)
+                        MERGE (target)-[:AT_FACILITY]->(f)
 
                         // Create ALIAS_OF relationship from symlink to target
                         MERGE (symlink)-[:ALIAS_OF]->(target)
@@ -2035,7 +2035,7 @@ async def persist_scan_results(
                     UNWIND $nodes AS node
                     MATCH (c:FacilityPath {id: node.id})
                     MATCH (f:Facility {id: node.facility_id})
-                    MERGE (c)-[:FACILITY_ID]->(f)
+                    MERGE (c)-[:AT_FACILITY]->(f)
                     """,
                     nodes=excluded_nodes,
                 )
@@ -2067,7 +2067,7 @@ async def persist_scan_results(
                                  u.given_name = COALESCE(user.given_name, u.given_name),
                                  u.family_name = COALESCE(user.family_name, u.family_name),
                                  u.enriched_at = COALESCE(user.enriched_at, u.enriched_at)
-                    MERGE (u)-[:FACILITY_ID]->(f)
+                    MERGE (u)-[:AT_FACILITY]->(f)
                     WITH u, user
                     WHERE user.home_path_id IS NOT NULL
                     MATCH (home:FacilityPath {id: user.home_path_id})
@@ -2567,7 +2567,7 @@ def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, 
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.status = $scored
               AND p.should_enrich = true
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
@@ -2696,7 +2696,7 @@ def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, 
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.status = $scored
               AND p.is_enriched = true
               AND p.score >= 0.5

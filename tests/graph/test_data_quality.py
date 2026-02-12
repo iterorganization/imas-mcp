@@ -1,19 +1,14 @@
 """Data quality tests.
 
 Verifies embedding dimensions, self-similarity, description quality,
-and enumerated field values. Embedding coverage for description fields
-is only checked in CI (after data push runs embed update); local tests
-skip those checks since embedding sync is periodic by design.
+and enumerated field values.
 """
-
-import os
 
 import pytest
 
 pytestmark = pytest.mark.graph
 
 # Node types that have description + embedding fields (facility-owned)
-# These are updated by `imas-codex embed update` and `data push --embed`
 DESCRIPTION_EMBEDDABLE_LABELS = [
     "FacilitySignal",
     "FacilityPath",
@@ -32,11 +27,6 @@ ALL_EMBEDDABLE_LABELS = [
 # Minimum self-similarity score (cosine) for embedding vs description
 # A well-embedded description should have high self-similarity
 MIN_SELF_SIMILARITY = 0.5
-
-
-def _is_ci() -> bool:
-    """Detect CI environment."""
-    return os.getenv("CI", "").lower() in ("true", "1")
 
 
 class TestEmbeddingDimensions:
@@ -140,15 +130,12 @@ class TestEmbeddingSelfSimilarity:
     - Embeddings computed from wrong text
     - Corrupt or shuffled embeddings
 
-    Only runs in CI where the embedding server is available. Locally,
-    embedding sync is periodic by design, so this is skipped.
+    Requires the remote embedding server (localhost:18765 via SSH tunnel).
     """
 
     @pytest.mark.parametrize("label", DESCRIPTION_EMBEDDABLE_LABELS)
     def test_self_similarity(self, graph_client, label, label_counts):
         """Stored embeddings should match re-embedded descriptions."""
-        if not _is_ci():
-            pytest.skip("Self-similarity check only runs in CI (requires embedder)")
 
         if not label_counts.get(label):
             pytest.skip(f"No {label} nodes in graph")
@@ -186,17 +173,12 @@ class TestEmbeddingSelfSimilarity:
 class TestDescriptionEmbeddingCoverage:
     """Description embedding coverage checks.
 
-    In CI (after `data push --embed`), all descriptions should be embedded.
-    Locally this is skipped since embedding sync is periodic.
+    After `data push --embed`, all descriptions should be embedded.
     """
 
     @pytest.mark.parametrize("label", DESCRIPTION_EMBEDDABLE_LABELS)
-    def test_description_embedding_coverage_ci(self, graph_client, label, label_counts):
-        """In CI, all nodes with descriptions should have embeddings."""
-        if not _is_ci():
-            pytest.skip(
-                "Embedding coverage only enforced in CI (sync is periodic locally)"
-            )
+    def test_description_embedding_coverage(self, graph_client, label, label_counts):
+        """All nodes with descriptions should have embeddings."""
 
         if not label_counts.get(label):
             pytest.skip(f"No {label} nodes in graph")

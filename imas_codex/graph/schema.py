@@ -38,16 +38,24 @@ class Relationship:
         slot_name: LinkML slot name
         to_class: Target class name (Neo4j label)
         multivalued: Whether the slot is multivalued
+        _cypher_type: Explicit Cypher relationship type override
     """
 
     from_class: str
     slot_name: str
     to_class: str
     multivalued: bool = False
+    _cypher_type: str | None = None
 
     @property
     def cypher_type(self) -> str:
-        """Convert to Neo4j relationship type (SCREAMING_SNAKE_CASE)."""
+        """Convert to Neo4j relationship type (SCREAMING_SNAKE_CASE).
+
+        Uses the ``relationship_type`` annotation from LinkML schema if
+        present, otherwise falls back to uppercased slot name.
+        """
+        if self._cypher_type:
+            return self._cypher_type
         # e.g., "facility_id" -> "FACILITY_ID", "writes_to" -> "WRITES_TO"
         return self.slot_name.upper()
 
@@ -101,12 +109,21 @@ class GraphSchema:
                 slot_range = slot.range
                 # Check if range is a class (relationship) vs primitive type
                 if slot_range and slot_range in self._view.all_classes():
+                    # Check for explicit relationship_type annotation
+                    annotations = getattr(slot, "annotations", {}) or {}
+                    rel_type_ann = annotations.get("relationship_type")
+                    cypher_type = (
+                        rel_type_ann.value
+                        if rel_type_ann and hasattr(rel_type_ann, "value")
+                        else None
+                    )
                     rels.append(
                         Relationship(
                             from_class=class_name,
                             slot_name=slot.name,
                             to_class=slot_range,
                             multivalued=bool(slot.multivalued),
+                            _cypher_type=cypher_type,
                         )
                     )
         return rels

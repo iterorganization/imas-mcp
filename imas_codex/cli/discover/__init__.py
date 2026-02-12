@@ -300,7 +300,7 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
         with GraphClient() as gc:
             scanned_paths = gc.query(
                 """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WHERE p.status = 'scanned'
                 RETURN p.path AS path, p.total_files AS total_files,
                        p.total_dirs AS total_dirs, p.has_readme AS has_readme,
@@ -315,7 +315,7 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
 
             scored_paths = gc.query(
                 """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WHERE p.status = 'scored' AND p.score IS NOT NULL
                 RETURN p.path AS path, p.score AS score,
                        p.score_modeling_code AS score_modeling_code,

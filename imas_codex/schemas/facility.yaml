@@ -687,6 +687,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       path:
         description: Absolute filesystem path
         required: true
@@ -1069,6 +1071,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       username:
         description: Local username at facility
         required: true
@@ -1154,6 +1158,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       role:
         description: Server role in the infrastructure
         range: ServerRole
@@ -1172,6 +1178,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       server_hostname:
         description: Primary server hosting this tree
         range: MDSplusServer
@@ -1223,6 +1231,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       version:
         description: Sequential version number for this tree structure
         required: true
@@ -1278,6 +1288,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       node_type:
         description: MDSplus node data type
         range: TreeNodeType
@@ -1413,6 +1425,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       description:
         description: Function description and usage notes
       signature:
@@ -1475,6 +1489,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       name:
         description: Name or description of this range
       start_shot:
@@ -1502,6 +1518,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       category:
         description: Diagnostic category
         range: DiagnosticCategory
@@ -1553,7 +1571,7 @@ classes:
       DataAccess nodes but shares the same physics_domain categorization.
       
       Required relationships:
-        - FACILITY_ID -> Facility
+        - AT_FACILITY -> Facility
         - DATA_ACCESS -> DataAccess (code generation)
       
       Optional relationships:
@@ -1601,6 +1619,8 @@ classes:
         description: Parent facility
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       physics_domain:
         description: Physics domain for categorizing this signal
         range: PhysicsDomain
@@ -1736,6 +1756,8 @@ classes:
         description: Parent facility
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       name:
         description: Human-readable name (e.g., "MDSplus TDI Local", "IMAS IDS Access")
       method_type:
@@ -1881,6 +1903,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       code_type:
         description: Type of analysis
         range: AnalysisCodeType
@@ -1942,6 +1966,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       
       # Pump context for Ambix Recipe generation
       driver:
@@ -1991,6 +2017,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       source_file:
         description: Remote file path (e.g., /home/wilson/data/load_to_imas.py)
         required: true
@@ -2033,6 +2061,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       path:
         description: Absolute remote filesystem path
         required: true
@@ -2142,6 +2172,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       # Typed resolution relationships
       resolves_to_tree_node:
         description: MDSplus TreeNode this reference resolves to
@@ -2174,6 +2206,8 @@ classes:
         description: Target facility for this agent run
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       agent_type:
         description: Type of agent (discover-paths, discover-files, discover-tdi, enrich, map)
         required: true
@@ -2251,7 +2285,7 @@ classes:
       - Access method details stored in facility private YAML
       
       Relationships:
-      - FACILITY_ID -> Facility (optional, for facility-specific sources)
+      - AT_FACILITY -> Facility (optional, for facility-specific sources)
       - DOCUMENTS_CODE -> AnalysisCode (optional, for readthedocs etc.)
     class_uri: facility:DocSource
     attributes:
@@ -2279,6 +2313,8 @@ classes:
       facility_id:
         description: Parent facility (if facility-specific)
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       documents_code:
         description: Code project this documents (for readthedocs, etc.)
         range: AnalysisCode
@@ -2321,7 +2357,7 @@ classes:
       Relationships:
       - LINKS_TO -> WikiPage (wiki link structure, created during scan)
       - HAS_ARTIFACT -> WikiArtifact (created during scan)
-      - FACILITY_ID -> Facility
+      - AT_FACILITY -> Facility
       - MENTIONS_TREE_NODE -> TreeNode (created during ingest)
       - MENTIONS_DIAGNOSTIC -> Diagnostic
       - MENTIONS_CODE -> AnalysisCode
@@ -2342,6 +2378,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       doc_source_id:
         description: DocSource this page came from
         range: DocSource
@@ -2454,6 +2492,8 @@ classes:
         description: Facility for efficient filtering
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       chunk_index:
         description: Zero-based position in parent document (0, 1, 2, ...)
         range: integer
@@ -2508,7 +2548,7 @@ classes:
       - Ingest worker downloads full content, parses, chunks, embeds
       
       Relationships:
-      - FACILITY_ID -> Facility
+      - AT_FACILITY -> Facility
       - HAS_ARTIFACT <- WikiPage (pages that link to this artifact)
       - HAS_CHUNK -> WikiChunk (created during ingest)
     class_uri: facility:WikiArtifact
@@ -2524,6 +2564,8 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       url:
         description: Full URL to artifact
         required: true
@@ -2610,7 +2652,7 @@ classes:
       - Embedding generated separately by embed-update CLI, not workers
       
       Relationships:
-      - FACILITY_ID -> Facility
+      - AT_FACILITY -> Facility
       - HAS_IMAGE <- WikiPage (inline images in page HTML)
       - HAS_IMAGE <- WikiArtifact (standalone wiki image files)
       - HAS_IMAGE <- WikiArtifact (figures extracted from PDFs/PPTX, future)
@@ -2633,6 +2675,8 @@ classes:
         description: Parent facility
         required: true
         range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
       source_url:
         description: Original URL or path where image was found
         required: true

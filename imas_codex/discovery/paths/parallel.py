@@ -90,7 +90,7 @@ class DiscoveryState:
         with GraphClient() as gc:
             result = gc.query(
                 """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WHERE p.status = $scored
                   AND (p.should_expand = false OR p.expanded_at IS NOT NULL)
                   AND (p.should_enrich = false OR p.is_enriched = true)
@@ -204,7 +204,7 @@ def has_pending_work(facility: str) -> bool:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WITH p,
                  CASE WHEN p.status = $discovered AND p.score IS NULL
                       THEN 'discovered' ELSE null END AS disc,
@@ -317,7 +317,7 @@ def claim_paths_for_scanning(
         # Claim unscored discovered paths (breadth-first by depth)
         result = gc.query(
             f"""
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $discovered AND p.score IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
@@ -361,7 +361,7 @@ def claim_paths_for_expanding(
         # Claim expansion paths (score-descending for valuable first)
         result = gc.query(
             f"""
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $scored
               AND p.should_expand = true
               AND p.expanded_at IS NULL
@@ -404,7 +404,7 @@ def claim_paths_for_scoring(
     with GraphClient() as gc:
         result = gc.query(
             f"""
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $scanned AND p.score IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
@@ -497,7 +497,7 @@ def claim_paths_for_enriching(
     with GraphClient() as gc:
         result = gc.query(
             f"""
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $scored
               AND {enrich_clause}
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
@@ -545,7 +545,7 @@ def claim_paths_for_rescoring(
     with GraphClient() as gc:
         result = gc.query(
             f"""
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
               AND p.rescored_at IS NULL
             {root_clause}
@@ -1203,7 +1203,7 @@ def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.path IN $paths
             SET p.claimed_at = null
             """,
@@ -1219,7 +1219,7 @@ def _revert_listing_claim(facility: str, paths: list[str]) -> None:
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.path IN $paths
             SET p.claimed_at = null
             """,
@@ -1235,7 +1235,7 @@ def _revert_enrich_claim(facility: str, paths: list[str]) -> None:
     with GraphClient() as gc:
         gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.path IN $paths
             SET p.claimed_at = null
             """,

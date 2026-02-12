@@ -127,7 +127,7 @@ def ingest_epochs(
         SET v += epoch
         WITH v, epoch
         MATCH (f:Facility {id: epoch.facility_id})
-        MERGE (v)-[:FACILITY_ID]->(f)
+        MERGE (v)-[:AT_FACILITY]->(f)
     """,
         epochs=records,
     )
@@ -262,7 +262,7 @@ def ingest_super_tree(
         WHERE n.facility_id IS NOT NULL
         WITH n
         MATCH (f:Facility {id: n.facility_id})
-        MERGE (n)-[:FACILITY_ID]->(f)
+        MERGE (n)-[:AT_FACILITY]->(f)
     """)
 
     # Create INTRODUCED_IN relationships

@@ -249,7 +249,7 @@ def ingest_tdi_functions(
                         physics_domain: $physics_domain,
                         source_file: $source_file
                     })
-                    CREATE (t)-[:FACILITY_ID]->(f)
+                    CREATE (t)-[:AT_FACILITY]->(f)
                     """,
                     facility_id=facility_id,
                     name=func.name,

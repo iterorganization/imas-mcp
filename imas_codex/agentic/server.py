@@ -321,10 +321,10 @@ def _init_repl() -> dict[str, Any]:
             summary = gc.query(
                 """
                 MATCH (f:Facility {id: $fid})
-                OPTIONAL MATCH (a:AnalysisCode)-[:FACILITY_ID]->(f)
-                OPTIONAL MATCH (d:Diagnostic)-[:FACILITY_ID]->(f)
-                OPTIONAL MATCH (t:TDIFunction)-[:FACILITY_ID]->(f)
-                OPTIONAL MATCH (m:MDSplusTree)-[:FACILITY_ID]->(f)
+                OPTIONAL MATCH (a:AnalysisCode)-[:AT_FACILITY]->(f)
+                OPTIONAL MATCH (d:Diagnostic)-[:AT_FACILITY]->(f)
+                OPTIONAL MATCH (t:TDIFunction)-[:AT_FACILITY]->(f)
+                OPTIONAL MATCH (m:MDSplusTree)-[:AT_FACILITY]->(f)
                 RETURN
                     count(DISTINCT a) AS analysis_codes,
                     count(DISTINCT d) AS diagnostics,
@@ -339,7 +339,7 @@ def _init_repl() -> dict[str, Any]:
             # Get actionable paths
             actionable = gc.query(
                 """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $fid})
                 WHERE p.status = 'discovered'
                 RETURN p.path AS path, p.interest_score AS score, p.description AS description
                 ORDER BY COALESCE(p.interest_score, 0) DESC
@@ -369,8 +369,8 @@ def _init_repl() -> dict[str, Any]:
             # Get MDSplus tree coverage
             trees = gc.query(
                 """
-                MATCH (t:MDSplusTree)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                OPTIONAL MATCH (n:TreeNode {tree_name: t.name})-[:FACILITY_ID]->(f)
+                MATCH (t:MDSplusTree)-[:AT_FACILITY]->(f:Facility {id: $fid})
+                OPTIONAL MATCH (n:TreeNode {tree_name: t.name})-[:AT_FACILITY]->(f)
                 RETURN t.name AS tree,
                        t.node_count_total AS total,
                        count(DISTINCT n) AS ingested
@@ -408,7 +408,7 @@ def _init_repl() -> dict[str, Any]:
             # Get discovered paths
             paths = gc.query(
                 """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $fid})
                 WHERE p.status = 'discovered'
                 RETURN p.path AS path, p.interest_score AS score
                 ORDER BY COALESCE(p.interest_score, 0) DESC

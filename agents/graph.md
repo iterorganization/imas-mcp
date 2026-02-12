@@ -88,7 +88,7 @@ query('''
     SET t += tool
     WITH t
     MATCH (f:Facility {id: 'tcv'})
-    MERGE (t)-[:FACILITY_ID]->(f)
+    MERGE (t)-[:AT_FACILITY]->(f)
 ''', tools=tools)
 """)
 ```

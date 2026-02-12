@@ -243,7 +243,7 @@ def persist_chunks_batch(chunks: list[dict]) -> int:
             MERGE (p)-[:HAS_CHUNK]->(c)
             WITH c, chunk
             MATCH (f:Facility {id: chunk.facility_id})
-            MERGE (c)-[:FACILITY_ID]->(f)
+            MERGE (c)-[:AT_FACILITY]->(f)
             """,
             chunks=chunks,
         )
@@ -935,7 +935,7 @@ class WikiIngestionPipeline:
                     p.conventions_found = $conventions
                 WITH p
                 MATCH (f:Facility {id: $facility_id})
-                MERGE (p)-[:FACILITY_ID]->(f)
+                MERGE (p)-[:AT_FACILITY]->(f)
                 """,
                 id=page_id,
                 url=page.url,
@@ -971,7 +971,7 @@ class WikiIngestionPipeline:
                     MERGE (p)-[:HAS_CHUNK]->(c)
                     WITH c, chunk
                     MATCH (f:Facility {id: chunk.facility_id})
-                    MERGE (c)-[:FACILITY_ID]->(f)
+                    MERGE (c)-[:AT_FACILITY]->(f)
                     """,
                     chunks=batch,
                 )
@@ -1039,7 +1039,7 @@ class WikiIngestionPipeline:
                         sc.cocos_index = conv.cocos_index
                     WITH sc, conv
                     MATCH (f:Facility {id: conv.facility_id})
-                    MERGE (sc)-[:FACILITY_ID]->(f)
+                    MERGE (sc)-[:AT_FACILITY]->(f)
                     """,
                     convs=conv_batch,
                 )
@@ -2186,7 +2186,7 @@ class WikiArtifactPipeline:
                     MERGE (wa)-[:HAS_CHUNK]->(c)
                     WITH c, chunk
                     MATCH (f:Facility {id: chunk.facility_id})
-                    MERGE (c)-[:FACILITY_ID]->(f)
+                    MERGE (c)-[:AT_FACILITY]->(f)
                     """,
                     chunks=batch,
                 )

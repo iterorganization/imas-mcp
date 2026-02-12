@@ -28,7 +28,7 @@ Each TreeNode has:
 (:MDSplusTree {
     name: "results",
     facility_id: "tcv"
-})-[:FACILITY_ID]->(:Facility {id: "tcv"})
+})-[:AT_FACILITY]->(:Facility {id: "tcv"})
 ```
 
 ### TreeNode

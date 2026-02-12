@@ -810,8 +810,8 @@ Return a JSON array:
 4. **Shared Code Patterns**
    ```cypher
    -- Cross-facility code with same IMAS patterns
-   MATCH (p1:FacilityPath)-[:FACILITY_ID]->(f1:Facility {id: 'tcv'})
-   MATCH (p2:FacilityPath)-[:FACILITY_ID]->(f2:Facility {id: 'iter'})
+   MATCH (p1:FacilityPath)-[:AT_FACILITY]->(f1:Facility {id: 'tcv'})
+   MATCH (p2:FacilityPath)-[:AT_FACILITY]->(f2:Facility {id: 'iter'})
    WHERE p1.patterns_detected IS NOT NULL
      AND any(pat IN p1.patterns_detected WHERE pat IN p2.patterns_detected)
    RETURN p1.path, p2.path, 

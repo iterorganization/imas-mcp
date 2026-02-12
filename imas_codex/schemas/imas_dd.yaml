@@ -457,10 +457,14 @@ classes:
         description: The path that changed
         range: IMASPath
         required: true
+        annotations:
+          relationship_type: FOR_IMAS_PATH
       version:
         description: Version where the change occurred
         range: DDVersion
         required: true
+        annotations:
+          relationship_type: IN_VERSION
 
   # Relationship class for coordinates (captures dimension + properties)
   CoordinateRelationship:

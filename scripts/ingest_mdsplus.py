@@ -223,7 +223,7 @@ def ingest_tree_nodes(
                 SET n += item
                 WITH n, item
                 MATCH (f:Facility {id: item.facility_id})
-                MERGE (n)-[:FACILITY_ID]->(f)
+                MERGE (n)-[:AT_FACILITY]->(f)
                 """,
                 batch=batch,
             )

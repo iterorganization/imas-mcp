@@ -538,7 +538,7 @@ def _show_version_details(gc, version: str) -> None:
     # Get IMASPathChange statistics
     path_changes = gc.query(
         """
-        MATCH (pc:IMASPathChange)-[:VERSION]->(v:DDVersion {id: $version})
+        MATCH (pc:IMASPathChange)-[:IN_VERSION]->(v:DDVersion {id: $version})
         RETURN pc.change_type AS change_type, count(*) AS count
         ORDER BY count DESC
         LIMIT 10

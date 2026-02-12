@@ -104,7 +104,7 @@ class FrontierManager:
                 # Count SourceFile nodes
                 file_result = client.query(
                     """
-                    MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                    MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                     RETURN sf.status AS status, count(*) AS count
                     """,
                     facility=self.facility,

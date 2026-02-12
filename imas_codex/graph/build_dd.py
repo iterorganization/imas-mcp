@@ -1614,7 +1614,7 @@ def _batch_create_path_nodes(
             UNWIND $paths AS p
             MATCH (path:IMASPath {id: p.id})
             MATCH (ids:IDS {name: p.ids_name})
-            MERGE (path)-[:IDS]->(ids)
+            MERGE (path)-[:IN_IDS]->(ids)
         """,
             paths=batch,
         )
@@ -1629,7 +1629,7 @@ def _batch_create_path_nodes(
                 UNWIND $paths AS p
                 MATCH (path:IMASPath {id: p.id})
                 MERGE (parent:IMASPath {id: p.parent_path})
-                MERGE (path)-[:PARENT]->(parent)
+                MERGE (path)-[:HAS_PARENT]->(parent)
             """,
                 paths=parent_paths,
             )
@@ -1801,8 +1801,8 @@ def _batch_create_path_changes(
         MATCH (change:IMASPathChange {id: c.id})
         MATCH (p:IMASPath {id: c.path})
         MATCH (v:DDVersion {id: $version})
-        MERGE (change)-[:PATH]->(p)
-        MERGE (change)-[:VERSION]->(v)
+        MERGE (change)-[:FOR_IMAS_PATH]->(p)
+        MERGE (change)-[:IN_VERSION]->(v)
     """,
         changes=change_list,
         version=version,

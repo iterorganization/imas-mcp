@@ -849,7 +849,7 @@ def get_data_access_context() -> dict[str, Any]:
         with GraphClient() as client:
             # Query existing methods with key fields for examples
             result = client.query("""
-                MATCH (m:DataAccess)-[:FACILITY_ID]->(f:Facility)
+                MATCH (m:DataAccess)-[:AT_FACILITY]->(f:Facility)
                 RETURN m.id AS id,
                        m.name AS name,
                        f.id AS facility,

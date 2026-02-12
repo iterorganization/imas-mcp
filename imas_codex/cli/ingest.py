@@ -337,7 +337,7 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
         if status == "all":
             result = client.query(
                 """
-                MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 RETURN sf.path AS path, sf.status AS status,
                        sf.interest_score AS score, sf.error AS error
                 ORDER BY sf.interest_score DESC
@@ -349,7 +349,7 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
         else:
             result = client.query(
                 """
-                MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WHERE sf.status = $status
                 RETURN sf.path AS path, sf.status AS status,
                        sf.interest_score AS score, sf.error AS error

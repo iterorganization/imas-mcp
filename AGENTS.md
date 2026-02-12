@@ -300,7 +300,7 @@ results = query("""
 | FacilitySignal | DATA_ACCESS | DataAccess |
 | FacilitySignal | MAPS_TO_IMAS | IMASPath |
 | WikiChunk | HAS_CHUNK← | WikiPage |
-| FacilityPath | FACILITY_ID | Facility |
+| FacilityPath | AT_FACILITY | Facility |
 
 **Token cost:** Always project specific properties in Cypher (`RETURN n.id, n.name`), never return full nodes. Use Cypher aggregations instead of Python post-processing.
 
@@ -315,7 +315,7 @@ query('''
     SET n += item
     WITH n
     MATCH (f:Facility {id: 'tcv'})
-    MERGE (n)-[:FACILITY_ID]->(f)
+    MERGE (n)-[:AT_FACILITY]->(f)
 ''', items=tools)
 ```
 

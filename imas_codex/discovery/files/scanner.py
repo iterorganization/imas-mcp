@@ -175,7 +175,7 @@ def _persist_discovered_files(
             WITH sf, item
             WHERE sf.status = 'discovered' AND sf.discovered_at = item.discovered_at
             MATCH (f:Facility {id: item.facility_id})
-            MERGE (sf)-[:FACILITY_ID]->(f)
+            MERGE (sf)-[:AT_FACILITY]->(f)
             RETURN count(CASE WHEN sf.discovered_at = item.discovered_at THEN 1 END) AS discovered,
                    count(CASE WHEN sf.discovered_at <> item.discovered_at THEN 1 END) AS skipped
             """,
@@ -294,7 +294,7 @@ def get_file_discovery_stats(facility: str) -> dict[str, int]:
     with GraphClient() as client:
         result = client.query(
             """
-            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             RETURN sf.status AS status, count(*) AS count
             """,
             facility=facility,
@@ -305,7 +305,7 @@ def get_file_discovery_stats(facility: str) -> dict[str, int]:
         # Count by category
         cat_result = client.query(
             """
-            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             RETURN sf.file_category AS category, count(*) AS count
             """,
             facility=facility,
@@ -329,7 +329,7 @@ def clear_facility_files(facility: str) -> dict[str, int]:
     with GraphClient() as client:
         result = client.query(
             """
-            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             DETACH DELETE sf
             RETURN count(*) AS deleted
             """,

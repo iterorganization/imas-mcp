@@ -84,7 +84,7 @@ Searchable text chunk with vector embedding.
 
 ### Relationships
 
-- `WikiPage` -[:FACILITY_ID]-> `Facility`
+- `WikiPage` -[:AT_FACILITY]-> `Facility`
 - `WikiPage` -[:HAS_CHUNK]-> `WikiChunk`
 - `WikiChunk` -[:DOCUMENTS]-> `TreeNode`
 - `WikiChunk` -[:MENTIONS_IMAS]-> `IMASPath`

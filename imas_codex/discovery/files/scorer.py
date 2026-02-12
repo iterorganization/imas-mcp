@@ -50,7 +50,7 @@ def _get_scorable_files(
     with GraphClient() as client:
         result = client.query(
             """
-            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NULL
             RETURN sf.id AS id, sf.path AS path, sf.language AS language,

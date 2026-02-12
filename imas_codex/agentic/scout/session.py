@@ -287,7 +287,7 @@ class ScoutSession:
                         SET sf += $props
                         WITH sf
                         MATCH (f:Facility {id: $facility})
-                        MERGE (sf)-[:FACILITY_ID]->(f)
+                        MERGE (sf)-[:AT_FACILITY]->(f)
                         """,
                         id=discovery["id"],
                         props={

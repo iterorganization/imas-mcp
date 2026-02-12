@@ -342,7 +342,7 @@ def discover_path(
                 ON CREATE SET f.name = $facility
                 MERGE (p:FacilityPath {id: $id})
                 SET p += $props
-                MERGE (p)-[:FACILITY_ID]->(f)
+                MERGE (p)-[:AT_FACILITY]->(f)
                 """,
                 id=path_id,
                 props=props,
@@ -380,7 +380,7 @@ def skip_path(facility: str, path: str, reason: str) -> dict[str, Any]:
                     p.skipped_at = $ts
                 WITH p
                 MATCH (f:Facility {id: $facility})
-                MERGE (p)-[:FACILITY_ID]->(f)
+                MERGE (p)-[:AT_FACILITY]->(f)
                 """,
                 id=path_id,
                 path=path,
@@ -519,7 +519,7 @@ def queue_source_file(
                 SET sf += $props
                 WITH sf
                 MATCH (f:Facility {id: $facility})
-                MERGE (sf)-[:FACILITY_ID]->(f)
+                MERGE (sf)-[:AT_FACILITY]->(f)
                 """,
                 id=file_id,
                 props=props,
@@ -552,7 +552,7 @@ def get_frontier(
         with GraphClient() as client:
             result = client.query(
                 """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WHERE p.status = 'discovered'
                   AND coalesce(p.interest_score, 0.5) >= $min_score
                 RETURN p.path AS path,
@@ -585,7 +585,7 @@ def get_exploration_summary(facility: str) -> dict[str, Any]:
             # Path status counts
             path_result = client.query(
                 """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 RETURN p.status AS status, count(*) AS count
                 """,
                 facility=facility,
@@ -601,7 +601,7 @@ def get_exploration_summary(facility: str) -> dict[str, Any]:
             # File counts
             file_result = client.query(
                 """
-                MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 RETURN sf.status AS status, count(*) AS count
                 """,
                 facility=facility,

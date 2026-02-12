@@ -543,7 +543,7 @@ class GraphClient:
             where_clause = "WHERE " + " AND ".join(conditions)
 
         query = f"""
-            MATCH (n:{label})-[:FACILITY_ID]->(f:Facility)
+            MATCH (n:{label})-[:AT_FACILITY]->(f:Facility)
             {where_clause}
             RETURN n, f.id as facility_id
             ORDER BY f.id, n.name
@@ -571,7 +571,7 @@ class GraphClient:
         with self.session() as sess:
             query_result = sess.run(
                 f"""
-                MATCH (n:{label})-[:FACILITY_ID]->(f:Facility)
+                MATCH (n:{label})-[:AT_FACILITY]->(f:Facility)
                 WHERE f.id IN $facility_ids
                 RETURN n, f.id as facility_id
                 ORDER BY f.id

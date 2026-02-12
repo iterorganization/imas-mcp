@@ -276,7 +276,7 @@ class BranchExecutor:
         with GraphClient() as gc:
             result = gc.query(
                 """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WHERE (p.status = 'discovered' OR (p.expand_to IS NOT NULL AND p.expand_to > p.depth))
                   AND (p.claimed_by IS NULL OR p.claimed_by = $session_id)
                 RETURN p.path AS path, p.depth AS depth

@@ -781,7 +781,7 @@ def ingest_epochs(
                         MERGE (s)-[:INTRODUCED_IN]->(v)
                         WITH s, sig
                         MATCH (f:Facility {id: sig.facility_id})
-                        MERGE (s)-[:FACILITY_ID]->(f)
+                        MERGE (s)-[:AT_FACILITY]->(f)
                         RETURN count(s) AS created
                         """,
                         signals=signals,
@@ -1071,7 +1071,7 @@ def ingest_discovered_signals(signals: list[dict]) -> int:
                 MERGE (s)-[:INTRODUCED_IN]->(v)
                 WITH s, sig
                 MATCH (f:Facility {id: sig.facility_id})
-                MERGE (s)-[:FACILITY_ID]->(f)
+                MERGE (s)-[:AT_FACILITY]->(f)
                 """,
                 signals=signals,
             )
