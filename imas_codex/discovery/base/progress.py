@@ -296,6 +296,42 @@ class WorkerStats:
 # =============================================================================
 
 
+# =============================================================================
+# Standard Layout Constants
+# =============================================================================
+#
+# All discovery progress displays share the same layout grid to ensure
+# consistent visual alignment.  Domain-specific displays import these
+# constants rather than redefining them.
+#
+#   LABEL_WIDTH       – left label column ("  SCAN    ", "  COST    ")
+#   METRICS_WIDTH     – right stat column for progress bars (" {n:>6,} {%} {r/s}")
+#   GAUGE_METRICS_WIDTH – right stat column for resource gauges (wider: time/cost text)
+#   MIN_WIDTH         – minimum panel width
+#
+# Bar and gauge widths are computed from terminal width:
+#   bar_width   = term_width - 4 - LABEL_WIDTH - METRICS_WIDTH
+#   gauge_width = term_width - 4 - LABEL_WIDTH - GAUGE_METRICS_WIDTH
+#
+# The difference prevents resource-gauge rows (TIME, COST, TOTAL) from
+# wrapping by reserving extra space for their longer trailing text.
+
+LABEL_WIDTH = 10
+METRICS_WIDTH = 22
+GAUGE_METRICS_WIDTH = 32
+MIN_WIDTH = 80
+
+
+def compute_bar_width(term_width: int) -> int:
+    """Progress-bar width from terminal width."""
+    return max(term_width, MIN_WIDTH) - 4 - LABEL_WIDTH - METRICS_WIDTH
+
+
+def compute_gauge_width(term_width: int) -> int:
+    """Resource-gauge width from terminal width."""
+    return max(term_width, MIN_WIDTH) - 4 - LABEL_WIDTH - GAUGE_METRICS_WIDTH
+
+
 @dataclass
 class ProgressConfig:
     """Common configuration for progress displays."""

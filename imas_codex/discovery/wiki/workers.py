@@ -254,9 +254,18 @@ async def ingest_worker(
     The ingest worker continues running even after cost limit is reached
     to drain the ingest queue. This ensures all scored content gets ingested.
 
+    If the remote embedding server becomes unavailable mid-run, the worker
+    pauses and polls for recovery (SSH tunnel re-establishment, systemd
+    restart) before continuing.  Status is reflected in the progress
+    display's ``embed:`` indicator.
+
     PERF: Pages are processed in parallel using asyncio.gather() with a
     semaphore to limit concurrency. This provides ~5x speedup over sequential.
     """
+    from imas_codex.embeddings.resilience import EmbeddingResilience
+
+    resilience = EmbeddingResilience(poll_interval=15.0, max_wait=0, reconnect=True)
+
     # Get shared async wiki client for Tequila auth (native async HTTP)
     shared_async_wiki_client = (
         await state.get_async_wiki_client()
@@ -332,6 +341,12 @@ async def ingest_worker(
             continue
 
         state.ingest_idle_count = 0
+
+        # Ensure embedding server is available before starting embed-heavy work.
+        # If the server is down the call blocks, polls, and attempts reconnect.
+        if not await resilience.await_ready():
+            logger.error("Embedding server permanently unavailable, stopping ingest")
+            break
 
         if on_progress:
             on_progress(f"ingesting {len(pages)} pages", state.ingest_stats)

@@ -259,17 +259,23 @@ class WikiDiscoveryState:
     def should_stop_image_scoring(self) -> bool:
         """Check if image score workers should stop.
 
-        Image score workers continue even after budget is exhausted so they
-        can drain images created during page ingestion (similar to how
-        ingest workers drain scored pages).  They only stop when:
+        Image score workers respect the cost budget (VLM calls are expensive).
+        They also wait for ingestion to start producing images before giving up,
+        since images are only created during page ingestion and may not exist
+        at the start of a run.
+
+        Stop when:
         1. Explicitly requested
-        2. Idle for 3+ iterations AND ingestion is done AND no pending images
+        2. Budget exhausted (VLM must respect budget like LLM workers)
+        3. Idle for 3+ iterations AND ingestion is done AND no pending images
         """
         if self.stop_requested:
             return True
-        # Continue even when budget exhausted - drain the image queue.
-        # Images are created during page ingestion, so they only appear
-        # after scoring has already consumed the budget.
+        if self.budget_exhausted:
+            return True
+        # Wait for ingestion to finish before declaring no work.
+        # Images only appear after pages are ingested, so the worker may
+        # see an empty queue early in the run.
         ingestion_done = self.ingest_idle_count >= 3
         if (
             self.image_idle_count >= 3

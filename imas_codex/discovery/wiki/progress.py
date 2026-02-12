@@ -34,9 +34,15 @@ from rich.panel import Panel
 from rich.text import Text
 
 from imas_codex.discovery.base.progress import (
+    GAUGE_METRICS_WIDTH,
+    LABEL_WIDTH,
+    METRICS_WIDTH,
+    MIN_WIDTH,
     StreamQueue,
     clean_text,
     clip_text,
+    compute_bar_width,
+    compute_gauge_width,
     format_time,
     make_bar,
     make_resource_gauge,
@@ -46,6 +52,7 @@ from imas_codex.discovery.base.supervision import (
     WorkerState,
 )
 from imas_codex.embeddings import get_embedding_source
+from imas_codex.embeddings.resilience import get_embed_status
 
 if TYPE_CHECKING:
     from imas_codex.discovery.base.progress import WorkerStats
@@ -436,11 +443,11 @@ class WikiProgressDisplay:
     - IMAGE: VLM captioning + scoring (ingested → captioned)
     """
 
-    # Layout constants - label widths are fixed, bars fill remaining space
-    LABEL_WIDTH = 10  # "  SCORE   " etc
-    MIN_WIDTH = 80
-    METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
-    GAUGE_METRICS_WIDTH = 32  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
+    # Layout constants imported from base.progress
+    LABEL_WIDTH = LABEL_WIDTH
+    MIN_WIDTH = MIN_WIDTH
+    METRICS_WIDTH = METRICS_WIDTH
+    GAUGE_METRICS_WIDTH = GAUGE_METRICS_WIDTH
 
     def __init__(
         self,
@@ -472,12 +479,12 @@ class WikiProgressDisplay:
     @property
     def bar_width(self) -> int:
         """Calculate progress bar width to fill available space."""
-        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+        return compute_bar_width(self.width)
 
     @property
     def gauge_width(self) -> int:
         """Calculate resource gauge width (shorter than bar to fit metrics)."""
-        return self.width - 4 - self.LABEL_WIDTH - self.GAUGE_METRICS_WIDTH
+        return compute_gauge_width(self.width)
 
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
@@ -593,17 +600,22 @@ class WikiProgressDisplay:
                 section.append(f" ({', '.join(parts)})", style="dim")
 
         # Embedding source indicator (live - changes if fallback triggered)
-        embed_source = get_embedding_source()
-        if embed_source.startswith("iter-"):
-            section.append(f"  embed:{embed_source}", style="green")
-        elif embed_source == "remote":
-            section.append("  embed:remote", style="green")
-        elif embed_source == "openrouter":
-            section.append("  embed:openrouter", style="yellow")
-        elif embed_source == "local":
-            section.append("  embed:local", style="cyan")
+        embed_health = get_embed_status()
+        if embed_health != "ready":
+            # Server is down — show resilience status instead of source
+            section.append(f"  embed:{embed_health}", style="red")
         else:
-            section.append(f"  embed:{embed_source}", style="dim")
+            embed_source = get_embedding_source()
+            if embed_source.startswith("iter-"):
+                section.append(f"  embed:{embed_source}", style="green")
+            elif embed_source == "remote":
+                section.append("  embed:remote", style="green")
+            elif embed_source == "openrouter":
+                section.append("  embed:openrouter", style="yellow")
+            elif embed_source == "local":
+                section.append("  embed:local", style="cyan")
+            else:
+                section.append(f"  embed:{embed_source}", style="dim")
 
         return section
 

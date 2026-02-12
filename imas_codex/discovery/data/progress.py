@@ -27,9 +27,15 @@ from rich.panel import Panel
 from rich.text import Text
 
 from imas_codex.discovery.base.progress import (
+    GAUGE_METRICS_WIDTH,
+    LABEL_WIDTH,
+    METRICS_WIDTH,
+    MIN_WIDTH,
     StreamQueue,
     clean_text,
     clip_text,
+    compute_bar_width,
+    compute_gauge_width,
     format_time,
     make_bar,
     make_resource_gauge,
@@ -255,11 +261,11 @@ class DataProgressDisplay:
     └──────────────────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    # Layout constants - label widths are fixed, bars fill remaining space
-    LABEL_WIDTH = 10  # "  SCAN    " etc
-    MIN_WIDTH = 80
-    METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
-    GAUGE_METRICS_WIDTH = 28  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
+    # Layout constants imported from base.progress
+    LABEL_WIDTH = LABEL_WIDTH
+    MIN_WIDTH = MIN_WIDTH
+    METRICS_WIDTH = METRICS_WIDTH
+    GAUGE_METRICS_WIDTH = GAUGE_METRICS_WIDTH
 
     def __init__(
         self,
@@ -291,12 +297,12 @@ class DataProgressDisplay:
     @property
     def bar_width(self) -> int:
         """Calculate progress bar width to fill available space."""
-        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+        return compute_bar_width(self.width)
 
     @property
     def gauge_width(self) -> int:
-        """Calculate resource gauge width to match progress bars."""
-        return self.bar_width
+        """Calculate resource gauge width (shorter than bar to fit metrics)."""
+        return compute_gauge_width(self.width)
 
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
@@ -572,17 +578,16 @@ class DataProgressDisplay:
     def _build_resources_section(self) -> Text:
         """Build the resource consumption gauges."""
         section = Text()
+        gw = self.gauge_width
 
         # TIME row
         section.append("  TIME    ", style="bold cyan")
         eta = None if self.state.discover_only else self.state.eta_seconds
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
-            section.append_text(
-                make_resource_gauge(self.state.elapsed, total_est, self.bar_width)
-            )
+            section.append_text(make_resource_gauge(self.state.elapsed, total_est, gw))
         else:
-            section.append("━" * self.bar_width, style="cyan")
+            section.append("━" * gw, style="cyan")
         section.append(f"  {format_time(self.state.elapsed)}", style="bold")
         if eta is not None and eta > 0:
             section.append(f"  ETA {format_time(eta)}", style="dim")
@@ -592,9 +597,7 @@ class DataProgressDisplay:
         if not self.state.discover_only:
             section.append("  COST    ", style="bold yellow")
             section.append_text(
-                make_resource_gauge(
-                    self.state.run_cost, self.state.cost_limit, self.bar_width
-                )
+                make_resource_gauge(self.state.run_cost, self.state.cost_limit, gw)
             )
             section.append(f"  ${self.state.run_cost:.2f}", style="bold")
             section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
@@ -616,12 +619,10 @@ class DataProgressDisplay:
             section.append("  TOTAL   ", style="bold white")
             # Progress bar shows current cost toward ETC
             if etc > 0 and etc > total_cost:
-                section.append_text(
-                    make_resource_gauge(total_cost, etc, self.bar_width)
-                )
+                section.append_text(make_resource_gauge(total_cost, etc, gw))
             else:
                 # No estimate yet or complete - show full bar
-                section.append("━" * self.bar_width, style="white")
+                section.append("━" * gw, style="white")
 
             section.append(f"  ${total_cost:.2f}", style="bold")
             # Show ETC (dynamic estimate)
