@@ -40,29 +40,68 @@ data_access_patterns:
   primary_method: edas
   shot_identifier: shot
   signal_naming: >-
-    EDAS channel-based access: eddb_get(channel_id, shot).
-    Python wrapper: eddb.get_data('channel_name', shot).
+    EDAS EDDB API: EDDB_locallib_API with methods opendb(dbtype), closedb(),
+    get_time_nearest(shot, t, dname, cat), get_time_slice_data(shot, t, dname, cat),
+    get_time_seriese_data(shot, t1, t2, dname, cat).
+    Low-level: _eddbreadTime(shot, cat, dname, t1, t2), _eddbreadHeader(shot, cat, dname),
+    _eddbreadOne(shot, cat, dname, step), _eddbreadPara(shot, cat, dname).
+    Also: _eddbreadPrePro, _eddbreadImage, _eddbreadComment, _eddbreadScore,
+    _eddbreadChInfo, _eddbreadTable, _eddbreadShot, _eddbreadNearTime.
+    EDDB_remote_API mirrors local API for remote access.
     Higher-level tools: eGIS (graphical viewer), eSLICE (time slicer),
     eSURF (surface viewer) wrap EDAS channels.
   tree_organization: >-
-    EDAS database tables organized by diagnostic system and campaign.
-    AnalysisDB for processed results. ExperimentDB for raw measurements.
-    Signal groups mirror diagnostic hardware layout.
+    EDAS database at /analysis_DB/EDASDB/ with per-shot directories (a003846, etc.).
+    8 database API modules: edas_eddb_api (main), edas_easy_api (simplified),
+    edas_fledd_api (FLEDD), edas_fsmd_api (FSMD), edas_lcdb_api (LCDB),
+    edas_mbdb_api (MBDB), edas_pmdb_api (PMDB), edas_uddb_api (UDDB).
+    AnalysisDB for processed results, ExperimentDB for raw measurements.
+    Multiple database backends: EDDB, FLEDD, FSMD, LCDB, MBDB, PMDB, UDDB.
   key_tools:
-    - eddb_get
-    - edgis
+    - edas_eddb_api
+    - edas_easy_api
+    - EDDB_locallib_API
+    - EDDB_remote_API
     - eslice
     - esurf
-    - eddb
+    - egis
+    - getseldata
+    - FBEQU
+    - SAEQU
+    - TOPICS2
   wiki_signal_patterns:
     - EDAS channel ID tables
     - diagnostic parameter listings
     - Eddb API reference
+    - EDAS database category (cat) listings
+    - getseldata parameter documentation
+    - eslice/esurf viewer documentation
   code_import_patterns:
-    - import eddb
+    - import edas_eddb_api
+    - import edas_easy_api
+    - EDDB_locallib_API
+    - EDDB_remote_API
     - eddb_get
-    - edgis
+    - eddbreadTime
+    - eddbreadHeader
+    - get_time_slice_data
+    - get_time_nearest
+    - opendb(
+    - closedb(
+    - import eddb
     - eslice
+    - esurf
+    - getseldata
+  notes:
+    - "EDAS2 v2.1.15 at /analysis/src/edas2/v2.1.15/ with edas_egis, edas_eslice2, edas_esurf2, edas_share"
+    - "8 database API modules at edas_share/database_api/: eddb, easy, fledd, fsmd, lcdb, mbdb, pmdb, uddb"
+    - "EDDB_locallib_API class: 25+ methods including opendb, closedb, get_time_nearest, get_time_slice_data"
+    - "Low-level read methods: _eddbreadTime(shot,cat,dname,t1,t2), _eddbreadHeader(shot,cat,dname), _eddbreadOne, _eddbreadPara"
+    - "EDASDB at /analysis_DB/EDASDB/ with shot directories (a003846, a003915, etc.)"
+    - "Tools at /analysis/bin/: eslice, esurf, egis, getseldata, FBEQU, SAEQU, TOPICS2"
+    - "C headers at /analysis/src/getseldata_v4.2/eddbaccess.h"
+    - "IMAS/3.42.0, MDSplus/7.132.0, UDA/2.7.5-2.7.6 modules available"
+    - "import imas works after module load (DD 3.42.0)"
 
 # Discovery root paths for path discovery pipeline
 # These are seeded as starting points for directory scanning

@@ -34,25 +34,54 @@ data_access_patterns:
   shot_identifier: shot
   signal_naming: >-
     IMAS IDS-based access: ids.equilibrium.time_slice[0].profiles_1d.psi.
-    Python: entry.get('equilibrium'). IDSTool for interactive browsing.
+    Python: entry = imas.DBEntry(uri, mode); entry.get('equilibrium').
+    DBEntry methods: open, close, create, get, get_slice, get_node,
+    partial_get, put, put_slice, list_all_occurrences, delete_data,
+    build_uri_from_legacy_parameters.
+    URI format: imas:mdsplus?path=/work/imas/shared/imasdb/<db>&pulse=N&run=M.
   tree_organization: >-
     IMAS Interface Data Structures (IDS) organized by physics domain:
     equilibrium, core_profiles, edge_profiles, magnetics, etc.
     Each IDS has a standard schema defined by the IMAS Data Dictionary.
+    Shared databases at /work/imas/shared/imasdb/: iter, ITER,
+    iter_disruptions, iter_machine_description, iter_md, iter_scenarios,
+    jet, JET, JT-60U, AMNS, DTT, HCD, PDS, SST-1, TEST.
+    Backends: MDSPLUS_BACKEND=12, HDF5_BACKEND=13, MEMORY_BACKEND=14,
+    UDA_BACKEND=15, ASCII_BACKEND=11.
   key_tools:
+    - imas.DBEntry
+    - imasdef
     - imas
-    - IDSTool
-    - al5
-    - imasdb
+    - JINTRAC
+    - iplotWidgets
   wiki_signal_patterns:
     - IDS field documentation
     - Data Dictionary references
     - IMAS access code examples
+    - DBEntry URI examples
+    - IDS occurrence listings
+    - JINTRAC workflow documentation
   code_import_patterns:
     - import imas
     - from imas import
-    - imasdb
-    - al5
+    - imas.DBEntry
+    - imas.imasdef
+    - DBEntry(
+    - .get(
+    - .put(
+    - .get_slice(
+    - .partial_get(
+    - imasdef.MDSPLUS_BACKEND
+    - imasdef.HDF5_BACKEND
+  notes:
+    - "IMAS AL version 5.3.1, DD version 3.42.0"
+    - "DBEntry methods: open, close, create, get, get_slice, get_node, partial_get, put, put_slice, list_all_occurrences, delete_data"
+    - "Backends: ASCII=11, MDSPLUS=12, HDF5=13, MEMORY=14, UDA=15 (via imas.imasdef)"
+    - "Shared imasdb at /work/imas/shared/imasdb/ with 30+ databases: iter, jet, JT-60U, AMNS, DTT, etc."
+    - "IMAS-AL-Core versions up to 5.4.1, IMAS-AL-Common 1.0.6"
+    - "JINTRAC available (36.0.5, 37.0.0) for integrated modeling workflows"
+    - "iplotWidgets available for IDS visualization"
+    - "Module system: source /etc/profile.d/z00_lmod.sh + module load IMAS"
 
 # Wiki/documentation sites (stored in private YAML, never graphed)
 # Each site: {url, portal_page, site_type, auth_type, credential_service}

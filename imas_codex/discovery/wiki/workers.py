@@ -72,6 +72,25 @@ async def score_worker(
     worker_id = id(asyncio.current_task())
     logger.info(f"score_worker started (task={worker_id})")
 
+    # Load facility-specific data access patterns for scorer context
+    facility_access_patterns: dict[str, Any] | None = None
+    try:
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(state.facility)
+        facility_access_patterns = facility_config.get("data_access_patterns")
+        if facility_access_patterns:
+            logger.info(
+                "score_worker %s: loaded data_access_patterns for %s "
+                "(primary_method=%s, %d key_tools)",
+                worker_id,
+                state.facility,
+                facility_access_patterns.get("primary_method", "unknown"),
+                len(facility_access_patterns.get("key_tools") or []),
+            )
+    except Exception as e:
+        logger.debug("score_worker %s: no data_access_patterns: %s", worker_id, e)
+
     # Use effective semaphore: SSH semaphore (4) for SSH-based sites,
     # HTTP semaphore (30) for direct HTTP. Prevents overwhelming remote
     # hosts with concurrent SSH subprocess calls.
@@ -194,7 +213,7 @@ async def score_worker(
             model = get_model("language")
             logger.debug(f"score_worker {worker_id}: starting LLM scoring...")
             results, cost = await _score_pages_batch(
-                pages_with_content, model, state.focus
+                pages_with_content, model, state.focus, facility_access_patterns
             )
             logger.debug(
                 f"score_worker {worker_id}: LLM scored {len(results)} pages, cost=${cost:.4f}"

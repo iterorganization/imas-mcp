@@ -66,6 +66,21 @@ data_sources:
   # MDSplus configuration (used for data validation, not signal discovery)
   mdsplus:
     connection_tree: tcv_shot  # Default tree for TDI context
+    # MDSplus subtrees discovered via SSH (mdsplus -s localhost -p 8000)
+    subtrees:
+      - ATLAS
+      - BASE
+      - DIAGZ
+      - DIAG_ACT
+      - ECRH
+      - HYBRID
+      - MAGNETICS
+      - MANUAL
+      - POWER
+      - RESULTS
+      - VSYSTEM
+      - PCS
+      - APCS
 
 # Data access patterns discovered during facility exploration.
 # Informs wiki scoring, code ingestion, and signal discovery.
@@ -77,26 +92,38 @@ data_access_patterns:
     tcv_get('signal_name'), or direct functions like fir_aut(shot).
     Raw MDSplus paths use backslash notation: \tree::subtree:node.
   tree_organization: >-
-    MDSplus trees by subsystem: tcv_shot (main), results (analysis),
-    magnetics, diagz, base, pcs, xtomo. TDI functions abstract over
-    these trees with automatic path resolution.
+    MDSplus subtrees: ATLAS, BASE, DIAGZ, DIAG_ACT, ECRH, HYBRID,
+    MAGNETICS, MANUAL, POWER, RESULTS, VSYSTEM, PCS, APCS.
+    TDI subdirs at /usr/local/CRPP/tdi/: base, devices, python,
+    scopes, tcv, trees, vsystem. TDI functions abstract over
+    MDSplus trees with automatic path resolution.
   key_tools:
     - tdiExecute
     - tcv_get
     - tcv_eq
     - gdat
     - tcvget
+    - fir_aut
+    - MDSplus
   wiki_signal_patterns:
     - MDSplus path tables
     - diagnostic node listings
     - signal catalogs with units
     - TDI function documentation
+    - MDSplus subtree references (ATLAS, DIAGZ, MAGNETICS, etc.)
   code_import_patterns:
     - import MDSplus
     - from MDSplus import
     - tdiExecute
     - tcv_get
     - gdat(
+    - tcv_eq(
+    - fir_aut(
+  notes:
+    - "13 MDSplus subtrees found via SSH: ATLAS BASE DIAGZ DIAG_ACT ECRH HYBRID MAGNETICS MANUAL POWER RESULTS VSYSTEM PCS APCS"
+    - "TDI library at /usr/local/CRPP/tdi/ with subdirs: base devices python scopes tcv trees vsystem"
+    - "Primary TDI physics accessors in /usr/local/CRPP/tdi/tcv/"
+    - "/home/codes NFS too slow for broad search - known issue"
 
 # Wiki/documentation sites
 # Direct HTTP access via Tequila SSO (EPFL authentication)

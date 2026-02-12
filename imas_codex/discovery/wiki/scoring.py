@@ -778,6 +778,7 @@ async def _score_pages_batch(
     pages: list[dict[str, Any]],
     model: str,
     focus: str | None = None,
+    data_access_patterns: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
     """Score a batch of pages using LLM with structured output.
 
@@ -793,6 +794,9 @@ async def _score_pages_batch(
         pages: List of page dicts with id, title, summary, preview_text, etc.
         model: Model identifier from get_model()
         focus: Optional focus area for scoring
+        data_access_patterns: Optional facility-specific data access patterns
+            from facility config. When provided, injected into the prompt
+            template so the LLM can boost pages matching facility tools/APIs.
 
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
@@ -808,6 +812,8 @@ async def _score_pages_batch(
     context: dict[str, Any] = {}
     if focus:
         context["focus"] = focus
+    if data_access_patterns:
+        context["data_access_patterns"] = data_access_patterns
 
     system_prompt = render_prompt("wiki/scorer", context)
 
@@ -901,8 +907,31 @@ async def _score_pages_batch(
     return results, total_cost
 
 
-def _score_pages_heuristic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Heuristic fallback scoring based on keywords. Zero cost."""
+def _score_pages_heuristic(
+    pages: list[dict[str, Any]],
+    data_access_patterns: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Heuristic fallback scoring based on keywords. Zero cost.
+
+    When data_access_patterns is provided, facility-specific key_tools
+    and code_import_patterns are added to the physics keywords for
+    boosted matching.
+    """
+    # Build facility-specific keywords from data_access_patterns
+    facility_keywords: list[str] = []
+    if data_access_patterns:
+        for tool in data_access_patterns.get("key_tools") or []:
+            # Normalize: lowercase, strip parens/dots for matching
+            kw = tool.lower().rstrip("(").split(".")[-1]
+            if kw and kw not in facility_keywords:
+                facility_keywords.append(kw)
+        for pattern in data_access_patterns.get("code_import_patterns") or []:
+            # Extract the key identifier from import patterns
+            # e.g., "import ppf" -> "ppf", "ppfget(" -> "ppfget"
+            kw = pattern.lower().rstrip("(").split()[-1].split(".")[-1]
+            if kw and len(kw) > 2 and kw not in facility_keywords:
+                facility_keywords.append(kw)
+
     results = []
     for page in pages:
         title = page.get("title", "").lower()
@@ -942,6 +971,12 @@ def _score_pages_heuristic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if kw in title:
                 score = max(score - 0.2, 0.0)
                 reasoning = f"Contains low-value keyword: {kw}"
+
+        # Boost for facility-specific data access patterns
+        for kw in facility_keywords:
+            if kw in title or kw in summary.lower():
+                score = min(score + 0.15, 1.0)
+                reasoning = f"Contains facility data access keyword: {kw}"
 
         results.append(
             {
