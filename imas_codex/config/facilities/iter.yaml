@@ -17,6 +17,43 @@ ssh_host: iter
 data_systems:
   - imas
   - mdsplus
+
+# Data source configuration for signal discovery
+# Used by: imas-codex discover signals iter
+data_sources:
+  # IMAS is ITER's native data format.
+  imas:
+    backends:
+      - mdsplus
+      - hdf5
+    db_name: iter
+
+# Data access patterns discovered during facility exploration.
+data_access_patterns:
+  primary_method: imas
+  shot_identifier: shot
+  signal_naming: >-
+    IMAS IDS-based access: ids.equilibrium.time_slice[0].profiles_1d.psi.
+    Python: entry.get('equilibrium'). IDSTool for interactive browsing.
+  tree_organization: >-
+    IMAS Interface Data Structures (IDS) organized by physics domain:
+    equilibrium, core_profiles, edge_profiles, magnetics, etc.
+    Each IDS has a standard schema defined by the IMAS Data Dictionary.
+  key_tools:
+    - imas
+    - IDSTool
+    - al5
+    - imasdb
+  wiki_signal_patterns:
+    - IDS field documentation
+    - Data Dictionary references
+    - IMAS access code examples
+  code_import_patterns:
+    - import imas
+    - from imas import
+    - imasdb
+    - al5
+
 # Wiki/documentation sites (stored in private YAML, never graphed)
 # Each site: {url, portal_page, site_type, auth_type, credential_service}
 wiki_sites:

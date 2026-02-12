@@ -36,34 +36,31 @@ from imas_codex.remote.executor import run_python_script
 
 logger = logging.getLogger(__name__)
 
-# TDI functions that are hardware control / operational dispatch, not physics data.
-# These either try to load hardware libraries (e.g., libvaccess.so), print debug
-# output to stdout, or perform machine-control actions. They should be excluded
-# from signal discovery.
-OPERATIONAL_TDI_FUNCTIONS: frozenset[str] = frozenset(
-    {
-        # Hardware / vacuum / tile control
-        "tile_store",
-        "tile_init_action",
-        "tile_cycle",
-        "tile_counter",
-        "tile_status",
-        # Acquisition / triggering
-        "acq_lente_trigger",
-        "acq_lente_init",
-        # Beckhoff PLC / hardware state
-        "beckhoff_setstate",
-        "beckhoff_getstate",
-        # Shot management / sequencing
-        "shot_close",
-        "shot_open",
-        "shot_init",
-        # Initialization / action dispatch (void functions)
-        "init_action",
-        "close_action",
-        "store_action",
-    }
-)
+
+def get_tdi_exclude_functions(facility: str) -> frozenset[str]:
+    """Load TDI function exclusion set from facility config.
+
+    Reads data_sources.tdi.exclude_functions from the facility YAML config.
+    Function names are case-insensitive (lowered on load).
+
+    Args:
+        facility: Facility ID (e.g., "tcv")
+
+    Returns:
+        Frozenset of lowercase function names to exclude from signal discovery.
+        Returns empty frozenset if no excludes configured.
+    """
+    from imas_codex.discovery.base.facility import get_facility
+
+    try:
+        config = get_facility(facility)
+        data_sources = config.get("data_sources", {})
+        tdi_config = data_sources.get("tdi", {})
+        excludes = tdi_config.get("exclude_functions", [])
+        return frozenset(name.lower() for name in excludes)
+    except Exception:
+        logger.debug("No TDI exclude_functions configured for %s", facility)
+        return frozenset()
 
 
 @dataclass
@@ -239,6 +236,9 @@ async def discover_tdi_signals(
 ) -> tuple[list[FacilitySignal], list[TDIFunctionMeta]]:
     """Discover signals from TDI functions.
 
+    Loads exclude_functions from facility config (data_sources.tdi.exclude_functions)
+    to filter out hardware/operational functions that don't return physics data.
+
     Args:
         facility: Facility ID (e.g., "tcv")
         ssh_host: SSH host alias
@@ -249,6 +249,15 @@ async def discover_tdi_signals(
     Returns:
         Tuple of (FacilitySignal list, TDIFunctionMeta list with source code)
     """
+    # Load exclude set from facility config
+    exclude_functions = get_tdi_exclude_functions(facility)
+    if exclude_functions:
+        logger.info(
+            "Loaded %d TDI exclude_functions from %s config",
+            len(exclude_functions),
+            facility,
+        )
+
     # Extract TDI function metadata
     logger.info("Extracting TDI functions from %s:%s", ssh_host, tdi_path)
     functions = await extract_tdi_functions(ssh_host, tdi_path)
@@ -273,7 +282,7 @@ async def discover_tdi_signals(
             continue
 
         # Skip operational/hardware functions that don't return physics data
-        if func.name.lower() in OPERATIONAL_TDI_FUNCTIONS:
+        if func.name.lower() in exclude_functions:
             logger.debug("Skipping operational TDI function: %s", func.name)
             continue
 

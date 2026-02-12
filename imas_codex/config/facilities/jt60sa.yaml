@@ -19,6 +19,51 @@ data_systems:
   - mdsplus  # MDSplus available via modules
   - uda      # UDA available via modules
 
+# Data source configuration for signal discovery
+# Used by: imas-codex discover signals jt60sa
+data_sources:
+  # EDAS is JT-60SA's primary experiment data access system.
+  # Wraps proprietary data formats with C/Fortran/Python APIs.
+  edas:
+    api_path: /analysis/src/edas
+    header_path: /analysis/src/edas/include
+    reference_shot: 1000  # TODO: confirm valid reference shot
+
+  # IMAS data available via modules
+  imas:
+    backends:
+      - mdsplus
+    db_name: jt60sa
+
+# Data access patterns discovered during facility exploration.
+data_access_patterns:
+  primary_method: edas
+  shot_identifier: shot
+  signal_naming: >-
+    EDAS channel-based access: eddb_get(channel_id, shot).
+    Python wrapper: eddb.get_data('channel_name', shot).
+    Higher-level tools: eGIS (graphical viewer), eSLICE (time slicer),
+    eSURF (surface viewer) wrap EDAS channels.
+  tree_organization: >-
+    EDAS database tables organized by diagnostic system and campaign.
+    AnalysisDB for processed results. ExperimentDB for raw measurements.
+    Signal groups mirror diagnostic hardware layout.
+  key_tools:
+    - eddb_get
+    - edgis
+    - eslice
+    - esurf
+    - eddb
+  wiki_signal_patterns:
+    - EDAS channel ID tables
+    - diagnostic parameter listings
+    - Eddb API reference
+  code_import_patterns:
+    - import eddb
+    - eddb_get
+    - edgis
+    - eslice
+
 # Discovery root paths for path discovery pipeline
 # These are seeded as starting points for directory scanning
 discovery_roots:

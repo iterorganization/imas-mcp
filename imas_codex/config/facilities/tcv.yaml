@@ -38,10 +38,65 @@ data_sources:
     primary_path: /usr/local/CRPP/tdi/tcv  # Physics accessors: tcv_eq, tcv_get, tcv_ip
     # Reference shot for TDI accessor validation
     reference_shot: 85000
+    # Hardware control and operational functions to exclude from signal discovery.
+    # These functions may load missing shared libraries (e.g., libvaccess.so),
+    # print debug output to stdout, or perform machine-control actions.
+    exclude_functions:
+      # Hardware / vacuum / tile thermocouple control
+      - tile_store
+      - tile_init_action
+      - tile_cycle
+      - tile_counter
+      - tile_status
+      # Acquisition / triggering
+      - acq_lente_trigger
+      - acq_lente_init
+      # Beckhoff PLC / hardware state
+      - beckhoff_setstate
+      - beckhoff_getstate
+      # Shot management / sequencing
+      - shot_close
+      - shot_open
+      - shot_init
+      # Initialization / action dispatch (void functions)
+      - init_action
+      - close_action
+      - store_action
 
   # MDSplus configuration (used for data validation, not signal discovery)
   mdsplus:
     connection_tree: tcv_shot  # Default tree for TDI context
+
+# Data access patterns discovered during facility exploration.
+# Informs wiki scoring, code ingestion, and signal discovery.
+data_access_patterns:
+  primary_method: tdi
+  shot_identifier: shot
+  signal_naming: >-
+    TDI function dispatch: tcv_eq('quantity', source='LIUQE'),
+    tcv_get('signal_name'), or direct functions like fir_aut(shot).
+    Raw MDSplus paths use backslash notation: \tree::subtree:node.
+  tree_organization: >-
+    MDSplus trees by subsystem: tcv_shot (main), results (analysis),
+    magnetics, diagz, base, pcs, xtomo. TDI functions abstract over
+    these trees with automatic path resolution.
+  key_tools:
+    - tdiExecute
+    - tcv_get
+    - tcv_eq
+    - gdat
+    - tcvget
+  wiki_signal_patterns:
+    - MDSplus path tables
+    - diagnostic node listings
+    - signal catalogs with units
+    - TDI function documentation
+  code_import_patterns:
+    - import MDSplus
+    - from MDSplus import
+    - tdiExecute
+    - tcv_get
+    - gdat(
 
 # Wiki/documentation sites
 # Direct HTTP access via Tequila SSO (EPFL authentication)

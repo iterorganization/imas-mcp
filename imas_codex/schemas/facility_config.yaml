@@ -153,6 +153,14 @@ classes:
       data_sources:
         description: Data source configuration for signal discovery
         range: DataSourcesConfig
+      data_access_patterns:
+        description: >-
+          Data access patterns discovered during initial facility exploration.
+          Populated by exploration agents before signal discovery runs. Describes
+          how data is organized, what tools/APIs exist, what naming conventions
+          are used. This informs downstream tools (wiki scoring, signal extraction,
+          code ingestion) about what to look for at this facility.
+        range: DataAccessPatternsConfig
       wiki_sites:
         description: Wiki/documentation sites
         multivalued: true
@@ -269,34 +277,51 @@ classes:
   DataSourcesConfig:
     description: >-
       Data source configuration for signal discovery. Specifies how to
-      enumerate signals from each data system.
+      enumerate signals from each data system. Each key maps to a scanner
+      plugin that knows how to extract signals from that data source type.
     class_uri: fc:DataSourcesConfig
     attributes:
       tdi:
-        description: TDI function configuration
+        description: TDI function configuration (MDSplus TDI expression files)
         range: TDIConfig
       mdsplus:
-        description: MDSplus configuration
+        description: MDSplus tree configuration (direct tree traversal)
         range: MDSplusConfig
+      ppf:
+        description: JET PPF configuration (Processed Pulse Files)
+        range: PPFConfig
+      edas:
+        description: JT-60SA EDAS configuration (Experiment Data Access System)
+        range: EDASConfig
       hdf5:
         description: HDF5 file configuration
         range: HDF5Config
       imas:
-        description: IMAS configuration
+        description: IMAS native data configuration
         range: IMASConfig
 
   TDIConfig:
-    description: TDI function data source configuration
+    description: >-
+      TDI function data source configuration. TDI (.fun) files provide
+      physics-level accessor functions over raw MDSplus tree paths.
+      Facility-specific (e.g., TCV tcv_eq, tcv_get, tcv_ip).
     class_uri: fc:TDIConfig
     attributes:
       primary_path:
-        description: Primary TDI directory path
+        description: Primary TDI directory path (e.g., /usr/local/CRPP/tdi/tcv)
       additional_paths:
         description: Additional TDI directories to scan
         multivalued: true
       reference_shot:
         description: Reference shot for TDI accessor validation
         range: integer
+      exclude_functions:
+        description: >-
+          TDI function names to exclude from signal discovery (case-insensitive).
+          Hardware control, acquisition triggers, and operational dispatch functions
+          that don't return physics data. These functions may load missing shared
+          libraries, print debug output, or perform side effects when executed.
+        multivalued: true
 
   MDSplusConfig:
     description: MDSplus data source configuration
@@ -311,6 +336,39 @@ classes:
         description: Shot number for tree introspection
         range: integer
 
+  PPFConfig:
+    description: >-
+      JET PPF (Processed Pulse File) data source configuration.
+      PPF is organized as Owner/DDA/Dtype entries. Access via SAL REST API,
+      MATLAB ppfget, IDL ppfget, or getdat CLI.
+    class_uri: fc:PPFConfig
+    attributes:
+      sal_endpoint:
+        description: SAL REST API endpoint URL
+      reference_pulse:
+        description: Reference pulse for signal validation
+        range: integer
+      default_owner:
+        description: Default PPF data owner (e.g., "jetppf")
+      exclude_ddas:
+        description: DDA identifiers to exclude from discovery
+        multivalued: true
+
+  EDASConfig:
+    description: >-
+      JT-60SA EDAS (Experiment Data Access System) configuration.
+      EDAS wraps proprietary data formats with C/Fortran/Python APIs.
+      Signal definitions are in C header files and Python wrapper code.
+    class_uri: fc:EDASConfig
+    attributes:
+      api_path:
+        description: Path to EDAS API source files
+      header_path:
+        description: Path to EDAS C header files with signal definitions
+      reference_shot:
+        description: Reference shot for signal validation
+        range: integer
+
   HDF5Config:
     description: HDF5 file data source configuration
     class_uri: fc:HDF5Config
@@ -320,12 +378,19 @@ classes:
         multivalued: true
 
   IMASConfig:
-    description: IMAS data source configuration
+    description: >-
+      IMAS native data source configuration. Used at facilities with
+      native IMAS backend support (ITER, JET post-migration, JT-60SA).
     class_uri: fc:IMASConfig
     attributes:
       backends:
-        description: Available IMAS backends
+        description: Available IMAS backends (e.g., mdsplus, hdf5, memory)
         multivalued: true
+      db_name:
+        description: IMAS database name
+      reference_shot:
+        description: Reference shot for IDS enumeration
+        range: integer
 
   UserInfoConfig:
     description: >-
@@ -361,4 +426,54 @@ classes:
         description: >-
           Glob patterns to exclude (e.g., "**/node_modules", "**/.git").
           Applied during directory enumeration.
+        multivalued: true
+
+  DataAccessPatternsConfig:
+    description: >-
+      Data access patterns discovered during initial facility exploration.
+      Populated by exploration agents to inform downstream discovery tools.
+      Describes how shot data is organized, what APIs/tools exist, and what
+      naming conventions are used at this facility. This bridges exploration
+      knowledge to scanning/scoring tools.
+    class_uri: fc:DataAccessPatternsConfig
+    attributes:
+      primary_method:
+        description: >-
+          The primary data access method at this facility (e.g., "tdi" for TCV,
+          "ppf" for JET, "edas" for JT-60SA, "imas" for ITER). Informs which
+          scanner plugin to run first.
+      signal_naming:
+        description: >-
+          How signals are named at this facility. Free text describing the
+          convention (e.g., "TDI function dispatch: tcv_eq('quantity')",
+          "PPF hierarchy: owner/dda/dtype", "EDAS channels: eddb_get(channel)").
+      shot_identifier:
+        description: >-
+          What the facility calls shots (e.g., "shot" at TCV, "pulse" at JET,
+          "shot" at JT-60SA). Used to template data access patterns.
+      tree_organization:
+        description: >-
+          How experimental data is organized (e.g., "MDSplus trees by subsystem",
+          "PPF by diagnostic data area", "EDAS database tables").
+      key_tools:
+        description: >-
+          Key data access tools/APIs discovered at the facility.
+          E.g., ["sal", "ppfget", "getdat"] for JET,
+          ["tdiExecute", "tcv_get", "gdat"] for TCV,
+          ["eddb_get", "edgis", "eslice"] for JT-60SA.
+        multivalued: true
+      wiki_signal_patterns:
+        description: >-
+          Patterns observed in wiki pages that indicate signal documentation.
+          E.g., ["MDSplus path tables", "diagnostic node listings", "signal catalogs"].
+          Helps wiki discovery score pages with data access content higher.
+        multivalued: true
+      code_import_patterns:
+        description: >-
+          Import patterns that indicate data access code.
+          E.g., ["import MDSplus", "from jet.data import sal", "import eddb"].
+          Helps code ingestion identify data access files.
+        multivalued: true
+      notes:
+        description: Free-form notes about data access at this facility
         multivalued: true

@@ -19,6 +19,53 @@ data_systems:
   - imas   # IMAS data format
   - mdsplus  # MDSplus (limited use)
 
+# Data source configuration for signal discovery
+# Used by: imas-codex discover signals jet
+data_sources:
+  # PPF is JET's primary processed data system.
+  # Organized as Owner/DDA/Dtype. Accessed via SAL REST API, ppfget, or getdat.
+  ppf:
+    sal_endpoint: https://sal.jet.uk  # SAL REST API
+    reference_pulse: 99896
+    default_owner: jetppf
+    # Exclude DDAs with raw/engineering data (high volume, low physics value)
+    exclude_ddas: []
+
+  # IMAS data available post-migration
+  imas:
+    backends:
+      - mdsplus
+    db_name: jet
+
+# Data access patterns discovered during facility exploration.
+data_access_patterns:
+  primary_method: ppf
+  shot_identifier: pulse
+  signal_naming: >-
+    PPF hierarchy: owner/dda/dtype (e.g., jetppf/EFIT/Q95).
+    SAL REST path: /salppc/rest/ppf/signal/{owner}/{pulse}/{seq}/{dda}/{dtype}.
+    getdat CLI: getdat -a ppf -p <pulse> -o <owner> -i <dda>/<dtype>.
+  tree_organization: >-
+    PPF by Diagnostic Data Area (DDA): EFIT (equilibrium), KK3 (ECE),
+    KG1V (interferometer), BOLO (bolometry), MAGN (magnetics), etc.
+    Each DDA contains typed data items (Dtypes) like Q95, TE, NE.
+  key_tools:
+    - sal
+    - ppfget
+    - getdat
+    - jpf
+    - efit
+  wiki_signal_patterns:
+    - DDA/Dtype catalog tables
+    - diagnostic signal listings
+    - EFIT equilibrium quantities
+  code_import_patterns:
+    - from jet.data import sal
+    - ppfget
+    - getdat
+    - import sal
+    - jet.data.sal
+
 # Discovery root paths for path discovery pipeline
 # These are seeded as starting points for directory scanning
 discovery_roots:

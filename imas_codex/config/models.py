@@ -230,6 +230,7 @@ class FacilityConfig(ConfiguredBaseModel):
     data_systems: Optional[list | dict] = Field(default=None, description="""Data systems available. Can be list of strings [\"mdsplus\", \"uda\"] or dict with details {mdsplus: {available: true, ...}}.""", json_schema_extra = { "linkml_meta": {'alias': 'data_systems', 'domain_of': ['FacilityConfig']} })
     discovery_roots: Optional[list] = Field(default=None, description="""Root paths for discovery pipeline seeding. Can be simple strings [\"/home\", \"/work\"] or structured [{path: \"/home\", category: \"container\"}].""", json_schema_extra = { "linkml_meta": {'alias': 'discovery_roots', 'domain_of': ['FacilityConfig']} })
     data_sources: Optional[DataSourcesConfig] = Field(default=None, description="""Data source configuration for signal discovery""", json_schema_extra = { "linkml_meta": {'alias': 'data_sources', 'domain_of': ['FacilityConfig']} })
+    data_access_patterns: Optional[DataAccessPatternsConfig] = Field(default=None, description="""Data access patterns discovered during initial facility exploration. Populated by exploration agents before signal discovery runs. Describes how data is organized, what tools/APIs exist, what naming conventions are used. This informs downstream tools (wiki scoring, signal extraction, code ingestion) about what to look for at this facility.""", json_schema_extra = { "linkml_meta": {'alias': 'data_access_patterns', 'domain_of': ['FacilityConfig']} })
     wiki_sites: Optional[list[WikiSiteConfig]] = Field(default=None, description="""Wiki/documentation sites""", json_schema_extra = { "linkml_meta": {'alias': 'wiki_sites', 'domain_of': ['FacilityConfig']} })
     user_info: Optional[UserInfoConfig] = Field(default=None, description="""User info discovery configuration""", json_schema_extra = { "linkml_meta": {'alias': 'user_info', 'domain_of': ['FacilityConfig']} })
     hostnames: Optional[list[str]] = Field(default=None, description="""Network hostnames for this facility""", json_schema_extra = { "linkml_meta": {'alias': 'hostnames',
@@ -306,27 +307,31 @@ class WikiSiteConfig(ConfiguredBaseModel):
 
 class DataSourcesConfig(ConfiguredBaseModel):
     """
-    Data source configuration for signal discovery. Specifies how to enumerate signals from each data system.
+    Data source configuration for signal discovery. Specifies how to enumerate signals from each data system. Each key maps to a scanner plugin that knows how to extract signals from that data source type.
     """
     linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta({'class_uri': 'fc:DataSourcesConfig',
          'from_schema': 'https://imas.iter.org/schemas/facility_config'})
 
-    tdi: Optional[TDIConfig] = Field(default=None, description="""TDI function configuration""", json_schema_extra = { "linkml_meta": {'alias': 'tdi', 'domain_of': ['DataSourcesConfig']} })
-    mdsplus: Optional[MDSplusConfig] = Field(default=None, description="""MDSplus configuration""", json_schema_extra = { "linkml_meta": {'alias': 'mdsplus', 'domain_of': ['DataSourcesConfig']} })
+    tdi: Optional[TDIConfig] = Field(default=None, description="""TDI function configuration (MDSplus TDI expression files)""", json_schema_extra = { "linkml_meta": {'alias': 'tdi', 'domain_of': ['DataSourcesConfig']} })
+    mdsplus: Optional[MDSplusConfig] = Field(default=None, description="""MDSplus tree configuration (direct tree traversal)""", json_schema_extra = { "linkml_meta": {'alias': 'mdsplus', 'domain_of': ['DataSourcesConfig']} })
+    ppf: Optional[PPFConfig] = Field(default=None, description="""JET PPF configuration (Processed Pulse Files)""", json_schema_extra = { "linkml_meta": {'alias': 'ppf', 'domain_of': ['DataSourcesConfig']} })
+    edas: Optional[EDASConfig] = Field(default=None, description="""JT-60SA EDAS configuration (Experiment Data Access System)""", json_schema_extra = { "linkml_meta": {'alias': 'edas', 'domain_of': ['DataSourcesConfig']} })
     hdf5: Optional[HDF5Config] = Field(default=None, description="""HDF5 file configuration""", json_schema_extra = { "linkml_meta": {'alias': 'hdf5', 'domain_of': ['DataSourcesConfig']} })
-    imas: Optional[IMASConfig] = Field(default=None, description="""IMAS configuration""", json_schema_extra = { "linkml_meta": {'alias': 'imas', 'domain_of': ['DataSourcesConfig']} })
+    imas: Optional[IMASConfig] = Field(default=None, description="""IMAS native data configuration""", json_schema_extra = { "linkml_meta": {'alias': 'imas', 'domain_of': ['DataSourcesConfig']} })
 
 
 class TDIConfig(ConfiguredBaseModel):
     """
-    TDI function data source configuration
+    TDI function data source configuration. TDI (.fun) files provide physics-level accessor functions over raw MDSplus tree paths. Facility-specific (e.g., TCV tcv_eq, tcv_get, tcv_ip).
     """
     linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta({'class_uri': 'fc:TDIConfig',
          'from_schema': 'https://imas.iter.org/schemas/facility_config'})
 
-    primary_path: Optional[str] = Field(default=None, description="""Primary TDI directory path""", json_schema_extra = { "linkml_meta": {'alias': 'primary_path', 'domain_of': ['TDIConfig']} })
+    primary_path: Optional[str] = Field(default=None, description="""Primary TDI directory path (e.g., /usr/local/CRPP/tdi/tcv)""", json_schema_extra = { "linkml_meta": {'alias': 'primary_path', 'domain_of': ['TDIConfig']} })
     additional_paths: Optional[list[str]] = Field(default=None, description="""Additional TDI directories to scan""", json_schema_extra = { "linkml_meta": {'alias': 'additional_paths', 'domain_of': ['TDIConfig']} })
-    reference_shot: Optional[int] = Field(default=None, description="""Reference shot for TDI accessor validation""", json_schema_extra = { "linkml_meta": {'alias': 'reference_shot', 'domain_of': ['TDIConfig', 'MDSplusConfig']} })
+    reference_shot: Optional[int] = Field(default=None, description="""Reference shot for TDI accessor validation""", json_schema_extra = { "linkml_meta": {'alias': 'reference_shot',
+         'domain_of': ['TDIConfig', 'MDSplusConfig', 'EDASConfig', 'IMASConfig']} })
+    exclude_functions: Optional[list[str]] = Field(default=None, description="""TDI function names to exclude from signal discovery (case-insensitive). Hardware control, acquisition triggers, and operational dispatch functions that don't return physics data. These functions may load missing shared libraries, print debug output, or perform side effects when executed.""", json_schema_extra = { "linkml_meta": {'alias': 'exclude_functions', 'domain_of': ['TDIConfig']} })
 
 
 class MDSplusConfig(ConfiguredBaseModel):
@@ -338,7 +343,34 @@ class MDSplusConfig(ConfiguredBaseModel):
 
     connection_tree: Optional[str] = Field(default=None, description="""Default tree for TDI context""", json_schema_extra = { "linkml_meta": {'alias': 'connection_tree', 'domain_of': ['MDSplusConfig']} })
     trees: Optional[list[str]] = Field(default=None, description="""MDSplus tree names to scan""", json_schema_extra = { "linkml_meta": {'alias': 'trees', 'domain_of': ['MDSplusConfig']} })
-    reference_shot: Optional[int] = Field(default=None, description="""Shot number for tree introspection""", json_schema_extra = { "linkml_meta": {'alias': 'reference_shot', 'domain_of': ['TDIConfig', 'MDSplusConfig']} })
+    reference_shot: Optional[int] = Field(default=None, description="""Shot number for tree introspection""", json_schema_extra = { "linkml_meta": {'alias': 'reference_shot',
+         'domain_of': ['TDIConfig', 'MDSplusConfig', 'EDASConfig', 'IMASConfig']} })
+
+
+class PPFConfig(ConfiguredBaseModel):
+    """
+    JET PPF (Processed Pulse File) data source configuration. PPF is organized as Owner/DDA/Dtype entries. Access via SAL REST API, MATLAB ppfget, IDL ppfget, or getdat CLI.
+    """
+    linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta({'class_uri': 'fc:PPFConfig',
+         'from_schema': 'https://imas.iter.org/schemas/facility_config'})
+
+    sal_endpoint: Optional[str] = Field(default=None, description="""SAL REST API endpoint URL""", json_schema_extra = { "linkml_meta": {'alias': 'sal_endpoint', 'domain_of': ['PPFConfig']} })
+    reference_pulse: Optional[int] = Field(default=None, description="""Reference pulse for signal validation""", json_schema_extra = { "linkml_meta": {'alias': 'reference_pulse', 'domain_of': ['PPFConfig']} })
+    default_owner: Optional[str] = Field(default=None, description="""Default PPF data owner (e.g., \"jetppf\")""", json_schema_extra = { "linkml_meta": {'alias': 'default_owner', 'domain_of': ['PPFConfig']} })
+    exclude_ddas: Optional[list[str]] = Field(default=None, description="""DDA identifiers to exclude from discovery""", json_schema_extra = { "linkml_meta": {'alias': 'exclude_ddas', 'domain_of': ['PPFConfig']} })
+
+
+class EDASConfig(ConfiguredBaseModel):
+    """
+    JT-60SA EDAS (Experiment Data Access System) configuration. EDAS wraps proprietary data formats with C/Fortran/Python APIs. Signal definitions are in C header files and Python wrapper code.
+    """
+    linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta({'class_uri': 'fc:EDASConfig',
+         'from_schema': 'https://imas.iter.org/schemas/facility_config'})
+
+    api_path: Optional[str] = Field(default=None, description="""Path to EDAS API source files""", json_schema_extra = { "linkml_meta": {'alias': 'api_path', 'domain_of': ['EDASConfig']} })
+    header_path: Optional[str] = Field(default=None, description="""Path to EDAS C header files with signal definitions""", json_schema_extra = { "linkml_meta": {'alias': 'header_path', 'domain_of': ['EDASConfig']} })
+    reference_shot: Optional[int] = Field(default=None, description="""Reference shot for signal validation""", json_schema_extra = { "linkml_meta": {'alias': 'reference_shot',
+         'domain_of': ['TDIConfig', 'MDSplusConfig', 'EDASConfig', 'IMASConfig']} })
 
 
 class HDF5Config(ConfiguredBaseModel):
@@ -353,12 +385,15 @@ class HDF5Config(ConfiguredBaseModel):
 
 class IMASConfig(ConfiguredBaseModel):
     """
-    IMAS data source configuration
+    IMAS native data source configuration. Used at facilities with native IMAS backend support (ITER, JET post-migration, JT-60SA).
     """
     linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta({'class_uri': 'fc:IMASConfig',
          'from_schema': 'https://imas.iter.org/schemas/facility_config'})
 
-    backends: Optional[list[str]] = Field(default=None, description="""Available IMAS backends""", json_schema_extra = { "linkml_meta": {'alias': 'backends', 'domain_of': ['IMASConfig']} })
+    backends: Optional[list[str]] = Field(default=None, description="""Available IMAS backends (e.g., mdsplus, hdf5, memory)""", json_schema_extra = { "linkml_meta": {'alias': 'backends', 'domain_of': ['IMASConfig']} })
+    db_name: Optional[str] = Field(default=None, description="""IMAS database name""", json_schema_extra = { "linkml_meta": {'alias': 'db_name', 'domain_of': ['IMASConfig']} })
+    reference_shot: Optional[int] = Field(default=None, description="""Reference shot for IDS enumeration""", json_schema_extra = { "linkml_meta": {'alias': 'reference_shot',
+         'domain_of': ['TDIConfig', 'MDSplusConfig', 'EDASConfig', 'IMASConfig']} })
 
 
 class UserInfoConfig(ConfiguredBaseModel):
@@ -388,6 +423,23 @@ class ExcludesConfig(ConfiguredBaseModel):
     patterns: Optional[list[str]] = Field(default=None, description="""Glob patterns to exclude (e.g., \"**/node_modules\", \"**/.git\"). Applied during directory enumeration.""", json_schema_extra = { "linkml_meta": {'alias': 'patterns', 'domain_of': ['ExcludesConfig']} })
 
 
+class DataAccessPatternsConfig(ConfiguredBaseModel):
+    """
+    Data access patterns discovered during initial facility exploration. Populated by exploration agents to inform downstream discovery tools. Describes how shot data is organized, what APIs/tools exist, and what naming conventions are used at this facility. This bridges exploration knowledge to scanning/scoring tools.
+    """
+    linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta({'class_uri': 'fc:DataAccessPatternsConfig',
+         'from_schema': 'https://imas.iter.org/schemas/facility_config'})
+
+    primary_method: Optional[str] = Field(default=None, description="""The primary data access method at this facility (e.g., \"tdi\" for TCV, \"ppf\" for JET, \"edas\" for JT-60SA, \"imas\" for ITER). Informs which scanner plugin to run first.""", json_schema_extra = { "linkml_meta": {'alias': 'primary_method', 'domain_of': ['DataAccessPatternsConfig']} })
+    signal_naming: Optional[str] = Field(default=None, description="""How signals are named at this facility. Free text describing the convention (e.g., \"TDI function dispatch: tcv_eq('quantity')\", \"PPF hierarchy: owner/dda/dtype\", \"EDAS channels: eddb_get(channel)\").""", json_schema_extra = { "linkml_meta": {'alias': 'signal_naming', 'domain_of': ['DataAccessPatternsConfig']} })
+    shot_identifier: Optional[str] = Field(default=None, description="""What the facility calls shots (e.g., \"shot\" at TCV, \"pulse\" at JET, \"shot\" at JT-60SA). Used to template data access patterns.""", json_schema_extra = { "linkml_meta": {'alias': 'shot_identifier', 'domain_of': ['DataAccessPatternsConfig']} })
+    tree_organization: Optional[str] = Field(default=None, description="""How experimental data is organized (e.g., \"MDSplus trees by subsystem\", \"PPF by diagnostic data area\", \"EDAS database tables\").""", json_schema_extra = { "linkml_meta": {'alias': 'tree_organization', 'domain_of': ['DataAccessPatternsConfig']} })
+    key_tools: Optional[list[str]] = Field(default=None, description="""Key data access tools/APIs discovered at the facility. E.g., [\"sal\", \"ppfget\", \"getdat\"] for JET, [\"tdiExecute\", \"tcv_get\", \"gdat\"] for TCV, [\"eddb_get\", \"edgis\", \"eslice\"] for JT-60SA.""", json_schema_extra = { "linkml_meta": {'alias': 'key_tools', 'domain_of': ['DataAccessPatternsConfig']} })
+    wiki_signal_patterns: Optional[list[str]] = Field(default=None, description="""Patterns observed in wiki pages that indicate signal documentation. E.g., [\"MDSplus path tables\", \"diagnostic node listings\", \"signal catalogs\"]. Helps wiki discovery score pages with data access content higher.""", json_schema_extra = { "linkml_meta": {'alias': 'wiki_signal_patterns', 'domain_of': ['DataAccessPatternsConfig']} })
+    code_import_patterns: Optional[list[str]] = Field(default=None, description="""Import patterns that indicate data access code. E.g., [\"import MDSplus\", \"from jet.data import sal\", \"import eddb\"]. Helps code ingestion identify data access files.""", json_schema_extra = { "linkml_meta": {'alias': 'code_import_patterns', 'domain_of': ['DataAccessPatternsConfig']} })
+    notes: Optional[list[str]] = Field(default=None, description="""Free-form notes about data access at this facility""", json_schema_extra = { "linkml_meta": {'alias': 'notes', 'domain_of': ['DataAccessPatternsConfig']} })
+
+
 # Model rebuild
 # see https://pydantic-docs.helpmanual.io/usage/models/#rebuilding-a-model
 FacilityConfig.model_rebuild()
@@ -396,8 +448,11 @@ WikiSiteConfig.model_rebuild()
 DataSourcesConfig.model_rebuild()
 TDIConfig.model_rebuild()
 MDSplusConfig.model_rebuild()
+PPFConfig.model_rebuild()
+EDASConfig.model_rebuild()
 HDF5Config.model_rebuild()
 IMASConfig.model_rebuild()
 UserInfoConfig.model_rebuild()
 ExcludesConfig.model_rebuild()
+DataAccessPatternsConfig.model_rebuild()
 
