@@ -252,10 +252,10 @@ discover.add_command(files)
     help="Auto-enrich paths scoring >= threshold (e.g., 0.75)",
 )
 @click.option(
-    "--timeout",
+    "--time",
     type=int,
     default=None,
-    help="Maximum runtime in minutes (e.g., 10). Discovery halts when timeout expires.",
+    help="Maximum runtime in minutes (e.g., 10). Discovery halts when time expires.",
 )
 def paths_run(
     facility: str,
@@ -271,7 +271,7 @@ def paths_run(
     no_rich: bool,
     add_roots: bool,
     enrich_threshold: float | None,
-    timeout: int | None,
+    time: int | None,
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -318,7 +318,7 @@ def paths_run(
         root_filter=root_filter,
         add_roots=add_roots,
         enrich_threshold=enrich_threshold,
-        timeout_minutes=timeout,
+        timeout_minutes=time,
     )
 
 
@@ -443,7 +443,7 @@ def _run_iterative_discovery(
     if limit:
         log_print(f"Path limit: {limit}")
     if timeout_minutes is not None:
-        log_print(f"Timeout: {timeout_minutes} min")
+        log_print(f"Time limit: {timeout_minutes} min")
     if not scan_only:
         log_print(f"Model: {model_name}")
 
@@ -1898,6 +1898,9 @@ def wiki_run(
 
     # Check existing artifact count (discover artifacts if pages exist but no artifacts)
     existing_artifacts = 0
+    # Per-site page/artifact summaries for resume display
+    _site_page_counts: list[tuple[str, int]] = []
+    _site_artifact_counts: list[tuple[str, int]] = []
     try:
         from imas_codex.graph.client import GraphClient
 
@@ -1907,15 +1910,82 @@ def wiki_run(
                 f=facility,
             )
             existing_artifacts = _art_result[0]["cnt"] if _art_result else 0
+
+            # Per-site page counts (group by URL prefix matching wiki_sites)
+            _page_rows = _gc.query(
+                """
+                MATCH (wp:WikiPage {facility_id: $f})
+                WITH wp.url AS url
+                RETURN url, count(*) AS cnt
+                """,
+                f=facility,
+            )
+            # Bucket pages into sites by matching URL prefixes
+            _site_urls = [
+                s.get("url", "").rstrip("/") for s in wiki_sites
+            ]
+            _site_names = []
+            for s in wiki_sites:
+                from urllib.parse import urlparse as _parse_site_url
+
+                _p = _parse_site_url(s.get("url", ""))
+                _site_names.append(
+                    _p.path.rstrip("/").rsplit("/", 1)[-1]
+                    or s.get("url", "")
+                )
+            _spc: dict[int, int] = {}  # site_index -> page count
+            for row in _page_rows:
+                purl = row["url"] or ""
+                for si, surl in enumerate(_site_urls):
+                    if purl.startswith(surl):
+                        _spc[si] = _spc.get(si, 0) + row["cnt"]
+                        break
+            _site_page_counts = [
+                (_site_names[si], cnt) for si, cnt in sorted(_spc.items())
+            ]
+
+            # Per-site artifact counts
+            _art_rows = _gc.query(
+                """
+                MATCH (wa:WikiArtifact {facility_id: $f})-[:FROM_PAGE]->(wp:WikiPage)
+                WITH wp.url AS url, count(wa) AS cnt
+                RETURN url, cnt
+                """,
+                f=facility,
+            )
+            _sac: dict[int, int] = {}
+            for row in _art_rows:
+                purl = row["url"] or ""
+                for si, surl in enumerate(_site_urls):
+                    if purl.startswith(surl):
+                        _sac[si] = _sac.get(si, 0) + row["cnt"]
+                        break
+            _site_artifact_counts = [
+                (_site_names[si], cnt) for si, cnt in sorted(_sac.items())
+            ]
     except Exception:
         pass
 
     if existing_pages > 0 and not should_bulk_discover:
-        parts = [f"{existing_pages} pages"]
-        if existing_artifacts > 0:
-            parts.append(f"{existing_artifacts:,} artifacts")
-        log_print(f"[dim]Found {', '.join(parts)} in graph, skipping scan[/dim]")
+        # Pages summary
+        log_print(f"[dim]Found {existing_pages:,} pages in graph, skipping scan[/dim]")
+        if _site_page_counts and len(_site_page_counts) > 1:
+            for sname, cnt in _site_page_counts:
+                log_print(f"[dim]  {sname}: {cnt:,} pages[/dim]")
         log_print("[dim]Use --rescan to re-enumerate pages[/dim]")
+
+        # Artifacts summary
+        if existing_artifacts > 0:
+            log_print("")
+            log_print(
+                f"[dim]Found {existing_artifacts:,} artifacts in graph[/dim]"
+            )
+            if _site_artifact_counts and len(_site_artifact_counts) > 1:
+                for sname, cnt in _site_artifact_counts:
+                    log_print(f"[dim]  {sname}: {cnt:,} artifacts[/dim]")
+            log_print(
+                "[dim]Use --rescan-artifacts to re-enumerate artifacts[/dim]"
+            )
     elif rescan and existing_pages > 0:
         log_print(
             f"[yellow]Rescan: adding new pages (keeping {existing_pages} existing)[/yellow]"
