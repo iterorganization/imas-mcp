@@ -7,6 +7,8 @@ and cluster structure.
 
 import pytest
 
+from imas_codex.graph.client import EXPECTED_VECTOR_INDEXES
+
 pytestmark = pytest.mark.graph
 
 
@@ -71,22 +73,13 @@ class TestGraphMeta:
 class TestVectorIndexes:
     """Verify vector indexes are present and online."""
 
-    EXPECTED_VECTOR_INDEXES = [
-        "code_chunk_embedding",
-        "facility_signal_desc_embedding",
-        "facility_path_desc_embedding",
-        "tree_node_desc_embedding",
-        "wiki_artifact_desc_embedding",
-        "imas_path_embedding",
-        "cluster_centroid",
-    ]
-
     def test_vector_indexes_exist(self, graph_indexes):
         """All expected vector indexes should exist."""
+        expected_names = {idx[0] for idx in EXPECTED_VECTOR_INDEXES}
         vector_indexes = {
             idx["name"] for idx in graph_indexes if idx["type"] == "VECTOR"
         }
-        missing = set(self.EXPECTED_VECTOR_INDEXES) - vector_indexes
+        missing = expected_names - vector_indexes
         assert not missing, (
             f"Missing vector indexes: {missing}. Run GraphClient().initialize_schema()."
         )

@@ -4,12 +4,70 @@ All tests in this package require a live Neo4j connection. If Neo4j
 is not reachable, tests are skipped automatically.
 """
 
+from pathlib import Path
+
 import pytest
 
 from imas_codex.graph.schema import GraphSchema, get_schema
 
 # Apply graph marker to all tests in this directory
 pytestmark = pytest.mark.graph
+
+
+# =============================================================================
+# Schema helpers - derive configuration from LinkML schemas
+# =============================================================================
+
+
+def _get_schemas_dir() -> Path:
+    """Get the schemas directory."""
+    return Path(__file__).parent.parent.parent / "imas_codex" / "schemas"
+
+
+def _get_combined_embeddable_labels() -> list[str]:
+    """Get all embeddable labels from all schemas (facility + imas_dd)."""
+    schemas_dir = _get_schemas_dir()
+    labels = set()
+    for schema_name in ["facility.yaml", "imas_dd.yaml"]:
+        gs = GraphSchema(schemas_dir / schema_name)
+        labels |= set(gs.embeddable_labels)
+    return sorted(labels)
+
+
+def _get_combined_description_embeddable_labels() -> list[str]:
+    """Get labels with description+embedding from all schemas."""
+    schemas_dir = _get_schemas_dir()
+    labels = set()
+    for schema_name in ["facility.yaml", "imas_dd.yaml"]:
+        gs = GraphSchema(schemas_dir / schema_name)
+        labels |= set(gs.description_embeddable_labels)
+    return sorted(labels)
+
+
+# Module-level caches (computed once per test session)
+_ALL_EMBEDDABLE_LABELS: list[str] | None = None
+_DESCRIPTION_EMBEDDABLE_LABELS: list[str] | None = None
+
+
+def get_all_embeddable_labels() -> list[str]:
+    """Get all node labels with embedding slots (cached)."""
+    global _ALL_EMBEDDABLE_LABELS
+    if _ALL_EMBEDDABLE_LABELS is None:
+        _ALL_EMBEDDABLE_LABELS = _get_combined_embeddable_labels()
+    return _ALL_EMBEDDABLE_LABELS
+
+
+def get_description_embeddable_labels() -> list[str]:
+    """Get node labels with description+embedding (cached)."""
+    global _DESCRIPTION_EMBEDDABLE_LABELS
+    if _DESCRIPTION_EMBEDDABLE_LABELS is None:
+        _DESCRIPTION_EMBEDDABLE_LABELS = _get_combined_description_embeddable_labels()
+    return _DESCRIPTION_EMBEDDABLE_LABELS
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
 
 
 @pytest.fixture(scope="session")

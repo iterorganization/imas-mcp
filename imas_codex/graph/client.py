@@ -41,6 +41,62 @@ logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# Vector Index Configuration
+# =============================================================================
+
+# Facility schema vector indexes - created by ensure_vector_indexes()
+# Each tuple: (index_name, node_label, property_name)
+FACILITY_VECTOR_INDEXES = [
+    ("code_chunk_embedding", "CodeChunk", "embedding"),
+    ("facility_signal_desc_embedding", "FacilitySignal", "embedding"),
+    ("facility_path_desc_embedding", "FacilityPath", "embedding"),
+    ("tree_node_desc_embedding", "TreeNode", "embedding"),
+    ("wiki_artifact_desc_embedding", "WikiArtifact", "embedding"),
+]
+
+# DD schema vector indexes - created by build_dd_graph()
+DD_VECTOR_INDEXES = [
+    ("imas_path_embedding", "IMASPath", "embedding"),
+    ("cluster_centroid", "IMASSemanticCluster", "centroid"),
+]
+
+# All expected vector indexes (imports from tests can use this)
+EXPECTED_VECTOR_INDEXES = FACILITY_VECTOR_INDEXES + DD_VECTOR_INDEXES
+
+
+# =============================================================================
+# Code-Created Relationships (not yet modeled as LinkML slots)
+# =============================================================================
+
+# These relationship types are created directly in Cypher queries but don't
+# yet have corresponding LinkML slot definitions. They should eventually be
+# promoted to schema slots, but for now they're documented here.
+#
+# Format: {TYPE: "Source -> Target (description)"}
+CODE_CREATED_RELATIONSHIPS: dict[str, str] = {
+    # Wiki/code chunking
+    "HAS_CHUNK": "WikiPage/SourceFile -> chunk nodes",
+    "HAS_ARTIFACT": "WikiPage -> WikiArtifact",
+    "HAS_IMAGE": "WikiPage/WikiArtifact -> Image",
+    "NEXT_CHUNK": "WikiChunk -> WikiChunk (ordering)",
+    # DD structure (created by build_dd_graph)
+    "IN_IDS": "IMASPath -> IDS (containment)",
+    "INTRODUCED_IN": "IMASPath -> DDVersion",
+    "DEPRECATED_IN": "IMASPath -> DDVersion",
+    "HAS_COORDINATE": "IMASPath -> IMASCoordinateSpec",
+    "HAS_UNIT": "IMASPath -> Unit",
+    "HAS_ERROR": "IMASPath -> IMASPath (error bounds)",
+    "HAS_PARENT": "IMASPath -> IMASPath (hierarchy)",
+    "IN_CLUSTER": "IMASPath -> IMASSemanticCluster",
+    # Facility relationships
+    "INSTANCE_OF": "Entity -> SoftwareRepo/PhysicsDomain",
+    "OWNS": "FacilityUser -> FacilityPath",
+    "IS_PERSON": "FacilityUser -> Person",
+    "CHECKED_VIA": "FacilitySignal -> DataAccess",
+}
+
+
 @dataclass
 class GraphClient:
     """Client for Neo4j knowledge graph operations.
@@ -161,43 +217,29 @@ class GraphClient:
     def ensure_vector_indexes(self) -> None:
         """Create vector indexes for semantic search if they don't exist.
 
-        Creates vector indexes on:
+        Creates vector indexes defined in FACILITY_VECTOR_INDEXES on:
         - CodeChunk.embedding - code semantic search
         - FacilitySignal.embedding - signal description search
         - FacilityPath.embedding - path description search
         - TreeNode.embedding - tree node description search
         - WikiArtifact.embedding - artifact description search
 
+        Note: DD indexes (imas_path_embedding, cluster_centroid) are created
+        by build_dd_graph() since they require the DD to be populated first.
+
         Requires Neo4j 5.x+ with vector index support.
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        # Index configurations: (index_name, label, property)
-        vector_indexes = [
-            ("code_chunk_embedding", "CodeChunk", "embedding"),
-            (
-                "facility_signal_desc_embedding",
-                "FacilitySignal",
-                "embedding",
-            ),
-            ("facility_path_desc_embedding", "FacilityPath", "embedding"),
-            ("tree_node_desc_embedding", "TreeNode", "embedding"),
-            ("wiki_artifact_desc_embedding", "WikiArtifact", "embedding"),
-        ]
-
         dim = get_embedding_dimension()
 
         with self.session() as sess:
             # Get existing indexes
             result = sess.run(
                 "SHOW INDEXES YIELD name WHERE name IN $names RETURN name",
-                names=[idx[0] for idx in vector_indexes],
+                names=[idx[0] for idx in FACILITY_VECTOR_INDEXES],
             )
             existing = {record["name"] for record in result}
 
-            for index_name, label, prop in vector_indexes:
+            for index_name, label, prop in FACILITY_VECTOR_INDEXES:
                 if index_name in existing:
                     continue  # Index already exists
 

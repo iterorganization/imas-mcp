@@ -110,8 +110,14 @@ class GraphSchema:
                 # Check if range is a class (relationship) vs primitive type
                 if slot_range and slot_range in self._view.all_classes():
                     # Check for explicit relationship_type annotation
-                    annotations = getattr(slot, "annotations", {}) or {}
-                    rel_type_ann = annotations.get("relationship_type")
+                    # annotations can be dict, JsonObj, or None
+                    annotations = getattr(slot, "annotations", None) or {}
+                    # Handle both dict and JsonObj-style access
+                    rel_type_ann = (
+                        annotations.get("relationship_type")
+                        if isinstance(annotations, dict)
+                        else getattr(annotations, "relationship_type", None)
+                    )
                     cypher_type = (
                         rel_type_ann.value
                         if rel_type_ann and hasattr(rel_type_ann, "value")
@@ -132,6 +138,32 @@ class GraphSchema:
     def relationship_types(self) -> list[str]:
         """Get unique relationship type names (SCREAMING_SNAKE_CASE)."""
         return sorted({rel.cypher_type for rel in self.relationships})
+
+    @cached_property
+    def embeddable_labels(self) -> list[str]:
+        """Get node labels that have an 'embedding' slot.
+
+        Used in tests to verify embedding dimensions and quality.
+        """
+        return sorted(
+            label
+            for label in self.node_labels
+            if "embedding" in self.get_all_slots(label)
+        )
+
+    @cached_property
+    def description_embeddable_labels(self) -> list[str]:
+        """Get node labels with both 'description' and 'embedding' slots.
+
+        These are nodes where we embed their description text.
+        Used to test description-to-embedding correlation.
+        """
+        return sorted(
+            label
+            for label in self.node_labels
+            if "embedding" in self.get_all_slots(label)
+            and "description" in self.get_all_slots(label)
+        )
 
     def get_identifier(self, class_name: str) -> str | None:
         """Get the identifier field for a class.

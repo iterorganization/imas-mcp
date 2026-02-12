@@ -6,23 +6,9 @@ and enumerated field values.
 
 import pytest
 
+from .conftest import get_all_embeddable_labels, get_description_embeddable_labels
+
 pytestmark = pytest.mark.graph
-
-# Node types that have description + embedding fields (facility-owned)
-DESCRIPTION_EMBEDDABLE_LABELS = [
-    "FacilitySignal",
-    "FacilityPath",
-    "TreeNode",
-    "WikiArtifact",
-]
-
-# Node types with embeddings (all, including DD and code)
-ALL_EMBEDDABLE_LABELS = [
-    *DESCRIPTION_EMBEDDABLE_LABELS,
-    "CodeChunk",
-    "WikiChunk",
-    "IMASPath",
-]
 
 # Minimum self-similarity score (cosine) for embedding vs description
 # A well-embedded description should have high self-similarity
@@ -32,7 +18,7 @@ MIN_SELF_SIMILARITY = 0.5
 class TestEmbeddingDimensions:
     """All embeddings must match the configured dimension."""
 
-    @pytest.mark.parametrize("label", ALL_EMBEDDABLE_LABELS)
+    @pytest.mark.parametrize("label", get_all_embeddable_labels())
     def test_embedding_dimension_matches_config(
         self, graph_client, label, label_counts, embedding_dimension
     ):
@@ -56,7 +42,7 @@ class TestEmbeddingDimensions:
             f"Expected {embedding_dimension}, found: {wrong_dims}"
         )
 
-    @pytest.mark.parametrize("label", ALL_EMBEDDABLE_LABELS)
+    @pytest.mark.parametrize("label", get_all_embeddable_labels())
     def test_no_mixed_dimensions(self, graph_client, label, label_counts):
         """All embeddings for a label must have the same dimension."""
         if not label_counts.get(label):
@@ -80,7 +66,7 @@ class TestEmbeddingDimensions:
 class TestEmbeddingQuality:
     """Embedding vectors should be valid and meaningful."""
 
-    @pytest.mark.parametrize("label", ALL_EMBEDDABLE_LABELS)
+    @pytest.mark.parametrize("label", get_all_embeddable_labels())
     def test_no_zero_embeddings(self, graph_client, label, label_counts):
         """Embeddings should not be all-zero vectors."""
         if not label_counts.get(label):
@@ -97,7 +83,7 @@ class TestEmbeddingQuality:
         count = result[0]["cnt"] if result else 0
         assert count == 0, f"{count} {label} nodes have zero/near-zero embeddings"
 
-    @pytest.mark.parametrize("label", ALL_EMBEDDABLE_LABELS)
+    @pytest.mark.parametrize("label", get_all_embeddable_labels())
     def test_embeddings_are_normalized(self, graph_client, label, label_counts):
         """Embeddings should be approximately unit-length (L2 norm ~ 1.0)."""
         if not label_counts.get(label):
@@ -133,7 +119,7 @@ class TestEmbeddingSelfSimilarity:
     Requires the remote embedding server (localhost:18765 via SSH tunnel).
     """
 
-    @pytest.mark.parametrize("label", DESCRIPTION_EMBEDDABLE_LABELS)
+    @pytest.mark.parametrize("label", get_description_embeddable_labels())
     def test_self_similarity(self, graph_client, label, label_counts):
         """Stored embeddings should match re-embedded descriptions."""
 
@@ -176,7 +162,7 @@ class TestDescriptionEmbeddingCoverage:
     After `data push --embed`, all descriptions should be embedded.
     """
 
-    @pytest.mark.parametrize("label", DESCRIPTION_EMBEDDABLE_LABELS)
+    @pytest.mark.parametrize("label", get_description_embeddable_labels())
     def test_description_embedding_coverage(self, graph_client, label, label_counts):
         """All nodes with descriptions should have embeddings."""
 

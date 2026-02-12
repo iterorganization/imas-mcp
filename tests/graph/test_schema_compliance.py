@@ -10,6 +10,8 @@ Verifies that the graph structure matches the LinkML schema definitions:
 
 import pytest
 
+from imas_codex.graph.client import CODE_CREATED_RELATIONSHIPS
+
 pytestmark = pytest.mark.graph
 
 
@@ -18,29 +20,6 @@ class TestLabelsAndRelationships:
 
     # Internal labels that are not in the LinkML schema
     INTERNAL_LABELS = {"_GraphMeta"}
-
-    # Relationship types created by build code but not yet modeled as
-    # proper LinkML slots with class ranges.  These are documented in
-    # schema class descriptions and should be promoted to real slots
-    # over time.
-    CODE_CREATED_RELATIONSHIPS = {
-        "HAS_CHUNK",  # WikiPage/SourceFile -> chunk nodes
-        "HAS_ARTIFACT",  # WikiPage -> WikiArtifact
-        "HAS_IMAGE",  # WikiPage/WikiArtifact -> Image
-        "NEXT_CHUNK",  # WikiChunk -> WikiChunk (ordering)
-        "IN_IDS",  # IMASPath -> IDS
-        "INTRODUCED_IN",  # IMASPath -> DDVersion
-        "DEPRECATED_IN",  # IMASPath -> DDVersion
-        "HAS_COORDINATE",  # IMASPath -> IMASCoordinateSpec
-        "HAS_UNIT",  # IMASPath -> Unit
-        "HAS_ERROR",  # IMASPath -> IMASPath (error bounds)
-        "HAS_PARENT",  # IMASPath -> IMASPath (hierarchy)
-        "IN_CLUSTER",  # IMASPath -> IMASSemanticCluster
-        "INSTANCE_OF",  # Entity -> SoftwareRepo/PhysicsDomain
-        "OWNS",  # FacilityUser -> FacilityPath
-        "IS_PERSON",  # FacilityUser -> Person
-        "CHECKED_VIA",  # FacilitySignal -> DataAccess
-    }
 
     def test_all_labels_in_schema(self, graph_labels, schema):
         """Every label in the graph must be defined in the schema."""
@@ -65,8 +44,8 @@ class TestLabelsAndRelationships:
         dd_schema = GraphSchema(schema_path="imas_codex/schemas/imas_dd.yaml")
         expected |= set(dd_schema.relationship_types)
 
-        # Include code-created relationships documented in schema comments
-        expected |= self.CODE_CREATED_RELATIONSHIPS
+        # Include code-created relationships documented in client.py
+        expected |= set(CODE_CREATED_RELATIONSHIPS.keys())
 
         unexpected = graph_relationship_types - expected
         assert not unexpected, (
