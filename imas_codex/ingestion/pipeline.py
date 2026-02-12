@@ -247,6 +247,10 @@ async def ingest_files(
     total_files = len(remote_paths)
     report(0, total_files, f"Starting ingestion of {total_files} files")
 
+    # Ensure Facility node exists so AT_FACILITY relationships don't fail
+    with GraphClient() as gc:
+        gc.ensure_facility(facility)
+
     vector_store = create_vector_store()
 
     # Deduplication check

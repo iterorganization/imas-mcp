@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 
 import click
 from rich.console import Console
@@ -65,6 +66,13 @@ logger = logging.getLogger(__name__)
     default=False,
     help="Use logging output instead of rich progress display",
 )
+@click.option(
+    "--time",
+    "time_limit",
+    type=int,
+    default=None,
+    help="Maximum runtime in minutes (e.g., 5). Discovery halts when time expires.",
+)
 def signals(
     facility: str,
     cost_limit: float,
@@ -76,6 +84,7 @@ def signals(
     enrich_workers: int,
     check_workers: int,
     no_rich: bool,
+    time_limit: int | None,
 ) -> None:
     """Discover signals from MDSplus TDI expressions.
 
@@ -163,6 +172,8 @@ def signals(
     log_print(f"  Cost limit: ${cost_limit:.2f}")
     if signal_limit:
         log_print(f"  Signal limit: {signal_limit}")
+    if time_limit is not None:
+        log_print(f"  Time limit: {time_limit} min")
     if focus:
         log_print(f"  Focus: {focus}")
     log_print(f"  Workers: {enrich_workers} enrich, {check_workers} check")
@@ -172,6 +183,11 @@ def signals(
 
     try:
         from imas_codex.discovery.data.parallel import run_parallel_data_discovery
+
+        # Compute deadline from time limit
+        deadline: float | None = None
+        if time_limit is not None:
+            deadline = time.time() + (time_limit * 60)
 
         def log_on_scan(msg, stats, results=None):
             if msg != "idle":
@@ -197,6 +213,7 @@ def signals(
                     focus=focus,
                     discover_only=scan_only,
                     enrich_only=enrich_only,
+                    deadline=deadline,
                     num_enrich_workers=enrich_workers,
                     num_check_workers=check_workers,
                     on_discover_progress=log_on_scan,
@@ -272,6 +289,7 @@ def signals(
                             focus=focus,
                             discover_only=scan_only,
                             enrich_only=enrich_only,
+                            deadline=deadline,
                             num_enrich_workers=enrich_workers,
                             num_check_workers=check_workers,
                             on_discover_progress=on_scan,

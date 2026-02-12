@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 import sys
+import time
 
 import click
 from rich.console import Console
@@ -67,6 +68,13 @@ logger = logging.getLogger(__name__)
     default=False,
     help="Re-scan artifacts even if already in graph",
 )
+@click.option(
+    "--time",
+    "time_limit",
+    type=int,
+    default=None,
+    help="Maximum runtime in minutes (e.g., 5). Discovery halts when time expires.",
+)
 def wiki(
     facility: str,
     source: str | None,
@@ -82,6 +90,7 @@ def wiki(
     score_workers: int,
     ingest_workers: int,
     rescan_artifacts: bool,
+    time_limit: int | None,
 ) -> None:
     """Discover wiki pages and build documentation graph.
 
@@ -583,6 +592,8 @@ def wiki(
         log_print(f"Cost limit: ${cost_limit:.2f}")
     if max_pages:
         log_print(f"Page limit: {max_pages}")
+    if time_limit is not None:
+        log_print(f"Time limit: {time_limit} min")
     if focus and not scan_only:
         log_print(f"Focus: {focus}")
     if len(site_configs) > 1:
@@ -602,6 +613,7 @@ def wiki(
             _use_rich: bool,
             _num_score_workers: int,
             _num_ingest_workers: int,
+            _deadline: float | None = None,
         ):
             combined: dict = {
                 "scanned": 0,
@@ -636,6 +648,9 @@ def wiki(
                     if remaining_pages is not None and remaining_pages <= 0:
                         wiki_logger.info("Page limit reached, skipping remaining sites")
                         break
+                    if _deadline is not None and time.time() >= _deadline:
+                        wiki_logger.info("Time limit reached, skipping remaining sites")
+                        break
 
                     wiki_logger.info(
                         "Processing site %d/%d: %s",
@@ -664,6 +679,7 @@ def wiki(
                             score_only=_score_only,
                             bulk_discover=False,
                             skip_reset=_multi,
+                            deadline=_deadline,
                             on_scan_progress=log_on_scan,
                             on_score_progress=log_on_score,
                             on_ingest_progress=log_on_ingest,
@@ -878,6 +894,8 @@ def wiki(
                             break
                         if remaining_pages is not None and remaining_pages <= 0:
                             break
+                        if _deadline is not None and time.time() >= _deadline:
+                            break
 
                         try:
                             result = await run_parallel_wiki_discovery(
@@ -899,6 +917,7 @@ def wiki(
                                 score_only=_score_only,
                                 bulk_discover=False,
                                 skip_reset=multi_site,
+                                deadline=_deadline,
                                 on_scan_progress=on_scan,
                                 on_score_progress=on_score,
                                 on_ingest_progress=on_ingest,
@@ -945,6 +964,10 @@ def wiki(
 
             return combined
 
+        deadline: float | None = None
+        if time_limit is not None:
+            deadline = time.time() + (time_limit * 60)
+
         result = asyncio.run(
             run_all_sites_unified(
                 _facility=facility,
@@ -958,6 +981,7 @@ def wiki(
                 _use_rich=use_rich,
                 _num_score_workers=score_workers,
                 _num_ingest_workers=ingest_workers,
+                _deadline=deadline,
             )
         )
 

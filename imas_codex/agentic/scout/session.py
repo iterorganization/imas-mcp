@@ -262,6 +262,7 @@ class ScoutSession:
 
         try:
             with GraphClient() as client:
+                client.ensure_facility(self.config.facility)
                 node_type = discovery.get("type", "FacilityPath")
                 if node_type == "FacilityPath":
                     client.query(
@@ -270,7 +271,7 @@ class ScoutSession:
                         SET p += $props
                         WITH p
                         MATCH (f:Facility {id: $facility})
-                        MERGE (p)-[:LOCATED_AT]->(f)
+                        MERGE (p)-[:AT_FACILITY]->(f)
                         """,
                         id=discovery["id"],
                         props={
@@ -308,6 +309,7 @@ class ScoutSession:
         path_id = f"{self.config.facility}:{path}"
         try:
             with GraphClient() as client:
+                client.ensure_facility(self.config.facility)
                 client.query(
                     """
                     MERGE (p:FacilityPath {id: $id})
@@ -317,7 +319,7 @@ class ScoutSession:
                         p.skipped_at = $ts
                     WITH p
                     MATCH (f:Facility {id: $facility})
-                    MERGE (p)-[:LOCATED_AT]->(f)
+                    MERGE (p)-[:AT_FACILITY]->(f)
                     """,
                     id=path_id,
                     path=path,

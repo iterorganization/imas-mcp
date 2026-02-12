@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -71,6 +72,7 @@ class WikiDiscoveryState:
     page_limit: int | None = None
     max_depth: int | None = None
     focus: str | None = None
+    deadline: float | None = None  # Unix timestamp when discovery should stop
 
     # Worker stats (simplified: score + ingest only)
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -146,6 +148,13 @@ class WikiDiscoveryState:
         return await self.service_monitor.await_services_ready()
 
     @property
+    def deadline_expired(self) -> bool:
+        """Check if the deadline has been reached."""
+        if self.deadline is None:
+            return False
+        return time.time() >= self.deadline
+
+    @property
     def budget_exhausted(self) -> bool:
         return self.total_cost >= self.cost_limit
 
@@ -168,6 +177,9 @@ class WikiDiscoveryState:
         queues normally.
         """
         if self.stop_requested:
+            return True
+
+        if self.deadline_expired:
             return True
 
         budget_done = self.budget_exhausted
@@ -250,9 +262,12 @@ class WikiDiscoveryState:
     def should_stop_scoring(self) -> bool:
         """Check if score workers should stop.
 
-        Score workers stop when budget exhausted or page limit reached.
+        Score workers stop when budget exhausted, page limit reached,
+        or deadline expired.
         """
         if self.stop_requested:
+            return True
+        if self.deadline_expired:
             return True
         if self.budget_exhausted:
             return True
@@ -266,11 +281,13 @@ class WikiDiscoveryState:
         Ingest workers continue AFTER budget is exhausted to drain the
         ingest queue. This ensures all scorable content gets ingested
         before termination. They only stop when:
-        1. Explicitly requested
+        1. Explicitly requested or deadline expired
         2. Idle for 3+ iterations with no pending ingest work AND
            score workers are also idle (no more scoring happening)
         """
         if self.stop_requested:
+            return True
+        if self.deadline_expired:
             return True
         # Continue even when budget exhausted - drain the ingest queue
         # BUT don't exit early if scoring is still running - pages may arrive soon
@@ -291,9 +308,12 @@ class WikiDiscoveryState:
         """Check if artifact ingest workers should stop.
 
         Artifact ingest workers continue until no pending scored artifacts remain.
-        They stop when explicitly requested or idle for 3+ iterations.
+        They stop when explicitly requested, deadline expired, or idle for
+        3+ iterations.
         """
         if self.stop_requested:
+            return True
+        if self.deadline_expired:
             return True
         if (
             self.artifact_idle_count >= 3
@@ -305,9 +325,12 @@ class WikiDiscoveryState:
     def should_stop_artifact_scoring(self) -> bool:
         """Check if artifact score workers should stop.
 
-        Artifact score workers stop when budget exhausted or no more discovered artifacts.
+        Artifact score workers stop when budget exhausted, deadline expired,
+        or no more discovered artifacts.
         """
         if self.stop_requested:
+            return True
+        if self.deadline_expired:
             return True
         if self.budget_exhausted:
             return True
@@ -327,11 +350,13 @@ class WikiDiscoveryState:
         at the start of a run.
 
         Stop when:
-        1. Explicitly requested
+        1. Explicitly requested or deadline expired
         2. Budget exhausted (VLM must respect budget like LLM workers)
         3. Idle for 3+ iterations AND ingestion is done AND no pending images
         """
         if self.stop_requested:
+            return True
+        if self.deadline_expired:
             return True
         if self.budget_exhausted:
             return True

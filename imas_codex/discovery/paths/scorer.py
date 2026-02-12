@@ -241,6 +241,50 @@ class DirectoryScorer:
             tokens_used=total_tokens,
         )
 
+    async def async_score_batch(
+        self,
+        directories: list[dict[str, Any]],
+        focus: str | None = None,
+        threshold: float = 0.7,
+    ) -> ScoredBatch:
+        """Async version of score_batch using acall_llm_structured.
+
+        Fully cancellable — no thread executors, uses litellm.acompletion().
+        """
+        from imas_codex.discovery.base.llm import acall_llm_structured
+
+        if not directories:
+            return ScoredBatch(
+                scored_dirs=[],
+                total_cost=0.0,
+                model=self.model,
+                tokens_used=0,
+            )
+
+        system_prompt = self._build_system_prompt(focus)
+        user_prompt = self._build_user_prompt(directories)
+
+        batch, cost, total_tokens = await acall_llm_structured(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_model=ScoreBatch,
+        )
+
+        cost_per_path = cost / len(directories) if directories else 0.0
+        scored_dirs = self._map_scored_directories(
+            batch, directories, threshold, cost_per_path
+        )
+
+        return ScoredBatch(
+            scored_dirs=scored_dirs,
+            total_cost=cost,
+            model=self.model,
+            tokens_used=total_tokens,
+        )
+
     def _build_system_prompt(self, focus: str | None = None) -> str:
         """Build system prompt for directory scoring.
 

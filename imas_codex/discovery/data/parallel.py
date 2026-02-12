@@ -80,6 +80,7 @@ class DataDiscoveryState:
     cost_limit: float = 10.0
     signal_limit: int | None = None
     focus: str | None = None
+    deadline: float | None = None  # Unix timestamp when discovery should stop
 
     # Worker stats
     discover_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -98,6 +99,13 @@ class DataDiscoveryState:
         return self.enrich_stats.cost
 
     @property
+    def deadline_expired(self) -> bool:
+        """Check if the deadline has been reached."""
+        if self.deadline is None:
+            return False
+        return time.time() >= self.deadline
+
+    @property
     def budget_exhausted(self) -> bool:
         return self.total_cost >= self.cost_limit
 
@@ -110,6 +118,9 @@ class DataDiscoveryState:
     def should_stop(self) -> bool:
         """Check if ALL workers should terminate."""
         if self.stop_requested:
+            return True
+
+        if self.deadline_expired:
             return True
 
         limit_done = self.budget_exhausted or self.signal_limit_reached
@@ -151,6 +162,8 @@ class DataDiscoveryState:
         """Check if enrich workers should stop."""
         if self.stop_requested:
             return True
+        if self.deadline_expired:
+            return True
         if self.budget_exhausted:
             return True
         if self.signal_limit_reached:
@@ -160,6 +173,8 @@ class DataDiscoveryState:
     def should_stop_checking(self) -> bool:
         """Check if check workers should stop."""
         if self.stop_requested:
+            return True
+        if self.deadline_expired:
             return True
         if self.check_idle_count >= 3:
             # Only stop if enriching is done AND no pending validation work
@@ -783,7 +798,7 @@ def ingest_epochs(
                             }
                         )
 
-                    # Create signals and INTRODUCED_IN + FACILITY_ID edges atomically
+                    # Create signals and INTRODUCED_IN + AT_FACILITY edges atomically
                     result = gc.query(
                         """
                         UNWIND $signals AS sig
@@ -1595,6 +1610,7 @@ async def run_parallel_data_discovery(
     num_check_workers: int = 1,
     discover_only: bool = False,
     enrich_only: bool = False,
+    deadline: float | None = None,
     on_discover_progress: Callable | None = None,
     on_enrich_progress: Callable | None = None,
     on_check_progress: Callable | None = None,
@@ -1634,6 +1650,12 @@ async def run_parallel_data_discovery(
     # Reset orphaned claims
     reset_transient_signals(facility)
 
+    # Ensure Facility node exists so AT_FACILITY relationships don't fail
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        gc.ensure_facility(facility)
+
     # Initialize state
     state = DataDiscoveryState(
         facility=facility,
@@ -1644,6 +1666,7 @@ async def run_parallel_data_discovery(
         signal_limit=signal_limit,
         focus=focus,
         enrich_only=enrich_only,
+        deadline=deadline,
     )
 
     # Create worker group

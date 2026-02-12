@@ -56,7 +56,7 @@ class Relationship:
         """
         if self._cypher_type:
             return self._cypher_type
-        # e.g., "facility_id" -> "FACILITY_ID", "writes_to" -> "WRITES_TO"
+        # e.g., "writes_to" -> "WRITES_TO", "has_chunk" -> "HAS_CHUNK"
         return self.slot_name.upper()
 
 

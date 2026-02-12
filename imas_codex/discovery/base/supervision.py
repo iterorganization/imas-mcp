@@ -404,14 +404,24 @@ class SupervisedWorkerGroup:
             if s.state in (WorkerState.backoff, WorkerState.crashed)
         )
 
-    async def cancel_all(self) -> None:
-        """Cancel all worker tasks."""
+    async def cancel_all(self, timeout: float = 10.0) -> None:
+        """Cancel all worker tasks.
+
+        Args:
+            timeout: Maximum seconds to wait for each task after cancellation.
+        """
         for task in self._tasks:
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        # Wait for all to finish with a hard timeout
+        pending = [t for t in self._tasks if not t.done()]
+        if pending:
+            _, still_pending = await asyncio.wait(pending, timeout=timeout)
+            if still_pending:
+                logger.warning(
+                    "%d task(s) did not finish within %ss, abandoning",
+                    len(still_pending),
+                    timeout,
+                )
 
 
 # =============================================================================

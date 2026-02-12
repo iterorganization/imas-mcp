@@ -188,12 +188,12 @@ update_facility_infrastructure("{{ facility | default('FACILITY') }}", {
 2. Extract usernames from paths matching `{home_root}/{username}`
 3. Query `getent passwd` to get full names (GECOS field)
 4. Create `FacilityUser` nodes linked to `Person` nodes
-5. Create `OWNS` relationships to home directory paths
+5. Create `HAS_HOME` relationships to home directory paths
 
 **Check existing user coverage:**
 ```python
 print(query("""
-    MATCH (u:FacilityUser)-[:FACILITY_ID]->(f:Facility {id: '{{ facility | default('FACILITY') }}'})
+    MATCH (u:FacilityUser)-[:AT_FACILITY]->(f:Facility {id: '{{ facility | default('FACILITY') }}'})
     RETURN count(u) AS users
 """))
 ```

@@ -28,7 +28,7 @@ from imas_codex.config.discovery_config import (
     get_exclusion_config_for_facility,
 )
 from imas_codex.discovery.base.facility import get_facility
-from imas_codex.remote.executor import run_python_script
+from imas_codex.remote.executor import async_run_python_script, run_python_script
 
 if TYPE_CHECKING:
     pass
@@ -347,3 +347,204 @@ def scan_paths(
             )
 
     return results
+
+
+def _build_scan_input(
+    facility: str,
+    paths: list[str],
+    enable_rg: bool,
+    enable_size: bool,
+) -> tuple[str, dict]:
+    """Build SSH host and input data for scan.
+
+    Returns:
+        Tuple of (ssh_host, input_data)
+    """
+    try:
+        config = get_facility(facility)
+        ssh_host = config.get("ssh_host", facility)
+    except ValueError:
+        ssh_host = facility
+
+    rg_patterns = _get_rg_patterns() if enable_rg else {}
+    input_data = {
+        "paths": paths,
+        "rg_patterns": rg_patterns,
+        "enable_rg": enable_rg,
+        "enable_size": enable_size,
+    }
+    return ssh_host, input_data
+
+
+def _parse_scan_output(
+    output: str,
+    paths: list[str],
+    facility: str,
+) -> list[ScanResult]:
+    """Parse JSON output from scan_directories.py into ScanResult objects.
+
+    Shared between sync and async scan_paths.
+    """
+    exclusion_config = get_exclusion_config_for_facility(facility)
+
+    try:
+        if "[stderr]:" in output:
+            output = output.split("[stderr]:")[0].strip()
+        results_data = json.loads(output)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse scan output: {e}")
+        logger.debug(f"Raw output: {output[:500]}")
+        return [
+            ScanResult(path=p, stats=DirStats(), child_dirs=[], error="parse error")
+            for p in paths
+        ]
+
+    results = []
+    for data in results_data:
+        path = data["path"]
+        error = data.get("error")
+
+        if error:
+            results.append(
+                ScanResult(path=path, stats=DirStats(), child_dirs=[], error=error)
+            )
+            continue
+
+        stats_data = data.get("stats", {})
+        rg_matches = stats_data.get("rg_matches", {})
+        size_bytes = stats_data.get("size_bytes")
+        if isinstance(size_bytes, str):
+            try:
+                size_bytes = int(size_bytes)
+            except ValueError:
+                size_bytes = None
+
+        stats = DirStats(
+            total_files=stats_data.get("total_files", 0),
+            total_dirs=stats_data.get("total_dirs", 0),
+            has_readme=stats_data.get("has_readme", False),
+            has_makefile=stats_data.get("has_makefile", False),
+            has_git=stats_data.get("has_git", False),
+            git_remote_url=stats_data.get("git_remote_url"),
+            git_head_commit=stats_data.get("git_head_commit"),
+            git_branch=stats_data.get("git_branch"),
+            git_root_commit=stats_data.get("git_root_commit"),
+            child_names=data.get("child_names", []),
+            tree_context=data.get("tree_context"),
+            numeric_dir_ratio=stats_data.get("numeric_dir_ratio", 0.0),
+            file_type_counts=stats_data.get("file_type_counts", {}),
+            size_bytes=size_bytes,
+            rg_matches=rg_matches,
+        )
+
+        raw_child_dirs = data.get("child_dirs", [])
+        child_dir_infos: list[ChildDirInfo] = []
+        for item in raw_child_dirs:
+            if isinstance(item, str):
+                child_dir_infos.append(ChildDirInfo(path=item))
+            elif isinstance(item, dict):
+                child_dir_infos.append(
+                    ChildDirInfo(
+                        path=item.get("path", ""),
+                        is_symlink=item.get("is_symlink", False),
+                        realpath=item.get("realpath"),
+                        device_inode=item.get("device_inode"),
+                    )
+                )
+
+        all_paths = [c.path for c in child_dir_infos]
+        _, excluded_dirs = exclusion_config.filter_paths(all_paths)
+        excluded_path_set = {p for p, _ in excluded_dirs}
+        included_dirs = [c for c in child_dir_infos if c.path not in excluded_path_set]
+
+        if excluded_dirs:
+            logger.debug(
+                f"Excluded {len(excluded_dirs)} dirs in {path}: "
+                f"{[d for d, _ in excluded_dirs[:5]]}"
+            )
+
+        path_is_symlink = data.get("is_symlink", False)
+        path_realpath = data.get("realpath")
+        path_device_inode = data.get("device_inode")
+
+        results.append(
+            ScanResult(
+                path=path,
+                stats=stats,
+                child_dirs=included_dirs,
+                excluded_dirs=excluded_dirs,
+                error=None,
+                is_symlink=path_is_symlink,
+                realpath=path_realpath,
+                device_inode=path_device_inode,
+            )
+        )
+
+    result_paths = {r.path for r in results}
+    for path in paths:
+        if path not in result_paths:
+            results.append(
+                ScanResult(path=path, stats=DirStats(), child_dirs=[], error="missing")
+            )
+
+    return results
+
+
+async def async_scan_paths(
+    facility: str,
+    paths: list[str],
+    timeout: int = 300,
+    enable_rg: bool = True,
+    enable_size: bool = False,
+) -> list[ScanResult]:
+    """Async version of scan_paths using asyncio subprocesses.
+
+    Fully cancellable — SSH subprocess is killed on task cancellation.
+    Same parsing logic and error handling as sync version.
+    """
+    import asyncio
+
+    if not paths:
+        return []
+
+    ssh_host, input_data = _build_scan_input(facility, paths, enable_rg, enable_size)
+
+    try:
+        output = await async_run_python_script(
+            "scan_directories.py",
+            input_data=input_data,
+            ssh_host=ssh_host,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            f"SSH scan timed out after {timeout}s for {facility}. "
+            f"Paths will be retried via orphan recovery."
+        )
+        raise
+    except subprocess.CalledProcessError as e:
+        if e.returncode == 255:
+            logger.warning(
+                f"Scan failed for {facility}: SSH connection failed. "
+                f"Paths will be retried via orphan recovery."
+            )
+            raise
+        error_str = str(e)[:200]
+        logger.warning(f"Scan script failed for {facility}: {error_str}")
+        return [
+            ScanResult(path=p, stats=DirStats(), child_dirs=[], error=error_str)
+            for p in paths
+        ]
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        error_str = str(e)
+        if len(error_str) > 200:
+            error_str = error_str[:200] + "..."
+        logger.warning(f"Scan failed for {facility}: {error_str}")
+        return [
+            ScanResult(path=p, stats=DirStats(), child_dirs=[], error=error_str)
+            for p in paths
+        ]
+
+    return _parse_scan_output(output, paths, facility)

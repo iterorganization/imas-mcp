@@ -1059,7 +1059,7 @@ classes:
       and enables cross-facility user identification.
 
       Relationships:
-      - (FacilityUser)-[:OWNS]->(FacilityPath) - paths owned by this user
+      - (FacilityUser)-[:HAS_HOME]->(FacilityPath) - home directory at facility
       - (FacilityUser)-[:IS_PERSON]->(Person) - cross-facility identity link
     mixins:
       - DiscoveryProvenance
@@ -1103,13 +1103,13 @@ classes:
         range: Person
         annotations:
           relationship_type: IS_PERSON
-      owned_paths:
-        description: Filesystem paths owned by this user
+      home_paths:
+        description: Home directories for this user (one per facility system)
         range: FacilityPath
         multivalued: true
         inlined: false
         annotations:
-          relationship_type: OWNS
+          relationship_type: HAS_HOME
 
   Person:
     description: >-
@@ -2533,12 +2533,9 @@ classes:
         description: Unique chunk identifier (e.g., "tcv:Thomson:chunk_0")
         required: true
       wiki_page_id:
-        description: Parent WikiPage ID
+        description: Parent WikiPage ID (stored as property, relationship created via WikiPage.has_chunks)
         required: true
         range: WikiPage
-        annotations:
-          relationship_type: HAS_CHUNK
-          inverse: true
       facility_id:
         description: Facility for efficient filtering
         required: true

@@ -1241,7 +1241,7 @@ class AgentsServer:
             Args:
                 node_type: Node label (use get_graph_schema() to see valid types)
                 data: List of property dicts matching the schema
-                create_facility_relationship: Auto-create FACILITY_ID relationship
+                create_facility_relationship: Auto-create AT_FACILITY relationship
                 batch_size: Nodes per batch (default: 50)
 
             Returns:

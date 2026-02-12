@@ -294,7 +294,7 @@ def bulk_discover_artifacts(
 
     logger.debug(f"Discovered {len(artifacts)} artifacts")
 
-    # Create artifact nodes in graph using shared helper (UNWIND + FACILITY_ID)
+    # Create artifact nodes in graph using shared helper (UNWIND + AT_FACILITY)
     # Include linked_pages for HAS_ARTIFACT relationship creation
     batch_data = [
         {
@@ -353,6 +353,7 @@ async def run_parallel_wiki_discovery(
     bulk_discover: bool = True,
     ingest_artifacts: bool = True,
     skip_reset: bool = False,
+    deadline: float | None = None,
     on_scan_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
     on_ingest_progress: Callable | None = None,
@@ -396,6 +397,10 @@ async def run_parallel_wiki_discovery(
     if not skip_reset:
         reset_transient_pages(facility)
 
+    # Ensure Facility node exists so AT_FACILITY relationships don't fail
+    with GraphClient() as gc:
+        gc.ensure_facility(facility)
+
     # Initialize state with auth info
     state = WikiDiscoveryState(
         facility=facility,
@@ -411,6 +416,7 @@ async def run_parallel_wiki_discovery(
         focus=focus,
         service_monitor=service_monitor,
         score_only=score_only,
+        deadline=deadline,
     )
 
     # Pre-warm SSH ControlMaster if using SSH transport.

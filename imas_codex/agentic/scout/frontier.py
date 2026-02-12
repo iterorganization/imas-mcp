@@ -80,7 +80,7 @@ class FrontierManager:
                 # Count FacilityPath nodes by status
                 result = client.query(
                     """
-                    MATCH (p:FacilityPath)-[:LOCATED_AT]->(f:Facility {id: $facility})
+                    MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                     RETURN p.status AS status, count(*) AS count
                     """,
                     facility=self.facility,
@@ -136,7 +136,7 @@ class FrontierManager:
             with GraphClient() as client:
                 result = client.query(
                     """
-                    MATCH (p:FacilityPath)-[:LOCATED_AT]->(f:Facility {id: $facility})
+                    MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                     WHERE p.status = 'discovered'
                       AND coalesce(p.interest_score, 0.5) >= $min_score
                     RETURN p.id AS id,
@@ -174,7 +174,7 @@ class FrontierManager:
                 if status:
                     result = client.query(
                         """
-                        MATCH (p:FacilityPath)-[:LOCATED_AT]->(f:Facility {id: $facility})
+                        MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                         WHERE p.status = $status
                         RETURN p.id AS id,
                                p.path AS path,
@@ -190,7 +190,7 @@ class FrontierManager:
                 else:
                     result = client.query(
                         """
-                        MATCH (p:FacilityPath)-[:LOCATED_AT]->(f:Facility {id: $facility})
+                        MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                         WHERE p.status IN ['scanned', 'scored']
                         RETURN p.id AS id,
                                p.path AS path,
@@ -244,7 +244,7 @@ class FrontierManager:
             with GraphClient() as client:
                 result = client.query(
                     """
-                    MATCH (p:FacilityPath)-[:LOCATED_AT]->(f:Facility {id: $facility})
+                    MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                     WHERE p.status = 'skipped'
                     RETURN p.id AS id,
                            p.path AS path,
@@ -280,7 +280,7 @@ class FrontierManager:
             with GraphClient() as client:
                 result = client.query(
                     """
-                    MATCH (p:FacilityPath)-[:LOCATED_AT]->(f:Facility {id: $facility})
+                    MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
                     WHERE p.status <> 'discovered'
                     SET p.status = 'discovered'
                     RETURN count(*) AS reset_count

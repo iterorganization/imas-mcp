@@ -1838,6 +1838,9 @@ async def run_parallel_discovery(
         for t in scan_tasks + expand_tasks + score_tasks + enrich_tasks + rescore_tasks
     ]
 
+    # Track when monitor triggers stop so we can apply a hard timeout
+    stop_triggered = asyncio.Event()
+
     # Monitor for limit reached and cancel workers gracefully
     async def limit_monitor():
         """Monitor for budget/path limits and cancel workers when reached."""
@@ -1852,17 +1855,41 @@ async def run_parallel_discovery(
             logger.info("Stop requested, initiating graceful shutdown...")
         else:
             logger.info("Discovery complete (no pending work), shutting down...")
+        # Signal all workers to stop via state
+        state.stop_requested = True
+        stop_triggered.set()
         await asyncio.sleep(graceful_shutdown_timeout)
-        # Cancel any still-running tasks
+        # Cancel any still-running tasks (may not work for thread-blocked ones)
         for task in all_tasks:
             if not task.done():
                 task.cancel()
 
     monitor_task = asyncio.create_task(limit_monitor())
 
-    # Run all workers concurrently with cancellation support
+    # Run all workers concurrently. Thread-blocked tasks (enrich SSH calls)
+    # may not respond to cancellation, so we apply a hard timeout once
+    # the monitor triggers shutdown.
+    async def guarded_gather():
+        """Gather all tasks, but abort if stop takes too long."""
+        gather_fut = asyncio.gather(*all_tasks, return_exceptions=True)
+        # Wait for either all tasks to complete or stop to be triggered
+        stop_wait = asyncio.create_task(stop_triggered.wait())
+        done, _ = await asyncio.wait(
+            [gather_fut, stop_wait], return_when=asyncio.FIRST_COMPLETED
+        )
+        if gather_fut in done:
+            stop_wait.cancel()
+            return
+        # Stop triggered — give tasks a hard deadline to finish
+        hard_limit = graceful_shutdown_timeout + 10
+        logger.debug(f"Stop triggered, hard timeout in {hard_limit}s")
+        try:
+            await asyncio.wait_for(gather_fut, timeout=hard_limit)
+        except TimeoutError:
+            logger.warning("Hard timeout reached, abandoning thread-blocked tasks")
+
     try:
-        await asyncio.gather(*all_tasks, return_exceptions=True)
+        await guarded_gather()
     except asyncio.CancelledError:
         state.stop_requested = True
     finally:

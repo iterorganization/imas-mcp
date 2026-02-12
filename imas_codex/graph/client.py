@@ -341,7 +341,7 @@ class GraphClient:
 
         Uses batched UNWIND queries for optimal Neo4j performance.
         Automatically creates relationships based on schema-defined slots
-        with class ranges (e.g., facility_id -> Facility creates FACILITY_ID edge).
+        with class ranges (e.g., facility_id -> Facility creates AT_FACILITY edge).
 
         Args:
             label: Node label (class name from schema)
@@ -359,7 +359,7 @@ class GraphClient:
             ...     {"id": "tcv:/home/codes", "path": "/home/codes", "facility_id": "tcv"},
             ...     {"id": "tcv:/home/anasrv", "path": "/home/anasrv", "facility_id": "tcv"},
             ... ])
-            {"processed": 2, "relationships": {"FACILITY_ID": 2}}
+            {"processed": 2, "relationships": {"AT_FACILITY": 2}}
         """
         if not items:
             return {"processed": 0, "relationships": {}}
@@ -446,6 +446,25 @@ class GraphClient:
     # High-Level Creation Methods
     # =========================================================================
 
+    def ensure_facility(self, facility_id: str) -> None:
+        """Ensure a Facility node exists, creating a minimal one if needed.
+
+        This should be called at the start of any discovery pipeline to
+        guarantee that AT_FACILITY relationships won't silently fail due
+        to a missing target node.
+
+        Uses MERGE so it's safe to call multiple times (idempotent).
+
+        Args:
+            facility_id: Facility identifier (e.g., "tcv", "iter")
+        """
+        with self.session() as sess:
+            sess.run(
+                "MERGE (f:Facility {id: $id}) "
+                "ON CREATE SET f.name = $id, f.created_at = datetime()",
+                id=facility_id,
+            )
+
     def create_facility(
         self,
         facility_id: str,
@@ -471,6 +490,7 @@ class GraphClient:
         **extra: Any,
     ) -> None:
         """Create MDSplusServer node and link to Facility."""
+        self.ensure_facility(facility_id)
         props = {"hostname": hostname, "facility_id": facility_id}
         if role:
             props["role"] = role
@@ -481,7 +501,7 @@ class GraphClient:
             hostname,
             "Facility",
             facility_id,
-            "FACILITY_ID",
+            "AT_FACILITY",
             from_id_field="hostname",
         )
 
@@ -494,6 +514,7 @@ class GraphClient:
         **extra: Any,
     ) -> None:
         """Create Diagnostic node and link to Facility."""
+        self.ensure_facility(facility_id)
         props = {"name": name, "facility_id": facility_id}
         if category:
             props["category"] = category
@@ -506,7 +527,7 @@ class GraphClient:
             name,
             "Facility",
             facility_id,
-            "FACILITY_ID",
+            "AT_FACILITY",
             from_id_field="name",
         )
 

@@ -471,7 +471,7 @@ async def ingest_tdi_signals(
         # Convert to dicts
         signal_dicts = [s.model_dump(exclude_none=True, by_alias=True) for s in batch]
 
-        # Batch merge with FACILITY_ID edge
+        # Batch merge with AT_FACILITY edge
         gc.query(
             """
             UNWIND $signals AS s

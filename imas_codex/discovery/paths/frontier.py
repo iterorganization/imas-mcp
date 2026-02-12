@@ -550,11 +550,8 @@ def seed_facility_roots(
         )
 
     with GraphClient() as gc:
-        # First ensure facility exists
-        existing = gc.get_facility(facility)
-        if not existing:
-            # Create minimal facility node
-            gc.create_facility(facility, name=facility)
+        # Ensure facility node exists (idempotent)
+        gc.ensure_facility(facility)
 
         result = gc.create_nodes("FacilityPath", items)
 
@@ -1340,8 +1337,8 @@ def clear_facility_paths(facility: str, batch_size: int = 5000) -> dict[str, int
 
     Deletion order follows referential integrity:
     1. SourceFile nodes by facility_id
-    2. FacilityUser nodes by FACILITY_ID relationship
-    3. FacilityPath nodes by FACILITY_ID relationship
+    2. FacilityUser nodes by AT_FACILITY relationship
+    3. FacilityPath nodes by AT_FACILITY relationship
     4. Orphaned SoftwareRepo and Person nodes
 
     Args:
@@ -2050,7 +2047,7 @@ async def persist_scan_results(
 
             facility_users = enrich_users_from_paths(facility, all_paths, gc=gc)
             if facility_users:
-                # Create FacilityUser nodes with OWNS relationship to home path
+                # Create FacilityUser nodes with HAS_HOME relationship to home path
                 gc.query(
                     """
                     UNWIND $users AS user
@@ -2071,7 +2068,7 @@ async def persist_scan_results(
                     WITH u, user
                     WHERE user.home_path_id IS NOT NULL
                     MATCH (home:FacilityPath {id: user.home_path_id})
-                    MERGE (u)-[:OWNS]->(home)
+                    MERGE (u)-[:HAS_HOME]->(home)
                     """,
                     users=facility_users,
                 )

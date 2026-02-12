@@ -255,6 +255,10 @@ def scan_facility_files(
         report(0, 0, "No scored paths to scan")
         return stats
 
+    # Ensure Facility node exists so AT_FACILITY relationships don't fail
+    with GraphClient() as gc:
+        gc.ensure_facility(facility)
+
     total = len(paths)
     report(0, total, f"Scanning {total} paths for source files")
 

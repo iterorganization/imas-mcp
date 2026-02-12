@@ -35,7 +35,7 @@ Modern LLMs are excellent at writing Cypher queries. The architecture supports:
 ```python
 # LLM-generated Cypher (recommended for complex queries)
 result = client.query("""
-    MATCH (code:AnalysisCode {name: $name})-[:FACILITY_ID]->(f:Facility)
+    MATCH (code:AnalysisCode {name: $name})-[:AT_FACILITY]->(f:Facility)
     RETURN f.id, f.name, code.version
     ORDER BY f.id
 """, name="EFIT")
@@ -78,7 +78,7 @@ facilities = [e["facility_id"] for e in efit_instances]
 
 # Using direct Cypher
 facilities = client.query("""
-    MATCH (c:AnalysisCode {name: $name})-[:FACILITY_ID]->(f:Facility)
+    MATCH (c:AnalysisCode {name: $name})-[:AT_FACILITY]->(f:Facility)
     RETURN f.id, f.name, c.code_type, c.version
 """, name="EFIT")
 ```
@@ -166,7 +166,7 @@ with GraphClient() as client:
     
     # Direct Cypher for complex queries
     result = client.query("""
-        MATCH (t:Tool)-[:FACILITY_ID]->(f:Facility)
+        MATCH (t:Tool)-[:AT_FACILITY]->(f:Facility)
         WHERE t.available = true
         RETURN f.id, collect(t.name) as tools
     """)
@@ -182,7 +182,7 @@ Slots with class ranges automatically become relationships:
 classes:
   MDSplusServer:
     attributes:
-      facility_id:            # Creates FACILITY_ID relationship
+      facility_id:            # Creates AT_FACILITY relationship
         range: Facility       # Target node type
         required: true
 ```

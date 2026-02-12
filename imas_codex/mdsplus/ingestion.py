@@ -256,7 +256,7 @@ def ingest_super_tree(
         )
         logger.debug(f"Inserted batch {i // batch_size + 1}")
 
-    # Create FACILITY_ID relationships
+    # Create AT_FACILITY relationships
     client.query("""
         MATCH (n:TreeNode)
         WHERE n.facility_id IS NOT NULL

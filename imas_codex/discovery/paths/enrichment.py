@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from imas_codex.discovery.base.facility import get_facility
-from imas_codex.remote.executor import run_python_script
+from imas_codex.remote.executor import async_run_python_script, run_python_script
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +296,115 @@ def enrich_paths(
             results.append(EnrichmentResult(path=p, error="missing"))
 
     return results
+
+
+def _build_enrich_input(
+    facility: str,
+    paths: list[str],
+    path_purposes: dict[str, str | None] | None = None,
+) -> tuple[str, dict]:
+    """Build SSH host and input data for enrichment.
+
+    Returns:
+        Tuple of (ssh_host, input_data)
+    """
+    try:
+        config = get_facility(facility)
+        ssh_host = config.get("ssh_host", facility)
+    except ValueError:
+        ssh_host = facility
+
+    input_data = {
+        "paths": paths,
+        "path_purposes": path_purposes or {},
+    }
+    return ssh_host, input_data
+
+
+def _parse_enrich_output(
+    output: str,
+    paths: list[str],
+) -> list[EnrichmentResult]:
+    """Parse JSON output from enrich_directories.py.
+
+    Shared between sync and async enrich_paths.
+    """
+    try:
+        if "[stderr]:" in output:
+            output = output.split("[stderr]:")[0].strip()
+        results_data = json.loads(output)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse enrichment output: {e}")
+        return [EnrichmentResult(path=p, error="parse error") for p in paths]
+
+    results = []
+    for data in results_data:
+        path = data.get("path", "")
+        result = EnrichmentResult(path=path)
+
+        if data.get("error"):
+            result.error = data.get("error")
+            results.append(result)
+            continue
+
+        read_matches = data.get("read_matches", 0)
+        write_matches = data.get("write_matches", 0)
+        result.read_matches = read_matches
+        result.write_matches = write_matches
+        result.is_multiformat = read_matches > 0 and write_matches > 0
+        result.total_bytes = data.get("total_bytes")
+        result.total_lines = data.get("total_lines")
+        lang_breakdown = data.get("language_breakdown", {})
+        if lang_breakdown:
+            result.language_breakdown = lang_breakdown
+        pattern_cats = data.get("pattern_categories", {})
+        if pattern_cats:
+            result.pattern_categories = pattern_cats
+        results.append(result)
+
+    result_paths = {r.path for r in results}
+    for p in paths:
+        if p not in result_paths:
+            results.append(EnrichmentResult(path=p, error="missing"))
+
+    return results
+
+
+async def async_enrich_paths(
+    facility: str,
+    paths: list[str],
+    timeout: int = 300,
+    path_purposes: dict[str, str | None] | None = None,
+) -> list[EnrichmentResult]:
+    """Async version of enrich_paths using asyncio subprocesses.
+
+    Fully cancellable — SSH subprocess is killed on task cancellation.
+    Same parsing logic and error handling as sync version.
+    """
+    import asyncio
+
+    if not paths:
+        return []
+
+    ssh_host, input_data = _build_enrich_input(facility, paths, path_purposes)
+
+    try:
+        output = await async_run_python_script(
+            "enrich_directories.py",
+            input_data=input_data,
+            ssh_host=ssh_host,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Enrichment timed out for {facility}")
+        return [EnrichmentResult(path=p, error="timeout") for p in paths]
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"Enrichment failed for {facility}: {e}")
+        return [EnrichmentResult(path=p, error=str(e)[:100]) for p in paths]
+
+    return _parse_enrich_output(output, paths)
 
 
 def persist_enrichment(facility: str, results: list[EnrichmentResult]) -> int:

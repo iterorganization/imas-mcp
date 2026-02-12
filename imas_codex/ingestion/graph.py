@@ -91,7 +91,7 @@ def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
 
 
 def link_examples_to_facility(graph_client: GraphClient | None = None) -> int:
-    """Create FACILITY_ID relationships from CodeExample nodes.
+    """Create AT_FACILITY relationships from CodeExample nodes.
 
     Args:
         graph_client: Optional GraphClient instance.
@@ -110,7 +110,7 @@ def link_examples_to_facility(graph_client: GraphClient | None = None) -> int:
     with _get_client(graph_client) as client:
         result = client.query(cypher)
         count = result[0]["created"] if result else 0
-        logger.info("Created %d FACILITY_ID relationships", count)
+        logger.info("Created %d AT_FACILITY relationships", count)
         return count
 
 

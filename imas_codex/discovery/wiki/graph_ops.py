@@ -71,7 +71,7 @@ def _bulk_create_wiki_pages(
     batch_size: int = 500,
     on_progress: Callable | None = None,
 ) -> int:
-    """Create WikiPage nodes with FACILITY_ID relationship in batches.
+    """Create WikiPage nodes with AT_FACILITY relationship in batches.
 
     Every WikiPage gets a [:AT_FACILITY]->(:Facility) relationship at creation
     time, not deferred to ingestion.
@@ -128,7 +128,7 @@ def _bulk_create_wiki_artifacts(
     batch_size: int = 500,
     on_progress: Callable | None = None,
 ) -> int:
-    """Create WikiArtifact nodes with FACILITY_ID and HAS_ARTIFACT relationships.
+    """Create WikiArtifact nodes with AT_FACILITY and HAS_ARTIFACT relationships.
 
     Args:
         gc: Open GraphClient

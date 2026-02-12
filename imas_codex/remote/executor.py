@@ -715,3 +715,101 @@ def run_python_script(
         )
 
     return output.strip()
+
+
+async def async_run_python_script(
+    script_name: str,
+    input_data: dict | list | None = None,
+    ssh_host: str | None = None,
+    timeout: int = 60,
+) -> str:
+    """Async version of run_python_script using asyncio subprocesses.
+
+    Uses asyncio.create_subprocess_exec() instead of subprocess.run(),
+    making the call fully cancellable by asyncio task cancellation.
+
+    Args:
+        script_name: Script filename (e.g., "scan_directories.py")
+        input_data: Dict/list to pass as JSON on stdin (None = no input)
+        ssh_host: SSH host to connect to (None = local)
+        timeout: Command timeout in seconds
+
+    Returns:
+        Script output (stdout)
+
+    Raises:
+        FileNotFoundError: If script doesn't exist
+        subprocess.CalledProcessError: On non-zero exit
+        TimeoutError: If command exceeds timeout
+        asyncio.CancelledError: If task is cancelled
+    """
+    import asyncio
+    import base64
+    import importlib.resources
+    import json
+
+    # Load script from package (Python 3.12+ required)
+    script_path = importlib.resources.files("imas_codex.remote.scripts").joinpath(
+        script_name
+    )
+    script_content = script_path.read_text()
+
+    is_local = is_local_host(ssh_host)
+
+    # Prepare JSON input
+    json_input = json.dumps(input_data) if input_data is not None else "{}"
+
+    # Encode script as base64 to avoid quoting issues
+    script_b64 = base64.b64encode(script_content.encode()).decode()
+
+    # Single-line Python that decodes script, runs it with JSON on stdin
+    runner = (
+        f"import base64,subprocess,sys;"
+        f's=base64.b64decode("{script_b64}");'
+        f'exec(compile(s,"script","exec"))'
+    )
+
+    if is_local:
+        cmd = ["python3", "-c", runner]
+    else:
+        # Check SSH health once per host per session (sync, cached)
+        _ensure_ssh_healthy_once(ssh_host)
+        cmd = ["ssh", "-T", ssh_host, f"python3 -c '{runner}'"]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(json_input.encode()),
+            timeout=timeout,
+        )
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise subprocess.TimeoutExpired(cmd, timeout) from None
+    except asyncio.CancelledError:
+        proc.kill()
+        await proc.wait()
+        raise
+
+    stdout = stdout_bytes.decode()
+    stderr = stderr_bytes.decode()
+
+    if stderr:
+        logger.debug(
+            "async_run_python_script(%s) stderr: %s",
+            script_name,
+            stderr[:500],
+        )
+
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+            proc.returncode, script_name, stdout, stderr
+        )
+
+    return stdout.strip()
