@@ -251,6 +251,12 @@ discover.add_command(files)
     default=None,
     help="Auto-enrich paths scoring >= threshold (e.g., 0.75)",
 )
+@click.option(
+    "--timeout",
+    type=int,
+    default=None,
+    help="Maximum runtime in minutes (e.g., 10). Discovery halts when timeout expires.",
+)
 def paths_run(
     facility: str,
     root: tuple[str, ...],
@@ -265,6 +271,7 @@ def paths_run(
     no_rich: bool,
     add_roots: bool,
     enrich_threshold: float | None,
+    timeout: int | None,
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -311,6 +318,7 @@ def paths_run(
         root_filter=root_filter,
         add_roots=add_roots,
         enrich_threshold=enrich_threshold,
+        timeout_minutes=timeout,
     )
 
 
@@ -328,14 +336,23 @@ def _run_iterative_discovery(
     root_filter: list[str] | None = None,
     add_roots: bool = False,
     enrich_threshold: float | None = None,
+    timeout_minutes: int | None = None,
 ) -> None:
     """Run parallel scan/score discovery."""
+    import time as time_module
+
     from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.discovery import (
         get_discovery_stats,
         seed_facility_roots,
         seed_missing_roots,
     )
+
+    # Compute deadline from timeout
+    start_time = time_module.time()
+    deadline: float | None = None
+    if timeout_minutes is not None:
+        deadline = start_time + (timeout_minutes * 60)
 
     # Auto-detect if rich can run (TTY check) or use no_rich flag
     use_rich = not no_rich and sys.stdout.isatty()
@@ -1888,9 +1905,10 @@ def wiki_run(
         pass
 
     if existing_pages > 0 and not should_bulk_discover:
-        log_print(
-            f"[dim]Found {existing_pages} existing wiki pages, skipping scan[/dim]"
-        )
+        parts = [f"{existing_pages} pages"]
+        if existing_artifacts > 0:
+            parts.append(f"{existing_artifacts:,} artifacts")
+        log_print(f"[dim]Found {', '.join(parts)} in graph, skipping scan[/dim]")
         log_print("[dim]Use --rescan to re-enumerate pages[/dim]")
     elif rescan and existing_pages > 0:
         log_print(
@@ -2316,6 +2334,8 @@ def wiki_run(
                                 accumulated_cost=stats.get("accumulated_cost", 0.0),
                                 artifacts_ingested=stats.get("artifacts_ingested", 0),
                                 artifacts_scored=stats.get("artifacts_scored", 0),
+                                images_scored=stats.get("images_scored", 0),
+                                pending_image_score=stats.get("pending_image_score", 0),
                             )
                         except asyncio.CancelledError:
                             raise

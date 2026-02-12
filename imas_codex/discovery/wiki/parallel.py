@@ -928,4 +928,21 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
         stats["pending_artifact_score"] = pending_artifact_score
         stats["pending_artifact_ingest"] = pending_artifact_ingest
 
+        # Image node counts (created during page ingestion, scored by VLM)
+        img_result = gc.query(
+            """
+            MATCH (img:Image {facility_id: $facility})
+            RETURN
+                count(CASE WHEN img.caption IS NOT NULL THEN 1 END) AS scored,
+                count(CASE WHEN img.caption IS NULL THEN 1 END) AS pending
+            """,
+            facility=facility,
+        )
+        if img_result:
+            stats["images_scored"] = img_result[0]["scored"]
+            stats["pending_image_score"] = img_result[0]["pending"]
+        else:
+            stats["images_scored"] = 0
+            stats["pending_image_score"] = 0
+
         return stats

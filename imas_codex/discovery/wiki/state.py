@@ -124,7 +124,12 @@ class WikiDiscoveryState:
 
     @property
     def total_cost(self) -> float:
-        return self.score_stats.cost + self.ingest_stats.cost + self.image_stats.cost
+        return (
+            self.score_stats.cost
+            + self.ingest_stats.cost
+            + self.image_stats.cost
+            + self.artifact_score_stats.cost
+        )
 
     @property
     def budget_exhausted(self) -> bool:
@@ -254,15 +259,17 @@ class WikiDiscoveryState:
     def should_stop_image_scoring(self) -> bool:
         """Check if image score workers should stop.
 
-        Image score workers stop when budget exhausted or no pending images.
-        They continue after page ingestion completes since page ingestion
-        creates the Image nodes.
+        Image score workers continue even after budget is exhausted so they
+        can drain images created during page ingestion (similar to how
+        ingest workers drain scored pages).  They only stop when:
+        1. Explicitly requested
+        2. Idle for 3+ iterations AND ingestion is done AND no pending images
         """
         if self.stop_requested:
             return True
-        if self.budget_exhausted:
-            return True
-        # Only stop if ingestion is also done AND no pending images
+        # Continue even when budget exhausted - drain the image queue.
+        # Images are created during page ingestion, so they only appear
+        # after scoring has already consumed the budget.
         ingestion_done = self.ingest_idle_count >= 3
         if (
             self.image_idle_count >= 3

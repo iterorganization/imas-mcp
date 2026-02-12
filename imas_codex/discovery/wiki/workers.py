@@ -711,7 +711,18 @@ async def image_score_worker(
     worker_id = id(asyncio.current_task())
     logger.info(f"image_score_worker started (task={worker_id})")
 
+    consecutive_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 3
+
     while not state.should_stop_image_scoring():
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            logger.warning(
+                "image_score_worker %s: %d consecutive VLM failures, stopping",
+                worker_id,
+                consecutive_failures,
+            )
+            break
+
         try:
             images = await asyncio.to_thread(
                 claim_images_for_scoring, state.facility, 10
@@ -760,6 +771,7 @@ async def image_score_worker(
             await asyncio.to_thread(mark_images_scored, state.facility, results)
             state.image_stats.processed += len(results)
             state.image_stats.cost += cost
+            consecutive_failures = 0
 
             if on_progress:
                 on_progress(
@@ -769,10 +781,14 @@ async def image_score_worker(
                 )
 
         except ValueError as e:
+            consecutive_failures += 1
             logger.warning(
-                "VLM failed for batch of %d images: %s. Images released for retry.",
+                "VLM failed for batch of %d images: %s. Images released for retry."
+                " (failure %d/%d)",
                 len(images_with_data),
                 e,
+                consecutive_failures,
+                MAX_CONSECUTIVE_FAILURES,
             )
             state.image_stats.errors = getattr(state.image_stats, "errors", 0) + 1
             await asyncio.to_thread(

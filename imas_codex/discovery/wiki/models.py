@@ -76,38 +76,26 @@ class WikiScoreResult(BaseModel):
     # Per-dimension scores (0.0-1.0 each)
     score_data_documentation: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Signal tables, node lists, shot databases (0.0-1.0)",
     )
     score_physics_content: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Physics explanations, methodology, theory (0.0-1.0)",
     )
     score_code_documentation: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Software docs, API references, usage guides (0.0-1.0)",
     )
     score_data_access: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="MDSplus paths, TDI expressions, access methods (0.0-1.0)",
     )
     score_calibration: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Calibration info, conversion factors, sensor specs (0.0-1.0)",
     )
     score_imas_relevance: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="IMAS integration, IDS references, mapping hints (0.0-1.0)",
     )
 
@@ -368,38 +356,26 @@ class ArtifactScoreResult(BaseModel):
     # Per-dimension scores (0.0-1.0 each) - same as WikiScoreResult
     score_data_documentation: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Signal tables, node lists, shot databases (0.0-1.0)",
     )
     score_physics_content: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Physics explanations, methodology, theory (0.0-1.0)",
     )
     score_code_documentation: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Software docs, API references, usage guides (0.0-1.0)",
     )
     score_data_access: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="MDSplus paths, TDI expressions, access methods (0.0-1.0)",
     )
     score_calibration: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Calibration info, conversion factors, sensor specs (0.0-1.0)",
     )
     score_imas_relevance: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="IMAS integration, IDS references, mapping hints (0.0-1.0)",
     )
 
@@ -602,38 +578,26 @@ class ImageScoreResult(BaseModel):
     # Per-dimension scores (0.0-1.0 each)
     score_data_documentation: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Signal tables, node lists, shot databases (0.0-1.0)",
     )
     score_physics_content: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Physics explanations, methodology, theory (0.0-1.0)",
     )
     score_code_documentation: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Software docs, API references, usage guides (0.0-1.0)",
     )
     score_data_access: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="MDSplus paths, TDI expressions, access methods (0.0-1.0)",
     )
     score_calibration: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="Calibration info, conversion factors, sensor specs (0.0-1.0)",
     )
     score_imas_relevance: float = Field(
         default=0.0,
-        ge=0.0,
-        le=1.0,
         description="IMAS integration, IDS references, mapping hints (0.0-1.0)",
     )
 
