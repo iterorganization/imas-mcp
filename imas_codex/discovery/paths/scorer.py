@@ -38,9 +38,6 @@ logger = logging.getLogger(__name__)
 # Suppress litellm noise on import (print-based + logger-based)
 suppress_litellm_noise()
 
-# Container expansion threshold (lower than default to explore containers)
-CONTAINER_THRESHOLD = 0.1
-
 # Per-purpose score names (for iteration)
 PURPOSE_SCORE_NAMES = [
     "score_modeling_code",
@@ -495,30 +492,19 @@ class DirectoryScorer:
             # handles clones/forks via root_commit or remote_url matching. Repos
             # are scored on their own merit; expansion is blocked for all git repos.
 
-            # Expansion decision - containers use lower threshold
-            effective_threshold = (
-                CONTAINER_THRESHOLD if purpose in CONTAINER_PURPOSES else threshold
-            )
-
-            # Base expansion decision
-            should_expand = (
-                combined >= effective_threshold
-                and result.should_expand
-                and purpose not in SUPPRESSED_PURPOSES
-            )
-
-            # CRITICAL: Containers with many subdirectories (e.g., /home with
-            # 1000+ user dirs) MUST be expanded regardless of score or LLM
-            # decision. The whole point of a container is that its children
-            # are the interesting paths. Without this, /home scored at 0.0
-            # would never be expanded to discover user home directories.
-            total_dirs = directories[i].get("total_dirs", 0) or 0
-            if (
-                purpose in CONTAINER_PURPOSES
-                and total_dirs >= 5
-                and purpose not in SUPPRESSED_PURPOSES
-            ):
-                should_expand = True
+            # Expansion decision
+            # Containers: trust LLM's should_expand (prompt guides the decision)
+            # Non-containers: require score >= threshold plus LLM agreement
+            if purpose in CONTAINER_PURPOSES:
+                should_expand = (
+                    result.should_expand and purpose not in SUPPRESSED_PURPOSES
+                )
+            else:
+                should_expand = (
+                    combined >= threshold
+                    and result.should_expand
+                    and purpose not in SUPPRESSED_PURPOSES
+                )
 
             # CRITICAL: Never expand git repos (code is available via git clone)
             # Even private repos don't need child expansion - files are at repo root
@@ -698,24 +684,20 @@ class DirectoryScorer:
             git_remote_url = directories[i].get("git_remote_url")
             # Note: No score penalty - SoftwareRepo dedup handles clone/fork detection
 
-            # Expansion decision - containers use lower threshold
-            effective_threshold = (
-                CONTAINER_THRESHOLD if purpose in CONTAINER_PURPOSES else threshold
-            )
-            should_expand = (
-                combined >= effective_threshold
-                and result.get("should_expand", False)
-                and purpose not in SUPPRESSED_PURPOSES
-            )
-
-            # Force-expand containers with many subdirectories (e.g., /home)
-            total_dirs = directories[i].get("total_dirs", 0) or 0
-            if (
-                purpose in CONTAINER_PURPOSES
-                and total_dirs >= 5
-                and purpose not in SUPPRESSED_PURPOSES
-            ):
-                should_expand = True
+            # Expansion decision
+            # Containers: trust LLM's should_expand (prompt guides the decision)
+            # Non-containers: require score >= threshold plus LLM agreement
+            if purpose in CONTAINER_PURPOSES:
+                should_expand = (
+                    result.get("should_expand", False)
+                    and purpose not in SUPPRESSED_PURPOSES
+                )
+            else:
+                should_expand = (
+                    combined >= threshold
+                    and result.get("should_expand", False)
+                    and purpose not in SUPPRESSED_PURPOSES
+                )
 
             # Never expand git repos
             if has_git:

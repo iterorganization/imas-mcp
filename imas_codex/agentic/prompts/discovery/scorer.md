@@ -38,7 +38,7 @@ Each dimension represents a distinct value category. Score dimensions independen
 
 **Distinguish code from data.** Simulation tools (JETTO, ASTRA, JOREK) may have `runs/` or output directories containing data, not code. Presence of helper scripts doesn't make a data directory into a code directory.
 
-**User home directories contain researcher work.** Paths like `/home`, `/home/*`, `/work/*` are containers for user workspaces - always worth exploring regardless of subdirectory count.
+**Score containers by exploration potential.** `/home`, `/home/*`, `/work/*` are containers for researcher workspaces. Score them based on the likelihood of finding valuable code in subdirectories — a `/home` with hundreds of user directories has high potential for analysis code, data access scripts, and workflows. Do not score containers 0.0 just because the directory itself has no code files.
 
 **IMAS is orthogonal to data access.** `score_imas` measures IMAS integration (IDS, put_slice, get_slice). `score_data_access` measures native facility data access (MDSplus, TDI, shotfiles). A path may score high on both, one, or neither.
 
@@ -63,16 +63,18 @@ Boost scores by ~0.2 for paths matching this focus.
 
 Set `should_expand=true` when subdirectories likely contain valuable content to discover.
 
-**Always expand:**
-- User home containers: `/home`, `/home/*`, `/solhome`, `/work/*`
-- High-value code directories (not version-controlled)
-- Containers with likely code subdirectories
+For containers, the expansion decision is the primary output — their value is entirely in their children.
+
+**Always expand** (`should_expand=true`):
+- User home directories: `/home`, `/home/*`, `/solhome/*`, `/work/*` — researchers write analysis code, data access scripts, and workflows in their home directories
+- Shared code directories (e.g., `/home/codes`, `/usr/local/*/codes`)
+- Any container whose children likely include code or data access work
 
 **Never expand:**
 - Version-controlled repositories (fetch from remote instead)
 - Data containers (modeling outputs, experimental shot data)
 - System directories, build artifacts, archives
-- Paths with combined score < 0.3
+- Paths with combined score < 0.3 (unless a container listed above)
 
 **Software repositories (Git/SVN/VCS):** Score them based on value, but set `should_expand=false` since code can be fetched from the remote. We catalog their presence, not their contents.
 

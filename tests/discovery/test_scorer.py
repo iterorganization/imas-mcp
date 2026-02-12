@@ -9,7 +9,6 @@ import pytest
 from imas_codex.discovery.paths.models import ResourcePurpose, ScoreBatch, ScoreResult
 from imas_codex.discovery.paths.scorer import (
     CONTAINER_PURPOSES,
-    CONTAINER_THRESHOLD,
     DirectoryScorer,
     grounded_score,
 )
@@ -63,12 +62,12 @@ class TestGroundedScore:
 
 
 class TestContainerExpansion:
-    """Test that containers with many subdirectories are always expanded.
+    """Test that container expansion is driven by the LLM's should_expand decision.
 
-    This was the root cause of the TCV /home directory not being scanned:
-    /home was classified as 'container' with all 0.0 per-dimension scores,
-    giving grounded_score=0.0 < CONTAINER_THRESHOLD=0.1, so should_expand
-    was set to False and the 1037 user home directories were never discovered.
+    The scorer prompt instructs the LLM to set should_expand=true for containers
+    like /home, /work, etc. The code trusts this decision for containers without
+    requiring a score threshold, unlike non-container paths which must also meet
+    a minimum score.
     """
 
     def _make_score_result(
@@ -92,19 +91,19 @@ class TestContainerExpansion:
     def _score_batch(self, results: list[ScoreResult]) -> ScoreBatch:
         return ScoreBatch(results=results)
 
-    def test_container_with_many_dirs_always_expanded(self):
-        """Container with total_dirs >= 5 should always expand."""
+    def test_container_expands_when_llm_says_yes(self):
+        """Container expands when LLM sets should_expand=true, even with 0 scores."""
         scorer = DirectoryScorer(facility="test")
         batch = self._score_batch(
             [
-                self._make_score_result("/home", should_expand=False),
+                self._make_score_result("/home", should_expand=True),
             ]
         )
         directories = [
             {
                 "path": "/home",
                 "total_files": 0,
-                "total_dirs": 1037,  # Many user home dirs
+                "total_dirs": 1037,
                 "has_readme": False,
                 "has_makefile": False,
                 "has_git": False,
@@ -115,8 +114,8 @@ class TestContainerExpansion:
         assert len(results) == 1
         assert results[0].should_expand is True
 
-    def test_container_with_few_dirs_respects_llm(self):
-        """Container with < 5 dirs respects LLM should_expand decision."""
+    def test_container_respects_llm_no_expand(self):
+        """Container does not expand when LLM sets should_expand=false."""
         scorer = DirectoryScorer(facility="test")
         batch = self._score_batch(
             [
@@ -127,7 +126,7 @@ class TestContainerExpansion:
             {
                 "path": "/tmp/few",
                 "total_files": 2,
-                "total_dirs": 3,  # Few dirs
+                "total_dirs": 3,
                 "has_readme": False,
                 "has_makefile": False,
                 "has_git": False,
@@ -136,7 +135,6 @@ class TestContainerExpansion:
 
         results = scorer._map_scored_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
-        # With 0.0 scores and should_expand=False from LLM, stays False
         assert results[0].should_expand is False
 
     def test_container_with_git_not_expanded(self):
@@ -163,19 +161,18 @@ class TestContainerExpansion:
         # Git repos should never be expanded even if container
         assert results[0].should_expand is False
 
-    def test_container_home_with_zero_scores_expanded(self):
-        """/home with all 0.0 scores but 1037 dirs MUST expand.
+    def test_container_no_score_threshold_required(self):
+        """Containers bypass score threshold — only LLM should_expand matters.
 
-        This is the exact scenario from the TCV bug: LLM gave /home all
-        0.0 per-dimension scores, grounded_score was 0.0, which was below
-        CONTAINER_THRESHOLD (0.1), so should_expand was False.
+        Non-containers require score >= threshold AND should_expand=true.
+        Containers only require should_expand=true (the prompt guides this).
         """
         scorer = DirectoryScorer(facility="test")
         batch = self._score_batch(
             [
                 self._make_score_result(
                     "/home",
-                    should_expand=False,  # LLM said no
+                    should_expand=True,  # Prompt-guided decision
                     score_modeling_code=0.0,
                     score_analysis_code=0.0,
                     score_operations_code=0.0,
@@ -202,11 +199,40 @@ class TestContainerExpansion:
 
         results = scorer._map_scored_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
-        # MUST expand despite 0.0 score and LLM saying should_expand=False
+        # Expands because LLM said yes — no score threshold for containers
         assert results[0].should_expand is True
 
-    def test_non_container_with_many_dirs_respects_threshold(self):
-        """Non-container purposes with many dirs still respect score threshold."""
+    def test_non_container_requires_score_threshold(self):
+        """Non-container paths must meet score threshold to expand."""
+        scorer = DirectoryScorer(facility="test")
+        batch = self._score_batch(
+            [
+                self._make_score_result(
+                    "/work/codes/analysis",
+                    purpose=ResourcePurpose.analysis_code,
+                    should_expand=True,
+                    score_analysis_code=0.3,  # Below 0.7 threshold
+                ),
+            ]
+        )
+        directories = [
+            {
+                "path": "/work/codes/analysis",
+                "total_files": 10,
+                "total_dirs": 5,
+                "has_readme": False,
+                "has_makefile": False,
+                "has_git": False,
+            }
+        ]
+
+        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        assert len(results) == 1
+        # LLM said expand, but score 0.3 < threshold 0.7 → no expand
+        assert results[0].should_expand is False
+
+    def test_non_container_data_never_expands(self):
+        """Data containers are blocked from expansion regardless."""
         scorer = DirectoryScorer(facility="test")
         batch = self._score_batch(
             [
