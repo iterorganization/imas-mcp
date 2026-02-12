@@ -68,6 +68,7 @@ class ServiceStatus:
     state: ServiceState = ServiceState.unknown
     auth_label: str | None = None  # e.g., "vpn", "tequila", "ssh"
     detail: str = ""  # Human-readable detail (e.g., "bolt://localhost:7687")
+    healthy_detail: str = ""  # Detail to show when grayed (stored on first success)
     last_check: float = 0.0
     last_healthy: float = 0.0
     consecutive_failures: int = 0
@@ -464,6 +465,7 @@ class ServiceMonitor:
                     status.state = ServiceState.healthy
                     status.last_healthy = time.time()
                     status.consecutive_failures = 0
+                    status.healthy_detail = detail  # Save for grayed display when down
                 else:
                     status.consecutive_failures += 1
                     if status.state == ServiceState.healthy:
@@ -532,17 +534,22 @@ def create_service_monitor(
         )
 
     if check_ssh and ssh_host:
-        # Build descriptive access label showing both SSH and web auth
-        access_label = "vpn" if access_method == "vpn" else None
+        # Build descriptive access label (vpn/tunnel access is VPN-gated)
+        if access_method in ("vpn", "tunnel"):
+            access_label = "vpn"
+            effective_auth = auth_type if auth_type and auth_type != "none" else "vpn"
+        else:
+            access_label = None
+            effective_auth = auth_type
 
         # Create access check that returns descriptive detail
-        def access_check(host=ssh_host, auth=auth_type):
+        def access_check(host=ssh_host, auth=effective_auth):
             healthy, detail = ssh_health_check(host)
             if healthy:
-                # Show SSH host + auth type when healthy
+                # Show ssh-host auth (e.g., "ssh-tcv tequila")
                 if auth:
-                    return True, f"{host}+{auth}"
-                return True, host
+                    return True, f"ssh-{host} {auth}"
+                return True, f"ssh-{host}"
             return healthy, detail
 
         monitor.add_check(
@@ -589,13 +596,16 @@ def build_servers_row(
             style = "yellow"
             state_str = f"recovering ({int(s.downtime_seconds)}s)"
         else:
-            style = "red"
-            if s.auth_label:
-                state_str = f"{s.auth_label} down"
+            # Unhealthy: show grayed version of healthy state, not red error
+            style = "dim"
+            if s.healthy_detail:
+                state_str = s.healthy_detail
+            elif s.auth_label:
+                state_str = f"{s.auth_label}"
             else:
                 state_str = s.detail[:30] if s.detail else "down"
             if s.downtime_seconds > 0:
-                state_str += f" ({int(s.downtime_seconds)}s)"
+                state_str += f" ({int(s.downtime_seconds)}s down)"
 
         parts.append((f"{s.name}:{state_str}", style))
 

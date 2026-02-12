@@ -461,13 +461,16 @@ def build_servers_section(
             style = "yellow"
             label = f"recovering ({int(s.downtime_seconds)}s)"
         else:
-            style = "red"
-            if s.auth_label:
-                label = f"{s.auth_label} down"
+            # Unhealthy: show grayed version of healthy state, not red error
+            style = "dim"
+            if s.healthy_detail:
+                label = s.healthy_detail
+            elif s.auth_label:
+                label = s.auth_label
             else:
                 label = s.detail[:30] if s.detail else "down"
             if s.downtime_seconds > 0:
-                label += f" ({int(s.downtime_seconds)}s)"
+                label += f" ({int(s.downtime_seconds)}s down)"
 
         section.append(f"  {s.name}:", style="dim")
         section.append(label, style=style)
