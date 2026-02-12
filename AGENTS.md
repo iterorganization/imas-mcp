@@ -21,7 +21,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 | Section | Purpose | Accessor |
 |---------|---------|----------|
-| `[graph]` | Neo4j URI, username, password | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()` |
+| `[graph]` | Neo4j URI, username, password, named profiles | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_graph()` |
 | `[embedding]` | Embedding model, dimension, backend | `get_model("embedding")` |
 | `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
 | `[vision]` | Image/document tasks | `get_model("vision")` |
@@ -31,7 +31,29 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 **Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"agent"`, `"compaction"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
 
-**Graph access:** `get_graph_uri()`, `get_graph_username()`, `get_graph_password()` resolve Neo4j connection settings. Priority: env var (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) → `[tool.imas-codex.graph]` in pyproject.toml → built-in defaults. When running on ITER cluster, set the URI in pyproject.toml to `bolt://localhost:7687` (local Neo4j). When running from WSL with an SSH tunnel, it resolves the same way. For remote sessions (e.g., zj on ITER), the pyproject.toml config travels with the repo.
+**Graph access:** Named graph profiles allow switching between Neo4j instances at runtime. `IMAS_CODEX_GRAPH` env var selects the active profile. Priority: `IMAS_CODEX_GRAPH` env → `[tool.imas-codex.graph].default` → `"iter"`. Each facility maps to a unique bolt+HTTP port pair by convention:
+
+| Facility | Bolt | HTTP | Data Dir |
+|----------|------|------|----------|
+| iter | 7687 | 7474 | `neo4j/` |
+| tcv | 7688 | 7475 | `neo4j-tcv/` |
+| jt60sa | 7689 | 7476 | `neo4j-jt60sa/` |
+
+Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply as escape hatches over any profile. Use `resolve_graph(name)` from `imas_codex.graph.profiles` for direct profile resolution. All CLI `data db` commands accept `--graph/-g` to target a specific profile.
+
+**Graph config in pyproject.toml:**
+```toml
+[tool.imas-codex.graph]
+default = "iter"        # Active profile (overridden by IMAS_CODEX_GRAPH)
+username = "neo4j"
+password = "imas-codex"
+
+# Optional explicit profile overrides
+[tool.imas-codex.graph.profiles.staging]
+bolt-port = 7700
+http-port = 7701
+data-dir = "/custom/path/neo4j-staging"
+```
 
 ## Schema System
 
@@ -199,12 +221,15 @@ The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, an
 ### Neo4j Management
 
 ```bash
-uv run imas-codex neo4j status           # Check status
-uv run imas-codex neo4j shell            # Interactive Cypher
-uv run imas-codex neo4j dump             # Backup (always before destructive ops)
-uv run imas-codex neo4j load graph.dump  # Restore
-uv run imas-codex neo4j pull             # Pull latest from GHCR
-uv run imas-codex neo4j push v4.0.0      # Push to GHCR
+uv run imas-codex data db status             # Check active graph status
+uv run imas-codex data db status -g tcv      # Check specific profile
+uv run imas-codex data db start -g tcv       # Start specific profile
+uv run imas-codex data db profiles           # List all profiles and ports
+uv run imas-codex data db shell              # Interactive Cypher (active profile)
+uv run imas-codex data dump                  # Backup (always before destructive ops)
+uv run imas-codex data load graph.tar.gz     # Restore
+uv run imas-codex data pull                  # Pull latest from GHCR
+uv run imas-codex data push --dev            # Push to GHCR
 ```
 
 Never use `DETACH DELETE` on production data without user confirmation. For re-embedding: update nodes in place, don't delete and recreate.

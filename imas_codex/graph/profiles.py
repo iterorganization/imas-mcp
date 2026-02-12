@@ -141,9 +141,7 @@ def resolve_graph(name: str | None = None) -> GraphProfile:
         uri = explicit.get("uri", f"bolt://localhost:{bolt_port}")
         username = explicit.get("username", shared_username)
         password = explicit.get("password", shared_password)
-        data_dir = Path(
-            explicit.get("data-dir", str(_convention_data_dir(name)))
-        )
+        data_dir = Path(explicit.get("data-dir", str(_convention_data_dir(name))))
     elif name in FACILITY_PORT_OFFSETS:
         # Convention-based profile
         bolt_port = _convention_bolt_port(name)

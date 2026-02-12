@@ -58,7 +58,11 @@ class Neo4jOperation:
         require_stopped: bool = True,
         reset_password_on_restart: bool = False,
         password: str = "imas-codex",
+        graph: str | None = None,
     ):
+        from imas_codex.graph.profiles import resolve_graph
+
+        self.profile = resolve_graph(graph)
         self.operation_name = operation_name
         self.require_stopped = require_stopped
         self.reset_password_on_restart = reset_password_on_restart
@@ -97,20 +101,24 @@ class Neo4jOperation:
         self.acquired = True
 
         # Stop Neo4j if needed
-        if self.require_stopped and is_neo4j_running():
+        if self.require_stopped and is_neo4j_running(self.profile.http_port):
             self.was_running = True
-            click.echo(f"Stopping Neo4j for {self.operation_name}...")
+            click.echo(
+                f"Stopping Neo4j [{self.profile.name}] for {self.operation_name}..."
+            )
             self._stop_neo4j()
 
             import time
 
             for _ in range(30):
-                if not is_neo4j_running():
+                if not is_neo4j_running(self.profile.http_port):
                     break
                 time.sleep(1)
             else:
                 self._release_lock()
-                raise click.ClickException("Failed to stop Neo4j within 30 seconds")
+                raise click.ClickException(
+                    f"Failed to stop Neo4j [{self.profile.name}] within 30 seconds"
+                )
 
         return self
 
@@ -139,7 +147,7 @@ class Neo4jOperation:
             "apptainer",
             "exec",
             "--bind",
-            f"{DATA_DIR}/data:/data",
+            f"{self.profile.data_dir}/data:/data",
             "--writable-tmpfs",
             str(NEO4J_IMAGE),
             "neo4j-admin",
@@ -163,8 +171,9 @@ class Neo4jOperation:
             return False
 
     def _stop_neo4j(self) -> None:
+        service_name = f"imas-codex-neo4j-{self.profile.name}"
         result = subprocess.run(
-            ["systemctl", "--user", "stop", "imas-codex-neo4j"],
+            ["systemctl", "--user", "stop", service_name],
             capture_output=True,
         )
         if result.returncode == 0:
@@ -181,22 +190,26 @@ class Neo4jOperation:
         subprocess.run(["pkill", "-15", "-f", "neo4j.*console"], capture_output=True)
 
     def _start_neo4j(self) -> None:
+        service_name = f"imas-codex-neo4j-{self.profile.name}"
         result = subprocess.run(
-            ["systemctl", "--user", "start", "imas-codex-neo4j"],
+            ["systemctl", "--user", "start", service_name],
             capture_output=True,
         )
         if result.returncode == 0:
             import time
 
             for _ in range(30):
-                if is_neo4j_running():
-                    click.echo("Neo4j ready")
+                if is_neo4j_running(self.profile.http_port):
+                    click.echo(f"Neo4j [{self.profile.name}] ready")
                     return
                 time.sleep(1)
-            click.echo("Warning: Neo4j may still be starting")
+            click.echo(f"Warning: Neo4j [{self.profile.name}] may still be starting")
             return
 
-        click.echo("Note: Restart Neo4j manually: imas-codex data db start")
+        click.echo(
+            f"Note: Restart Neo4j manually: "
+            f"imas-codex data db start --graph {self.profile.name}"
+        )
 
     def _release_lock(self) -> None:
         if self._lock_file.exists():
@@ -396,11 +409,12 @@ def check_graph_conflict(bolt_port: int = 7687) -> str | None:
     return None
 
 
-def backup_existing_data(reason: str) -> Path | None:
+def backup_existing_data(reason: str, data_dir: Path | None = None) -> Path | None:
+    target = data_dir or DATA_DIR
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     recovery_path = RECOVERY_DIR / f"{timestamp}-{reason}"
 
-    if DATA_DIR.exists():
+    if target.exists():
         recovery_path.mkdir(parents=True, exist_ok=True)
         (recovery_path / "graph_data_existed.marker").touch()
         return recovery_path
@@ -480,8 +494,9 @@ def show_file_diff(local_path: Path, remote_path: Path) -> bool:
     return True
 
 
-def check_graph_exists() -> bool:
-    data_path = DATA_DIR / "data" / "databases" / "neo4j"
+def check_graph_exists(data_dir: Path | None = None) -> bool:
+    target = data_dir or DATA_DIR
+    data_path = target / "data" / "databases" / "neo4j"
     return data_path.exists() and any(data_path.iterdir())
 
 
@@ -659,25 +674,39 @@ def db_start(
 
 @data_db.command("stop")
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
-def db_stop(data_dir: str | None) -> None:
+@click.option(
+    "--graph",
+    "-g",
+    envvar="IMAS_CODEX_GRAPH",
+    default=None,
+    help="Graph profile name (default: active profile)",
+)
+def db_stop(data_dir: str | None, graph: str | None) -> None:
     """Stop Neo4j server."""
     import signal
 
-    data_path = Path(data_dir) if data_dir else DATA_DIR
+    from imas_codex.graph.profiles import resolve_graph
+
+    profile = resolve_graph(graph)
+    data_path = Path(data_dir) if data_dir else profile.data_dir
     pid_file = data_path / "neo4j.pid"
 
     if pid_file.exists():
         pid = int(pid_file.read_text().strip())
         try:
             os.kill(pid, signal.SIGTERM)
-            click.echo(f"Sent SIGTERM to Neo4j (PID: {pid})")
+            click.echo(f"Sent SIGTERM to Neo4j [{profile.name}] (PID: {pid})")
             pid_file.unlink()
         except ProcessLookupError:
-            click.echo("Neo4j process not found (stale PID file)")
+            click.echo(f"Neo4j [{profile.name}] process not found (stale PID file)")
             pid_file.unlink()
     else:
         result = subprocess.run(["pkill", "-f", "neo4j.*console"], capture_output=True)
-        click.echo("Neo4j stopped" if result.returncode == 0 else "Neo4j not running")
+        click.echo(
+            f"Neo4j [{profile.name}] stopped"
+            if result.returncode == 0
+            else f"Neo4j [{profile.name}] not running"
+        )
 
 
 @data_db.command("status")
@@ -729,16 +758,25 @@ def db_profiles() -> None:
 @data_db.command("shell")
 @click.option("--image", envvar="NEO4J_IMAGE", default=None)
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
-def db_shell(image: str | None, password: str | None) -> None:
+@click.option(
+    "--graph",
+    "-g",
+    envvar="IMAS_CODEX_GRAPH",
+    default=None,
+    help="Graph profile name (default: active profile)",
+)
+def db_shell(image: str | None, password: str | None, graph: str | None) -> None:
     """Open Cypher shell to Neo4j."""
-    from imas_codex.settings import get_graph_password
+    from imas_codex.graph.profiles import resolve_graph
 
-    password = password or get_graph_password()
+    profile = resolve_graph(graph)
+    password = password or profile.password
     image_path = Path(image) if image else NEO4J_IMAGE
 
     if not image_path.exists():
         raise click.ClickException(f"Neo4j image not found: {image_path}")
 
+    click.echo(f"Connecting to Neo4j [{profile.name}] at localhost:{profile.bolt_port}")
     subprocess.run(
         [
             "apptainer",
@@ -746,8 +784,10 @@ def db_shell(image: str | None, password: str | None) -> None:
             "--writable-tmpfs",
             str(image_path),
             "cypher-shell",
+            "-a",
+            f"bolt://localhost:{profile.bolt_port}",
             "-u",
-            "neo4j",
+            profile.username,
             "-p",
             password,
         ]
@@ -760,6 +800,13 @@ def db_shell(image: str | None, password: str | None) -> None:
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None, help="Custom data dir")
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option(
+    "--graph",
+    "-g",
+    envvar="IMAS_CODEX_GRAPH",
+    default=None,
+    help="Graph profile name (default: active profile)",
+)
+@click.option(
     "--minimal", is_flag=True, help="Use minimal service (no resource limits)"
 )
 def db_service(
@@ -767,14 +814,16 @@ def db_service(
     image: str | None,
     data_dir: str | None,
     password: str | None,
+    graph: str | None,
     minimal: bool,
 ) -> None:
     """Manage Neo4j as a systemd user service."""
     import platform
 
-    from imas_codex.settings import get_graph_password
+    from imas_codex.graph.profiles import resolve_graph
 
-    password = password or get_graph_password()
+    profile = resolve_graph(graph)
+    password = password or profile.password
 
     if platform.system() != "Linux":
         raise click.ClickException("systemd services only supported on Linux")
@@ -785,15 +834,16 @@ def db_service(
     require_apptainer()
 
     service_dir = Path.home() / ".config" / "systemd" / "user"
-    service_file = service_dir / "imas-codex-neo4j.service"
+    service_name = f"imas-codex-neo4j-{profile.name}"
+    service_file = service_dir / f"{service_name}.service"
     template_file = SERVICES_DIR / "imas-codex-db.service"
     image_path = Path(image) if image else NEO4J_IMAGE
-    data_path = Path(data_dir) if data_dir else DATA_DIR
+    data_path = Path(data_dir) if data_dir else profile.data_dir
     apptainer_path = shutil.which("apptainer")
 
     if action == "install":
         # Check for conflicting tunnel before installing
-        conflict = check_graph_conflict()
+        conflict = check_graph_conflict(profile.bolt_port)
         if conflict:
             raise click.ClickException(conflict)
 
@@ -809,7 +859,7 @@ def db_service(
 
         if minimal or not template_file.exists():
             service_content = f"""[Unit]
-Description=Neo4j Graph Database (IMAS Codex)
+Description=Neo4j Graph Database - {profile.name} (IMAS Codex)
 After=network.target
 
 [Service]
@@ -820,6 +870,8 @@ ExecStart={apptainer_path} exec \\
     --bind {data_path}/import:/import \\
     --writable-tmpfs \\
     --env NEO4J_AUTH=neo4j/{password} \\
+    --env NEO4J_server_bolt_listen__address=:{profile.bolt_port} \\
+    --env NEO4J_server_http_listen__address=:{profile.http_port} \\
     {image_path} \\
     neo4j console
 Restart=on-failure
@@ -829,40 +881,42 @@ RestartSec=5
 WantedBy=default.target
 """
             service_file.write_text(service_content)
-            click.echo("Installed minimal service")
+            click.echo(f"Installed minimal service for [{profile.name}]")
         else:
             shutil.copy(template_file, service_file)
             click.echo(f"Installed from template: {template_file}")
             click.echo("  Includes: cleanup, graceful shutdown, resource limits")
 
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        subprocess.run(
-            ["systemctl", "--user", "enable", "imas-codex-neo4j"], check=True
+        subprocess.run(["systemctl", "--user", "enable", service_name], check=True)
+        click.echo(f"\n✓ Service [{profile.name}] installed and enabled")
+        click.echo(
+            f"  Bolt: localhost:{profile.bolt_port}  "
+            f"HTTP: localhost:{profile.http_port}"
         )
-        click.echo("\n✓ Service installed and enabled")
-        click.echo("  Start: systemctl --user start imas-codex-neo4j")
-        click.echo("  Or:    imas-codex data db start")
+        click.echo(f"  Start: systemctl --user start {service_name}")
+        click.echo(f"  Or:    imas-codex data db start --graph {profile.name}")
 
     elif action == "uninstall":
         if not service_file.exists():
-            click.echo("Service not installed")
+            click.echo(f"Service [{profile.name}] not installed")
             return
         subprocess.run(
-            ["systemctl", "--user", "stop", "imas-codex-neo4j"], capture_output=True
+            ["systemctl", "--user", "stop", service_name], capture_output=True
         )
         subprocess.run(
-            ["systemctl", "--user", "disable", "imas-codex-neo4j"], capture_output=True
+            ["systemctl", "--user", "disable", service_name], capture_output=True
         )
         service_file.unlink()
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        click.echo("Service uninstalled")
+        click.echo(f"Service [{profile.name}] uninstalled")
 
     elif action == "status":
         if not service_file.exists():
-            click.echo("Service not installed")
+            click.echo(f"Service [{profile.name}] not installed")
             return
         result = subprocess.run(
-            ["systemctl", "--user", "status", "imas-codex-neo4j"],
+            ["systemctl", "--user", "status", service_name],
             capture_output=True,
             text=True,
         )
@@ -1291,9 +1345,20 @@ def secrets_status() -> None:
     help="Output archive path (default: imas-codex-graph-{version}.tar.gz)",
 )
 @click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after dump")
-def data_dump(output: str | None, no_restart: bool) -> None:
+@click.option(
+    "--graph",
+    "-g",
+    envvar="IMAS_CODEX_GRAPH",
+    default=None,
+    help="Graph profile name (default: active profile)",
+)
+def data_dump(output: str | None, no_restart: bool, graph: str | None) -> None:
     """Export graph database to archive."""
+    from imas_codex.graph.profiles import resolve_graph
+
     require_apptainer()
+
+    profile = resolve_graph(graph)
 
     git_info = get_git_info()
     version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
@@ -1303,11 +1368,11 @@ def data_dump(output: str | None, no_restart: bool) -> None:
     else:
         output_path = Path(f"imas-codex-graph-{version_label}.tar.gz")
 
-    with Neo4jOperation("graph dump", require_stopped=True) as op:
+    with Neo4jOperation("graph dump", require_stopped=True, graph=profile.name) as op:
         if no_restart:
             op.was_running = False
 
-        click.echo(f"Creating archive: {output_path}")
+        click.echo(f"Creating archive [{profile.name}]: {output_path}")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -1315,14 +1380,14 @@ def data_dump(output: str | None, no_restart: bool) -> None:
             archive_dir.mkdir()
 
             click.echo("  Dumping graph database...")
-            dumps_dir = DATA_DIR / "dumps"
+            dumps_dir = profile.data_dir / "dumps"
             dumps_dir.mkdir(parents=True, exist_ok=True)
 
             cmd = [
                 "apptainer",
                 "exec",
                 "--bind",
-                f"{DATA_DIR}/data:/data",
+                f"{profile.data_dir}/data:/data",
                 "--bind",
                 f"{dumps_dir}:/dumps",
                 "--writable-tmpfs",
@@ -1367,28 +1432,42 @@ def data_dump(output: str | None, no_restart: bool) -> None:
 @click.option("--force", is_flag=True, help="Overwrite existing data")
 @click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after load")
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
+@click.option(
+    "--graph",
+    "-g",
+    envvar="IMAS_CODEX_GRAPH",
+    default=None,
+    help="Graph profile name (default: active profile)",
+)
 def data_load(
-    archive: str, force: bool, no_restart: bool, password: str | None
+    archive: str,
+    force: bool,
+    no_restart: bool,
+    password: str | None,
+    graph: str | None,
 ) -> None:
     """Load graph database from archive."""
+    from imas_codex.graph.profiles import resolve_graph
     from imas_codex.settings import get_graph_password
 
+    profile = resolve_graph(graph)
     password = password or get_graph_password()
     require_apptainer()
 
     archive_path = Path(archive)
-    click.echo(f"Loading archive: {archive_path}")
+    click.echo(f"Loading archive into [{profile.name}]: {archive_path}")
 
     with Neo4jOperation(
         "graph load",
         require_stopped=True,
         reset_password_on_restart=True,
         password=password,
+        graph=profile.name,
     ) as op:
         if no_restart:
             op.was_running = False
 
-        backup_existing_data("pre-load")
+        backup_existing_data("pre-load", data_dir=profile.data_dir)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -1411,7 +1490,7 @@ def data_load(
             graph_dump = archive_dir / "graph.dump"
             if graph_dump.exists():
                 click.echo("  Loading graph database...")
-                dumps_dir = DATA_DIR / "dumps"
+                dumps_dir = profile.data_dir / "dumps"
                 dumps_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy(graph_dump, dumps_dir / "neo4j.dump")
 
@@ -1419,7 +1498,7 @@ def data_load(
                     "apptainer",
                     "exec",
                     "--bind",
-                    f"{DATA_DIR}/data:/data",
+                    f"{profile.data_dir}/data:/data",
                     "--bind",
                     f"{dumps_dir}:/dumps",
                     "--writable-tmpfs",
@@ -1565,6 +1644,13 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
 @click.option("--dry-run", is_flag=True, help="Show what would be pushed")
 @click.option("--skip-private", is_flag=True, help="Skip private YAML gist sync")
 @click.option("--skip-embed", is_flag=True, help="Skip description embedding update")
+@click.option(
+    "--graph",
+    "-g",
+    envvar="IMAS_CODEX_GRAPH",
+    default=None,
+    help="Graph profile name (default: active profile)",
+)
 def data_push(
     dev: bool,
     registry: str | None,
@@ -1572,6 +1658,7 @@ def data_push(
     dry_run: bool,
     skip_private: bool,
     skip_embed: bool,
+    graph: str | None,
 ) -> None:
     """Push graph archive to GHCR and private facility configs to Gist.
 
@@ -1612,7 +1699,10 @@ def data_push(
         from click.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(data_dump, ["-o", str(archive_path)])
+        dump_args = ["-o", str(archive_path)]
+        if graph:
+            dump_args.extend(["--graph", graph])
+        result = runner.invoke(data_dump, dump_args)
         if result.exit_code != 0:
             raise click.ClickException(f"Dump failed: {result.output}")
 
@@ -1696,6 +1786,13 @@ def data_push(
 @click.option("--no-backup", is_flag=True, help="Skip backup marker")
 @click.option("--skip-private", is_flag=True, help="Skip private YAML gist sync")
 @click.option("--gist-url", help="Gist URL for private files (for onboarding)")
+@click.option(
+    "--graph",
+    "-g",
+    envvar="IMAS_CODEX_GRAPH",
+    default=None,
+    help="Graph profile name (default: active profile)",
+)
 def data_pull(
     version: str,
     registry: str | None,
@@ -1704,14 +1801,18 @@ def data_pull(
     no_backup: bool,
     skip_private: bool,
     gist_url: str | None,
+    graph: str | None,
 ) -> None:
     """Pull graph archive from GHCR and private facility configs from Gist.
 
     When no --version is specified, pulls 'latest'. If 'latest' doesn't
     exist, falls back to the most recent tag in the registry.
     """
+    from imas_codex.graph.profiles import resolve_graph
+
     require_oras()
 
+    profile = resolve_graph(graph)
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
 
@@ -1722,7 +1823,7 @@ def data_pull(
 
     artifact_ref = f"{target_registry}/imas-codex-graph:{resolved_version}"
 
-    if check_graph_exists() and not force:
+    if check_graph_exists(data_dir=profile.data_dir) and not force:
         manifest = get_local_graph_manifest()
         if manifest is None:
             raise click.ClickException(
@@ -1746,7 +1847,7 @@ def data_pull(
     click.echo(f"Pulling: {artifact_ref}")
 
     if not no_backup:
-        backup_existing_data("pre-pull")
+        backup_existing_data("pre-pull", data_dir=profile.data_dir)
 
     login_to_ghcr(token)
 
@@ -1768,7 +1869,8 @@ def data_pull(
         from click.testing import CliRunner
 
         runner = CliRunner()
-        result = runner.invoke(data_load, [str(archives[0]), "--force"])
+        load_args = [str(archives[0]), "--force", "--graph", profile.name]
+        result = runner.invoke(data_load, load_args)
         if result.exit_code != 0:
             raise click.ClickException(f"Load failed: {result.output}")
 
