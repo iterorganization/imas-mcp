@@ -49,12 +49,13 @@ INGESTABLE_ARTIFACT_TYPES = {
     "json",
 }
 
-# Types that should become Image nodes (routed to image pipeline, not text extraction)
+# Types that should become Image nodes (routed to image pipeline, not text extraction).
+# Used by artifact_worker for routing; Cypher queries use score_exempt property instead.
 IMAGE_ARTIFACT_TYPES = {"image"}
 
 # All types worth scoring via LLM (metadata-only scoring for data/archive/other).
-# Image artifacts are excluded — they bypass LLM text scoring and go directly
-# to ingestion, where the VLM captioning pipeline scores them visually.
+# Image artifacts are excluded — they are score_exempt and bypass LLM text scoring,
+# going directly from discovered → ingested via the VLM captioning pipeline.
 SCORABLE_ARTIFACT_TYPES = INGESTABLE_ARTIFACT_TYPES | {
     "data",
     "archive",
@@ -140,6 +141,14 @@ def _bulk_create_wiki_artifacts(
     Returns:
         Number of artifacts created/updated
     """
+    # Pre-compute score_exempt flag for each artifact.
+    # Image artifacts bypass LLM text scoring and go directly to ingestion
+    # (discovered → ingested) via the VLM captioning pipeline.
+    for a in batch_data:
+        a.setdefault(
+            "score_exempt", a.get("artifact_type", "").lower() in IMAGE_ARTIFACT_TYPES
+        )
+
     created = 0
     total = len(batch_data)
     for i in range(0, total, batch_size):
@@ -155,6 +164,7 @@ def _bulk_create_wiki_artifacts(
                           wa.size_bytes = a.size_bytes,
                           wa.mime_type = a.mime_type,
                           wa.status = $discovered,
+                          wa.score_exempt = a.score_exempt,
                           wa.discovered_at = datetime(),
                           wa.bulk_discovered = true
             ON MATCH SET wa.bulk_discovered = true
@@ -260,21 +270,20 @@ def has_pending_artifact_work(facility: str) -> bool:
     """Check if there are pending artifacts (scoring or ingestion).
 
     Artifacts are pending when:
-    - status = 'discovered' AND artifact_type in SCORABLE_ARTIFACT_TYPES (needs scoring)
-    - status = 'discovered' AND artifact_type in IMAGE_ARTIFACT_TYPES (needs direct ingestion)
-    - status = 'scored' AND score >= 0.5 AND ingestable/image type (needs ingestion)
+    - status = 'discovered' AND NOT score_exempt (needs LLM scoring)
+    - status = 'discovered' AND score_exempt (needs direct ingestion)
+    - status = 'scored' AND score >= 0.5 AND ingestable type (needs ingestion)
     - claimed_at is null or expired
     """
-    ingestable = list(INGESTABLE_ARTIFACT_TYPES | IMAGE_ARTIFACT_TYPES)
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
             WHERE (
-                (wa.status = $discovered AND wa.artifact_type IN $scorable)
-                OR (wa.status = $discovered AND wa.artifact_type IN $image_types)
-                OR (wa.status = $scored AND wa.score >= 0.5 AND wa.artifact_type IN $ingestable)
+                (wa.status = $discovered)
+                OR (wa.status = $scored AND wa.score >= 0.5
+                    AND wa.artifact_type IN $ingestable)
               )
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
@@ -282,9 +291,7 @@ def has_pending_artifact_work(facility: str) -> bool:
             facility=facility,
             discovered=WikiArtifactStatus.discovered.value,
             scored=WikiArtifactStatus.scored.value,
-            scorable=list(SCORABLE_ARTIFACT_TYPES),
-            image_types=list(IMAGE_ARTIFACT_TYPES),
-            ingestable=ingestable,
+            ingestable=list(INGESTABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -321,18 +328,18 @@ def has_pending_artifact_ingest_work(facility: str) -> bool:
 
     Returns True if there are artifacts with:
     - status = 'scored' AND score >= 0.5 AND ingestable type (text-extractable)
-    - status = 'discovered' AND artifact_type = 'image' (bypass scoring)
+    - status = 'discovered' AND score_exempt = true (bypass LLM scoring)
     - claimed_at is null or expired
     """
-    ingestable = list(INGESTABLE_ARTIFACT_TYPES | IMAGE_ARTIFACT_TYPES)
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
             WHERE (
-                (wa.status = $scored AND wa.score >= 0.5 AND wa.artifact_type IN $types)
-                OR (wa.status = $discovered AND wa.artifact_type IN $image_types)
+                (wa.status = $scored AND wa.score >= 0.5
+                 AND wa.artifact_type IN $types)
+                OR (wa.status = $discovered AND wa.score_exempt = true)
               )
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
@@ -340,8 +347,7 @@ def has_pending_artifact_ingest_work(facility: str) -> bool:
             facility=facility,
             scored=WikiArtifactStatus.scored.value,
             discovered=WikiArtifactStatus.discovered.value,
-            types=ingestable,
-            image_types=list(IMAGE_ARTIFACT_TYPES),
+            types=list(INGESTABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -964,7 +970,11 @@ def claim_artifacts_for_ingesting(
 
     Claims two categories of artifacts:
     1. Scored text-extractable artifacts with score >= min_score
-    2. Discovered image artifacts (bypass scoring, go directly to VLM pipeline)
+    2. Score-exempt artifacts (e.g. images) directly from discovered status
+
+    Score-exempt artifacts bypass LLM text scoring and go directly to the
+    ingestion pipeline, where type-specific handlers (e.g. VLM captioning
+    for images) process them.
 
     Data/archive types are scored but never claimed for ingestion.
 
@@ -972,13 +982,12 @@ def claim_artifacts_for_ingesting(
     """
     import uuid
 
-    ingestable = list(INGESTABLE_ARTIFACT_TYPES | IMAGE_ARTIFACT_TYPES)
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(uuid.uuid4())
 
     with GraphClient() as gc:
         # Step 1: Attempt to claim artifacts with our unique token.
-        # Image artifacts: claim from 'discovered' (bypass LLM scoring).
+        # Score-exempt artifacts: claim from 'discovered' (bypass LLM scoring).
         # Text artifacts: claim from 'scored' with score >= threshold.
         gc.query(
             """
@@ -986,7 +995,7 @@ def claim_artifacts_for_ingesting(
             WHERE (
                 (wa.status = $scored AND wa.score >= $min_score
                  AND wa.artifact_type IN $types)
-                OR (wa.status = $discovered AND wa.artifact_type IN $image_types)
+                OR (wa.status = $discovered AND wa.score_exempt = true)
               )
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
@@ -999,8 +1008,7 @@ def claim_artifacts_for_ingesting(
             scored=WikiArtifactStatus.scored.value,
             discovered=WikiArtifactStatus.discovered.value,
             min_score=min_score,
-            types=ingestable,
-            image_types=list(IMAGE_ARTIFACT_TYPES),
+            types=list(INGESTABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
             limit=limit,
             token=claim_token,

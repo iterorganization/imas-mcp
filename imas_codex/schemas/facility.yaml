@@ -437,10 +437,16 @@ enums:
       - Score: download preview + LLM scoring in single pass
         Artifacts with score >= 0.5 proceed to ingestion
       - Ingest: download full content, parse, chunk, embed
+      
+      Score-exempt artifacts (score_exempt=true, e.g. images) skip the
+      scored phase entirely: discovered → ingested. They are picked up
+      directly by the ingestion worker without LLM text scoring.
     permissible_values:
       discovered:
         description: >-
           Artifact link found but not yet scored. Awaiting content-aware scoring.
+          Score-exempt artifacts (images) are picked up directly from this
+          state by the ingestion worker.
       scored:
         description: >-
           Scoring complete. Score field set based on content preview.
@@ -2516,6 +2522,14 @@ classes:
           Timestamp when a worker claimed this artifact for processing.
           Null when not being processed. Used for orphan recovery (>5min = reclaim).
         range: datetime
+      score_exempt:
+        description: >-
+          When true, artifact bypasses LLM text scoring and goes directly
+          from discovered → ingested. Set at discovery time for artifact types
+          that use a different scoring pipeline (e.g. images use VLM captioning
+          instead of text scoring). Ingestion worker claims discovered artifacts
+          with this flag set.
+        range: boolean
       
       # Graph metrics (computed during discovery)
       in_degree:

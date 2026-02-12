@@ -26,7 +26,6 @@ from imas_codex.graph import GraphClient
 from imas_codex.graph.models import WikiArtifactStatus, WikiPageStatus
 
 from .graph_ops import (
-    IMAGE_ARTIFACT_TYPES,
     INGESTABLE_ARTIFACT_TYPES,
     SCORABLE_ARTIFACT_TYPES,
     _bulk_create_wiki_artifacts,
@@ -893,8 +892,9 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
             WITH wa.status AS status, wa.score AS score,
-                 wa.artifact_type AS atype
-            RETURN status, score, atype, count(*) AS cnt
+                 wa.artifact_type AS atype,
+                 coalesce(wa.score_exempt, false) AS exempt
+            RETURN status, score, atype, exempt, count(*) AS cnt
             """,
             facility=facility,
         )
@@ -902,13 +902,20 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
         pending_artifact_score = 0
         pending_artifact_ingest = 0
         scorable = SCORABLE_ARTIFACT_TYPES
-        ingestable = INGESTABLE_ARTIFACT_TYPES | IMAGE_ARTIFACT_TYPES
+        ingestable = INGESTABLE_ARTIFACT_TYPES
         for r in artifact_result:
             total_artifacts += r["cnt"]
             st = r["status"]
             atype = r["atype"]
-            if st == WikiArtifactStatus.discovered.value and atype in scorable:
+            exempt = r["exempt"]
+            if (
+                st == WikiArtifactStatus.discovered.value
+                and atype in scorable
+                and not exempt
+            ):
                 pending_artifact_score += r["cnt"]
+            elif st == WikiArtifactStatus.discovered.value and exempt:
+                pending_artifact_ingest += r["cnt"]
             elif (
                 st == WikiArtifactStatus.scored.value
                 and atype in ingestable
