@@ -235,9 +235,13 @@ classes:
       introduced_version:
         description: DD version where this IDS was introduced
         range: DDVersion
+        annotations:
+          relationship_type: INTRODUCED_IN
       deprecated_version:
         description: DD version where this IDS was deprecated (null = current)
         range: DDVersion
+        annotations:
+          relationship_type: DEPRECATED_IN
 
   IMASPath:
     description: >-
@@ -295,15 +299,28 @@ classes:
       parent_path:
         description: Parent path in hierarchy (null for IDS-level paths)
         range: IMASPath
+        annotations:
+          relationship_type: HAS_PARENT
+      in_ids:
+        description: IDS that contains this path
+        range: IDS
+        annotations:
+          relationship_type: IN_IDS
       unit:
         description: Physical units for this path
         range: Unit
+        annotations:
+          relationship_type: HAS_UNIT
       introduced_version:
         description: DD version where this path was introduced
         range: DDVersion
+        annotations:
+          relationship_type: INTRODUCED_IN
       deprecated_version:
         description: DD version where this path was deprecated (null = current)
         range: DDVersion
+        annotations:
+          relationship_type: DEPRECATED_IN
       renamed_to:
         description: Successor path if this was renamed (not just removed)
         range: IMASPath
@@ -335,6 +352,21 @@ classes:
           Error fields are not embedded since they have no unique semantic content.
         multivalued: true
         range: IMASPath
+        annotations:
+          relationship_type: HAS_ERROR
+      in_cluster:
+        description: Semantic cluster this path belongs to
+        range: IMASSemanticCluster
+        annotations:
+          relationship_type: IN_CLUSTER
+      coordinates:
+        description: >-
+          Coordinate specifications for this path (axis definitions).
+          Can be index specs (1...N) or other paths (time, rho_tor, etc.).
+        multivalued: true
+        range: IMASCoordinateSpec
+        annotations:
+          relationship_type: HAS_COORDINATE
 
   # Unit is now defined in common.yaml and imported
 

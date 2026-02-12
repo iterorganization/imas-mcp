@@ -896,6 +896,8 @@ classes:
       software_repo_id:
         description: Link to SoftwareRepo node if this is a git clone
         range: SoftwareRepo
+        annotations:
+          relationship_type: INSTANCE_OF
       # Scan statistics (set during listing)
       total_files:
         description: Total files in directory (set during listing)
@@ -1099,6 +1101,15 @@ classes:
       person_id:
         description: Link to cross-facility Person node (if identified)
         range: Person
+        annotations:
+          relationship_type: IS_PERSON
+      owned_paths:
+        description: Filesystem paths owned by this user
+        range: FacilityPath
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: OWNS
 
   Person:
     description: >-
@@ -1309,6 +1320,8 @@ classes:
       unit:
         description: Physical units for this node (linked via HAS_UNIT relationship)
         range: Unit
+        annotations:
+          relationship_type: HAS_UNIT
       description:
         description: Node description
       embedding:
@@ -1367,9 +1380,13 @@ classes:
       introduced_version:
         description: The tree model version that introduced this node
         range: TreeModelVersion
+        annotations:
+          relationship_type: INTRODUCED_IN
       removed_version:
         description: The tree model version that removed this node (rare)
         range: TreeModelVersion
+        annotations:
+          relationship_type: REMOVED_IN
       # IMAS mapping preparation fields
       sign_convention:
         description: >-
@@ -1682,6 +1699,15 @@ classes:
           The signal's accessor is substituted into DataAccess templates.
         required: true
         range: DataAccess
+        annotations:
+          relationship_type: DATA_ACCESS
+      checked_via:
+        description: >-
+          DataAccess node used to verify signal availability (example_shot test).
+          Links to specific access method that was tested successfully.
+        range: DataAccess
+        annotations:
+          relationship_type: CHECKED_VIA
       description:
         description: What this signal measures (physics description)
       embedding:
@@ -2357,12 +2383,13 @@ classes:
       Relationships:
       - LINKS_TO -> WikiPage (wiki link structure, created during scan)
       - HAS_ARTIFACT -> WikiArtifact (created during scan)
+      - HAS_CHUNK -> WikiChunk (created during ingest)
+      - HAS_IMAGE -> Image (inline images in page HTML)
       - AT_FACILITY -> Facility
       - MENTIONS_TREE_NODE -> TreeNode (created during ingest)
       - MENTIONS_DIAGNOSTIC -> Diagnostic
       - MENTIONS_CODE -> AnalysisCode
       - MENTIONS_DOMAIN -> PhysicsDomain
-      - HAS_CHUNK -> WikiChunk (created during ingest)
     mixins:
       - LLMProvenance
       - LLMOperation
@@ -2411,6 +2438,27 @@ classes:
         inlined: false
         annotations:
           relationship_type: LINKS_TO
+      has_artifacts:
+        description: Artifacts linked from this page (PDFs, presentations, etc.)
+        range: WikiArtifact
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: HAS_ARTIFACT
+      has_chunks:
+        description: Text chunks created during ingestion for semantic search
+        range: WikiChunk
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: HAS_CHUNK
+      has_images:
+        description: Inline images found in page HTML
+        range: Image
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: HAS_IMAGE
       
       # Worker coordination (same pattern as FacilityPath)
       claimed_at:
@@ -2488,12 +2536,21 @@ classes:
         description: Parent WikiPage ID
         required: true
         range: WikiPage
+        annotations:
+          relationship_type: HAS_CHUNK
+          inverse: true
       facility_id:
         description: Facility for efficient filtering
         required: true
         range: Facility
         annotations:
           relationship_type: AT_FACILITY
+      next_chunk:
+        description: Next chunk in reading order for sequential traversal
+        range: WikiChunk
+        inlined: false
+        annotations:
+          relationship_type: NEXT_CHUNK
       chunk_index:
         description: Zero-based position in parent document (0, 1, 2, ...)
         range: integer
@@ -2551,6 +2608,7 @@ classes:
       - AT_FACILITY -> Facility
       - HAS_ARTIFACT <- WikiPage (pages that link to this artifact)
       - HAS_CHUNK -> WikiChunk (created during ingest)
+      - HAS_IMAGE -> Image (figures extracted from documents)
     class_uri: facility:WikiArtifact
     mixins:
       - DiscoveryProvenance
@@ -2566,6 +2624,20 @@ classes:
         range: Facility
         annotations:
           relationship_type: AT_FACILITY
+      has_chunks:
+        description: Text chunks created during artifact parsing
+        range: WikiChunk
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: HAS_CHUNK
+      has_images:
+        description: Images/figures extracted from this artifact
+        range: Image
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: HAS_IMAGE
       url:
         description: Full URL to artifact
         required: true

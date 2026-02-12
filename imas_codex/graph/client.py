@@ -74,35 +74,33 @@ EXPECTED_VECTOR_INDEXES: list[tuple[str, str, str]] = _get_all_vector_indexes()
 
 
 # =============================================================================
-# Code-Created Relationships (not yet modeled as LinkML slots)
+# Relationship Types (Schema-Derived)
 # =============================================================================
 
-# These relationship types are created directly in Cypher queries but don't
-# yet have corresponding LinkML slot definitions. They should eventually be
-# promoted to schema slots, but for now they're documented here.
-#
-# Format: {TYPE: "Source -> Target (description)"}
-CODE_CREATED_RELATIONSHIPS: dict[str, str] = {
-    # Wiki/code chunking
-    "HAS_CHUNK": "WikiPage/SourceFile -> chunk nodes",
-    "HAS_ARTIFACT": "WikiPage -> WikiArtifact",
-    "HAS_IMAGE": "WikiPage/WikiArtifact -> Image",
-    "NEXT_CHUNK": "WikiChunk -> WikiChunk (ordering)",
-    # DD structure (created by build_dd_graph)
-    "IN_IDS": "IMASPath -> IDS (containment)",
-    "INTRODUCED_IN": "IMASPath -> DDVersion",
-    "DEPRECATED_IN": "IMASPath -> DDVersion",
-    "HAS_COORDINATE": "IMASPath -> IMASCoordinateSpec",
-    "HAS_UNIT": "IMASPath -> Unit",
-    "HAS_ERROR": "IMASPath -> IMASPath (error bounds)",
-    "HAS_PARENT": "IMASPath -> IMASPath (hierarchy)",
-    "IN_CLUSTER": "IMASPath -> IMASSemanticCluster",
-    # Facility relationships
-    "INSTANCE_OF": "Entity -> SoftwareRepo/PhysicsDomain",
-    "OWNS": "FacilityUser -> FacilityPath",
-    "IS_PERSON": "FacilityUser -> Person",
-    "CHECKED_VIA": "FacilitySignal -> DataAccess",
-}
+
+def _get_all_relationship_types() -> set[str]:
+    """Derive all expected relationship types from LinkML schemas.
+
+    Returns a set of SCREAMING_SNAKE_CASE relationship type names.
+    Combines facility.yaml and imas_dd.yaml schemas.
+    """
+    from pathlib import Path
+
+    from imas_codex.graph.schema import GraphSchema
+
+    schemas_dir = Path(__file__).parent.parent / "schemas"
+
+    # Collect from both schemas
+    rel_types = set()
+    for schema_file in ["facility.yaml", "imas_dd.yaml"]:
+        gs = GraphSchema(schemas_dir / schema_file)
+        rel_types.update(gs.relationship_types)
+
+    return rel_types
+
+
+# Cache the result (computed once at module load)
+EXPECTED_RELATIONSHIP_TYPES: set[str] = _get_all_relationship_types()
 
 
 @dataclass
