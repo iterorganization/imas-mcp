@@ -2377,9 +2377,12 @@ def wiki_run(
                 check_ssh=bool(_first_ssh_host),
             )
 
-            # Suppress noisy INFO logs from embedding modules during rich display
-            # (source tracking, model init etc. are shown in the progress panel)
-            for mod in ("imas_codex.embeddings",):
+            # Suppress noisy INFO logs during rich display — progress is
+            # shown in the TUI panel, so log lines are redundant noise.
+            for mod in (
+                "imas_codex.embeddings",
+                "imas_codex.discovery.wiki",
+            ):
                 logging.getLogger(mod).setLevel(logging.WARNING)
 
             with WikiProgressDisplay(

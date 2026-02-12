@@ -52,16 +52,14 @@ INGESTABLE_ARTIFACT_TYPES = {
 # Types that should become Image nodes (routed to image pipeline, not text extraction)
 IMAGE_ARTIFACT_TYPES = {"image"}
 
-# All types worth scoring via LLM (metadata-only scoring for data/archive/other)
-SCORABLE_ARTIFACT_TYPES = (
-    INGESTABLE_ARTIFACT_TYPES
-    | IMAGE_ARTIFACT_TYPES
-    | {
-        "data",
-        "archive",
-        "other",
-    }
-)
+# All types worth scoring via LLM (metadata-only scoring for data/archive/other).
+# Image artifacts are excluded — they bypass LLM text scoring and go directly
+# to ingestion, where the VLM captioning pipeline scores them visually.
+SCORABLE_ARTIFACT_TYPES = INGESTABLE_ARTIFACT_TYPES | {
+    "data",
+    "archive",
+    "other",
+}
 
 
 def _bulk_create_wiki_pages(
@@ -263,6 +261,7 @@ def has_pending_artifact_work(facility: str) -> bool:
 
     Artifacts are pending when:
     - status = 'discovered' AND artifact_type in SCORABLE_ARTIFACT_TYPES (needs scoring)
+    - status = 'discovered' AND artifact_type in IMAGE_ARTIFACT_TYPES (needs direct ingestion)
     - status = 'scored' AND score >= 0.5 AND ingestable/image type (needs ingestion)
     - claimed_at is null or expired
     """
@@ -274,6 +273,7 @@ def has_pending_artifact_work(facility: str) -> bool:
             MATCH (wa:WikiArtifact {facility_id: $facility})
             WHERE (
                 (wa.status = $discovered AND wa.artifact_type IN $scorable)
+                OR (wa.status = $discovered AND wa.artifact_type IN $image_types)
                 OR (wa.status = $scored AND wa.score >= 0.5 AND wa.artifact_type IN $ingestable)
               )
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
@@ -283,6 +283,7 @@ def has_pending_artifact_work(facility: str) -> bool:
             discovered=WikiArtifactStatus.discovered.value,
             scored=WikiArtifactStatus.scored.value,
             scorable=list(SCORABLE_ARTIFACT_TYPES),
+            image_types=list(IMAGE_ARTIFACT_TYPES),
             ingestable=ingestable,
             cutoff=cutoff,
         )
@@ -316,12 +317,11 @@ def has_pending_artifact_score_work(facility: str) -> bool:
 
 
 def has_pending_artifact_ingest_work(facility: str) -> bool:
-    """Check if there are scored artifacts awaiting ingestion.
+    """Check if there are artifacts awaiting ingestion.
 
     Returns True if there are artifacts with:
-    - status = 'scored'
-    - score >= 0.5
-    - artifact_type in INGESTABLE_ARTIFACT_TYPES or IMAGE_ARTIFACT_TYPES
+    - status = 'scored' AND score >= 0.5 AND ingestable type (text-extractable)
+    - status = 'discovered' AND artifact_type = 'image' (bypass scoring)
     - claimed_at is null or expired
     """
     ingestable = list(INGESTABLE_ARTIFACT_TYPES | IMAGE_ARTIFACT_TYPES)
@@ -330,15 +330,18 @@ def has_pending_artifact_ingest_work(facility: str) -> bool:
         result = gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
-            WHERE wa.status = $scored
-              AND wa.score >= 0.5
-              AND wa.artifact_type IN $types
+            WHERE (
+                (wa.status = $scored AND wa.score >= 0.5 AND wa.artifact_type IN $types)
+                OR (wa.status = $discovered AND wa.artifact_type IN $image_types)
+              )
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
             scored=WikiArtifactStatus.scored.value,
+            discovered=WikiArtifactStatus.discovered.value,
             types=ingestable,
+            image_types=list(IMAGE_ARTIFACT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -894,8 +897,8 @@ def claim_artifacts_for_scoring(
     """Claim discovered artifacts for scoring.
 
     Claims artifacts with status='discovered' and any scorable artifact_type.
-    All artifact types are scored (text-based preview or metadata-only).
-    Image artifacts get a basic LLM score; VLM captioning happens separately.
+    Image artifacts are NOT scored here — they bypass LLM scoring and go
+    directly to ingestion via claim_artifacts_for_ingesting.
 
     Workflow: discovered + scorable_type + unclaimed → set claimed_at
     Score worker extracts text preview and scores with LLM.
@@ -957,14 +960,13 @@ def claim_artifacts_for_ingesting(
     min_score: float = 0.5,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Claim scored artifacts for ingestion.
+    """Claim artifacts for ingestion.
 
-    Claims artifacts with status='scored' and score >= min_score.
-    Includes both text-extractable types and image types (routed differently).
+    Claims two categories of artifacts:
+    1. Scored text-extractable artifacts with score >= min_score
+    2. Discovered image artifacts (bypass scoring, go directly to VLM pipeline)
+
     Data/archive types are scored but never claimed for ingestion.
-
-    Workflow: scored + score >= threshold + unclaimed → set claimed_at
-    After ingest: update status to 'ingested'.
 
     Uses claim token pattern to handle race conditions between workers.
     """
@@ -975,13 +977,17 @@ def claim_artifacts_for_ingesting(
     claim_token = str(uuid.uuid4())
 
     with GraphClient() as gc:
-        # Step 1: Attempt to claim artifacts with our unique token
+        # Step 1: Attempt to claim artifacts with our unique token.
+        # Image artifacts: claim from 'discovered' (bypass LLM scoring).
+        # Text artifacts: claim from 'scored' with score >= threshold.
         gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
-            WHERE wa.status = $scored
-              AND wa.score >= $min_score
-              AND wa.artifact_type IN $types
+            WHERE (
+                (wa.status = $scored AND wa.score >= $min_score
+                 AND wa.artifact_type IN $types)
+                OR (wa.status = $discovered AND wa.artifact_type IN $image_types)
+              )
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
             WITH wa
@@ -991,8 +997,10 @@ def claim_artifacts_for_ingesting(
             """,
             facility=facility,
             scored=WikiArtifactStatus.scored.value,
+            discovered=WikiArtifactStatus.discovered.value,
             min_score=min_score,
             types=ingestable,
+            image_types=list(IMAGE_ARTIFACT_TYPES),
             cutoff=cutoff,
             limit=limit,
             token=claim_token,

@@ -113,6 +113,38 @@ def _format_row_with_headers(
         return " | ".join(values)
 
 
+def _is_legacy_xls(content_bytes: bytes) -> bool:
+    """Detect legacy .xls (BIFF/Compound Document) format by magic bytes.
+
+    Legacy .xls files start with the OLE2 compound document magic bytes,
+    while .xlsx files start with the ZIP magic (PK\x03\x04). openpyxl
+    only handles .xlsx — legacy .xls requires xlrd.
+    """
+    # OLE2 Compound Document magic bytes
+    return content_bytes[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def _extract_xlrd_sheets(content_bytes: bytes) -> list[tuple[str, list[tuple]]]:
+    """Extract sheet names and row tuples from a legacy .xls file using xlrd.
+
+    Returns:
+        List of (sheet_name, rows) where rows is a list of tuples.
+    """
+    import xlrd
+
+    wb = xlrd.open_workbook(file_contents=content_bytes)
+    sheets = []
+    for sheet in wb.sheets():
+        rows = []
+        for row_idx in range(sheet.nrows):
+            row_values = tuple(
+                sheet.cell_value(row_idx, col) for col in range(sheet.ncols)
+            )
+            rows.append(row_values)
+        sheets.append((sheet.name, rows))
+    return sheets
+
+
 def extract_excel_preview(content_bytes: bytes) -> str:
     """Extract a text preview from Excel bytes for LLM scoring.
 
@@ -120,12 +152,55 @@ def extract_excel_preview(content_bytes: bytes) -> str:
     Detects headers and formats rows with column context.
     Skips purely numeric sheets.
 
+    Supports both legacy .xls (via xlrd) and modern .xlsx (via openpyxl).
+
     Args:
         content_bytes: Raw .xlsx/.xls file bytes
 
     Returns:
         Text preview string (may be empty if no textual content)
     """
+    if _is_legacy_xls(content_bytes):
+        return _extract_excel_preview_xlrd(content_bytes)
+    return _extract_excel_preview_openpyxl(content_bytes)
+
+
+def _extract_excel_preview_xlrd(content_bytes: bytes) -> str:
+    """Extract preview from legacy .xls using xlrd."""
+    sheets = _extract_xlrd_sheets(content_bytes)
+    text_parts: list[str] = []
+    sheets_processed = 0
+
+    for sheet_name, all_rows in sheets:
+        if sheets_processed >= PREVIEW_MAX_SHEETS:
+            break
+        if not all_rows:
+            continue
+
+        text_fraction = _compute_text_fraction(all_rows)
+        if text_fraction < MIN_TEXT_CELL_FRACTION:
+            continue
+
+        sheets_processed += 1
+        headers, data_start = _detect_header_row(all_rows)
+
+        sheet_lines = [f"[Sheet: {sheet_name}]"]
+        if headers:
+            sheet_lines.append("Columns: " + " | ".join(h for h in headers if h))
+
+        for row in all_rows[data_start : data_start + PREVIEW_MAX_ROWS]:
+            line = _format_row_with_headers(row, headers)
+            if line:
+                sheet_lines.append(line)
+
+        if len(sheet_lines) > 1:
+            text_parts.append("\n".join(sheet_lines))
+
+    return "\n\n".join(text_parts)
+
+
+def _extract_excel_preview_openpyxl(content_bytes: bytes) -> str:
+    """Extract preview from modern .xlsx using openpyxl."""
     from openpyxl import load_workbook
 
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
@@ -177,12 +252,63 @@ def extract_excel_full(content_bytes: bytes) -> str:
     Reads all sheets with textual content. Uses header detection to
     produce contextual "column: value" rows. Skips purely numeric sheets.
 
+    Supports both legacy .xls (via xlrd) and modern .xlsx (via openpyxl).
+
     Args:
         content_bytes: Raw .xlsx/.xls file bytes
 
     Returns:
         Full text string (may be empty if no textual content)
     """
+    if _is_legacy_xls(content_bytes):
+        return _extract_excel_full_xlrd(content_bytes)
+    return _extract_excel_full_openpyxl(content_bytes)
+
+
+def _extract_excel_full_xlrd(content_bytes: bytes) -> str:
+    """Extract full text from legacy .xls using xlrd."""
+    sheets = _extract_xlrd_sheets(content_bytes)
+    text_parts: list[str] = []
+
+    for sheet_name, all_rows in sheets:
+        if not all_rows:
+            continue
+
+        text_fraction = _compute_text_fraction(all_rows)
+        if text_fraction < MIN_TEXT_CELL_FRACTION:
+            logger.debug(
+                "Skipping sheet '%s': only %.0f%% text cells",
+                sheet_name,
+                text_fraction * 100,
+            )
+            continue
+
+        headers, data_start = _detect_header_row(all_rows)
+
+        sheet_lines = [f"[Sheet: {sheet_name}]"]
+        if headers:
+            sheet_lines.append("Columns: " + " | ".join(h for h in headers if h))
+
+        rows_emitted = 0
+        for row in all_rows[data_start:]:
+            line = _format_row_with_headers(row, headers)
+            if line:
+                sheet_lines.append(line)
+                rows_emitted += 1
+                if rows_emitted >= FULL_MAX_ROWS_PER_SHEET:
+                    remaining = len(all_rows) - data_start - rows_emitted
+                    if remaining > 0:
+                        sheet_lines.append(f"[... {remaining} more rows truncated]")
+                    break
+
+        if len(sheet_lines) > 1:
+            text_parts.append("\n".join(sheet_lines))
+
+    return "\n\n".join(text_parts)
+
+
+def _extract_excel_full_openpyxl(content_bytes: bytes) -> str:
+    """Extract full text from modern .xlsx using openpyxl."""
     from openpyxl import load_workbook
 
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:

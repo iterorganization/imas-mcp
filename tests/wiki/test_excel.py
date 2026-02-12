@@ -15,6 +15,7 @@ from imas_codex.discovery.wiki.excel import (
     _compute_text_fraction,
     _detect_header_row,
     _format_row_with_headers,
+    _is_legacy_xls,
     _is_text_value,
     extract_excel_full,
     extract_excel_preview,
@@ -291,3 +292,91 @@ class TestExtractExcelFull:
         assert "Notes" in text
         # Calibration is all-numeric, should be skipped
         assert "Calibration" not in text
+
+
+# ---------------------------------------------------------------------------
+# Legacy .xls format (xlrd)
+# ---------------------------------------------------------------------------
+
+
+def _make_xls(*sheets: tuple[str, list[list]]) -> bytes:
+    """Create an in-memory legacy .xls from (sheet_name, rows) pairs using xlrd's companion xlwt."""
+    import xlwt
+
+    wb = xlwt.Workbook()
+    for name, rows in sheets:
+        ws = wb.add_sheet(name)
+        for r_idx, row in enumerate(rows):
+            for c_idx, val in enumerate(row):
+                ws.write(r_idx, c_idx, val)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+class TestIsLegacyXls:
+    def test_xlsx_is_not_legacy(self):
+        data = _make_xlsx(("Sheet1", [["a", "b"]]))
+        assert _is_legacy_xls(data) is False
+
+    def test_xls_is_legacy(self):
+        data = _make_xls(("Sheet1", [["a", "b"]]))
+        assert _is_legacy_xls(data) is True
+
+    def test_empty_bytes(self):
+        assert _is_legacy_xls(b"") is False
+
+    def test_random_bytes(self):
+        assert _is_legacy_xls(b"PK\x03\x04random") is False
+
+
+class TestLegacyXlsPreview:
+    def test_basic_xls_table(self):
+        data = _make_xls(
+            (
+                "Params",
+                [
+                    ["Name", "Value", "Unit"],
+                    ["Te", 1.5, "keV"],
+                    ["ne", 2e19, "m^-3"],
+                ],
+            )
+        )
+        text = extract_excel_preview(data)
+        assert "[Sheet: Params]" in text
+        assert "Name: Te" in text
+
+    def test_xls_skips_numeric_sheet(self):
+        data = _make_xls(
+            ("TextSheet", [["Name", "Desc"], ["ip", "Current"]]),
+            ("NumberSheet", [[i, i * 2, i * 3] for i in range(20)]),
+        )
+        text = extract_excel_preview(data)
+        assert "TextSheet" in text
+        assert "NumberSheet" not in text
+
+
+class TestLegacyXlsFull:
+    def test_basic_xls_full(self):
+        data = _make_xls(
+            (
+                "Results",
+                [
+                    ["Parameter", "Value", "Unit"],
+                    ["Te", 1.5, "keV"],
+                    ["ne", 2e19, "m^-3"],
+                ],
+            )
+        )
+        text = extract_excel_full(data)
+        assert "[Sheet: Results]" in text
+        assert "Parameter: Te" in text
+
+    def test_xls_multiple_sheets(self):
+        data = _make_xls(
+            ("Config", [["Setting", "Value"], ["resolution", "high"]]),
+            ("Notes", [["Topic", "Comment"], ["IMAS", "v3.42"]]),
+        )
+        text = extract_excel_full(data)
+        assert "Config" in text
+        assert "Notes" in text
