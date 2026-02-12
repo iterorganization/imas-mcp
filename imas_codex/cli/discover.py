@@ -2348,9 +2348,34 @@ def wiki_run(
                 return combined
 
             # Rich mode: single unified display across all sites
+            from imas_codex.discovery.base.services import create_service_monitor
             from imas_codex.discovery.wiki.progress import WikiProgressDisplay
 
             multi_site = len(_site_configs) > 1
+
+            # Determine SSH host and access method for service monitor
+            # Use the first site's SSH config (all sites for a facility typically
+            # share the same access path)
+            _first_ssh_host = _site_configs[0].get("ssh_host")
+            _first_access = None
+            for _sc in _site_configs:
+                if _sc.get("ssh_host"):
+                    _first_ssh_host = _sc["ssh_host"]
+                    # Look up access_method from wiki_sites config
+                    for _ws in wiki_sites:
+                        if _ws.get("url") == _sc.get("base_url"):
+                            _first_access = _ws.get("access_method", "direct")
+                            break
+                    break
+
+            service_monitor = create_service_monitor(
+                facility=_facility,
+                ssh_host=_first_ssh_host,
+                access_method=_first_access,
+                check_graph=True,
+                check_embed=not (_scan_only or _score_only),
+                check_ssh=bool(_first_ssh_host),
+            )
 
             # Suppress noisy INFO logs from embedding modules during rich display
             # (source tracking, model init etc. are shown in the progress panel)
@@ -2366,6 +2391,9 @@ def wiki_run(
                 scan_only=_scan_only,
                 score_only=_score_only,
             ) as display:
+                # Wire service monitor into display state and start it
+                display.state.service_monitor = service_monitor
+                await service_monitor.__aenter__()
                 # Set multi-site info on first iteration
                 if multi_site:
                     display.set_site_info(
@@ -2559,6 +2587,7 @@ def wiki_run(
                                 on_artifact_score_progress=on_artifact_score,
                                 on_image_progress=on_image,
                                 on_worker_status=on_worker_status,
+                                service_monitor=service_monitor,
                             )
                         except Exception as e:
                             wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
@@ -2590,6 +2619,8 @@ def wiki_run(
                         await ticker_task
                     except asyncio.CancelledError:
                         pass
+                    # Stop service monitor
+                    await service_monitor.__aexit__(None, None, None)
 
             # Print summary AFTER Live display exits (outside `with` block)
             # so it appears cleanly below the frozen display

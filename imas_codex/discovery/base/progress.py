@@ -428,6 +428,53 @@ def build_worker_row(config: WorkerRowConfig, bar_width: int = 40) -> Text:
 # =============================================================================
 
 
+def build_servers_section(
+    statuses: list | None = None,
+) -> Text | None:
+    """Build the SERVERS status row for progress displays.
+
+    Shows live status of external service dependencies (graph, embed, SSH/VPN).
+    Returns None if no services are monitored.
+
+    Args:
+        statuses: List of ServiceStatus objects from ServiceMonitor.get_status()
+
+    Format:
+      SERVERS  graph:bolt://localhost:7687  embed:iter-login  ssh:vpn
+    """
+    if not statuses:
+        return None
+
+    from imas_codex.discovery.base.services import ServiceState
+
+    section = Text()
+    section.append("  SERVERS", style="bold white")
+
+    for s in statuses:
+        if s.state == ServiceState.healthy:
+            style = "green"
+            label = s.detail or "ok"
+        elif s.state == ServiceState.unknown:
+            style = "dim"
+            label = "checking"
+        elif s.state == ServiceState.recovering:
+            style = "yellow"
+            label = f"recovering ({int(s.downtime_seconds)}s)"
+        else:
+            style = "red"
+            if s.auth_label:
+                label = f"{s.auth_label} down"
+            else:
+                label = s.detail[:30] if s.detail else "down"
+            if s.downtime_seconds > 0:
+                label += f" ({int(s.downtime_seconds)}s)"
+
+        section.append(f"  {s.name}:", style="dim")
+        section.append(label, style=style)
+
+    return section
+
+
 def build_header(
     config: ProgressConfig,
     title_suffix: str = "Discovery",

@@ -35,6 +35,9 @@ class WikiDiscoveryState:
     portal_page: str
     ssh_host: str | None = None
 
+    # Service monitor for worker gating (set by parallel.py)
+    service_monitor: Any = field(default=None, repr=False)
+
     # Authentication for HTTP-based access
     auth_type: str | None = None  # tequila, session, keycloak, basic, or None
     credential_service: str | None = None  # Keyring service for credentials
@@ -130,6 +133,16 @@ class WikiDiscoveryState:
             + self.image_stats.cost
             + self.artifact_score_stats.cost
         )
+
+    async def await_services(self) -> bool:
+        """Block until all critical services are healthy.
+
+        Returns True when services are ready, False if monitor was stopped.
+        No-op (returns True immediately) when no service_monitor is set.
+        """
+        if self.service_monitor is None:
+            return True
+        return await self.service_monitor.await_services_ready()
 
     @property
     def budget_exhausted(self) -> bool:

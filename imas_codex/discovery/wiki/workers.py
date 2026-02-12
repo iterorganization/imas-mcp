@@ -127,6 +127,12 @@ async def score_worker(
                 }
 
     while not state.should_stop_scoring():
+        # Gate on service health (SSH/VPN) before claiming work
+        if state.service_monitor and not state.service_monitor.all_healthy:
+            await state.service_monitor.await_services_ready()
+            if state.should_stop_scoring():
+                break
+
         # Increased batch size from 25 to 50 for better LLM throughput
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         logger.debug(f"score_worker {worker_id}: claiming pages...")
@@ -321,6 +327,12 @@ async def ingest_worker(
                 return None
 
     while not state.should_stop_ingesting():
+        # Gate on service health (SSH/VPN) before claiming work
+        if state.service_monitor and not state.service_monitor.all_healthy:
+            await state.service_monitor.await_services_ready()
+            if state.should_stop_ingesting():
+                break
+
         # Increased batch size from 10 to 20 for better embedding throughput
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         try:
@@ -402,6 +414,12 @@ async def artifact_worker(
     )
 
     while not state.should_stop_artifact_worker():
+        # Gate on service health (SSH/VPN) before claiming work
+        if state.service_monitor and not state.service_monitor.all_healthy:
+            await state.service_monitor.await_services_ready()
+            if state.should_stop_artifact_worker():
+                break
+
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         try:
             artifacts = await asyncio.to_thread(
@@ -554,6 +572,12 @@ async def artifact_score_worker(
     logger.info(f"artifact_score_worker started (task={worker_id})")
 
     while not state.should_stop_artifact_scoring():
+        # Gate on service health (SSH/VPN) before claiming work
+        if state.service_monitor and not state.service_monitor.all_healthy:
+            await state.service_monitor.await_services_ready()
+            if state.should_stop_artifact_scoring():
+                break
+
         # Claim artifacts for scoring
         try:
             artifacts = await asyncio.to_thread(
@@ -737,6 +761,12 @@ async def image_score_worker(
                 consecutive_failures,
             )
             break
+
+        # Gate on service health (SSH/VPN) before claiming work
+        if state.service_monitor and not state.service_monitor.all_healthy:
+            await state.service_monitor.await_services_ready()
+            if state.should_stop_image_scoring():
+                break
 
         try:
             images = await asyncio.to_thread(

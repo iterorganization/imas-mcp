@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.live import Live
@@ -39,6 +39,7 @@ from imas_codex.discovery.base.progress import (
     METRICS_WIDTH,
     MIN_WIDTH,
     StreamQueue,
+    build_servers_section,
     clean_text,
     clip_text,
     compute_bar_width,
@@ -223,6 +224,9 @@ class ProgressState:
             rate=0.3, max_rate=1.0, min_display_time=0.5
         )
     )
+
+    # Service monitor reference (for SERVERS display row)
+    service_monitor: Any = None
 
     # Tracking
     start_time: float = field(default_factory=time.time)
@@ -520,6 +524,13 @@ class WikiProgressDisplay:
         section = Text()
         section.append("  WORKERS", style="bold green")
 
+        # Show paused indicator when service monitor gates workers
+        monitor = self.state.service_monitor
+        if monitor is not None and monitor.paused:
+            section.append("  PAUSED", style="bold red")
+            section.append(" (awaiting services)", style="red dim")
+            return section
+
         wg = self.state.worker_group
         if not wg:
             section.append("  no status available", style="dim italic")
@@ -599,23 +610,24 @@ class WikiProgressDisplay:
                     parts.append(f"{failed} failed")
                 section.append(f" ({', '.join(parts)})", style="dim")
 
-        # Embedding source indicator (live - changes if fallback triggered)
-        embed_health = get_embed_status()
-        if embed_health != "ready":
-            # Server is down — show resilience status instead of source
-            section.append(f"  embed:{embed_health}", style="red")
-        else:
-            embed_source = get_embedding_source()
-            if embed_source.startswith("iter-"):
-                section.append(f"  embed:{embed_source}", style="green")
-            elif embed_source == "remote":
-                section.append("  embed:remote", style="green")
-            elif embed_source == "openrouter":
-                section.append("  embed:openrouter", style="yellow")
-            elif embed_source == "local":
-                section.append("  embed:local", style="cyan")
+        # Embedding source indicator (only when no service monitor provides it)
+        if self.state.service_monitor is None:
+            embed_health = get_embed_status()
+            if embed_health != "ready":
+                # Server is down — show resilience status instead of source
+                section.append(f"  embed:{embed_health}", style="red")
             else:
-                section.append(f"  embed:{embed_source}", style="dim")
+                embed_source = get_embedding_source()
+                if embed_source.startswith("iter-"):
+                    section.append(f"  embed:{embed_source}", style="green")
+                elif embed_source == "remote":
+                    section.append("  embed:remote", style="green")
+                elif embed_source == "openrouter":
+                    section.append("  embed:openrouter", style="yellow")
+                elif embed_source == "local":
+                    section.append("  embed:local", style="cyan")
+                else:
+                    section.append(f"  embed:{embed_source}", style="dim")
 
         return section
 
@@ -1142,19 +1154,38 @@ class WikiProgressDisplay:
 
         return section
 
+    def _build_servers_section(self) -> Text | None:
+        """Build SERVERS status row from service monitor."""
+        monitor = self.state.service_monitor
+        if monitor is None:
+            return None
+        statuses = monitor.get_status()
+        return build_servers_section(statuses)
+
     def _build_display(self) -> Panel:
         """Build the complete display."""
         sections = [
             self._build_header(),
-            Text("─" * (self.width - 4), style="dim"),
-            self._build_worker_section(),
-            Text("─" * (self.width - 4), style="dim"),
-            self._build_progress_section(),
-            Text("─" * (self.width - 4), style="dim"),
-            self._build_activity_section(),
-            Text("─" * (self.width - 4), style="dim"),
-            self._build_resources_section(),
         ]
+
+        # SERVERS row (above workers, only when service monitor is active)
+        servers = self._build_servers_section()
+        if servers is not None:
+            sections.append(Text("─" * (self.width - 4), style="dim"))
+            sections.append(servers)
+
+        sections.extend(
+            [
+                Text("─" * (self.width - 4), style="dim"),
+                self._build_worker_section(),
+                Text("─" * (self.width - 4), style="dim"),
+                self._build_progress_section(),
+                Text("─" * (self.width - 4), style="dim"),
+                self._build_activity_section(),
+                Text("─" * (self.width - 4), style="dim"),
+                self._build_resources_section(),
+            ]
+        )
 
         content = Text()
         for i, section in enumerate(sections):

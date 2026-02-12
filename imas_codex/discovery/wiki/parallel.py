@@ -361,6 +361,7 @@ async def run_parallel_wiki_discovery(
     on_artifact_score_progress: Callable | None = None,
     on_image_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
+    service_monitor: Any = None,
 ) -> dict[str, Any]:
     """Run parallel wiki discovery with async workers.
 
@@ -382,6 +383,9 @@ async def run_parallel_wiki_discovery(
         on_artifact_score_progress: Progress callback for artifact score worker.
         on_worker_status: Callback for worker status changes. Called with
             SupervisedWorkerGroup for live status display.
+        service_monitor: ServiceMonitor instance for health monitoring.
+            When provided, workers gate on service health (pause when
+            SSH/VPN is down). Passed through to WikiDiscoveryState.
 
     Returns:
         Dict with discovery statistics
@@ -406,6 +410,7 @@ async def run_parallel_wiki_discovery(
         page_limit=page_limit,
         max_depth=max_depth,
         focus=focus,
+        service_monitor=service_monitor,
     )
 
     # Pre-warm SSH ControlMaster if using SSH transport.
