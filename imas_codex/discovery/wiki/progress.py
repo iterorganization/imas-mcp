@@ -520,16 +520,16 @@ class WikiProgressDisplay:
 
         Format:
           WORKERS  scan:0  score:2 (1 active, 1 backing off)  ingest:1  artifact:1
+
+        When paused, workers are shown grayed out but still visible.
         """
         section = Text()
-        section.append("  WORKERS", style="bold green")
 
-        # Show paused indicator when service monitor gates workers
+        # Check if workers are paused due to service issues
         monitor = self.state.service_monitor
-        if monitor is not None and monitor.paused:
-            section.append("  PAUSED", style="bold red")
-            section.append(" (awaiting services)", style="red dim")
-            return section
+        is_paused = monitor is not None and monitor.paused
+
+        section.append("  WORKERS", style="dim" if is_paused else "bold green")
 
         wg = self.state.worker_group
         if not wg:
@@ -581,8 +581,10 @@ class WikiProgressDisplay:
             for _, state in workers:
                 state_counts[state] = state_counts.get(state, 0) + 1
 
-            # Determine overall style based on states
-            if state_counts.get(WorkerState.crashed, 0) > 0:
+            # Determine overall style based on states (grayed out when paused)
+            if is_paused:
+                style = "dim"
+            elif state_counts.get(WorkerState.crashed, 0) > 0:
                 style = "red"
             elif state_counts.get(WorkerState.backoff, 0) > 0:
                 style = "yellow"
@@ -759,7 +761,11 @@ class WikiProgressDisplay:
         # Maximum content width for the panel (account for padding and border)
         content_width = self.width - 6  # Panel padding + border
 
-        # Helper to determine if worker should show "idle"
+        # Check if workers are paused (for showing "paused" instead of "idle")
+        monitor = self.state.service_monitor
+        is_paused = monitor is not None and monitor.paused
+
+        # Helper to determine if worker should show "idle" or "paused"
         def should_show_idle(processing: bool, queue: StreamQueue) -> bool:
             return not processing and queue.is_empty()
 
@@ -838,7 +844,10 @@ class WikiProgressDisplay:
                 section.append("complete", style="green")
                 section.append("\n    ", style="dim")
             elif should_show_idle(self.state.score_processing, self.state.score_queue):
-                section.append("idle", style="dim italic")
+                if is_paused:
+                    section.append("paused", style="yellow italic")
+                else:
+                    section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
             else:
                 section.append("...", style="dim italic")
@@ -902,7 +911,10 @@ class WikiProgressDisplay:
             elif should_show_idle(
                 self.state.ingest_processing, self.state.ingest_queue
             ):
-                section.append("idle", style="dim italic")
+                if is_paused:
+                    section.append("paused", style="yellow italic")
+                else:
+                    section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
             else:
                 section.append("...", style="dim italic")
@@ -984,7 +996,10 @@ class WikiProgressDisplay:
                 self.state.artifact_processing,
                 self.state.artifact_queue,
             ):
-                section.append("idle", style="dim italic")
+                if is_paused:
+                    section.append("paused", style="yellow italic")
+                else:
+                    section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
             else:
                 section.append("...", style="dim italic")
@@ -1047,7 +1062,10 @@ class WikiProgressDisplay:
                 self.state.image_processing,
                 self.state.image_queue,
             ):
-                section.append("idle", style="dim italic")
+                if is_paused:
+                    section.append("paused", style="yellow italic")
+                else:
+                    section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
             else:
                 section.append("...", style="dim italic")
@@ -1168,16 +1186,18 @@ class WikiProgressDisplay:
             self._build_header(),
         ]
 
-        # SERVERS row (above workers, only when service monitor is active)
+        # SERVERS and WORKERS are grouped together (no separator between)
         servers = self._build_servers_section()
         if servers is not None:
             sections.append(Text("─" * (self.width - 4), style="dim"))
             sections.append(servers)
+            sections.append(self._build_worker_section())  # No separator before workers
+        else:
+            sections.append(Text("─" * (self.width - 4), style="dim"))
+            sections.append(self._build_worker_section())
 
         sections.extend(
             [
-                Text("─" * (self.width - 4), style="dim"),
-                self._build_worker_section(),
                 Text("─" * (self.width - 4), style="dim"),
                 self._build_progress_section(),
                 Text("─" * (self.width - 4), style="dim"),
