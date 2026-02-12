@@ -2,6 +2,7 @@
 
 Configuration is organized into subsections:
   [tool.imas-codex]                — general settings
+  [tool.imas-codex.graph]          — Neo4j graph URI, username, password
   [tool.imas-codex.data-dictionary] — DD version, include-ggd, include-error-fields
   [tool.imas-codex.embedding]      — embedding model, dimension, backend
   [tool.imas-codex.language]       — language models, batch-size for structured output
@@ -9,7 +10,7 @@ Configuration is organized into subsections:
   [tool.imas-codex.agent]          — agent models for planning/exploration tasks
   [tool.imas-codex.compaction]     — compaction models for summarization tasks
 
-All settings support environment variable overrides (IMAS_CODEX_* prefix).
+All settings support environment variable overrides (IMAS_CODEX_* prefix / NEO4J_*).
 """
 
 import importlib.resources
@@ -182,6 +183,39 @@ def get_embed_server_port() -> int:
 # with the other embedding accessors (dimension, backend, etc.).
 
 
+# ─── Graph settings (Neo4j) ────────────────────────────────────────────────
+
+
+def get_graph_uri() -> str:
+    """Get the Neo4j connection URI.
+
+    Priority: NEO4J_URI env → [graph].uri → 'bolt://localhost:7687'.
+    """
+    if env := os.getenv("NEO4J_URI"):
+        return env
+    return _get_section("graph").get("uri", "bolt://localhost:7687")
+
+
+def get_graph_username() -> str:
+    """Get the Neo4j username.
+
+    Priority: NEO4J_USERNAME env → [graph].username → 'neo4j'.
+    """
+    if env := os.getenv("NEO4J_USERNAME"):
+        return env
+    return _get_section("graph").get("username", "neo4j")
+
+
+def get_graph_password() -> str:
+    """Get the Neo4j password.
+
+    Priority: NEO4J_PASSWORD env → [graph].password → 'imas-codex'.
+    """
+    if env := os.getenv("NEO4J_PASSWORD"):
+        return env
+    return _get_section("graph").get("password", "imas-codex")
+
+
 # ─── Data dictionary settings ──────────────────────────────────────────────
 
 
@@ -266,3 +300,6 @@ EMBEDDING_BACKEND = get_embedding_backend()
 EMBED_REMOTE_URL = get_embed_remote_url()
 EMBED_SERVER_PORT = get_embed_server_port()
 EMBEDDING_DIMENSION = get_embedding_dimension()
+GRAPH_URI = get_graph_uri()
+GRAPH_USERNAME = get_graph_username()
+GRAPH_PASSWORD = get_graph_password()

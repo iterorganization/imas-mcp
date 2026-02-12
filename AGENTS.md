@@ -21,6 +21,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 | Section | Purpose | Accessor |
 |---------|---------|----------|
+| `[graph]` | Neo4j URI, username, password | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()` |
 | `[embedding]` | Embedding model, dimension, backend | `get_model("embedding")` |
 | `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
 | `[vision]` | Image/document tasks | `get_model("vision")` |
@@ -29,6 +30,8 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | `[data-dictionary]` | DD version, include-ggd, include-error-fields | `get_dd_version()` |
 
 **Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"agent"`, `"compaction"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
+
+**Graph access:** `get_graph_uri()`, `get_graph_username()`, `get_graph_password()` resolve Neo4j connection settings. Priority: env var (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) → `[tool.imas-codex.graph]` in pyproject.toml → built-in defaults. When running on ITER cluster, set the URI in pyproject.toml to `bolt://localhost:7687` (local Neo4j). When running from WSL with an SSH tunnel, it resolves the same way. For remote sessions (e.g., zj on ITER), the pyproject.toml config travels with the repo.
 
 ## Schema System
 

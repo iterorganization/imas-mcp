@@ -25,7 +25,12 @@ from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
 
 from imas_codex.embeddings import get_embed_model
 from imas_codex.graph import GraphClient
-from imas_codex.settings import get_embedding_dimension
+from imas_codex.settings import (
+    get_embedding_dimension,
+    get_graph_password,
+    get_graph_uri,
+    get_graph_username,
+)
 
 from .extractors.ids import IDSExtractor
 from .extractors.mdsplus import MDSplusExtractor
@@ -45,24 +50,27 @@ ProgressCallback = Callable[[int, int, str], None]
 
 
 def create_vector_store(
-    neo4j_uri: str = "bolt://localhost:7687",
-    neo4j_user: str = "neo4j",
-    neo4j_password: str = "imas-codex",
+    neo4j_uri: str | None = None,
+    neo4j_user: str | None = None,
+    neo4j_password: str | None = None,
 ) -> Neo4jVectorStore:
     """Create Neo4jVectorStore for code chunks.
 
+    Connection settings are resolved from centralized settings when not
+    explicitly provided (env var → pyproject.toml → default).
+
     Args:
-        neo4j_uri: Neo4j connection URI
-        neo4j_user: Neo4j username
-        neo4j_password: Neo4j password
+        neo4j_uri: Neo4j connection URI (default: from settings)
+        neo4j_user: Neo4j username (default: from settings)
+        neo4j_password: Neo4j password (default: from settings)
 
     Returns:
         Configured Neo4jVectorStore
     """
     return Neo4jVectorStore(
-        username=neo4j_user,
-        password=neo4j_password,
-        url=neo4j_uri,
+        username=neo4j_user or get_graph_username(),
+        password=neo4j_password or get_graph_password(),
+        url=neo4j_uri or get_graph_uri(),
         embedding_dimension=get_embedding_dimension(),
         index_name="code_chunk_embedding",
         node_label="CodeChunk",

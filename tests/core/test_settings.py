@@ -202,6 +202,9 @@ class TestModuleLevelConstants:
         assert hasattr(settings, "INCLUDE_ERROR_FIELDS")
         assert hasattr(settings, "EMBEDDING_BACKEND")
         assert hasattr(settings, "EMBEDDING_DIMENSION")
+        assert hasattr(settings, "GRAPH_URI")
+        assert hasattr(settings, "GRAPH_USERNAME")
+        assert hasattr(settings, "GRAPH_PASSWORD")
 
     def test_module_constants_have_correct_types(self):
         """Module-level constants have correct types."""
@@ -210,3 +213,71 @@ class TestModuleLevelConstants:
         assert isinstance(settings.INCLUDE_ERROR_FIELDS, bool)
         assert isinstance(settings.EMBEDDING_BACKEND, str)
         assert isinstance(settings.EMBEDDING_DIMENSION, int)
+        assert isinstance(settings.GRAPH_URI, str)
+        assert isinstance(settings.GRAPH_USERNAME, str)
+        assert isinstance(settings.GRAPH_PASSWORD, str)
+
+
+class TestGraphSettings:
+    """Tests for graph (Neo4j) settings accessors."""
+
+    def test_get_graph_uri_default(self, monkeypatch):
+        """get_graph_uri returns pyproject value or default."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.delenv("NEO4J_URI", raising=False)
+        result = settings.get_graph_uri()
+        assert isinstance(result, str)
+        assert result.startswith("bolt://")
+
+    def test_get_graph_uri_env_override(self, monkeypatch):
+        """NEO4J_URI env var overrides pyproject.toml."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.setenv("NEO4J_URI", "bolt://remote-host:7687")
+        result = settings.get_graph_uri()
+        assert result == "bolt://remote-host:7687"
+
+    def test_get_graph_username_default(self, monkeypatch):
+        """get_graph_username returns pyproject value or default."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
+        result = settings.get_graph_username()
+        assert isinstance(result, str)
+        assert result == "neo4j"
+
+    def test_get_graph_username_env_override(self, monkeypatch):
+        """NEO4J_USERNAME env var overrides pyproject.toml."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.setenv("NEO4J_USERNAME", "custom-user")
+        result = settings.get_graph_username()
+        assert result == "custom-user"
+
+    def test_get_graph_password_default(self, monkeypatch):
+        """get_graph_password returns pyproject value or default."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+        result = settings.get_graph_password()
+        assert isinstance(result, str)
+        assert result == "imas-codex"
+
+    def test_get_graph_password_env_override(self, monkeypatch):
+        """NEO4J_PASSWORD env var overrides pyproject.toml."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.setenv("NEO4J_PASSWORD", "secret-pw")
+        result = settings.get_graph_password()
+        assert result == "secret-pw"
+
+    def test_graph_settings_from_pyproject(self, monkeypatch):
+        """Graph settings are read from pyproject.toml [tool.imas-codex.graph]."""
+        settings._load_pyproject_settings.cache_clear()
+        monkeypatch.delenv("NEO4J_URI", raising=False)
+        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
+        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+
+        # These should resolve from pyproject.toml which has the graph section
+        uri = settings.get_graph_uri()
+        username = settings.get_graph_username()
+        password = settings.get_graph_password()
+
+        assert "bolt://" in uri
+        assert username == "neo4j"
+        assert password == "imas-codex"

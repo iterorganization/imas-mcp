@@ -552,13 +552,17 @@ def data_db() -> None:
 @data_db.command("start")
 @click.option("--image", envvar="NEO4J_IMAGE", default=None)
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
-@click.option("--password", envvar="NEO4J_PASSWORD", default="imas-codex")
+@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
 def db_start(
-    image: str | None, data_dir: str | None, password: str, foreground: bool
+    image: str | None, data_dir: str | None, password: str | None, foreground: bool
 ) -> None:
     """Start Neo4j server via Apptainer."""
     import platform
+
+    from imas_codex.settings import get_graph_password
+
+    password = password or get_graph_password()
 
     if platform.system() in ("Windows", "Darwin"):
         click.echo("On Windows/Mac, use Docker: docker compose up -d neo4j", err=True)
@@ -671,9 +675,12 @@ def db_status() -> None:
 
 @data_db.command("shell")
 @click.option("--image", envvar="NEO4J_IMAGE", default=None)
-@click.option("--password", envvar="NEO4J_PASSWORD", default="imas-codex")
-def db_shell(image: str | None, password: str) -> None:
+@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
+def db_shell(image: str | None, password: str | None) -> None:
     """Open Cypher shell to Neo4j."""
+    from imas_codex.settings import get_graph_password
+
+    password = password or get_graph_password()
     image_path = Path(image) if image else NEO4J_IMAGE
 
     if not image_path.exists():
@@ -698,7 +705,7 @@ def db_shell(image: str | None, password: str) -> None:
 @click.argument("action", type=click.Choice(["install", "uninstall", "status"]))
 @click.option("--image", envvar="NEO4J_IMAGE", default=None, help="Custom image path")
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None, help="Custom data dir")
-@click.option("--password", envvar="NEO4J_PASSWORD", default="imas-codex")
+@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option(
     "--minimal", is_flag=True, help="Use minimal service (no resource limits)"
 )
@@ -706,11 +713,15 @@ def db_service(
     action: str,
     image: str | None,
     data_dir: str | None,
-    password: str,
+    password: str | None,
     minimal: bool,
 ) -> None:
     """Manage Neo4j as a systemd user service."""
     import platform
+
+    from imas_codex.settings import get_graph_password
+
+    password = password or get_graph_password()
 
     if platform.system() != "Linux":
         raise click.ClickException("systemd services only supported on Linux")
@@ -1302,9 +1313,14 @@ def data_dump(output: str | None, no_restart: bool) -> None:
 @click.argument("archive", type=click.Path(exists=True))
 @click.option("--force", is_flag=True, help="Overwrite existing data")
 @click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after load")
-@click.option("--password", envvar="NEO4J_PASSWORD", default="imas-codex")
-def data_load(archive: str, force: bool, no_restart: bool, password: str) -> None:
+@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
+def data_load(
+    archive: str, force: bool, no_restart: bool, password: str | None
+) -> None:
     """Load graph database from archive."""
+    from imas_codex.settings import get_graph_password
+
+    password = password or get_graph_password()
     require_apptainer()
 
     archive_path = Path(archive)
