@@ -1180,13 +1180,13 @@ async def enrich_worker(
     """
     from collections import defaultdict
 
-    from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.agentic.prompt_loader import render_prompt
     from imas_codex.discovery.base.llm import acall_llm_structured
     from imas_codex.discovery.data.models import SignalEnrichmentBatch
+    from imas_codex.settings import get_model
 
     # Get model configured for enrichment task
-    model = get_model_for_task("enrichment")
+    model = get_model("language")
 
     # Render system prompt once (contains physics domains from schema)
     system_prompt = render_prompt("discovery/signal-enrichment")

@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from imas_codex.agentic.agents import (
     AgentConfig,
     create_agent,
-    get_model_for_task,
 )
 from imas_codex.agentic.monitor import AgentMonitor, create_step_callback
 from imas_codex.agentic.prompt_loader import load_prompts
@@ -27,6 +26,7 @@ from imas_codex.agentic.tools import (
 )
 from imas_codex.core.physics_domain import PhysicsDomain
 from imas_codex.graph import GraphClient
+from imas_codex.settings import get_model
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +343,7 @@ async def quick_task(
         tools = get_enrichment_tools()
         system_prompt = _get_prompt("discovery/enricher")
 
-    model = get_model_for_task(agent_type)
+    model = get_model("agent" if agent_type == "exploration" else "language")
 
     config = AgentConfig(
         model=model,
@@ -507,7 +507,7 @@ async def batch_enrich_paths(
     Returns:
         List of EnrichmentResult for all paths
     """
-    effective_model = model or get_model_for_task("enrichment")
+    effective_model = model or get_model("language")
 
     # Auto-select batch size based on model
     if batch_size is None:

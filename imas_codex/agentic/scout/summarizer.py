@@ -8,7 +8,7 @@ This keeps context manageable across long exploration sessions.
 import logging
 from typing import Any
 
-from imas_codex.settings import get_model_for_task
+from imas_codex.settings import get_model
 
 from ..llm import get_llm
 
@@ -63,7 +63,7 @@ class WindowSummarizer:
         Args:
             model: Override model name. If None, uses summarization preset.
         """
-        self.model = model or get_model_for_task("compaction")
+        self.model = model or get_model("compaction")
         self._llm = None
 
     def _get_llm(self) -> Any:

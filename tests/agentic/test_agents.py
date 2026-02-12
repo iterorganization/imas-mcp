@@ -16,7 +16,6 @@ from imas_codex.agentic.agents import (
     AgentConfig,
     create_agent,
     create_litellm_model,
-    get_model_for_task,
 )
 from imas_codex.agentic.monitor import (
     AgentMonitor,
@@ -32,31 +31,29 @@ from imas_codex.agentic.tools import (
     get_enrichment_tools,
     get_exploration_tools,
 )
+from imas_codex.settings import get_model
 
 
 class TestModelConfiguration:
     """Test model selection and configuration."""
 
-    def test_task_models_defined(self):
-        """Verify task models are defined via get_model_for_task."""
-        assert get_model_for_task("enrichment") is not None
-        assert get_model_for_task("exploration") is not None
-        assert get_model_for_task("vision") is not None
-        assert get_model_for_task("compaction") is not None
+    def test_section_models_defined(self):
+        """Verify section models are defined via get_model."""
+        assert get_model("language") is not None
+        assert get_model("agent") is not None
+        assert get_model("vision") is not None
+        assert get_model("compaction") is not None
 
-    def test_get_model_for_task_known(self):
-        """Get model for known task."""
-        model = get_model_for_task("enrichment")
+    def test_get_model_known_section(self):
+        """Get model for known section."""
+        model = get_model("language")
         assert isinstance(model, str)
         assert "/" in model  # Model should have provider/name format
 
-    def test_get_model_for_task_unknown(self):
-        """Unknown task falls back to agent default."""
-        from imas_codex.settings import get_agent_model
-
-        model = get_model_for_task("unknown_task")
-        agent_default = get_agent_model()
-        assert model == agent_default
+    def test_get_model_unknown_section(self):
+        """Unknown section raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown model section"):
+            get_model("unknown_section")
 
     @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
     def test_create_litellm_model_adds_prefix(self):
@@ -249,14 +246,14 @@ class TestAgentConfig:
         """Config accepts custom values."""
         config = AgentConfig(
             name="enrichment",
-            task="enrichment",
+            task="language",
             max_steps=10,
             cost_limit_usd=5.0,
             planning_interval=3,
         )
 
         assert config.name == "enrichment"
-        assert config.task == "enrichment"
+        assert config.task == "language"
         assert config.max_steps == 10
         assert config.cost_limit_usd == 5.0
         assert config.planning_interval == 3

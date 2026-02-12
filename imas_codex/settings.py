@@ -68,40 +68,55 @@ def _get_section(section: str) -> dict:
     return _load_pyproject_settings().get(section, {})
 
 
-# ─── Task routing ───────────────────────────────────────────────────────────
+# ─── Valid model sections ───────────────────────────────────────────────────
 
-# Tasks routed to [tool.imas-codex.language]
-LANGUAGE_TASKS = frozenset(
-    {
-        "discovery",
-        "score",
-        "enrichment",
-        "captioning",
-        "labeling",
-    }
-)
+MODEL_SECTIONS = frozenset({"embedding", "language", "vision", "agent", "compaction"})
 
-# Tasks routed to [tool.imas-codex.vision]
-VISION_TASKS = frozenset(
-    {
-        "vision",
-    }
-)
+# Default model per section (fallback when not configured)
+_MODEL_DEFAULTS: dict[str, str] = {
+    "embedding": "Qwen/Qwen3-Embedding-0.6B",
+    "language": "google/gemini-3-flash-preview",
+    "vision": "google/gemini-3-flash-preview",
+    "agent": "anthropic/claude-sonnet-4.5",
+    "compaction": "anthropic/claude-haiku-4.5",
+}
 
-# Tasks routed to [tool.imas-codex.agent]
-AGENT_TASKS = frozenset(
-    {
-        "exploration",
-        "scout",
-    }
-)
+# Environment variable names per section
+_MODEL_ENV_VARS: dict[str, str] = {
+    "embedding": "IMAS_CODEX_EMBEDDING_MODEL",
+    "language": "IMAS_CODEX_LANGUAGE_MODEL",
+    "vision": "IMAS_CODEX_VISION_MODEL",
+    "agent": "IMAS_CODEX_AGENT_MODEL",
+    "compaction": "IMAS_CODEX_COMPACTION_MODEL",
+}
 
-# Tasks routed to [tool.imas-codex.compaction]
-COMPACTION_TASKS = frozenset(
-    {
-        "compaction",
-    }
-)
+
+def get_model(section: str) -> str:
+    """Get the configured model for a pyproject.toml section.
+
+    Accepted sections match [tool.imas-codex.*]:
+        language, vision, agent, compaction, embedding
+
+    Priority: env var → [tool.imas-codex.{section}].model → default.
+
+    Args:
+        section: One of the MODEL_SECTIONS keys.
+
+    Returns:
+        Model identifier string (e.g. 'google/gemini-3-flash-preview').
+
+    Raises:
+        ValueError: If section is not a valid model section.
+    """
+    if section not in MODEL_SECTIONS:
+        raise ValueError(
+            f"Unknown model section '{section}'. "
+            f"Valid sections: {', '.join(sorted(MODEL_SECTIONS))}"
+        )
+    if env_var := _MODEL_ENV_VARS.get(section):
+        if env := os.getenv(env_var):
+            return env
+    return _get_section(section).get("model", _MODEL_DEFAULTS[section])
 
 
 # ─── Embedding settings ────────────────────────────────────────────────────
@@ -110,11 +125,9 @@ COMPACTION_TASKS = frozenset(
 def get_embedding_model() -> str:
     """Get the embedding model name.
 
-    Priority: IMAS_CODEX_EMBEDDING_MODEL env → [embedding].model → fallback.
+    Convenience wrapper around get_model("embedding").
     """
-    if env := os.getenv("IMAS_CODEX_EMBEDDING_MODEL"):
-        return env
-    return _get_section("embedding").get("model", "Qwen/Qwen3-Embedding-0.6B")
+    return get_model("embedding")
 
 
 def get_embedding_dimension() -> int:
@@ -163,101 +176,10 @@ def get_embed_server_port() -> int:
     return int(port) if port is not None else 18765
 
 
-# ─── Language model settings ───────────────────────────────────────────────
-
-
-def get_language_model(task: str | None = None) -> str:
-    """Get the language model for structured output tasks.
-
-    Used for high-volume tasks: scoring, discovery, enrichment, labeling.
-
-    Args:
-        task: Optional task override. Falls back to section default.
-
-    Priority: IMAS_CODEX_LANGUAGE_MODEL env → [language].{task} → [language].model.
-    """
-    if env := os.getenv("IMAS_CODEX_LANGUAGE_MODEL"):
-        return env
-    section = _get_section("language")
-    if task and (model := section.get(task)):
-        return model
-    return section.get("model", "google/gemini-3-flash-preview")
-
-
-# ─── Vision model settings ─────────────────────────────────────────────────
-
-
-def get_vision_model(task: str | None = None) -> str:
-    """Get the vision model for image/document tasks.
-
-    Args:
-        task: Optional task override. Falls back to section default.
-
-    Priority: IMAS_CODEX_VISION_MODEL env → [vision].{task} → [vision].model.
-    """
-    if env := os.getenv("IMAS_CODEX_VISION_MODEL"):
-        return env
-    section = _get_section("vision")
-    if task and (model := section.get(task)):
-        return model
-    return section.get("model", "google/gemini-3-flash-preview")
-
-
-# ─── Agent model settings ─────────────────────────────────────────────────
-
-
-def get_agent_model(task: str | None = None) -> str:
-    """Get the agent model for planning and exploration tasks.
-
-    Args:
-        task: Optional task key (e.g. 'scout').
-              Falls back to section default (capable model).
-    """
-    section = _get_section("agent")
-    if task and (model := section.get(task)):
-        return model
-    return section.get("model", "anthropic/claude-sonnet-4.5")
-
-
-# ─── Compaction model settings ─────────────────────────────────────────────
-
-
-def get_compaction_model(task: str | None = None) -> str:
-    """Get the compaction model for summarization tasks.
-
-    Args:
-        task: Optional task key. Falls back to section default.
-    """
-    if env := os.getenv("IMAS_CODEX_COMPACTION_MODEL"):
-        return env
-    section = _get_section("compaction")
-    if task and (model := section.get(task)):
-        return model
-    return section.get("model", "anthropic/claude-haiku-4.5")
-
-
-# ─── Unified task routing ──────────────────────────────────────────────────
-
-
-def get_model_for_task(task: str) -> str:
-    """Get the configured model for a task type.
-
-    Routes to the appropriate config section:
-      Language tasks (discovery, score, enrichment) → [language]
-      Vision tasks (vision) → [vision]
-      Agent tasks (exploration, scout) → [agent]
-      Compaction tasks (compaction) → [compaction]
-    """
-    if task in LANGUAGE_TASKS:
-        return get_language_model(task)
-    if task in VISION_TASKS:
-        return get_vision_model(task)
-    if task in AGENT_TASKS:
-        return get_agent_model(task)
-    if task in COMPACTION_TASKS:
-        return get_compaction_model(task)
-    # Unknown task → agent default
-    return get_agent_model()
+# ─── Model accessors ───────────────────────────────────────────────────────
+# All callers should use get_model("language"), get_model("vision"), etc.
+# The embedding model is accessed via get_embedding_model() for consistency
+# with the other embedding accessors (dimension, backend, etc.).
 
 
 # ─── Data dictionary settings ──────────────────────────────────────────────

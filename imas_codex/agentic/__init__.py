@@ -23,7 +23,6 @@ from imas_codex.agentic.agents import (
     create_orchestrator,
     get_agent_monitor,
     get_enrichment_agent,
-    get_model_for_task,
     get_model_id,
     get_scout_agent,
 )
@@ -87,7 +86,6 @@ __all__ = [
     "get_agent_monitor",
     "get_enrichment_agent",
     "get_scout_agent",
-    "get_model_for_task",
     "get_model_id",
     "PRESETS",
     # Enrichment

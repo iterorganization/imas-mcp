@@ -8,7 +8,7 @@ import os
 from functools import lru_cache
 
 from imas_codex.agentic.agents import PRESETS, get_model_id
-from imas_codex.settings import get_agent_model
+from imas_codex.settings import get_model
 
 __all__ = [
     "PRESETS",
@@ -45,7 +45,7 @@ def get_llm(
     from llama_index.llms.openrouter import OpenRouter
 
     # Resolve preset names
-    resolved_model = get_model_id(model or get_agent_model())
+    resolved_model = get_model_id(model or get_model("agent"))
 
     api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:

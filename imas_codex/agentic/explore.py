@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from smolagents import CodeAgent
 
-from imas_codex.agentic.agents import create_litellm_model, get_model_for_task
+from imas_codex.agentic.agents import create_litellm_model
 from imas_codex.agentic.monitor import AgentMonitor, create_step_callback
 from imas_codex.agentic.prompt_loader import load_prompts
 from imas_codex.agentic.tools import (
@@ -34,6 +34,7 @@ from imas_codex.agentic.tools import (
     query_neo4j,
 )
 from imas_codex.discovery import get_facility
+from imas_codex.settings import get_model
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -123,7 +124,7 @@ class ExplorationAgent:
             cost_limit_usd: Budget limit in USD
         """
         self.facility = facility
-        self.model = model or get_model_for_task("exploration")
+        self.model = model or get_model("agent")
         self.verbose = verbose
         self.max_steps = max_steps
         self.cost_limit_usd = cost_limit_usd
@@ -239,7 +240,7 @@ class ExplorationAgent:
         # Create LLM
         llm = create_litellm_model(
             model=self.model,
-            task="exploration",
+            task="agent",
             temperature=0.3,
             max_tokens=16384,
         )

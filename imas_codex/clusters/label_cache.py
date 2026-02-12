@@ -25,7 +25,7 @@ from pathlib import Path
 from imas_codex import dd_version
 from imas_codex.definitions.clusters import LABELS_FILE
 from imas_codex.resource_path_accessor import ResourcePathAccessor
-from imas_codex.settings import get_language_model
+from imas_codex.settings import get_model
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +218,7 @@ class LabelCache:
             The path hash used as key
         """
         path_hash = compute_cluster_hash(paths)
-        model = model or get_language_model()
+        model = model or get_model("language")
         created_at = datetime.now().isoformat()
         paths_json = json.dumps(sorted(paths))
 
@@ -285,7 +285,7 @@ class LabelCache:
         Returns:
             Number of labels stored
         """
-        model = model or get_language_model()
+        model = model or get_model("language")
         created_at = datetime.now().isoformat()
         count = 0
         new_entries: list[tuple[str, str, str]] = []

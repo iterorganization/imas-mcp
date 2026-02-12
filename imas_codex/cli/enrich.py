@@ -187,15 +187,15 @@ def enrich_nodes(
         compose_batches,
         discover_nodes_to_enrich,
         estimate_enrichment_cost,
-        get_model_for_task,
         get_parent_path,
     )
+    from imas_codex.settings import get_model
 
     if verbose:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     # Resolve model from config if not specified
-    effective_model = model or get_model_for_task("enrichment")
+    effective_model = model or get_model("language")
 
     # Determine target status
     target_status = "all" if force else status

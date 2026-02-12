@@ -341,12 +341,12 @@ def _run_iterative_discovery(
     """Run parallel scan/score discovery."""
     import time as time_module
 
-    from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.discovery import (
         get_discovery_stats,
         seed_facility_roots,
         seed_missing_roots,
     )
+    from imas_codex.settings import get_model
 
     # Compute deadline from timeout
     start_time = time_module.time()
@@ -424,7 +424,7 @@ def _run_iterative_discovery(
     effective_score_workers = 0 if scan_only else num_score_workers
 
     # Get model name for display
-    model_name = get_model_for_task("score")
+    model_name = get_model("language")
     if model_name.startswith("anthropic/"):
         model_name = model_name[len("anthropic/") :]
 
@@ -771,10 +771,10 @@ async def _async_discovery_loop(
     scored_this_run: set[str] = set()
 
     if use_rich:
-        from imas_codex.agentic.agents import get_model_for_task
         from imas_codex.discovery.paths.progress import ParallelProgressDisplay
+        from imas_codex.settings import get_model
 
-        model_name = get_model_for_task("score")
+        model_name = get_model("language")
 
         with ParallelProgressDisplay(
             facility=facility,
@@ -1921,17 +1921,14 @@ def wiki_run(
                 f=facility,
             )
             # Bucket pages into sites by matching URL prefixes
-            _site_urls = [
-                s.get("url", "").rstrip("/") for s in wiki_sites
-            ]
+            _site_urls = [s.get("url", "").rstrip("/") for s in wiki_sites]
             _site_names = []
             for s in wiki_sites:
                 from urllib.parse import urlparse as _parse_site_url
 
                 _p = _parse_site_url(s.get("url", ""))
                 _site_names.append(
-                    _p.path.rstrip("/").rsplit("/", 1)[-1]
-                    or s.get("url", "")
+                    _p.path.rstrip("/").rsplit("/", 1)[-1] or s.get("url", "")
                 )
             _spc: dict[int, int] = {}  # site_index -> page count
             for row in _page_rows:
@@ -1977,15 +1974,11 @@ def wiki_run(
         # Artifacts summary
         if existing_artifacts > 0:
             log_print("")
-            log_print(
-                f"[dim]Found {existing_artifacts:,} artifacts in graph[/dim]"
-            )
+            log_print(f"[dim]Found {existing_artifacts:,} artifacts in graph[/dim]")
             if _site_artifact_counts and len(_site_artifact_counts) > 1:
                 for sname, cnt in _site_artifact_counts:
                     log_print(f"[dim]  {sname}: {cnt:,} artifacts[/dim]")
-            log_print(
-                "[dim]Use --rescan-artifacts to re-enumerate artifacts[/dim]"
-            )
+            log_print("[dim]Use --rescan-artifacts to re-enumerate artifacts[/dim]")
     elif rescan and existing_pages > 0:
         log_print(
             f"[yellow]Rescan: adding new pages (keeping {existing_pages} existing)[/yellow]"

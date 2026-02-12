@@ -64,10 +64,10 @@ async def score_worker(
     Transitions: scanned → scored
 
     Fetches page content preview, then scores with LLM.
-    Uses centralized LLM access via get_model_for_task().
+    Uses centralized LLM access via get_model().
     Cost is tracked from actual OpenRouter response.
     """
-    from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.settings import get_model
 
     worker_id = id(asyncio.current_task())
     logger.info(f"score_worker started (task={worker_id})")
@@ -185,7 +185,7 @@ async def score_worker(
 
         try:
             # Step 2: Score batch with LLM (only pages that have content)
-            model = get_model_for_task("discovery")
+            model = get_model("language")
             logger.debug(f"score_worker {worker_id}: starting LLM scoring...")
             results, cost = await _score_pages_batch(
                 pages_with_content, model, state.focus
@@ -548,7 +548,7 @@ async def artifact_score_worker(
 
     Uses the same scoring dimensions as wiki page scoring for consistency.
     """
-    from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.settings import get_model
 
     worker_id = id(asyncio.current_task())
     logger.info(f"artifact_score_worker started (task={worker_id})")
@@ -654,7 +654,7 @@ async def artifact_score_worker(
 
         try:
             # Step 2: Score batch with LLM (only artifacts that have content)
-            model = get_model_for_task("discovery")
+            model = get_model("language")
             results, cost = await _score_artifacts_batch(
                 artifacts_to_score, model, state.focus
             )
@@ -721,7 +721,7 @@ async def image_score_worker(
     captioned/scored. Sends image bytes + context to VLM, receives
     caption + scoring in one pass.
     """
-    from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.settings import get_model
 
     worker_id = id(asyncio.current_task())
     logger.info(f"image_score_worker started (task={worker_id})")
@@ -777,7 +777,7 @@ async def image_score_worker(
             on_progress(f"scoring {len(images_with_data)} images", state.image_stats)
 
         try:
-            model = get_model_for_task("vision")
+            model = get_model("vision")
             results, cost = await _score_images_batch(
                 images_with_data, model, state.focus
             )

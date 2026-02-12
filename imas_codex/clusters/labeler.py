@@ -22,7 +22,7 @@ from imas_codex.definitions.clusters import (
     TAGS_SCHEMA,
 )
 from imas_codex.embeddings.openrouter_client import OpenRouterClient
-from imas_codex.settings import get_labeling_batch_size, get_language_model
+from imas_codex.settings import get_labeling_batch_size, get_model
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class ClusterLabeler:
             base_url: API base URL (uses OPENAI_BASE_URL env var if not provided)
             enable_enrichment: Whether to extract enrichment fields
         """
-        self.model = model or get_language_model()
+        self.model = model or get_model("language")
         self.enable_enrichment = enable_enrichment
         api_key = api_key or os.getenv("OPENAI_API_KEY")
         base_url = base_url or os.getenv(

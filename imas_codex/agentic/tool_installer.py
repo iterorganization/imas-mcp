@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from smolagents import CodeAgent, Tool
 
-from imas_codex.agentic.agents import create_litellm_model, get_model_for_task
+from imas_codex.agentic.agents import create_litellm_model
 from imas_codex.remote.tools import (
     check_all_tools,
     check_tool,
@@ -31,6 +31,7 @@ from imas_codex.remote.tools import (
     load_fast_tools,
     run,
 )
+from imas_codex.settings import get_model
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +253,7 @@ def get_tool_installer_agent(
         Configured CodeAgent
     """
     llm = create_litellm_model(
-        model=model or get_model_for_task("exploration"),
+        model=model or get_model("agent"),
         temperature=0.1,
         max_tokens=4096,
     )

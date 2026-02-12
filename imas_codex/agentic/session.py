@@ -7,7 +7,7 @@ Provides:
 - Environment variable overrides for production configuration
 
 Usage:
-    session = LLMSession(task="enrichment", cost_limit_usd=10.0)
+    session = LLMSession(task="language", cost_limit_usd=10.0)
     llm = session.get_llm()
 
     # Check budget before expensive operations
@@ -25,7 +25,7 @@ from imas_codex.agentic.llm import (
     get_llm as _get_llm_factory,
     get_model_id,
 )
-from imas_codex.settings import get_model_for_task
+from imas_codex.settings import get_model
 
 if TYPE_CHECKING:
     from llama_index.llms.openrouter import OpenRouter
@@ -141,7 +141,7 @@ class LLMSession:
     3. None (no limit)
 
     Attributes:
-        task: Task type for model selection ('enrichment', 'exploration', etc.)
+        task: pyproject.toml section for model selection ('language', 'vision', 'agent', 'compaction')
         model: Explicit model override (None = use config/env)
         cost_limit_usd: Maximum cost in USD (None = no limit)
         temperature: LLM temperature (0.0-1.0)
@@ -149,7 +149,7 @@ class LLMSession:
         cost_tracker: Shared cost tracker instance
     """
 
-    task: str = "default"
+    task: str = "agent"
     model: str | None = None
     cost_limit_usd: float | None = None
     temperature: float = 0.3
@@ -182,7 +182,7 @@ class LLMSession:
         """Get the resolved model ID (applying all override rules)."""
         if self.model:
             return get_model_id(self.model)
-        return get_model_for_task(self.task)
+        return get_model(self.task)
 
     def get_llm(self, **kwargs) -> OpenRouter:
         """Get configured LLM instance.
@@ -267,7 +267,7 @@ class LLMSession:
         """Return human-readable session summary."""
         parts = [
             f"Model: {self.resolved_model}",
-            f"Task: {self.task}",
+            f"Section: {self.task}",
             self.cost_tracker.summary(),
         ]
         if self.dry_run:
@@ -291,7 +291,7 @@ def estimate_cost(input_tokens: int, output_tokens: int, model: str) -> float:
 
 
 def create_session(
-    task: str = "default",
+    task: str = "agent",
     model: str | None = None,
     cost_limit_usd: float | None = None,
     temperature: float = 0.3,
@@ -302,7 +302,7 @@ def create_session(
     This is the primary entry point for CLI commands to create sessions.
 
     Args:
-        task: Task type for model selection
+        task: pyproject.toml section for model selection ('language', 'agent', etc.)
         model: Explicit model override
         cost_limit_usd: Maximum cost in USD
         temperature: LLM temperature

@@ -1,5 +1,7 @@
 """Tests for settings.py module."""
 
+import pytest
+
 from imas_codex import settings
 from imas_codex.settings import _parse_bool
 
@@ -16,30 +18,30 @@ class TestSettingsFunctions:
 
         assert result == "test-model"
 
-    def test_get_language_model_env_override(self, monkeypatch):
+    def test_get_model_language_env_override(self, monkeypatch):
         """Environment variable overrides language model setting."""
         settings._load_pyproject_settings.cache_clear()
 
         monkeypatch.setenv("IMAS_CODEX_LANGUAGE_MODEL", "test-llm")
-        result = settings.get_language_model()
+        result = settings.get_model("language")
 
         assert result == "test-llm"
 
-    def test_get_vision_model_env_override(self, monkeypatch):
+    def test_get_model_vision_env_override(self, monkeypatch):
         """Environment variable overrides vision model setting."""
         settings._load_pyproject_settings.cache_clear()
 
         monkeypatch.setenv("IMAS_CODEX_VISION_MODEL", "test-vlm")
-        result = settings.get_vision_model()
+        result = settings.get_model("vision")
 
         assert result == "test-vlm"
 
-    def test_get_compaction_model_env_override(self, monkeypatch):
+    def test_get_model_compaction_env_override(self, monkeypatch):
         """Environment variable overrides compaction model setting."""
         settings._load_pyproject_settings.cache_clear()
 
         monkeypatch.setenv("IMAS_CODEX_COMPACTION_MODEL", "test-compact")
-        result = settings.get_compaction_model()
+        result = settings.get_model("compaction")
 
         assert result == "test-compact"
 
@@ -89,12 +91,12 @@ class TestSettingsFunctions:
         assert isinstance(result, str)
         assert len(result) > 0
 
-    def test_get_language_model_default(self, monkeypatch):
-        """get_language_model returns default when env not set."""
+    def test_get_model_language_default(self, monkeypatch):
+        """get_model('language') returns default when env not set."""
         settings._load_pyproject_settings.cache_clear()
 
         monkeypatch.delenv("IMAS_CODEX_LANGUAGE_MODEL", raising=False)
-        result = settings.get_language_model()
+        result = settings.get_model("language")
 
         assert isinstance(result, str)
         assert len(result) > 0
@@ -128,40 +130,43 @@ class TestSettingsFunctions:
         assert isinstance(result, bool)
 
 
-class TestModelForTask:
-    """Tests for unified task model routing."""
+class TestGetModel:
+    """Tests for unified get_model(section) function."""
 
-    def test_language_tasks_return_language_model(self):
-        """Language tasks route to the language section."""
-        for task in ("discovery", "score", "enrichment"):
-            model = settings.get_model_for_task(task)
-            assert isinstance(model, str)
-            assert "/" in model
-
-    def test_vision_tasks_return_vision_model(self):
-        """Vision tasks route to the vision section."""
-        model = settings.get_model_for_task("vision")
+    def test_language_section_returns_model(self):
+        """Language section returns a model string."""
+        model = settings.get_model("language")
         assert isinstance(model, str)
         assert "/" in model
 
-    def test_agent_tasks_return_agent_model(self):
-        """Agent tasks route to the agent section."""
-        for task in ("exploration", "scout"):
-            model = settings.get_model_for_task(task)
-            assert isinstance(model, str)
-            assert "/" in model
-
-    def test_compaction_tasks_return_compaction_model(self):
-        """Compaction tasks route to the compaction section."""
-        model = settings.get_model_for_task("compaction")
+    def test_vision_section_returns_model(self):
+        """Vision section returns a model string."""
+        model = settings.get_model("vision")
         assert isinstance(model, str)
         assert "/" in model
 
-    def test_unknown_task_falls_back(self):
-        """Unknown task falls back to agent default."""
-        model = settings.get_model_for_task("nonexistent_task")
-        agent_default = settings.get_agent_model()
-        assert model == agent_default
+    def test_agent_section_returns_model(self):
+        """Agent section returns a model string."""
+        model = settings.get_model("agent")
+        assert isinstance(model, str)
+        assert "/" in model
+
+    def test_compaction_section_returns_model(self):
+        """Compaction section returns a model string."""
+        model = settings.get_model("compaction")
+        assert isinstance(model, str)
+        assert "/" in model
+
+    def test_embedding_section_returns_model(self):
+        """Embedding section returns a model string."""
+        model = settings.get_model("embedding")
+        assert isinstance(model, str)
+        assert len(model) > 0
+
+    def test_unknown_section_raises(self):
+        """Unknown section raises ValueError."""
+        with pytest.raises(ValueError, match="Unknown model section"):
+            settings.get_model("nonexistent_section")
 
 
 class TestParseBool:

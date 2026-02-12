@@ -22,7 +22,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from imas_codex.agentic.agents import get_model_for_task
 from imas_codex.discovery.base.llm import suppress_litellm_noise
 from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
@@ -32,6 +31,7 @@ from imas_codex.discovery.paths.models import (
     ScoredDirectory,
     parse_path_purpose,
 )
+from imas_codex.settings import get_model
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +177,7 @@ class DirectoryScorer:
     def __post_init__(self):
         """Initialize model from config if not provided."""
         if self.model is None:
-            self.model = get_model_for_task("score")
+            self.model = get_model("language")
 
     def score_batch(
         self,

@@ -34,7 +34,7 @@ from smolagents import CodeAgent, LiteLLMModel, Tool
 
 from imas_codex.agentic.monitor import AgentMonitor, create_step_callback
 from imas_codex.agentic.prompt_loader import load_prompts
-from imas_codex.settings import get_agent_model, get_model_for_task
+from imas_codex.settings import get_model
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -88,7 +88,7 @@ def create_litellm_model(
     """
     # Resolve model from task config if not specified
     if model is None:
-        model = get_model_for_task(task) if task else get_agent_model()
+        model = get_model(task) if task else get_model("agent")
 
     # OpenRouter requires 'openrouter/' prefix for LiteLLM
     if not model.startswith("openrouter/"):
@@ -167,7 +167,7 @@ def create_agent(
             name="explorer",
             instructions="Explore facility and discover code files",
             tools=get_exploration_tools(),
-            task="exploration",
+            task="agent",
             cost_limit_usd=2.0,
         )
         agent = create_agent(config)
@@ -216,7 +216,7 @@ def create_agent(
 
     logger.info(
         f"Created CodeAgent '{config.name}' with {len(config.tools)} tools, "
-        f"model={config.model or get_model_for_task(config.task)}"
+        f"model={config.model or get_model(config.task or 'agent')}"
     )
 
     return agent
@@ -260,7 +260,7 @@ def get_enrichment_agent(
         instructions=_get_prompt("discovery/enricher"),
         tools=get_enrichment_tools(),
         model=model,
-        task="enrichment",
+        task="language",
         max_steps=10,
         cost_limit_usd=cost_limit_usd,
         verbose=verbose,
@@ -306,7 +306,7 @@ def get_scout_agent(
         instructions=instructions,
         tools=tools,
         model=model,
-        task="exploration",
+        task="agent",
         max_steps=30,
         cost_limit_usd=cost_limit_usd,
         planning_interval=5,  # Re-plan every 5 steps
@@ -347,7 +347,7 @@ def create_orchestrator(
         scout = get_scout_agent("iter")
 
         orchestrator = create_orchestrator(
-            task="enrichment",
+            task="language",
             managed_agents=[enricher, scout],
             instructions="Explore facility then enrich discovered paths",
         )

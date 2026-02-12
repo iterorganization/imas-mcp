@@ -196,7 +196,7 @@ async def _score_artifacts_batch(
 
     Args:
         artifacts: List of artifact dicts with id, filename, preview_text, etc.
-        model: Model identifier from get_model_for_task()
+        model: Model identifier from get_model()
         focus: Optional focus area for scoring
 
     Returns:
@@ -791,7 +791,7 @@ async def _score_pages_batch(
 
     Args:
         pages: List of page dicts with id, title, summary, preview_text, etc.
-        model: Model identifier from get_model_for_task()
+        model: Model identifier from get_model()
         focus: Optional focus area for scoring
 
     Returns:

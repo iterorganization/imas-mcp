@@ -21,14 +21,14 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 | Section | Purpose | Accessor |
 |---------|---------|----------|
-| `[embedding]` | Embedding model, dimension, backend | `get_embedding_model()` |
-| `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_language_model(task)` |
-| `[vision]` | Image/document tasks | `get_vision_model(task)` |
-| `[agent]` | Planning, exploration, autonomous tasks | `get_agent_model(task)` |
-| `[compaction]` | Summarization/compaction | `get_compaction_model(task)` |
+| `[embedding]` | Embedding model, dimension, backend | `get_model("embedding")` |
+| `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
+| `[vision]` | Image/document tasks | `get_model("vision")` |
+| `[agent]` | Planning, exploration, autonomous tasks | `get_model("agent")` |
+| `[compaction]` | Summarization/compaction | `get_model("compaction")` |
 | `[data-dictionary]` | DD version, include-ggd, include-error-fields | `get_dd_version()` |
 
-**Task routing:** `get_model_for_task(task)` dispatches to the correct section. Valid tasks: `discovery`, `score`, `enrichment`, `captioning`, `labeling` → language; `vision` → vision; `exploration`, `scout` → agent; `compaction` → compaction.
+**Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"agent"`, `"compaction"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
 
 ## Schema System
 

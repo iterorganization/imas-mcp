@@ -1469,10 +1469,10 @@ def _rescore_with_llm(
     """
     import json
 
-    from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.agentic.prompt_loader import render_prompt
     from imas_codex.discovery.paths.frontier import sample_enriched_paths
     from imas_codex.discovery.paths.models import RescoreBatch
+    from imas_codex.settings import get_model
 
     # Build prompt context with enriched examples
     context: dict = {}
@@ -1563,7 +1563,7 @@ def _rescore_with_llm(
     user_prompt = "\n".join(lines)
 
     # Get model
-    model = get_model_for_task("score")  # Use same model as scorer
+    model = get_model("language")  # Use same model as scorer
 
     # Call LLM with shared retry+parse loop — retries on both API errors
     # and JSON/validation errors (same resilience as wiki pipeline).

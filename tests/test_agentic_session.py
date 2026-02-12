@@ -107,28 +107,28 @@ class TestLLMSession:
     def test_init_defaults(self):
         """Test default initialization."""
         session = LLMSession()
-        assert session.task == "default"
+        assert session.task == "agent"
         assert session.model is None
         assert session.cost_limit_usd is None
         assert session.temperature == 0.3
         assert session.dry_run is False
 
-    def test_resolved_model_uses_task_config(self):
-        """Test that resolved_model returns task-based model from config."""
-        session = LLMSession(task="enrichment")
+    def test_resolved_model_uses_section_config(self):
+        """Test that resolved_model returns section-based model from config."""
+        session = LLMSession(task="language")
         # Should get model from pyproject.toml config
         assert session.resolved_model is not None
         assert len(session.resolved_model) > 0
 
     def test_resolved_model_explicit_override(self):
-        """Test that explicit model overrides task config."""
-        session = LLMSession(task="enrichment", model="my-custom-model")
+        """Test that explicit model overrides section config."""
+        session = LLMSession(task="language", model="my-custom-model")
         assert session.resolved_model == "my-custom-model"
 
     def test_env_model_override(self):
         """Test that IMAS_CODEX_MODEL env var overrides config."""
         with patch.dict(os.environ, {"IMAS_CODEX_MODEL": "env-override-model"}):
-            session = LLMSession(task="enrichment")
+            session = LLMSession(task="language")
             assert session.resolved_model == "env-override-model"
 
     def test_explicit_model_beats_env(self):
@@ -189,11 +189,11 @@ class TestLLMSession:
 
     def test_summary(self):
         """Test summary output."""
-        session = LLMSession(task="enrichment", cost_limit_usd=10.0)
+        session = LLMSession(task="language", cost_limit_usd=10.0)
         summary = session.summary()
 
         assert "Model:" in summary
-        assert "Task: enrichment" in summary
+        assert "Section: language" in summary
         assert "$" in summary
 
     def test_summary_dry_run(self):
@@ -210,7 +210,7 @@ class TestCreateSession:
     def test_creates_session(self):
         """Test that factory creates session with correct parameters."""
         session = create_session(
-            task="exploration",
+            task="agent",
             model="test-model",
             cost_limit_usd=5.0,
             temperature=0.5,
@@ -218,7 +218,7 @@ class TestCreateSession:
         )
 
         assert isinstance(session, LLMSession)
-        assert session.task == "exploration"
+        assert session.task == "agent"
         assert session.model == "test-model"
         assert session.cost_limit_usd == 5.0
         assert session.temperature == 0.5
@@ -228,7 +228,7 @@ class TestCreateSession:
         """Test factory with default values."""
         session = create_session()
 
-        assert session.task == "default"
+        assert session.task == "agent"
         assert session.model is None
         assert session.cost_limit_usd is None
         assert session.temperature == 0.3

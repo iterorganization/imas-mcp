@@ -26,7 +26,7 @@ from linkml_runtime.utils.schemaview import SchemaView
 from imas_codex.core.data_model import PhysicsDomain
 from imas_codex.definitions.physics import DOMAINS_SCHEMA, IDS_DOMAINS_FILE
 from imas_codex.embeddings.openrouter_client import OpenRouterClient
-from imas_codex.settings import get_language_model
+from imas_codex.settings import get_model
 
 # Load environment variables from .env file, overriding any existing values
 load_dotenv(override=True)
@@ -170,7 +170,7 @@ def infer_domains_with_llm(
     api_key: str | None = None,
 ) -> dict[str, str]:
     """Use LLM to infer physics domains for IDS entries."""
-    model = model or get_language_model()
+    model = model or get_model("language")
     api_key = api_key or os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
 
@@ -258,7 +258,7 @@ def save_ids_domains(
         "metadata": {
             "created": datetime.now(UTC).isoformat(),
             "description": "IDS to physics domain mappings across all DD versions",
-            "model": model or get_language_model(),
+            "model": model or get_model("language"),
             "total_ids": len(mappings),
             "dd_versions_covered": version_coverage,
         },
