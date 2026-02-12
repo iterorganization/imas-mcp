@@ -387,6 +387,34 @@ End every response that modifies files with the **full commit message** and a br
 - Never use `git add -A`
 - The `.env` file contains secrets — never expose or commit it
 
+## CLI Logs
+
+All discovery CLI commands write DEBUG-level rotating logs to disk. The rich progress display suppresses most log output to keep the TUI clean, but full details are always available in the log files.
+
+**Log directory:** `~/.local/share/imas-codex/logs/`
+
+| CLI Command | Log File |
+|-------------|----------|
+| `discover wiki` | `wiki.log` |
+| `discover paths` | `paths.log` |
+| `discover signals` | `signals.log` |
+| `discover files` | `files.log` |
+
+```bash
+# View logs during or after a run
+tail -f ~/.local/share/imas-codex/logs/wiki.log     # Follow live
+cat ~/.local/share/imas-codex/logs/paths.log         # Full log
+ls -la ~/.local/share/imas-codex/logs/               # List all logs
+
+# Search for errors across all CLI logs
+rg "ERROR|WARNING" ~/.local/share/imas-codex/logs/
+
+# Diagnose a specific worker (e.g., artifact worker hang)
+rg "artifact_worker" ~/.local/share/imas-codex/logs/wiki.log
+```
+
+Logs rotate at 10 MB with 3 backups (e.g., `wiki.log`, `wiki.log.1`, `wiki.log.2`). The file handler captures all `imas_codex.*` loggers at DEBUG level regardless of the `--no-rich` or `--verbose` flags.
+
 ## Testing
 
 ```bash

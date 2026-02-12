@@ -455,7 +455,7 @@ async def artifact_worker(
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         try:
             artifacts = await asyncio.to_thread(
-                claim_artifacts_for_ingesting, state.facility, limit=8
+                claim_artifacts_for_ingesting, state.facility, limit=4
             )
         except Exception as e:
             logger.warning("artifact_worker: claim failed: %s", e)
@@ -473,6 +473,29 @@ async def artifact_worker(
 
         if on_progress:
             on_progress(f"ingesting {len(artifacts)} artifacts", state.artifact_stats)
+
+        results = []
+        for artifact in artifacts:
+            artifact_id = artifact["id"]
+            artifact_type = artifact.get("artifact_type", "unknown")
+            url = artifact.get("url", "")
+            filename = artifact.get("filename", "unknown")
+
+            # Send per-artifact progress so the display shows what's being processed
+            if on_progress:
+                on_progress(
+                    f"ingesting {filename}",
+                    state.artifact_stats,
+                    results=[
+                        {
+                            "filename": filename,
+                            "artifact_type": artifact_type,
+                            "score": artifact.get("score"),
+                            "physics_domain": artifact.get("physics_domain"),
+                            "description": artifact.get("description", ""),
+                        }
+                    ],
+                )
 
         results = []
         for artifact in artifacts:

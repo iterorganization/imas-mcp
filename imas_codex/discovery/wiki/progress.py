@@ -519,9 +519,10 @@ class WikiProgressDisplay:
         """Build worker status section showing counts by task and state.
 
         Format:
-          WORKERS  scan:0  score:2 (1 active, 1 backing off)  ingest:1  artifact:1
+          WORKERS  score:2 (1 active, 1 backing off)  page:4  artifact:2  image:1
 
         When paused, workers are shown grayed out but still visible.
+        Scan workers are omitted (bulk discovery replaces link-crawling).
         """
         section = Text()
 
@@ -533,12 +534,11 @@ class WikiProgressDisplay:
 
         wg = self.state.worker_group
         if not wg:
-            section.append("  no status available", style="dim italic")
+            section.append("  starting...", style="dim italic")
             return section
 
-        # Group workers by task type
+        # Group workers by task type (scan omitted — replaced by bulk discovery)
         task_groups: dict[str, list[tuple[str, WorkerState]]] = {
-            "scan": [],
             "score": [],
             "page": [],
             "artifact": [],
@@ -554,7 +554,7 @@ class WikiProgressDisplay:
             elif "artifact" in name:
                 task_groups["artifact"].append((name, status.state))
             elif "scan" in name:
-                task_groups["scan"].append((name, status.state))
+                continue  # Scan workers no longer used
             elif "score" in name:
                 task_groups["score"].append((name, status.state))
             elif "ingest" in name:
@@ -562,8 +562,6 @@ class WikiProgressDisplay:
 
         # Display each task group
         for task, workers in task_groups.items():
-            if not workers and task == "scan" and self.state.score_only:
-                continue  # Skip scan in score-only mode
             if (
                 not workers
                 and task in ("score", "page", "artifact", "image")
@@ -834,7 +832,7 @@ class WikiProgressDisplay:
                     section.append(f"skipped: {reason}", style="yellow dim")
             elif self.state.score_processing:
                 if is_paused:
-                    section.append("paused", style="yellow italic")
+                    section.append("paused", style="dim italic")
                 else:
                     section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
@@ -848,7 +846,7 @@ class WikiProgressDisplay:
                 section.append("\n    ", style="dim")
             elif should_show_idle(self.state.score_processing, self.state.score_queue):
                 if is_paused:
-                    section.append("paused", style="yellow italic")
+                    section.append("paused", style="dim italic")
                 else:
                     section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
@@ -902,7 +900,7 @@ class WikiProgressDisplay:
                     )
             elif self.state.ingest_processing:
                 if is_paused:
-                    section.append("paused", style="yellow italic")
+                    section.append("paused", style="dim italic")
                 else:
                     section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
@@ -918,7 +916,7 @@ class WikiProgressDisplay:
                 self.state.ingest_processing, self.state.ingest_queue
             ):
                 if is_paused:
-                    section.append("paused", style="yellow italic")
+                    section.append("paused", style="dim italic")
                 else:
                     section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
@@ -985,7 +983,7 @@ class WikiProgressDisplay:
                     )
             elif self.state.artifact_processing:
                 if is_paused:
-                    section.append("paused", style="yellow italic")
+                    section.append("paused", style="dim italic")
                 else:
                     section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
@@ -1006,7 +1004,7 @@ class WikiProgressDisplay:
                 self.state.artifact_queue,
             ):
                 if is_paused:
-                    section.append("paused", style="yellow italic")
+                    section.append("paused", style="dim italic")
                 else:
                     section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
@@ -1059,7 +1057,7 @@ class WikiProgressDisplay:
                     )
             elif self.state.image_processing:
                 if is_paused:
-                    section.append("paused", style="yellow italic")
+                    section.append("paused", style="dim italic")
                 else:
                     section.append("processing...", style="cyan italic")
                 section.append("\n    ", style="dim")
@@ -1075,7 +1073,7 @@ class WikiProgressDisplay:
                 self.state.image_queue,
             ):
                 if is_paused:
-                    section.append("paused", style="yellow italic")
+                    section.append("paused", style="dim italic")
                 else:
                     section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
@@ -1185,11 +1183,21 @@ class WikiProgressDisplay:
         return section
 
     def _build_servers_section(self) -> Text | None:
-        """Build SERVERS status row from service monitor."""
+        """Build SERVERS status row from service monitor.
+
+        Always returns a section (even before checks complete) so the
+        SERVERS row is visible from the first render.
+        """
         monitor = self.state.service_monitor
         if monitor is None:
             return None
         statuses = monitor.get_status()
+        if not statuses:
+            # Monitor registered but no checks configured yet — show pending
+            section = Text()
+            section.append("  SERVERS", style="bold white")
+            section.append("  checking...", style="dim italic")
+            return section
         return build_servers_section(statuses)
 
     def _build_display(self) -> Panel:
@@ -1198,15 +1206,12 @@ class WikiProgressDisplay:
             self._build_header(),
         ]
 
-        # SERVERS and WORKERS are grouped together (no separator between)
+        # SERVERS and WORKERS are always grouped together (no separator between)
+        sections.append(Text("─" * (self.width - 4), style="dim"))
         servers = self._build_servers_section()
         if servers is not None:
-            sections.append(Text("─" * (self.width - 4), style="dim"))
             sections.append(servers)
-            sections.append(self._build_worker_section())  # No separator before workers
-        else:
-            sections.append(Text("─" * (self.width - 4), style="dim"))
-            sections.append(self._build_worker_section())
+        sections.append(self._build_worker_section())
 
         sections.extend(
             [

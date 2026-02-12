@@ -440,7 +440,7 @@ def build_servers_section(
         statuses: List of ServiceStatus objects from ServiceMonitor.get_status()
 
     Format:
-      SERVERS  graph:bolt://localhost:7687  embed:iter-login  ssh:vpn
+      SERVERS  graph:iter-login  embed:iter-login  ssh:jt60sa  auth:vpn
     """
     if not statuses:
         return None
@@ -455,22 +455,33 @@ def build_servers_section(
             style = "green"
             label = s.detail or "ok"
         elif s.state == ServiceState.unknown:
+            # Pending initial check — show grey "pending" instead of "unknown"
             style = "dim"
-            label = "checking"
+            label = "pending"
         elif s.state == ServiceState.recovering:
             style = "yellow"
             label = f"recovering ({int(s.downtime_seconds)}s)"
         else:
-            # Unhealthy: show grayed version of healthy state, not red error
+            # Unhealthy: show grayed label with concise reason
             style = "dim"
             if s.healthy_detail:
+                # Was healthy before — show last-known good state grayed out
                 label = s.healthy_detail
             elif s.auth_label:
                 label = s.auth_label
             else:
-                label = s.detail[:30] if s.detail else "down"
+                # Derive concise label from error detail
+                detail = (s.detail or "").lower()
+                if "timeout" in detail or "timed out" in detail:
+                    label = "down"
+                elif "connection refused" in detail:
+                    label = "down"
+                elif "no route" in detail:
+                    label = "down"
+                else:
+                    label = "down"
             if s.downtime_seconds > 0:
-                label += f" ({int(s.downtime_seconds)}s down)"
+                label += f" ({int(s.downtime_seconds)}s)"
 
         section.append(f"  {s.name}:", style="dim")
         section.append(label, style=style)

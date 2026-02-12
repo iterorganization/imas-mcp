@@ -1,0 +1,100 @@
+"""CLI logging configuration with file output.
+
+Provides a shared ``configure_cli_logging`` function that sets up both
+console and file logging for CLI commands.  Each CLI tool writes a
+rotating log file under ``~/.local/share/imas-codex/logs/<command>.log``.
+
+Usage from any CLI command::
+
+    from imas_codex.cli.logging import configure_cli_logging
+
+    log_dir = configure_cli_logging("wiki", verbose=verbose)
+    # Returns the log directory path for display
+
+Agents can access the logs via::
+
+    cat ~/.local/share/imas-codex/logs/wiki.log
+    tail -f ~/.local/share/imas-codex/logs/wiki.log   # Follow live
+    ls -la ~/.local/share/imas-codex/logs/             # List all logs
+"""
+
+from __future__ import annotations
+
+import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
+# Standard log directory follows XDG convention
+LOG_DIR = Path.home() / ".local" / "share" / "imas-codex" / "logs"
+
+
+def get_log_dir() -> Path:
+    """Return the CLI log directory, creating it if needed."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    return LOG_DIR
+
+
+def get_log_file(command: str) -> Path:
+    """Return the log file path for a given CLI command."""
+    return get_log_dir() / f"{command}.log"
+
+
+def configure_cli_logging(
+    command: str,
+    *,
+    verbose: bool = False,
+    console_level: int | None = None,
+    file_level: int = logging.DEBUG,
+    max_bytes: int = 10 * 1024 * 1024,  # 10 MB
+    backup_count: int = 3,
+) -> Path:
+    """Configure logging for a CLI command with file output.
+
+    Sets up:
+    - File handler: DEBUG-level rotating log at
+      ``~/.local/share/imas-codex/logs/<command>.log``
+    - Console handler: WARNING (or VERBOSE if requested)
+
+    Args:
+        command: CLI command name (e.g., "wiki", "paths", "ingest")
+        verbose: If True, set console to INFO level
+        console_level: Override console level (takes precedence over verbose)
+        file_level: File log level (default: DEBUG)
+        max_bytes: Max size per log file before rotation
+        backup_count: Number of rotated backups to keep
+
+    Returns:
+        Path to the log directory
+    """
+    log_file = get_log_file(command)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Root logger gets file handler at DEBUG level
+    root_logger = logging.getLogger("imas_codex")
+
+    # Remove existing file handlers to avoid duplicates on repeated calls
+    for handler in root_logger.handlers[:]:
+        if isinstance(handler, (RotatingFileHandler, logging.FileHandler)):
+            root_logger.removeHandler(handler)
+
+    # File handler: captures everything for diagnosis
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(file_level)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    root_logger.addHandler(file_handler)
+
+    # Ensure root logger threshold allows file handler to receive events
+    if root_logger.level > file_level:
+        root_logger.setLevel(file_level)
+
+    return log_file.parent

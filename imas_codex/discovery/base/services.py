@@ -716,7 +716,7 @@ def build_servers_row(
             state_str = s.detail or "ok"
         elif s.state == ServiceState.unknown:
             style = "dim"
-            state_str = "unknown"
+            state_str = "pending"
         elif s.state == ServiceState.recovering:
             style = "yellow"
             state_str = f"recovering ({int(s.downtime_seconds)}s)"
@@ -728,9 +728,9 @@ def build_servers_row(
             elif s.auth_label:
                 state_str = f"{s.auth_label}"
             else:
-                state_str = s.detail[:30] if s.detail else "down"
+                state_str = "down"
             if s.downtime_seconds > 0:
-                state_str += f" ({int(s.downtime_seconds)}s down)"
+                state_str += f" ({int(s.downtime_seconds)}s)"
 
         parts.append((f"{s.name}:{state_str}", style))
 

@@ -103,6 +103,7 @@ def wiki(
       imas-codex discover wiki tcv -f equilibrium  # Focus scoring
       imas-codex discover wiki jet -c 5.0          # $5 budget
     """
+    from imas_codex.cli.logging import configure_cli_logging
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki import get_wiki_stats
     from imas_codex.discovery.wiki.graph_ops import reset_transient_pages
@@ -110,6 +111,9 @@ def wiki(
 
     # Auto-detect if rich can run (TTY check) or use no_rich flag
     use_rich = not no_rich and sys.stdout.isatty()
+
+    # Always configure file logging (DEBUG level to disk)
+    configure_cli_logging("wiki", verbose=verbose)
 
     if use_rich:
         console = Console()
@@ -698,7 +702,7 @@ def wiki(
             ):
                 logging.getLogger(mod).setLevel(logging.WARNING)
 
-            with WikiProgressDisplay(
+            display = WikiProgressDisplay(
                 facility=_facility,
                 cost_limit=_cost_limit,
                 page_limit=_max_pages,
@@ -706,9 +710,13 @@ def wiki(
                 console=console,
                 scan_only=_scan_only,
                 score_only=_score_only,
-            ) as display:
-                display.state.service_monitor = service_monitor
-                await service_monitor.__aenter__()
+            )
+            # Set service_monitor BEFORE entering the Live context so the
+            # SERVERS row renders from the very first frame.
+            display.state.service_monitor = service_monitor
+            await service_monitor.__aenter__()
+
+            with display:
                 if multi_site:
                     display.set_site_info(
                         site_name=_site_configs[0]["base_url"],
