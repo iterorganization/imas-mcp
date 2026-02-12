@@ -38,7 +38,13 @@ from imas_codex.discovery.base.progress import (
     LABEL_WIDTH,
     METRICS_WIDTH,
     MIN_WIDTH,
+    ActivityRowConfig,
+    ProgressRowConfig,
+    ResourceConfig,
     StreamQueue,
+    build_activity_section,
+    build_progress_section,
+    build_resource_section,
     build_servers_section,
     build_worker_status_section,
     clean_text,
@@ -46,8 +52,6 @@ from imas_codex.discovery.base.progress import (
     compute_bar_width,
     compute_gauge_width,
     format_time,
-    make_bar,
-    make_resource_gauge,
 )
 from imas_codex.discovery.base.supervision import (
     SupervisedWorkerGroup,
@@ -557,112 +561,68 @@ class WikiProgressDisplay:
         )
 
     def _build_progress_section(self) -> Text:
-        """Build the main progress bars for SCORE and INGEST.
+        """Build the main progress bars using unified builder.
 
         Progress is measured against total pages in graph, not just this session.
-        This shows true coverage of the wiki.
         """
-        section = Text()
-        bar_width = self.bar_width
-
-        # SCORE row - scoring progress against total pages
-        # Total to score = total_pages (all wiki pages for this facility)
-        # Completed = pages_scored + pages_ingested (scored includes ingest-ready)
         score_total = self.state.total_pages or 1
         scored_pages = self.state.pages_scored + self.state.pages_ingested
-        score_pct = scored_pages / score_total * 100 if score_total > 0 else 0
+        ingest_total = max(self.state.pages_scored + self.state.pages_ingested, 1)
 
-        if self.state.scan_only:
-            section.append("  SCORE   ", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
-        else:
-            section.append("  SCORE   ", style="bold blue")
-            score_ratio = min(scored_pages / score_total, 1.0) if score_total > 0 else 0
-            section.append(make_bar(score_ratio, bar_width), style="blue")
-            section.append(f" {scored_pages:>6,}", style="bold")
-            section.append(f" {score_pct:>3.0f}%", style="cyan")
-            if self.state.score_rate and self.state.score_rate > 0:
-                section.append(f" {self.state.score_rate:>5.1f}/s", style="dim")
-        section.append("\n")
+        # Artifact progress
+        art_scored = self.state.artifacts_scored
+        art_ingested = self.state.artifacts_ingested
+        art_pending_score = self.state.pending_artifact_score
+        art_completed = art_scored + art_ingested
+        art_total = art_pending_score + art_completed
 
-        # PAGE row - ingestion progress against scored pages
-        # Total to ingest = pages that qualify for ingestion (score >= 0.5)
-        # For simplicity, use pages_scored + pages_ingested as denominator
-        ingest_total = self.state.pages_scored + self.state.pages_ingested
-        if ingest_total <= 0:
-            ingest_total = 1
-        ingest_pct = self.state.pages_ingested / ingest_total * 100
+        # Artifact combined rate
+        art_score_rate = self.state.artifact_score_rate
+        art_ingest_rate = self.state.artifact_rate
+        art_rate = (
+            sum(r for r in [art_score_rate, art_ingest_rate] if r and r > 0) or None
+        )
 
-        if self.state.scan_only:
-            section.append("  PAGE    ", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
-        else:
-            section.append("  PAGE    ", style="bold magenta")
-            ingest_ratio = min(self.state.pages_ingested / ingest_total, 1.0)
-            section.append(make_bar(ingest_ratio, bar_width), style="magenta")
-            section.append(f" {self.state.pages_ingested:>6,}", style="bold")
-            section.append(f" {ingest_pct:>3.0f}%", style="cyan")
-            if self.state.ingest_rate and self.state.ingest_rate > 0:
-                section.append(f" {self.state.ingest_rate:>5.1f}/s", style="dim")
+        # Image progress
+        img_scored = self.state.images_scored
+        img_pending = self.state.pending_image_score
+        img_total = img_scored + img_pending
 
-        # ARTIFACTS row - pipeline progress: scored+ingested / total processable
-        # Total processable = pending_score + scored + ingested (all supported types)
-        # Completed = scored + ingested (artifacts that have been through scoring)
-        # This ensures progress shows while scoring (even when most are skipped)
-        section.append("\n")
-        if self.state.scan_only:
-            section.append("  ARTFCT  ", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
-        else:
-            section.append("  ARTFCT  ", style="bold yellow")
-            scored = self.state.artifacts_scored
-            ingested = self.state.artifacts_ingested
-            pending_score = self.state.pending_artifact_score
-            completed = scored + ingested
-            art_total = pending_score + completed
-            if art_total > 0:
-                art_ratio = min(completed / art_total, 1.0)
-                section.append(make_bar(art_ratio, bar_width), style="yellow")
-                section.append(f" {completed:>6,}", style="bold")
-                art_pct = completed / art_total * 100
-                section.append(f" {art_pct:>3.0f}%", style="cyan")
-            else:
-                section.append("─" * bar_width, style="dim")
-                section.append(f" {completed:>6,}", style="bold")
-            # Show combined score+ingest rate
-            score_rate = self.state.artifact_score_rate
-            ingest_rate = self.state.artifact_rate
-            combined_rate = sum(r for r in [score_rate, ingest_rate] if r and r > 0)
-            if combined_rate > 0:
-                section.append(f" {combined_rate:>5.1f}/s", style="dim")
-
-        # IMAGE row - VLM captioning + scoring progress
-        section.append("\n")
-        if self.state.scan_only:
-            section.append("  IMAGE   ", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
-        else:
-            section.append("  IMAGE   ", style="bold green")
-            img_scored = self.state.images_scored
-            img_pending = self.state.pending_image_score
-            img_total = img_scored + img_pending
-            if img_total > 0:
-                img_ratio = min(img_scored / img_total, 1.0)
-                section.append(make_bar(img_ratio, bar_width), style="green")
-                section.append(f" {img_scored:>6,}", style="bold")
-                img_pct = img_scored / img_total * 100
-                section.append(f" {img_pct:>3.0f}%", style="cyan")
-            else:
-                section.append("─" * bar_width, style="dim")
-                section.append(f" {img_scored:>6,}", style="bold")
-            if self.state.image_score_rate and self.state.image_score_rate > 0:
-                section.append(f" {self.state.image_score_rate:>5.1f}/s", style="dim")
-
-        return section
+        rows = [
+            ProgressRowConfig(
+                name="SCORE",
+                style="bold blue",
+                completed=scored_pages,
+                total=score_total,
+                rate=self.state.score_rate,
+                disabled=self.state.scan_only,
+            ),
+            ProgressRowConfig(
+                name="PAGE",
+                style="bold magenta",
+                completed=self.state.pages_ingested,
+                total=ingest_total,
+                rate=self.state.ingest_rate,
+                disabled=self.state.scan_only,
+            ),
+            ProgressRowConfig(
+                name="ARTFCT",
+                style="bold yellow",
+                completed=art_completed,
+                total=max(art_total, 1),
+                rate=art_rate,
+                disabled=self.state.scan_only,
+            ),
+            ProgressRowConfig(
+                name="IMAGE",
+                style="bold green",
+                completed=img_scored,
+                total=max(img_total, 1),
+                rate=self.state.image_score_rate,
+                disabled=self.state.scan_only,
+            ),
+        ]
+        return build_progress_section(rows, self.bar_width)
 
     def _clip_title(self, title: str, max_len: int = 70) -> str:
         """Clip title to max length, preferring end truncation."""
@@ -671,29 +631,49 @@ class WikiProgressDisplay:
         return title[: max_len - 3] + "..."
 
     def _build_activity_section(self) -> Text:
-        """Build the current activity section showing SCORE and INGEST.
+        """Build the current activity section using unified builder.
 
-        Shows physics domain and LLM description for both workers.
+        Shows physics domain and LLM description for all worker types.
         All content is clipped to fit within the panel width.
         """
-        section = Text()
-
-        score = self.state.current_score
-        ingest = self.state.current_ingest
-
-        # Maximum content width for the panel (account for padding and border)
-        content_width = self.width - 6  # Panel padding + border
-
-        # Check if workers are paused (for showing "paused" instead of "idle")
+        content_width = self.width - 6
         monitor = self.state.service_monitor
         is_paused = monitor is not None and monitor.paused
+        rows: list[ActivityRowConfig] = []
 
-        # Helper to determine if worker should show "idle" or "paused"
-        def should_show_idle(processing: bool, queue: StreamQueue) -> bool:
-            return not processing and queue.is_empty()
+        def _score_detail(
+            score_val: float | None,
+            domain: str | None,
+            description: str,
+            *,
+            is_physics: bool = False,
+        ) -> list[tuple[str, str]]:
+            """Build detail parts for a score + domain + description line."""
+            parts: list[tuple[str, str]] = []
+            used = 4  # indent
+            if score_val is not None:
+                style = (
+                    "bold green"
+                    if score_val >= 0.7
+                    else "yellow"
+                    if score_val >= 0.4
+                    else "red"
+                )
+                s = f"{score_val:.2f}"
+                parts.append((f"{s}  ", style))
+                used += len(s) + 2
+            d = domain or ("physics" if is_physics else "")
+            if d:
+                parts.append((f"{d}  ", "cyan"))
+                used += len(d) + 2
+            if description:
+                desc = clean_text(description)
+                parts.append(
+                    (clip_text(desc, max(10, content_width - used)), "italic dim")
+                )
+            return parts
 
-        def is_worker_complete(task_type: str) -> bool:
-            """Check if all workers of a given task type have stopped."""
+        def _worker_complete(task_type: str) -> bool:
             wg = self.state.worker_group
             if not wg:
                 return False
@@ -706,415 +686,193 @@ class WikiProgressDisplay:
                 s == WorkerState.stopped for _, s in workers
             )
 
-        # SCORE section - always 2 lines for consistent height
+        # SCORE activity
         if not self.state.scan_only:
-            section.append("  SCORE   ", style="bold blue")
-            if score:
-                # Line 1: Page title (clipped to fit remaining space)
-                title_width = content_width - self.LABEL_WIDTH
-                section.append(
-                    self._clip_title(score.title, title_width), style="white"
-                )
-                section.append("\n")
-
-                # Line 2: Score, physics domain, description
-                section.append("    ", style="dim")
-                score_str = ""
-                if score.score is not None:
-                    if score.score >= 0.7:
-                        style = "bold green"
-                    elif score.score >= 0.4:
-                        style = "yellow"
-                    else:
-                        style = "red"
-                    score_str = f"{score.score:.2f}"
-                    section.append(f"{score_str}  ", style=style)
-
-                # Physics domain without brackets (matching paths CLI)
-                domain_str = ""
-                if score.physics_domain:
-                    domain_str = score.physics_domain
-                    section.append(f"{domain_str}  ", style="cyan")
-                elif score.is_physics:
-                    domain_str = "physics"
-                    section.append(f"{domain_str}  ", style="cyan")
-
-                if score.description:
-                    desc = clean_text(score.description)
-                    # Calculate remaining width for description
-                    # 4 indent + score (5) + space (2) + domain + space (2)
-                    used = (
-                        4
-                        + (len(score_str) + 2 if score_str else 0)
-                        + (len(domain_str) + 2 if domain_str else 0)
-                    )
-                    desc_width = content_width - used
-                    section.append(
-                        clip_text(desc, max(10, desc_width)), style="italic dim"
-                    )
-                elif score.skipped:
-                    reason = score.skip_reason[:40] if score.skip_reason else ""
-                    section.append(f"skipped: {reason}", style="yellow dim")
-            elif self.state.score_processing:
-                if is_paused:
-                    section.append("paused", style="dim italic")
-                else:
-                    section.append("processing...", style="cyan italic")
-                section.append("\n    ", style="dim")
-            elif not self.state.score_queue.is_empty():
-                # Items in queue but not yet popped - show waiting state
-                queued = len(self.state.score_queue)
-                section.append(f"streaming {queued} items...", style="cyan italic")
-                section.append("\n    ", style="dim")
-            elif is_worker_complete("score"):
+            score = self.state.current_score
+            score_row = ActivityRowConfig(
+                name="SCORE",
+                style="bold blue",
+                is_processing=self.state.score_processing,
+                is_paused=is_paused,
+                queue_size=(
+                    len(self.state.score_queue)
+                    if not self.state.score_queue.is_empty()
+                    and not score
+                    and not self.state.score_processing
+                    else 0
+                ),
+            )
+            if _worker_complete("score") and not score:
+                score_row.is_complete = True
                 if self.state.cost_limit_reached:
-                    section.append("cost limit", style="yellow")
-                else:
-                    section.append("complete", style="green")
-                section.append("\n    ", style="dim")
-            elif should_show_idle(self.state.score_processing, self.state.score_queue):
-                if is_paused:
-                    section.append("paused", style="dim italic")
-                else:
-                    section.append("idle", style="dim italic")
-                section.append("\n    ", style="dim")
-            else:
-                section.append("...", style="dim italic")
-                section.append("\n    ", style="dim")
-            section.append("\n")
-
-        # PAGE section - 2 lines: title, then score + domain + description
-        if not self.state.scan_only:
-            section.append("  PAGE    ", style="bold magenta")
-            if ingest:
-                # Line 1: Page title (clipped to fit remaining space)
-                title_width = content_width - self.LABEL_WIDTH
-                section.append(
-                    self._clip_title(ingest.title, title_width), style="white"
+                    score_row.complete_label = "cost limit"
+            if score:
+                score_row.primary_text = self._clip_title(
+                    score.title, content_width - LABEL_WIDTH
                 )
-                section.append("\n")
-
-                # Line 2: score + physics domain + description + chunk count
-                section.append("    ", style="dim")
-                score_str = ""
-                if ingest.score is not None:
-                    if ingest.score >= 0.7:
-                        style = "bold green"
-                    elif ingest.score >= 0.4:
-                        style = "yellow"
-                    else:
-                        style = "dim"
-                    score_str = f"{ingest.score:.2f}"
-                    section.append(f"{score_str}  ", style=style)
-
-                # Physics domain without brackets (matching paths CLI)
-                domain_str = ""
-                if ingest.physics_domain:
-                    domain_str = ingest.physics_domain
-                    section.append(f"{domain_str}  ", style="cyan")
-
-                if ingest.description:
-                    desc = clean_text(ingest.description)
-                    # Calculate remaining width for description
-                    # 4 indent + score + domain
-                    used = (
-                        4
-                        + (len(score_str) + 2 if score_str else 0)
-                        + (len(domain_str) + 2 if domain_str else 0)
-                    )
-                    desc_width = content_width - used
-                    section.append(
-                        clip_text(desc, max(10, desc_width)), style="italic dim"
-                    )
-            elif self.state.ingest_processing:
-                if is_paused:
-                    section.append("paused", style="dim italic")
+                if score.skipped:
+                    reason = score.skip_reason[:40] if score.skip_reason else ""
+                    score_row.detail_parts = [(f"skipped: {reason}", "yellow dim")]
                 else:
-                    section.append("processing...", style="cyan italic")
-                section.append("\n    ", style="dim")
-            elif not self.state.ingest_queue.is_empty():
-                # Items in queue but not yet popped - show waiting state
-                queued = len(self.state.ingest_queue)
-                section.append(f"streaming {queued} items...", style="cyan italic")
-                section.append("\n    ", style="dim")
-            elif is_worker_complete("ingest"):
-                section.append("complete", style="green")
-                section.append("\n    ", style="dim")
-            elif should_show_idle(
-                self.state.ingest_processing, self.state.ingest_queue
-            ):
-                if is_paused:
-                    section.append("paused", style="dim italic")
-                else:
-                    section.append("idle", style="dim italic")
-                section.append("\n    ", style="dim")
-            else:
-                section.append("...", style="dim italic")
-                section.append("\n    ", style="dim")
+                    score_row.detail_parts = _score_detail(
+                        score.score,
+                        score.physics_domain,
+                        score.description,
+                        is_physics=score.is_physics,
+                    )
+            rows.append(score_row)
 
-        # ARTIFACT section - 2 lines: filename, then score + domain + description
-        artifact = self.state.current_artifact
+        # PAGE activity
         if not self.state.scan_only:
-            section.append("\n")
-            section.append("  ARTFCT  ", style="bold yellow")
+            ingest = self.state.current_ingest
+            page_row = ActivityRowConfig(
+                name="PAGE",
+                style="bold magenta",
+                is_processing=self.state.ingest_processing,
+                is_paused=is_paused,
+                queue_size=(
+                    len(self.state.ingest_queue)
+                    if not self.state.ingest_queue.is_empty()
+                    and not ingest
+                    and not self.state.ingest_processing
+                    else 0
+                ),
+            )
+            if _worker_complete("ingest") and not ingest:
+                page_row.is_complete = True
+            if ingest:
+                page_row.primary_text = self._clip_title(
+                    ingest.title, content_width - LABEL_WIDTH
+                )
+                page_row.detail_parts = _score_detail(
+                    ingest.score, ingest.physics_domain, ingest.description
+                )
+            rows.append(page_row)
+
+        # ARTIFACT activity
+        if not self.state.scan_only:
+            artifact = self.state.current_artifact
+            art_row = ActivityRowConfig(
+                name="ARTFCT",
+                style="bold yellow",
+                is_processing=self.state.artifact_processing,
+                is_paused=is_paused,
+                queue_size=(
+                    (
+                        len(self.state.artifact_queue)
+                        + len(self.state.artifact_score_queue)
+                    )
+                    if (
+                        not self.state.artifact_queue.is_empty()
+                        or not self.state.artifact_score_queue.is_empty()
+                    )
+                    and not artifact
+                    and not self.state.artifact_processing
+                    else 0
+                ),
+            )
+            if _worker_complete("artifact") and not artifact:
+                art_row.is_complete = True
+                if self.state.cost_limit_reached:
+                    art_row.complete_label = "cost limit"
             if artifact:
-                # Line 1: Artifact filename
-                title_width = content_width - self.LABEL_WIDTH
                 display_name = artifact.filename
                 if artifact.chunk_count > 0:
-                    suffix = f" ({artifact.chunk_count} chunks)"
-                    if len(display_name) + len(suffix) > title_width:
-                        display_name = (
-                            display_name[: title_width - len(suffix) - 3] + "..."
-                        )
-                    display_name += suffix
+                    display_name += f" ({artifact.chunk_count} chunks)"
                 elif artifact.score is not None and artifact.score < 0.5:
-                    suffix = " (skipped)"
-                    if len(display_name) + len(suffix) > title_width:
-                        display_name = (
-                            display_name[: title_width - len(suffix) - 3] + "..."
-                        )
-                    display_name += suffix
-                section.append(
-                    self._clip_title(display_name, title_width), style="white"
+                    display_name += " (skipped)"
+                art_row.primary_text = self._clip_title(
+                    display_name, content_width - LABEL_WIDTH
                 )
-                section.append("\n")
-
-                # Line 2: Score, physics domain, description
-                section.append("    ", style="dim")
-                score_str = ""
-                if artifact.score is not None:
-                    if artifact.score >= 0.7:
-                        style = "bold green"
-                    elif artifact.score >= 0.4:
-                        style = "yellow"
-                    else:
-                        style = "red"
-                    score_str = f"{artifact.score:.2f}"
-                    section.append(f"{score_str}  ", style=style)
-
-                domain_str = ""
-                if artifact.physics_domain:
-                    domain_str = artifact.physics_domain
-                    section.append(f"{domain_str}  ", style="cyan")
-
-                if artifact.description:
-                    desc = clean_text(artifact.description)
-                    used = (
-                        4
-                        + (len(score_str) + 2 if score_str else 0)
-                        + (len(domain_str) + 2 if domain_str else 0)
-                    )
-                    desc_width = content_width - used
-                    section.append(
-                        clip_text(desc, max(10, desc_width)), style="italic dim"
-                    )
-            elif self.state.artifact_processing:
-                if is_paused:
-                    section.append("paused", style="dim italic")
-                else:
-                    section.append("processing...", style="cyan italic")
-                section.append("\n    ", style="dim")
-            elif (
-                not self.state.artifact_queue.is_empty()
-                or not self.state.artifact_score_queue.is_empty()
-            ):
-                queued = len(self.state.artifact_queue) + len(
-                    self.state.artifact_score_queue
+                art_row.detail_parts = _score_detail(
+                    artifact.score,
+                    artifact.physics_domain,
+                    artifact.description,
                 )
-                section.append(f"streaming {queued} items...", style="cyan italic")
-                section.append("\n    ", style="dim")
-            elif is_worker_complete("artifact"):
-                if self.state.cost_limit_reached:
-                    section.append("cost limit", style="yellow")
-                else:
-                    section.append("complete", style="green")
-                section.append("\n    ", style="dim")
-            elif should_show_idle(
-                self.state.artifact_processing,
-                self.state.artifact_queue,
-            ):
-                if is_paused:
-                    section.append("paused", style="dim italic")
-                else:
-                    section.append("idle", style="dim italic")
-                section.append("\n    ", style="dim")
-            else:
-                section.append("...", style="dim italic")
-                section.append("\n    ", style="dim")
+            rows.append(art_row)
 
-        # IMAGE section - 2 lines: image id, then score + domain + caption
-        image = self.state.current_image
+        # IMAGE activity
         if not self.state.scan_only:
-            section.append("\n")
-            section.append("  IMAGE   ", style="bold green")
-            if image:
-                # Line 1: Image ID (clipped)
-                title_width = content_width - self.LABEL_WIDTH
-                section.append(
-                    self._clip_title(image.image_id, title_width), style="white"
-                )
-                section.append("\n")
-
-                # Line 2: Score, physics domain, caption/description
-                section.append("    ", style="dim")
-                score_str = ""
-                if image.score is not None:
-                    if image.score >= 0.7:
-                        style = "bold green"
-                    elif image.score >= 0.4:
-                        style = "yellow"
-                    else:
-                        style = "red"
-                    score_str = f"{image.score:.2f}"
-                    section.append(f"{score_str}  ", style=style)
-
-                domain_str = ""
-                if image.physics_domain:
-                    domain_str = image.physics_domain
-                    section.append(f"{domain_str}  ", style="cyan")
-
-                desc = image.caption or image.description
-                if desc:
-                    desc = clean_text(desc)
-                    used = (
-                        4
-                        + (len(score_str) + 2 if score_str else 0)
-                        + (len(domain_str) + 2 if domain_str else 0)
-                    )
-                    desc_width = content_width - used
-                    section.append(
-                        clip_text(desc, max(10, desc_width)), style="italic dim"
-                    )
-            elif self.state.image_processing:
-                if is_paused:
-                    section.append("paused", style="dim italic")
-                else:
-                    section.append("processing...", style="cyan italic")
-                section.append("\n    ", style="dim")
-            elif not self.state.image_queue.is_empty():
-                queued = len(self.state.image_queue)
-                section.append(f"streaming {queued} items...", style="cyan italic")
-                section.append("\n    ", style="dim")
-            elif is_worker_complete("image"):
+            image = self.state.current_image
+            img_row = ActivityRowConfig(
+                name="IMAGE",
+                style="bold green",
+                is_processing=self.state.image_processing,
+                is_paused=is_paused,
+                queue_size=(
+                    len(self.state.image_queue)
+                    if not self.state.image_queue.is_empty()
+                    and not image
+                    and not self.state.image_processing
+                    else 0
+                ),
+            )
+            if _worker_complete("image") and not image:
+                img_row.is_complete = True
                 if self.state.cost_limit_reached:
-                    section.append("cost limit", style="yellow")
-                else:
-                    section.append("complete", style="green")
-                section.append("\n    ", style="dim")
-            elif should_show_idle(
-                self.state.image_processing,
-                self.state.image_queue,
-            ):
-                if is_paused:
-                    section.append("paused", style="dim italic")
-                else:
-                    section.append("idle", style="dim italic")
-                section.append("\n    ", style="dim")
-            else:
-                section.append("...", style="dim italic")
-                section.append("\n    ", style="dim")
+                    img_row.complete_label = "cost limit"
+            if image:
+                img_row.primary_text = self._clip_title(
+                    image.image_id, content_width - LABEL_WIDTH
+                )
+                desc = image.caption or image.description
+                img_row.detail_parts = _score_detail(
+                    image.score, image.physics_domain, desc
+                )
+            rows.append(img_row)
 
-        return section
+        return build_activity_section(rows, content_width)
 
     def _build_resources_section(self) -> Text:
-        """Build the resource consumption gauges with ETA/ETC like paths CLI."""
-        section = Text()
-        gw = self.gauge_width
+        """Build the resource consumption gauges using unified builder."""
+        # Compute ETC
+        total_facility_cost = self.state.accumulated_cost + self.state.run_cost
+        etc = total_facility_cost
+        cpp = self.state.cost_per_page
+        if cpp and cpp > 0 and self.state.pending_score > 0:
+            etc += self.state.pending_score * cpp
+        cpa = self.state.cost_per_artifact_score
+        if cpa and cpa > 0 and self.state.pending_artifact_score > 0:
+            etc += self.state.pending_artifact_score * cpa
+        cpi = self.state.cost_per_image_score
+        if cpi and cpi > 0 and self.state.pending_image_score > 0:
+            etc += self.state.pending_image_score * cpi
 
-        # TIME row with ETA
-        section.append("  TIME    ", style="bold cyan")
+        # Build stats
+        stats: list[tuple[str, str, str]] = [
+            (
+                "scored",
+                str(self.state.pages_scored + self.state.pages_ingested),
+                "blue",
+            ),
+            ("ingested", str(self.state.pages_ingested), "magenta"),
+            ("skipped", str(self.state.pages_skipped), "yellow"),
+        ]
 
-        eta = None if self.state.scan_only else self.state.eta_seconds
-        if eta is not None and eta > 0:
-            total_est = self.state.elapsed + eta
-            section.append_text(make_resource_gauge(self.state.elapsed, total_est, gw))
-        else:
-            section.append("━" * gw, style="cyan")
-
-        section.append(f"  {format_time(self.state.elapsed)}", style="bold")
-
-        if eta is not None:
-            if eta <= 0:
-                # Show which limit was reached
-                limit_reason = self.state.limit_reason
-                if limit_reason == "cost":
-                    section.append("  cost limit reached", style="yellow dim")
-                elif limit_reason == "page":
-                    section.append("  page limit reached", style="yellow dim")
-                else:
-                    section.append("  complete", style="green dim")
-            else:
-                section.append(f"  ETA {format_time(eta)}", style="dim")
-        section.append("\n")
-
-        # COST row (hidden in scan_only mode)
-        if not self.state.scan_only:
-            section.append("  COST    ", style="bold yellow")
-            section.append_text(
-                make_resource_gauge(self.state.run_cost, self.state.cost_limit, gw)
-            )
-            section.append(f"  ${self.state.run_cost:.2f}", style="bold")
-            section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
-            section.append("\n")
-
-            # TOTAL row - cumulative cost with ETC (Estimated Total Cost)
-            # ETC predicts cost to complete all pending score work:
-            #   remaining page score cost + remaining artifact score cost
-            total_facility_cost = self.state.accumulated_cost + self.state.run_cost
-            has_pending = (
-                self.state.pending_score > 0 or self.state.pending_artifact_score > 0
-            )
-            if total_facility_cost > 0 or has_pending:
-                section.append("  TOTAL   ", style="bold white")
-
-                # Predict remaining cost from per-item rates
-                etc = total_facility_cost
-                cpp = self.state.cost_per_page
-                if cpp and cpp > 0 and self.state.pending_score > 0:
-                    etc += self.state.pending_score * cpp
-                cpa = self.state.cost_per_artifact_score
-                if cpa and cpa > 0 and self.state.pending_artifact_score > 0:
-                    etc += self.state.pending_artifact_score * cpa
-                cpi = self.state.cost_per_image_score
-                if cpi and cpi > 0 and self.state.pending_image_score > 0:
-                    etc += self.state.pending_image_score * cpi
-
-                if etc > 0:
-                    section.append_text(
-                        make_resource_gauge(total_facility_cost, etc, gw)
-                    )
-                else:
-                    section.append("━" * gw, style="white")
-
-                section.append(f"  ${total_facility_cost:.2f}", style="bold")
-                if etc > total_facility_cost:
-                    section.append(f"  ETC ${etc:.2f}", style="dim")
-                section.append("\n")
-
-        # STATS row - graph state with pending work
-        section.append("  STATS   ", style="bold magenta")
-        section.append(
-            f"scored={self.state.pages_scored + self.state.pages_ingested}",
-            style="blue",
-        )
-        section.append(f"  ingested={self.state.pages_ingested}", style="magenta")
-        section.append(f"  skipped={self.state.pages_skipped}", style="yellow")
-
-        # Pending work by worker type (combined page + artifact + image)
+        # Pending work
         pending_score = self.state.pending_score + self.state.pending_artifact_score
         pending_ingest = self.state.pending_ingest + self.state.pending_artifact_ingest
-        pending_parts = []
-        if pending_score > 0:
-            pending_parts.append(f"score:{pending_score}")
-        if pending_ingest > 0:
-            pending_parts.append(f"ingest:{pending_ingest}")
-        if self.state.pending_image_score > 0:
-            pending_parts.append(f"image:{self.state.pending_image_score}")
-        if pending_parts:
-            section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
-        return section
+        # Determine limit reason
+        limit_reason = self.state.limit_reason
+
+        config = ResourceConfig(
+            elapsed=self.state.elapsed,
+            eta=None if self.state.scan_only else self.state.eta_seconds,
+            run_cost=self.state.run_cost,
+            cost_limit=self.state.cost_limit,
+            accumulated_cost=self.state.accumulated_cost,
+            etc=etc if etc > total_facility_cost else None,
+            scan_only=self.state.scan_only,
+            limit_reason=limit_reason,
+            stats=stats,
+            pending=[
+                ("score", pending_score),
+                ("ingest", pending_ingest),
+                ("image", self.state.pending_image_score),
+            ],
+        )
+        return build_resource_section(config, self.gauge_width)
 
     def _build_servers_section(self) -> Text | None:
         """Build SERVERS status row from service monitor.

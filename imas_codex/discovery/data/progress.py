@@ -31,15 +31,19 @@ from imas_codex.discovery.base.progress import (
     LABEL_WIDTH,
     METRICS_WIDTH,
     MIN_WIDTH,
+    ActivityRowConfig,
+    ProgressRowConfig,
+    ResourceConfig,
     StreamQueue,
+    build_activity_section,
+    build_progress_section,
+    build_resource_section,
     build_worker_status_section,
     clean_text,
     clip_text,
     compute_bar_width,
     compute_gauge_width,
     format_time,
-    make_bar,
-    make_resource_gauge,
 )
 from imas_codex.discovery.base.supervision import (
     SupervisedWorkerGroup,
@@ -335,91 +339,62 @@ class DataProgressDisplay:
         )
 
     def _build_progress_section(self) -> Text:
-        """Build the main progress bars.
+        """Build the main progress bars using unified builder.
 
         Progress semantics:
         - SCAN: Shows total signals discovered. Progress bar fills as scan completes.
         - ENRICH: Shows enriched count relative to total signals discovered.
         - CHECK: Shows checked count relative to enriched signals.
-
-        Note: total_signals is the high water mark (all signals ever discovered),
-        not the current count in 'discovered' status which decreases as signals
-        are enriched.
         """
-        section = Text()
-        bar_width = self.bar_width
-
-        # Total signals in graph is our TEC (total eventually consistent)
         total = max(self.state.total_signals, 1)
         enriched = self.state.signals_enriched + self.state.signals_checked
         checked = self.state.signals_checked
-
-        # SCAN row - shows total signals discovered
-        # Progress = (enriched + checked) / total when scan is done,
-        # or scan progress during active scanning
-        section.append("  SCAN    ", style="bold blue")
-        if self.state.scan_processing or self.state.signals_discovered > 0:
-            # Active scan or scan pending - show actual discovered signals
-            ratio = 1.0 if self.state.total_signals > 0 else 0
-        else:
-            # Scan complete - show full bar
-            ratio = 1.0
-        section.append(make_bar(ratio, bar_width), style="blue")
-        section.append(f" {total:>6,}", style="bold")
-        section.append("     ", style="dim")  # No percentage for scanning
-        if self.state.discover_rate and self.state.discover_rate > 0:
-            section.append(f" {self.state.discover_rate:>5.1f}/s", style="dim")
-        section.append("\n")
-
-        # ENRICH row - shows enriched progress relative to total discovered
-        enrich_pct = enriched / total * 100 if total > 0 else 0
-
-        if self.state.discover_only:
-            section.append("  ENRICH  ", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("   disabled", style="dim italic")
-        else:
-            section.append("  ENRICH  ", style="bold green")
-            ratio = min(enriched / total, 1.0) if total > 0 else 0
-            section.append(make_bar(ratio, bar_width), style="green")
-            section.append(f" {enriched:>6,}", style="bold")
-            section.append(f" {enrich_pct:>3.0f}%", style="cyan")
-            if self.state.enrich_rate and self.state.enrich_rate > 0:
-                section.append(f" {self.state.enrich_rate:>5.1f}/s", style="dim")
-        section.append("\n")
-
-        # CHECK row - shows checked relative to enriched
-        # Denominator is (enriched + checked) = signals that passed enrichment
         check_denom = max(enriched, 1)
-        check_pct = checked / check_denom * 100 if check_denom > 0 else 0
 
-        if self.state.discover_only or self.state.enrich_only:
-            section.append("  CHECK   ", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("  disabled", style="dim italic")
-        else:
-            section.append("  CHECK   ", style="bold magenta")
-            ratio = min(checked / check_denom, 1.0) if check_denom > 0 else 0
-            section.append(make_bar(ratio, bar_width), style="magenta")
-            section.append(f" {checked:>6,}", style="bold")
-            section.append(f" {check_pct:>3.0f}%", style="cyan")
-            if self.state.check_rate and self.state.check_rate > 0:
-                section.append(f" {self.state.check_rate:>5.1f}/s", style="dim")
-
-        return section
+        rows = [
+            ProgressRowConfig(
+                name="SCAN",
+                style="bold blue",
+                completed=total,
+                total=total,
+                rate=self.state.discover_rate,
+                show_pct=False,
+            ),
+            ProgressRowConfig(
+                name="ENRICH",
+                style="bold green",
+                completed=enriched,
+                total=total,
+                rate=self.state.enrich_rate,
+                disabled=self.state.discover_only,
+            ),
+            ProgressRowConfig(
+                name="CHECK",
+                style="bold magenta",
+                completed=checked,
+                total=check_denom,
+                rate=self.state.check_rate,
+                disabled=self.state.discover_only or self.state.enrich_only,
+            ),
+        ]
+        return build_progress_section(rows, self.bar_width)
 
     def _build_activity_section(self) -> Text:
-        """Build the current activity section with two lines per streamer."""
-        section = Text()
+        """Build the current activity section using unified builder."""
         content_width = self.width - 6
+        rows: list[ActivityRowConfig] = []
 
-        # SCAN section (2 lines)
+        # SCAN activity
         scan = self.state.current_scan
-        section.append("  SCAN    ", style="bold blue")
+        scan_row = ActivityRowConfig(
+            name="SCAN",
+            style="bold blue",
+            is_processing=self.state.scan_processing,
+            processing_label="scanning...",
+        )
         if scan:
-            # First line: show epoch phase or path
+            # Primary: epoch phase or path
             if scan.epoch_phase:
-                # Show epoch detection progress
                 if scan.epoch_phase == "coarse":
                     pct = (
                         int(100 * scan.epoch_shots_scanned / scan.epoch_total_shots)
@@ -436,177 +411,122 @@ class DataProgressDisplay:
                     )
                 else:
                     status = f"building {scan.epoch_boundaries_found} epochs"
-                section.append(status, style="cyan")
+                scan_row.primary_text = status
             else:
                 path = scan.node_path or scan.signal_id
-                section.append(clip_text(path, content_width - 10), style="white")
-            section.append("\n")
-            # Second line: tree name, boundaries found, signal count
-            section.append("           ", style="dim")  # 11 spaces align with content
+                scan_row.primary_text = clip_text(path, content_width - 10)
+
+            # Detail line
+            parts: list[tuple[str, str]] = []
             if scan.tree_name:
-                section.append(f"tree={scan.tree_name}  ", style="cyan")
+                parts.append((f"tree={scan.tree_name}  ", "cyan"))
             if scan.epoch_phase and scan.epoch_boundaries_found > 0:
-                section.append(
-                    f"{scan.epoch_boundaries_found} epochs detected", style="yellow"
+                parts.append(
+                    (f"{scan.epoch_boundaries_found} epochs detected", "yellow")
                 )
             elif scan.signals_in_tree > 0:
-                # Only show signal count when not in epoch detection phase
-                section.append(f"{scan.signals_in_tree:,} nodes scanned", style="dim")
-        elif self.state.scan_processing:
-            section.append("scanning...", style="cyan italic")
-            section.append("\n")
-            section.append("           ", style="dim")
-            if self.state.current_tree:
-                section.append(f"tree={self.state.current_tree}", style="cyan")
-        else:
-            section.append("idle", style="dim italic")
-            section.append("\n")
-            section.append("           ", style="dim")
-        section.append("\n")
+                parts.append((f"{scan.signals_in_tree:,} nodes scanned", "dim"))
+            scan_row.detail_parts = parts or None
+        elif self.state.scan_processing and self.state.current_tree:
+            scan_row.primary_text = ""  # Will show processing label
+            scan_row.detail_parts = [(f"tree={self.state.current_tree}", "cyan")]
+            # Override: show custom processing with tree info
+            scan_row.is_processing = True
+        rows.append(scan_row)
 
-        # ENRICH section (2 lines)
+        # ENRICH activity
         if not self.state.discover_only:
             enrich = self.state.current_enrich
-            section.append("  ENRICH  ", style="bold green")
+            enrich_row = ActivityRowConfig(
+                name="ENRICH",
+                style="bold green",
+                is_processing=self.state.enrich_processing,
+                processing_label="classifying...",
+            )
             if enrich:
-                section.append(
-                    clip_text(enrich.signal_id, content_width - 10), style="white"
+                enrich_row.primary_text = clip_text(
+                    enrich.signal_id, content_width - 10
                 )
-                section.append("\n")
-                section.append(
-                    "           ", style="dim"
-                )  # 11 spaces align with content
+                parts = []
                 if enrich.physics_domain:
-                    section.append(f"{enrich.physics_domain}  ", style="cyan")
+                    parts.append((f"{enrich.physics_domain}  ", "cyan"))
                 if enrich.description:
                     desc = clean_text(enrich.description)
                     used = 10 + (
                         len(enrich.physics_domain) + 2 if enrich.physics_domain else 0
                     )
-                    section.append(
-                        clip_text(desc, content_width - used), style="italic dim"
-                    )
-            elif self.state.enrich_processing:
-                section.append("classifying...", style="cyan italic")
-                section.append("\n")
-                section.append("           ", style="dim")
-            else:
-                section.append("idle", style="dim italic")
-                section.append("\n")
-                section.append("           ", style="dim")
-            section.append("\n")
+                    parts.append((clip_text(desc, content_width - used), "italic dim"))
+                enrich_row.detail_parts = parts or None
+            rows.append(enrich_row)
 
-        # CHECK section (2 lines)
+        # CHECK activity
         if not self.state.discover_only and not self.state.enrich_only:
             validate = self.state.current_check
-            section.append("  CHECK   ", style="bold magenta")
+            check_row = ActivityRowConfig(
+                name="CHECK",
+                style="bold magenta",
+                is_processing=self.state.check_processing,
+                processing_label="testing...",
+            )
             if validate:
+                # Primary: shot + status
                 shot_str = f"shot={validate.shot}" if validate.shot else ""
                 if validate.success is True:
-                    section.append(f"{shot_str} success", style="green")
+                    check_row.primary_text = f"{shot_str} success"
                 elif validate.success is False:
                     err = validate.error[:40] if validate.error else "failed"
-                    section.append(f"{shot_str} {err}", style="red")
+                    check_row.primary_text = f"{shot_str} {err}"
                 else:
-                    section.append(f"{shot_str} testing...", style="cyan italic")
-                section.append("\n")
-                # Second line: signal ID
-                section.append("          ", style="dim")  # 10 spaces for CHECK
-                section.append(
-                    clip_text(validate.signal_id, content_width - 10), style="dim"
-                )
-            elif self.state.check_processing:
-                section.append("testing...", style="cyan italic")
-                section.append("\n")
-                section.append("          ", style="dim")
-            else:
-                section.append("idle", style="dim italic")
-                section.append("\n")
-                section.append("          ", style="dim")
+                    check_row.primary_text = f"{shot_str} testing..."
+                # Detail: signal ID
+                check_row.detail_parts = [
+                    (clip_text(validate.signal_id, content_width - 10), "dim")
+                ]
+            rows.append(check_row)
 
-        return section
+        return build_activity_section(rows, content_width)
 
     def _build_resources_section(self) -> Text:
-        """Build the resource consumption gauges."""
-        section = Text()
-        gw = self.gauge_width
-
-        # TIME row
-        section.append("  TIME    ", style="bold cyan")
-        eta = None if self.state.discover_only else self.state.eta_seconds
-        if eta is not None and eta > 0:
-            total_est = self.state.elapsed + eta
-            section.append_text(make_resource_gauge(self.state.elapsed, total_est, gw))
-        else:
-            section.append("━" * gw, style="cyan")
-        section.append(f"  {format_time(self.state.elapsed)}", style="bold")
-        if eta is not None and eta > 0:
-            section.append(f"  ETA {format_time(eta)}", style="dim")
-        section.append("\n")
-
-        # COST row
-        if not self.state.discover_only:
-            section.append("  COST    ", style="bold yellow")
-            section.append_text(
-                make_resource_gauge(self.state.run_cost, self.state.cost_limit, gw)
-            )
-            section.append(f"  ${self.state.run_cost:.2f}", style="bold")
-            section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
-            section.append("\n")
-
-            # TOTAL row - progress toward estimated total cost (ETC)
-            # Cost accumulates from enrichment, so estimate based on signals remaining
-            total_cost = self.state.accumulated_cost + self.state.run_cost
-            signals_enriched = self.state.run_enriched
-            signals_remaining = self.state.pending_enrich + self.state.pending_check
-
-            # Compute ETC (Estimated Total Cost)
-            etc = total_cost
-            if signals_enriched > 0 and signals_remaining > 0:
-                cost_per_signal = self.state.run_cost / signals_enriched
-                etc = total_cost + (cost_per_signal * signals_remaining)
-
-            # Always show TOTAL row when not discover_only (matches TIME/COST pattern)
-            section.append("  TOTAL   ", style="bold white")
-            # Progress bar shows current cost toward ETC
-            if etc > 0 and etc > total_cost:
-                section.append_text(make_resource_gauge(total_cost, etc, gw))
-            else:
-                # No estimate yet or complete - show full bar
-                section.append("━" * gw, style="white")
-
-            section.append(f"  ${total_cost:.2f}", style="bold")
-            # Show ETC (dynamic estimate)
-            if etc > total_cost:
-                section.append(f"  ETC ${etc:.2f}", style="dim")
-            section.append("\n")
-
-        # STATS row - show counts and pending work
+        """Build the resource consumption gauges using unified builder."""
         total = self.state.total_signals
         enriched = self.state.signals_enriched + self.state.signals_checked
         checked = self.state.signals_checked
 
-        section.append("  STATS   ", style="bold magenta")
-        section.append(f"discovered={total}", style="blue")
-        section.append(f"  enriched={enriched}", style="green")
-        section.append(f"  checked={checked}", style="magenta")
+        # Compute ETC
+        total_cost = self.state.accumulated_cost + self.state.run_cost
+        etc = total_cost
+        signals_enriched = self.state.run_enriched
+        signals_remaining = self.state.pending_enrich + self.state.pending_check
+        if signals_enriched > 0 and signals_remaining > 0:
+            cost_per_signal = self.state.run_cost / signals_enriched
+            etc = total_cost + (cost_per_signal * signals_remaining)
 
-        # Show pending work counts
-        pending_parts = []
-        if self.state.pending_enrich > 0:
-            pending_parts.append(f"enrich:{self.state.pending_enrich}")
-        if self.state.pending_check > 0:
-            pending_parts.append(f"check:{self.state.pending_check}")
-        if pending_parts:
-            section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
-
-        # Failed/skipped last
+        # Build stats
+        stats: list[tuple[str, str, str]] = [
+            ("discovered", str(total), "blue"),
+            ("enriched", str(enriched), "green"),
+            ("checked", str(checked), "magenta"),
+        ]
         if self.state.signals_failed > 0:
-            section.append(f"  failed={self.state.signals_failed}", style="red")
+            stats.append(("failed", str(self.state.signals_failed), "red"))
         if self.state.signals_skipped > 0:
-            section.append(f"  skipped={self.state.signals_skipped}", style="dim")
+            stats.append(("skipped", str(self.state.signals_skipped), "dim"))
 
-        return section
+        config = ResourceConfig(
+            elapsed=self.state.elapsed,
+            eta=None if self.state.discover_only else self.state.eta_seconds,
+            run_cost=self.state.run_cost,
+            cost_limit=self.state.cost_limit,
+            accumulated_cost=self.state.accumulated_cost,
+            etc=etc if etc > total_cost else None,
+            scan_only=self.state.discover_only,
+            stats=stats,
+            pending=[
+                ("enrich", self.state.pending_enrich),
+                ("check", self.state.pending_check),
+            ],
+        )
+        return build_resource_section(config, self.gauge_width)
 
     def _build_display(self) -> Panel:
         """Build the complete display."""

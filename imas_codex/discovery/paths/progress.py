@@ -28,15 +28,18 @@ from imas_codex.discovery.base.progress import (
     LABEL_WIDTH,
     METRICS_WIDTH,
     MIN_WIDTH,
+    ActivityRowConfig,
+    ProgressRowConfig,
+    ResourceConfig,
     StreamQueue,
+    build_activity_section,
+    build_progress_section,
+    build_resource_section,
     clean_text,
     clip_path,
     clip_text,
     compute_bar_width,
     compute_gauge_width,
-    format_time,
-    make_bar,
-    make_resource_gauge,
 )
 
 if TYPE_CHECKING:
@@ -406,192 +409,131 @@ class ParallelProgressDisplay:
         return header
 
     def _build_progress_section(self) -> Text:
-        """Build the main progress bars for scan and score.
+        """Build the main progress bars using unified builder.
 
         Pipeline: discovered → scanning → scanned → scoring → scored/skipped
-                                                            (excluded at any point)
-
-        SCAN shows: paths that completed scanning / all paths needing to be scanned
-        SCORE shows: paths that completed scoring / all paths needing to scored
-
-        The key insight: SCAN completion includes paths currently being scored
-        (they have already been scanned), while SCORE completion only includes
-        terminal states (scored + skipped).
-
-        Note: `excluded` paths have status='skipped' AND terminal_reason='excluded'.
-        They are counted in both `skipped` and `excluded` stats. We subtract
-        `excluded` from both numerator and denominator to avoid double-counting.
         """
-        section = Text()
-
-        bar_width = self.bar_width
-
-        # SCAN progress: paths that have finished scanning vs all that need scanning
-        # Completed scan = scanned + scoring + scored + (skipped - excluded)
-        #   - excluded paths were pre-filtered, never actually scanned
-        #   - skipped includes excluded, so subtract to avoid double-counting
-        # Total needing scan = total - excluded (everything except excluded needs scanning)
+        # SCAN: paths that finished scan / total needing scan
         scanned_paths = (
             self.state.pending_score
             + self.state.scored
             + self.state.skipped
             - self.state.excluded
         )
-        scan_total = self.state.total - self.state.excluded
-        if scan_total <= 0:
-            scan_total = 1
-        scan_pct = (scanned_paths / scan_total * 100) if scan_total > 0 else 0
+        scan_total = max(self.state.total - self.state.excluded, 1)
 
-        # SCORE progress: paths that completed LLM scoring vs all needing scoring
-        # Excludes 'skipped' since those include bulk-skipped paths that never
-        # entered the scorer queue (e.g., data container children)
-        # Completed = scored only (paths that went through LLM)
-        # Total = pending_score + scored
+        # SCORE: paths through LLM / total needing scoring
         scored_paths = self.state.scored
-        score_total = self.state.pending_score + self.state.scored
-        if score_total <= 0:
-            score_total = 1
-        score_pct = (scored_paths / score_total * 100) if score_total > 0 else 0
+        score_total = max(self.state.pending_score + self.state.scored, 1)
 
-        # SCAN row: shows full exploration scanning progress
-        if self.state.score_only:
-            section.append("  SCAN    ", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
-        else:
-            section.append("  SCAN    ", style="bold blue")
-            scan_ratio = min(scanned_paths / scan_total, 1.0) if scan_total > 0 else 0
-            section.append(make_bar(scan_ratio, bar_width), style="blue")
-            section.append(f" {scanned_paths:>6,}", style="bold")
-            section.append(f" {scan_pct:>3.0f}%", style="cyan")
-            # Show combined rate (scan + expand)
-            combined_rate = sum(
-                r for r in [self.state.scan_rate, self.state.expand_rate] if r
-            )
-            if combined_rate > 0:
-                section.append(f" {combined_rate:>5.1f}/s", style="dim")
-        section.append("\n")
+        # ENRICH: enriched / total needing enrichment
+        enrich_total = max(self.state.pending_enrich + self.state.run_enriched, 1)
 
-        # SCORE row: shows full exploration scoring progress
-        if self.state.scan_only:
-            section.append("  SCORE   ", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
-        else:
-            section.append("  SCORE   ", style="bold green")
-            score_ratio = min(scored_paths / score_total, 1.0) if score_total > 0 else 0
-            section.append(make_bar(score_ratio, bar_width), style="green")
-            section.append(f" {scored_paths:>6,}", style="bold")
-            section.append(f" {score_pct:>3.0f}%", style="cyan")
-            # Show combined rate (score + rescore)
-            combined_rate = sum(
-                r for r in [self.state.score_rate, self.state.rescore_rate] if r
-            )
-            if combined_rate > 0:
-                section.append(f" {combined_rate:>5.1f}/s", style="dim")
-        section.append("\n")
+        # Combined rates
+        scan_rate = (
+            sum(r for r in [self.state.scan_rate, self.state.expand_rate] if r) or None
+        )
+        score_rate = (
+            sum(r for r in [self.state.score_rate, self.state.rescore_rate] if r)
+            or None
+        )
 
-        # ENRICH row: shows deep analysis progress on high-value paths
-        # Enrichment runs on paths where should_enrich=true (scored by LLM)
-        if self.state.scan_only:
-            section.append("  ENRICH  ", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
-        else:
-            section.append("  ENRICH  ", style="bold magenta")
-            # Completed enrichment = run_enriched
-            # Total = pending_enrich + run_enriched
-            enrich_total = self.state.pending_enrich + self.state.run_enriched
-            if enrich_total <= 0:
-                enrich_total = 1
-            enrich_ratio = min(self.state.run_enriched / enrich_total, 1.0)
-            enrich_pct = (
-                self.state.run_enriched / enrich_total * 100 if enrich_total > 0 else 0
-            )
-            section.append(make_bar(enrich_ratio, bar_width), style="magenta")
-            section.append(f" {self.state.run_enriched:>6,}", style="bold")
-            section.append(f" {enrich_pct:>3.0f}%", style="cyan")
-            if self.state.enrich_rate and self.state.enrich_rate > 0:
-                section.append(f" {self.state.enrich_rate:>5.1f}/s", style="dim")
-
-        return section
+        rows = [
+            ProgressRowConfig(
+                name="SCAN",
+                style="bold blue",
+                completed=scanned_paths,
+                total=scan_total,
+                rate=scan_rate,
+                disabled=self.state.score_only,
+            ),
+            ProgressRowConfig(
+                name="SCORE",
+                style="bold green",
+                completed=scored_paths,
+                total=score_total,
+                rate=score_rate,
+                disabled=self.state.scan_only,
+            ),
+            ProgressRowConfig(
+                name="ENRICH",
+                style="bold magenta",
+                completed=self.state.run_enriched,
+                total=enrich_total,
+                rate=self.state.enrich_rate,
+                disabled=self.state.scan_only,
+            ),
+        ]
+        return build_progress_section(rows, self.bar_width)
 
     def _build_activity_section(self) -> Text:
-        """Build the current activity section showing what's happening now.
-
-        Format:
-          SCAN <path>
-            <stats>
-          SCORE <path>  <score> <reason>
-        """
-        section = Text()
+        """Build the current activity section using unified builder."""
+        content_width = self.width - 6
+        rows: list[ActivityRowConfig] = []
 
         scan = self.state.current_scan
         score = self.state.current_score
 
-        # Helper to determine if worker should show "idle"
-        # Only show idle when worker is not processing AND queue is empty
-        def should_show_idle(processing: bool, queue: StreamQueue) -> bool:
-            return not processing and queue.is_empty()
-
-        # SCAN section - always 2 lines for consistent height
-        section.append("  SCAN    ", style="bold blue")
+        # SCAN activity
+        scan_row = ActivityRowConfig(
+            name="SCAN",
+            style="bold blue",
+            is_processing=self.state.scan_processing,
+            queue_size=(
+                len(self.state.scan_queue)
+                if not self.state.scan_queue.is_empty()
+                and not scan
+                and not self.state.scan_processing
+                else 0
+            ),
+        )
         if scan:
-            section.append(
-                clip_path(scan.path, self.width - self.LABEL_WIDTH - 4), style="white"
-            )
-            section.append("\n")
-            # Stats indented below
-            section.append("    ", style="dim")
-            section.append(f"{scan.files} files", style="cyan")
-            section.append(", ", style="dim")
-            section.append(f"{scan.dirs} dirs", style="cyan")
+            scan_row.primary_text = clip_path(scan.path, self.width - LABEL_WIDTH - 4)
+            parts: list[tuple[str, str]] = [
+                (f"{scan.files} files", "cyan"),
+                (", ", "dim"),
+                (f"{scan.dirs} dirs", "cyan"),
+            ]
             if scan.has_code:
-                section.append("  ", style="dim")
-                section.append("code project", style="green dim")
-        elif self.state.scan_processing:
-            section.append("processing...", style="cyan italic")
-            section.append("\n    ", style="dim")  # Empty second line
-        elif should_show_idle(self.state.scan_processing, self.state.scan_queue):
-            section.append("idle", style="dim italic")
-            section.append("\n    ", style="dim")  # Empty second line
-        else:
-            # Queue has items but nothing displayed yet (waiting for tick)
-            section.append("...", style="dim italic")
-            section.append("\n    ", style="dim")
-        section.append("\n")
+                parts.append(("  ", "dim"))
+                parts.append(("code project", "green dim"))
+            scan_row.detail_parts = parts
+        rows.append(scan_row)
 
-        # SCORE section - always 2 lines for consistent height (skip in scan_only mode)
+        # SCORE activity (skip in scan_only)
         if not self.state.scan_only:
-            section.append("  SCORE   ", style="bold green")
+            score_row = ActivityRowConfig(
+                name="SCORE",
+                style="bold green",
+                is_processing=self.state.score_processing,
+                queue_size=(
+                    len(self.state.score_queue)
+                    if not self.state.score_queue.is_empty()
+                    and not score
+                    and not self.state.score_processing
+                    else 0
+                ),
+            )
             if score:
-                # Show path with terminal indicator
-                path_display = clip_path(score.path, self.width - self.LABEL_WIDTH - 14)
-                section.append(path_display, style="white")
+                # Path with terminal indicator
+                path_display = clip_path(score.path, self.width - LABEL_WIDTH - 14)
                 if not score.should_expand:
-                    section.append(" terminal", style="magenta")
-                section.append("\n")
-                # Score details indented below (matching SCAN layout)
-                section.append("    ", style="dim")
+                    path_display += " terminal"
+                score_row.primary_text = path_display
 
-                # Always show score if available
+                # Detail line
+                parts = []
                 if score.score is not None:
-                    # Color code the score
-                    if score.score >= 0.7:
-                        style = "bold green"
-                    elif score.score >= 0.4:
-                        style = "yellow"
-                    else:
-                        style = "red"
-                    section.append(f"{score.score:.2f}", style=style)
+                    style = (
+                        "bold green"
+                        if score.score >= 0.7
+                        else "yellow"
+                        if score.score >= 0.4
+                        else "red"
+                    )
+                    parts.append((f"{score.score:.2f}", style))
 
-                    # Calculate available width for description
-                    # Layout: "    0.85  " = 10 chars, leave 2 for padding
                     desc_width = self.width - 12
-
-                    # Build description for line 2
-                    # Priority: description (LLM reasoning) > purpose (category)
-                    # For terminal paths with terminal_reason (empty, access_denied), show that
                     if score.terminal_reason:
                         desc = score.terminal_reason.replace("_", " ")
                     elif score.description:
@@ -600,193 +542,108 @@ class ParallelProgressDisplay:
                         desc = clean_text(score.purpose)
                     else:
                         desc = ""
-
                     if desc:
-                        # Use clip_text for end-clipping, cap at 65 to prevent wrapping
-                        clipped_desc = clip_text(desc, min(desc_width, 65))
-                        section.append(f"  {clipped_desc}", style="italic dim")
+                        parts.append(
+                            (
+                                f"  {clip_text(desc, min(desc_width, 65))}",
+                                "italic dim",
+                            )
+                        )
                 elif score.skipped:
-                    # No score available, just show skipped status
-                    desc_width = self.width - 16  # "    skipped  " = ~12 chars
-                    section.append("skipped", style="yellow")
+                    parts.append(("skipped", "yellow"))
                     if score.skip_reason:
                         reason = clean_text(score.skip_reason)
-                        section.append(
-                            f"  {clip_text(reason, desc_width)}", style="dim"
-                        )
-            elif self.state.score_processing:
-                section.append("processing...", style="cyan italic")
-                section.append("\n    ", style="dim")  # Empty second line
-            elif should_show_idle(self.state.score_processing, self.state.score_queue):
-                section.append("idle", style="dim italic")
-                section.append("\n    ", style="dim")  # Empty second line
-            else:
-                # Queue has items but nothing displayed yet
-                section.append("...", style="dim italic")
-                section.append("\n    ", style="dim")
-            section.append("\n")
+                        parts.append((f"  {clip_text(reason, self.width - 16)}", "dim"))
 
-        # ENRICH section - always 2 lines for consistent height (skip in scan_only mode)
+                score_row.detail_parts = parts or None
+            rows.append(score_row)
+
+        # ENRICH activity (skip in scan_only)
         if not self.state.scan_only:
             enrich = self.state.current_enrich
+            enrich_row = ActivityRowConfig(
+                name="ENRICH",
+                style="bold magenta",
+                is_processing=self.state.enrich_processing,
+            )
             queue_empty = self.state.enrich_queue.is_empty()
-            section.append("  ENRICH  ", style="bold magenta")
-            # Show current item if queue still has items OR we're still processing
-            # Once queue is drained and worker is idle, show "idle" instead of stale item
             if enrich and (not queue_empty or self.state.enrich_processing):
-                section.append(
-                    clip_path(enrich.path, self.width - self.LABEL_WIDTH - 4),
-                    style="white",
+                enrich_row.primary_text = clip_path(
+                    enrich.path, self.width - LABEL_WIDTH - 4
                 )
-                section.append("\n")
-                # Stats indented below
-                section.append("    ", style="dim")
-                # Format bytes nicely
+                parts = []
+                # Size
                 if enrich.total_bytes >= 1_000_000:
                     size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
                 elif enrich.total_bytes >= 1_000:
                     size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
                 else:
                     size_str = f"{enrich.total_bytes}B"
-                section.append(size_str, style="cyan")
+                parts.append((size_str, "cyan"))
                 if enrich.total_lines > 0:
-                    section.append(f"  {enrich.total_lines:,} LOC", style="cyan")
-                # Show top languages
+                    parts.append((f"  {enrich.total_lines:,} LOC", "cyan"))
                 if enrich.languages:
                     langs = ", ".join(enrich.languages[:3])
-                    section.append(f"  [{langs}]", style="green dim")
-                # Show multiformat indicator
+                    parts.append((f"  [{langs}]", "green dim"))
                 if enrich.is_multiformat:
-                    section.append("  multiformat", style="yellow")
+                    parts.append(("  multiformat", "yellow"))
                 elif enrich.read_matches > 0 or enrich.write_matches > 0:
-                    section.append(
-                        f"  r:{enrich.read_matches} w:{enrich.write_matches}",
-                        style="dim",
+                    parts.append(
+                        (
+                            f"  r:{enrich.read_matches} w:{enrich.write_matches}",
+                            "dim",
+                        )
                     )
-            elif self.state.enrich_processing:
-                section.append("processing...", style="cyan italic")
-                section.append("\n    ", style="dim")  # Empty second line
-            elif queue_empty:
-                # Queue drained and not processing - truly idle
-                section.append("idle", style="dim italic")
-                section.append("\n    ", style="dim")  # Empty second line
-            else:
-                # Queue has items but nothing displayed yet (waiting for rate limit)
-                section.append("...", style="dim italic")
-                section.append("\n    ", style="dim")
+                enrich_row.detail_parts = parts
+            elif not self.state.enrich_processing and queue_empty:
+                pass  # Will show "idle"
+            rows.append(enrich_row)
 
-        return section
+        return build_activity_section(rows, content_width)
 
     def _build_resources_section(self) -> Text:
-        """Build the resource consumption gauges.
+        """Build the resource consumption gauges using unified builder."""
+        # Compute ETC
+        total_facility_cost = self.state.accumulated_cost + self.state.run_cost
+        etc = total_facility_cost
+        cpp = self.state.cost_per_path
+        if cpp and cpp > 0:
+            pending = self.state.pending_scan + self.state.pending_score
+            etc += pending * cpp
+        if self.state.run_rescored > 0 and self.state._run_rescore_cost > 0:
+            cost_per_rescore = self.state._run_rescore_cost / self.state.run_rescored
+            etc += self.state.pending_rescore * cost_per_rescore
 
-        Order: TIME, COST, TOTAL (as requested for visual flow).
-        """
-        section = Text()
+        # Build stats
+        stats: list[tuple[str, str, str]] = [
+            ("depth", str(self.state.max_depth), "cyan"),
+            ("scored", str(self.state.scored), "green"),
+            ("skipped", str(self.state.skipped), "yellow"),
+        ]
 
-        # TIME row first - elapsed with ETA
-        section.append("  TIME    ", style="bold cyan")
+        # Extra stats appended at end
+        extra_stats: list[tuple[str, str, str]] = [
+            ("excluded", str(self.state.excluded), "dim"),
+        ]
 
-        # Estimate total time if we have an ETA
-        eta = None if self.state.scan_only else self.state.eta_seconds
-        gw = self.gauge_width
-        if eta is not None and eta > 0:
-            total_est = self.state.elapsed + eta
-            section.append_text(make_resource_gauge(self.state.elapsed, total_est, gw))
-        else:
-            # Unknown total - show elapsed only with full bar (complete or unknown)
-            section.append("━" * gw, style="cyan")
-
-        section.append(f"  {format_time(self.state.elapsed)}", style="bold")
-
-        if eta is not None:
-            if eta <= 0:
-                # Show which limit was reached - budget, path, or complete
-                limit_reason = self.state.limit_reason
-                if limit_reason == "cost":
-                    section.append("  cost limit reached", style="yellow dim")
-                elif limit_reason == "path":
-                    section.append("  path limit reached", style="yellow dim")
-                else:
-                    section.append("  complete", style="green dim")
-            else:
-                section.append(f"  ETA {format_time(eta)}", style="dim")
-        section.append("\n")
-
-        # COST row - this run's cost against budget (hidden in scan_only mode)
-        if not self.state.scan_only:
-            section.append("  COST    ", style="bold yellow")
-            # Cost bar uses cost_limit as 100% - no estimates
-            section.append_text(
-                make_resource_gauge(self.state.run_cost, self.state.cost_limit, gw)
-            )
-            section.append(f"  ${self.state.run_cost:.2f}", style="bold")
-            section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
-            section.append("\n")
-
-            # TOTAL row - progress toward estimated total cost (ETC)
-            # Always show if we have any cost data (accumulated or current run)
-            total_facility_cost = self.state.accumulated_cost + self.state.run_cost
-            if total_facility_cost > 0 or self.state.pending_score > 0:
-                section.append("  TOTAL   ", style="bold white")
-                # Dynamic ETC based on cost per path and remaining work
-                # Include both score and rescore pending work
-                cpp = self.state.cost_per_path
-                etc = total_facility_cost  # Estimated Total Cost
-                if cpp and cpp > 0:
-                    pending_score_paths = (
-                        self.state.pending_scan + self.state.pending_score
-                    )
-                    etc += pending_score_paths * cpp
-                # Add rescore cost estimate
-                if self.state.run_rescored > 0 and self.state._run_rescore_cost > 0:
-                    cost_per_rescore = (
-                        self.state._run_rescore_cost / self.state.run_rescored
-                    )
-                    etc += self.state.pending_rescore * cost_per_rescore
-
-                # Progress bar shows current cost toward ETC
-                if etc > 0:
-                    section.append_text(
-                        make_resource_gauge(total_facility_cost, etc, gw)
-                    )
-                else:
-                    section.append("━" * gw, style="white")
-
-                section.append(f"  ${total_facility_cost:.2f}", style="bold")
-                # Show ETC (dynamic estimate)
-                if etc > total_facility_cost:
-                    section.append(f"  ETC ${etc:.2f}", style="dim")
-                section.append("\n")
-
-        # STATS row - terminal state counts from graph (not session-based)
-        # Shows actual graph state, not just this run's processed counts
-        section.append("  STATS   ", style="bold magenta")
-        section.append(f"depth={self.state.max_depth}", style="cyan")
-
-        # Terminal states (paths that have reached end of pipeline)
-        section.append(f"  scored={self.state.scored}", style="green")
-        section.append(f"  skipped={self.state.skipped}", style="yellow")
-
-        # Pending work by worker type - show what each worker is waiting for
-        # Format: scan:5 expand:12 enrich:3 rescore:0
-        pending_parts = []
-        if self.state.pending_scan > 0:
-            pending_parts.append(f"scan:{self.state.pending_scan}")
-        if self.state.pending_expand > 0:
-            pending_parts.append(f"expand:{self.state.pending_expand}")
-        if self.state.pending_enrich > 0:
-            pending_parts.append(f"enrich:{self.state.pending_enrich}")
-        if self.state.pending_rescore > 0:
-            pending_parts.append(f"rescore:{self.state.pending_rescore}")
-
-        if pending_parts:
-            section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
-
-        # Excluded last
-        section.append(f"  excluded={self.state.excluded}", style="dim")
-
-        return section
+        config = ResourceConfig(
+            elapsed=self.state.elapsed,
+            eta=None if self.state.scan_only else self.state.eta_seconds,
+            run_cost=self.state.run_cost,
+            cost_limit=self.state.cost_limit,
+            accumulated_cost=self.state.accumulated_cost,
+            etc=etc if etc > total_facility_cost else None,
+            scan_only=self.state.scan_only,
+            limit_reason=self.state.limit_reason,
+            stats=stats + extra_stats,
+            pending=[
+                ("scan", self.state.pending_scan),
+                ("expand", self.state.pending_expand),
+                ("enrich", self.state.pending_enrich),
+                ("rescore", self.state.pending_rescore),
+            ],
+        )
+        return build_resource_section(config, self.gauge_width)
 
     def _build_display(self) -> Panel:
         """Build the complete display."""

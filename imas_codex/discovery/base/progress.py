@@ -378,20 +378,29 @@ class BaseProgressState:
 
 
 @dataclass
-class WorkerRowConfig:
-    """Configuration for a single worker progress row."""
+class ProgressRowConfig:
+    """Configuration for a single pipeline progress row.
 
-    name: str  # e.g., "SCAN", "SCORE"
+    Each row represents a pipeline stage (SCAN, SCORE, PAGE, etc.)
+    with a progress bar, count, percentage, and optional rate.
+    """
+
+    name: str  # e.g., "SCAN", "SCORE", "PAGE"
     style: str  # e.g., "bold blue", "bold green"
     completed: int = 0
     total: int = 1
     rate: float | None = None
     disabled: bool = False
     disabled_msg: str = "disabled"
+    show_pct: bool = True  # False for rows like SCAN that just show count
 
 
-def build_worker_row(config: WorkerRowConfig, bar_width: int = 40) -> Text:
-    """Build a single worker progress row.
+# Keep old name as alias for compatibility
+WorkerRowConfig = ProgressRowConfig
+
+
+def build_progress_row(config: ProgressRowConfig, bar_width: int = 40) -> Text:
+    """Build a single pipeline progress row.
 
     Format: "  SCAN   ━━━━━━━━━━────────────────  1,234  42%  77.1/s"
     """
@@ -403,7 +412,7 @@ def build_worker_row(config: WorkerRowConfig, bar_width: int = 40) -> Text:
         row.append(f"    {config.disabled_msg}", style="dim italic")
         return row
 
-    # Worker name
+    # Pipeline stage name
     row.append(f"  {config.name:<6} ", style=config.style)
 
     # Progress bar
@@ -414,13 +423,41 @@ def build_worker_row(config: WorkerRowConfig, bar_width: int = 40) -> Text:
 
     # Stats
     row.append(f" {config.completed:>6,}", style="bold")
-    row.append(f" {pct:>3.0f}%", style="cyan")
+    if config.show_pct:
+        row.append(f" {pct:>3.0f}%", style="cyan")
+    else:
+        row.append("     ", style="dim")
 
     # Rate (if available)
     if config.rate and config.rate > 0:
         row.append(f" {config.rate:>5.1f}/s", style="dim")
 
     return row
+
+
+# Keep old name as alias for compatibility
+build_worker_row = build_progress_row
+
+
+def build_progress_section(
+    rows: list[ProgressRowConfig],
+    bar_width: int = 40,
+) -> Text:
+    """Build the PROGRESS section from a list of pipeline stage rows.
+
+    Each CLI defines its pipeline stages as ``ProgressRowConfig`` objects,
+    and this function renders them uniformly.
+
+    Args:
+        rows: Pipeline stage configurations.
+        bar_width: Width of progress bars (use ``compute_bar_width()``).
+    """
+    section = Text()
+    for i, config in enumerate(rows):
+        if i > 0:
+            section.append("\n")
+        section.append_text(build_progress_row(config, bar_width))
+    return section
 
 
 # =============================================================================
@@ -614,71 +651,6 @@ def build_header(
     return header
 
 
-def build_resource_section(
-    elapsed: float,
-    eta: float | None,
-    run_cost: float | None,
-    cost_limit: float | None,
-    total_cost: float | None = None,
-    extra_stats: list[tuple[str, str, str]] | None = None,
-    gauge_width: int = 20,
-    scan_only: bool = False,
-) -> Text:
-    """Build resource consumption section (TIME, COST, STATS).
-
-    Args:
-        elapsed: Elapsed time in seconds
-        eta: Estimated time remaining in seconds (or None)
-        run_cost: Cost for this run (or None)
-        cost_limit: Cost limit (or None)
-        total_cost: Total accumulated cost (or None)
-        extra_stats: List of (label, value, style) tuples for STATS row
-        gauge_width: Width of resource gauges
-        scan_only: If True, hide cost gauges
-    """
-    section = Text()
-
-    # TIME row
-    section.append("  TIME    ", style="bold cyan")
-
-    if eta is not None and eta > 0:
-        total_est = elapsed + eta
-        section.append_text(make_resource_gauge(elapsed, total_est, gauge_width))
-    else:
-        section.append("━" * gauge_width, style="cyan")
-
-    section.append(f"  {format_time(elapsed)}", style="bold")
-
-    if eta is not None:
-        if eta <= 0:
-            section.append("  complete", style="green dim")
-        else:
-            section.append(f"  ETA {format_time(eta)}", style="dim")
-    section.append("\n")
-
-    # COST row (hidden in scan_only mode)
-    if not scan_only and run_cost is not None and cost_limit is not None:
-        section.append("  COST    ", style="bold yellow")
-        section.append_text(make_resource_gauge(run_cost, cost_limit, gauge_width))
-        section.append(f"  ${run_cost:.2f}", style="bold")
-        section.append(f" / ${cost_limit:.2f}", style="dim")
-
-        # Show total accumulated cost if different from run_cost
-        if total_cost is not None and total_cost > run_cost:
-            section.append(f"  (total: ${total_cost:.2f})", style="dim")
-        section.append("\n")
-
-    # STATS row (if extra_stats provided)
-    if extra_stats:
-        section.append("  STATS   ", style="bold magenta")
-        for i, (label, value, style) in enumerate(extra_stats):
-            if i > 0:
-                section.append("  ", style="dim")
-            section.append(f"{label}={value}", style=style)
-
-    return section
-
-
 # =============================================================================
 # Base Progress Display
 # =============================================================================
@@ -755,3 +727,228 @@ class ActivityItem:
     path: str = ""
     is_processing: bool = False  # True when awaiting batch result
     error: str | None = None
+
+
+# =============================================================================
+# Unified Activity Section Builder
+# =============================================================================
+
+
+@dataclass
+class ActivityRowConfig:
+    """Configuration for a single activity display row (2 lines).
+
+    Each activity row shows what a pipeline stage is currently doing.
+    The row always occupies 2 lines for layout stability.
+
+    States (checked in order):
+    1. ``content`` provided → render primary_text on line 1, detail_text on line 2
+    2. ``is_processing`` → show ``processing_label``
+    3. ``queue_size > 0`` → show "streaming N items..."
+    4. ``is_complete`` → show "complete" (or ``complete_label``)
+    5. ``is_paused`` → show "paused"
+    6. else → show "idle"
+    """
+
+    name: str  # Row label, e.g., "SCAN", "SCORE"
+    style: str  # Label style, e.g., "bold blue"
+
+    # Content (when an item is being displayed)
+    primary_text: str = ""  # Line 1: path, title, or ID
+    detail_parts: list[tuple[str, str]] | None = None  # Line 2: [(text, style), ...]
+
+    # State flags
+    is_processing: bool = False
+    processing_label: str = "processing..."
+    is_complete: bool = False
+    complete_label: str = "complete"
+    is_paused: bool = False
+    disabled: bool = False
+
+    # Queue state
+    queue_size: int = 0
+
+    @property
+    def has_content(self) -> bool:
+        """True when content is available to display."""
+        return bool(self.primary_text)
+
+
+def build_activity_section(
+    rows: list[ActivityRowConfig],
+    content_width: int = 80,
+) -> Text:
+    """Build the ACTIVITY section from a list of activity row configs.
+
+    Each row occupies exactly 2 lines for visual stability.
+    The ``content_width`` is typically ``display_width - 6`` to account
+    for panel padding and borders.
+
+    Args:
+        rows: Activity row configurations (one per pipeline stage).
+        content_width: Available width for content text.
+    """
+    label_width = LABEL_WIDTH
+    section = Text()
+
+    for i, row in enumerate(rows):
+        if i > 0:
+            section.append("\n")
+
+        if row.disabled:
+            continue
+
+        section.append(f"  {row.name:<6} ", style=row.style)
+
+        if row.has_content:
+            # Line 1: primary text
+            max_text = content_width - label_width
+            primary = row.primary_text
+            if len(primary) > max_text:
+                primary = primary[: max_text - 3] + "..."
+            section.append(primary, style="white")
+            section.append("\n")
+
+            # Line 2: detail parts
+            section.append("    ", style="dim")
+            if row.detail_parts:
+                for text, style in row.detail_parts:
+                    section.append(text, style=style)
+        elif row.is_processing:
+            label = "paused" if row.is_paused else row.processing_label
+            style = "dim italic" if row.is_paused else "cyan italic"
+            section.append(label, style=style)
+            section.append("\n    ", style="dim")
+        elif row.queue_size > 0:
+            section.append(f"streaming {row.queue_size} items...", style="cyan italic")
+            section.append("\n    ", style="dim")
+        elif row.is_complete:
+            section.append(row.complete_label, style="green")
+            section.append("\n    ", style="dim")
+        elif row.is_paused:
+            section.append("paused", style="dim italic")
+            section.append("\n    ", style="dim")
+        else:
+            section.append("idle", style="dim italic")
+            section.append("\n    ", style="dim")
+
+    return section
+
+
+# =============================================================================
+# Unified Resource Section Builder
+# =============================================================================
+
+
+@dataclass
+class ResourceConfig:
+    """Configuration for the resource consumption section.
+
+    Covers TIME, COST, TOTAL, and STATS rows.
+    """
+
+    elapsed: float
+    eta: float | None = None
+
+    # Cost tracking
+    run_cost: float | None = None
+    cost_limit: float | None = None
+    accumulated_cost: float = 0.0
+    etc: float | None = None  # Estimated Total Cost (pre-computed by caller)
+
+    # Customisation
+    scan_only: bool = False
+    limit_reason: str | None = None  # "cost", "path", "page", etc.
+
+    # STATS row: list of (label, value, style) tuples
+    stats: list[tuple[str, str, str]] | None = None
+
+    # STATS row: pending counts as (label, count) tuples
+    pending: list[tuple[str, int]] | None = None
+
+
+def build_resource_section(
+    config: ResourceConfig,
+    gauge_width: int = 20,
+) -> Text:
+    """Build the RESOURCES section (TIME, COST, TOTAL, STATS).
+
+    This replaces the per-CLI ``_build_resources_section`` methods with
+    a single unified implementation.
+
+    Args:
+        config: Resource configuration.
+        gauge_width: Width of resource gauge bars (use ``compute_gauge_width()``).
+    """
+    section = Text()
+
+    # TIME row
+    section.append("  TIME    ", style="bold cyan")
+
+    eta = None if config.scan_only else config.eta
+    if eta is not None and eta > 0:
+        total_est = config.elapsed + eta
+        section.append_text(make_resource_gauge(config.elapsed, total_est, gauge_width))
+    else:
+        section.append("━" * gauge_width, style="cyan")
+
+    section.append(f"  {format_time(config.elapsed)}", style="bold")
+
+    if eta is not None:
+        if eta <= 0:
+            if config.limit_reason:
+                section.append(
+                    f"  {config.limit_reason} limit reached", style="yellow dim"
+                )
+            else:
+                section.append("  complete", style="green dim")
+        else:
+            section.append(f"  ETA {format_time(eta)}", style="dim")
+    section.append("\n")
+
+    # COST row (hidden in scan_only mode)
+    if (
+        not config.scan_only
+        and config.run_cost is not None
+        and config.cost_limit is not None
+    ):
+        section.append("  COST    ", style="bold yellow")
+        section.append_text(
+            make_resource_gauge(config.run_cost, config.cost_limit, gauge_width)
+        )
+        section.append(f"  ${config.run_cost:.2f}", style="bold")
+        section.append(f" / ${config.cost_limit:.2f}", style="dim")
+        section.append("\n")
+
+        # TOTAL row - accumulated + run cost with ETC
+        total_cost = config.accumulated_cost + config.run_cost
+        etc = config.etc
+        show_total = total_cost > 0 or (etc is not None and etc > total_cost)
+
+        if show_total:
+            section.append("  TOTAL   ", style="bold white")
+            if etc is not None and etc > total_cost:
+                section.append_text(make_resource_gauge(total_cost, etc, gauge_width))
+            else:
+                section.append("━" * gauge_width, style="white")
+            section.append(f"  ${total_cost:.2f}", style="bold")
+            if etc is not None and etc > total_cost:
+                section.append(f"  ETC ${etc:.2f}", style="dim")
+            section.append("\n")
+
+    # STATS row
+    if config.stats:
+        section.append("  STATS   ", style="bold magenta")
+        for i, (label, value, style) in enumerate(config.stats):
+            if i > 0:
+                section.append("  ", style="dim")
+            section.append(f"{label}={value}", style=style)
+
+        # Pending work
+        if config.pending:
+            active = [(label, count) for label, count in config.pending if count > 0]
+            if active:
+                parts = [f"{label}:{count}" for label, count in active]
+                section.append(f"  pending=[{' '.join(parts)}]", style="cyan dim")
+
+    return section
