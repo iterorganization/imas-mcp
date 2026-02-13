@@ -1298,6 +1298,24 @@ class AgentsServer:
                 with GraphClient() as client:
                     skipped_dedup = 0
 
+                    # Ingestion gating: verify facility is allowed
+                    facility_ids = {
+                        item.get("facility_id")
+                        for item in valid_items
+                        if item.get("facility_id")
+                    }
+                    for fid in facility_ids:
+                        try:
+                            from imas_codex.graph.meta import gate_ingestion
+
+                            gate_ingestion(client, fid)
+                        except ValueError as gate_err:
+                            return {
+                                "processed": 0,
+                                "skipped": len(valid_items),
+                                "errors": [str(gate_err)],
+                            }
+
                     # SourceFile deduplication
                     if node_type == "SourceFile":
                         existing = client.query(

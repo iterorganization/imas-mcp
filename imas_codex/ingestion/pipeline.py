@@ -251,6 +251,16 @@ async def ingest_files(
     with GraphClient() as gc:
         gc.ensure_facility(facility)
 
+        # Ingestion gating: verify this graph allows the target facility
+        try:
+            from imas_codex.graph.meta import gate_ingestion
+
+            gate_ingestion(gc, facility)
+        except ValueError as e:
+            logger.error("Ingestion gated: %s", e)
+            report(0, 0, f"Ingestion blocked: {e}")
+            return stats
+
     vector_store = create_vector_store()
 
     # Deduplication check

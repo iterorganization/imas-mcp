@@ -1,29 +1,27 @@
 """Named graph profiles for multi-instance Neo4j management.
 
-Each profile maps a human-readable name to a Neo4j instance with a specific
-bolt port, HTTP port, data directory, and **host** — where Neo4j physically
-runs.  Facility names (iter, tcv, jt60sa, etc.) map to ports and hosts by
-convention — no config required.
+Graph identity and location are **orthogonal** concerns:
+- **name** — what data is in the graph (codex, tcv, sandbox)
+- **location** — where Neo4j physically runs (iter, tcv, local)
 
-The ``host`` field is an *absolute* property: ``"iter"`` means the ITER
-login node regardless of whether you are on ITER or WSL.  At connection
-time, ``is_local_host(host)`` (from ``imas_codex.remote.executor``)
-determines whether to connect directly or via a tunnel.
+Port convention (both bolt and HTTP offset together)::
 
-Switching is done via ``IMAS_CODEX_GRAPH`` env var or
-``[tool.imas-codex.graph].default`` in pyproject.toml.
-
-Port convention (both bolt and HTTP offset together):
     iter   → bolt 7687, http 7474  (Neo4j defaults)
     tcv    → bolt 7688, http 7475
     jt60sa → bolt 7689, http 7476
     jet    → bolt 7690, http 7477
-    west   → bolt 7691, http 7478
-    mast-u → bolt 7692, http 7479
-    asdex-u→ bolt 7693, http 7480
-    east   → bolt 7694, http 7481
-    diii-d → bolt 7695, http 7482
-    kstar  → bolt 7696, http 7483
+    ...
+
+When connecting to a **remote** host, auto-tunnels are established with
+a +10 000 offset to prevent port clashes::
+
+    Direct (on the host):    bolt = 7687 + offset
+    Tunneled (remote):       bolt = 17687 + offset
+
+Switching is done via:
+- ``IMAS_CODEX_GRAPH`` env — graph name (identity)
+- ``IMAS_CODEX_GRAPH_LOCATION`` env — where it runs (location override)
+- ``[tool.imas-codex.graph]`` in pyproject.toml
 
 Custom profiles override convention via ``[tool.imas-codex.graph.profiles.*]``
 in pyproject.toml.
@@ -33,35 +31,28 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 # ─── Port convention ────────────────────────────────────────────────────────
-# Ordered list — position determines port offset.  New facilities are appended
-# at the end so existing port assignments are stable.
+# Port offsets and host defaults are managed in pyproject.toml:
+#   [tool.imas-codex.graph.locations]  — offset per facility
+#   [tool.imas-codex.graph.hosts]      — SSH alias per facility
+# The constants below are minimal fallback defaults for the three core
+# facilities, used only when pyproject.toml is unavailable.
 
 BOLT_BASE_PORT = 7687
 HTTP_BASE_PORT = 7474
 
-FACILITY_PORT_OFFSETS: dict[str, int] = {
+# Fallback defaults — full table lives in pyproject.toml
+_FALLBACK_OFFSETS: dict[str, int] = {
     "iter": 0,
     "tcv": 1,
     "jt60sa": 2,
-    "jet": 3,
-    "west": 4,
-    "mast-u": 5,
-    "asdex-u": 6,
-    "east": 7,
-    "diii-d": 8,
-    "kstar": 9,
 }
-
-# Convention host defaults: known facilities that run on a remote host.
-# Profiles without a host entry (or not in this dict) default to None (local).
-FACILITY_HOST_DEFAULTS: dict[str, str] = {
+_FALLBACK_HOSTS: dict[str, str] = {
     "iter": "iter",
     "tcv": "tcv",
     "jt60sa": "jt60sa",
@@ -74,6 +65,26 @@ DATA_BASE_DIR = Path.home() / ".local" / "share" / "imas-codex"
 BACKUPS_DIR = DATA_BASE_DIR / "backups"
 
 
+def _get_all_offsets() -> dict[str, int]:
+    """Merge offsets from pyproject.toml with fallback defaults."""
+    from imas_codex.settings import _get_section
+
+    configured = _get_section("graph").get("locations", {})
+    merged = dict(_FALLBACK_OFFSETS)
+    merged.update({k: int(v) for k, v in configured.items()})
+    return merged
+
+
+def _get_all_hosts() -> dict[str, str]:
+    """Merge host defaults from pyproject.toml with fallback defaults."""
+    from imas_codex.settings import _get_section
+
+    configured = _get_section("graph").get("hosts", {})
+    merged = dict(_FALLBACK_HOSTS)
+    merged.update(configured)
+    return merged
+
+
 # ─── GraphProfile ───────────────────────────────────────────────────────────
 
 
@@ -82,9 +93,10 @@ class GraphProfile:
     """Resolved connection parameters for a named graph instance.
 
     Attributes:
-        name:      Profile name (e.g. ``"iter"``, ``"tcv"``).
-        host:      Where Neo4j physically runs — SSH alias, hostname,
-                   or ``None`` meaning ``"local"``.
+        name:      Graph identity name (e.g. ``"codex"``, ``"tcv"``).
+        location:  Where Neo4j physically runs — SSH alias, hostname,
+                   or ``"local"`` / ``None``.
+        host:      Alias for *location* (backward compat).
         uri:       Bolt URI (e.g. ``"bolt://localhost:7687"``).
         username:  Neo4j username.
         password:  Neo4j password.
@@ -102,6 +114,11 @@ class GraphProfile:
     http_port: int
     data_dir: Path
 
+    @property
+    def location(self) -> str:
+        """Where Neo4j runs — SSH alias or ``"local"``."""
+        return self.host or "local"
+
 
 # ─── Tunnel conflict detection ──────────────────────────────────────────────
 
@@ -112,19 +129,9 @@ def is_port_bound_by_tunnel(port: int = 7687) -> bool:
     This detects the case where an SSH tunnel is forwarding a remote Neo4j
     to localhost, which would conflict with starting a local Neo4j instance.
     """
-    try:
-        result = subprocess.run(
-            ["ss", "-tlnp"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        for line in result.stdout.splitlines():
-            if f":{port}" in line and "ssh" in line.lower():
-                return True
-        return False
-    except Exception:
-        return False
+    from imas_codex.remote.tunnel import is_port_bound_by_ssh
+
+    return is_port_bound_by_ssh(port)
 
 
 def check_graph_conflict(bolt_port: int = 7687) -> str | None:
@@ -148,6 +155,46 @@ def check_graph_conflict(bolt_port: int = 7687) -> str | None:
     return None
 
 
+# ─── Location helpers ───────────────────────────────────────────────────────
+
+
+def get_graph_location() -> str:
+    """Return the current graph location (where Neo4j runs).
+
+    Priority:
+        1. ``IMAS_CODEX_GRAPH_LOCATION`` environment variable
+        2. ``[tool.imas-codex.graph].location`` in pyproject.toml
+        3. Infer from graph name if it's a known facility
+        4. ``"iter"`` default
+    """
+    if env := os.getenv("IMAS_CODEX_GRAPH_LOCATION"):
+        return env
+
+    from imas_codex.settings import _get_section
+
+    graph_section = _get_section("graph")
+
+    # New-style: explicit location key
+    if location := graph_section.get("location"):
+        return location
+
+    # Backward compat: infer from default/name
+    name = graph_section.get("name") or graph_section.get("default", DEFAULT_PROFILE)
+    if name in _get_all_hosts():
+        return name
+
+    return DEFAULT_PROFILE
+
+
+def get_location_offset(location: str) -> int:
+    """Get the port offset for a location.
+
+    Checks ``[tool.imas-codex.graph.locations]`` in pyproject.toml first,
+    then falls back to the built-in defaults.
+    """
+    return _get_all_offsets().get(location, 0)
+
+
 # ─── Resolution ─────────────────────────────────────────────────────────────
 
 
@@ -156,27 +203,29 @@ def get_active_graph_name() -> str:
 
     Priority:
         1. ``IMAS_CODEX_GRAPH`` environment variable
-        2. ``[tool.imas-codex.graph].default`` in pyproject.toml
-        3. ``"iter"`` built-in default
+        2. ``[tool.imas-codex.graph].name`` in pyproject.toml
+        3. ``[tool.imas-codex.graph].default`` in pyproject.toml (back compat)
+        4. ``"iter"`` built-in default
     """
     if env := os.getenv("IMAS_CODEX_GRAPH"):
         return env
 
     from imas_codex.settings import _get_section
 
-    return _get_section("graph").get("default", DEFAULT_PROFILE)
+    graph_section = _get_section("graph")
+    return graph_section.get("name") or graph_section.get("default") or DEFAULT_PROFILE
 
 
 def _resolve_uri(host: str | None, bolt_port: int) -> str:
-    """Resolve the bolt URI based on host locality.
+    """Resolve the bolt URI based on host locality, with auto-tunneling.
 
     1. If host is None / "local" / matches local machine → direct localhost
     2. If not local → check ``IMAS_CODEX_TUNNEL_BOLT_{HOST}`` env for override
-    3. If no override → ``bolt://localhost:{bolt_port}`` (assume same-port tunnel)
+    3. If no override → auto-tunnel with +10000 offset
     """
     from imas_codex.remote.executor import is_local_host
 
-    if host is None or is_local_host(host):
+    if host is None or host == "local" or is_local_host(host):
         return f"bolt://localhost:{bolt_port}"
 
     # Non-local: check tunnel port override
@@ -190,10 +239,26 @@ def _resolve_uri(host: str | None, bolt_port: int) -> str:
         )
         return f"bolt://localhost:{tunnel_port}"
 
-    # No override — assume same-port tunnel
-    logger.debug(
-        "Remote host %s: using bolt://localhost:%d (assume same-port tunnel)",
+    # Auto-tunnel: remote_port + TUNNEL_OFFSET
+    from imas_codex.remote.tunnel import TUNNEL_OFFSET, ensure_tunnel
+
+    tunnel_port_int = bolt_port + TUNNEL_OFFSET
+    ok = ensure_tunnel(
+        port=bolt_port,
+        ssh_host=host,
+        tunnel_port=tunnel_port_int,
+    )
+    if ok:
+        logger.info(
+            "Auto-tunnel: %s:%d → localhost:%d", host, bolt_port, tunnel_port_int
+        )
+        return f"bolt://localhost:{tunnel_port_int}"
+
+    # Tunnel failed — fall back to same-port (user may have manual tunnel)
+    logger.warning(
+        "Auto-tunnel to %s:%d failed. Falling back to bolt://localhost:%d",
         host,
+        bolt_port,
         bolt_port,
     )
     return f"bolt://localhost:{bolt_port}"
@@ -207,24 +272,17 @@ def resolve_graph(name: str | None = None) -> GraphProfile:
            (escape-hatch overrides, applied last)
         2. Explicit ``[tool.imas-codex.graph.profiles.<name>]`` in pyproject.toml
         3. Convention-based port mapping for known facility names
+        4. Any name is accepted — uses location for port/host resolution
 
-    The ``host`` field is resolved from:
-        - Explicit ``host`` in profile config
-        - ``FACILITY_HOST_DEFAULTS`` for known facilities
-        - ``None`` (local) for everything else
-
-    The bolt URI is then derived via :func:`_resolve_uri`, which uses
-    ``is_local_host()`` to determine direct vs tunnel access.
+    **Name/location split**: The profile *name* is the graph identity
+    (what data is inside).  The *location* determines where Neo4j runs
+    and therefore which ports to use.
 
     Args:
         name: Profile name.  ``None`` resolves via :func:`get_active_graph_name`.
 
     Returns:
         Fully resolved :class:`GraphProfile`.
-
-    Raises:
-        ValueError: If *name* is not a known facility and has no explicit
-            profile configuration.
     """
     if name is None:
         name = get_active_graph_name()
@@ -245,28 +303,41 @@ def resolve_graph(name: str | None = None) -> GraphProfile:
         # Explicit profile — use its values, fall back to shared/convention
         bolt_port = explicit.get("bolt-port", _convention_bolt_port(name))
         http_port = explicit.get("http-port", _convention_http_port(name))
-        host = explicit.get("host", FACILITY_HOST_DEFAULTS.get(name))
+        host = explicit.get("host", _get_all_hosts().get(name))
         username = explicit.get("username", shared_username)
         password = explicit.get("password", shared_password)
         data_dir = Path(explicit.get("data-dir", str(_convention_data_dir(name))))
-    elif name in FACILITY_PORT_OFFSETS:
-        # Convention-based profile
+    elif name in _get_all_offsets():
+        # Convention-based profile for known facility
         bolt_port = _convention_bolt_port(name)
         http_port = _convention_http_port(name)
-        host = FACILITY_HOST_DEFAULTS.get(name)
+        host = _get_all_hosts().get(name)
         username = shared_username
         password = shared_password
         data_dir = _convention_data_dir(name)
     else:
-        msg = (
-            f"Unknown graph profile '{name}'. "
-            f"Known facilities: {', '.join(sorted(FACILITY_PORT_OFFSETS))}. "
-            f"Define a custom profile in pyproject.toml: "
-            f"[tool.imas-codex.graph.profiles.{name}]"
-        )
-        raise ValueError(msg)
+        # Unknown name — resolve via location for ports, allow any name
+        location = get_graph_location()
+        offset = get_location_offset(location)
+        bolt_port = BOLT_BASE_PORT + offset
+        http_port = HTTP_BASE_PORT + offset
+        host = _get_all_hosts().get(location)
+        username = shared_username
+        password = shared_password
+        data_dir = _convention_data_dir(location)
 
-    # Location-aware URI resolution
+    # Location override: IMAS_CODEX_GRAPH_LOCATION changes where we connect
+    if loc_override := os.getenv("IMAS_CODEX_GRAPH_LOCATION"):
+        if loc_override == "local":
+            host = None
+            offset = 0
+        else:
+            host = loc_override
+            offset = get_location_offset(loc_override)
+        bolt_port = BOLT_BASE_PORT + offset
+        http_port = HTTP_BASE_PORT + offset
+
+    # Location-aware URI resolution (with auto-tunneling)
     uri = _resolve_uri(host, bolt_port)
 
     # Env var escape hatches (always win)
@@ -294,12 +365,12 @@ def resolve_graph(name: str | None = None) -> GraphProfile:
 
 def _convention_bolt_port(name: str) -> int:
     """Bolt port for a known facility name, or base port for unknown."""
-    return BOLT_BASE_PORT + FACILITY_PORT_OFFSETS.get(name, 0)
+    return BOLT_BASE_PORT + _get_all_offsets().get(name, 0)
 
 
 def _convention_http_port(name: str) -> int:
     """HTTP port for a known facility name, or base port for unknown."""
-    return HTTP_BASE_PORT + FACILITY_PORT_OFFSETS.get(name, 0)
+    return HTTP_BASE_PORT + _get_all_offsets().get(name, 0)
 
 
 def _convention_data_dir(name: str) -> Path:
@@ -322,7 +393,7 @@ def list_profiles() -> list[GraphProfile]:
 
     graph_section = _get_section("graph")
     explicit_names = set(graph_section.get("profiles", {}).keys())
-    all_names = set(FACILITY_PORT_OFFSETS.keys()) | explicit_names
+    all_names = set(_get_all_offsets().keys()) | explicit_names
 
     result = []
     for name in sorted(all_names):

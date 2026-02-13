@@ -488,7 +488,8 @@ def graph() -> None:
       imas-codex graph dump          Export graph to archive
       imas-codex graph load <file>   Load graph archive
       imas-codex graph push          Push graph to GHCR
-      imas-codex graph pull          Pull graph from GHCR
+      imas-codex graph fetch         Download graph archive (no load)
+      imas-codex graph pull          Fetch + load (convenience)
       imas-codex graph list          List available versions
       imas-codex graph status        Show local status
       imas-codex graph clear         Clear graph (with auto-backup)
@@ -500,6 +501,7 @@ def graph() -> None:
       imas-codex graph db start      Start Neo4j server
       imas-codex graph db stop       Stop Neo4j server
       imas-codex graph db status     Check Neo4j status
+      imas-codex graph db profiles   List profiles and ports
 
     \b
       imas-codex graph tunnel start  Start SSH tunnel to remote graph
@@ -1548,6 +1550,84 @@ def graph_push(
     _dispatch_graph_quality(git_info, version_tag, target_registry)
 
 
+@graph.command("fetch")
+@click.option("-v", "--version", "version", default="latest")
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+@click.option("--token", envvar="GHCR_TOKEN")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    default=None,
+    help="Save archive to this path (default: auto-named in current directory)",
+)
+@click.option(
+    "--facility",
+    "-f",
+    default=None,
+    help="Fetch per-facility graph (e.g. tcv) from imas-codex-graph-{facility}",
+)
+def graph_fetch(
+    version: str,
+    registry: str | None,
+    token: str | None,
+    output: str | None,
+    facility: str | None,
+) -> Path:
+    """Fetch graph archive from GHCR without loading.
+
+    Downloads the archive to disk but does NOT load it into Neo4j.
+    Use 'graph load <archive>' to load it afterwards, or use
+    'graph pull' as a convenience for fetch + load.
+
+    When no --version is specified, fetches 'latest'. If 'latest' doesn't
+    exist, falls back to the most recent tag in the registry.
+    """
+    require_oras()
+
+    git_info = get_git_info()
+    target_registry = get_registry(git_info, registry)
+    pkg_name = get_package_name(facility)
+
+    # Resolve version: if "latest" doesn't exist, find most recent tag
+    resolved_version = version
+    if version == "latest":
+        resolved_version = _resolve_latest_tag(target_registry, token, pkg_name)
+
+    artifact_ref = f"{target_registry}/{pkg_name}:{resolved_version}"
+    click.echo(f"Fetching: {artifact_ref}")
+
+    login_to_ghcr(token)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+
+        result = subprocess.run(
+            ["oras", "pull", artifact_ref, "-o", str(tmp)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise click.ClickException(f"Fetch failed: {result.stderr}")
+
+        archives = list(tmp.glob("*.tar.gz"))
+        if not archives:
+            raise click.ClickException("No archive found in fetched artifact")
+
+        src_archive = archives[0]
+        if output:
+            dest = Path(output)
+        else:
+            dest = Path(f"{pkg_name}-{resolved_version}.tar.gz")
+
+        shutil.move(str(src_archive), str(dest))
+
+    size_mb = dest.stat().st_size / 1024 / 1024
+    click.echo(f"✓ Fetched: {dest} ({size_mb:.1f} MB)")
+    click.echo(f"  Load with: imas-codex graph load {dest}")
+    return dest
+
+
 @graph.command("pull")
 @click.option("-v", "--version", "version", default="latest")
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
@@ -1576,7 +1656,10 @@ def graph_pull(
     facility: str | None,
     graph: str | None,
 ) -> None:
-    """Pull graph archive from GHCR.
+    """Pull graph from GHCR and load it (convenience for fetch + load).
+
+    This is equivalent to running 'graph fetch' followed by 'graph load'.
+    Use 'graph fetch' if you only want to download without loading.
 
     When no --version is specified, pulls 'latest'. If 'latest' doesn't
     exist, falls back to the most recent tag in the registry.
@@ -2693,13 +2776,13 @@ def graph_tunnel() -> None:
     "--local-bolt-port",
     type=int,
     default=None,
-    help="Local port for bolt forwarding (default: same as remote)",
+    help="Local port for bolt forwarding (default: remote + tunnel offset)",
 )
 @click.option(
     "--local-http-port",
     type=int,
     default=None,
-    help="Local port for HTTP forwarding (default: same as remote)",
+    help="Local port for HTTP forwarding (default: remote + tunnel offset)",
 )
 def tunnel_start(
     host: str | None,
@@ -2709,10 +2792,14 @@ def tunnel_start(
 ) -> None:
     """Start SSH tunnel for remote graph access.
 
-    Forwards the remote Neo4j bolt and HTTP ports to localhost.
+    Forwards the remote Neo4j bolt and HTTP ports to localhost using
+    the shared tunnel utility. Default local ports use the tunnel offset
+    (+10000) to avoid clashing with local Neo4j instances.
+
     HOST defaults to the profile's configured host.
     """
     from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.remote.tunnel import TUNNEL_OFFSET, ensure_tunnel
 
     profile = resolve_graph(graph)
     target_host = host or profile.host
@@ -2724,56 +2811,38 @@ def tunnel_start(
             "Specify a host: imas-codex graph tunnel start <host>"
         )
 
-    local_bolt = local_bolt_port or profile.bolt_port
-    local_http = local_http_port or profile.http_port
-
-    # Check if tunnel already exists
-    from imas_codex.graph.profiles import is_port_bound_by_tunnel
-
-    if is_port_bound_by_tunnel(local_bolt):
-        click.echo(
-            f"Port {local_bolt} already has an SSH tunnel.\n"
-            "Use 'graph tunnel status' to see active tunnels."
-        )
-        return
-
-    # Check if a local Neo4j is on the same port
-    if is_neo4j_running(local_http):
-        click.echo(
-            f"Warning: A local service is already on HTTP port {local_http}.\n"
-            "The tunnel may conflict with it."
-        )
-        if not click.confirm("Continue anyway?"):
-            return
+    local_bolt = local_bolt_port or (profile.bolt_port + TUNNEL_OFFSET)
+    local_http = local_http_port or (profile.http_port + TUNNEL_OFFSET)
 
     click.echo(
         f"Starting tunnel to {target_host} "
-        f"(bolt:{local_bolt}→{profile.bolt_port}, "
-        f"http:{local_http}→{profile.http_port})"
+        f"(bolt: localhost:{local_bolt} → {target_host}:{profile.bolt_port}, "
+        f"http: localhost:{local_http} → {target_host}:{profile.http_port})"
     )
 
-    cmd = [
-        "ssh",
-        "-f",
-        "-N",
-        "-L",
-        f"{local_bolt}:localhost:{profile.bolt_port}",
-        "-L",
-        f"{local_http}:localhost:{profile.http_port}",
-        target_host,
-    ]
+    bolt_ok = ensure_tunnel(
+        port=profile.bolt_port,
+        ssh_host=target_host,
+        tunnel_port=local_bolt,
+    )
+    http_ok = ensure_tunnel(
+        port=profile.http_port,
+        ssh_host=target_host,
+        tunnel_port=local_http,
+    )
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise click.ClickException(f"SSH tunnel failed: {result.stderr}")
-
-    click.echo(f"✓ Tunnel active: {target_host}")
-    click.echo(f"  Bolt: localhost:{local_bolt} → {target_host}:{profile.bolt_port}")
-    click.echo(f"  HTTP: localhost:{local_http} → {target_host}:{profile.http_port}")
-
-    if local_bolt != profile.bolt_port:
-        env_key = f"IMAS_CODEX_TUNNEL_BOLT_{target_host.upper().replace('-', '_')}"
-        click.echo(f"\n  Set {env_key}={local_bolt} in .env for automatic detection")
+    if bolt_ok and http_ok:
+        click.echo(f"✓ Tunnel active: {target_host}")
+        click.echo(
+            f"  Bolt: localhost:{local_bolt} → {target_host}:{profile.bolt_port}"
+        )
+        click.echo(
+            f"  HTTP: localhost:{local_http} → {target_host}:{profile.http_port}"
+        )
+    elif bolt_ok:
+        click.echo("✓ Bolt tunnel active, HTTP tunnel failed")
+    else:
+        raise click.ClickException(f"Failed to establish tunnel to {target_host}.")
 
 
 @graph_tunnel.command("stop")
@@ -2791,6 +2860,7 @@ def tunnel_stop(host: str | None, graph: str | None) -> None:
     HOST defaults to the profile's configured host.
     """
     from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.remote.tunnel import stop_tunnel
 
     profile = resolve_graph(graph)
     target_host = host or profile.host
@@ -2801,35 +2871,27 @@ def tunnel_stop(host: str | None, graph: str | None) -> None:
             "with a profile that has a remote host."
         )
 
-    result = subprocess.run(
-        ["ssh", "-O", "exit", target_host],
-        capture_output=True,
-        text=True,
-    )
-
-    if result.returncode == 0:
+    if stop_tunnel(target_host):
         click.echo(f"✓ Tunnel to {target_host} stopped")
     else:
-        # Try pkill as fallback
-        result = subprocess.run(
-            ["pkill", "-f", f"ssh.*-N.*{target_host}"],
-            capture_output=True,
-        )
-        if result.returncode == 0:
-            click.echo(f"✓ Tunnel to {target_host} killed")
-        else:
-            click.echo(f"No active tunnel to {target_host} found")
+        click.echo(f"No active tunnel to {target_host} found")
 
 
 @graph_tunnel.command("status")
 def tunnel_status() -> None:
     """Show active SSH tunnels for graph connections."""
-    from imas_codex.graph.profiles import BOLT_BASE_PORT, FACILITY_PORT_OFFSETS
+    from imas_codex.graph.profiles import BOLT_BASE_PORT, _get_all_offsets
+    from imas_codex.remote.tunnel import TUNNEL_OFFSET
 
-    # Gather all known graph ports
-    graph_ports = set()
-    for offset in FACILITY_PORT_OFFSETS.values():
-        graph_ports.add(BOLT_BASE_PORT + offset)
+    offsets = _get_all_offsets()
+
+    # Gather all known graph ports (direct + tunneled)
+    graph_ports: dict[int, str] = {}
+    for name, offset in offsets.items():
+        direct_port = BOLT_BASE_PORT + offset
+        tunneled_port = direct_port + TUNNEL_OFFSET
+        graph_ports[direct_port] = name
+        graph_ports[tunneled_port] = f"{name} (tunneled)"
 
     try:
         result = subprocess.run(
@@ -2846,19 +2908,13 @@ def tunnel_status() -> None:
         for line in result.stdout.splitlines():
             if "ssh" not in line.lower():
                 continue
-            for port in graph_ports:
+            for port, facility in graph_ports.items():
                 if f":{port}" in line:
-                    tunnels.append((port, line.strip()))
+                    tunnels.append((port, facility, line.strip()))
 
         if tunnels:
             click.echo("Active graph SSH tunnels:")
-            for port, line in tunnels:
-                # Find which facility this port belongs to
-                facility = "unknown"
-                for name, offset in FACILITY_PORT_OFFSETS.items():
-                    if BOLT_BASE_PORT + offset == port:
-                        facility = name
-                        break
+            for port, facility, line in tunnels:
                 click.echo(f"  Port {port} ({facility}): {line}")
         else:
             click.echo("No active SSH tunnels on graph ports")

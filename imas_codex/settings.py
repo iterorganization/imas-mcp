@@ -215,8 +215,13 @@ def get_graph_password() -> str:
 
 
 def get_graph_name() -> str:
-    """Get the active graph profile name (e.g. ``"iter"``, ``"tcv"``)."""
+    """Get the active graph identity name (e.g. ``"codex"``, ``"tcv"``)."""
     return get_graph_profile().name
+
+
+def get_graph_location() -> str:
+    """Get the active graph location (e.g. ``"iter"``, ``"local"``)."""
+    return get_graph_profile().location
 
 
 # ─── Data dictionary settings ──────────────────────────────────────────────

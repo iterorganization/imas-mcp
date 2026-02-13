@@ -25,7 +25,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import socket
 import subprocess
 import time
 
@@ -98,8 +97,7 @@ def _try_start_service() -> bool:
 def _ensure_ssh_tunnel(port: int, ssh_host: str = "iter") -> bool:
     """Ensure SSH tunnel from workstation to ITER login node.
 
-    Only needed when running off-ITER. The tunnel forwards
-    localhost:PORT → login:PORT where the embedding server runs.
+    Delegates to the shared tunnel utility in ``imas_codex.remote.tunnel``.
 
     Args:
         port: Port to forward
@@ -108,59 +106,9 @@ def _ensure_ssh_tunnel(port: int, ssh_host: str = "iter") -> bool:
     Returns:
         True if tunnel is active (already existed or newly created)
     """
-    # Check if port is already bound locally
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1)
-            result = s.connect_ex(("127.0.0.1", port))
-            if result == 0:
-                logger.debug(
-                    "Port %d already bound locally, tunnel likely active", port
-                )
-                return True
-    except OSError:
-        pass
+    from imas_codex.remote.tunnel import ensure_tunnel
 
-    # Try to start SSH tunnel
-    logger.info("Starting SSH tunnel to %s (port %d)...", ssh_host, port)
-    try:
-        subprocess.run(
-            [
-                "ssh",
-                "-f",
-                "-N",
-                "-o",
-                "ExitOnForwardFailure=yes",
-                "-o",
-                "ServerAliveInterval=30",
-                "-o",
-                "ServerAliveCountMax=3",
-                "-o",
-                "ConnectTimeout=10",
-                "-L",
-                f"{port}:127.0.0.1:{port}",
-                ssh_host,
-            ],
-            timeout=15,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        # Give tunnel a moment to establish
-        time.sleep(1.0)
-        logger.info("SSH tunnel established to %s:%d", ssh_host, port)
-        return True
-    except subprocess.TimeoutExpired:
-        logger.warning("SSH tunnel start timed out")
-        return False
-    except subprocess.CalledProcessError as e:
-        logger.warning(
-            "SSH tunnel start failed: %s", e.stderr.strip() if e.stderr else e
-        )
-        return False
-    except FileNotFoundError:
-        logger.warning("ssh command not found")
-        return False
+    return ensure_tunnel(port=port, ssh_host=ssh_host)
 
 
 def ensure_embedding_ready(

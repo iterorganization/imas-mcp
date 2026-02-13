@@ -21,6 +21,14 @@ _ensure_fresh()
 del _ensure_fresh
 
 from imas_codex.graph.client import GraphClient  # noqa: E402
+from imas_codex.graph.meta import (  # noqa: E402
+    add_facility_to_meta,
+    check_graph_identity,
+    ensure_graph_meta,
+    gate_ingestion,
+    get_graph_meta,
+    remove_facility_from_meta,
+)
 from imas_codex.graph.models import (  # noqa: E402
     AnalysisCode,
     AnalysisCodeType,
@@ -54,6 +62,13 @@ from imas_codex.graph.schema import (  # noqa: E402
 __all__ = [
     # Client (fast import)
     "GraphClient",
+    # Graph identity (meta)
+    "add_facility_to_meta",
+    "check_graph_identity",
+    "ensure_graph_meta",
+    "gate_ingestion",
+    "get_graph_meta",
+    "remove_facility_from_meta",
     # Graph profiles
     "GraphProfile",
     "resolve_graph",

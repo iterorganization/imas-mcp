@@ -44,6 +44,15 @@ from imas_codex.remote.tools import (
     run_script,
 )
 
+# SSH tunnel management
+from imas_codex.remote.tunnel import (
+    TUNNEL_OFFSET,
+    ensure_tunnel,
+    is_port_bound_by_ssh,
+    is_tunnel_active,
+    stop_tunnel,
+)
+
 __all__ = [
     # Low-level executor
     "cleanup_stale_sockets",
@@ -51,6 +60,12 @@ __all__ = [
     "is_local_host",
     "run_command",
     "run_script_via_stdin",
+    # SSH tunnel management
+    "TUNNEL_OFFSET",
+    "ensure_tunnel",
+    "is_port_bound_by_ssh",
+    "is_tunnel_active",
+    "stop_tunnel",
     # High-level tools
     "FastTool",
     "FastToolsConfig",

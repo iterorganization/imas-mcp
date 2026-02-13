@@ -4,13 +4,13 @@ import pytest
 
 from imas_codex.graph.profiles import (
     BOLT_BASE_PORT,
-    FACILITY_HOST_DEFAULTS,
-    FACILITY_PORT_OFFSETS,
     HTTP_BASE_PORT,
     GraphProfile,
     _convention_bolt_port,
     _convention_data_dir,
     _convention_http_port,
+    _get_all_hosts,
+    _get_all_offsets,
     check_graph_conflict,
     get_active_graph_name,
     is_port_bound_by_tunnel,
@@ -42,15 +42,17 @@ class TestPortConvention:
 
     def test_all_facilities_have_unique_ports(self):
         """Every known facility has a unique bolt and http port."""
-        bolt_ports = {_convention_bolt_port(f) for f in FACILITY_PORT_OFFSETS}
-        http_ports = {_convention_http_port(f) for f in FACILITY_PORT_OFFSETS}
-        assert len(bolt_ports) == len(FACILITY_PORT_OFFSETS)
-        assert len(http_ports) == len(FACILITY_PORT_OFFSETS)
+        offsets = _get_all_offsets()
+        bolt_ports = {_convention_bolt_port(f) for f in offsets}
+        http_ports = {_convention_http_port(f) for f in offsets}
+        assert len(bolt_ports) == len(offsets)
+        assert len(http_ports) == len(offsets)
 
     def test_bolt_and_http_dont_clash(self):
         """Bolt and HTTP port ranges don't overlap."""
-        bolt_ports = {_convention_bolt_port(f) for f in FACILITY_PORT_OFFSETS}
-        http_ports = {_convention_http_port(f) for f in FACILITY_PORT_OFFSETS}
+        offsets = _get_all_offsets()
+        bolt_ports = {_convention_bolt_port(f) for f in offsets}
+        http_ports = {_convention_http_port(f) for f in offsets}
         assert bolt_ports.isdisjoint(http_ports)
 
     def test_unknown_facility_gets_base_ports(self):
@@ -92,6 +94,11 @@ class TestResolveGraph:
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+        # Treat tcv as local so auto-tunnel doesn't fire
+        monkeypatch.setattr(
+            "imas_codex.remote.executor.is_local_host",
+            lambda h: True,
+        )
 
         profile = resolve_graph("tcv")
         assert isinstance(profile, GraphProfile)
@@ -113,11 +120,18 @@ class TestResolveGraph:
         assert profile.http_port == 7474
         assert profile.uri == "bolt://localhost:7687"
 
-    def test_resolve_unknown_raises(self, monkeypatch):
-        """Unknown profile name raises ValueError."""
+    def test_resolve_unknown_uses_location_fallback(self, monkeypatch):
+        """Unknown profile name resolves via location fallback."""
         _load_pyproject_settings.cache_clear()
-        with pytest.raises(ValueError, match="Unknown graph profile"):
-            resolve_graph("nonexistent-facility")
+        monkeypatch.delenv("NEO4J_URI", raising=False)
+        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
+        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+        monkeypatch.delenv("IMAS_CODEX_GRAPH_LOCATION", raising=False)
+
+        profile = resolve_graph("nonexistent-facility")
+        # Falls through to location-based resolution using default location
+        assert profile.name == "nonexistent-facility"
+        assert isinstance(profile, GraphProfile)
 
     def test_env_uri_overrides_convention(self, monkeypatch):
         """NEO4J_URI env var overrides convention URI."""
@@ -161,7 +175,7 @@ class TestHostField:
     """Tests for the host field on GraphProfile."""
 
     def test_known_facility_has_host(self, monkeypatch):
-        """Known facilities in FACILITY_HOST_DEFAULTS get host set."""
+        """Known facilities in graph.hosts config get host set."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
@@ -181,7 +195,7 @@ class TestHostField:
         assert profile.host == "tcv"
 
     def test_unknown_host_facility_has_none(self, monkeypatch):
-        """Facility not in FACILITY_HOST_DEFAULTS gets host=None."""
+        """Facility not in graph.hosts config gets host=None."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
@@ -191,9 +205,9 @@ class TestHostField:
         assert profile.host is None
 
     def test_host_defaults_match_known_facilities(self):
-        """FACILITY_HOST_DEFAULTS only contains known facilities."""
-        for name in FACILITY_HOST_DEFAULTS:
-            assert name in FACILITY_PORT_OFFSETS
+        """All hosts have a corresponding location offset."""
+        for name in _get_all_hosts():
+            assert name in _get_all_offsets()
 
 
 # ── Tunnel conflict detection ───────────────────────────────────────────────
@@ -261,7 +275,7 @@ class TestListProfiles:
 
         profiles = list_profiles()
         names = {p.name for p in profiles}
-        assert names >= set(FACILITY_PORT_OFFSETS.keys())
+        assert names >= set(_get_all_offsets().keys())
 
     def test_profiles_sorted_by_name(self, monkeypatch):
         """list_profiles returns sorted by name."""
