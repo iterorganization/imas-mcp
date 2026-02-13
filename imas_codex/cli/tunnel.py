@@ -377,9 +377,13 @@ def tunnel_status() -> None:
         profile = resolve_graph(auto_tunnel=False)
         name = profile.name
         known_ports[profile.bolt_port] = f"neo4j-bolt ({name})"
-        known_ports[profile.bolt_port + TUNNEL_OFFSET] = f"neo4j-bolt ({name}, tunneled)"
+        known_ports[profile.bolt_port + TUNNEL_OFFSET] = (
+            f"neo4j-bolt ({name}, tunneled)"
+        )
         known_ports[profile.http_port] = f"neo4j-http ({name})"
-        known_ports[profile.http_port + TUNNEL_OFFSET] = f"neo4j-http ({name}, tunneled)"
+        known_ports[profile.http_port + TUNNEL_OFFSET] = (
+            f"neo4j-http ({name}, tunneled)"
+        )
     except Exception:
         from imas_codex.graph.profiles import BOLT_BASE_PORT, HTTP_BASE_PORT
 
@@ -388,6 +392,18 @@ def tunnel_status() -> None:
         known_ports[HTTP_BASE_PORT] = "neo4j-http"
         known_ports[HTTP_BASE_PORT + TUNNEL_OFFSET] = "neo4j-http (tunneled)"
     known_ports[embed_port] = "embed"
+
+    # Build port→location map for SSH-forwarded ports so we can show
+    # "iter" (or whichever host) instead of a generic "(ssh)" marker.
+    port_host: dict[int, str] = {}
+    try:
+        host = profile.host  # type: ignore[possibly-undefined]
+        for p in known_ports:
+            if p >= TUNNEL_OFFSET:
+                port_host[p] = host
+        port_host[embed_port] = host
+    except Exception:
+        pass
 
     # Identify which ports are bound by SSH (via ss -tlnp)
     ssh_ports: set[int] = set()
@@ -418,7 +434,11 @@ def tunnel_status() -> None:
     if tunnels:
         click.echo("Active tunnels:")
         for port, label, is_ssh in tunnels:
-            marker = " (ssh)" if is_ssh else ""
+            if is_ssh:
+                location = port_host.get(port, "ssh")
+                marker = f" ({location})"
+            else:
+                marker = ""
             click.echo(f"  :{port}  {label}{marker}")
     else:
         click.echo("No active tunnels on known service ports")
