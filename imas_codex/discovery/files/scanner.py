@@ -35,6 +35,7 @@ def _scan_remote_path(
     ssh_host: str | None = None,
     max_depth: int = 5,
     timeout: int = 60,
+    max_files_per_path: int = 5000,
 ) -> list[dict]:
     """Scan a remote path for supported files via SSH.
 
@@ -85,6 +86,20 @@ def _scan_remote_path(
                     "file_category": detect_file_category(line),
                     "facility_id": facility,
                 }
+            )
+
+        if len(files) > max_files_per_path:
+            logger.warning(
+                "Path %s:%s has %d files (limit %d), truncating",
+                host,
+                remote_path,
+                len(files),
+                max_files_per_path,
+            )
+            files = files[:max_files_per_path]
+        elif files:
+            logger.info(
+                "Found %d files in %s:%s", len(files), host, remote_path
             )
 
         return files
@@ -165,39 +180,50 @@ def _persist_discovered_files(
     if not items:
         return {"discovered": 0, "skipped": 0}
 
+    # Batch large writes to avoid overwhelming Neo4j
+    BATCH_SIZE = 500
+    total_discovered = 0
+    total_skipped = 0
+
     with GraphClient() as client:
-        # MERGE to skip already-discovered files
-        result = client.query(
-            """
-            UNWIND $items AS item
-            MERGE (sf:SourceFile {id: item.id})
-            ON CREATE SET sf += item
-            WITH sf, item
-            WHERE sf.status = 'discovered' AND sf.discovered_at = item.discovered_at
-            MATCH (f:Facility {id: item.facility_id})
-            MERGE (sf)-[:AT_FACILITY]->(f)
-            RETURN count(CASE WHEN sf.discovered_at = item.discovered_at THEN 1 END) AS discovered,
-                   count(CASE WHEN sf.discovered_at <> item.discovered_at THEN 1 END) AS skipped
-            """,
-            items=items,
-        )
+        for batch_start in range(0, len(items), BATCH_SIZE):
+            batch = items[batch_start : batch_start + BATCH_SIZE]
 
-        counts = result[0] if result else {"discovered": 0, "skipped": 0}
-
-        # Link to parent FacilityPath
-        if source_path_id:
-            client.query(
+            # MERGE to skip already-discovered files
+            result = client.query(
                 """
                 UNWIND $items AS item
-                MATCH (sf:SourceFile {id: item.id})
-                MATCH (p:FacilityPath {id: $parent_id})
-                MERGE (p)-[:CONTAINS]->(sf)
+                MERGE (sf:SourceFile {id: item.id})
+                ON CREATE SET sf += item
+                WITH sf, item
+                WHERE sf.status = 'discovered' AND sf.discovered_at = item.discovered_at
+                MATCH (f:Facility {id: item.facility_id})
+                MERGE (sf)-[:AT_FACILITY]->(f)
+                RETURN count(CASE WHEN sf.discovered_at = item.discovered_at THEN 1 END) AS discovered,
+                       count(CASE WHEN sf.discovered_at <> item.discovered_at THEN 1 END) AS skipped
                 """,
-                items=items,
-                parent_id=source_path_id,
+                items=batch,
             )
 
-            # Update FacilityPath scan count
+            counts = result[0] if result else {"discovered": 0, "skipped": 0}
+            total_discovered += counts.get("discovered", len(batch))
+            total_skipped += counts.get("skipped", 0)
+
+            # Link to parent FacilityPath
+            if source_path_id:
+                client.query(
+                    """
+                    UNWIND $items AS item
+                    MATCH (sf:SourceFile {id: item.id})
+                    MATCH (p:FacilityPath {id: $parent_id})
+                    MERGE (p)-[:CONTAINS]->(sf)
+                    """,
+                    items=batch,
+                    parent_id=source_path_id,
+                )
+
+        # Update FacilityPath scan count (once, after all batches)
+        if source_path_id:
             client.query(
                 """
                 MATCH (p:FacilityPath {id: $parent_id})
@@ -209,8 +235,8 @@ def _persist_discovered_files(
             )
 
         return {
-            "discovered": counts.get("discovered", len(items)),
-            "skipped": counts.get("skipped", 0),
+            "discovered": total_discovered,
+            "skipped": total_skipped,
         }
 
 
