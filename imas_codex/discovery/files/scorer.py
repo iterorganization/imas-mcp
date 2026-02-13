@@ -193,7 +193,10 @@ def score_facility_files(
     Returns:
         Dict with total_scored, total_skipped, cost, batches
     """
-    from imas_codex.agentic.llm import get_completion
+    from imas_codex.discovery.base.llm import call_llm_structured
+    from imas_codex.settings import get_model
+
+    model = get_model("language")
 
     stats: dict[str, Any] = {
         "total_scored": 0,
@@ -236,26 +239,17 @@ def score_facility_files(
         prompt = _build_scoring_prompt(batch, facility, focus=focus)
 
         try:
-            response = get_completion(
-                prompt,
-                response_format=BatchScoreResult,
+            parsed, cost, tokens = call_llm_structured(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                response_model=BatchScoreResult,
                 temperature=0.1,
             )
+            stats["cost"] += cost
 
-            if isinstance(response, BatchScoreResult):
-                result = _apply_scores(response.scores, file_id_map)
-                stats["total_scored"] += result["scored"]
-                stats["total_skipped"] += result["skipped"]
-            else:
-                # Try parsing raw response
-                try:
-                    parsed = BatchScoreResult.model_validate_json(response)
-                    result = _apply_scores(parsed.scores, file_id_map)
-                    stats["total_scored"] += result["scored"]
-                    stats["total_skipped"] += result["skipped"]
-                except Exception as parse_err:
-                    logger.warning("Failed to parse LLM response: %s", parse_err)
-                    stats["errors"].append(str(parse_err))
+            result = _apply_scores(parsed.scores, file_id_map)
+            stats["total_scored"] += result["scored"]
+            stats["total_skipped"] += result["skipped"]
 
         except Exception as e:
             logger.error("Scoring batch failed: %s", e)

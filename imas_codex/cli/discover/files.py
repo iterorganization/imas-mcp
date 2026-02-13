@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import sys
 
@@ -156,37 +155,35 @@ def files(
                     spinner="dots",
                 ) as status:
 
-                    def scan_progress(msg, stats):
+                    def scan_progress(current, total, msg):
                         status.update(f"[cyan]{msg}[/cyan]")
 
-                    scan_result = asyncio.run(
-                        scan_facility_files(
-                            facility=facility,
-                            ssh_host=ssh_host,
-                            min_score=min_score,
-                            max_paths=max_paths,
-                            focus=focus,
-                            on_progress=scan_progress,
-                        )
-                    )
+                    scan_kwargs = {
+                        "facility": facility,
+                        "ssh_host": ssh_host,
+                        "min_score": min_score,
+                        "progress_callback": scan_progress,
+                    }
+                    if max_paths is not None:
+                        scan_kwargs["max_paths"] = max_paths
+                    scan_result = scan_facility_files(**scan_kwargs)
             else:
 
-                def scan_log(msg, stats):
-                    file_logger.info(f"SCAN: {msg}")
+                def scan_log(current, total, msg):
+                    file_logger.info(f"SCAN: [{current}/{total}] {msg}")
 
-                scan_result = asyncio.run(
-                    scan_facility_files(
-                        facility=facility,
-                        ssh_host=ssh_host,
-                        min_score=min_score,
-                        max_paths=max_paths,
-                        focus=focus,
-                        on_progress=scan_log,
-                    )
-                )
+                scan_kwargs = {
+                    "facility": facility,
+                    "ssh_host": ssh_host,
+                    "min_score": min_score,
+                    "progress_callback": scan_log,
+                }
+                if max_paths is not None:
+                    scan_kwargs["max_paths"] = max_paths
+                scan_result = scan_facility_files(**scan_kwargs)
 
-            total_scanned = scan_result.get("discovered", 0)
-            paths_scanned = scan_result.get("paths_scanned", 0)
+            total_scanned = scan_result.get("new_files", 0)
+            paths_scanned = scan_result.get("total_paths", 0)
             log_print(
                 f"  [green]{total_scanned} files discovered "
                 f"in {paths_scanned} paths[/green]"
@@ -256,13 +253,12 @@ def files(
                 progress_callback=score_log,
             )
 
-        total_scored = score_result.get("scored", 0)
+        total_scored = score_result.get("total_scored", 0)
         total_cost = score_result.get("cost", 0.0)
-        high_score = score_result.get("high_score", 0)
+        total_skipped = score_result.get("total_skipped", 0)
 
         log_print(
-            f"  [green]{total_scored} files scored, "
-            f"{high_score} high-relevance (≥0.7)[/green]"
+            f"  [green]{total_scored} files scored, {total_skipped} skipped[/green]"
         )
         log_print(f"  [dim]Cost: ${total_cost:.2f}[/dim]")
 

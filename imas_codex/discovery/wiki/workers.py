@@ -829,9 +829,9 @@ async def image_score_worker(
 
     Transitions: ingested → captioned
 
-    Claims images that have been ingested (image_data stored) but not yet
-    captioned/scored. Sends image bytes + context to VLM, receives
-    caption + scoring in one pass.
+    Claims images that have been ingested but not yet captioned/scored.
+    Fetches image bytes on-demand from source_url, sends to VLM, receives
+    caption + scoring in one pass. Image data is NOT stored in the graph.
     """
     from imas_codex.settings import get_model
 
