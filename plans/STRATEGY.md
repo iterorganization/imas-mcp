@@ -258,7 +258,7 @@ We treat the Database as an Artifact.
 ### Phase 7: CI/CD & Production 🔜
 - [ ] Automated graph builds on commit
 - [ ] GHCR publishing pipeline
-- [ ] Version traceability with `_GraphMeta` node
+- [ ] Version traceability via DDVersion.build_hash
 - [ ] Graph artifact integrity validation
 
 ---

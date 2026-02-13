@@ -403,65 +403,6 @@ enums:
       session:
         description: Session-based auth (login form, cookies)
 
-  WikiPageStatus:
-    description: >-
-      Lifecycle status for wiki page discovery. Uses claimed_at timestamp for
-      transient worker coordination (same pattern as FacilityPathStatus).
-      
-      Workflow: scanned → scored → ingested (simple 3-phase)
-      - Bulk discovery sets status=scanned
-      - Score: fetch content preview + LLM scoring in single pass
-        Pages with score >= 0.5 proceed to ingestion
-      - Ingest: embed pages with score >= 0.5
-    permissible_values:
-      scanned:
-        description: >-
-          Discovered via bulk API or crawl. Awaiting content-aware scoring.
-      scored:
-        description: >-
-          Content-aware scoring complete. Score field set based on page content.
-          Pages with score >= 0.5 proceed to ingestion.
-      ingested:
-        description: Content chunked, embedded, and linked to graph
-      skipped:
-        description: Filtered out by scoring (too low value to process)
-      failed:
-        description: Error during processing (check error field)
-
-  WikiArtifactStatus:
-    description: >-
-      Lifecycle status for wiki artifacts (PDFs, presentations, etc.).
-      Uses claimed_at timestamp for transient worker coordination
-      (same pattern as WikiPageStatus - no separate transient states).
-      
-      Workflow: discovered → scored → ingested (simple 3-phase)
-      - Bulk discovery sets status=discovered
-      - Score: download preview + LLM scoring in single pass
-        Artifacts with score >= 0.5 proceed to ingestion
-      - Ingest: download full content, parse, chunk, embed
-      
-      Score-exempt artifacts (score_exempt=true, e.g. images) skip the
-      scored phase entirely: discovered → ingested. They are picked up
-      directly by the ingestion worker without LLM text scoring.
-    permissible_values:
-      discovered:
-        description: >-
-          Artifact link found but not yet scored. Awaiting content-aware scoring.
-          Score-exempt artifacts (images) are picked up directly from this
-          state by the ingestion worker.
-      scored:
-        description: >-
-          Scoring complete. Score field set based on content preview.
-          Artifacts with score >= 0.5 proceed to ingestion.
-      ingested:
-        description: Content downloaded, parsed, chunked, and embedded
-      deferred:
-        description: High-value but requires unsupported parser (OCR, scanned PDF, etc.)
-      skipped:
-        description: Filtered out by scoring (too low value to process)
-      failed:
-        description: Error during processing (check error field)
-
   ImageStatus:
     description: >-
       Lifecycle for image processing. Images are discovered during page
@@ -1463,8 +1404,11 @@ classes:
       Return -1 means not applicable, -2 means undefined program.
     class_uri: facility:TDIFunction
     attributes:
-      name:
+      id:
         identifier: true
+        description: Composite key as facility:tdi:name (e.g., "tcv:tdi:tcv_eq")
+        required: true
+      name:
         description: Function name (e.g., "tcv_eq", "tcv_ip")
         required: true
       facility_id:
@@ -1524,8 +1468,6 @@ classes:
           JSON-encoded map of category to quantity names.
           E.g., {"shape": ["AMIN", "KAPPA", "DELTA"], "energy": ["WE", "W_MHD"]}
       # TDI introspection results
-      id:
-        description: Composite key as facility:tdi:name (e.g., "tcv:tdi:tcv_eq")
       path:
         description: Filesystem path to the .FUN source file
       source_code:
@@ -1650,7 +1592,7 @@ classes:
       Lifecycle relationships (tree epoch tracking):
         - INTRODUCED_IN -> TreeModelVersion (epoch when signal first appeared)
         - REMOVED_IN -> TreeModelVersion (epoch when signal disappeared)
-        - CHECKED_VIA -> DataAccessNode (validated data access path)
+        - CHECKED_WITH -> DataAccess (access check with outcome metadata)
       
       Signal discovery automation strategy:
         Each data system requires bespoke discovery:
@@ -1667,6 +1609,7 @@ classes:
     class_uri: facility:FacilitySignal
     mixins:
       - DiscoveryProvenance
+      - LLMOperation
     attributes:
       id:
         identifier: true
@@ -1752,13 +1695,15 @@ classes:
         range: DataAccess
         annotations:
           relationship_type: DATA_ACCESS
-      checked_via:
+      checked_with:
         description: >-
-          DataAccess node used to verify signal availability (example_shot test).
-          Links to specific access method that was tested successfully.
+          DataAccess node used in the most recent access check.
+          The CHECKED_WITH relationship carries outcome metadata (success,
+          shot, shape, dtype, error). Created for both successful and
+          failed checks so the full check history is queryable.
         range: DataAccess
         annotations:
-          relationship_type: CHECKED_VIA
+          relationship_type: CHECKED_WITH
       description:
         description: What this signal measures (physics description)
       embedding:
@@ -1798,25 +1743,18 @@ classes:
       example_shot:
         description: Known-good shot/pulse for testing
         range: integer
-      validated:
-        description: Whether this signal has been tested with example_shot
-        range: boolean
-        ifabsent: "false"
-      validation_error:
-        description: Error message if validation failed
       # Enrichment tracking
       checked:
-        description: Whether signal data access has been validated
+        description: >-
+          Whether an access check has been attempted for this signal.
+          Query the CHECKED_WITH relationship for outcome details.
         range: boolean
       checked_at:
-        description: Timestamp when signal data access was validated
+        description: Timestamp when the most recent access check was performed
         range: datetime
       enriched_at:
         description: Timestamp when LLM enrichment (description, domain) was completed
         range: datetime
-      enrichment_cost:
-        description: LLM cost in USD for enriching this signal
-        range: float
 
   DataAccess:
     description: >-
@@ -1975,6 +1913,57 @@ classes:
           Complete working Python code example using this method.
           Should be copy-pasteable with only {shot} substitution.
           Useful for agent prompts and documentation.
+
+  # Relationship class for signal access checks
+  AccessCheck:
+    description: >-
+      Records the outcome of testing a FacilitySignal's data access.
+      Created for BOTH successful and failed checks, so the complete
+      check history is queryable. Stored as CHECKED_WITH relationship
+      properties between FacilitySignal and DataAccess.
+      
+      Query pattern:
+        MATCH (s:FacilitySignal)-[c:CHECKED_WITH]->(da:DataAccess)
+        WHERE c.success = true
+        RETURN s.id, c.shot, c.shape, c.dtype
+      
+      Failed checks:
+        MATCH (s:FacilitySignal)-[c:CHECKED_WITH]->(da:DataAccess)
+        WHERE c.success = false
+        RETURN s.id, c.error, c.shot
+    class_uri: facility:AccessCheck
+    attributes:
+      signal:
+        description: The signal that was checked
+        range: FacilitySignal
+        required: true
+      data_access:
+        description: The DataAccess node used for the check
+        range: DataAccess
+        required: true
+      success:
+        description: Whether the data access check succeeded
+        range: boolean
+        required: true
+      shot:
+        description: Shot/pulse number used for the check
+        range: integer
+        required: true
+      checked_at:
+        description: When the check was performed
+        range: datetime
+        required: true
+      shape:
+        description: Data shape if successful (e.g. "[1000]", "[100, 50]")
+      dtype:
+        description: Data type if successful (e.g. "float32", "int16")
+      error:
+        description: Error message if the check failed
+      error_type:
+        description: >-
+          Classification of the failure for analytics.
+          E.g., "TreeNNF" (node not found), "TdiINVCLADSC" (invalid descriptor),
+          "timeout", "connection_refused", "empty_data"
 
   AnalysisCode:
     description: >-
@@ -2848,17 +2837,11 @@ classes:
         range: string
       image_format:
         description: Storage format of image_data (always 'webp' for new images)
-      image_width:
+      width:
         description: Width of stored (downsampled) image in pixels
         range: integer
-      image_height:
-        description: Height of stored (downsampled) image in pixels
-        range: integer
-      width:
-        description: Width of stored image in pixels (alias of image_width)
-        range: integer
       height:
-        description: Height of stored image in pixels (alias of image_height)
+        description: Height of stored (downsampled) image in pixels
         range: integer
       original_width:
         description: Width of original image in pixels (before downsample)

@@ -21,7 +21,7 @@ class TestLabelsAndRelationships:
     """Verify graph labels and relationship types match the schema."""
 
     # Internal labels that are not in the LinkML schema
-    INTERNAL_LABELS = {"_GraphMeta"}
+    INTERNAL_LABELS: set[str] = set()
 
     def test_all_labels_in_schema(self, graph_labels, schema):
         """Every label in the graph must be defined in the schema."""

@@ -204,6 +204,11 @@ classes:
       clusters_count:
         description: Number of clusters for this version
         range: integer
+      build_hash:
+        description: >-
+          SHA256 hash of build parameters (DD versions, flags) for idempotency.
+          If hash matches on next run, DD build is skipped. Replaces the
+          former _GraphMeta.dd_build_hash property.
       created_at:
         description: Timestamp when DDVersion node was created in the graph
         range: datetime

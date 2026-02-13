@@ -38,7 +38,7 @@ This module discovers, classifies, and validates data signals from fusion facili
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          CHECK WORKER (1)                                │
 │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐  │
-│  │   Claim Batch    │ → │  Remote MDSplus    │ → │   CHECKED_VIA     │  │
+│  │   Claim Batch    │ → │  Remote MDSplus    │ → │   CHECKED_WITH    │  │
 │  │  (10 signals)    │    │  (run_python_script)│   │   relationship   │  │
 │  └──────────────────┘    └──────────────────┘    └──────────────────┘  │
 │                                    │                                     │
@@ -64,7 +64,7 @@ Signals progress through states via worker transitions:
 |-------|-------------|-------------|
 | `discovered` | Signal exists in tree, node_path known | enrich_worker |
 | `enriched` | LLM classified physics_domain, description | check_worker |
-| `checked` | MDSplus access confirmed, shape/dtype known | (terminal) |
+| `checked` | Access check attempted (see CHECKED_WITH for outcome) | (terminal) |
 | `skipped` | Excluded by filter or policy | (terminal) |
 | `failed` | Error during processing | (terminal) |
 
@@ -194,8 +194,8 @@ Phase 3: LLM Enrichment
 Phase 4: MDSplus Checking
 - Claiming batches of 10 enriched signals
 - Executing check_signals.py via SSH
-- Recording shape, dtype on success
-- Creating CHECKED_VIA relationships to DataAccess
+- Recording shape, dtype, error on CHECKED_WITH relationship
+- Creating CHECKED_WITH relationships to DataAccess (success + failure)
 
 Summary:
 - Epochs created: N
@@ -247,8 +247,9 @@ Summary:
 // Epoch lineage  
 (epoch_v3)-[:PRECEDED_BY]->(epoch_v2)
 
-// Access verification
-(signal)-[:CHECKED_VIA]->(data_access)
+// Access check (carries outcome metadata: success, shot, shape, dtype, error)
+(signal)-[:CHECKED_WITH {success: true, shot: 80000, shape: "[1000]"}]->(data_access)
+(signal)-[:CHECKED_WITH {success: false, shot: 80000, error: "TreeNNF"}]->(data_access)
 ```
 
 ## Module Structure
@@ -273,4 +274,4 @@ discover clear --domain signals tcv
 This removes:
 - All FacilitySignal nodes for the facility
 - All TreeModelVersion nodes for the facility
-- All INTRODUCED_IN/REMOVED_IN/CHECKED_VIA relationships
+- All INTRODUCED_IN/REMOVED_IN/CHECKED_WITH relationships

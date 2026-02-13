@@ -1,7 +1,7 @@
 """Structural graph tests.
 
 Verifies the overall structure and health of the graph: expected
-node types present, vector indexes online, _GraphMeta integrity,
+node types present, vector indexes online, build hash integrity,
 and cluster structure.
 """
 
@@ -41,33 +41,17 @@ class TestGraphPresence:
         assert graph_stats["relationships"] > 0, "Graph has no relationships"
 
 
-class TestGraphMeta:
-    """Verify _GraphMeta node is present and valid."""
+class TestBuildHash:
+    """Verify build hash is stored on current DDVersion."""
 
-    def test_graph_meta_exists(self, graph_client):
-        """_GraphMeta node should exist."""
-        result = graph_client.query("MATCH (m:_GraphMeta) RETURN count(m) AS cnt")
-        count = result[0]["cnt"] if result else 0
-        assert count >= 1, "No _GraphMeta node found. Run build_dd_graph()."
-
-    def test_graph_meta_has_build_hash(self, graph_client):
-        """_GraphMeta should have a dd_build_hash (indicates clean build)."""
+    def test_current_dd_version_has_build_hash(self, graph_client):
+        """Current DDVersion should have a build_hash (indicates clean build)."""
         result = graph_client.query(
-            "MATCH (m:_GraphMeta) RETURN m.dd_build_hash AS hash"
+            "MATCH (d:DDVersion {is_current: true}) RETURN d.build_hash AS hash"
         )
         if not result:
-            pytest.skip("No _GraphMeta node")
-        assert result[0]["hash"], "_GraphMeta.dd_build_hash is null/empty"
-
-    def test_graph_meta_has_dd_versions(self, graph_client):
-        """_GraphMeta should list DD versions used in the build."""
-        result = graph_client.query(
-            "MATCH (m:_GraphMeta) RETURN m.dd_versions AS versions"
-        )
-        if not result:
-            pytest.skip("No _GraphMeta node")
-        versions = result[0]["versions"]
-        assert versions, "_GraphMeta.dd_versions is null/empty"
+            pytest.skip("No current DDVersion node")
+        assert result[0]["hash"], "DDVersion.build_hash is null/empty"
 
 
 class TestVectorIndexes:

@@ -235,16 +235,17 @@ def has_pending_check_work(facility: str) -> bool:
 def get_data_discovery_stats(facility: str) -> dict[str, Any]:
     """Get current discovery statistics from graph.
 
-    Returns counts of signals by status, pending work, and accumulated
-    enrichment cost for historical tracking across runs.
+    Returns counts of signals by status, pending work, accumulated
+    enrichment cost, and access check outcomes for historical tracking.
     """
     try:
         with GraphClient() as gc:
             result = gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
+                OPTIONAL MATCH (s)-[c:CHECKED_WITH]->()
                 RETURN
-                    count(s) AS total,
+                    count(DISTINCT s) AS total,
                     sum(CASE WHEN s.status = $discovered THEN 1 ELSE 0 END) AS discovered,
                     sum(CASE WHEN s.status = $enriched THEN 1 ELSE 0 END) AS enriched,
                     sum(CASE WHEN s.status = $checked THEN 1 ELSE 0 END) AS checked,
@@ -252,7 +253,9 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
                     sum(CASE WHEN s.status = $failed THEN 1 ELSE 0 END) AS failed,
                     sum(CASE WHEN s.status = $discovered AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_enrich,
                     sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_check,
-                    sum(coalesce(s.enrichment_cost, 0)) AS accumulated_cost
+                    sum(coalesce(s.llm_cost, 0)) AS accumulated_cost,
+                    count(CASE WHEN c.success = true THEN 1 END) AS checks_passed,
+                    count(CASE WHEN c.success = false THEN 1 END) AS checks_failed
                 """,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
@@ -514,7 +517,7 @@ def mark_signals_enriched(
                                            THEN sig.analysis_code ELSE s.analysis_code END,
                     s.keywords = CASE WHEN sig.keywords IS NOT NULL
                                       THEN sig.keywords ELSE s.keywords END,
-                    s.enrichment_cost = $per_signal_cost,
+                    s.llm_cost = $per_signal_cost,
                     s.enriched_at = datetime(),
                     s.claimed_at = null
                 """,
@@ -531,15 +534,21 @@ def mark_signals_enriched(
 def mark_signals_checked(
     signals: list[dict],
 ) -> int:
-    """Mark signals as checked and create CHECKED_VIA relationship to DataAccess.
+    """Mark signals as checked and create CHECKED_WITH relationship to DataAccess.
 
-    Creates a CHECKED_VIA relationship from each FacilitySignal to its DataAccess,
-    indicating that the accessor was tested and works with this data access node.
-    This leaves checked signals linked to verified working data access nodes.
+    Creates a CHECKED_WITH relationship from each FacilitySignal to its DataAccess
+    node, carrying outcome metadata (success, shot, shape, dtype, error).
+    Created for BOTH successful and failed data access checks.
 
     Expected signal dict keys:
     - id: signal ID
-    - data_access: DataAccess ID (optional, creates CHECKED_VIA if present)
+    - data_access: DataAccess ID (creates CHECKED_WITH relationship)
+    - success: bool — whether the check succeeded
+    - shot: int — shot number used for the check
+    - shape: str — data shape (success only)
+    - dtype: str — data type (success only)
+    - error: str — error message (failure only)
+    - error_type: str — error classification (failure only)
     """
     if not signals:
         return 0
@@ -557,7 +566,14 @@ def mark_signals_checked(
                 WITH s, sig
                 WHERE sig.data_access IS NOT NULL
                 MATCH (da:DataAccess {id: sig.data_access})
-                MERGE (s)-[:CHECKED_VIA]->(da)
+                MERGE (s)-[c:CHECKED_WITH]->(da)
+                SET c.success = sig.success,
+                    c.shot = sig.shot,
+                    c.checked_at = datetime(),
+                    c.shape = sig.shape,
+                    c.dtype = sig.dtype,
+                    c.error = sig.error,
+                    c.error_type = sig.error_type
                 """,
                 signals=signals,
                 checked=FacilitySignalStatus.checked.value,
@@ -588,19 +604,21 @@ def mark_signal_skipped(signal_id: str, reason: str) -> None:
 
 
 def mark_signal_failed(signal_id: str, error: str, revert_status: str) -> None:
-    """Mark a signal as failed with error message."""
+    """Mark a signal as failed due to infrastructure error.
+
+    Use this for infrastructure-level failures (SSH timeout, script crash),
+    NOT for data access failures (use mark_signals_checked with success=false).
+    """
     try:
         with GraphClient() as gc:
             gc.query(
                 """
                 MATCH (s:FacilitySignal {id: $id})
                 SET s.status = $failed,
-                    s.validation_error = $error,
                     s.claimed_at = null
                 """,
                 id=signal_id,
                 failed=FacilitySignalStatus.failed.value,
-                error=error,
             )
     except Exception as e:
         logger.warning("Could not mark signal %s as failed: %s", signal_id, e)
@@ -1392,6 +1410,33 @@ async def enrich_worker(
                 on_progress("enriched batch", state.enrich_stats, enriched)
 
 
+def _classify_check_error(error: str) -> str:
+    """Classify a check error message into a category for analytics.
+
+    Returns a short error_type string that can be aggregated across signals.
+    """
+    if not error:
+        return "unknown"
+    err_lower = error.lower()
+    if "treeннф" in err_lower or "not found" in err_lower or "TreeNNF" in error:
+        return "node_not_found"
+    if "TreeNODATA" in error or "no data" in err_lower:
+        return "no_data"
+    if "TdiINVCLADSC" in error or "invalid" in err_lower:
+        return "invalid_descriptor"
+    if "timeout" in err_lower or "timed out" in err_lower:
+        return "timeout"
+    if "connection" in err_lower or "refused" in err_lower:
+        return "connection_error"
+    if "empty" in err_lower:
+        return "empty_data"
+    if "permission" in err_lower or "denied" in err_lower:
+        return "permission_denied"
+    if "segmentation" in err_lower or "segfault" in err_lower:
+        return "segfault"
+    return "other"
+
+
 async def check_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
@@ -1427,7 +1472,7 @@ async def check_worker(
             on_progress(f"checking {len(signals)} signals", state.check_stats)
 
         # Prepare batch for remote check script
-        # Build map of signal ID -> data_access for CHECKED_VIA relationship
+        # Build map of signal ID -> data_access for CHECKED_WITH relationship
         batch_input = []
         signal_data_access: dict[str, str | None] = {}
         for signal in signals:
@@ -1463,7 +1508,6 @@ async def check_worker(
         # Execute batched check via optimized remote script (single SSH call)
         # The script groups signals by tree/shot for efficient processing
         checked = []
-        failed = []
         try:
             # Use batched script with 30s timeout per tree/shot group
             output = await asyncio.to_thread(
@@ -1525,22 +1569,28 @@ async def check_worker(
 
                 for result in results:
                     signal_id = result.get("id")
-                    if result.get("success"):
-                        checked.append(
-                            {
-                                "id": signal_id,
-                                "shape": result.get("shape"),
-                                "dtype": result.get("dtype"),
-                                "data_access": signal_data_access.get(signal_id),
-                            }
-                        )
+                    shot = None
+                    # Find the shot used for this signal from batch_input
+                    for bi in batch_input:
+                        if bi["id"] == signal_id:
+                            shot = bi.get("shot")
+                            break
+                    success = bool(result.get("success"))
+                    entry = {
+                        "id": signal_id,
+                        "success": success,
+                        "shot": shot,
+                        "data_access": signal_data_access.get(signal_id),
+                    }
+                    if success:
+                        entry["shape"] = result.get("shape")
+                        entry["dtype"] = result.get("dtype")
                     else:
-                        failed.append(
-                            {
-                                "id": signal_id,
-                                "error": result.get("error", "check failed"),
-                            }
-                        )
+                        error_msg = result.get("error", "check failed")
+                        entry["error"] = error_msg
+                        # Classify common MDSplus error types
+                        entry["error_type"] = _classify_check_error(error_msg)
+                    checked.append(entry)
 
             except (json.JSONDecodeError, KeyError) as e:
                 logger.warning(
@@ -1571,23 +1621,19 @@ async def check_worker(
                 await asyncio.to_thread(release_signal_claim, sig["id"])
             continue
 
-        # Mark failed signals
-        for fail in failed:
-            await asyncio.to_thread(
-                mark_signal_failed,
-                fail["id"],
-                fail["error"],
-                FacilitySignalStatus.enriched.value,
-            )
-
-        # Update graph with checked signals
+        # All results (success + failure) go through mark_signals_checked
+        # which creates CHECKED_WITH relationships with outcome metadata
         if checked:
             await asyncio.to_thread(mark_signals_checked, checked)
             state.check_stats.processed += len(checked)
 
             if on_progress:
                 results = [
-                    {"id": v["id"], "success": True, "shape": v.get("shape")}
+                    {
+                        "id": v["id"],
+                        "success": v.get("success", True),
+                        "shape": v.get("shape"),
+                    }
                     for v in checked
                 ]
                 on_progress("checked batch", state.check_stats, results)

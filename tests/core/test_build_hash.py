@@ -55,13 +55,21 @@ class TestComputeBuildHash:
 class TestCheckGraphUpToDate:
     """Tests for _check_graph_up_to_date."""
 
-    def _make_client(self, meta_response, emb_response=None, cluster_response=None):
+    def _make_client(
+        self,
+        hash_response=None,
+        ver_response=None,
+        emb_response=None,
+        cluster_response=None,
+    ):
         """Build a mock GraphClient with canned query responses."""
         client = MagicMock()
 
         def query_side_effect(cypher, **kwargs):
-            if "_GraphMeta" in cypher:
-                return meta_response
+            if "is_current" in cypher:
+                return hash_response if hash_response is not None else []
+            if "collect(d.id)" in cypher:
+                return ver_response if ver_response is not None else []
             if "p.embedding" in cypher:
                 return emb_response or []
             if "IMASSemanticCluster" in cypher:
@@ -72,52 +80,58 @@ class TestCheckGraphUpToDate:
         return client
 
     def test_no_meta_returns_false(self):
-        client = self._make_client(meta_response=[])
+        client = self._make_client(hash_response=[])
         assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, True) is False
 
     def test_hash_mismatch_returns_false(self):
         client = self._make_client(
-            meta_response=[{"hash": "wrong", "versions": ["4.0.0"]}]
+            hash_response=[{"hash": "wrong"}],
         )
         assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, True) is False
 
     def test_version_mismatch_returns_false(self):
         client = self._make_client(
-            meta_response=[{"hash": "abc", "versions": ["3.0.0"]}]
+            hash_response=[{"hash": "abc"}],
+            ver_response=[{"versions": ["3.0.0"]}],
         )
         assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, True) is False
 
     def test_matching_no_embeddings_no_clusters(self):
         """Hash + versions match, no embeddings/clusters requested → True."""
         client = self._make_client(
-            meta_response=[{"hash": "abc", "versions": ["4.0.0"]}]
+            hash_response=[{"hash": "abc"}],
+            ver_response=[{"versions": ["4.0.0"]}],
         )
         assert _check_graph_up_to_date(client, "abc", ["4.0.0"], False, False) is True
 
     def test_matching_with_embeddings_present(self):
         client = self._make_client(
-            meta_response=[{"hash": "abc", "versions": ["4.0.0"]}],
+            hash_response=[{"hash": "abc"}],
+            ver_response=[{"versions": ["4.0.0"]}],
             emb_response=[{"total": 100, "with_emb": 100}],
         )
         assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, False) is True
 
     def test_matching_with_insufficient_embeddings(self):
         client = self._make_client(
-            meta_response=[{"hash": "abc", "versions": ["4.0.0"]}],
+            hash_response=[{"hash": "abc"}],
+            ver_response=[{"versions": ["4.0.0"]}],
             emb_response=[{"total": 100, "with_emb": 10}],
         )
         assert _check_graph_up_to_date(client, "abc", ["4.0.0"], True, False) is False
 
     def test_matching_with_clusters_present(self):
         client = self._make_client(
-            meta_response=[{"hash": "abc", "versions": ["4.0.0"]}],
+            hash_response=[{"hash": "abc"}],
+            ver_response=[{"versions": ["4.0.0"]}],
             cluster_response=[{"cnt": 50}],
         )
         assert _check_graph_up_to_date(client, "abc", ["4.0.0"], False, True) is True
 
     def test_matching_with_no_clusters(self):
         client = self._make_client(
-            meta_response=[{"hash": "abc", "versions": ["4.0.0"]}],
+            hash_response=[{"hash": "abc"}],
+            ver_response=[{"versions": ["4.0.0"]}],
             cluster_response=[{"cnt": 0}],
         )
         assert _check_graph_up_to_date(client, "abc", ["4.0.0"], False, True) is False

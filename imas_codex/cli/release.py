@@ -56,7 +56,7 @@ def release(
 
     MODE: --remote upstream (finalize release - default)
     - Pre-flight: clean tree, synced with upstream
-    - Updates _GraphMeta node with version
+    - Tags current DDVersion with release info
     - Dumps and pushes graph to GHCR
     - Creates and pushes tag to upstream (triggers CI)
 
@@ -294,39 +294,30 @@ def _release_upstream_mode(
     else:
         click.echo("  [would validate no private fields in graph]")
 
-    # Step 2: Update _GraphMeta node
+    # Step 2: Tag current DDVersion with release info
     if not skip_graph:
-        click.echo("\nStep 2: Updating graph metadata...")
+        click.echo("\nStep 2: Tagging DDVersion with release info...")
         if not dry_run:
             try:
                 from imas_codex.graph import GraphClient
 
                 with GraphClient() as client:
-                    facilities_result = client.query(
-                        "MATCH (f:Facility) RETURN collect(f.id) as facilities"
-                    )
-                    facilities = (
-                        facilities_result[0]["facilities"] if facilities_result else []
-                    )
                     client.query(
                         """
-                        MERGE (m:_GraphMeta {id: 'meta'})
-                        SET m.version = $version,
-                            m.message = $message,
-                            m.updated_at = datetime(),
-                            m.facilities = $facilities
+                        MATCH (d:DDVersion {is_current: true})
+                        SET d.release_version = $version,
+                            d.release_message = $message,
+                            d.release_at = datetime()
                         """,
                         version=version_number,
                         message=message,
-                        facilities=facilities,
                     )
-                    click.echo(f"  _GraphMeta updated: version={version_number}")
-                    click.echo(f"  Facilities: {', '.join(facilities)}")
+                    click.echo(f"  DDVersion tagged: release_version={version_number}")
             except Exception as e:
-                click.echo(f"Warning: Could not update graph metadata: {e}", err=True)
+                click.echo(f"Warning: Could not tag DDVersion: {e}", err=True)
                 click.echo("  Is Neo4j running? Check with: imas-codex data db status")
         else:
-            click.echo("  [would update _GraphMeta node in graph]")
+            click.echo("  [would tag DDVersion with release info]")
 
         # Step 3: Dump and push graph (unified via data CLI)
         click.echo("\nStep 3: Dumping and pushing graph...")

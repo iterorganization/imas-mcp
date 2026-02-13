@@ -163,15 +163,19 @@ enums:
       Lifecycle status for wiki page discovery. Uses claimed_at timestamp for
       transient worker coordination (same pattern as FacilityPathStatus).
       
-      Simple 3-phase workflow: scanned → scored → ingested
+      Workflow: scanned → scored → ingested (simple 3-phase)
       - Bulk discovery sets status=scanned
       - Score: fetch content preview + LLM scoring in single pass
+        Pages with score >= 0.5 proceed to ingestion
       - Ingest: embed pages with score >= 0.5
     permissible_values:
       scanned:
-        description: Discovered via bulk API or crawl. Awaiting content-aware scoring.
+        description: >-
+          Discovered via bulk API or crawl. Awaiting content-aware scoring.
       scored:
-        description: Content-aware scoring complete. Pages with score >= 0.5 proceed to ingestion.
+        description: >-
+          Content-aware scoring complete. Score field set based on page content.
+          Pages with score >= 0.5 proceed to ingestion.
       ingested:
         description: Content chunked, embedded, and linked to graph
       skipped:
@@ -190,10 +194,16 @@ enums:
       - Score: download preview + LLM scoring in single pass
         Artifacts with score >= 0.5 proceed to ingestion
       - Ingest: download full content, parse, chunk, embed
+      
+      Score-exempt artifacts (score_exempt=true, e.g. images) skip the
+      scored phase entirely: discovered → ingested. They are picked up
+      directly by the ingestion worker without LLM text scoring.
     permissible_values:
       discovered:
         description: >-
           Artifact link found but not yet scored. Awaiting content-aware scoring.
+          Score-exempt artifacts (images) are picked up directly from this
+          state by the ingestion worker.
       scored:
         description: >-
           Scoring complete. Score field set based on content preview.
@@ -222,7 +232,9 @@ enums:
       enriched:
         description: LLM enrichment complete - physics_domain classified, description generated
       checked:
-        description: Data access tested successfully - creates CHECKED_VIA link to DataAccess
+        description: >-
+          Access check attempted - creates CHECKED_WITH link to DataAccess.
+          Query CHECKED_WITH.success to determine if the check passed or failed.
       skipped:
         description: Filtered out (duplicate, internal node, or low value)
       failed:

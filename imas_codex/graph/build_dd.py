@@ -1040,7 +1040,7 @@ def _check_graph_up_to_date(
     """Check if the graph already contains a build matching the given hash.
 
     Validates:
-    - _GraphMeta.dd_build_hash matches
+    - DDVersion.build_hash on the current version matches
     - All requested versions exist
     - Embedding coverage is complete (if embeddings were requested)
     - Clusters exist (if clusters were requested)
@@ -1050,9 +1050,8 @@ def _check_graph_up_to_date(
     try:
         result = client.query(
             """
-            MATCH (m:_GraphMeta)
-            RETURN m.dd_build_hash AS hash,
-                   m.dd_versions AS versions
+            MATCH (d:DDVersion {is_current: true})
+            RETURN d.build_hash AS hash
             """
         )
         if not result:
@@ -1062,7 +1061,11 @@ def _check_graph_up_to_date(
         if meta.get("hash") != build_hash:
             return False
 
-        stored_versions = meta.get("versions") or []
+        # Verify all requested versions exist
+        ver_result = client.query(
+            "MATCH (d:DDVersion) RETURN collect(d.id) AS versions"
+        )
+        stored_versions = ver_result[0]["versions"] if ver_result else []
         if set(versions) != set(stored_versions):
             return False
 
@@ -1110,7 +1113,7 @@ def build_dd_graph(
     Build the IMAS DD graph.
 
     On a second run with identical parameters the function verifies the
-    graph is already up-to-date via a build hash stored in ``_GraphMeta``
+    graph is already up-to-date via a build hash stored on the current ``DDVersion``
     and returns immediately, avoiding any expensive re-extraction or
     re-embedding.
 
@@ -1320,17 +1323,13 @@ def build_dd_graph(
             cluster_count = _import_clusters(client, dry_run, use_rich=use_rich)
             stats["clusters_created"] = cluster_count
 
-        # Persist build hash for idempotency on next run
+        # Persist build hash on current DDVersion for idempotency on next run
         if not dry_run:
             client.query(
                 """
-                MERGE (m:_GraphMeta)
-                SET m.dd_graph_built = datetime(),
-                    m.dd_versions = $versions,
-                    m.dd_current_version = $current,
-                    m.dd_build_hash = $hash
+                MATCH (d:DDVersion {id: $current})
+                SET d.build_hash = $hash
                 """,
-                versions=versions,
                 current=current_dd_version,
                 hash=build_hash,
             )
@@ -2167,10 +2166,10 @@ def clear_dd_graph(
     if results["orphaned_units"] > 0:
         logger.debug(f"Deleted {results['orphaned_units']} orphaned Unit nodes")
 
-    # Clean up _GraphMeta DD fields
+    # Clear build hash from DDVersion (idempotency marker)
     client.query("""
-        MATCH (m:_GraphMeta)
-        REMOVE m.dd_graph_built, m.dd_versions, m.dd_current_version, m.dd_build_hash
+        MATCH (d:DDVersion)
+        REMOVE d.build_hash
     """)
 
     # Drop DD-specific vector indexes (they're empty now)

@@ -43,7 +43,7 @@ class TestClearDdGraph:
                 if "Unit" in cypher and "HAS_UNIT" in cypher:
                     return [{"deleted": 5}]
 
-            # Handle REMOVE (GraphMeta cleanup)
+            # Handle REMOVE (DDVersion build_hash cleanup)
             if "REMOVE" in cypher:
                 return []
 
@@ -113,19 +113,19 @@ class TestClearDdGraph:
         assert "imas_path_embedding" in drop_text
         assert "cluster_centroid" in drop_text
 
-    def test_cleans_graph_meta(self):
-        """_GraphMeta DD fields are removed."""
+    def test_clears_build_hash(self):
+        """DDVersion build_hash is cleared."""
         from imas_codex.graph.build_dd import clear_dd_graph
 
         client = self._make_client()
         clear_dd_graph(client)
 
-        meta_calls = [
+        hash_calls = [
             call
             for call in client.query.call_args_list
-            if "REMOVE" in str(call) and "GraphMeta" in str(call)
+            if "REMOVE" in str(call) and "build_hash" in str(call)
         ]
-        assert len(meta_calls) == 1
+        assert len(hash_calls) == 1
 
     def test_batch_deletion(self):
         """Large node sets are deleted in batches."""
