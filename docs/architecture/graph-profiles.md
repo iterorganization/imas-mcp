@@ -71,9 +71,9 @@ Override with env var: `IMAS_CODEX_TUNNEL_BOLT_ITER=17687`
 
 Manual tunnel management:
 ```bash
-imas-codex graph tunnel start iter   # Start tunnel
-imas-codex graph tunnel status       # Show active tunnels
-imas-codex graph tunnel stop iter    # Stop tunnel
+imas-codex tunnel start iter         # Start tunnel
+imas-codex tunnel status             # Show active tunnels
+imas-codex tunnel stop iter          # Stop tunnel
 ```
 
 ## Graph Commands
@@ -83,7 +83,7 @@ imas-codex graph push          # Push graph to GHCR
 imas-codex graph fetch         # Download archive (no load)
 imas-codex graph pull          # Fetch + load (convenience)
 imas-codex graph list          # List available versions in GHCR
-imas-codex graph dump          # Export to archive
+imas-codex graph export        # Export to archive
 imas-codex graph load <file>   # Load archive into Neo4j
 ```
 
@@ -94,13 +94,13 @@ imas-codex graph load <file>   # Load archive into Neo4j
 **From ITER login node:**
 ```bash
 # No config needed — is_local_host("iter") returns True
-imas-codex graph db status
+imas-codex serve neo4j status
 ```
 
 **From WSL (auto-tunnel):**
 ```bash
 # Auto-tunnel kicks in automatically when resolving profile
-imas-codex graph db status  # tunnels to bolt://localhost:17687
+imas-codex serve neo4j status  # tunnels to bolt://localhost:17687
 ```
 
 ### 2. Local-only Graph (no remote)
@@ -140,7 +140,7 @@ data-dir = "/home/user/.local/share/imas-codex/neo4j-tcv"
 
 ```bash
 # Start TCV-specific local graph
-IMAS_CODEX_GRAPH=tcv-local imas-codex graph db start
+IMAS_CODEX_GRAPH=tcv-local imas-codex serve neo4j start
 ```
 
 ### 4. ITER + Facility-specific
@@ -149,10 +149,10 @@ Access facility-specific graph on ITER (different port, same host):
 
 ```bash
 # On ITER: switch to TCV graph (runs on ITER, port 7688)
-IMAS_CODEX_GRAPH=tcv imas-codex graph db status
+IMAS_CODEX_GRAPH=tcv imas-codex serve neo4j status
 
 # From WSL: auto-tunnels to TCV graph on ITER (port 17688)
-IMAS_CODEX_GRAPH=tcv imas-codex graph db status
+IMAS_CODEX_GRAPH=tcv imas-codex serve neo4j status
 ```
 
 ### 5. Multiple Tunnels
@@ -166,8 +166,8 @@ For simultaneous access to multiple facility graphs from WSL:
 #   jt60sa: 17689/17476
 
 # Switch between graphs
-IMAS_CODEX_GRAPH=iter imas-codex graph db status
-IMAS_CODEX_GRAPH=tcv imas-codex graph db status
+IMAS_CODEX_GRAPH=iter imas-codex serve neo4j status
+IMAS_CODEX_GRAPH=tcv imas-codex serve neo4j status
 ```
 
 Or configure manual tunnels in SSH config:
@@ -211,12 +211,12 @@ convention ports (7687+) while tunnels use offset ports (17687+).
 
 | CLI Command | Purpose |
 |-------------|---------|
-| `graph db profiles` | List all profiles and status |
-| `graph db status` | Check active graph |
-| `graph db status -g tcv` | Check specific profile |
-| `graph db start -g tcv` | Start specific profile |
-| `graph tunnel start iter` | Manual tunnel to iter |
-| `graph tunnel status` | Show active tunnels |
+| `serve neo4j profiles` | List all profiles and status |
+| `serve neo4j status` | Check active graph |
+| `serve neo4j status -g tcv` | Check specific profile |
+| `serve neo4j start -g tcv` | Start specific profile |
+| `tunnel start iter` | Manual tunnel to iter |
+| `tunnel status` | Show active tunnels |
 | `graph fetch` | Download archive from GHCR |
 | `graph pull` | Fetch + load convenience |
 | `graph list` | List versions in GHCR |

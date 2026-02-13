@@ -93,26 +93,26 @@ os.environ["IMAS_CODEX_GRAPH"] = "tcv"
 
 ## Graph Management CLI
 
-### Database Operations
+### Server Operations
 
 ```bash
-# Start/stop/status
-imas-codex graph db start              # Start active profile
-imas-codex graph db start -g tcv       # Start specific profile
-imas-codex graph db stop -g tcv
-imas-codex graph db status -g tcv
-imas-codex graph db profiles           # List all profiles
-imas-codex graph db shell              # Interactive Cypher shell
-imas-codex graph db service install    # Install systemd service
+# Start/stop/status (under 'serve neo4j')
+imas-codex serve neo4j start           # Start active profile
+imas-codex serve neo4j start -g tcv    # Start specific profile
+imas-codex serve neo4j stop -g tcv
+imas-codex serve neo4j status -g tcv
+imas-codex serve neo4j profiles        # List all profiles
+imas-codex serve neo4j shell           # Interactive Cypher shell
+imas-codex serve neo4j service install # Install systemd service
 ```
 
 ### Graph Lifecycle
 
 ```bash
-# Dump and load
-imas-codex graph dump                  # Full graph dump
-imas-codex graph dump --facility tcv   # Per-facility dump (filtered)
-imas-codex graph load archive.tar.gz   # Load from archive
+# Export and load
+imas-codex graph export                # Full graph export
+imas-codex graph export --facility tcv # Per-facility export (filtered)
+imas-codex graph load archive.tar.gz   # Load archive into Neo4j
 
 # GHCR registry
 imas-codex graph push                  # Push release to GHCR
@@ -130,18 +130,18 @@ imas-codex graph restore backup.dump   # Restore specific backup
 imas-codex graph clear                 # Clear graph (auto-backup first)
 
 # Cleanup
-imas-codex graph remove tag1 tag2      # Delete GHCR tags
-imas-codex graph remove --dev          # Remove all dev tags
-imas-codex graph remove --backups --older-than 30d  # Clean old backups
+imas-codex graph clean tag1 tag2       # Delete GHCR tags
+imas-codex graph clean --dev           # Remove all dev tags
+imas-codex graph clean --backups --older-than 30d  # Clean old backups
 ```
 
 ### SSH Tunnels
 
 ```bash
-imas-codex graph tunnel start          # Start tunnel to active profile's host
-imas-codex graph tunnel start iter     # Start tunnel to specific host
-imas-codex graph tunnel stop iter
-imas-codex graph tunnel status         # Show active tunnels
+imas-codex tunnel start iter           # Start tunnel to specific host
+imas-codex tunnel start --all          # Start tunnels for all services
+imas-codex tunnel stop iter
+imas-codex tunnel status               # Show active tunnels
 ```
 
 ## Per-Facility Federation
@@ -158,13 +158,13 @@ This preserves the full IMAS Data Dictionary (shared across facilities) while is
 
 ```bash
 # Create and push per-facility graph
-imas-codex graph dump --facility tcv
+imas-codex graph export --facility tcv
 imas-codex graph push --facility tcv --dev
 
 # End user pulls only their facility
 export IMAS_CODEX_GRAPH=tcv
 imas-codex graph pull --facility tcv
-imas-codex graph db start
+imas-codex serve neo4j start
 ```
 
 ## GHCR Package Naming

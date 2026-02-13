@@ -1,10 +1,11 @@
 """Graph lifecycle CLI for Neo4j database management.
 
 This module provides the ``imas-codex graph`` command group for:
-- Graph database dump/load/push/pull to GHCR (with per-facility federation)
-- Neo4j database server management (under ``graph db``)
-- Graph lifecycle: clear, backup, restore, remove
-- SSH tunnel management for remote graph access (under ``graph tunnel``)
+- Graph database export/load/push/pull to GHCR (with per-facility federation)
+- Graph lifecycle: clear, backup, restore, clean
+
+Neo4j server management is under ``imas-codex serve neo4j``.
+SSH tunnel management is under ``imas-codex tunnel``.
 """
 
 import json
@@ -204,7 +205,7 @@ class Neo4jOperation:
 
         click.echo(
             f"Note: Restart Neo4j manually: "
-            f"imas-codex graph db start --graph {self.profile.name}"
+            f"imas-codex serve neo4j start --graph {self.profile.name}"
         )
 
     def _release_lock(self) -> None:
@@ -485,52 +486,46 @@ def graph() -> None:
     """Manage graph database lifecycle.
 
     \b
-      imas-codex graph dump          Export graph to archive
-      imas-codex graph load <file>   Load graph archive
-      imas-codex graph push          Push graph to GHCR
-      imas-codex graph fetch         Download graph archive (no load)
-      imas-codex graph pull          Fetch + load (convenience)
-      imas-codex graph list          List available versions
-      imas-codex graph status        Show local status
-      imas-codex graph clear         Clear graph (with auto-backup)
-      imas-codex graph backup        Create backup dump
-      imas-codex graph restore       Restore from backup
-      imas-codex graph remove        Delete GHCR tags or old backups
+    Archive & Registry:
+      imas-codex graph export         Export graph to archive
+      imas-codex graph load <file>    Load graph archive
+      imas-codex graph push           Push archive to GHCR
+      imas-codex graph pull           Fetch + load from GHCR
+      imas-codex graph fetch          Download archive (no load)
+      imas-codex graph list           List GHCR versions
 
     \b
-      imas-codex graph db start      Start Neo4j server
-      imas-codex graph db stop       Stop Neo4j server
-      imas-codex graph db status     Check Neo4j status
-      imas-codex graph db profiles   List profiles and ports
-
-    \b
-      imas-codex graph tunnel start  Start SSH tunnel to remote graph
-      imas-codex graph tunnel stop   Stop SSH tunnel
-      imas-codex graph tunnel status Show tunnel status
+    Local Operations:
+      imas-codex graph status         Show graph and registry status
+      imas-codex graph backup         Create local backup (.dump)
+      imas-codex graph restore        Restore from local backup
+      imas-codex graph clear          Clear all graph data
+      imas-codex graph clean          Remove GHCR tags or old backups
     """
     pass
 
 
 # ============================================================================
-# Database Subgroup
+# Neo4j Server Group (registered under 'serve' in CLI __init__)
 # ============================================================================
 
 
-@graph.group("db")
-def graph_db() -> None:
+@click.group("neo4j")
+def neo4j() -> None:
     """Manage Neo4j graph database server.
 
     \b
-      imas-codex graph db start     Start Neo4j via Apptainer
-      imas-codex graph db stop      Stop Neo4j
-      imas-codex graph db status    Check status
-      imas-codex graph db shell     Open Cypher shell
-      imas-codex graph db service   Manage systemd service
+      imas-codex serve neo4j start     Start Neo4j via Apptainer
+      imas-codex serve neo4j stop      Stop Neo4j
+      imas-codex serve neo4j status    Check status
+      imas-codex serve neo4j profiles  List profiles and ports
+      imas-codex serve neo4j shell     Open Cypher shell
+      imas-codex serve neo4j service   Manage systemd service
     """
     pass
 
 
-@graph_db.command("start")
+@neo4j.command("start")
 @click.option(
     "--graph",
     "-g",
@@ -542,7 +537,7 @@ def graph_db() -> None:
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
-def db_start(
+def neo4j_start(
     graph: str | None,
     image: str | None,
     data_dir: str | None,
@@ -640,7 +635,7 @@ def db_start(
         click.echo("Warning: Neo4j may still be starting")
 
 
-@graph_db.command("stop")
+@neo4j.command("stop")
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
 @click.option(
     "--graph",
@@ -649,7 +644,7 @@ def db_start(
     default=None,
     help="Graph profile name (default: active profile)",
 )
-def db_stop(data_dir: str | None, graph: str | None) -> None:
+def neo4j_stop(data_dir: str | None, graph: str | None) -> None:
     """Stop Neo4j server."""
     import signal
 
@@ -677,11 +672,11 @@ def db_stop(data_dir: str | None, graph: str | None) -> None:
         )
 
 
-@graph_db.command("status")
+@neo4j.command("status")
 @click.option(
     "--graph", "-g", envvar="IMAS_CODEX_GRAPH", default=None, help="Graph profile name"
 )
-def db_status(graph: str | None) -> None:
+def neo4j_status(graph: str | None) -> None:
     """Check Neo4j server status."""
     from imas_codex.graph.profiles import resolve_graph
 
@@ -705,8 +700,8 @@ def db_status(graph: str | None) -> None:
         )
 
 
-@graph_db.command("profiles")
-def db_profiles() -> None:
+@neo4j.command("profiles")
+def neo4j_profiles() -> None:
     """List available graph profiles and their port assignments."""
     from imas_codex.graph.profiles import get_active_graph_name, list_profiles
 
@@ -723,7 +718,7 @@ def db_profiles() -> None:
         )
 
 
-@graph_db.command("shell")
+@neo4j.command("shell")
 @click.option("--image", envvar="NEO4J_IMAGE", default=None)
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option(
@@ -733,7 +728,7 @@ def db_profiles() -> None:
     default=None,
     help="Graph profile name (default: active profile)",
 )
-def db_shell(image: str | None, password: str | None, graph: str | None) -> None:
+def neo4j_shell(image: str | None, password: str | None, graph: str | None) -> None:
     """Open Cypher shell to Neo4j."""
     from imas_codex.graph.profiles import resolve_graph
 
@@ -762,7 +757,7 @@ def db_shell(image: str | None, password: str | None, graph: str | None) -> None
     )
 
 
-@graph_db.command("service")
+@neo4j.command("service")
 @click.argument("action", type=click.Choice(["install", "uninstall", "status"]))
 @click.option("--image", envvar="NEO4J_IMAGE", default=None, help="Custom image path")
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None, help="Custom data dir")
@@ -777,7 +772,7 @@ def db_shell(image: str | None, password: str | None, graph: str | None) -> None
 @click.option(
     "--minimal", is_flag=True, help="Use minimal service (no resource limits)"
 )
-def db_service(
+def neo4j_service(
     action: str,
     image: str | None,
     data_dir: str | None,
@@ -865,7 +860,7 @@ WantedBy=default.target
             f"HTTP: localhost:{profile.http_port}"
         )
         click.echo(f"  Start: systemctl --user start {service_name}")
-        click.echo(f"  Or:    imas-codex graph db start --graph {profile.name}")
+        click.echo(f"  Or:    imas-codex serve neo4j start --graph {profile.name}")
 
     elif action == "uninstall":
         if not service_file.exists():
@@ -1093,19 +1088,19 @@ def _create_facility_dump(
         click.echo(f"    Filtered dump: {size_mb:.1f} MB")
 
 
-@graph.command("dump")
+@graph.command("export")
 @click.option(
     "--output",
     "-o",
     type=click.Path(),
     help="Output archive path (default: imas-codex-graph[-{facility}]-{version}.tar.gz)",
 )
-@click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after dump")
+@click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after export")
 @click.option(
     "--facility",
     "-f",
     default=None,
-    help="Dump per-facility graph (e.g. tcv)",
+    help="Export per-facility graph (e.g. tcv)",
 )
 @click.option(
     "--graph",
@@ -1114,7 +1109,7 @@ def _create_facility_dump(
     default=None,
     help="Graph profile name (default: active profile)",
 )
-def graph_dump(
+def graph_export(
     output: str | None,
     no_restart: bool,
     facility: str | None,
@@ -1264,12 +1259,12 @@ def graph_load(
                 click.echo(f"  Version: {manifest.get('version')}")
                 click.echo(f"  Commit: {manifest.get('git_commit', 'unknown')[:7]}")
 
-            graph_dump = archive_dir / "graph.dump"
-            if graph_dump.exists():
+            dump_file = archive_dir / "graph.dump"
+            if dump_file.exists():
                 click.echo("  Loading graph database...")
                 dumps_dir = profile.data_dir / "dumps"
                 dumps_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy(graph_dump, dumps_dir / "neo4j.dump")
+                shutil.copy(dump_file, dumps_dir / "neo4j.dump")
 
                 cmd = [
                     "apptainer",
@@ -1489,9 +1484,9 @@ def graph_push(
             dump_args.extend(["--graph", graph])
         if facility:
             dump_args.extend(["--facility", facility])
-        result = runner.invoke(graph_dump, dump_args)
+        result = runner.invoke(graph_export, dump_args)
         if result.exit_code != 0:
-            raise click.ClickException(f"Dump failed: {result.output}")
+            raise click.ClickException(f"Export failed: {result.output}")
 
         login_to_ghcr(token)
 
@@ -2085,214 +2080,7 @@ def _delete_tag(
     return True
 
 
-@graph.command("delete")
-@click.argument("tags", nargs=-1, required=True)
-@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
-@click.option("--token", envvar="GHCR_TOKEN")
-@click.option("--force", is_flag=True, help="Skip confirmation prompt")
-@click.option(
-    "--facility",
-    "-f",
-    default=None,
-    help="Delete from per-facility GHCR package",
-)
-def graph_delete(
-    tags: tuple[str, ...],
-    registry: str | None,
-    token: str | None,
-    force: bool,
-    facility: str | None,
-) -> None:
-    """Delete specific graph versions from GHCR.
-
-    \b
-    Examples:
-      imas-codex graph delete 0.5.0.dev123-abc1234-r1
-      imas-codex graph delete 0.5.0.dev123-abc1234-r1 0.5.0.dev123-abc1234-r2
-      imas-codex graph delete latest
-    """
-    require_oras()  # For tag listing
-
-    git_info = get_git_info()
-    target_registry = get_registry(git_info, registry)
-    pkg_name = get_package_name(facility)
-
-    # Verify tags exist
-    available = _list_registry_tags(target_registry, token, pkg_name)
-    missing = [t for t in tags if t not in available]
-    if missing:
-        click.echo(f"Tags not found: {', '.join(missing)}", err=True)
-        if not available:
-            click.echo("  (no tags in registry)")
-        else:
-            click.echo(f"  Available: {', '.join(sorted(available)[:10])}")
-        if len(missing) == len(tags):
-            raise SystemExit(1)
-
-    found = [t for t in tags if t in available]
-    if not found:
-        return
-
-    click.echo(f"Will delete {len(found)} tag(s) from {target_registry}:")
-    for t in found:
-        click.echo(f"  - {t}")
-
-    if not force:
-        if not click.confirm("\nProceed?"):
-            click.echo("Aborted.")
-            return
-
-    deleted = 0
-    for t in found:
-        if _delete_tag(target_registry, t, token, pkg_name):
-            click.echo(f"  Deleted: {t}")
-            deleted += 1
-
-    click.echo(f"\n✓ Deleted {deleted}/{len(found)} tags")
-
-
-@graph.command("prune")
-@click.option(
-    "--version",
-    "target_version",
-    help="Delete all dev tags for this version (e.g. 0.5.0)",
-)
-@click.option("--dev", "dev_only", is_flag=True, help="Only delete dev/revision tags")
-@click.option(
-    "--keep-latest",
-    type=int,
-    default=0,
-    help="Keep the N most recent dev tags (by revision number)",
-)
-@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
-@click.option("--token", envvar="GHCR_TOKEN")
-@click.option("--force", is_flag=True, help="Skip confirmation prompt")
-@click.option("--dry-run", is_flag=True, help="Show what would be deleted")
-@click.option(
-    "--facility",
-    "-f",
-    default=None,
-    help="Prune from per-facility GHCR package",
-)
-def graph_prune(
-    target_version: str | None,
-    dev_only: bool,
-    keep_latest: int,
-    registry: str | None,
-    token: str | None,
-    force: bool,
-    dry_run: bool,
-    facility: str | None,
-) -> None:
-    """Remove old graph versions from GHCR.
-
-    \b
-    Examples:
-      # Delete all dev tags for version 0.5.0
-      imas-codex graph prune --version 0.5.0 --dev
-
-      # Delete ALL tags for version 0.5.0 (including release)
-      imas-codex graph prune --version 0.5.0
-
-      # Keep the 3 most recent dev tags, delete the rest
-      imas-codex graph prune --version 0.5.0 --dev --keep-latest 3
-
-      # Dry run to see what would be deleted
-      imas-codex graph prune --version 0.5.0 --dev --dry-run
-    """
-    require_oras()  # For tag listing
-
-    git_info = get_git_info()
-    target_registry = get_registry(git_info, registry)
-
-    pkg_name = get_package_name(facility)
-
-    available = _list_registry_tags(target_registry, token, pkg_name)
-    if not available:
-        click.echo("No tags in registry.")
-        return
-
-    # Determine which tags to delete
-    to_delete: list[str] = []
-
-    if target_version:
-        for tag in available:
-            if tag == "latest":
-                continue  # Never auto-delete 'latest'
-            # Match tags that start with the version prefix
-            # e.g. version="0.5.0" matches "0.5.0", "0.5.0.dev123-abc-r1", etc.
-            if tag == target_version or tag.startswith(f"{target_version}."):
-                if dev_only:
-                    # Only delete dev tags (contain 'dev' or '-r')
-                    if "dev" in tag or "-r" in tag:
-                        to_delete.append(tag)
-                else:
-                    to_delete.append(tag)
-    else:
-        # No version specified - find all dev tags
-        if dev_only:
-            to_delete = [
-                t for t in available if t != "latest" and ("dev" in t or "-r" in t)
-            ]
-        else:
-            raise click.ClickException(
-                "Specify --version to target a specific version, "
-                "or use --dev to target all dev tags."
-            )
-
-    if not to_delete:
-        click.echo("No matching tags to delete.")
-        return
-
-    # Sort by revision number for --keep-latest
-    def _sort_key(tag: str) -> int:
-        """Extract revision number for sorting. Higher = newer."""
-        if "-r" in tag:
-            try:
-                return int(tag.rsplit("-r", 1)[-1])
-            except ValueError:
-                return 0
-        return 0
-
-    to_delete.sort(key=_sort_key, reverse=True)
-
-    # Keep N most recent
-    if keep_latest > 0 and len(to_delete) > keep_latest:
-        kept = to_delete[:keep_latest]
-        to_delete = to_delete[keep_latest:]
-        click.echo(f"Keeping {len(kept)} most recent:")
-        for t in kept:
-            click.echo(f"  + {t}")
-    elif keep_latest > 0:
-        click.echo(
-            f"Only {len(to_delete)} tag(s) found, "
-            f"fewer than --keep-latest={keep_latest}. Nothing to delete."
-        )
-        return
-
-    click.echo(f"\nWill delete {len(to_delete)} tag(s):")
-    for t in to_delete:
-        click.echo(f"  - {t}")
-
-    if dry_run:
-        click.echo("\n[DRY RUN] No tags were deleted.")
-        return
-
-    if not force:
-        if not click.confirm("\nProceed?"):
-            click.echo("Aborted.")
-            return
-
-    deleted = 0
-    for t in to_delete:
-        if _delete_tag(target_registry, t, token, pkg_name):
-            click.echo(f"  Deleted: {t}")
-            deleted += 1
-
-    click.echo(f"\n✓ Deleted {deleted}/{len(to_delete)} tags")
-
-
-@graph.command("remove")
+@graph.command("clean")
 @click.argument("tags", nargs=-1)
 @click.option("--dev", "dev_only", is_flag=True, help="Remove all dev tags from GHCR")
 @click.option(
@@ -2327,7 +2115,7 @@ def graph_prune(
 @click.option("--token", envvar="GHCR_TOKEN")
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
 @click.option("--dry-run", is_flag=True, help="Show what would be removed")
-def graph_remove(
+def graph_clean(
     tags: tuple[str, ...],
     dev_only: bool,
     before_version: str | None,
@@ -2341,19 +2129,19 @@ def graph_remove(
     force: bool,
     dry_run: bool,
 ) -> None:
-    """Remove graph versions from GHCR or clean local backups.
+    """Remove GHCR tags or clean local backups.
 
     \b
     GHCR examples:
-      imas-codex graph remove tag1 tag2         # Delete specific tags
-      imas-codex graph remove --dev              # Remove all dev tags
-      imas-codex graph remove --before 0.5.0     # Remove tags older than v0.5.0
-      imas-codex graph remove --pattern "*.dev*" # Glob match on tags
+      imas-codex graph clean tag1 tag2         # Delete specific tags
+      imas-codex graph clean --dev              # Remove all dev tags
+      imas-codex graph clean --before 0.5.0    # Remove tags older than v0.5.0
+      imas-codex graph clean --pattern "*.dev*" # Glob match on tags
 
     \b
     Backup examples:
-      imas-codex graph remove --backups --older-than 30d
-      imas-codex graph remove --backups --keep-latest 5
+      imas-codex graph clean --backups --older-than 30d
+      imas-codex graph clean --backups --keep-latest 5
     """
     if backups:
         _remove_backups(older_than, keep_latest, force, dry_run)
@@ -2562,7 +2350,7 @@ def graph_clear(graph: str | None, no_backup: bool, force: bool) -> None:
     if not is_neo4j_running(profile.http_port):
         raise click.ClickException(
             f"Neo4j [{profile.name}] is not running on port {profile.http_port}.\n"
-            f"Start it: imas-codex graph db start --graph {profile.name}"
+            f"Start it: imas-codex serve neo4j start --graph {profile.name}"
         )
 
     # Show current stats
@@ -2741,183 +2529,3 @@ def graph_restore(
             raise click.ClickException(f"Restore failed: {result.stderr}")
 
     click.echo(f"✓ Restored [{profile.name}] from {backup_path.name}")
-
-
-# ============================================================================
-# Tunnel Subgroup
-# ============================================================================
-
-
-@graph.group("tunnel")
-def graph_tunnel() -> None:
-    """Manage SSH tunnels for remote graph access.
-
-    SSH tunnels forward remote Neo4j ports to localhost, allowing
-    transparent access to graphs running on facility machines.
-
-    \b
-      imas-codex graph tunnel start [HOST]   Start tunnel to remote graph
-      imas-codex graph tunnel stop [HOST]     Stop tunnel
-      imas-codex graph tunnel status          Show active tunnels
-    """
-    pass
-
-
-@graph_tunnel.command("start")
-@click.argument("host", required=False)
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
-@click.option(
-    "--local-bolt-port",
-    type=int,
-    default=None,
-    help="Local port for bolt forwarding (default: remote + tunnel offset)",
-)
-@click.option(
-    "--local-http-port",
-    type=int,
-    default=None,
-    help="Local port for HTTP forwarding (default: remote + tunnel offset)",
-)
-def tunnel_start(
-    host: str | None,
-    graph: str | None,
-    local_bolt_port: int | None,
-    local_http_port: int | None,
-) -> None:
-    """Start SSH tunnel for remote graph access.
-
-    Forwards the remote Neo4j bolt and HTTP ports to localhost using
-    the shared tunnel utility. Default local ports use the tunnel offset
-    (+10000) to avoid clashing with local Neo4j instances.
-
-    HOST defaults to the profile's configured host.
-    """
-    from imas_codex.graph.profiles import resolve_graph
-    from imas_codex.remote.tunnel import TUNNEL_OFFSET, ensure_tunnel
-
-    profile = resolve_graph(graph)
-    target_host = host or profile.host
-
-    if target_host is None:
-        raise click.ClickException(
-            f"Profile [{profile.name}] has no remote host configured.\n"
-            "This profile connects to localhost directly — no tunnel needed.\n"
-            "Specify a host: imas-codex graph tunnel start <host>"
-        )
-
-    local_bolt = local_bolt_port or (profile.bolt_port + TUNNEL_OFFSET)
-    local_http = local_http_port or (profile.http_port + TUNNEL_OFFSET)
-
-    click.echo(
-        f"Starting tunnel to {target_host} "
-        f"(bolt: localhost:{local_bolt} → {target_host}:{profile.bolt_port}, "
-        f"http: localhost:{local_http} → {target_host}:{profile.http_port})"
-    )
-
-    bolt_ok = ensure_tunnel(
-        port=profile.bolt_port,
-        ssh_host=target_host,
-        tunnel_port=local_bolt,
-    )
-    http_ok = ensure_tunnel(
-        port=profile.http_port,
-        ssh_host=target_host,
-        tunnel_port=local_http,
-    )
-
-    if bolt_ok and http_ok:
-        click.echo(f"✓ Tunnel active: {target_host}")
-        click.echo(
-            f"  Bolt: localhost:{local_bolt} → {target_host}:{profile.bolt_port}"
-        )
-        click.echo(
-            f"  HTTP: localhost:{local_http} → {target_host}:{profile.http_port}"
-        )
-    elif bolt_ok:
-        click.echo("✓ Bolt tunnel active, HTTP tunnel failed")
-    else:
-        raise click.ClickException(f"Failed to establish tunnel to {target_host}.")
-
-
-@graph_tunnel.command("stop")
-@click.argument("host", required=False)
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
-def tunnel_stop(host: str | None, graph: str | None) -> None:
-    """Stop SSH tunnel for a remote host.
-
-    HOST defaults to the profile's configured host.
-    """
-    from imas_codex.graph.profiles import resolve_graph
-    from imas_codex.remote.tunnel import stop_tunnel
-
-    profile = resolve_graph(graph)
-    target_host = host or profile.host
-
-    if target_host is None:
-        raise click.ClickException(
-            "No host specified. Provide HOST argument or use --graph "
-            "with a profile that has a remote host."
-        )
-
-    if stop_tunnel(target_host):
-        click.echo(f"✓ Tunnel to {target_host} stopped")
-    else:
-        click.echo(f"No active tunnel to {target_host} found")
-
-
-@graph_tunnel.command("status")
-def tunnel_status() -> None:
-    """Show active SSH tunnels for graph connections."""
-    from imas_codex.graph.profiles import BOLT_BASE_PORT, _get_all_offsets
-    from imas_codex.remote.tunnel import TUNNEL_OFFSET
-
-    offsets = _get_all_offsets()
-
-    # Gather all known graph ports (direct + tunneled)
-    graph_ports: dict[int, str] = {}
-    for name, offset in offsets.items():
-        direct_port = BOLT_BASE_PORT + offset
-        tunneled_port = direct_port + TUNNEL_OFFSET
-        graph_ports[direct_port] = name
-        graph_ports[tunneled_port] = f"{name} (tunneled)"
-
-    try:
-        result = subprocess.run(
-            ["ss", "-tlnp"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode != 0:
-            click.echo("Could not check tunnels (ss command failed)")
-            return
-
-        tunnels = []
-        for line in result.stdout.splitlines():
-            if "ssh" not in line.lower():
-                continue
-            for port, facility in graph_ports.items():
-                if f":{port}" in line:
-                    tunnels.append((port, facility, line.strip()))
-
-        if tunnels:
-            click.echo("Active graph SSH tunnels:")
-            for port, facility, line in tunnels:
-                click.echo(f"  Port {port} ({facility}): {line}")
-        else:
-            click.echo("No active SSH tunnels on graph ports")
-
-    except Exception as e:
-        click.echo(f"Could not check tunnels: {e}")

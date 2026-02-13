@@ -233,13 +233,13 @@ The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, an
 ### Neo4j Management
 
 ```bash
-uv run imas-codex graph db status            # Check active graph status
-uv run imas-codex graph db status -g tcv     # Check specific profile
-uv run imas-codex graph db start -g tcv      # Start specific profile
-uv run imas-codex graph db profiles          # List all profiles and ports
-uv run imas-codex graph db shell             # Interactive Cypher (active profile)
-uv run imas-codex graph dump                 # Export graph to archive
-uv run imas-codex graph dump --facility tcv  # Per-facility dump (filtered)
+uv run imas-codex serve neo4j status         # Check active graph status
+uv run imas-codex serve neo4j status -g tcv  # Check specific profile
+uv run imas-codex serve neo4j start -g tcv   # Start specific profile
+uv run imas-codex serve neo4j profiles       # List all profiles and ports
+uv run imas-codex serve neo4j shell          # Interactive Cypher (active profile)
+uv run imas-codex graph export               # Export graph to archive
+uv run imas-codex graph export -f tcv        # Per-facility export (filtered)
 uv run imas-codex graph load graph.tar.gz    # Load graph archive
 uv run imas-codex graph pull                 # Pull latest from GHCR
 uv run imas-codex graph pull --facility tcv  # Pull per-facility graph
@@ -248,10 +248,10 @@ uv run imas-codex graph push --facility tcv  # Push per-facility graph
 uv run imas-codex graph backup               # Create neo4j-admin dump backup
 uv run imas-codex graph restore              # Restore from backup
 uv run imas-codex graph clear                # Clear graph (with auto-backup)
-uv run imas-codex graph remove --dev         # Remove all dev GHCR tags
-uv run imas-codex graph remove --backups --older-than 30d  # Clean old backups
-uv run imas-codex graph tunnel start iter    # Start SSH tunnel to remote graph
-uv run imas-codex graph tunnel status        # Show active tunnels
+uv run imas-codex graph clean --dev          # Remove all dev GHCR tags
+uv run imas-codex graph clean --backups --older-than 30d  # Clean old backups
+uv run imas-codex tunnel start iter          # Start SSH tunnel to remote host
+uv run imas-codex tunnel status              # Show active tunnels
 uv run imas-codex config private push        # Push private YAML to Gist
 uv run imas-codex config secrets push iter   # Push .env to remote host
 ```
@@ -537,8 +537,8 @@ Extended examples and edge cases for each domain: [agents/](agents/)
 ## Fallback: MCP Server Not Running
 
 ```bash
-uv run imas-codex neo4j status    # Graph operations
-uv run imas-codex neo4j shell     # Interactive Cypher
-uv run imas-codex ingest run tcv  # Ingestion
-uv run pytest                     # Testing
+uv run imas-codex serve neo4j status    # Graph operations
+uv run imas-codex serve neo4j shell     # Interactive Cypher
+uv run imas-codex ingest run tcv        # Ingestion
+uv run pytest                           # Testing
 ```
