@@ -464,16 +464,60 @@ def _is_local_address(hostname: str) -> bool:
     return False
 
 
-@lru_cache(maxsize=1)
-def _get_explicit_local_hosts() -> frozenset[str]:
-    """Return host aliases declared local via ``IMAS_CODEX_LOCAL_HOSTS``.
+# ─── XDG local-hosts file ────────────────────────────────────────────────────
 
-    Comma-separated, case-insensitive.  Useful on sites where the SSH alias
-    resolves to a VIP/load-balancer address that differs from every local
-    interface (e.g. ``IMAS_CODEX_LOCAL_HOSTS=iter``).
+_LOCAL_HOSTS_FILE = Path.home() / ".config" / "imas-codex" / "local-hosts"
+
+
+def get_local_hosts_file() -> Path:
+    """Return the path to the local-hosts file."""
+    return _LOCAL_HOSTS_FILE
+
+
+@lru_cache(maxsize=1)
+def _get_configured_local_hosts() -> frozenset[str]:
+    """Return host aliases declared local via XDG file or env var.
+
+    Sources (merged, case-insensitive):
+
+    1. ``~/.config/imas-codex/local-hosts`` — one host per line,
+       machine-specific, never travels with ``.env`` or git.
+       Managed via ``imas-codex config local-hosts``.
+    2. ``IMAS_CODEX_LOCAL_HOSTS`` env var — comma-separated,
+       session-level override for debugging/testing.
     """
+    hosts: set[str] = set()
+
+    # XDG config file (persistent, per-machine)
+    if _LOCAL_HOSTS_FILE.exists():
+        try:
+            for line in _LOCAL_HOSTS_FILE.read_text().splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    hosts.add(stripped.lower())
+        except Exception:
+            pass
+
+    # Env var (session-level override — NOT for .env files)
     raw = os.environ.get("IMAS_CODEX_LOCAL_HOSTS", "")
-    return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
+    hosts.update(h.strip().lower() for h in raw.split(",") if h.strip())
+
+    return frozenset(hosts)
+
+
+@lru_cache(maxsize=1)
+def _get_fqdn_domain_parts() -> tuple[str, ...]:
+    """Return FQDN components for diagnostic display.
+
+    On ``98dci4-srv-1001.iter.org`` → ``("98dci4-srv-1001", "iter", "org")``.
+    On ``FR-IWL-MCINTOS1`` (no dots) → ``("fr-iwl-mcintos1",)``.
+
+    .. note:: NOT used for automatic locality detection — FQDN domain
+       components are too broad (all ``*.iter.org`` machines would match
+       ``"iter"``).  Use ``config local-hosts add`` instead.
+    """
+    fqdn = socket.getfqdn().lower()
+    return tuple(fqdn.split("."))
 
 
 def is_local_host(ssh_host: str | None) -> bool:
@@ -482,7 +526,9 @@ def is_local_host(ssh_host: str | None) -> bool:
     Resolution order:
 
     1. ``None`` / ``"local"`` → always local
-    2. ``IMAS_CODEX_LOCAL_HOSTS`` env var (comma-separated aliases)
+    2. Configured local hosts — ``~/.config/imas-codex/local-hosts``
+       file (per-machine) and ``IMAS_CODEX_LOCAL_HOSTS`` env var
+       (per-session).  Managed via ``imas-codex config local-hosts``.
     3. Hostname / FQDN / short-name match via :func:`_get_local_hostnames`
     4. SSH config resolution (``HostName`` via ``~/.ssh/config``)
     5. Bind probe — resolves the candidate via DNS and tries
@@ -508,8 +554,8 @@ def is_local_host(ssh_host: str | None) -> bool:
     if host_lower == "local":
         return True
 
-    # Env-var override for sites behind VIPs / load-balancers
-    if host_lower in _get_explicit_local_hosts():
+    # XDG config file + env var override
+    if host_lower in _get_configured_local_hosts():
         return True
 
     local_hostnames = _get_local_hostnames()

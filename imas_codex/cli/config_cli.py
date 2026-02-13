@@ -3,6 +3,7 @@
 This module provides the ``imas-codex config`` command group for:
 - Private facility YAML management via GitHub Gist (``config private``)
 - Secrets (.env) sync between project clones via SSH (``config secrets``)
+- Local-host declarations for location-aware detection (``config local-hosts``)
 """
 
 import os
@@ -105,7 +106,7 @@ def _save_secrets_host(host: str) -> None:
 
 @click.group("config")
 def config() -> None:
-    """Manage private facility configs and secrets.
+    """Manage private facility configs, secrets, and local-host settings.
 
     \b
       imas-codex config private push      Push private YAML to Gist
@@ -114,6 +115,9 @@ def config() -> None:
       imas-codex config secrets push      Push .env to remote host
       imas-codex config secrets pull      Pull .env from remote host
       imas-codex config secrets status    Show .env status
+      imas-codex config local-hosts       Show declared local hosts
+      imas-codex config local-hosts add   Declare a host as local
+      imas-codex config local-hosts remove Remove a local-host declaration
     """
     pass
 
@@ -528,3 +532,128 @@ def secrets_status() -> None:
 
     click.echo(f"\nDefault remote path: {SECRETS_DEFAULT_PROJECT_PATH}")
     click.echo(f"Last used host: {secrets_host or '(none)'}")
+
+
+# ============================================================================
+# Local Hosts Subgroup (per-machine locality declarations)
+# ============================================================================
+
+
+@config.group("local-hosts", invoke_without_command=True)
+@click.pass_context
+def config_local_hosts(ctx: click.Context) -> None:
+    """Manage local-host declarations for location detection.
+
+    Declares which SSH host aliases refer to this machine.  Persisted in
+    ``~/.config/imas-codex/local-hosts`` — never travels with ``.env``
+    or git, so ``config secrets push`` won't leak it to other machines.
+
+    Most cases are detected automatically via FQDN domain matching
+    (e.g. on ``*.iter.org``, ``is_local_host("iter")`` returns True).
+    Use this command only when automatic detection fails.
+
+    \b
+      imas-codex config local-hosts           Show current declarations
+      imas-codex config local-hosts add tcv   Declare 'tcv' as local
+      imas-codex config local-hosts remove tcv Remove declaration
+    """
+    if ctx.invoked_subcommand is None:
+        # Default action: show current local hosts
+        from imas_codex.remote.executor import (
+            _get_fqdn_domain_parts,
+            get_local_hosts_file,
+        )
+
+        hosts_file = get_local_hosts_file()
+
+        # Show FQDN-based auto-detection
+        import socket
+
+        fqdn = socket.getfqdn()
+        domain_parts = _get_fqdn_domain_parts()
+        click.echo(f"FQDN: {fqdn}")
+        click.echo(f"  Domain components: {', '.join(domain_parts)}")
+
+        # Show configured file
+        click.echo(f"\nLocal-hosts file: {hosts_file}")
+        if hosts_file.exists():
+            lines = [
+                line.strip()
+                for line in hosts_file.read_text().splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+            if lines:
+                for host in lines:
+                    click.echo(f"  {host}")
+            else:
+                click.echo("  (empty)")
+        else:
+            click.echo("  (not created)")
+
+        # Show env var override
+        env_val = os.environ.get("IMAS_CODEX_LOCAL_HOSTS", "")
+        if env_val:
+            click.echo(f"\nIMAS_CODEX_LOCAL_HOSTS env: {env_val}")
+
+
+@config_local_hosts.command("add")
+@click.argument("host")
+def local_hosts_add(host: str) -> None:
+    """Declare a host alias as local to this machine.
+
+    Example: imas-codex config local-hosts add iter
+    """
+    from imas_codex.remote.executor import get_local_hosts_file
+
+    hosts_file = get_local_hosts_file()
+    hosts_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read existing
+    existing: list[str] = []
+    if hosts_file.exists():
+        existing = [
+            line.strip()
+            for line in hosts_file.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+    if host.lower() in [h.lower() for h in existing]:
+        click.echo(f"'{host}' is already declared as local")
+        return
+
+    # Append
+    with hosts_file.open("a") as f:
+        if not existing:
+            f.write("# SSH aliases that refer to this machine\n")
+            f.write("# Managed by: imas-codex config local-hosts\n")
+        f.write(f"{host}\n")
+
+    click.echo(f"Added '{host}' to {hosts_file}")
+
+
+@config_local_hosts.command("remove")
+@click.argument("host")
+def local_hosts_remove(host: str) -> None:
+    """Remove a local-host declaration.
+
+    Example: imas-codex config local-hosts remove iter
+    """
+    from imas_codex.remote.executor import get_local_hosts_file
+
+    hosts_file = get_local_hosts_file()
+
+    if not hosts_file.exists():
+        raise click.ClickException(f"No local-hosts file: {hosts_file}")
+
+    lines = hosts_file.read_text().splitlines()
+    new_lines = [
+        line
+        for line in lines
+        if line.strip().lower() != host.lower() or line.strip().startswith("#")
+    ]
+
+    if len(new_lines) == len(lines):
+        raise click.ClickException(f"'{host}' not found in {hosts_file}")
+
+    hosts_file.write_text("\n".join(new_lines) + "\n" if new_lines else "")
+    click.echo(f"Removed '{host}' from {hosts_file}")
