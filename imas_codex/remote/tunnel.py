@@ -21,15 +21,57 @@ Example::
 from __future__ import annotations
 
 import logging
+import signal
 import socket
 import subprocess
 import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 # Default offset added to remote port to derive the local tunnel port.
 # e.g. remote 7687 → local 17687
 TUNNEL_OFFSET = 10000
+
+# PID file directory for tracking our tunnel processes
+_PID_DIR = Path.home() / ".local" / "share" / "imas-codex" / "tunnels"
+
+
+def _pid_file(ssh_host: str) -> Path:
+    """Return the PID file path for a given host."""
+    return _PID_DIR / f"{ssh_host}.pid"
+
+
+def _write_pid(ssh_host: str, pid: int) -> None:
+    """Record an autossh/ssh tunnel PID for later cleanup."""
+    _PID_DIR.mkdir(parents=True, exist_ok=True)
+    _pid_file(ssh_host).write_text(str(pid))
+
+
+def _read_pid(ssh_host: str) -> int | None:
+    """Read the recorded PID for a host's tunnel, or None."""
+    path = _pid_file(ssh_host)
+    if not path.exists():
+        return None
+    try:
+        pid = int(path.read_text().strip())
+        # Verify process still exists
+        try:
+            import os
+
+            os.kill(pid, 0)
+            return pid
+        except ProcessLookupError:
+            path.unlink(missing_ok=True)
+            return None
+    except (ValueError, OSError):
+        path.unlink(missing_ok=True)
+        return None
+
+
+def _clear_pid(ssh_host: str) -> None:
+    """Remove the PID file for a host."""
+    _pid_file(ssh_host).unlink(missing_ok=True)
 
 
 def is_tunnel_active(port: int) -> bool:
@@ -80,8 +122,12 @@ def ensure_tunnel(
     If ``tunnel_port`` is already bound locally, assumes the tunnel is
     active and returns immediately.  Otherwise launches::
 
-        ssh -f -N -o ExitOnForwardFailure=yes \\
+        ssh -f -N -o ControlMaster=no -o ControlPath=none \\
             -L {tunnel_port}:127.0.0.1:{port} {ssh_host}
+
+    ``ExitOnForwardFailure`` is intentionally omitted — config-level
+    ``RemoteForward`` directives (e.g. ``RemoteForward 2222``) would kill
+    the entire connection.  Port liveness is verified after connect instead.
 
     Args:
         port: Remote port to forward.
@@ -111,7 +157,9 @@ def ensure_tunnel(
                 "-f",
                 "-N",
                 "-o",
-                "ExitOnForwardFailure=yes",
+                "ControlMaster=no",
+                "-o",
+                "ControlPath=none",
                 "-o",
                 "ServerAliveInterval=30",
                 "-o",
@@ -157,42 +205,53 @@ def ensure_tunnel(
 
 
 def stop_tunnel(ssh_host: str) -> bool:
-    """Stop an SSH tunnel to the given host.
+    """Stop SSH tunnel processes to the given host.
 
-    Tries ``ssh -O exit`` first (clean ControlMaster shutdown), then
-    falls back to ``pkill`` targeting both autossh and ssh tunnel processes.
+    Uses PID files written at tunnel start to target only our processes.
+    Falls back to pattern matching as a safety net, but **only** for
+    ``imas-codex``-style tunnel patterns (``-L {offset_port}:``).
+
+    Does **not** use ``ssh -O exit`` (would kill ControlMaster sessions)
+    and does **not** blindly ``pkill autossh.*{host}`` (would kill the
+    user's unrelated autossh processes).
 
     Returns:
-        True if a tunnel was stopped.
+        True if a tunnel process was killed.
     """
     stopped = False
 
+    # Primary: kill by recorded PID
+    pid = _read_pid(ssh_host)
+    if pid is not None:
+        try:
+            import os
+
+            # Kill the process group to catch autossh + its child ssh
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            logger.info("Killed tunnel process group for %s (pid %d)", ssh_host, pid)
+            stopped = True
+        except (ProcessLookupError, PermissionError):
+            logger.debug("PID %d already gone", pid)
+        _clear_pid(ssh_host)
+
+    # Fallback: pattern match only for imas-codex-style tunnel ports
+    # (offset ports like 17687, 17474 that only we create)
+    offset_pattern = f"-L 1[0-9]{{4}}:.*{ssh_host}"
     result = subprocess.run(
-        ["ssh", "-O", "exit", ssh_host],
+        ["pgrep", "-f", offset_pattern],
         capture_output=True,
         text=True,
     )
     if result.returncode == 0:
-        logger.info("Tunnel to %s stopped via ControlMaster", ssh_host)
-        stopped = True
+        for pid_str in result.stdout.strip().splitlines():
+            try:
+                import os
 
-    # Kill autossh processes for this host
-    result = subprocess.run(
-        ["pkill", "-f", f"autossh.*{ssh_host}"],
-        capture_output=True,
-    )
-    if result.returncode == 0:
-        logger.info("autossh to %s killed via pkill", ssh_host)
-        stopped = True
-
-    # Kill plain SSH tunnel processes for this host
-    result = subprocess.run(
-        ["pkill", "-f", f"ssh.*-N.*{ssh_host}"],
-        capture_output=True,
-    )
-    if result.returncode == 0:
-        logger.info("ssh tunnel to %s killed via pkill", ssh_host)
-        stopped = True
+                os.kill(int(pid_str), signal.SIGTERM)
+                logger.info("Killed orphan tunnel pid %s for %s", pid_str, ssh_host)
+                stopped = True
+            except (ProcessLookupError, PermissionError, ValueError):
+                pass
 
     if not stopped:
         logger.debug("No active tunnel to %s found", ssh_host)
@@ -202,6 +261,7 @@ def stop_tunnel(ssh_host: str) -> bool:
 
 __all__ = [
     "TUNNEL_OFFSET",
+    "_write_pid",
     "ensure_tunnel",
     "is_port_bound_by_ssh",
     "is_tunnel_active",

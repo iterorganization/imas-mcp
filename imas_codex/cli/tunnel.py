@@ -4,6 +4,12 @@ Manages SSH tunnels to all remote services (Neo4j graph, embedding server)
 from a single top-level command group.  Uses ``autossh`` when available for
 automatic reconnection, otherwise falls back to plain ``ssh -f -N``.
 
+All requested port forwards are batched into **one SSH connection** per host
+(single ProxyJump, single auth).  ``ExitOnForwardFailure`` is intentionally
+**not** used because config-level ``RemoteForward`` directives (e.g.
+``RemoteForward 2222``) would kill the entire connection on failure.
+Instead, we verify each local port is reachable after SSH connects.
+
 Usage::
 
     imas-codex tunnel start [HOST]           # All services
@@ -14,6 +20,7 @@ Usage::
     imas-codex tunnel service install [HOST]  # Persistent autossh via systemd
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,6 +30,31 @@ import click
 # ============================================================================
 # Helpers
 # ============================================================================
+
+
+def _record_tunnel_pid(host: str, first_local_port: int) -> None:
+    """Find and record the PID of the autossh/ssh process we just started.
+
+    Searches for a process matching our specific local-port forward pattern
+    so that ``stop_tunnel`` can target exactly our process without affecting
+    other SSH sessions.
+    """
+    from imas_codex.remote.tunnel import _write_pid
+
+    # pgrep for autossh (or ssh) forwarding our first tunnel port
+    for prog in ("autossh", "ssh"):
+        result = subprocess.run(
+            ["pgrep", "-f", f"{prog}.*-L {first_local_port}:.*{host}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            for pid_str in result.stdout.strip().splitlines():
+                try:
+                    _write_pid(host, int(pid_str))
+                    return
+                except ValueError:
+                    continue
 
 
 def _resolve_host(host: str | None) -> str:
@@ -95,83 +127,117 @@ def _get_tunnel_ports(
     return ports
 
 
-def _start_single_tunnel(
+def _start_tunnels(
     host: str,
-    remote_port: int,
-    local_port: int,
-    label: str,
+    ports: list[tuple[int, int, str]],
     use_autossh: bool,
-) -> bool:
-    """Start a single port-forward tunnel. Returns True on success."""
-    from imas_codex.remote.tunnel import is_tunnel_active
+) -> int:
+    """Start port-forward tunnels in a single SSH connection.
 
-    if is_tunnel_active(local_port):
-        click.echo(f"  {label}: already active (localhost:{local_port})")
-        return True
+    All requested forwards are passed as multiple ``-L`` flags to one
+    ``autossh``/``ssh`` process so there is only one ProxyJump negotiation.
+    Ports that are already bound locally are skipped and reported.
 
-    forward = f"{local_port}:127.0.0.1:{remote_port}"
-
-    if use_autossh:
-        cmd = [
-            "autossh",
-            "-M",
-            "0",
-            "-f",
-            "-N",
-            "-o",
-            "ControlMaster=no",
-            "-o",
-            "ControlPath=none",
-            "-o",
-            "ServerAliveInterval=30",
-            "-o",
-            "ServerAliveCountMax=3",
-            "-o",
-            "ExitOnForwardFailure=yes",
-            "-L",
-            forward,
-            host,
-        ]
-    else:
-        cmd = [
-            "ssh",
-            "-f",
-            "-N",
-            "-o",
-            "ExitOnForwardFailure=yes",
-            "-o",
-            "ServerAliveInterval=30",
-            "-o",
-            "ServerAliveCountMax=3",
-            "-o",
-            "ConnectTimeout=10",
-            "-L",
-            forward,
-            host,
-        ]
-
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=15)
-    except subprocess.CalledProcessError as e:
-        click.echo(f"  {label}: FAILED ({e.stderr.strip() if e.stderr else e})")
-        return False
-    except subprocess.TimeoutExpired:
-        click.echo(f"  {label}: TIMEOUT")
-        return False
-
+    Returns the number of active tunnels (including pre-existing ones).
+    """
     import time
 
-    time.sleep(0.5)
+    from imas_codex.remote.tunnel import is_tunnel_active
 
-    # Retry port check — autossh may need time after forking
-    for _ in range(3):
+    already_active: list[tuple[int, str]] = []
+    to_start: list[tuple[int, int, str]] = []
+
+    for remote_port, local_port, label in ports:
         if is_tunnel_active(local_port):
-            click.echo(f"  {label}: localhost:{local_port} → {host}:{remote_port}")
-            return True
+            already_active.append((local_port, label))
+        else:
+            to_start.append((remote_port, local_port, label))
+
+    for local_port, label in already_active:
+        click.echo(f"  {label}: already active (localhost:{local_port})")
+
+    if not to_start:
+        return len(already_active)
+
+    # Build -L flags for all ports that need tunneling
+    forward_args: list[str] = []
+    for remote_port, local_port, _label in to_start:
+        forward_args.extend(["-L", f"{local_port}:127.0.0.1:{remote_port}"])
+
+    # SSH options shared between autossh and plain ssh modes.
+    # We intentionally omit ExitOnForwardFailure — config-level
+    # RemoteForward directives (e.g. RemoteForward 2222) would kill the
+    # entire connection if they fail.  Port liveness is verified after
+    # connect instead.  ClearAllForwardings is also omitted because it
+    # clears our own -L flags (despite what the man page suggests).
+    ssh_opts = [
+        "-o", "ControlMaster=no",
+        "-o", "ControlPath=none",
+        "-o", "ServerAliveInterval=30",
+        "-o", "ServerAliveCountMax=3",
+    ]  # fmt: skip
+
+    if use_autossh:
+        cmd = ["autossh", "-M", "0", "-f", "-N", *ssh_opts, *forward_args, host]
+        # AUTOSSH_GATETIME=0: don't treat quick ssh exit as "connection failed"
+        # (autossh default 30 s would suppress retries on fast failures)
+        env = {**os.environ, "AUTOSSH_GATETIME": "0"}
+    else:
+        cmd = [
+            "ssh", "-f", "-N",
+            *ssh_opts,
+            "-o", "ConnectTimeout=10",
+            *forward_args,
+            host,
+        ]  # fmt: skip
+        env = None
+
+    try:
+        subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.strip() if e.stderr else str(e)
+        click.echo(f"  FAILED: {stderr}")
+        return len(already_active)
+    except subprocess.TimeoutExpired:
+        click.echo("  TIMEOUT waiting for SSH connection")
+        return len(already_active)
+
+    # Record the autossh/ssh PID for targeted cleanup later.
+    # autossh -f / ssh -f fork into the background, so we find the PID
+    # by matching our specific -L forward pattern.
+    _record_tunnel_pid(host, to_start[0][1])
+
+    # Wait for the forked ssh to bind the ports.
+    # ssh -f forks AFTER connection + forwarding setup, so ports
+    # should be available quickly.  Retry to account for slow auth.
+    time.sleep(0.5)
+    new_ok = 0
+    for _attempt in range(5):
+        new_ok = 0
+        all_up = True
+        for _remote_port, local_port, _label in to_start:
+            if is_tunnel_active(local_port):
+                new_ok += 1
+            else:
+                all_up = False
+        if all_up:
+            break
         time.sleep(1.0)
 
-    click.echo(f"  {label}: started but port {local_port} not reachable")
-    return False
+    for remote_port, local_port, label in to_start:
+        if is_tunnel_active(local_port):
+            click.echo(f"  {label}: localhost:{local_port} → {host}:{remote_port}")
+        else:
+            click.echo(f"  {label}: FAILED (port {local_port} not reachable)")
+
+    return len(already_active) + new_ok
 
 
 # ============================================================================
@@ -237,10 +303,7 @@ def tunnel_start(
         )
 
     ports = _get_tunnel_ports(target, neo4j_only, embed_only)
-    ok = 0
-    for remote_port, local_port, label in ports:
-        if _start_single_tunnel(target, remote_port, local_port, label, use_autossh):
-            ok += 1
+    ok = _start_tunnels(target, ports, use_autossh)
 
     if ok == len(ports):
         click.echo(f"✓ All {ok} tunnel(s) active")
@@ -296,31 +359,38 @@ def tunnel_stop(host: str | None, stop_all: bool) -> None:
 def tunnel_status() -> None:
     """Show active SSH tunnels across all services.
 
-    Scans for SSH-bound ports matching known Neo4j and embedding server
-    ports across all graph profiles.
+    Scans known Neo4j and embedding server ports (both direct and
+    tunneled) for anything listening.  Ports bound by an SSH process
+    are labeled accordingly.
     """
-    from imas_codex.graph.profiles import (
-        BOLT_BASE_PORT,
-        HTTP_BASE_PORT,
-        _get_all_offsets,
-    )
-    from imas_codex.remote.tunnel import TUNNEL_OFFSET
+    from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
     from imas_codex.settings import get_embed_server_port
 
-    offsets = _get_all_offsets()
     embed_port = get_embed_server_port()
 
-    # Build map of all known service ports → label
+    # Build port→label map using the same resolution as tunnel_start
+    # so that labels match (graph name "codex", not location "iter").
     known_ports: dict[int, str] = {}
-    for name, offset in offsets.items():
-        bolt = BOLT_BASE_PORT + offset
-        http = HTTP_BASE_PORT + offset
-        known_ports[bolt] = f"neo4j-bolt ({name})"
-        known_ports[bolt + TUNNEL_OFFSET] = f"neo4j-bolt ({name}, tunneled)"
-        known_ports[http] = f"neo4j-http ({name})"
-        known_ports[http + TUNNEL_OFFSET] = f"neo4j-http ({name}, tunneled)"
+    try:
+        from imas_codex.graph.profiles import resolve_graph
+
+        profile = resolve_graph(auto_tunnel=False)
+        name = profile.name
+        known_ports[profile.bolt_port] = f"neo4j-bolt ({name})"
+        known_ports[profile.bolt_port + TUNNEL_OFFSET] = f"neo4j-bolt ({name}, tunneled)"
+        known_ports[profile.http_port] = f"neo4j-http ({name})"
+        known_ports[profile.http_port + TUNNEL_OFFSET] = f"neo4j-http ({name}, tunneled)"
+    except Exception:
+        from imas_codex.graph.profiles import BOLT_BASE_PORT, HTTP_BASE_PORT
+
+        known_ports[BOLT_BASE_PORT] = "neo4j-bolt"
+        known_ports[BOLT_BASE_PORT + TUNNEL_OFFSET] = "neo4j-bolt (tunneled)"
+        known_ports[HTTP_BASE_PORT] = "neo4j-http"
+        known_ports[HTTP_BASE_PORT + TUNNEL_OFFSET] = "neo4j-http (tunneled)"
     known_ports[embed_port] = "embed"
 
+    # Identify which ports are bound by SSH (via ss -tlnp)
+    ssh_ports: set[int] = set()
     try:
         result = subprocess.run(
             ["ss", "-tlnp"],
@@ -328,29 +398,30 @@ def tunnel_status() -> None:
             text=True,
             timeout=5,
         )
-        if result.returncode != 0:
-            click.echo("Could not check tunnels (ss command failed)")
-            return
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "ssh" not in line.lower():
+                    continue
+                for port in known_ports:
+                    if f":{port}" in line:
+                        ssh_ports.add(port)
+    except Exception:
+        pass
 
-        seen: set[int] = set()
-        tunnels: list[tuple[int, str]] = []
-        for line in result.stdout.splitlines():
-            if "ssh" not in line.lower():
-                continue
-            for port, label in known_ports.items():
-                if port not in seen and f":{port}" in line:
-                    tunnels.append((port, label))
-                    seen.add(port)
+    # Check all known ports for liveness
+    tunnels: list[tuple[int, str, bool]] = []
+    for port, label in sorted(known_ports.items()):
+        if is_tunnel_active(port):
+            is_ssh = port in ssh_ports
+            tunnels.append((port, label, is_ssh))
 
-        if tunnels:
-            click.echo("Active SSH tunnels:")
-            for port, label in sorted(tunnels):
-                click.echo(f"  :{port}  {label}")
-        else:
-            click.echo("No active SSH tunnels on known service ports")
-
-    except Exception as e:
-        click.echo(f"Could not check tunnels: {e}")
+    if tunnels:
+        click.echo("Active tunnels:")
+        for port, label, is_ssh in tunnels:
+            marker = " (ssh)" if is_ssh else ""
+            click.echo(f"  :{port}  {label}{marker}")
+    else:
+        click.echo("No active tunnels on known service ports")
 
 
 # ============================================================================
@@ -441,7 +512,6 @@ ExecStart={autossh} -M 0 -N \\
     -o "ControlPath=none" \\
     -o "ServerAliveInterval=30" \\
     -o "ServerAliveCountMax=3" \\
-    -o "ExitOnForwardFailure=yes" \\
     {forwards_str} \\
     {target}
 ExecStop=/bin/kill $MAINPID
