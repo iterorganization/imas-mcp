@@ -17,6 +17,7 @@ Functions:
 """
 
 import logging
+import os
 import re
 import socket
 import subprocess
@@ -439,11 +440,57 @@ def _parse_ssh_config_host(ssh_host: str) -> tuple[str | None, bool]:
     return None, False
 
 
+def _is_local_address(hostname: str) -> bool:
+    """Check if *hostname* resolves to an IP bound on a local interface.
+
+    Attempts ``socket.bind()`` for each resolved address — only succeeds if
+    the OS owns the address.  Useful when the machine sits behind a VIP or
+    load-balancer whose external IPs differ from the login node's own.
+    """
+    try:
+        addrs = {info[4][0] for info in socket.getaddrinfo(hostname, None)}
+    except Exception:
+        return False
+
+    for addr in addrs:
+        family = socket.AF_INET6 if ":" in addr else socket.AF_INET
+        try:
+            s = socket.socket(family, socket.SOCK_STREAM)
+            s.bind((addr, 0))
+            s.close()
+            return True
+        except OSError:
+            continue
+    return False
+
+
+@lru_cache(maxsize=1)
+def _get_explicit_local_hosts() -> frozenset[str]:
+    """Return host aliases declared local via ``IMAS_CODEX_LOCAL_HOSTS``.
+
+    Comma-separated, case-insensitive.  Useful on sites where the SSH alias
+    resolves to a VIP/load-balancer address that differs from every local
+    interface (e.g. ``IMAS_CODEX_LOCAL_HOSTS=iter``).
+    """
+    raw = os.environ.get("IMAS_CODEX_LOCAL_HOSTS", "")
+    return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
+
+
 def is_local_host(ssh_host: str | None) -> bool:
     """Determine if an ssh_host refers to the local machine.
 
-    This is a low-level check based on hostname matching.
-    For facility-aware locality detection, use is_local_facility() from tools.py.
+    Resolution order:
+
+    1. ``None`` / ``"local"`` → always local
+    2. ``IMAS_CODEX_LOCAL_HOSTS`` env var (comma-separated aliases)
+    3. Hostname / FQDN / short-name match via :func:`_get_local_hostnames`
+    4. SSH config resolution (``HostName`` via ``~/.ssh/config``)
+    5. Bind probe — resolves the candidate via DNS and tries
+       ``socket.bind()`` to check if any resulting IP is on a local
+       interface (catches FQDN-to-interface mismatches)
+
+    For facility-aware locality detection, use ``is_local_facility()``
+    from ``tools.py``.
 
     Args:
         ssh_host: SSH host alias or hostname (None = local).
@@ -455,14 +502,20 @@ def is_local_host(ssh_host: str | None) -> bool:
     if ssh_host is None:
         return True
 
+    host_lower = ssh_host.lower()
+
     # Explicit "local" specifier means run locally
-    if ssh_host.lower() == "local":
+    if host_lower == "local":
+        return True
+
+    # Env-var override for sites behind VIPs / load-balancers
+    if host_lower in _get_explicit_local_hosts():
         return True
 
     local_hostnames = _get_local_hostnames()
 
     # Check if ssh_host is explicitly localhost
-    if ssh_host.lower() in local_hostnames:
+    if host_lower in local_hostnames:
         return True
 
     # Resolve ssh_host via SSH config
@@ -475,6 +528,12 @@ def is_local_host(ssh_host: str | None) -> bool:
 
     if resolved and resolved.lower() in local_hostnames:
         return True
+
+    # Last resort: resolve via DNS and check if any IP is bound locally.
+    # Check the SSH-resolved name first (more specific), then the raw alias.
+    for candidate in dict.fromkeys(filter(None, [resolved, ssh_host])):
+        if _is_local_address(candidate):
+            return True
 
     return False
 
