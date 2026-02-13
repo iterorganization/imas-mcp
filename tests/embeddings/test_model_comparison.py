@@ -25,6 +25,9 @@ sentence_transformers = pytest.importorskip(
 )
 SentenceTransformer = sentence_transformers.SentenceTransformer
 
+# Exclude from default test runs — these download large models
+pytestmark = pytest.mark.slow
+
 # Test cases: (query, expected_top_paths, language)
 # Expected paths should appear in top-5 results for good retrieval
 DD_RETRIEVAL_CASES = [

@@ -47,9 +47,16 @@ def embedding_model_name(request):
 
 @pytest.fixture(scope="session", autouse=True)
 def configure_embedding_model(embedding_model_name):
-    """Configure the embedding model environment variable."""
+    """Configure the embedding model environment variable.
+
+    Forces local backend with all-MiniLM-L6-v2 for all tests unless
+    explicitly overridden via --embedding-model CLI option.
+    """
+    os.environ.setdefault("IMAS_CODEX_EMBEDDING_BACKEND", "local")
     if embedding_model_name:
         os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = embedding_model_name
+    else:
+        os.environ.setdefault("IMAS_CODEX_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
 
 # Standard test IDS set for consistency across all tests

@@ -68,6 +68,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+    "torch",
+    "sentence-transformers>=5.0.0",
     "pytest>=8.3.5,<9.0.0",
     "pytest-cov>=6.1.1,<7.0.0",
     "pytest-asyncio>=0.21.0,<1.0.0",
@@ -198,12 +200,14 @@ imas-dd-version = ""
 [tool.imas-codex]
 
 [tool.imas-codex.graph]
-# Active graph profile. Override: IMAS_CODEX_GRAPH=tcv
-name = "iter"
+# Graph name = logical identity (what data). Override: IMAS_CODEX_GRAPH=tcv
+# Location  = where Neo4j runs (SSH alias). Override: IMAS_CODEX_GRAPH_LOCATION=local
+name = "codex"
+location = "iter"
 username = "neo4j"
 password = "imas-codex"
 
-# Port offsets per location — list position determines bolt/http ports.
+# Port slots — list position determines bolt/http ports.
 # bolt = 7687 + index, http = 7474 + index.
 # Tunneled connections add +10000 (e.g. iter tunnel → bolt 17687).
 locations = ["iter", "tcv", "jt60sa", "jet", "west", "mast-u", "asdex-u", "east", "diii-d", "kstar"]
@@ -216,7 +220,7 @@ locations = ["iter", "tcv", "jt60sa", "jet", "west", "mast-u", "asdex-u", "east"
 
 # Explicit profile overrides (convention handles standard cases):
 # [tool.imas-codex.graph.profiles.staging]
-# host = "staging-server"          # Where Neo4j runs (SSH alias)
+# location = "staging-server"      # Where Neo4j runs (SSH alias)
 # bolt-port = 7700
 # http-port = 7701
 # data-dir = "/custom/path/neo4j-staging"
@@ -294,7 +298,7 @@ addopts = [
     "--verbose",
     "--durations=10",
     "--cache-clear",
-    "-m", "not graph",
+    "-m", "not graph and not slow",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
@@ -394,14 +398,19 @@ explicit = true
 [tool.uv.sources]
 torch = [
   { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cpu", extra = "test" },
   { index = "pytorch-gpu", extra = "gpu" },
 ]
 
 [tool.uv]
-# cpu and gpu extras are mutually exclusive
+# cpu, gpu, and test extras for torch are mutually exclusive with gpu
 conflicts = [
   [
     { extra = "cpu" },
+    { extra = "gpu" },
+  ],
+  [
+    { extra = "test" },
     { extra = "gpu" },
   ],
 ]

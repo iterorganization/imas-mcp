@@ -1,64 +1,100 @@
 # Graph Profile Configuration
 
-Graph profiles configure where Neo4j runs and how to connect. The system uses
-**convention-based** port allocation with **location-aware** URI resolution
-and **automatic tunneling** for remote graphs.
+Graph profiles configure **what** data is in a Neo4j instance and **where**
+it runs. These are two orthogonal concerns:
 
-## Key Concepts
+| Concept | Config key | Env override | Example |
+|---------|-----------|--------------|---------|
+| **Name** | `name` | `IMAS_CODEX_GRAPH` | `"codex"` (all facilities + IMAS DD) |
+| **Location** | `location` | `IMAS_CODEX_GRAPH_LOCATION` | `"iter"` (ITER login node) |
 
-| Concept | Description | Example |
-|---------|-------------|---------|
-| **Profile name** | Logical graph identifier | `"iter"`, `"tcv"` |
-| **Host** | Where Neo4j physically runs | `"iter"` (SSH alias), `None` (local) |
-| **Ports** | Bolt and HTTP ports at the host | 7687/7474 (iter), 7688/7475 (tcv) |
-| **Tunnel offset** | +10000 to local port for tunneled access | 17687 (tunneled iter) |
-| **Data dir** | Neo4j data directory | `~/.local/share/imas-codex/neo4j` |
+The default graph is **`codex`** — a single graph containing all facilities
+and the IMAS data dictionary. It runs at the **`iter`** location (the ITER
+HPC cluster).
 
-## Port Convention
+## Configuration
 
-Port offsets are managed in `pyproject.toml` under
-`[tool.imas-codex.graph].locations`. List position encodes the port offset.
-SSH host aliases default to the location name (e.g. location `tcv` →
-SSH alias `tcv`). Only add explicit `[tool.imas-codex.graph.hosts]`
-entries where the alias differs:
+All graph settings live in `pyproject.toml`:
 
 ```toml
 [tool.imas-codex.graph]
-# Position = port offset: iter=0 (7687/7474), tcv=1 (7688/7475), ...
+name = "codex"          # What data (override: IMAS_CODEX_GRAPH=tcv)
+location = "iter"       # Where it runs (override: IMAS_CODEX_GRAPH_LOCATION=local)
+username = "neo4j"
+password = "imas-codex"
+
+# Port slots — position = port offset
+# iter=0 (7687/7474), tcv=1 (7688/7475), jt60sa=2 (7689/7476), ...
 locations = ["iter", "tcv", "jt60sa", "jet", "west", "mast-u", "asdex-u", "east", "diii-d", "kstar"]
+```
 
+## Key Concepts
+
+### Name (what data)
+
+The graph **name** identifies what data lives in the Neo4j instance:
+
+- `"codex"` — the main graph with all facilities + IMAS data dictionary
+- `"tcv"` — a single-facility graph (when name matches a location, ports
+  come from that location's slot — see below)
+- `"sandbox"` — any arbitrary name for experimentation
+
+### Location (where it runs)
+
+The **location** determines where Neo4j physically runs. Each location maps
+to an SSH alias and a port slot:
+
+| Location | Bolt Port | HTTP Port | SSH alias |
+|----------|-----------|-----------|-----------|
+| iter | 7687 | 7474 | `iter` |
+| tcv | 7688 | 7475 | `tcv` |
+| jt60sa | 7689 | 7476 | `jt60sa` |
+| jet | 7690 | 7477 | `jet` |
+
+Port formula: `bolt = 7687 + index`, `http = 7474 + index` (index from the
+`locations` list).
+
+### How Name and Location Interact
+
+When resolving a graph profile:
+
+1. **Name matches a location** (e.g. `name = "tcv"`) → ports come from that
+   location's slot. Useful for per-facility graphs.
+2. **Name does not match any location** (e.g. `name = "codex"`) → ports come
+   from the configured `location` key (default: `"iter"`).
+
+This means **`codex`** at location `"iter"` uses the same ports as an
+explicit `"iter"` graph — they share the Neo4j instance.
+
+### SSH hosts
+
+By default, each location's name doubles as its SSH alias (e.g. location
+`"tcv"` → `ssh tcv`). Only add explicit entries in `[graph.hosts]` when
+the SSH alias differs from the location name:
+
+```toml
+[tool.imas-codex.graph.hosts]
 # Only needed when SSH alias ≠ location name:
-# [tool.imas-codex.graph.hosts]
-# custom-facility = "my-ssh-alias"
+# custom-location = "my-ssh-alias"
 ```
 
-| Profile | Bolt Port | HTTP Port | Default Host |
-|---------|-----------|-----------|--------------|
-| iter | 7687 | 7474 | `"iter"` (ITER cluster) |
-| tcv | 7688 | 7475 | `"tcv"` (TCV machine) |
-| jt60sa | 7689 | 7476 | `"jt60sa"` (JT-60SA) |
-| jet | 7690 | 7477 | None (local) |
-
-## How URI Resolution Works
+## URI Resolution
 
 ```
-Profile name → Host → is_local_host(host) → URI
-                  ↓ (remote)
-            auto-tunnel → bolt://localhost:{port+10000}
+Name → Location → is_local_host(location) → URI
+                       ↓ (remote)
+                 auto-tunnel → bolt://localhost:{port+10000}
 ```
 
-1. Profile "iter" has host="iter" (implicit from location name)
+1. Graph name `"codex"` doesn't match a location → uses configured
+   location `"iter"` → ports 7687/7474, SSH to `iter`
 2. `is_local_host("iter")` checks facility private YAML:
-   - On ITER login node: True (matches `login_nodes` pattern)
-   - Elsewhere: False
-3. URI resolved:
-   - Local: `bolt://localhost:{port}` (direct)
-   - Remote: auto-tunnel establishes `ssh -L {port+10000}:127.0.0.1:{port}`,
-     then `bolt://localhost:{port+10000}`
+   - On ITER login node: True → `bolt://localhost:7687`
+   - Elsewhere: False → auto-tunnel → `bolt://localhost:17687`
 
 ## Auto-Tunneling
 
-When connecting to a **remote** host, the profile resolver automatically
+When connecting to a **remote** location, the profile resolver automatically
 establishes an SSH tunnel with a +10000 offset:
 
 ```
@@ -75,147 +111,95 @@ imas-codex tunnel status             # Show active tunnels
 imas-codex tunnel stop iter          # Stop tunnel
 ```
 
-## Graph Commands
-
-```bash
-imas-codex graph push          # Push graph to GHCR
-imas-codex graph fetch         # Download archive (no load)
-imas-codex graph pull          # Fetch + load (convenience)
-imas-codex graph list          # List available versions in GHCR
-imas-codex graph export        # Export to archive
-imas-codex graph load <file>   # Load archive into Neo4j
-```
-
 ## Configuration Scenarios
 
-### 1. Access ITER Graph (default)
-
-**From ITER login node:**
-```bash
-# No config needed — is_local_host("iter") returns True
-imas-codex serve neo4j status
-```
-
-**From WSL (auto-tunnel):**
-```bash
-# Auto-tunnel kicks in automatically when resolving profile
-imas-codex serve neo4j status  # tunnels to bolt://localhost:17687
-```
-
-### 2. Local-only Graph (no remote)
-
-Create an explicit local profile in `pyproject.toml`:
+### 1. Default: Codex Graph on ITER
 
 ```toml
 [tool.imas-codex.graph]
-name = "local"  # Use local profile by default
-
-[tool.imas-codex.graph.profiles.local]
-# No host = local execution
-bolt-port = 7687
-http-port = 7474
-data-dir = "/home/user/.local/share/imas-codex/neo4j-local"
+name = "codex"       # All facilities + IMAS DD
+location = "iter"    # Runs on ITER login node
 ```
 
-Or use env var override:
+**From ITER login node:** Direct access at `bolt://localhost:7687`
+**From WSL:** Auto-tunnels to `bolt://localhost:17687`
+
+### 2. Per-Facility Graph
+
+When `name` matches a location, it uses that location's port slot:
+
 ```bash
-export IMAS_CODEX_GRAPH=local
+# Run a TCV-only graph (port 7688)
+IMAS_CODEX_GRAPH=tcv imas-codex serve neo4j start
 ```
 
-### 3. Local + Facility-specific
-
-Run Neo4j locally for TCV-only data on different ports:
+### 3. Local Development
 
 ```toml
 [tool.imas-codex.graph]
-name = "tcv-local"
+name = "codex"
+location = "local"    # No SSH, direct localhost access
+```
 
-[tool.imas-codex.graph.profiles.tcv-local]
-# No host = runs locally
-bolt-port = 7688    # TCV convention port
-http-port = 7475
-data-dir = "/home/user/.local/share/imas-codex/neo4j-tcv"
+Or via env var:
+```bash
+export IMAS_CODEX_GRAPH_LOCATION=local
+```
+
+### 4. Explicit Profile Override
+
+For non-standard setups, define an explicit profile:
+
+```toml
+[tool.imas-codex.graph.profiles.staging]
+location = "staging-server"   # Where Neo4j runs
+bolt-port = 7700              # Custom ports
+http-port = 7701
+data-dir = "/custom/path/neo4j-staging"
 ```
 
 ```bash
-# Start TCV-specific local graph
-IMAS_CODEX_GRAPH=tcv-local imas-codex serve neo4j start
-```
-
-### 4. ITER + Facility-specific
-
-Access facility-specific graph on ITER (different port, same host):
-
-```bash
-# On ITER: switch to TCV graph (runs on ITER, port 7688)
-IMAS_CODEX_GRAPH=tcv imas-codex serve neo4j status
-
-# From WSL: auto-tunnels to TCV graph on ITER (port 17688)
-IMAS_CODEX_GRAPH=tcv imas-codex serve neo4j status
+IMAS_CODEX_GRAPH=staging imas-codex serve neo4j status
 ```
 
 ### 5. Multiple Tunnels
 
-For simultaneous access to multiple facility graphs from WSL:
+Access multiple facility graphs simultaneously from WSL:
 
 ```bash
-# Auto-tunnels handle this — each graph gets its own port:
-#   iter:  17687/17474
-#   tcv:   17688/17475
+# Each location gets its own tunnel port:
+#   iter:   17687/17474
+#   tcv:    17688/17475
 #   jt60sa: 17689/17476
 
-# Switch between graphs
-IMAS_CODEX_GRAPH=iter imas-codex serve neo4j status
-IMAS_CODEX_GRAPH=tcv imas-codex serve neo4j status
+IMAS_CODEX_GRAPH=codex  imas-codex serve neo4j status  # iter ports
+IMAS_CODEX_GRAPH=tcv    imas-codex serve neo4j status  # tcv ports
 ```
 
-Or configure manual tunnels in SSH config:
-```bash
-# SSH config (~/.ssh/config)
-Host iter
-  LocalForward 17687 localhost:7687  # iter graph
-  LocalForward 17688 localhost:7688  # tcv graph
-  LocalForward 17689 localhost:7689  # jt60sa graph
-```
+## Data Directory Convention
 
-## Avoiding Port Conflicts
-
-**Problem:** Local Neo4j and SSH tunnel both on port 7687.
-
-The tunnel offset (+10000) prevents this by default. Local Neo4j uses
-convention ports (7687+) while tunnels use offset ports (17687+).
-
-**Custom overrides for edge cases:**
-
-1. **Use different port for local development**
-   ```toml
-   [tool.imas-codex.graph.profiles.dev]
-   bolt-port = 7697  # Unused port
-   http-port = 7484
-   ```
-
-2. **Use tunnel port override**
-   ```bash
-   export IMAS_CODEX_TUNNEL_BOLT_ITER=17687
-   ```
+| Graph name | Directory |
+|-----------|-----------|
+| `codex` (default) | `~/.local/share/imas-codex/neo4j/` |
+| `tcv` | `~/.local/share/imas-codex/neo4j-tcv/` |
+| `sandbox` | `~/.local/share/imas-codex/neo4j-sandbox/` |
 
 ## Quick Reference
 
 | Env Var | Purpose |
 |---------|---------|
-| `IMAS_CODEX_GRAPH` | Select active profile |
+| `IMAS_CODEX_GRAPH` | Select graph name |
 | `IMAS_CODEX_GRAPH_LOCATION` | Override where Neo4j runs |
-| `IMAS_CODEX_TUNNEL_BOLT_ITER` | Override tunnel port for iter |
+| `IMAS_CODEX_TUNNEL_BOLT_ITER` | Override tunnel port |
 | `NEO4J_URI` | Override URI completely |
 
 | CLI Command | Purpose |
 |-------------|---------|
 | `serve neo4j profiles` | List all profiles and status |
 | `serve neo4j status` | Check active graph |
-| `serve neo4j status -g tcv` | Check specific profile |
-| `serve neo4j start -g tcv` | Start specific profile |
+| `serve neo4j status -g tcv` | Check specific graph |
+| `serve neo4j start -g tcv` | Start specific graph |
 | `tunnel start iter` | Manual tunnel to iter |
 | `tunnel status` | Show active tunnels |
-| `graph fetch` | Download archive from GHCR |
-| `graph pull` | Fetch + load convenience |
-| `graph list` | List versions in GHCR |
+| `graph push` | Push graph to GHCR |
+| `graph pull` | Fetch + load from GHCR |

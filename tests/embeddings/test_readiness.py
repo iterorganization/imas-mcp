@@ -185,41 +185,29 @@ class TestEnsureEmbeddingReady:
 class TestEnsureSshTunnel:
     """Tests for SSH tunnel establishment."""
 
-    @patch("imas_codex.embeddings.readiness.socket.socket")
-    def test_returns_true_when_port_already_bound(self, mock_socket_cls):
-        """Should return True immediately if port is already in use."""
+    @patch("imas_codex.embeddings.readiness.ensure_tunnel", return_value=True)
+    def test_returns_true_when_tunnel_active(self, mock_ensure):
+        """Should return True when ensure_tunnel succeeds."""
         from imas_codex.embeddings.readiness import _ensure_ssh_tunnel
-
-        mock_socket = MagicMock()
-        mock_socket.connect_ex.return_value = 0  # Port is open
-        mock_socket.__enter__ = MagicMock(return_value=mock_socket)
-        mock_socket.__exit__ = MagicMock(return_value=False)
-        mock_socket_cls.return_value = mock_socket
 
         assert _ensure_ssh_tunnel(18765) is True
+        mock_ensure.assert_called_once_with(port=18765, ssh_host="iter")
 
-    @patch("imas_codex.embeddings.readiness.subprocess.run")
-    @patch("imas_codex.embeddings.readiness.socket.socket")
-    def test_starts_ssh_tunnel_when_port_free(self, mock_socket_cls, mock_run):
-        """Should start SSH tunnel when port is not in use."""
+    @patch("imas_codex.embeddings.readiness.ensure_tunnel", return_value=False)
+    def test_returns_false_when_tunnel_fails(self, mock_ensure):
+        """Should return False when ensure_tunnel fails."""
         from imas_codex.embeddings.readiness import _ensure_ssh_tunnel
 
-        mock_socket = MagicMock()
-        mock_socket.connect_ex.return_value = 111  # Connection refused (port free)
-        mock_socket.__enter__ = MagicMock(return_value=mock_socket)
-        mock_socket.__exit__ = MagicMock(return_value=False)
-        mock_socket_cls.return_value = mock_socket
+        assert _ensure_ssh_tunnel(18765) is False
+        mock_ensure.assert_called_once()
 
-        mock_run.return_value = MagicMock(returncode=0)
+    @patch("imas_codex.embeddings.readiness.ensure_tunnel", return_value=True)
+    def test_uses_explicit_ssh_host(self, mock_ensure):
+        """Should pass explicit ssh_host to ensure_tunnel."""
+        from imas_codex.embeddings.readiness import _ensure_ssh_tunnel
 
-        result = _ensure_ssh_tunnel(18765)
-        assert result is True
-        mock_run.assert_called_once()
-        # Verify SSH command includes the correct port forwarding
-        call_args = mock_run.call_args
-        cmd = call_args[0][0]
-        assert "ssh" in cmd
-        assert "18765:127.0.0.1:18765" in " ".join(cmd)
+        assert _ensure_ssh_tunnel(18765, ssh_host="tcv") is True
+        mock_ensure.assert_called_once_with(port=18765, ssh_host="tcv")
 
 
 class TestTryStartService:

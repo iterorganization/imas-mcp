@@ -58,9 +58,6 @@ def run_server(port: int, transport: str = "streamable-http"):
 @pytest.mark.parametrize("transport", ["streamable-http", "sse"])
 @pytest.mark.timeout(15)
 def test_health_basic(transport, monkeypatch):
-    # Use local backend for testing
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
-
     port = 8900 if transport == "streamable-http" else 8901
     with run_server(port=port, transport=transport):
         # Poll until health available with shorter intervals
@@ -85,9 +82,6 @@ def test_health_basic(transport, monkeypatch):
 
 
 def test_health_idempotent_wrapping(monkeypatch):
-    # Use local backend for testing
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
-
     port = 8902
     server = Server(ids_set=STANDARD_TEST_IDS_SET, use_rich=False)
 

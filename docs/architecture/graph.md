@@ -61,13 +61,14 @@ IMAS_CODEX_TUNNEL_BOLT_ITER=17687
 ```toml
 # pyproject.toml
 [tool.imas-codex.graph]
-default = "iter"
+name = "codex"          # Graph identity (override: IMAS_CODEX_GRAPH=tcv)
+location = "iter"       # Where it runs (override: IMAS_CODEX_GRAPH_LOCATION=local)
 username = "neo4j"
 password = "imas-codex"
 
-# Optional explicit profile override
+# Explicit profile override
 [tool.imas-codex.graph.profiles.staging]
-host = "staging-server"
+location = "staging-server"
 bolt-port = 7700
 http-port = 7701
 ```

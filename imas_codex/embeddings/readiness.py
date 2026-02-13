@@ -28,6 +28,8 @@ import re
 import subprocess
 import time
 
+from imas_codex.remote.tunnel import ensure_tunnel
+
 logger = logging.getLogger(__name__)
 
 # ITER login node hostname — embedding server and Neo4j run here.
@@ -110,8 +112,6 @@ def _ensure_ssh_tunnel(port: int, ssh_host: str | None = None) -> bool:
         from imas_codex.graph.profiles import get_graph_location
 
         ssh_host = get_graph_location()
-
-    from imas_codex.remote.tunnel import ensure_tunnel
 
     return ensure_tunnel(port=port, ssh_host=ssh_host)
 
