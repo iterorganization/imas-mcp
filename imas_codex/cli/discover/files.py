@@ -228,38 +228,32 @@ def files(
             ) as progress:
                 task_id = progress.add_task("[cyan]Scoring files...", total=None)
 
-                def score_progress(msg, stats):
-                    scored = stats.get("scored", 0)
-                    total = stats.get("total", 0)
+                def score_progress(current, total, msg):
                     if total > 0:
-                        progress.update(task_id, total=total, completed=scored)
+                        progress.update(task_id, total=total, completed=current)
                     progress.update(
                         task_id,
                         description=f"[cyan]Scoring: {msg}",
                     )
 
-                score_result = asyncio.run(
-                    score_facility_files(
-                        facility=facility,
-                        cost_limit=cost_limit,
-                        batch_size=score_batch_size,
-                        focus=focus,
-                        on_progress=score_progress,
-                    )
-                )
-        else:
-
-            def score_log(msg, stats):
-                file_logger.info(f"SCORE: {msg}")
-
-            score_result = asyncio.run(
-                score_facility_files(
+                score_result = score_facility_files(
                     facility=facility,
                     cost_limit=cost_limit,
                     batch_size=score_batch_size,
                     focus=focus,
-                    on_progress=score_log,
+                    progress_callback=score_progress,
                 )
+        else:
+
+            def score_log(current, total, msg):
+                file_logger.info(f"SCORE: [{current}/{total}] {msg}")
+
+            score_result = score_facility_files(
+                facility=facility,
+                cost_limit=cost_limit,
+                batch_size=score_batch_size,
+                focus=focus,
+                progress_callback=score_log,
             )
 
         total_scored = score_result.get("scored", 0)
