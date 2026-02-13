@@ -251,10 +251,10 @@ batch-size = 50
 model = "google/gemini-3-flash-preview"
 
 [tool.imas-codex.agent]
-model = "anthropic/claude-sonnet-4.5"
+model = "anthropic/claude-opus-4.6"
 
 [tool.imas-codex.compaction]
-model = "anthropic/claude-haiku-4.5"
+model = "anthropic/claude-sonnet-4.5"
 
 [tool.hatch.envs.test]
 dependencies = [

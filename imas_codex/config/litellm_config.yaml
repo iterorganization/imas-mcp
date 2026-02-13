@@ -16,22 +16,22 @@ credential_list:
 
 # --- Model definitions ---
 model_list:
-  # Opus 4 — agent teams, complex reasoning
+  # Opus 4.6 — agent teams, complex reasoning
   - model_name: opus
     litellm_params:
-      model: openrouter/anthropic/claude-opus-4-20250514
+      model: openrouter/anthropic/claude-opus-4.6
       litellm_credential_name: openrouter
 
-  # Sonnet 4 — focused tasks, search, data gathering
+  # Sonnet 4.5 — focused tasks, search, data gathering
   - model_name: sonnet
     litellm_params:
-      model: openrouter/anthropic/claude-sonnet-4-20250514
+      model: openrouter/anthropic/claude-sonnet-4.5
       litellm_credential_name: openrouter
 
-  # Haiku 4 — structured output, graph writes, low-reasoning
+  # Haiku 4.5 — structured output, graph writes, low-reasoning
   - model_name: haiku
     litellm_params:
-      model: openrouter/anthropic/claude-haiku-4-20250514
+      model: openrouter/anthropic/claude-haiku-4.5
       litellm_credential_name: openrouter
 
   # Gemini Flash — scoring, batch classification (auto-caches)
