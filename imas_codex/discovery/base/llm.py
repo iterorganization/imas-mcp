@@ -51,7 +51,11 @@ import logging
 import os
 import re
 import time
+from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
+
+import yaml
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -243,33 +247,90 @@ def _sanitize_content(content: str) -> str:
     return content
 
 
-def _supports_cache_control(model: str) -> bool:
-    """Check if a model supports explicit cache_control breakpoints via OpenRouter.
+# ---------------------------------------------------------------------------
+# Prompt caching configuration (data-driven from config/prompt_caching.yaml)
+# ---------------------------------------------------------------------------
 
-    Anthropic: cache_control required, reads 0.1× input price.
-    Gemini: cache_control supported (uses last breakpoint), reads 0.25× input price.
+_PROMPT_CACHING_CONFIG = (
+    Path(__file__).resolve().parents[2] / "config" / "prompt_caching.yaml"
+)
+
+
+@lru_cache(maxsize=1)
+def _load_caching_config() -> dict[str, Any]:
+    """Load prompt caching configuration from YAML.
+
+    Returns:
+        Parsed config dict with provider entries.
+    """
+    with _PROMPT_CACHING_CONFIG.open() as f:
+        return yaml.safe_load(f)
+
+
+@lru_cache(maxsize=1)
+def _explicit_cache_patterns() -> tuple[str, ...]:
+    """Return match patterns for providers supporting explicit cache_control.
+
+    These are providers where injecting ``cache_control`` breakpoints into
+    messages enables prompt caching (Anthropic, Google Gemini, etc.).
+    Providers with implicit caching don't need breakpoints but tolerate them.
+
+    Returns:
+        Tuple of lowercase match strings (e.g., ("claude", "anthropic", "gemini", ...)).
+    """
+    config = _load_caching_config()
+    patterns: list[str] = []
+    for _name, provider in config.get("providers", {}).items():
+        # Include both explicit and implicit — breakpoints are harmless
+        # on implicit providers and help if OpenRouter re-routes.
+        patterns.extend(provider.get("match", []))
+    return tuple(patterns)
+
+
+def _supports_cache_control(model: str) -> bool:
+    """Check if a model benefits from explicit cache_control breakpoints.
+
+    Uses data-driven matching from ``config/prompt_caching.yaml``.
+    Includes both explicit providers (Anthropic, Gemini) where breakpoints
+    are required, and implicit providers (OpenAI, DeepSeek) where they are
+    harmless but help if OpenRouter re-routes to an explicit provider.
     """
     model_lower = model.lower()
-    return (
-        "claude" in model_lower or "anthropic" in model_lower or "gemini" in model_lower
-    )
+    return any(pattern in model_lower for pattern in _explicit_cache_patterns())
+
+
+def get_caching_info(model: str) -> dict[str, Any] | None:
+    """Return caching config for a model, or None if no provider matches.
+
+    Looks up the model against ``config/prompt_caching.yaml`` and returns
+    the matching provider's configuration (mode, read_discount, min_tokens, etc.).
+
+    Args:
+        model: Model identifier (e.g., "anthropic/claude-sonnet-4.5").
+
+    Returns:
+        Provider config dict or None.
+    """
+    config = _load_caching_config()
+    model_lower = model.lower()
+    for name, provider in config.get("providers", {}).items():
+        if any(pattern in model_lower for pattern in provider.get("match", [])):
+            return {"provider": name, **provider}
+    return None
 
 
 def inject_cache_control(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Add cache_control breakpoints to system messages for Anthropic caching.
+    """Add cache_control breakpoints to system messages for prompt caching.
 
     Converts the last system message's content to a content-block list
     with ``cache_control: {"type": "ephemeral"}`` on the last block.
-    This enables prompt caching via OpenRouter for supported providers:
+    Provider support is configured in ``config/prompt_caching.yaml``.
 
-    **Anthropic** (Claude): read 0.1×, write 1.25× (5min) or 2× (1hr)
-    **Google** (Gemini): read 0.25×, write ≈input+storage (5min TTL)
-
-    The default 5-minute TTL is used here because discovery workers
-    issue many calls within short windows (batch scoring).  For long-
-    running agent sessions, pass ``ttl="1h"`` explicitly (Anthropic only).
+    The default 5-minute ``ephemeral`` TTL is optimal for discovery
+    workers that fire calls every 1-3 seconds, keeping the cache warm
+    continuously throughout a CLI run.
 
     Args:
         messages: Chat messages (not mutated — a shallow copy is returned).
@@ -315,8 +376,9 @@ def _build_kwargs(
     When max_tokens or timeout are not explicitly set, uses
     model-family defaults from MODEL_TOKEN_LIMITS.
 
-    For supported models (Anthropic, Gemini), ``cache_control`` breakpoints
-    are injected on the system prompt to enable prompt caching via OpenRouter.
+    For models with caching support (per ``config/prompt_caching.yaml``),
+    ``cache_control`` breakpoints are injected on the system prompt to
+    enable prompt caching via OpenRouter.
     """
     model_id = ensure_openrouter_prefix(model)
     limits = get_model_limits(model)

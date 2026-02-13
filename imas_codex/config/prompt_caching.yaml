@@ -1,0 +1,89 @@
+# Prompt caching configuration for OpenRouter providers.
+#
+# Two caching modes:
+#   explicit  — requires cache_control breakpoints in messages
+#   implicit  — automatic, no message modification needed
+#
+# Explicit caching is injected by inject_cache_control() in discovery/base/llm.py.
+# Implicit caching is free — providers handle it transparently.
+#
+# Source: https://openrouter.ai/docs/guides/best-practices/prompt-caching
+# Last updated: 2026-02-13
+
+providers:
+  # ── Explicit caching (requires cache_control breakpoints) ──────────
+
+  anthropic:
+    mode: explicit
+    read_discount: 0.1     # 90% off input price
+    write_cost_5min: 1.25  # 25% surcharge (5-min TTL)
+    write_cost_1hr: 2.0    # 100% surcharge (1-hr TTL)
+    min_tokens:
+      default: 1024
+      # Models requiring larger minimum:
+      claude-opus-4.5: 4096
+      claude-haiku-4.5: 4096
+    ttl_options: ["5min", "1hr"]
+    match:
+      - claude
+      - anthropic
+
+  google:
+    mode: explicit
+    read_discount: 0.25    # 75% off input price
+    write_cost_5min: 1.0   # input price + storage
+    min_tokens:
+      default: 4096
+      gemini-2.5-pro: 2048
+      gemini-2.5-flash: 1028
+    ttl_options: ["5min"]   # TTL does not auto-renew
+    notes: "Only the last cache_control breakpoint is used"
+    match:
+      - gemini
+      - google
+
+  # ── Implicit caching (automatic, no breakpoints needed) ────────────
+  # These providers cache automatically. We still inject cache_control
+  # breakpoints because it doesn't hurt (ignored by the provider) and
+  # keeps behaviour consistent if OpenRouter routes to a different
+  # provider that does support explicit caching.
+
+  openai:
+    mode: implicit
+    read_discount: 0.5     # 50% off (varies by model, 0.25-0.50×)
+    min_tokens:
+      default: 1024
+    match:
+      - gpt
+      - openai
+      - o1
+      - o3
+      - o4
+
+  deepseek:
+    mode: implicit
+    read_discount: 0.1     # 90% off
+    match:
+      - deepseek
+
+  grok:
+    mode: implicit
+    read_discount: 0.25    # 75% off
+    match:
+      - grok
+      - x-ai
+      - xai
+
+  groq:
+    mode: implicit
+    read_discount: 0.5
+    notes: "Currently available on Kimi K2 models only"
+    match:
+      - groq
+
+  moonshot:
+    mode: implicit
+    read_discount: 0.25
+    match:
+      - moonshot
+      - kimi
