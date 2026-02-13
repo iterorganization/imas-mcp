@@ -37,8 +37,10 @@ def main(ctx: click.Context, version: bool) -> None:
       imas-codex serve imas       Start the IMAS Data Dictionary MCP server
       imas-codex serve agents     Start the Agents MCP server
       imas-codex serve embed      Start GPU embedding server
+      imas-codex graph push       Push graph archive to GHCR
+      imas-codex graph db start   Start Neo4j database
+      imas-codex config private   Manage private facility YAML
       imas-codex imas build       Build/update IMAS DD graph
-      imas-codex imas status      Show DD graph statistics
       imas-codex facilities list  List configured facilities
     """
     if version:
@@ -50,15 +52,45 @@ def main(ctx: click.Context, version: bool) -> None:
         click.echo(ctx.get_help())
 
 
+class _DeprecatedDataGroup(click.MultiCommand):
+    """Deprecated 'data' command that forwards to 'graph' and 'config'."""
+
+    def __init__(self, graph_group: click.Group, config_group: click.Group) -> None:
+        super().__init__(
+            name="data",
+            help="[DEPRECATED] Use 'imas-codex graph' or 'imas-codex config' instead.",
+        )
+        self._graph = graph_group
+        self._config = config_group
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        graph_cmds = self._graph.list_commands(ctx)
+        config_cmds = self._config.list_commands(ctx)
+        return sorted(set(graph_cmds + config_cmds))
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        click.echo(
+            "Warning: 'imas-codex data' is deprecated. "
+            "Use 'imas-codex graph' or 'imas-codex config' instead.",
+            err=True,
+        )
+        # Try graph first, then config
+        result = self._graph.get_command(ctx, cmd_name)
+        if result is None:
+            result = self._config.get_command(ctx, cmd_name)
+        return result
+
+
 def register_commands() -> None:
     """Register all command groups with the main CLI."""
     from imas_codex.cli.compute import hpc
+    from imas_codex.cli.config_cli import config
     from imas_codex.cli.credentials import credentials
-    from imas_codex.cli.data import data
     from imas_codex.cli.discover import discover
     from imas_codex.cli.embed import embed
     from imas_codex.cli.enrich import enrich
     from imas_codex.cli.facilities import facilities
+    from imas_codex.cli.graph_cli import graph
     from imas_codex.cli.hosts import hosts
     from imas_codex.cli.imas_dd import imas
     from imas_codex.cli.ingest import ingest
@@ -68,7 +100,8 @@ def register_commands() -> None:
     from imas_codex.cli.utils import setup_age
 
     main.add_command(serve)
-    main.add_command(data)
+    main.add_command(graph)
+    main.add_command(config)
     main.add_command(hpc)
     main.add_command(discover)
     main.add_command(embed)
@@ -81,6 +114,9 @@ def register_commands() -> None:
     main.add_command(release)
     main.add_command(setup_age)
     main.add_command(credentials)
+
+    # Deprecated alias: 'data' forwards to 'graph' and 'config'
+    main.add_command(_DeprecatedDataGroup(graph, config))
 
 
 # Register commands at import time

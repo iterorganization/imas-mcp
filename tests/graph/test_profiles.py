@@ -4,13 +4,16 @@ import pytest
 
 from imas_codex.graph.profiles import (
     BOLT_BASE_PORT,
+    FACILITY_HOST_DEFAULTS,
     FACILITY_PORT_OFFSETS,
     HTTP_BASE_PORT,
     GraphProfile,
     _convention_bolt_port,
     _convention_data_dir,
     _convention_http_port,
+    check_graph_conflict,
     get_active_graph_name,
+    is_port_bound_by_tunnel,
     list_profiles,
     resolve_graph,
 )
@@ -149,6 +152,65 @@ class TestResolveGraph:
         tcv_p = resolve_graph("tcv")
         assert iter_p.username == tcv_p.username
         assert iter_p.password == tcv_p.password
+
+
+# ── Host field ──────────────────────────────────────────────────────────────
+
+
+class TestHostField:
+    """Tests for the host field on GraphProfile."""
+
+    def test_known_facility_has_host(self, monkeypatch):
+        """Known facilities in FACILITY_HOST_DEFAULTS get host set."""
+        _load_pyproject_settings.cache_clear()
+        monkeypatch.delenv("NEO4J_URI", raising=False)
+        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
+        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+
+        profile = resolve_graph("iter")
+        assert profile.host == "iter"
+
+    def test_tcv_has_host(self, monkeypatch):
+        """tcv facility has host set."""
+        _load_pyproject_settings.cache_clear()
+        monkeypatch.delenv("NEO4J_URI", raising=False)
+        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
+        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+
+        profile = resolve_graph("tcv")
+        assert profile.host == "tcv"
+
+    def test_unknown_host_facility_has_none(self, monkeypatch):
+        """Facility not in FACILITY_HOST_DEFAULTS gets host=None."""
+        _load_pyproject_settings.cache_clear()
+        monkeypatch.delenv("NEO4J_URI", raising=False)
+        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
+        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+
+        profile = resolve_graph("kstar")
+        assert profile.host is None
+
+    def test_host_defaults_match_known_facilities(self):
+        """FACILITY_HOST_DEFAULTS only contains known facilities."""
+        for name in FACILITY_HOST_DEFAULTS:
+            assert name in FACILITY_PORT_OFFSETS
+
+
+# ── Tunnel conflict detection ───────────────────────────────────────────────
+
+
+class TestTunnelConflict:
+    """Tests for tunnel conflict detection functions."""
+
+    def test_is_port_bound_by_tunnel_returns_bool(self):
+        """is_port_bound_by_tunnel returns a boolean."""
+        result = is_port_bound_by_tunnel(99999)
+        assert isinstance(result, bool)
+
+    def test_check_graph_conflict_no_tunnel(self):
+        """check_graph_conflict returns None when no tunnel on obscure port."""
+        result = check_graph_conflict(99999)
+        assert result is None
 
 
 # ── Active graph name ───────────────────────────────────────────────────────

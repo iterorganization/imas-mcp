@@ -39,7 +39,9 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | tcv | 7688 | 7475 | `neo4j-tcv/` |
 | jt60sa | 7689 | 7476 | `neo4j-jt60sa/` |
 
-Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply as escape hatches over any profile. Use `resolve_graph(name)` from `imas_codex.graph.profiles` for direct profile resolution. All CLI `data db` commands accept `--graph/-g` to target a specific profile.
+Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply as escape hatches over any profile. Use `resolve_graph(name)` from `imas_codex.graph.profiles` for direct profile resolution. All CLI `graph` commands accept `--graph/-g` to target a specific profile.
+
+**Location-aware connections:** The `host` field on `GraphProfile` records where Neo4j physically runs (SSH alias or hostname). `is_local_host(host)` determines direct vs tunnel access at connection time. For remote hosts, set `IMAS_CODEX_TUNNEL_BOLT_{HOST}` env var to override the tunnel port.
 
 **Graph config in pyproject.toml:**
 ```toml
@@ -50,6 +52,7 @@ password = "imas-codex"
 
 # Optional explicit profile overrides
 [tool.imas-codex.graph.profiles.staging]
+host = "staging-server"      # Where Neo4j runs (SSH alias or hostname)
 bolt-port = 7700
 http-port = 7701
 data-dir = "/custom/path/neo4j-staging"
@@ -221,15 +224,22 @@ The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, an
 ### Neo4j Management
 
 ```bash
-uv run imas-codex data db status             # Check active graph status
-uv run imas-codex data db status -g tcv      # Check specific profile
-uv run imas-codex data db start -g tcv       # Start specific profile
-uv run imas-codex data db profiles           # List all profiles and ports
-uv run imas-codex data db shell              # Interactive Cypher (active profile)
-uv run imas-codex data dump                  # Backup (always before destructive ops)
-uv run imas-codex data load graph.tar.gz     # Restore
-uv run imas-codex data pull                  # Pull latest from GHCR
-uv run imas-codex data push --dev            # Push to GHCR
+uv run imas-codex graph db status            # Check active graph status
+uv run imas-codex graph db status -g tcv     # Check specific profile
+uv run imas-codex graph db start -g tcv      # Start specific profile
+uv run imas-codex graph db profiles          # List all profiles and ports
+uv run imas-codex graph db shell             # Interactive Cypher (active profile)
+uv run imas-codex graph dump                 # Export graph to archive
+uv run imas-codex graph load graph.tar.gz    # Load graph archive
+uv run imas-codex graph pull                 # Pull latest from GHCR
+uv run imas-codex graph push --dev           # Push to GHCR
+uv run imas-codex graph backup               # Create neo4j-admin dump backup
+uv run imas-codex graph restore              # Restore from backup
+uv run imas-codex graph clear                # Clear graph (with auto-backup)
+uv run imas-codex graph tunnel start iter    # Start SSH tunnel to remote graph
+uv run imas-codex graph tunnel status        # Show active tunnels
+uv run imas-codex config private push        # Push private YAML to Gist
+uv run imas-codex config secrets push iter   # Push .env to remote host
 ```
 
 Never use `DETACH DELETE` on production data without user confirmation. For re-embedding: update nodes in place, don't delete and recreate.

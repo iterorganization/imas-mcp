@@ -48,6 +48,18 @@ class TestCLIImports:
 
         assert data is not None
 
+    def test_import_graph_cli(self):
+        """Graph CLI module imports."""
+        from imas_codex.cli.graph_cli import graph
+
+        assert graph is not None
+
+    def test_import_config_cli(self):
+        """Config CLI module imports."""
+        from imas_codex.cli.config_cli import config
+
+        assert config is not None
+
     def test_import_ingest(self):
         """Ingest module imports."""
         from imas_codex.cli.ingest import ingest

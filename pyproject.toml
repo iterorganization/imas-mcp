@@ -198,9 +198,11 @@ username = "neo4j"
 password = "imas-codex"
 
 # Explicit profile overrides (convention handles standard cases):
-# [tool.imas-codex.graph.profiles.remote-tcv]
-# uri = "bolt://tcv-server.epfl.ch:7687"
-# password = "tcv-specific-password"
+# [tool.imas-codex.graph.profiles.staging]
+# host = "staging-server"          # Where Neo4j runs (SSH alias)
+# bolt-port = 7700
+# http-port = 7701
+# data-dir = "/custom/path/neo4j-staging"
 
 [tool.imas-codex.data-dictionary]
 version = "4.1.0"

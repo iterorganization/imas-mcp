@@ -202,10 +202,6 @@ class TestModuleLevelConstants:
         assert hasattr(settings, "INCLUDE_ERROR_FIELDS")
         assert hasattr(settings, "EMBEDDING_BACKEND")
         assert hasattr(settings, "EMBEDDING_DIMENSION")
-        assert hasattr(settings, "GRAPH_URI")
-        assert hasattr(settings, "GRAPH_USERNAME")
-        assert hasattr(settings, "GRAPH_PASSWORD")
-        assert hasattr(settings, "GRAPH_NAME")
 
     def test_module_constants_have_correct_types(self):
         """Module-level constants have correct types."""
@@ -214,10 +210,6 @@ class TestModuleLevelConstants:
         assert isinstance(settings.INCLUDE_ERROR_FIELDS, bool)
         assert isinstance(settings.EMBEDDING_BACKEND, str)
         assert isinstance(settings.EMBEDDING_DIMENSION, int)
-        assert isinstance(settings.GRAPH_URI, str)
-        assert isinstance(settings.GRAPH_USERNAME, str)
-        assert isinstance(settings.GRAPH_PASSWORD, str)
-        assert isinstance(settings.GRAPH_NAME, str)
 
 
 class TestGraphSettings:
