@@ -33,7 +33,7 @@ def _resolve_host(host: str | None) -> str:
     try:
         from imas_codex.graph.profiles import resolve_graph
 
-        profile = resolve_graph()
+        profile = resolve_graph(auto_tunnel=False)
         if profile.host:
             return profile.host
     except Exception:
@@ -63,10 +63,7 @@ def _get_tunnel_ports(
         try:
             from imas_codex.graph.profiles import resolve_graph
 
-            profile = resolve_graph()
-            if profile.host == host or (profile.host is None and all_services):
-                # Only add if this host matches the profile's host
-                pass
+            profile = resolve_graph(auto_tunnel=False)
             ports.append(
                 (
                     profile.bolt_port,
@@ -164,9 +161,12 @@ def _start_single_tunnel(
 
     time.sleep(0.5)
 
-    if is_tunnel_active(local_port):
-        click.echo(f"  {label}: localhost:{local_port} → {host}:{remote_port}")
-        return True
+    # Retry port check — autossh may need time after forking
+    for _ in range(3):
+        if is_tunnel_active(local_port):
+            click.echo(f"  {label}: localhost:{local_port} → {host}:{remote_port}")
+            return True
+        time.sleep(1.0)
 
     click.echo(f"  {label}: started but port {local_port} not reachable")
     return False
@@ -302,13 +302,15 @@ def tunnel_status() -> None:
             click.echo("Could not check tunnels (ss command failed)")
             return
 
-        tunnels = []
+        seen: set[int] = set()
+        tunnels: list[tuple[int, str]] = []
         for line in result.stdout.splitlines():
             if "ssh" not in line.lower():
                 continue
             for port, label in known_ports.items():
-                if f":{port}" in line:
+                if port not in seen and f":{port}" in line:
                     tunnels.append((port, label))
+                    seen.add(port)
 
         if tunnels:
             click.echo("Active SSH tunnels:")

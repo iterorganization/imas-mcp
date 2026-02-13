@@ -160,11 +160,13 @@ def stop_tunnel(ssh_host: str) -> bool:
     """Stop an SSH tunnel to the given host.
 
     Tries ``ssh -O exit`` first (clean ControlMaster shutdown), then
-    falls back to ``pkill``.
+    falls back to ``pkill`` targeting both autossh and ssh tunnel processes.
 
     Returns:
         True if a tunnel was stopped.
     """
+    stopped = False
+
     result = subprocess.run(
         ["ssh", "-O", "exit", ssh_host],
         capture_output=True,
@@ -172,18 +174,30 @@ def stop_tunnel(ssh_host: str) -> bool:
     )
     if result.returncode == 0:
         logger.info("Tunnel to %s stopped via ControlMaster", ssh_host)
-        return True
+        stopped = True
 
+    # Kill autossh processes for this host
+    result = subprocess.run(
+        ["pkill", "-f", f"autossh.*{ssh_host}"],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        logger.info("autossh to %s killed via pkill", ssh_host)
+        stopped = True
+
+    # Kill plain SSH tunnel processes for this host
     result = subprocess.run(
         ["pkill", "-f", f"ssh.*-N.*{ssh_host}"],
         capture_output=True,
     )
     if result.returncode == 0:
-        logger.info("Tunnel to %s killed via pkill", ssh_host)
-        return True
+        logger.info("ssh tunnel to %s killed via pkill", ssh_host)
+        stopped = True
 
-    logger.debug("No active tunnel to %s found", ssh_host)
-    return False
+    if not stopped:
+        logger.debug("No active tunnel to %s found", ssh_host)
+
+    return stopped
 
 
 __all__ = [

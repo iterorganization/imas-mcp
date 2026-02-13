@@ -264,7 +264,11 @@ def _resolve_uri(host: str | None, bolt_port: int) -> str:
     return f"bolt://localhost:{bolt_port}"
 
 
-def resolve_graph(name: str | None = None) -> GraphProfile:
+def resolve_graph(
+    name: str | None = None,
+    *,
+    auto_tunnel: bool = True,
+) -> GraphProfile:
     """Resolve a graph profile by name.
 
     Resolution order for connection parameters:
@@ -280,6 +284,9 @@ def resolve_graph(name: str | None = None) -> GraphProfile:
 
     Args:
         name: Profile name.  ``None`` resolves via :func:`get_active_graph_name`.
+        auto_tunnel: When True (default), automatically start an SSH tunnel
+            if the host is remote.  Set to False when only port/host metadata
+            is needed (e.g. tunnel CLI) to avoid side-effects.
 
     Returns:
         Fully resolved :class:`GraphProfile`.
@@ -337,8 +344,11 @@ def resolve_graph(name: str | None = None) -> GraphProfile:
         bolt_port = BOLT_BASE_PORT + offset
         http_port = HTTP_BASE_PORT + offset
 
-    # Location-aware URI resolution (with auto-tunneling)
-    uri = _resolve_uri(host, bolt_port)
+    # Location-aware URI resolution (with optional auto-tunneling)
+    if auto_tunnel:
+        uri = _resolve_uri(host, bolt_port)
+    else:
+        uri = f"bolt://localhost:{bolt_port}"
 
     # Env var escape hatches (always win)
     if env_uri := os.getenv("NEO4J_URI"):
