@@ -22,3 +22,13 @@ repos:
         language: system
         files: ^(pyproject\.toml|uv\.lock)$
         pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: private-yaml-sync
+        name: sync private YAML to gist
+        entry: imas-codex config private push --quiet
+        language: system
+        files: ^imas_codex/config/facilities/.*_private\.yaml$
+        pass_filenames: false
+        stages: [pre-commit]

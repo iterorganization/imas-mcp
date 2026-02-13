@@ -896,6 +896,201 @@ WantedBy=default.target
 # ============================================================================
 
 
+def _create_facility_dump(
+    source_dump_path: Path, facility: str, output_path: Path
+) -> None:
+    """Create a per-facility dump by filtering a full graph dump.
+
+    Loads the full dump into a temporary Neo4j instance, deletes nodes
+    belonging to other facilities and orphaned non-DD nodes, then dumps
+    the filtered graph.
+
+    Args:
+        source_dump_path: Path to the full ``neo4j.dump`` file.
+        facility: Facility ID to keep (e.g. ``"tcv"``).
+        output_path: Where to write the filtered dump file.
+    """
+    import time
+    import urllib.request
+
+    temp_bolt_port = 27687
+    temp_http_port = 27474
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dir = Path(tmpdir) / "neo4j-temp"
+        for subdir in ("data", "logs", "dumps"):
+            (temp_dir / subdir).mkdir(parents=True)
+
+        # Copy source dump into temp dumps dir
+        shutil.copy(source_dump_path, temp_dir / "dumps" / "neo4j.dump")
+
+        click.echo(
+            f"  Loading full dump into temp instance for {facility} filtering..."
+        )
+
+        # Load dump into temp data dir
+        load_cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{temp_dir}/data:/data",
+            "--bind",
+            f"{temp_dir}/dumps:/dumps",
+            "--writable-tmpfs",
+            str(NEO4J_IMAGE),
+            "neo4j-admin",
+            "database",
+            "load",
+            "neo4j",
+            "--from-path=/dumps",
+            "--overwrite-destination=true",
+        ]
+        result = subprocess.run(load_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise click.ClickException(
+                f"Failed to load dump into temp instance: {result.stderr}"
+            )
+
+        # Set initial password for temp instance
+        pw_cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{temp_dir}/data:/data",
+            "--writable-tmpfs",
+            str(NEO4J_IMAGE),
+            "neo4j-admin",
+            "dbms",
+            "set-initial-password",
+            "temp-password",
+        ]
+        subprocess.run(pw_cmd, capture_output=True, text=True)
+
+        # Start temp Neo4j
+        click.echo("  Starting temp Neo4j instance...")
+        start_cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{temp_dir}/data:/data",
+            "--bind",
+            f"{temp_dir}/logs:/logs",
+            "--writable-tmpfs",
+            "--env",
+            "NEO4J_AUTH=neo4j/temp-password",
+            "--env",
+            f"NEO4J_server_bolt_listen__address=:{temp_bolt_port}",
+            "--env",
+            f"NEO4J_server_http_listen__address=:{temp_http_port}",
+            str(NEO4J_IMAGE),
+            "neo4j",
+            "console",
+        ]
+        proc = subprocess.Popen(
+            start_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        try:
+            # Wait for temp instance to be ready
+            ready = False
+            for _ in range(60):
+                try:
+                    urllib.request.urlopen(
+                        f"http://localhost:{temp_http_port}/", timeout=2
+                    )
+                    ready = True
+                    break
+                except Exception:
+                    time.sleep(1)
+
+            if not ready:
+                raise click.ClickException(
+                    "Temp Neo4j instance did not start within 60 seconds"
+                )
+
+            click.echo(f"  Filtering graph: keeping facility={facility}...")
+
+            from neo4j import GraphDatabase
+
+            driver = GraphDatabase.driver(
+                f"bolt://localhost:{temp_bolt_port}",
+                auth=("neo4j", "temp-password"),
+            )
+            with driver.session() as session:
+                # Delete non-target facility nodes
+                result = session.run(
+                    "MATCH (n) "
+                    "WHERE n.facility_id IS NOT NULL "
+                    "AND n.facility_id <> $facility "
+                    "DETACH DELETE n "
+                    "RETURN count(*) AS deleted",
+                    facility=facility,
+                )
+                deleted_facility = result.single()["deleted"]
+                click.echo(f"    Removed {deleted_facility} non-{facility} nodes")
+
+                # Delete orphan nodes (no relationships, not IMAS DD types)
+                result = session.run(
+                    "MATCH (n) WHERE NOT (n)--() "
+                    "AND NOT n:IMASPath AND NOT n:DDVersion AND NOT n:Unit "
+                    "AND NOT n:IMASCoordinateSpec AND NOT n:PhysicsDomain "
+                    "AND NOT n:IMASSemanticCluster "
+                    "DELETE n "
+                    "RETURN count(*) AS deleted"
+                )
+                deleted_orphans = result.single()["deleted"]
+                click.echo(f"    Removed {deleted_orphans} orphan nodes")
+
+            driver.close()
+
+        finally:
+            # Stop temp Neo4j
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+        # Dump filtered graph from temp instance
+        click.echo("  Dumping filtered graph...")
+        # Clear old dump file
+        (temp_dir / "dumps" / "neo4j.dump").unlink(missing_ok=True)
+
+        dump_cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{temp_dir}/data:/data",
+            "--bind",
+            f"{temp_dir}/dumps:/dumps",
+            "--writable-tmpfs",
+            str(NEO4J_IMAGE),
+            "neo4j-admin",
+            "database",
+            "dump",
+            "neo4j",
+            "--to-path=/dumps",
+            "--overwrite-destination=true",
+        ]
+        result = subprocess.run(dump_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise click.ClickException(
+                f"Failed to dump filtered graph: {result.stderr}"
+            )
+
+        filtered_dump = temp_dir / "dumps" / "neo4j.dump"
+        if not filtered_dump.exists():
+            raise click.ClickException("Filtered dump file not created")
+
+        shutil.move(str(filtered_dump), str(output_path))
+        size_mb = output_path.stat().st_size / 1024 / 1024
+        click.echo(f"    Filtered dump: {size_mb:.1f} MB")
+
+
 @graph.command("dump")
 @click.option(
     "--output",
@@ -974,13 +1169,22 @@ def graph_dump(
             if result.returncode != 0:
                 raise click.ClickException(f"Graph dump failed: {result.stderr}")
 
-            graph_dump = dumps_dir / "neo4j.dump"
-            if graph_dump.exists():
-                shutil.move(str(graph_dump), str(archive_dir / "graph.dump"))
+            dump_file = dumps_dir / "neo4j.dump"
+            if dump_file.exists():
+                shutil.move(str(dump_file), str(archive_dir / "graph.dump"))
                 size_mb = (archive_dir / "graph.dump").stat().st_size / 1024 / 1024
                 click.echo(f"    Graph: {size_mb:.1f} MB")
             else:
                 raise click.ClickException("Graph dump file not created")
+
+            # If facility specified, filter the dump to keep only that facility
+            if facility:
+                click.echo(f"  Filtering dump for facility: {facility}")
+                _create_facility_dump(
+                    archive_dir / "graph.dump",
+                    facility,
+                    archive_dir / "graph.dump",
+                )
 
             manifest = {
                 "version": __version__,
@@ -2003,6 +2207,247 @@ def graph_prune(
             deleted += 1
 
     click.echo(f"\n✓ Deleted {deleted}/{len(to_delete)} tags")
+
+
+@graph.command("remove")
+@click.argument("tags", nargs=-1)
+@click.option("--dev", "dev_only", is_flag=True, help="Remove all dev tags from GHCR")
+@click.option(
+    "--before",
+    "before_version",
+    default=None,
+    help="Remove tags older than this semver version",
+)
+@click.option("--pattern", default=None, help="Glob pattern to match GHCR tags")
+@click.option(
+    "--backups", is_flag=True, help="Operate on local backup files instead of GHCR"
+)
+@click.option(
+    "--older-than",
+    "older_than",
+    default=None,
+    help="With --backups: remove backups older than N days (e.g. 30d)",
+)
+@click.option(
+    "--keep-latest",
+    type=int,
+    default=0,
+    help="With --backups: retain N most recent backup files",
+)
+@click.option(
+    "--facility",
+    "-f",
+    default=None,
+    help="Target per-facility GHCR package",
+)
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+@click.option("--token", envvar="GHCR_TOKEN")
+@click.option("--force", is_flag=True, help="Skip confirmation prompt")
+@click.option("--dry-run", is_flag=True, help="Show what would be removed")
+def graph_remove(
+    tags: tuple[str, ...],
+    dev_only: bool,
+    before_version: str | None,
+    pattern: str | None,
+    backups: bool,
+    older_than: str | None,
+    keep_latest: int,
+    facility: str | None,
+    registry: str | None,
+    token: str | None,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    """Remove graph versions from GHCR or clean local backups.
+
+    \b
+    GHCR examples:
+      imas-codex graph remove tag1 tag2         # Delete specific tags
+      imas-codex graph remove --dev              # Remove all dev tags
+      imas-codex graph remove --before 0.5.0     # Remove tags older than v0.5.0
+      imas-codex graph remove --pattern "*.dev*" # Glob match on tags
+
+    \b
+    Backup examples:
+      imas-codex graph remove --backups --older-than 30d
+      imas-codex graph remove --backups --keep-latest 5
+    """
+    if backups:
+        _remove_backups(older_than, keep_latest, force, dry_run)
+        return
+
+    # GHCR mode
+    require_oras()
+
+    git_info = get_git_info()
+    target_registry = get_registry(git_info, registry)
+    pkg_name = get_package_name(facility)
+
+    available = _list_registry_tags(target_registry, token, pkg_name)
+    if not available:
+        click.echo("No tags in registry.")
+        return
+
+    to_delete: list[str] = []
+
+    # Explicit tags
+    if tags:
+        missing = [t for t in tags if t not in available]
+        if missing:
+            click.echo(f"Tags not found: {', '.join(missing)}", err=True)
+        to_delete.extend(t for t in tags if t in available)
+
+    # --dev: all dev tags
+    if dev_only:
+        to_delete.extend(
+            t
+            for t in available
+            if t != "latest" and ("dev" in t or "-r" in t) and t not in to_delete
+        )
+
+    # --before VERSION: tags with semver < given version
+    if before_version:
+        from packaging.version import InvalidVersion, Version
+
+        try:
+            threshold = Version(before_version)
+        except InvalidVersion:
+            raise click.ClickException(f"Invalid version: {before_version}") from None
+
+        for t in available:
+            if t == "latest" or t in to_delete:
+                continue
+            # Extract base version from tag (e.g. "0.4.0.dev123-abc-r1" -> "0.4.0")
+            base = t.split(".dev")[0].split("-")[0]
+            try:
+                if Version(base) < threshold:
+                    to_delete.append(t)
+            except InvalidVersion:
+                continue
+
+    # --pattern GLOB
+    if pattern:
+        import fnmatch
+
+        to_delete.extend(
+            t
+            for t in available
+            if t != "latest" and fnmatch.fnmatch(t, pattern) and t not in to_delete
+        )
+
+    if not to_delete:
+        click.echo("No tags matched for removal.")
+        return
+
+    # Deduplicate preserving order
+    seen: set[str] = set()
+    unique_delete: list[str] = []
+    for t in to_delete:
+        if t not in seen:
+            seen.add(t)
+            unique_delete.append(t)
+    to_delete = unique_delete
+
+    click.echo(f"Will remove {len(to_delete)} tag(s) from {target_registry}:")
+    for t in to_delete:
+        click.echo(f"  - {t}")
+
+    if dry_run:
+        click.echo("\n[DRY RUN] No tags were removed.")
+        return
+
+    if not force:
+        if not click.confirm("\nProceed?"):
+            click.echo("Aborted.")
+            return
+
+    deleted = 0
+    for t in to_delete:
+        if _delete_tag(target_registry, t, token, pkg_name):
+            click.echo(f"  Removed: {t}")
+            deleted += 1
+
+    click.echo(f"\n✓ Removed {deleted}/{len(to_delete)} tags")
+
+
+def _remove_backups(
+    older_than: str | None,
+    keep_latest: int,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    """Remove local backup dump files."""
+    from imas_codex.graph.profiles import BACKUPS_DIR
+
+    if not BACKUPS_DIR.exists():
+        click.echo("No backups directory found.")
+        return
+
+    all_backups = sorted(
+        BACKUPS_DIR.glob("*.dump"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not all_backups:
+        click.echo("No backup files found.")
+        return
+
+    to_remove: list[Path] = []
+
+    if older_than:
+        # Parse "30d" format
+        value = older_than.rstrip("d")
+        try:
+            days = int(value)
+        except ValueError:
+            raise click.ClickException(
+                f"Invalid --older-than format: {older_than} (expected e.g. 30d)"
+            ) from None
+
+        from datetime import timedelta
+
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        cutoff_ts = cutoff.timestamp()
+
+        to_remove = [b for b in all_backups if b.stat().st_mtime < cutoff_ts]
+
+    elif keep_latest > 0:
+        if len(all_backups) > keep_latest:
+            to_remove = all_backups[keep_latest:]
+        else:
+            click.echo(
+                f"Only {len(all_backups)} backup(s), "
+                f"fewer than --keep-latest={keep_latest}. Nothing to remove."
+            )
+            return
+    else:
+        click.echo("Specify --older-than or --keep-latest for backup cleanup.")
+        return
+
+    if not to_remove:
+        click.echo("No backups matched for removal.")
+        return
+
+    click.echo(f"Will remove {len(to_remove)} backup file(s):")
+    for b in to_remove:
+        mb = b.stat().st_size / 1024 / 1024
+        click.echo(f"  - {b.name} ({mb:.1f} MB)")
+
+    if dry_run:
+        click.echo("\n[DRY RUN] No backups were removed.")
+        return
+
+    if not force:
+        if not click.confirm("\nProceed?"):
+            click.echo("Aborted.")
+            return
+
+    removed = 0
+    for b in to_remove:
+        b.unlink()
+        removed += 1
+
+    click.echo(f"\n✓ Removed {removed} backup file(s)")
 
 
 # ============================================================================

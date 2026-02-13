@@ -4,17 +4,19 @@ services:
   neo4j:
     image: neo4j:2025.11-community
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "${BOLT_PORT:-7687}:${BOLT_PORT:-7687}"
+      - "${HTTP_PORT:-7474}:${HTTP_PORT:-7474}"
     environment:
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-imas-codex}
       - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_server_bolt_listen__address=:${BOLT_PORT:-7687}
+      - NEO4J_server_http_listen__address=:${HTTP_PORT:-7474}
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7474/"]
+      test: ["CMD", "curl", "-f", "http://localhost:${HTTP_PORT:-7474}/"]
       interval: 10s
       timeout: 5s
       retries: 5

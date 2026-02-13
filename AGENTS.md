@@ -230,12 +230,17 @@ uv run imas-codex graph db start -g tcv      # Start specific profile
 uv run imas-codex graph db profiles          # List all profiles and ports
 uv run imas-codex graph db shell             # Interactive Cypher (active profile)
 uv run imas-codex graph dump                 # Export graph to archive
+uv run imas-codex graph dump --facility tcv  # Per-facility dump (filtered)
 uv run imas-codex graph load graph.tar.gz    # Load graph archive
 uv run imas-codex graph pull                 # Pull latest from GHCR
+uv run imas-codex graph pull --facility tcv  # Pull per-facility graph
 uv run imas-codex graph push --dev           # Push to GHCR
+uv run imas-codex graph push --facility tcv  # Push per-facility graph
 uv run imas-codex graph backup               # Create neo4j-admin dump backup
 uv run imas-codex graph restore              # Restore from backup
 uv run imas-codex graph clear                # Clear graph (with auto-backup)
+uv run imas-codex graph remove --dev         # Remove all dev GHCR tags
+uv run imas-codex graph remove --backups --older-than 30d  # Clean old backups
 uv run imas-codex graph tunnel start iter    # Start SSH tunnel to remote graph
 uv run imas-codex graph tunnel status        # Show active tunnels
 uv run imas-codex config private push        # Push private YAML to Gist

@@ -614,6 +614,129 @@ docker build --build-arg OPENAI_API_KEY=your_key_here .
 docker build .
 ```
 
+## Graph Management
+
+IMAS Codex uses a Neo4j knowledge graph to store facility data, IMAS Data Dictionary paths, and semantic embeddings. The CLI provides comprehensive tools for managing graph instances.
+
+### Graph Profiles
+
+Named profiles allow switching between Neo4j instances at runtime. Each profile maps to a host, bolt port, HTTP port, and data directory.
+
+**Convention ports** (no configuration needed for known facilities):
+
+| Facility | Bolt | HTTP |
+|----------|------|------|
+| iter | 7687 | 7474 |
+| tcv | 7688 | 7475 |
+| jt60sa | 7689 | 7476 |
+
+Select the active profile:
+```bash
+export IMAS_CODEX_GRAPH=tcv
+```
+
+### Quick Start (End User)
+
+```bash
+# Pull a facility graph from GHCR
+imas-codex graph pull --facility tcv
+
+# Start Neo4j
+imas-codex graph db start
+
+# Verify
+imas-codex graph db status
+imas-codex graph db shell
+# > MATCH (n:FacilityPath) RETURN n.facility_id, count(n)
+```
+
+### Location-Aware Connections
+
+The `host` field on each profile records where Neo4j physically runs. At connection time, `is_local_host(host)` determines direct vs tunnel access:
+
+- **On ITER**: `resolve_graph("iter")` detects the local machine → `bolt://localhost:7687` (direct)
+- **On WSL**: `resolve_graph("iter")` detects a remote host → uses SSH tunnel → `bolt://localhost:7687`
+
+For dual-instance setups (local + tunneled), set a tunnel port override in `.env`:
+```bash
+IMAS_CODEX_TUNNEL_BOLT_ITER=17687
+# Then: ssh -f -N -L 17687:localhost:7687 iter
+```
+
+### SSH Tunnels
+
+```bash
+# Start tunnel to remote graph (reads profile host/port)
+imas-codex graph tunnel start iter
+
+# With custom local port (for dual-instance)
+imas-codex graph tunnel start iter --local-bolt-port 17687
+
+# Show active tunnels
+imas-codex graph tunnel status
+
+# Stop tunnel
+imas-codex graph tunnel stop iter
+```
+
+### Backup and Restore
+
+```bash
+# Create a neo4j-admin dump backup
+imas-codex graph backup
+
+# Restore from backup (interactive selection)
+imas-codex graph restore
+
+# Restore specific file
+imas-codex graph restore ~/.local/share/imas-codex/backups/iter-20260213.dump
+
+# Clear graph (auto-backup first)
+imas-codex graph clear
+```
+
+### GHCR Registry
+
+```bash
+# Push (requires GHCR_TOKEN with write:packages scope)
+imas-codex graph push              # Release push (requires git tag)
+imas-codex graph push --dev        # Dev push (auto-increments revision)
+imas-codex graph push --facility tcv --dev  # Per-facility push
+
+# Pull
+imas-codex graph pull              # Pull latest unified graph
+imas-codex graph pull --facility tcv  # Pull per-facility graph
+
+# List and cleanup
+imas-codex graph list              # List available versions
+imas-codex graph remove --dev      # Remove all dev tags
+imas-codex graph remove --backups --older-than 30d  # Clean old backups
+```
+
+### Per-Facility Federation
+
+The full graph contains all facilities. Per-facility graphs are extracted via dump-and-clean:
+
+```bash
+# Dump filtered to a single facility (keeps IMAS DD nodes)
+imas-codex graph dump --facility tcv
+
+# Push to per-facility GHCR package
+imas-codex graph push --facility tcv --dev
+```
+
+This creates `ghcr.io/iterorganization/imas-codex-graph-tcv` containing only TCV data plus the shared IMAS Data Dictionary.
+
+### Docker Compose
+
+```bash
+# Default ports (iter convention: bolt=7687, http=7474)
+docker compose --profile graph up
+
+# Custom ports for another facility
+BOLT_PORT=7688 HTTP_PORT=7475 docker compose --profile graph up
+```
+
 ## Development
 
 For local development and customization:

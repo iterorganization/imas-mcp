@@ -141,31 +141,34 @@ def config_private() -> None:
 @config_private.command("push")
 @click.option("--gist-id", envvar="IMAS_PRIVATE_GIST_ID", help="Existing gist ID")
 @click.option("--dry-run", is_flag=True, help="Show what would be pushed")
-def private_push(gist_id: str | None, dry_run: bool) -> None:
+@click.option("--quiet", "-q", is_flag=True, help="Suppress output (for hooks)")
+def private_push(gist_id: str | None, dry_run: bool, quiet: bool) -> None:
     """Push private YAML files to a secret GitHub Gist."""
     require_gh()
 
+    echo = click.echo if not quiet else lambda *a, **kw: None
+
     private_files = get_private_files()
     if not private_files:
-        click.echo("No private YAML files found")
-        click.echo(f"  Expected pattern: {PRIVATE_YAML_GLOB}")
+        echo("No private YAML files found")
+        echo(f"  Expected pattern: {PRIVATE_YAML_GLOB}")
         return
 
     effective_gist_id = gist_id or get_saved_gist_id()
 
-    click.echo(f"Private files to push: {len(private_files)}")
+    echo(f"Private files to push: {len(private_files)}")
     for f in private_files:
-        click.echo(f"  - {f.name}")
+        echo(f"  - {f.name}")
 
     if dry_run:
         if effective_gist_id:
-            click.echo(f"\n[DRY RUN] Would update gist: {effective_gist_id}")
+            echo(f"\n[DRY RUN] Would update gist: {effective_gist_id}")
         else:
-            click.echo("\n[DRY RUN] Would create new secret gist")
+            echo("\n[DRY RUN] Would create new secret gist")
         return
 
     if effective_gist_id:
-        click.echo(f"\nUpdating gist {effective_gist_id}...")
+        echo(f"\nUpdating gist {effective_gist_id}...")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             gist_dir = Path(tmpdir) / "gist"
@@ -176,7 +179,7 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
                 text=True,
             )
             if result.returncode != 0:
-                click.echo("Gist not found, creating new one...")
+                echo("Gist not found, creating new one...")
                 effective_gist_id = None
             else:
                 subprocess.run(
@@ -206,7 +209,7 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
                     text=True,
                 )
                 if "nothing to commit" in result.stdout + result.stderr:
-                    click.echo("  No changes to push")
+                    echo("  No changes to push")
                 else:
                     result = subprocess.run(
                         ["git", "push"],
@@ -218,7 +221,7 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
                         raise click.ClickException(f"Push failed: {result.stderr}")
 
     if not effective_gist_id:
-        click.echo("\nCreating secret gist...")
+        echo("\nCreating secret gist...")
         cmd = [
             "gh",
             "gist",
@@ -236,10 +239,10 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
         effective_gist_id = gist_url.split("/")[-1]
 
         save_gist_id(effective_gist_id)
-        click.echo(f"Gist ID saved to: {GIST_ID_FILE}")
+        echo(f"Gist ID saved to: {GIST_ID_FILE}")
 
-    click.echo(f"\n✓ Pushed to: https://gist.github.com/{effective_gist_id}")
-    click.echo("  (This is a secret gist - only accessible with the URL)")
+    echo(f"\n✓ Pushed to: https://gist.github.com/{effective_gist_id}")
+    echo("  (This is a secret gist - only accessible with the URL)")
 
 
 @config_private.command("pull")
