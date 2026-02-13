@@ -16,21 +16,20 @@ and **automatic tunneling** for remote graphs.
 
 ## Port Convention
 
-Port offsets and host defaults are managed in `pyproject.toml` under
-`[tool.imas-codex.graph.locations]` and `[tool.imas-codex.graph.hosts]`:
+Port offsets are managed in `pyproject.toml` under
+`[tool.imas-codex.graph].locations`. List position encodes the port offset.
+SSH host aliases default to the location name (e.g. location `tcv` →
+SSH alias `tcv`). Only add explicit `[tool.imas-codex.graph.hosts]`
+entries where the alias differs:
 
 ```toml
-[tool.imas-codex.graph.locations]
-iter = 0       # bolt 7687, http 7474
-tcv = 1        # bolt 7688, http 7475
-jt60sa = 2     # bolt 7689, http 7476
-jet = 3        # bolt 7690, http 7477
-# ... more facilities
+[tool.imas-codex.graph]
+# Position = port offset: iter=0 (7687/7474), tcv=1 (7688/7475), ...
+locations = ["iter", "tcv", "jt60sa", "jet", "west", "mast-u", "asdex-u", "east", "diii-d", "kstar"]
 
-[tool.imas-codex.graph.hosts]
-iter = "iter"      # SSH alias
-tcv = "tcv"
-jt60sa = "jt60sa"
+# Only needed when SSH alias ≠ location name:
+# [tool.imas-codex.graph.hosts]
+# custom-facility = "my-ssh-alias"
 ```
 
 | Profile | Bolt Port | HTTP Port | Default Host |
@@ -48,7 +47,7 @@ Profile name → Host → is_local_host(host) → URI
             auto-tunnel → bolt://localhost:{port+10000}
 ```
 
-1. Profile "iter" has host="iter" (from `[tool.imas-codex.graph.hosts]`)
+1. Profile "iter" has host="iter" (implicit from location name)
 2. `is_local_host("iter")` checks facility private YAML:
    - On ITER login node: True (matches `login_nodes` pattern)
    - Elsewhere: False
@@ -109,7 +108,7 @@ Create an explicit local profile in `pyproject.toml`:
 
 ```toml
 [tool.imas-codex.graph]
-default = "local"  # Use local profile by default
+name = "local"  # Use local profile by default
 
 [tool.imas-codex.graph.profiles.local]
 # No host = local execution
@@ -129,7 +128,7 @@ Run Neo4j locally for TCV-only data on different ports:
 
 ```toml
 [tool.imas-codex.graph]
-default = "tcv-local"
+name = "tcv-local"
 
 [tool.imas-codex.graph.profiles.tcv-local]
 # No host = runs locally

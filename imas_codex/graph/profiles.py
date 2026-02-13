@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 
 # ─── Port convention ────────────────────────────────────────────────────────
 # Port offsets and host defaults are managed exclusively in pyproject.toml:
-#   [tool.imas-codex.graph.locations]  — offset per facility
-#   [tool.imas-codex.graph.hosts]      — SSH alias per facility
+#   [tool.imas-codex.graph].locations  — list of facilities (index = port offset)
+#   [tool.imas-codex.graph.hosts]      — SSH alias overrides (optional)
 
 BOLT_BASE_PORT = 7687
 HTTP_BASE_PORT = 7474
@@ -52,19 +52,34 @@ BACKUPS_DIR = DATA_BASE_DIR / "backups"
 
 
 def _get_all_offsets() -> dict[str, int]:
-    """Return location→offset map from pyproject.toml ``[graph.locations]``."""
+    """Return location→offset map from pyproject.toml ``[graph].locations``.
+
+    Locations is a list where position encodes the port offset::
+
+        locations = ["iter", "tcv", "jt60sa", ...]  # iter=0, tcv=1, ...
+    """
     from imas_codex.settings import _get_section
 
-    configured = _get_section("graph").get("locations", {})
+    configured = _get_section("graph").get("locations", [])
+    if isinstance(configured, list):
+        return {name: i for i, name in enumerate(configured)}
+    # Backward compat: dict form (name = offset)
     return {k: int(v) for k, v in configured.items()}
 
 
 def _get_all_hosts() -> dict[str, str]:
-    """Return facility→host map from pyproject.toml ``[graph.hosts]``."""
+    """Return facility→host map.
+
+    Explicit entries from ``[graph.hosts]`` override, but any location
+    in ``[graph.locations]`` implicitly uses its own name as SSH alias.
+    """
     from imas_codex.settings import _get_section
 
-    configured = _get_section("graph").get("hosts", {})
-    return dict(configured)
+    explicit = _get_section("graph").get("hosts", {})
+    # Every location implicitly has host == name; explicit entries override
+    hosts = {name: name for name in _get_all_offsets()}
+    hosts.update(explicit)
+    return hosts
 
 
 # ─── GraphProfile ───────────────────────────────────────────────────────────
@@ -160,8 +175,8 @@ def get_graph_location() -> str:
     if location := graph_section.get("location"):
         return location
 
-    # Backward compat: infer from default/name
-    name = graph_section.get("name") or graph_section.get("default", DEFAULT_PROFILE)
+    # Infer from graph name
+    name = graph_section.get("name") or graph_section.get("default") or DEFAULT_PROFILE
     if name in _get_all_hosts():
         return name
 
@@ -169,11 +184,7 @@ def get_graph_location() -> str:
 
 
 def get_location_offset(location: str) -> int:
-    """Get the port offset for a location.
-
-    Checks ``[tool.imas-codex.graph.locations]`` in pyproject.toml first,
-    then falls back to the built-in defaults.
-    """
+    """Get the port offset for a location (its index in the locations list)."""
     return _get_all_offsets().get(location, 0)
 
 
@@ -195,7 +206,11 @@ def get_active_graph_name() -> str:
     from imas_codex.settings import _get_section
 
     graph_section = _get_section("graph")
-    return graph_section.get("name") or graph_section.get("default") or DEFAULT_PROFILE
+    return (
+        graph_section.get("name")
+        or graph_section.get("default")  # backward compat
+        or DEFAULT_PROFILE
+    )
 
 
 def _resolve_uri(host: str | None, bolt_port: int) -> str:

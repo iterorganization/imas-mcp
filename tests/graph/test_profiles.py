@@ -199,15 +199,19 @@ class TestHostField:
         profile = resolve_graph("tcv")
         assert profile.host == "tcv"
 
-    def test_unknown_host_facility_has_none(self, monkeypatch):
-        """Facility not in graph.hosts config gets host=None."""
+    def test_location_in_list_has_implicit_host(self, monkeypatch):
+        """Every location in the list gets an implicit host = name."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+        monkeypatch.setattr(
+            "imas_codex.remote.executor.is_local_host",
+            lambda h: True,
+        )
 
         profile = resolve_graph("kstar")
-        assert profile.host is None
+        assert profile.host == "kstar"
 
     def test_host_defaults_match_known_facilities(self):
         """All hosts have a corresponding location offset."""

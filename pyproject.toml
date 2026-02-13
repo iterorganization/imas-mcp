@@ -198,31 +198,21 @@ imas-dd-version = ""
 [tool.imas-codex]
 
 [tool.imas-codex.graph]
-default = "iter"
+# Active graph profile. Override: IMAS_CODEX_GRAPH=tcv
+name = "iter"
 username = "neo4j"
 password = "imas-codex"
 
-# Port offsets per location — position determines bolt/http ports.
-# bolt = 7687 + offset, http = 7474 + offset.
+# Port offsets per location — list position determines bolt/http ports.
+# bolt = 7687 + index, http = 7474 + index.
 # Tunneled connections add +10000 (e.g. iter tunnel → bolt 17687).
-[tool.imas-codex.graph.locations]
-iter = 0
-tcv = 1
-jt60sa = 2
-jet = 3
-west = 4
-mast-u = 5
-asdex-u = 6
-east = 7
-diii-d = 8
-kstar = 9
+locations = ["iter", "tcv", "jt60sa", "jet", "west", "mast-u", "asdex-u", "east", "diii-d", "kstar"]
 
-# SSH alias for facilities that run Neo4j on a remote host.
-# Omit entries that are local-only.
+# SSH host aliases for remote Neo4j instances.
+# When omitted, the location name is used as the SSH alias.
+# Only add entries where the SSH alias differs from the location name.
 [tool.imas-codex.graph.hosts]
-iter = "iter"
-tcv = "tcv"
-jt60sa = "jt60sa"
+# iter, tcv, jt60sa use location name as SSH alias (implicit)
 
 # Explicit profile overrides (convention handles standard cases):
 # [tool.imas-codex.graph.profiles.staging]
