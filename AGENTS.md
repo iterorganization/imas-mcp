@@ -41,7 +41,16 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply as escape hatches over any profile. Use `resolve_graph(name)` from `imas_codex.graph.profiles` for direct profile resolution. All CLI `graph` commands accept `--graph/-g` to target a specific profile.
 
-**Location-aware connections:** The `host` field on `GraphProfile` records where Neo4j physically runs (SSH alias or hostname). `is_local_host(host)` determines direct vs tunnel access at connection time. For remote hosts, set `IMAS_CODEX_TUNNEL_BOLT_{HOST}` env var to override the tunnel port. Locality detection uses hostname matching, SSH config resolution, and IP bind probes. For edge cases (VIP/load-balancer sites), use `imas-codex config local-hosts add <host>` (persists to `~/.config/imas-codex/local-hosts`). Session-level override: `IMAS_CODEX_LOCAL_HOSTS=iter` env var (do NOT put in `.env` — it travels with `config secrets push`).
+**Location-aware connections:** The `host` field on `GraphProfile` records where Neo4j physically runs (SSH alias or hostname). `is_local_host(host)` determines direct vs tunnel access at connection time. For remote hosts, set `IMAS_CODEX_TUNNEL_BOLT_{HOST}` env var to override the tunnel port. Locality detection uses hostname matching, SSH config resolution, and IP bind probes. For edge cases (VIP/load-balancer sites), configure `login_nodes` and `local_hosts` in the facility's private YAML (syncs with `config private push/pull`). Session-level override: `IMAS_CODEX_LOCAL_HOSTS=iter` env var (do NOT put in `.env` — it travels with `config secrets push`).
+
+**Facility locality config:** Add to `<facility>_private.yaml`:
+```yaml
+login_nodes:
+  - "hostname-pattern-*.example.org"  # Glob patterns for login node FQDNs
+local_hosts:
+  - facility_alias                    # SSH aliases treated as local
+```
+When the current machine's FQDN matches a `login_nodes` pattern, that facility's `local_hosts` are treated as local by `is_local_host()`. Check with: `imas-codex config local-hosts`.
 
 **Graph config in pyproject.toml:**
 ```toml

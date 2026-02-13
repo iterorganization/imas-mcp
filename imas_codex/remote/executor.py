@@ -464,39 +464,66 @@ def _is_local_address(hostname: str) -> bool:
     return False
 
 
-# ─── XDG local-hosts file ────────────────────────────────────────────────────
-
-_LOCAL_HOSTS_FILE = Path.home() / ".config" / "imas-codex" / "local-hosts"
+# ─── Facility-based local host detection ────────────────────────────────────
 
 
-def get_local_hosts_file() -> Path:
-    """Return the path to the local-hosts file."""
-    return _LOCAL_HOSTS_FILE
+@lru_cache(maxsize=1)
+def _get_facility_local_hosts() -> frozenset[str]:
+    """Return host aliases declared local via facility private configs.
+
+    Reads ``login_nodes`` (FQDN glob patterns) and ``local_hosts`` (SSH aliases)
+    from each facility's private YAML. If the current machine's FQDN matches
+    any ``login_nodes`` pattern, returns that facility's ``local_hosts``.
+
+    This approach:
+    - Syncs with ``config private push/pull`` (GitHub Gist)
+    - Uses existing facility config infrastructure
+    - No separate per-machine config file needed
+    """
+    import fnmatch
+
+    from imas_codex.discovery.base.facility import (
+        get_facility_infrastructure,
+        list_facilities,
+    )
+
+    fqdn = socket.getfqdn().lower()
+    hosts: set[str] = set()
+
+    for facility_id in list_facilities():
+        try:
+            infra = get_facility_infrastructure(facility_id)
+            login_nodes = infra.get("login_nodes", [])
+            local_hosts = infra.get("local_hosts", [])
+
+            # Check if current FQDN matches any login_nodes pattern
+            for pattern in login_nodes:
+                if fnmatch.fnmatch(fqdn, pattern.lower()):
+                    # We're on this facility's login node - add its local_hosts
+                    hosts.update(h.lower() for h in local_hosts)
+                    break
+        except Exception:
+            # Config loading errors shouldn't break execution
+            pass
+
+    return frozenset(hosts)
 
 
 @lru_cache(maxsize=1)
 def _get_configured_local_hosts() -> frozenset[str]:
-    """Return host aliases declared local via XDG file or env var.
+    """Return host aliases declared local via facility config or env var.
 
     Sources (merged, case-insensitive):
 
-    1. ``~/.config/imas-codex/local-hosts`` — one host per line,
-       machine-specific, never travels with ``.env`` or git.
-       Managed via ``imas-codex config local-hosts``.
+    1. Facility private configs — ``login_nodes`` (FQDN patterns) and
+       ``local_hosts`` (SSH aliases). Syncs with ``config private push/pull``.
     2. ``IMAS_CODEX_LOCAL_HOSTS`` env var — comma-separated,
-       session-level override for debugging/testing.
+       session-level override for debugging/testing only (do NOT put in .env).
     """
     hosts: set[str] = set()
 
-    # XDG config file (persistent, per-machine)
-    if _LOCAL_HOSTS_FILE.exists():
-        try:
-            for line in _LOCAL_HOSTS_FILE.read_text().splitlines():
-                stripped = line.strip()
-                if stripped and not stripped.startswith("#"):
-                    hosts.add(stripped.lower())
-        except Exception:
-            pass
+    # Facility private configs (primary source)
+    hosts.update(_get_facility_local_hosts())
 
     # Env var (session-level override — NOT for .env files)
     raw = os.environ.get("IMAS_CODEX_LOCAL_HOSTS", "")
@@ -505,38 +532,23 @@ def _get_configured_local_hosts() -> frozenset[str]:
     return frozenset(hosts)
 
 
-@lru_cache(maxsize=1)
-def _get_fqdn_domain_parts() -> tuple[str, ...]:
-    """Return FQDN components for diagnostic display.
-
-    On ``98dci4-srv-1001.iter.org`` → ``("98dci4-srv-1001", "iter", "org")``.
-    On ``FR-IWL-MCINTOS1`` (no dots) → ``("fr-iwl-mcintos1",)``.
-
-    .. note:: NOT used for automatic locality detection — FQDN domain
-       components are too broad (all ``*.iter.org`` machines would match
-       ``"iter"``).  Use ``config local-hosts add`` instead.
-    """
-    fqdn = socket.getfqdn().lower()
-    return tuple(fqdn.split("."))
-
-
 def is_local_host(ssh_host: str | None) -> bool:
     """Determine if an ssh_host refers to the local machine.
 
     Resolution order:
 
     1. ``None`` / ``"local"`` → always local
-    2. Configured local hosts — ``~/.config/imas-codex/local-hosts``
-       file (per-machine) and ``IMAS_CODEX_LOCAL_HOSTS`` env var
-       (per-session).  Managed via ``imas-codex config local-hosts``.
-    3. Hostname / FQDN / short-name match via :func:`_get_local_hostnames`
-    4. SSH config resolution (``HostName`` via ``~/.ssh/config``)
-    5. Bind probe — resolves the candidate via DNS and tries
+    2. Facility-configured local hosts — ``login_nodes`` (FQDN patterns) and
+       ``local_hosts`` (SSH aliases) in ``<facility>_private.yaml``. If the
+       current machine's FQDN matches a facility's ``login_nodes`` pattern,
+       that facility's ``local_hosts`` are treated as local.
+    3. Session override — ``IMAS_CODEX_LOCAL_HOSTS`` env var (debugging only,
+       do NOT put in ``.env`` as it travels with ``config secrets push``).
+    4. Hostname / FQDN / short-name match via :func:`_get_local_hostnames`
+    5. SSH config resolution (``HostName`` via ``~/.ssh/config``)
+    6. Bind probe — resolves the candidate via DNS and tries
        ``socket.bind()`` to check if any resulting IP is on a local
        interface (catches FQDN-to-interface mismatches)
-
-    For facility-aware locality detection, use ``is_local_facility()``
-    from ``tools.py``.
 
     Args:
         ssh_host: SSH host alias or hostname (None = local).
