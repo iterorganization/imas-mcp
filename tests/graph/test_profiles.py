@@ -114,6 +114,11 @@ class TestResolveGraph:
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+        # Treat iter as local so auto-tunnel doesn't fire
+        monkeypatch.setattr(
+            "imas_codex.remote.executor.is_local_host",
+            lambda h: True,
+        )
 
         profile = resolve_graph("iter")
         assert profile.bolt_port == 7687

@@ -37,26 +37,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # ─── Port convention ────────────────────────────────────────────────────────
-# Port offsets and host defaults are managed in pyproject.toml:
+# Port offsets and host defaults are managed exclusively in pyproject.toml:
 #   [tool.imas-codex.graph.locations]  — offset per facility
 #   [tool.imas-codex.graph.hosts]      — SSH alias per facility
-# The constants below are minimal fallback defaults for the three core
-# facilities, used only when pyproject.toml is unavailable.
 
 BOLT_BASE_PORT = 7687
 HTTP_BASE_PORT = 7474
-
-# Fallback defaults — full table lives in pyproject.toml
-_FALLBACK_OFFSETS: dict[str, int] = {
-    "iter": 0,
-    "tcv": 1,
-    "jt60sa": 2,
-}
-_FALLBACK_HOSTS: dict[str, str] = {
-    "iter": "iter",
-    "tcv": "tcv",
-    "jt60sa": "jt60sa",
-}
 
 DEFAULT_PROFILE = "iter"
 DEFAULT_USERNAME = "neo4j"
@@ -66,23 +52,19 @@ BACKUPS_DIR = DATA_BASE_DIR / "backups"
 
 
 def _get_all_offsets() -> dict[str, int]:
-    """Merge offsets from pyproject.toml with fallback defaults."""
+    """Return location→offset map from pyproject.toml ``[graph.locations]``."""
     from imas_codex.settings import _get_section
 
     configured = _get_section("graph").get("locations", {})
-    merged = dict(_FALLBACK_OFFSETS)
-    merged.update({k: int(v) for k, v in configured.items()})
-    return merged
+    return {k: int(v) for k, v in configured.items()}
 
 
 def _get_all_hosts() -> dict[str, str]:
-    """Merge host defaults from pyproject.toml with fallback defaults."""
+    """Return facility→host map from pyproject.toml ``[graph.hosts]``."""
     from imas_codex.settings import _get_section
 
     configured = _get_section("graph").get("hosts", {})
-    merged = dict(_FALLBACK_HOSTS)
-    merged.update(configured)
-    return merged
+    return dict(configured)
 
 
 # ─── GraphProfile ───────────────────────────────────────────────────────────

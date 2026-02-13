@@ -272,7 +272,13 @@ def hpc_shell(
         f"Requesting {cpus} CPUs, {mem}GB RAM on {partition}"
         f"{' (exclusive)' if exclusive else ''}..."
     )
-    click.echo(f"Services: embed={login_hostname}:18765, neo4j={login_hostname}:7687")
+    from imas_codex.graph.profiles import BOLT_BASE_PORT
+    from imas_codex.settings import get_embed_server_port
+
+    embed_port = get_embed_server_port()
+    click.echo(
+        f"Services: embed={login_hostname}:{embed_port}, neo4j={login_hostname}:{BOLT_BASE_PORT}"
+    )
 
     os.execvp("srun", cmd)
 
@@ -574,10 +580,14 @@ def hpc_info() -> None:
             f"{info['total']:<6}"
         )
 
+    from imas_codex.graph.profiles import BOLT_BASE_PORT
+    from imas_codex.settings import get_embed_server_port
+
+    embed_port = get_embed_server_port()
     login_hn = _get_login_hostname()
     click.echo(f"\nLogin node: {login_hn}")
-    click.echo(f"Embed server: http://{login_hn}:18765")
-    click.echo(f"Neo4j: bolt://{login_hn}:7687")
+    click.echo(f"Embed server: http://{login_hn}:{embed_port}")
+    click.echo(f"Neo4j: bolt://{login_hn}:{BOLT_BASE_PORT}")
 
     click.echo("\nRecommended configurations:")
     click.echo(

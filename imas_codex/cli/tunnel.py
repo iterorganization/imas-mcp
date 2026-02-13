@@ -79,9 +79,11 @@ def _get_tunnel_ports(
                 )
             )
         except Exception:
-            # Fallback: use default bolt/http ports
-            ports.append((7687, 7687 + TUNNEL_OFFSET, "neo4j-bolt"))
-            ports.append((7474, 7474 + TUNNEL_OFFSET, "neo4j-http"))
+            # Fallback: use base ports from convention constants
+            from imas_codex.graph.profiles import BOLT_BASE_PORT, HTTP_BASE_PORT
+
+            ports.append((BOLT_BASE_PORT, BOLT_BASE_PORT + TUNNEL_OFFSET, "neo4j-bolt"))
+            ports.append((HTTP_BASE_PORT, HTTP_BASE_PORT + TUNNEL_OFFSET, "neo4j-http"))
 
     if embed or all_services:
         from imas_codex.settings import get_embed_server_port
@@ -273,7 +275,11 @@ def tunnel_status() -> None:
     Scans for SSH-bound ports matching known Neo4j and embedding server
     ports across all graph profiles.
     """
-    from imas_codex.graph.profiles import BOLT_BASE_PORT, _get_all_offsets
+    from imas_codex.graph.profiles import (
+        BOLT_BASE_PORT,
+        HTTP_BASE_PORT,
+        _get_all_offsets,
+    )
     from imas_codex.remote.tunnel import TUNNEL_OFFSET
     from imas_codex.settings import get_embed_server_port
 
@@ -284,7 +290,7 @@ def tunnel_status() -> None:
     known_ports: dict[int, str] = {}
     for name, offset in offsets.items():
         bolt = BOLT_BASE_PORT + offset
-        http = bolt - 213  # http = bolt - 213 (7687→7474, 7688→7475, ...)
+        http = HTTP_BASE_PORT + offset
         known_ports[bolt] = f"neo4j-bolt ({name})"
         known_ports[bolt + TUNNEL_OFFSET] = f"neo4j-bolt ({name}, tunneled)"
         known_ports[http] = f"neo4j-http ({name})"

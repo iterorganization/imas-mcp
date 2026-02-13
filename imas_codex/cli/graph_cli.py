@@ -54,16 +54,16 @@ class Neo4jOperation:
         operation_name: str,
         require_stopped: bool = True,
         reset_password_on_restart: bool = False,
-        password: str = "imas-codex",
+        password: str | None = None,
         graph: str | None = None,
     ):
-        from imas_codex.graph.profiles import resolve_graph
+        from imas_codex.graph.profiles import DEFAULT_PASSWORD, resolve_graph
 
         self.profile = resolve_graph(graph)
         self.operation_name = operation_name
         self.require_stopped = require_stopped
         self.reset_password_on_restart = reset_password_on_restart
-        self.password = password
+        self.password = password or DEFAULT_PASSWORD
         self.acquired = False
         self.was_running = False
         self._lock_file: Path = NEO4J_LOCK_FILE
@@ -354,7 +354,11 @@ def require_gh() -> None:
         )
 
 
-def is_neo4j_running(http_port: int = 7474) -> bool:
+def is_neo4j_running(http_port: int | None = None) -> bool:
+    from imas_codex.graph.profiles import HTTP_BASE_PORT
+
+    if http_port is None:
+        http_port = HTTP_BASE_PORT
     try:
         import urllib.request
 

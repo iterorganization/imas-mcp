@@ -94,18 +94,23 @@ def _try_start_service() -> bool:
         return False
 
 
-def _ensure_ssh_tunnel(port: int, ssh_host: str = "iter") -> bool:
-    """Ensure SSH tunnel from workstation to ITER login node.
+def _ensure_ssh_tunnel(port: int, ssh_host: str | None = None) -> bool:
+    """Ensure SSH tunnel from workstation to remote login node.
 
     Delegates to the shared tunnel utility in ``imas_codex.remote.tunnel``.
 
     Args:
         port: Port to forward
-        ssh_host: SSH host alias (default: iter)
+        ssh_host: SSH host alias (default: resolved from active graph profile)
 
     Returns:
         True if tunnel is active (already existed or newly created)
     """
+    if ssh_host is None:
+        from imas_codex.graph.profiles import get_graph_location
+
+        ssh_host = get_graph_location()
+
     from imas_codex.remote.tunnel import ensure_tunnel
 
     return ensure_tunnel(port=port, ssh_host=ssh_host)

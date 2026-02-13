@@ -357,7 +357,11 @@ def require_gh() -> None:
         )
 
 
-def is_neo4j_running(http_port: int = 7474) -> bool:
+def is_neo4j_running(http_port: int | None = None) -> bool:
+    from imas_codex.graph.profiles import HTTP_BASE_PORT
+
+    if http_port is None:
+        http_port = HTTP_BASE_PORT
     try:
         import urllib.request
 
@@ -367,46 +371,25 @@ def is_neo4j_running(http_port: int = 7474) -> bool:
         return False
 
 
-def is_port_bound_by_tunnel(port: int = 7687) -> bool:
-    """Check if the Neo4j port is bound by an SSH tunnel (not a local Neo4j).
+def is_port_bound_by_tunnel(port: int | None = None) -> bool:
+    """Check if a port is bound by an SSH tunnel (not a local Neo4j)."""
+    from imas_codex.graph.profiles import (
+        BOLT_BASE_PORT,
+        is_port_bound_by_tunnel as _check,
+    )
 
-    This detects the case where an SSH tunnel is forwarding a remote Neo4j
-    to localhost, which would conflict with starting a local Neo4j instance.
-    """
-    try:
-        result = subprocess.run(
-            ["ss", "-tlnp"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        for line in result.stdout.splitlines():
-            if f":{port}" in line and "ssh" in line.lower():
-                return True
-        return False
-    except Exception:
-        return False
+    if port is None:
+        port = BOLT_BASE_PORT
+    return _check(port)
 
 
-def check_graph_conflict(bolt_port: int = 7687) -> str | None:
-    """Check for conflicting graph configurations.
+def check_graph_conflict(bolt_port: int | None = None) -> str | None:
+    """Check for conflicting graph configurations."""
+    from imas_codex.graph.profiles import BOLT_BASE_PORT, check_graph_conflict as _check
 
-    Returns an error message if a conflict is detected, None otherwise.
-    """
-    if is_port_bound_by_tunnel(bolt_port):
-        return (
-            f"Port {bolt_port} is bound by an SSH tunnel.\n"
-            "Starting a local Neo4j would create two separate graphs.\n"
-            "\n"
-            "To use the remote graph via tunnel:\n"
-            "  - Don't start local Neo4j\n"
-            "  - Ensure SSH tunnel is active: ssh -f -N iter\n"
-            "\n"
-            "To use a local graph instead:\n"
-            "  - Kill the SSH tunnel: ssh -O exit iter\n"
-            "  - Then start local Neo4j"
-        )
-    return None
+    if bolt_port is None:
+        bolt_port = BOLT_BASE_PORT
+    return _check(bolt_port)
 
 
 def backup_existing_data(reason: str, data_dir: Path | None = None) -> Path | None:
