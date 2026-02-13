@@ -116,8 +116,8 @@ def config() -> None:
       imas-codex config secrets pull      Pull .env from remote host
       imas-codex config secrets status    Show .env status
       imas-codex config local-hosts       Show declared local hosts
-      imas-codex config local-hosts add   Declare a host as local
-      imas-codex config local-hosts remove Remove a local-host declaration
+      imas-codex config add-host          Declare a host alias as local
+      imas-codex config remove-host       Remove a local-host declaration
     """
     pass
 
@@ -535,75 +535,156 @@ def secrets_status() -> None:
 
 
 # ============================================================================
-# Local Hosts Subgroup (per-machine locality declarations)
+# Local Hosts Commands (per-machine locality declarations)
 # ============================================================================
 
 
-@config.group("local-hosts", invoke_without_command=True)
-@click.pass_context
-def config_local_hosts(ctx: click.Context) -> None:
-    """Manage local-host declarations for location detection.
+def _check_fqdn_consistency(host: str, fqdn: str) -> str | None:
+    """Check if adding host makes sense given the FQDN.
 
-    Declares which SSH host aliases refer to this machine.  Persisted in
-    ``~/.config/imas-codex/local-hosts`` — never travels with ``.env``
-    or git, so ``config secrets push`` won't leak it to other machines.
-
-    Most cases are detected automatically via FQDN domain matching
-    (e.g. on ``*.iter.org``, ``is_local_host("iter")`` returns True).
-    Use this command only when automatic detection fails.
-
-    \b
-      imas-codex config local-hosts           Show current declarations
-      imas-codex config local-hosts add tcv   Declare 'tcv' as local
-      imas-codex config local-hosts remove tcv Remove declaration
+    Returns a warning message if the match is ambiguous, None only if
+    the hostname portion clearly identifies this as the target machine.
     """
-    if ctx.invoked_subcommand is None:
-        # Default action: show current local hosts
-        from imas_codex.remote.executor import (
-            _get_fqdn_domain_parts,
-            get_local_hosts_file,
+    parts = fqdn.lower().split(".")
+    host_lower = host.lower()
+    hostname = parts[0] if parts else ""
+
+    # Check if host appears in the hostname portion (not just domain)
+    # e.g., on "tcv-server.epfl.ch", adding "tcv" is clearly correct
+    if host_lower in hostname:
+        return None  # Hostname contains alias - clearly correct
+
+    # Check if hostname contains alias-like pattern (strip numbers)
+    import re
+
+    hostname_base = re.sub(r"[0-9-]+", "", hostname)
+    if host_lower in hostname_base or hostname_base in host_lower:
+        return None  # Base hostname matches
+
+    # If host is in domain but NOT hostname, warn - could be a workstation
+    # e.g., "FR-IWL-MCINTOS1.iter.org" has "iter" in domain but not hostname
+    if host_lower in parts[1:]:  # In domain portion
+        return (
+            f"This machine's hostname is '{hostname}' on the '{'.'.join(parts[1:])}' domain.\n"
+            f"  Adding '{host}' would mean declaring this specific machine as the\n"
+            f"  '{host}' SSH target. Verify this is correct:\n"
+            f"    - If you're on the {host} login node → proceed\n"
+            f"    - If you're on a workstation → cancel, use: --facility {host}"
         )
 
-        hosts_file = get_local_hosts_file()
-
-        # Show FQDN-based auto-detection
-        import socket
-
-        fqdn = socket.getfqdn()
-        domain_parts = _get_fqdn_domain_parts()
-        click.echo(f"FQDN: {fqdn}")
-        click.echo(f"  Domain components: {', '.join(domain_parts)}")
-
-        # Show configured file
-        click.echo(f"\nLocal-hosts file: {hosts_file}")
-        if hosts_file.exists():
-            lines = [
-                line.strip()
-                for line in hosts_file.read_text().splitlines()
-                if line.strip() and not line.strip().startswith("#")
-            ]
-            if lines:
-                for host in lines:
-                    click.echo(f"  {host}")
-            else:
-                click.echo("  (empty)")
-        else:
-            click.echo("  (not created)")
-
-        # Show env var override
-        env_val = os.environ.get("IMAS_CODEX_LOCAL_HOSTS", "")
-        if env_val:
-            click.echo(f"\nIMAS_CODEX_LOCAL_HOSTS env: {env_val}")
+    # Doesn't match at all - strong warning
+    return (
+        f"FQDN '{fqdn}' doesn't contain '{host}'.\n"
+        f"  Are you sure you want to declare '{host}' as local on this machine?\n"
+        f"  If '{host}' is a remote facility, use: --facility {host}"
+    )
 
 
-@config_local_hosts.command("add")
-@click.argument("host")
-def local_hosts_add(host: str) -> None:
-    """Declare a host alias as local to this machine.
+@config.command("local-hosts")
+def config_local_hosts() -> None:
+    """Show local-host declarations for location detection.
 
-    Example: imas-codex config local-hosts add iter
+    Displays which SSH host aliases are declared as local to this machine.
+    The file ``~/.config/imas-codex/local-hosts`` stores these declarations
+    and never travels with ``.env`` or git.
+
+    Use ``config add-host`` to add new declarations.
     """
+    from imas_codex.remote.executor import (
+        _get_fqdn_domain_parts,
+        get_local_hosts_file,
+    )
+
+    hosts_file = get_local_hosts_file()
+
+    # Show FQDN info
+    import socket
+
+    fqdn = socket.getfqdn()
+    domain_parts = _get_fqdn_domain_parts()
+    click.echo(f"FQDN: {fqdn}")
+    click.echo(f"  Domain components: {', '.join(domain_parts)}")
+
+    # Show configured file
+    click.echo(f"\nLocal-hosts file: {hosts_file}")
+    if hosts_file.exists():
+        lines = [
+            line.strip()
+            for line in hosts_file.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        if lines:
+            for host in lines:
+                click.echo(f"  {host}")
+        else:
+            click.echo("  (empty)")
+    else:
+        click.echo("  (not created)")
+
+    # Show env var override
+    env_val = os.environ.get("IMAS_CODEX_LOCAL_HOSTS", "")
+    if env_val:
+        click.echo(f"\nIMAS_CODEX_LOCAL_HOSTS env: {env_val}")
+
+
+@config.command("add-host")
+@click.argument("host")
+@click.option(
+    "--facility",
+    "-f",
+    default=None,
+    help="Run on remote facility instead of locally (e.g., --facility iter)",
+)
+@click.option("--yes", "-y", is_flag=True, help="Skip FQDN consistency warning")
+def config_add_host(host: str, facility: str | None, yes: bool) -> None:
+    """Declare a host alias as local to this (or a remote) machine.
+
+    \b
+    Examples:
+      # Declare 'iter' as local on the current machine
+      imas-codex config add-host iter
+
+      # Declare 'iter' as local on the ITER login node (from WSL)
+      imas-codex config add-host iter --facility iter
+
+      # Declare 'tcv' as local on the TCV machine (from WSL)
+      imas-codex config add-host tcv --facility tcv
+
+    The local-hosts file (~/.config/imas-codex/local-hosts) is per-machine
+    and never travels with .env or git, so config secrets push won't leak
+    locality settings to other facilities.
+    """
+    if facility:
+        # Remote execution via SSH
+        from imas_codex.remote.executor import run_command
+
+        # Build remote command - use full path since imas-codex might not be in PATH
+        remote_cmd = (
+            f"cd ~/Code/imas-codex && uv run imas-codex config add-host {host} --yes"
+        )
+        click.echo(f"Running on {facility}...")
+        try:
+            output = run_command(remote_cmd, ssh_host=facility, timeout=30)
+            if output.strip():
+                click.echo(output.strip())
+        except Exception as e:
+            raise click.ClickException(f"Remote command failed: {e}")
+        return
+
+    # Local execution
     from imas_codex.remote.executor import get_local_hosts_file
+
+    import socket
+
+    fqdn = socket.getfqdn()
+
+    # FQDN consistency check
+    if not yes:
+        warning = _check_fqdn_consistency(host, fqdn)
+        if warning:
+            click.echo(f"Warning: {warning}", err=True)
+            if not click.confirm("Continue anyway?"):
+                raise click.Abort()
 
     hosts_file = get_local_hosts_file()
     hosts_file.parent.mkdir(parents=True, exist_ok=True)
@@ -625,19 +706,50 @@ def local_hosts_add(host: str) -> None:
     with hosts_file.open("a") as f:
         if not existing:
             f.write("# SSH aliases that refer to this machine\n")
-            f.write("# Managed by: imas-codex config local-hosts\n")
+            f.write("# Managed by: imas-codex config add-host\n")
         f.write(f"{host}\n")
 
     click.echo(f"Added '{host}' to {hosts_file}")
+    click.echo(f"  FQDN: {fqdn}")
 
 
-@config_local_hosts.command("remove")
+@config.command("remove-host")
 @click.argument("host")
-def local_hosts_remove(host: str) -> None:
-    """Remove a local-host declaration.
+@click.option(
+    "--facility",
+    "-f",
+    default=None,
+    help="Run on remote facility instead of locally (e.g., --facility iter)",
+)
+def config_remove_host(host: str, facility: str | None) -> None:
+    """Remove a local-host declaration from this (or a remote) machine.
 
-    Example: imas-codex config local-hosts remove iter
+    \b
+    Examples:
+      # Remove 'iter' from the current machine
+      imas-codex config remove-host iter
+
+      # Remove 'iter' from the ITER login node (from WSL)
+      imas-codex config remove-host iter --facility iter
     """
+    if facility:
+        # Remote execution via SSH
+        from imas_codex.remote.executor import run_command
+
+        # Build remote command - use full path since imas-codex might not be in PATH
+        remote_cmd = (
+            f"cd ~/Code/imas-codex && uv run imas-codex config remove-host {host}"
+        )
+        click.echo(f"Running on {facility}...")
+        try:
+            output = run_command(remote_cmd, ssh_host=facility, timeout=30)
+            if output.strip():
+                click.echo(output.strip())
+        except Exception as e:
+            raise click.ClickException(f"Remote command failed: {e}")
+        return
+
+    # Local execution
     from imas_codex.remote.executor import get_local_hosts_file
 
     hosts_file = get_local_hosts_file()
