@@ -1805,6 +1805,23 @@ async def run_parallel_data_discovery(
     if enrich_only:
         state.discover_idle_count = 10
 
+    # Embed description worker: embeds FacilitySignal descriptions as they are enriched
+    from imas_codex.discovery.base.embed_worker import embed_description_worker
+
+    embed_status = worker_group.create_status("embed_worker", group="ingest")
+    worker_group.add_task(
+        asyncio.create_task(
+            supervised_worker(
+                embed_description_worker,
+                "embed_worker",
+                state,
+                state.should_stop,
+                labels=["FacilitySignal"],
+                status_tracker=embed_status,
+            )
+        )
+    )
+
     # Report worker status
     if on_worker_status:
         on_worker_status(worker_group)

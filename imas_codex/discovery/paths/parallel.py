@@ -1996,9 +1996,19 @@ async def run_parallel_discovery(
         for _ in range(num_rescore_workers)
     ]
 
+    # Embed description worker: embeds FacilityPath descriptions as they are scored
+    from imas_codex.discovery.base.embed_worker import embed_description_worker
+
+    embed_tasks = [embed_description_worker(state, labels=["FacilityPath"])]
+
     all_tasks = [
         asyncio.create_task(t)
-        for t in scan_tasks + expand_tasks + score_tasks + enrich_tasks + rescore_tasks
+        for t in scan_tasks
+        + expand_tasks
+        + score_tasks
+        + enrich_tasks
+        + rescore_tasks
+        + embed_tasks
     ]
 
     # Track when monitor triggers stop so we can apply a hard timeout

@@ -1261,7 +1261,7 @@ def claim_images_for_scoring(
             MATCH (img:Image {facility_id: $facility, claim_token: $token})
             RETURN img.id AS id,
                    img.source_url AS source_url,
-                   img.image_data AS image_data,
+                   img.source_type AS source_type,
                    img.image_format AS image_format,
                    img.page_title AS page_title,
                    img.section AS section,

@@ -895,30 +895,57 @@ async def image_score_worker(
 
         state.image_idle_count = 0
 
-        # Filter out images without stored image_data
-        images_with_data = [img for img in images if img.get("image_data")]
-        images_no_data = [img for img in images if not img.get("image_data")]
+        # Fetch image bytes on-demand from source_url (not stored in graph)
+        from imas_codex.discovery.wiki.image import downsample_image
 
-        if images_no_data:
+        images_ready: list[dict[str, Any]] = []
+        images_unfetchable: list[str] = []
+
+        for img in images:
+            source_url = img.get("source_url")
+            source_type = img.get("source_type", "")
+            if not source_url or source_type == "document_figure":
+                # document_figure source_urls are synthetic (artifact#pageN)
+                images_unfetchable.append(img["id"])
+                continue
+            try:
+                raw_bytes = await _fetch_image_bytes(
+                    source_url, getattr(state, "ssh_host", None)
+                )
+                if not raw_bytes or len(raw_bytes) < 512:
+                    images_unfetchable.append(img["id"])
+                    continue
+                result = downsample_image(raw_bytes)
+                if result is None:
+                    images_unfetchable.append(img["id"])
+                    continue
+                b64_data, _w, _h, _ow, _oh = result
+                img["image_data"] = b64_data
+                images_ready.append(img)
+            except Exception as e:
+                logger.debug(
+                    "image_score_worker: failed to fetch %s: %s", source_url, e
+                )
+                images_unfetchable.append(img["id"])
+
+        if images_unfetchable:
             logger.info(
-                "image_score_worker: %d/%d images have no image_data, releasing",
-                len(images_no_data),
+                "image_score_worker: %d/%d images unfetchable, releasing",
+                len(images_unfetchable),
                 len(images),
             )
-            await asyncio.to_thread(
-                _release_claimed_images, [img["id"] for img in images_no_data]
-            )
+            await asyncio.to_thread(_release_claimed_images, images_unfetchable)
 
-        if not images_with_data:
+        if not images_ready:
             continue
 
         if on_progress:
-            on_progress(f"scoring {len(images_with_data)} images", state.image_stats)
+            on_progress(f"scoring {len(images_ready)} images", state.image_stats)
 
         try:
             model = get_model("vision")
             results, cost = await _score_images_batch(
-                images_with_data,
+                images_ready,
                 model,
                 state.focus,
                 facility_access_patterns,
@@ -943,7 +970,7 @@ async def image_score_worker(
             logger.warning(
                 "VLM failed for batch of %d images: %s. Images released for retry."
                 " (failure %d/%d)",
-                len(images_with_data),
+                len(images_ready),
                 e,
                 consecutive_failures,
                 MAX_CONSECUTIVE_FAILURES,
@@ -951,7 +978,7 @@ async def image_score_worker(
             state.image_stats.errors = getattr(state.image_stats, "errors", 0) + 1
             await asyncio.to_thread(
                 _release_claimed_images,
-                [img["id"] for img in images_with_data],
+                [img["id"] for img in images_ready],
             )
 
 
@@ -1145,7 +1172,6 @@ async def _ingest_image_artifact(
                           i.source_type = 'wiki_file',
                           i.status = 'ingested',
                           i.filename = $filename,
-                          i.image_data = $b64_data,
                           i.image_format = 'webp',
                           i.width = $stored_w,
                           i.height = $stored_h,
@@ -1164,7 +1190,6 @@ async def _ingest_image_artifact(
             url=url,
             filename=filename,
             artifact_id=artifact_id,
-            b64_data=b64_data,
             stored_w=stored_w,
             stored_h=stored_h,
             orig_w=orig_w,
@@ -1238,7 +1263,6 @@ async def _persist_document_figures(
                 "source_type": "document_figure",
                 "status": "ingested",
                 "filename": name,
-                "image_data": b64_data,
                 "image_format": "webp",
                 "width": stored_w,
                 "height": stored_h,
@@ -1262,7 +1286,6 @@ async def _persist_document_figures(
                           i.source_type = img.source_type,
                           i.status = img.status,
                           i.filename = img.filename,
-                          i.image_data = img.image_data,
                           i.image_format = img.image_format,
                           i.width = img.width,
                           i.height = img.height,
@@ -1522,7 +1545,6 @@ async def _extract_and_persist_images(
                     "source_url": src,
                     "source_type": "wiki_inline",
                     "status": "ingested",
-                    "image_data": b64_data,
                     "image_format": "webp",
                     "width": stored_w,
                     "height": stored_h,
@@ -1552,7 +1574,6 @@ async def _extract_and_persist_images(
                           i.source_url = img.source_url,
                           i.source_type = img.source_type,
                           i.status = img.status,
-                          i.image_data = img.image_data,
                           i.image_format = img.image_format,
                           i.width = img.width,
                           i.height = img.height,

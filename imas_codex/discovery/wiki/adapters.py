@@ -892,14 +892,41 @@ class MediaWikiAdapter(WikiAdapter):
                         timeout=60,
                     )
                     if result.returncode != 0:
+                        logger.warning(
+                            "fileusage API failed (rc=%d, batch %d): %s",
+                            result.returncode,
+                            i // batch_size,
+                            result.stderr[:200] if result.stderr else "no stderr",
+                        )
                         break
 
                     stdout = result.stdout.strip()
                     if stdout.startswith("<!") or stdout.startswith("<html"):
+                        logger.warning(
+                            "fileusage API returned HTML instead of JSON "
+                            "(batch %d, likely auth redirect). "
+                            "Artifact-page linking will be incomplete.",
+                            i // batch_size,
+                        )
                         break
 
                     data = json.loads(stdout)
-                except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "fileusage API timed out (batch %d)", i // batch_size
+                    )
+                    break
+                except json.JSONDecodeError as e:
+                    logger.warning(
+                        "fileusage API returned invalid JSON (batch %d): %s",
+                        i // batch_size,
+                        e,
+                    )
+                    break
+                except Exception as e:
+                    logger.warning(
+                        "fileusage API error (batch %d): %s", i // batch_size, e
+                    )
                     break
 
                 pages = data.get("query", {}).get("pages", {})

@@ -8,6 +8,10 @@ Provides:
 - Remote file transfer utilities (HTTP, SSH)
 """
 
+from imas_codex.discovery.base.embed_worker import (
+    embed_batch_sync,
+    embed_description_worker,
+)
 from imas_codex.discovery.base.executor import CommandResult, ParallelExecutor
 from imas_codex.discovery.base.facility import (
     add_exploration_note,
@@ -27,7 +31,6 @@ from imas_codex.discovery.base.llm import (
     call_llm,
     call_llm_structured,
     extract_cost,
-    get_caching_info,
     get_model_limits,
     inject_cache_control,
     suppress_litellm_noise,
@@ -94,6 +97,9 @@ __all__ = [
     "get_facilities_dir",
     "filter_private_fields",
     "validate_no_private_fields",
+    # Embed worker
+    "embed_description_worker",
+    "embed_batch_sync",
     # Executor
     "ParallelExecutor",
     "CommandResult",
@@ -103,7 +109,6 @@ __all__ = [
     "acall_llm",
     "acall_llm_structured",
     "extract_cost",
-    "get_caching_info",
     "get_model_limits",
     "inject_cache_control",
     "suppress_litellm_noise",

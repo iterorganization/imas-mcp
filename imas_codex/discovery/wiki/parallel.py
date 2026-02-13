@@ -18,6 +18,7 @@ import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.base.embed_worker import embed_description_worker
 from imas_codex.discovery.base.supervision import (
     SupervisedWorkerGroup,
     supervised_worker,
@@ -516,17 +517,22 @@ async def run_parallel_wiki_discovery(
                 on_artifact_progress(f"bulk: {msg}", state.artifact_stats)
 
         # Bulk discovery uses SSH when available, no async wiki client support yet
-        bulk_artifacts_discovered = await asyncio.to_thread(
+        bulk_result = await asyncio.to_thread(
             bulk_discover_artifacts,
             facility,
             base_url,
             site_type,
-            ssh_host,
-            None,  # wiki_client - removed, use SSH path
-            state.credential_service,
-            "vpn" if ssh_host else "direct",
-            artifact_progress,
+            ssh_host=ssh_host,
+            wiki_client=None,  # removed, use SSH path
+            credential_service=state.credential_service,
+            access_method="vpn" if ssh_host else "direct",
+            on_progress=artifact_progress,
         )
+        # bulk_discover_artifacts returns (count, page_artifacts_dict)
+        if isinstance(bulk_result, tuple):
+            bulk_artifacts_discovered, _page_artifacts = bulk_result
+        else:
+            bulk_artifacts_discovered = bulk_result or 0
 
         if bulk_artifacts_discovered:
             logger.info(f"Bulk discovery found {bulk_artifacts_discovered} artifacts")
@@ -605,6 +611,22 @@ async def run_parallel_wiki_discovery(
                 state.should_stop_image_scoring,
                 on_progress=on_image_progress,
                 status_tracker=image_score_status,
+            )
+        )
+    )
+
+    # Embed description worker: embeds descriptions for all wiki node types
+    # Runs continuously, picking up newly-described nodes from score/ingest workers
+    embed_status = worker_group.create_status("embed_worker", group="ingest")
+    worker_group.add_task(
+        asyncio.create_task(
+            supervised_worker(
+                embed_description_worker,
+                "embed_worker",
+                state,
+                state.should_stop,
+                labels=["WikiPage", "WikiArtifact", "Image"],
+                status_tracker=embed_status,
             )
         )
     )

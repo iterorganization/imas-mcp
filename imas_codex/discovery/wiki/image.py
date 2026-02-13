@@ -118,21 +118,6 @@ def downsample_image(
     return b64_data, new_width, new_height, orig_width, orig_height
 
 
-def image_bytes_to_data_uri(image_data_b64: str) -> str:
-    """Convert base64-encoded WebP image data to a data URI for VLM input.
-
-    LiteLLM/OpenRouter vision models accept images as data URIs in the
-    message content. This converts our stored base64 string to that format.
-
-    Args:
-        image_data_b64: Base64-encoded WebP image data from graph
-
-    Returns:
-        Data URI string: "data:image/webp;base64,..."
-    """
-    return f"data:image/webp;base64,{image_data_b64}"
-
-
 def content_hash(image_bytes: bytes) -> str:
     """Compute SHA-256 hash of raw image bytes for dedup verification.
 

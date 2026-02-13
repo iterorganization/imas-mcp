@@ -3088,16 +3088,8 @@ classes:
         range: ImageStatus
         required: true
       
-      # Stored image data (downsampled for offline captioning)
-      image_data:
-        description: >-
-          Downsampled image bytes stored as base64-encoded string.
-          Format: WebP, max 768px longest side, quality 80.
-          Enables VLM captioning without facility network access.
-          Typical size: 30-80KB per image.
-        range: string
       image_format:
-        description: Storage format of image_data (always 'webp' for new images)
+        description: Format of stored/fetched image (always 'webp' for new images)
       width:
         description: Width of stored (downsampled) image in pixels
         range: integer
