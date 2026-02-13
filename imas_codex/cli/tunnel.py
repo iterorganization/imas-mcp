@@ -252,20 +252,44 @@ def tunnel_start(
 
 @tunnel.command("stop")
 @click.argument("host", required=False)
-def tunnel_stop(host: str | None) -> None:
-    """Stop SSH tunnels to a remote host.
+@click.option("--all", "stop_all", is_flag=True, help="Stop tunnels to all hosts")
+def tunnel_stop(host: str | None, stop_all: bool) -> None:
+    """Stop SSH tunnels.
 
-    Tries ControlMaster exit first, falls back to pkill.
-    HOST defaults to the active graph profile's host.
+    Without HOST, stops tunnels to all configured remote hosts.
+    With HOST, stops only tunnels to that specific host.
+
+    \b
+    Examples:
+      imas-codex tunnel stop           # Stop all tunnels
+      imas-codex tunnel stop iter      # Stop only iter tunnels
     """
+    from imas_codex.graph.profiles import _get_all_hosts
     from imas_codex.remote.tunnel import stop_tunnel
 
-    target = _resolve_host(host)
+    if host:
+        # Explicit host — stop just that one
+        if stop_tunnel(host):
+            click.echo(f"✓ Tunnels to {host} stopped")
+        else:
+            click.echo(f"No active tunnels to {host} found")
+        return
 
-    if stop_tunnel(target):
-        click.echo(f"✓ Tunnels to {target} stopped")
+    # No host specified — stop all configured remote hosts
+    hosts = list(_get_all_hosts().values())
+    if not hosts:
+        click.echo("No remote hosts configured")
+        return
+
+    stopped: list[str] = []
+    for h in sorted(set(hosts)):
+        if stop_tunnel(h):
+            stopped.append(h)
+
+    if stopped:
+        click.echo(f"✓ Tunnels stopped: {', '.join(stopped)}")
     else:
-        click.echo(f"No active tunnels to {target} found")
+        click.echo("No active tunnels found")
 
 
 @tunnel.command("status")
