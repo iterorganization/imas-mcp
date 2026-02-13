@@ -175,6 +175,54 @@ enums:
   # EnrichmentStatus are defined in common.yaml with unified terminology.
   # See common.yaml for the design philosophy and value definitions.
 
+  MappingStatus:
+    description: >-
+      Status lifecycle for IMAS mappings. Every agent-generated mapping
+      follows proposal → consensus → mapping with full audit trail.
+      Rejected mappings are persisted with rejection reasons to prevent
+      future agents from re-proposing the same bad mapping.
+    permissible_values:
+      proposed:
+        description: Initial mapping proposal from agent team
+      endorsed:
+        description: Multiple evidence sources agree, awaiting validation
+      contested:
+        description: Conflicting evidence or failed tests, needs resolution
+      validated:
+        description: Approved by lead agent or human review
+      rejected:
+        description: Incorrect mapping (persisted with rejection reason)
+
+  EvidenceType:
+    description: Categories of evidence supporting or refuting a mapping proposal
+    permissible_values:
+      wiki_documentation:
+        description: Evidence from wiki pages or documentation
+      code_reference:
+        description: Evidence from source code analysis
+      data_validation:
+        description: Evidence from testing data access against real shots
+      unit_analysis:
+        description: Evidence from unit compatibility analysis
+      sign_convention:
+        description: Evidence from COCOS or sign convention analysis
+      shape_analysis:
+        description: Evidence from array shape/dimension analysis
+      expert_knowledge:
+        description: Agent reasoning based on domain expertise
+
+  AgentSessionStatus:
+    description: Status lifecycle for agent team sessions
+    permissible_values:
+      running:
+        description: Session is actively executing
+      completed:
+        description: Session finished successfully
+      failed:
+        description: Session stopped due to error
+      budget_exhausted:
+        description: Session stopped because cost limit was reached
+
   PopulationType:
     description: How tree nodes are populated with data
     permissible_values:
@@ -2025,6 +2073,9 @@ classes:
       A mapping from facility-specific data to IMAS paths.
       Contains all information needed to generate an Ambix Recipe for data pumping.
       Data flow is one-way (facility->IMAS) but searchable from either direction.
+      
+      Extended with status lifecycle for agent team workflows:
+      proposed → endorsed/contested → validated/rejected
     mixins:
       - LLMProvenance
       - LLMOperation
@@ -2047,6 +2098,9 @@ classes:
         range: Facility
         annotations:
           relationship_type: AT_FACILITY
+      status:
+        description: Mapping lifecycle status (for agent team workflow)
+        range: MappingStatus
       
       # Pump context for Ambix Recipe generation
       driver:
@@ -2077,6 +2131,213 @@ classes:
         range: float
       notes:
         description: Mapping notes and caveats
+      # Agent team provenance
+      proposed_by:
+        description: AgentSession that proposed this mapping
+        range: AgentSession
+        annotations:
+          relationship_type: PROPOSED_BY
+      evidence:
+        description: Evidence nodes supporting this mapping
+        range: MappingEvidence
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: HAS_EVIDENCE
+      rejection_reason:
+        description: Why this mapping was rejected (persisted to prevent re-proposal)
+      validated_by:
+        description: AgentSession or user that validated this mapping
+
+  MappingProposal:
+    description: >-
+      A proposed mapping from an agent team, with status lifecycle and
+      evidence chain. Proposals track the full journey from initial
+      suggestion through endorsement/contestation to final validation.
+      Rejected proposals are preserved to prevent re-proposal.
+    mixins:
+      - LLMProvenance
+      - LLMOperation
+    class_uri: facility:MappingProposal
+    attributes:
+      id:
+        identifier: true
+        description: Unique proposal ID (e.g., "tcv-mp-plasma_current-001")
+        required: true
+      facility_id:
+        description: Target facility
+        required: true
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      signal_id:
+        description: Source FacilitySignal for this mapping
+        required: true
+        range: FacilitySignal
+        annotations:
+          relationship_type: PROPOSES_SOURCE
+      imas_path_id:
+        description: Target IMAS path
+        required: true
+        range: IMASPath
+        annotations:
+          relationship_type: PROPOSES_TARGET
+      status:
+        description: Proposal lifecycle status
+        range: MappingStatus
+        required: true
+      confidence:
+        description: Current confidence score (0.0-1.0, updated as evidence arrives)
+        range: float
+      proposed_by:
+        description: AgentSession that created this proposal
+        range: AgentSession
+        annotations:
+          relationship_type: PROPOSED_BY
+      proposed_at:
+        description: When the proposal was created
+        range: datetime
+      endorsed_at:
+        description: When the proposal was endorsed
+        range: datetime
+      validated_at:
+        description: When the proposal was validated
+        range: datetime
+      rejected_at:
+        description: When the proposal was rejected
+        range: datetime
+      rejection_reason:
+        description: Why this proposal was rejected
+      evidence:
+        description: Evidence nodes supporting or refuting this proposal
+        range: MappingEvidence
+        multivalued: true
+        inlined: false
+        annotations:
+          relationship_type: HAS_EVIDENCE
+      # Mapping details (promoted to IMASMapping on validation)
+      driver:
+        description: Proposed data access driver
+        range: DataSourceType
+      units_in:
+        description: Source data units
+      units_out:
+        description: Target IMAS units
+      scale:
+        description: Proposed scale factor
+        range: float
+      transformation:
+        description: Proposed transformation expression
+      notes:
+        description: Agent reasoning and notes
+
+  MappingEvidence:
+    description: >-
+      Evidence supporting or refuting a mapping proposal. Created by
+      agent team members during the mapping discovery workflow.
+      Each evidence item is typed and linked to its source.
+    class_uri: facility:MappingEvidence
+    attributes:
+      id:
+        identifier: true
+        description: Unique evidence ID
+        required: true
+      evidence_type:
+        description: Category of evidence
+        range: EvidenceType
+        required: true
+      content:
+        description: Evidence content (text, code snippet, data summary)
+        required: true
+      supports_mapping:
+        description: True if evidence supports the mapping, false if it refutes
+        range: boolean
+        required: true
+      confidence:
+        description: Confidence in this evidence (0.0-1.0)
+        range: float
+      source_url:
+        description: URL or path to evidence source (wiki page, code file, etc.)
+      source_node_id:
+        description: ID of source graph node (WikiChunk, CodeChunk, TreeNode)
+      created_by:
+        description: AgentSession that created this evidence
+        range: AgentSession
+        annotations:
+          relationship_type: CREATED_BY
+      created_at:
+        description: When this evidence was created
+        range: datetime
+
+  AgentSession:
+    description: >-
+      Tracks an agent team session for cost accounting, resumability,
+      and audit trail. Each team deployment creates one AgentSession.
+      Budget fields are periodically synced from Langfuse by querying
+      traces tagged with the session ID.
+    class_uri: facility:AgentSession
+    attributes:
+      id:
+        identifier: true
+        description: Unique session ID (e.g., "tcv-mapping-equilibrium-20260213")
+        required: true
+      facility_id:
+        description: Target facility for this session
+        required: true
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      session_type:
+        description: Type of agent session (mapping, exploration, validation)
+        required: true
+      physics_domain:
+        description: Target physics domain if applicable
+        range: PhysicsDomain
+      status:
+        description: Session lifecycle status
+        range: AgentSessionStatus
+        required: true
+      started_at:
+        description: When the session started
+        range: datetime
+        required: true
+      ended_at:
+        description: When the session completed
+        range: datetime
+      # Team composition
+      team_size:
+        description: Number of agent teammates in this session
+        range: integer
+      model:
+        description: Primary LLM model used (e.g., "opus", "sonnet")
+      # Budget tracking (synced from Langfuse)
+      budget_limit_usd:
+        description: Maximum allowed cost for this session
+        range: float
+      budget_used_usd:
+        description: Actual cost incurred (periodically synced from Langfuse)
+        range: float
+      # Progress tracking
+      signals_total:
+        description: Total signals to process
+        range: integer
+      signals_processed:
+        description: Signals with proposals created
+        range: integer
+      proposals_created:
+        description: Number of MappingProposal nodes created
+        range: integer
+      proposals_validated:
+        description: Number of proposals that reached validated status
+        range: integer
+      proposals_rejected:
+        description: Number of proposals rejected
+        range: integer
+      # Langfuse correlation
+      langfuse_trace_id:
+        description: Langfuse trace ID for cost correlation
+      error_message:
+        description: Error message if session failed
 
 # =============================================================================
 # Code Examples Classes

@@ -1,0 +1,22 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(ssh *)",
+      "Bash(uv run *)",
+      "Bash(rg *)",
+      "Bash(fd *)",
+      "Bash(eza *)",
+      "Bash(tokei *)",
+      "Bash(git *)",
+      "Bash(curl *)",
+      "Bash(litellm *)",
+      "mcp__codex__*",
+      "mcp__imas-ddv4__*",
+      "Read(.claude/**)"
+    ]
+  }
+}

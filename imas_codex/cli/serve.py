@@ -228,6 +228,284 @@ def serve_agents(
 
 
 # ============================================================================
+# Serve LLM Proxy Command Group
+# ============================================================================
+
+
+@serve.group("llm")
+def serve_llm() -> None:
+    """Manage LiteLLM proxy server for centralized LLM routing.
+
+    Routes all LLM calls through a single proxy with cost tracking via Langfuse.
+    Provides OpenAI-compatible endpoint for agent teams and discovery workers.
+
+    \b
+      imas-codex serve llm start      Start LiteLLM proxy (foreground)
+      imas-codex serve llm status     Check proxy health
+      imas-codex serve llm service    Manage systemd service
+    """
+    pass
+
+
+@serve_llm.command("start")
+@click.option(
+    "--host",
+    envvar="LITELLM_HOST",
+    default="0.0.0.0",
+    help="Host to bind (default: all interfaces)",
+)
+@click.option(
+    "--port",
+    envvar="LITELLM_PORT",
+    default=4000,
+    type=int,
+    help="Port to bind (default: 4000)",
+)
+@click.option(
+    "--log-level",
+    default="INFO",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
+    help="Set the logging level",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to LiteLLM config YAML (default: bundled config)",
+)
+def llm_start(
+    host: str,
+    port: int,
+    log_level: str,
+    config_path: str | None,
+) -> None:
+    """Start the LiteLLM proxy server.
+
+    Routes all LLM calls through a centralized proxy with Langfuse observability.
+    Requires OPENROUTER_API_KEY and LITELLM_MASTER_KEY environment variables.
+
+    Examples:
+        # Start with defaults
+        imas-codex serve llm start
+
+        # Custom port
+        imas-codex serve llm start --port 4001
+
+        # Custom config
+        imas-codex serve llm start --config my_config.yaml
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    # Verify litellm is installed
+    litellm_bin = shutil.which("litellm")
+    if not litellm_bin:
+        raise click.ClickException(
+            "litellm CLI not found. Install with: pip install 'litellm>=1.81.0' "
+            "or: uv sync --extra serve"
+        )
+
+    # Resolve config path
+    if config_path is None:
+        config_path = str(
+            Path(__file__).parent.parent / "config" / "litellm_config.yaml"
+        )
+        if not Path(config_path).exists():
+            raise click.ClickException(f"Bundled config not found: {config_path}")
+
+    # Check required env vars
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        raise click.ClickException(
+            "OPENROUTER_API_KEY not set. Add to .env or export in shell."
+        )
+
+    master_key = os.environ.get("LITELLM_MASTER_KEY", "sk-litellm-imas-codex")
+    os.environ.setdefault("LITELLM_MASTER_KEY", master_key)
+
+    click.echo(f"Starting LiteLLM proxy on {host}:{port}")
+    click.echo(f"Config: {config_path}")
+    click.echo(f"Master key: {master_key[:10]}...")
+
+    # Check Langfuse config
+    if os.environ.get("LANGFUSE_PUBLIC_KEY"):
+        click.echo("Langfuse: configured (cost tracking enabled)")
+    else:
+        click.echo(
+            "Langfuse: not configured (set LANGFUSE_PUBLIC_KEY for cost tracking)"
+        )
+
+    cmd = [
+        litellm_bin,
+        "--config",
+        config_path,
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--detailed_debug" if log_level == "DEBUG" else "--drop_params",
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+    except KeyboardInterrupt:
+        click.echo("\nProxy stopped")
+
+
+@serve_llm.command("status")
+@click.option(
+    "--url",
+    default=None,
+    help="Proxy URL (default: http://localhost:4000)",
+)
+def llm_status(url: str | None) -> None:
+    """Check LiteLLM proxy health.
+
+    Examples:
+        imas-codex serve llm status
+        imas-codex serve llm status --url http://remote:4000
+    """
+    import httpx
+
+    if url is None:
+        url = os.environ.get("LITELLM_PROXY_URL", "http://localhost:4000")
+
+    click.echo(f"LiteLLM Proxy ({url}):")
+
+    try:
+        resp = httpx.get(f"{url}/health", timeout=5.0)
+        if resp.status_code == 200:
+            click.echo("  ✓ Healthy")
+            # Show model availability
+            models_resp = httpx.get(
+                f"{url}/v1/models",
+                timeout=5.0,
+                headers={
+                    "Authorization": f"Bearer {os.environ.get('LITELLM_MASTER_KEY', 'sk-litellm-imas-codex')}"
+                },
+            )
+            if models_resp.status_code == 200:
+                models = models_resp.json().get("data", [])
+                click.echo(f"  Models: {len(models)} available")
+                for m in models[:10]:
+                    click.echo(f"    - {m.get('id', 'unknown')}")
+        else:
+            click.echo(f"  ✗ Unhealthy (HTTP {resp.status_code})")
+    except httpx.ConnectError:
+        click.echo("  ✗ Not running")
+        click.echo("  Start with: imas-codex serve llm start")
+    except Exception as e:
+        click.echo(f"  ✗ Error: {e}")
+
+
+@serve_llm.command("service")
+@click.argument(
+    "action", type=click.Choice(["install", "uninstall", "status", "start", "stop"])
+)
+@click.option(
+    "--port", default=4000, type=int, help="Port for the proxy (default: 4000)"
+)
+def llm_service(action: str, port: int) -> None:
+    """Manage LiteLLM proxy as systemd user service.
+
+    Examples:
+        imas-codex serve llm service install
+        imas-codex serve llm service start
+        imas-codex serve llm service status
+    """
+    import platform
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if platform.system() != "Linux":
+        raise click.ClickException("systemd services only supported on Linux")
+
+    if not shutil.which("systemctl"):
+        raise click.ClickException("systemctl not found")
+
+    service_dir = Path.home() / ".config" / "systemd" / "user"
+    service_file = service_dir / "imas-codex-llm.service"
+
+    if action == "install":
+        service_dir.mkdir(parents=True, exist_ok=True)
+
+        uv_path = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+
+        project_dir = Path.home() / "imas-codex"
+        if not project_dir.exists():
+            project_dir = Path.cwd()
+            if not (project_dir / "pyproject.toml").exists():
+                raise click.ClickException(
+                    f"Project not found at {Path.home() / 'imas-codex'} or current directory"
+                )
+
+        config_path = project_dir / "imas_codex" / "config" / "litellm_config.yaml"
+
+        service_content = f"""[Unit]
+Description=IMAS Codex LiteLLM Proxy
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory={project_dir}
+EnvironmentFile=%h/.env
+ExecStart={uv_path} run --extra serve --project {project_dir} litellm --config {config_path} --host 0.0.0.0 --port {port}
+ExecStop=/bin/kill -15 $MAINPID
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+"""
+        service_file.write_text(service_content)
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        subprocess.run(["systemctl", "--user", "enable", "imas-codex-llm"], check=True)
+        click.echo("✓ LLM proxy service installed and enabled")
+        click.echo(f"  Port: {port}")
+        click.echo("  Start: imas-codex serve llm service start")
+
+    elif action == "uninstall":
+        if not service_file.exists():
+            click.echo("Service not installed")
+            return
+        subprocess.run(
+            ["systemctl", "--user", "stop", "imas-codex-llm"], capture_output=True
+        )
+        subprocess.run(
+            ["systemctl", "--user", "disable", "imas-codex-llm"], capture_output=True
+        )
+        service_file.unlink()
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        click.echo("Service uninstalled")
+
+    elif action == "status":
+        if not service_file.exists():
+            click.echo("Service not installed")
+            return
+        result = subprocess.run(
+            ["systemctl", "--user", "status", "imas-codex-llm"],
+            capture_output=True,
+            text=True,
+        )
+        click.echo(result.stdout)
+
+    elif action == "start":
+        if not service_file.exists():
+            raise click.ClickException(
+                "Service not installed. Run: imas-codex serve llm service install"
+            )
+        subprocess.run(["systemctl", "--user", "start", "imas-codex-llm"], check=True)
+        click.echo("LLM proxy service started")
+
+    elif action == "stop":
+        subprocess.run(["systemctl", "--user", "stop", "imas-codex-llm"], check=True)
+        click.echo("LLM proxy service stopped")
+
+
+# ============================================================================
 # Serve Embed Command Group
 # ============================================================================
 

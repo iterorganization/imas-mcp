@@ -1,0 +1,57 @@
+# imas-codex LiteLLM Proxy Configuration
+#
+# Start: imas-codex serve llm start
+# Or:    litellm --config imas_codex/config/litellm_config.yaml
+#
+# All agent teams, discovery workers, and MCP tools route through this proxy.
+# Single API key management, centralized cost tracking via Langfuse.
+
+# --- Shared credentials ---
+credential_list:
+  - credential_name: openrouter
+    credential_values:
+      api_key: os.environ/OPENROUTER_API_KEY
+    credential_info:
+      description: "OpenRouter API key for all model routing"
+
+# --- Model definitions ---
+model_list:
+  # Opus 4 — agent teams, complex reasoning
+  - model_name: opus
+    litellm_params:
+      model: openrouter/anthropic/claude-opus-4-20250514
+      litellm_credential_name: openrouter
+
+  # Sonnet 4 — focused tasks, search, data gathering
+  - model_name: sonnet
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4-20250514
+      litellm_credential_name: openrouter
+
+  # Haiku 4 — structured output, graph writes, low-reasoning
+  - model_name: haiku
+    litellm_params:
+      model: openrouter/anthropic/claude-haiku-4-20250514
+      litellm_credential_name: openrouter
+
+  # Gemini Flash — scoring, batch classification (auto-caches)
+  - model_name: scoring
+    litellm_params:
+      model: openrouter/google/gemini-3-flash-preview
+      litellm_credential_name: openrouter
+
+  # Passthrough — any model not explicitly listed
+  - model_name: "*"
+    litellm_params:
+      model: "openrouter/*"
+      litellm_credential_name: openrouter
+
+litellm_settings:
+  drop_params: true
+  num_retries: 3
+  request_timeout: 120
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
