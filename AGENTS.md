@@ -41,7 +41,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply as escape hatches over any profile. Use `resolve_graph(name)` from `imas_codex.graph.profiles` for direct profile resolution. All CLI `graph` commands accept `--graph/-g` to target a specific profile.
 
-**Location-aware connections:** The `host` field on `GraphProfile` records where Neo4j physically runs (SSH alias or hostname). `is_local_host(host)` determines direct vs tunnel access at connection time. For remote hosts, set `IMAS_CODEX_TUNNEL_BOLT_{HOST}` env var to override the tunnel port.
+**Location-aware connections:** The `host` field on `GraphProfile` records where Neo4j physically runs (SSH alias or hostname). `is_local_host(host)` determines direct vs tunnel access at connection time. For remote hosts, set `IMAS_CODEX_TUNNEL_BOLT_{HOST}` env var to override the tunnel port. On sites behind VIPs/load-balancers where the SSH alias resolves to external addresses, set `IMAS_CODEX_LOCAL_HOSTS=iter` (comma-separated) to force local detection.
 
 **Graph config in pyproject.toml:**
 ```toml
