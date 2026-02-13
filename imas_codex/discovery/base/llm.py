@@ -243,6 +243,59 @@ def _sanitize_content(content: str) -> str:
     return content
 
 
+def _is_anthropic_model(model: str) -> bool:
+    """Check if a model is an Anthropic/Claude model that supports caching."""
+    model_lower = model.lower()
+    return "claude" in model_lower or "anthropic" in model_lower
+
+
+def inject_cache_control(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Add cache_control breakpoints to system messages for Anthropic caching.
+
+    Converts the last system message's content to a content-block list
+    with ``cache_control: {"type": "ephemeral"}`` on the last block.
+    This enables OpenRouter/Anthropic prompt caching:
+
+    * **Cache read**: 0.1× input price (90 % off)
+    * **Cache write (5 min TTL)**: 1.25× input price
+    * **Cache write (1 hr TTL)**: 2× input price
+
+    The default 5-minute TTL is used here because discovery workers
+    issue many calls within short windows (batch scoring).  For long-
+    running agent sessions, pass ``ttl="1h"`` explicitly.
+
+    Args:
+        messages: Chat messages (not mutated — a shallow copy is returned).
+
+    Returns:
+        New message list with cache_control injected on the last system message.
+    """
+    messages = [m.copy() for m in messages]
+
+    # Walk backwards to find the last system message
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "system":
+            content = messages[i]["content"]
+            if isinstance(content, str):
+                messages[i]["content"] = [
+                    {
+                        "type": "text",
+                        "text": content,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            elif isinstance(content, list) and content:
+                # Already in block format — add cache_control to last block
+                content = [block.copy() for block in content]
+                content[-1]["cache_control"] = {"type": "ephemeral"}
+                messages[i]["content"] = content
+            break
+
+    return messages
+
+
 def _build_kwargs(
     model: str,
     api_key: str,
@@ -256,9 +309,17 @@ def _build_kwargs(
 
     When max_tokens or timeout are not explicitly set, uses
     model-family defaults from MODEL_TOKEN_LIMITS.
+
+    For Anthropic models, ``cache_control`` breakpoints are injected
+    on the system prompt to enable prompt caching via OpenRouter
+    (cached reads cost 0.1× input price).
     """
     model_id = ensure_openrouter_prefix(model)
     limits = get_model_limits(model)
+
+    # Inject cache_control for Anthropic models
+    if _is_anthropic_model(model):
+        messages = inject_cache_control(messages)
 
     kwargs: dict[str, Any] = {
         "model": model_id,

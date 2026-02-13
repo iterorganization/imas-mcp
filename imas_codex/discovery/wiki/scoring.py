@@ -272,16 +272,25 @@ async def _score_artifacts_batch(
     last_error = None
     total_cost = 0.0
 
+    from imas_codex.discovery.base.llm import (
+        _is_anthropic_model,
+        inject_cache_control,
+    )
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    if _is_anthropic_model(model):
+        messages = inject_cache_control(messages)
+
     for attempt in range(max_retries):
         try:
             response = await litellm.acompletion(
                 model=model_id,
                 api_key=api_key,
                 response_format=ArtifactScoreBatch,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
+                messages=messages,
                 temperature=0.3,
                 max_tokens=16000,
                 timeout=120,
@@ -507,16 +516,25 @@ async def _score_images_batch(
     last_error = None
     total_cost = 0.0
 
+    from imas_codex.discovery.base.llm import (
+        _is_anthropic_model,
+        inject_cache_control,
+    )
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    if _is_anthropic_model(model):
+        messages = inject_cache_control(messages)
+
     for attempt in range(max_retries):
         try:
             response = await litellm.acompletion(
                 model=model_id,
                 api_key=api_key,
                 response_format=ImageScoreBatch,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
+                messages=messages,
                 temperature=0.3,
                 max_tokens=32000,
                 timeout=180,  # VLM may need more time for images

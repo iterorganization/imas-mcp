@@ -28,6 +28,7 @@ from imas_codex.discovery.base.llm import (
     call_llm_structured,
     extract_cost,
     get_model_limits,
+    inject_cache_control,
     suppress_litellm_noise,
 )
 from imas_codex.discovery.base.progress import (
@@ -102,6 +103,7 @@ __all__ = [
     "acall_llm_structured",
     "extract_cost",
     "get_model_limits",
+    "inject_cache_control",
     "suppress_litellm_noise",
     # Progress
     "ProgressConfig",
