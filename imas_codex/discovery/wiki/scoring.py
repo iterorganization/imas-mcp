@@ -273,7 +273,7 @@ async def _score_artifacts_batch(
     total_cost = 0.0
 
     from imas_codex.discovery.base.llm import (
-        _is_anthropic_model,
+        _supports_cache_control,
         inject_cache_control,
     )
 
@@ -281,7 +281,7 @@ async def _score_artifacts_batch(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    if _is_anthropic_model(model):
+    if _supports_cache_control(model):
         messages = inject_cache_control(messages)
 
     for attempt in range(max_retries):
@@ -517,7 +517,7 @@ async def _score_images_batch(
     total_cost = 0.0
 
     from imas_codex.discovery.base.llm import (
-        _is_anthropic_model,
+        _supports_cache_control,
         inject_cache_control,
     )
 
@@ -525,7 +525,7 @@ async def _score_images_batch(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    if _is_anthropic_model(model):
+    if _supports_cache_control(model):
         messages = inject_cache_control(messages)
 
     for attempt in range(max_retries):

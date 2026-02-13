@@ -243,10 +243,16 @@ def _sanitize_content(content: str) -> str:
     return content
 
 
-def _is_anthropic_model(model: str) -> bool:
-    """Check if a model is an Anthropic/Claude model that supports caching."""
+def _supports_cache_control(model: str) -> bool:
+    """Check if a model supports explicit cache_control breakpoints via OpenRouter.
+
+    Anthropic: cache_control required, reads 0.1× input price.
+    Gemini: cache_control supported (uses last breakpoint), reads 0.25× input price.
+    """
     model_lower = model.lower()
-    return "claude" in model_lower or "anthropic" in model_lower
+    return (
+        "claude" in model_lower or "anthropic" in model_lower or "gemini" in model_lower
+    )
 
 
 def inject_cache_control(
@@ -256,15 +262,14 @@ def inject_cache_control(
 
     Converts the last system message's content to a content-block list
     with ``cache_control: {"type": "ephemeral"}`` on the last block.
-    This enables OpenRouter/Anthropic prompt caching:
+    This enables prompt caching via OpenRouter for supported providers:
 
-    * **Cache read**: 0.1× input price (90 % off)
-    * **Cache write (5 min TTL)**: 1.25× input price
-    * **Cache write (1 hr TTL)**: 2× input price
+    **Anthropic** (Claude): read 0.1×, write 1.25× (5min) or 2× (1hr)
+    **Google** (Gemini): read 0.25×, write ≈input+storage (5min TTL)
 
     The default 5-minute TTL is used here because discovery workers
     issue many calls within short windows (batch scoring).  For long-
-    running agent sessions, pass ``ttl="1h"`` explicitly.
+    running agent sessions, pass ``ttl="1h"`` explicitly (Anthropic only).
 
     Args:
         messages: Chat messages (not mutated — a shallow copy is returned).
@@ -310,15 +315,14 @@ def _build_kwargs(
     When max_tokens or timeout are not explicitly set, uses
     model-family defaults from MODEL_TOKEN_LIMITS.
 
-    For Anthropic models, ``cache_control`` breakpoints are injected
-    on the system prompt to enable prompt caching via OpenRouter
-    (cached reads cost 0.1× input price).
+    For supported models (Anthropic, Gemini), ``cache_control`` breakpoints
+    are injected on the system prompt to enable prompt caching via OpenRouter.
     """
     model_id = ensure_openrouter_prefix(model)
     limits = get_model_limits(model)
 
-    # Inject cache_control for Anthropic models
-    if _is_anthropic_model(model):
+    # Inject cache_control for models that support explicit breakpoints
+    if _supports_cache_control(model):
         messages = inject_cache_control(messages)
 
     kwargs: dict[str, Any] = {
