@@ -265,27 +265,14 @@ def reset_orphaned_claims(facility: str, *, silent: bool = False) -> int:
     Returns:
         Number of paths with claims cleared
     """
-    from imas_codex.graph import GraphClient
+    from imas_codex.discovery.base.claims import reset_stale_claims
 
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (p:FacilityPath {facility_id: $facility})
-            WHERE p.claimed_at IS NOT NULL
-              AND p.claimed_at < datetime() - duration($cutoff)
-            SET p.claimed_at = null
-            RETURN count(p) AS reset_count
-            """,
-            facility=facility,
-            cutoff=cutoff,
-        )
-        reset_count = result[0]["reset_count"] if result else 0
-
-    if reset_count and not silent:
-        logger.info(f"Released {reset_count} orphaned claims (older than {CLAIM_TIMEOUT_SECONDS}s)")
-
-    return reset_count
+    return reset_stale_claims(
+        "FacilityPath",
+        facility,
+        timeout_seconds=CLAIM_TIMEOUT_SECONDS,
+        silent=silent,
+    )
 
 
 # ============================================================================
@@ -1185,8 +1172,13 @@ async def score_worker(
         await asyncio.sleep(0.1)
 
 
-def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
-    """Release claimed paths on error by clearing claimed_at."""
+def _revert_path_claims(facility: str, paths: list[str]) -> None:
+    """Release claimed paths on error by clearing claimed_at.
+
+    Unified handler for all path claim reverts (scanning, listing,
+    scoring, enrichment).  Uses facility-scoped query to avoid
+    accidentally releasing paths from another facility.
+    """
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
@@ -1201,36 +1193,10 @@ def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
         )
 
 
-def _revert_listing_claim(facility: str, paths: list[str]) -> None:
-    """Release claimed paths on error by clearing claimed_at."""
-    from imas_codex.graph import GraphClient
-
-    with GraphClient() as gc:
-        gc.query(
-            """
-            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.path IN $paths
-            SET p.claimed_at = null
-            """,
-            facility=facility,
-            paths=paths,
-        )
-
-
-def _revert_enrich_claim(facility: str, paths: list[str]) -> None:
-    """Revert paths from enriching back to unenriched state on error."""
-    from imas_codex.graph import GraphClient
-
-    with GraphClient() as gc:
-        gc.query(
-            """
-            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.path IN $paths
-            SET p.claimed_at = null
-            """,
-            facility=facility,
-            paths=paths,
-        )
+# Backwards-compatible aliases
+_revert_scoring_claim = _revert_path_claims
+_revert_listing_claim = _revert_path_claims
+_revert_enrich_claim = _revert_path_claims
 
 
 async def enrich_worker(

@@ -197,14 +197,24 @@ def _bulk_create_wiki_artifacts(
         # Use MERGE for WikiPage to handle cases where the page hasn't been
         # fully ingested yet — creates a stub node that will be enriched later
         # when the page is actually crawled and ingested.
+        # Always set facility_id and AT_FACILITY so referential integrity holds.
         gc.query(
             """
             UNWIND $links AS link
             MATCH (wa:WikiArtifact {id: link.artifact_id})
             MERGE (wp:WikiPage {id: link.page_id})
+            ON CREATE SET wp.facility_id = $facility,
+                          wp.status = 'scanned',
+                          wp.title = link.page_id,
+                          wp.url = '',
+                          wp.discovered_at = datetime()
             MERGE (wp)-[:HAS_ARTIFACT]->(wa)
+            WITH wp
+            MATCH (f:Facility {id: $facility})
+            MERGE (wp)-[:AT_FACILITY]->(f)
             """,
             links=page_links,
+            facility=facility,
         )
 
     return created
@@ -435,35 +445,25 @@ def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, i
     Uses timeout-based recovery so multiple CLI instances can run
     concurrently on the same facility without wiping each other's claims.
     Only claims older than the timeout are considered orphaned.
-    """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.claimed_at IS NOT NULL
-              AND wp.claimed_at < datetime() - duration($cutoff)
-            SET wp.claimed_at = null
-            RETURN count(wp) AS reset_count
-            """,
-            facility=facility,
-            cutoff=cutoff,
-        )
-        page_reset = result[0]["reset_count"] if result else 0
 
-        # Also clear stale artifact claims
-        result = gc.query(
-            """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
-            WHERE wa.claimed_at IS NOT NULL
-              AND wa.claimed_at < datetime() - duration($cutoff)
-            SET wa.claimed_at = null
-            RETURN count(wa) AS reset_count
-            """,
-            facility=facility,
-            cutoff=cutoff,
-        )
-        artifact_reset = result[0]["reset_count"] if result else 0
+    Delegates to the common claims module for both WikiPage and
+    WikiArtifact node types.
+    """
+    from imas_codex.discovery.base.claims import reset_stale_claims
+
+    page_reset = reset_stale_claims(
+        "WikiPage",
+        facility,
+        timeout_seconds=CLAIM_TIMEOUT_SECONDS,
+        silent=True,  # We log our own combined message
+    )
+
+    artifact_reset = reset_stale_claims(
+        "WikiArtifact",
+        facility,
+        timeout_seconds=CLAIM_TIMEOUT_SECONDS,
+        silent=True,
+    )
 
     total_reset = page_reset + artifact_reset
     if not silent and total_reset > 0:
@@ -1097,7 +1097,7 @@ def mark_artifacts_scored(
                 wa.score = item.score,
                 wa.artifact_purpose = item.artifact_purpose,
                 wa.description = item.description,
-                wa.score_reasoning = item.reasoning,
+                wa.reasoning = item.reasoning,
                 wa.keywords = item.keywords,
                 wa.physics_domain = item.physics_domain,
                 wa.preview_text = item.preview_text,

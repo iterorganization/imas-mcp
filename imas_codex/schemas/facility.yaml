@@ -2443,6 +2443,12 @@ classes:
       patterns_matched:
         description: Patterns that matched during discovery (e.g., "IMAS", "equilibrium")
         multivalued: true
+      # Worker coordination
+      claimed_at:
+        description: >-
+          Timestamp when a worker claimed this file for processing.
+          Used for distributed worker coordination. Stale claims (>5min) are reclaimed.
+        range: datetime
       # Processing metadata
       started_at:
         description: When ingestion started (fetching state)
@@ -2622,6 +2628,27 @@ classes:
         range: integer
       accumulated_summary:
         description: Compressed context summary from previous windows
+
+      # Session tracking
+      current_window:
+        description: Current window number being processed
+        range: integer
+      facility:
+        description: Facility identifier this run belongs to
+      session_id:
+        description: UUID linking related agent runs in a session
+      total_discoveries:
+        description: Total items discovered across all windows
+        range: integer
+      total_queued:
+        description: Total items queued for processing
+        range: integer
+      total_skipped:
+        description: Total items skipped (already processed, excluded, etc.)
+        range: integer
+      total_steps:
+        description: Total LLM steps executed in this run
+        range: integer
 
 # =============================================================================
 # Documentation Source Classes
@@ -2838,6 +2865,26 @@ classes:
         range: integer
       error:
         description: Error message if status is failed
+
+      # Ingestion result metadata
+      conventions_found:
+        description: Number of naming/coding conventions discovered in page content
+        range: integer
+      failed_at:
+        description: Timestamp when ingestion failed
+        range: datetime
+      imas_paths_found:
+        description: Number of IMAS IDS paths found in page content
+        range: integer
+      ingested_at:
+        description: Timestamp when page content was successfully ingested
+        range: datetime
+      link_count:
+        description: Number of outbound links found on this page
+        range: integer
+      mdsplus_paths_found:
+        description: Number of MDSplus tree paths found in page content
+        range: integer
 
   WikiChunk:
     description: >-

@@ -98,9 +98,7 @@ def _scan_remote_path(
             )
             files = files[:max_files_per_path]
         elif files:
-            logger.info(
-                "Found %d files in %s:%s", len(files), host, remote_path
-            )
+            logger.info("Found %d files in %s:%s", len(files), host, remote_path)
 
         return files
 
@@ -120,6 +118,10 @@ def _get_scannable_paths(
     limit: int = 100,
 ) -> list[dict]:
     """Get scored FacilityPaths that are ready for file scanning.
+
+    .. deprecated::
+        Use :func:`~imas_codex.discovery.files.graph_ops.claim_paths_for_file_scan`
+        instead for parallel-safe claiming.
 
     Returns paths with status 'scored' and score >= min_score,
     ordered by score descending.
@@ -251,6 +253,8 @@ def scan_facility_files(
     """Scan scored FacilityPaths for source files.
 
     Enumerates files in high-scoring directories, creates SourceFile nodes.
+    Uses claim coordination via ``files_claimed_at`` on FacilityPath to
+    enable safe parallel execution.
 
     Args:
         facility: Facility ID
@@ -263,6 +267,11 @@ def scan_facility_files(
     Returns:
         Dict with total_files, total_paths, new_files, skipped_files
     """
+    from imas_codex.discovery.files.graph_ops import (
+        claim_paths_for_file_scan,
+        release_path_file_scan_claim,
+    )
+
     stats = {
         "total_files": 0,
         "total_paths": 0,
@@ -275,10 +284,10 @@ def scan_facility_files(
             progress_callback(current, total, msg)
         logger.info("[%d/%d] %s", current, total, msg)
 
-    # Get paths to scan
-    paths = _get_scannable_paths(facility, min_score=min_score, limit=max_paths)
+    # Claim paths atomically (parallel-safe)
+    paths = claim_paths_for_file_scan(facility, min_score=min_score, limit=max_paths)
     if not paths:
-        report(0, 0, "No scored paths to scan")
+        report(0, 0, "No scored paths to scan (or all claimed by another worker)")
         return stats
 
     # Ensure Facility node exists so AT_FACILITY relationships don't fail
@@ -295,17 +304,29 @@ def scan_facility_files(
 
         report(idx, total, f"Scanning {path} (score={score:.2f})")
 
-        files = _scan_remote_path(
-            facility, path, ssh_host=ssh_host, max_depth=max_depth
-        )
+        try:
+            files = _scan_remote_path(
+                facility, path, ssh_host=ssh_host, max_depth=max_depth
+            )
 
-        if files:
-            result = _persist_discovered_files(facility, files, source_path_id=path_id)
-            stats["new_files"] += result["discovered"]
-            stats["skipped_files"] += result["skipped"]
-            stats["total_files"] += len(files)
+            if files:
+                result = _persist_discovered_files(
+                    facility, files, source_path_id=path_id
+                )
+                stats["new_files"] += result["discovered"]
+                stats["skipped_files"] += result["skipped"]
+                stats["total_files"] += len(files)
 
-        stats["total_paths"] += 1
+            stats["total_paths"] += 1
+
+        except Exception as e:
+            logger.warning("Error scanning %s: %s", path, e)
+            # Release claim on error so another worker can retry
+            release_path_file_scan_claim(path_id)
+            continue
+
+        # Release claim after successful scan
+        release_path_file_scan_claim(path_id)
 
     report(
         total,

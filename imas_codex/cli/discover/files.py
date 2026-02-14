@@ -135,6 +135,14 @@ def files(
         log_print(f"  Focus: {focus}")
     log_print("")
 
+    # Release stale claims from crashed processes (timeout-based, parallel-safe)
+    from imas_codex.discovery.files.graph_ops import reset_orphaned_file_claims
+
+    reset_counts = reset_orphaned_file_claims(facility, silent=True)
+    total_reset = sum(reset_counts.values())
+    if total_reset:
+        log_print(f"[dim]Reset {total_reset} orphaned claims from previous run[/dim]")
+
     # Stage 1: Scan files via SSH
     total_scanned = 0
     total_scored = 0

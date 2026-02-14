@@ -46,7 +46,12 @@ def _get_scorable_files(
     facility: str,
     limit: int = 100,
 ) -> list[dict]:
-    """Get SourceFile nodes needing scoring (discovered, no interest_score)."""
+    """Get SourceFile nodes needing scoring (discovered, no interest_score).
+
+    .. deprecated::
+        Use :func:`~imas_codex.discovery.files.graph_ops.claim_files_for_scoring`
+        instead for parallel-safe claiming.
+    """
     with GraphClient() as client:
         result = client.query(
             """
@@ -182,6 +187,10 @@ def score_facility_files(
 ) -> dict[str, Any]:
     """Score discovered SourceFiles using LLM batch scoring.
 
+    Uses claim coordination via ``claimed_at`` on SourceFile to enable
+    safe parallel execution.  Only unclaimed (or stale-claimed) files
+    are claimed for scoring.
+
     Args:
         facility: Facility ID
         focus: Natural language focus (e.g., "equilibrium reconstruction")
@@ -194,6 +203,10 @@ def score_facility_files(
         Dict with total_scored, total_skipped, cost, batches
     """
     from imas_codex.discovery.base.llm import call_llm_structured
+    from imas_codex.discovery.files.graph_ops import (
+        claim_files_for_scoring,
+        release_file_score_claims,
+    )
     from imas_codex.settings import get_model
 
     model = get_model("language")
@@ -211,10 +224,10 @@ def score_facility_files(
             progress_callback(current, total, msg)
         logger.info("[%d/%d] %s", current, total, msg)
 
-    # Get files to score
-    files = _get_scorable_files(facility, limit=limit)
+    # Claim files atomically (parallel-safe)
+    files = claim_files_for_scoring(facility, limit=limit)
     if not files:
-        report(0, 0, "No files to score")
+        report(0, 0, "No files to score (or all claimed by another worker)")
         return stats
 
     total = len(files)
@@ -224,11 +237,15 @@ def score_facility_files(
     processed = 0
     for batch_start in range(0, total, batch_size):
         if stats["cost"] >= cost_limit:
+            # Release unclaimed files from remaining batches
+            remaining_ids = [f["id"] for f in files[batch_start:]]
+            release_file_score_claims(remaining_ids)
             report(processed, total, f"Cost limit reached (${stats['cost']:.2f})")
             break
 
         batch = files[batch_start : batch_start + batch_size]
         file_id_map = {f["path"]: f["id"] for f in batch}
+        batch_ids = [f["id"] for f in batch]
 
         report(
             processed,
@@ -251,9 +268,14 @@ def score_facility_files(
             stats["total_scored"] += result["scored"]
             stats["total_skipped"] += result["skipped"]
 
+            # Clear claims on successfully scored files
+            release_file_score_claims(batch_ids)
+
         except Exception as e:
             logger.error("Scoring batch failed: %s", e)
             stats["errors"].append(str(e))
+            # Release claims on error so another worker can retry
+            release_file_score_claims(batch_ids)
 
         stats["batches"] += 1
         processed += len(batch)

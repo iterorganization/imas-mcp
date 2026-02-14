@@ -276,25 +276,18 @@ def reset_transient_signals(facility: str, silent: bool = False) -> dict[str, in
     """Reset orphaned signals from previous runs.
 
     Clears claimed_at for any signal that's been claimed too long.
+    Delegates to the common claims module for the actual reset.
     """
+    from imas_codex.discovery.base.claims import reset_stale_claims
+
     try:
-        with GraphClient() as gc:
-            result = gc.query(
-                f"""
-                MATCH (s:FacilitySignal {{facility_id: $facility}})
-                WHERE s.claimed_at IS NOT NULL
-                  AND s.claimed_at < datetime() - duration('PT{CLAIM_TIMEOUT_SECONDS}S')
-                SET s.claimed_at = null
-                RETURN count(s) AS released
-                """,
-                facility=facility,
-            )
-            released = result[0]["released"] if result else 0
-            if released > 0 and not silent:
-                logger.info(
-                    "Released %d orphaned signal claims for %s", released, facility
-                )
-            return {"released": released}
+        released = reset_stale_claims(
+            "FacilitySignal",
+            facility,
+            timeout_seconds=CLAIM_TIMEOUT_SECONDS,
+            silent=silent,
+        )
+        return {"released": released}
     except Exception as e:
         logger.warning("Could not reset transient signals: %s", e)
         return {"released": 0}
@@ -634,17 +627,9 @@ def mark_signal_failed(signal_id: str, error: str, revert_status: str) -> None:
 
 def release_signal_claim(signal_id: str) -> None:
     """Release claim on a signal without changing status."""
-    try:
-        with GraphClient() as gc:
-            gc.query(
-                """
-                MATCH (s:FacilitySignal {id: $id})
-                SET s.claimed_at = null
-                """,
-                id=signal_id,
-            )
-    except Exception as e:
-        logger.warning("Could not release signal claim: %s", e)
+    from imas_codex.discovery.base.claims import release_claim
+
+    release_claim("FacilitySignal", signal_id)
 
 
 # =============================================================================
