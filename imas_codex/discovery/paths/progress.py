@@ -90,6 +90,7 @@ class EnrichItem:
         default_factory=dict
     )  # Per-category matches (mdsplus, hdf5, imas, etc.)
     error: str | None = None
+    warnings: list[str] = field(default_factory=list)  # e.g., ["tokei_timeout"]
 
 
 # ============================================================================
@@ -572,28 +573,43 @@ class ParallelProgressDisplay:
                     enrich.path, self.width - LABEL_WIDTH - 4
                 )
                 parts = []
-                # Size
-                if enrich.total_bytes >= 1_000_000:
-                    size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
-                elif enrich.total_bytes >= 1_000:
-                    size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
+                # Show error/warning state prominently
+                if enrich.error:
+                    parts.append((enrich.error, "red"))
+                elif enrich.warnings:
+                    # Show partial result (du worked but tokei timed out)
+                    if enrich.total_bytes >= 1_000_000:
+                        size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
+                    elif enrich.total_bytes >= 1_000:
+                        size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
+                    else:
+                        size_str = f"{enrich.total_bytes}B"
+                    parts.append((size_str, "cyan"))
+                    warn_str = ", ".join(enrich.warnings)
+                    parts.append((f"  [{warn_str}]", "yellow"))
                 else:
-                    size_str = f"{enrich.total_bytes}B"
-                parts.append((size_str, "cyan"))
-                if enrich.total_lines > 0:
-                    parts.append((f"  {enrich.total_lines:,} LOC", "cyan"))
-                if enrich.languages:
-                    langs = ", ".join(enrich.languages[:3])
-                    parts.append((f"  [{langs}]", "green dim"))
-                if enrich.is_multiformat:
-                    parts.append(("  multiformat", "yellow"))
-                elif enrich.read_matches > 0 or enrich.write_matches > 0:
-                    parts.append(
-                        (
-                            f"  r:{enrich.read_matches} w:{enrich.write_matches}",
-                            "dim",
+                    # Size
+                    if enrich.total_bytes >= 1_000_000:
+                        size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
+                    elif enrich.total_bytes >= 1_000:
+                        size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
+                    else:
+                        size_str = f"{enrich.total_bytes}B"
+                    parts.append((size_str, "cyan"))
+                    if enrich.total_lines > 0:
+                        parts.append((f"  {enrich.total_lines:,} LOC", "cyan"))
+                    if enrich.languages:
+                        langs = ", ".join(enrich.languages[:3])
+                        parts.append((f"  [{langs}]", "green dim"))
+                    if enrich.is_multiformat:
+                        parts.append(("  multiformat", "yellow"))
+                    elif enrich.read_matches > 0 or enrich.write_matches > 0:
+                        parts.append(
+                            (
+                                f"  r:{enrich.read_matches} w:{enrich.write_matches}",
+                                "dim",
+                            )
                         )
-                    )
                 enrich_row.detail_parts = parts
             elif not self.state.enrich_processing and queue_empty:
                 pass  # Will show "idle"
@@ -907,6 +923,7 @@ class ParallelProgressDisplay:
                         languages=languages,
                         is_multiformat=is_multi,
                         error=r.get("error"),
+                        warnings=r.get("warnings", []),
                     )
                 )
             # Use actual worker rate, capped for readability

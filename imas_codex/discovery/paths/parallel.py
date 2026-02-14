@@ -565,7 +565,8 @@ def claim_paths_for_rescoring(
                    p.read_matches AS read_matches,
                    p.write_matches AS write_matches,
                    p.path_purpose AS path_purpose,
-                   p.description AS description
+                   p.description AS description,
+                   p.enrich_warnings AS enrich_warnings
             """,
             facility=facility,
             limit=limit,
@@ -597,10 +598,20 @@ def mark_enrichment_complete(
 
     with GraphClient() as gc:
         for result in enrichment_results:
-            if result.get("error"):
-                continue
-
             path_id = f"{facility}:{result['path']}"
+
+            if result.get("error"):
+                # Clear claimed_at so path can be retried, and store error
+                gc.query(
+                    """
+                    MATCH (p:FacilityPath {id: $id})
+                    SET p.claimed_at = null,
+                        p.enrich_error = $error
+                    """,
+                    id=path_id,
+                    error=result["error"][:200],
+                )
+                continue
 
             # Serialize language_breakdown dict to JSON (Neo4j rejects dicts)
             lang_breakdown = result.get("language_breakdown")
@@ -616,6 +627,10 @@ def mark_enrichment_complete(
 
                 pattern_cats = json.dumps(pattern_cats) if pattern_cats else None
 
+            # Serialize warnings list to comma-separated string for Neo4j
+            warnings = result.get("warnings", [])
+            warn_str = ", ".join(warnings) if warnings else None
+
             gc.query(
                 """
                 MATCH (p:FacilityPath {id: $id})
@@ -628,6 +643,7 @@ def mark_enrichment_complete(
                     p.pattern_categories = $pattern_categories,
                     p.read_matches = $read_matches,
                     p.write_matches = $write_matches,
+                    p.enrich_warnings = $enrich_warnings,
                     p.claimed_at = null
                 """,
                 id=path_id,
@@ -639,6 +655,7 @@ def mark_enrichment_complete(
                 pattern_categories=pattern_cats,
                 read_matches=result.get("read_matches", 0),
                 write_matches=result.get("write_matches", 0),
+                enrich_warnings=warn_str,
             )
             updated += 1
 
@@ -1266,6 +1283,7 @@ async def enrich_worker(
                     "read_matches": r.read_matches,
                     "write_matches": r.write_matches,
                     "error": r.error,
+                    "warnings": r.warnings if hasattr(r, "warnings") else [],
                 }
                 for r in results
             ]
@@ -1669,6 +1687,15 @@ async def _async_rescore_with_llm(
         lines_prompt.append(f"  Total bytes: {p.get('total_bytes') or 0}")
         lines_prompt.append(f"  Language breakdown: {lang or {}}")
         lines_prompt.append(f"  Is multiformat: {p.get('is_multiformat', False)}")
+
+        # Enrichment warnings (tokei timeout, etc.)
+        enrich_warnings = p.get("enrich_warnings")
+        if enrich_warnings:
+            if isinstance(enrich_warnings, str):
+                lines_prompt.append(f"  Enrichment warnings: {enrich_warnings}")
+                lines_prompt.append(
+                    "  Note: Some metrics may be incomplete due to timeouts on large directories."
+                )
 
         # Initial per-dimension scores (what we're potentially adjusting)
         # Use `or 0.0` since .get() returns None if key exists with None value

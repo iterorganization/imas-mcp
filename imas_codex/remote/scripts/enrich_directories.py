@@ -205,6 +205,7 @@ def enrich_directory(
     # Note: dust is a TUI visualization tool without machine-parseable output,
     # so we use du -sb which outputs "BYTES\tPATH" format
     total_bytes = 0
+    du_timed_out = False
     try:
         proc = subprocess.run(
             ["du", "-sb", path],
@@ -217,7 +218,9 @@ def enrich_directory(
                 total_bytes = int(proc.stdout.split()[0])
             except (ValueError, IndexError):
                 pass
-    except (subprocess.TimeoutExpired, Exception):
+    except subprocess.TimeoutExpired:
+        du_timed_out = True
+    except Exception:
         pass
 
     result["total_bytes"] = total_bytes
@@ -225,14 +228,20 @@ def enrich_directory(
     # Lines of code analysis with tokei (skip for data paths - not code)
     total_lines = 0
     language_breakdown: Dict[str, int] = {}
+    tokei_timed_out = False
 
     if has_tokei and not skip_loc and not skip_patterns:
+        # Scale timeout by directory size: 30s base + 15s per GB
+        tokei_timeout = (
+            30 + int(total_bytes / 1_000_000_000) * 15 if total_bytes > 0 else 60
+        )
+        tokei_timeout = min(tokei_timeout, 120)  # Cap at 2 minutes
         try:
             proc = subprocess.run(
                 ["tokei", path, "-o", "json"],
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=tokei_timeout,
             )
             if proc.returncode == 0 and proc.stdout.strip():
                 try:
@@ -248,11 +257,22 @@ def enrich_directory(
                                 total_lines += code
                 except json.JSONDecodeError:
                     pass
-        except (subprocess.TimeoutExpired, Exception):
+        except subprocess.TimeoutExpired:
+            tokei_timed_out = True
+        except Exception:
             pass
 
     result["total_lines"] = total_lines
     result["language_breakdown"] = language_breakdown
+
+    # Report partial failures so downstream can see what happened
+    warnings: List[str] = []
+    if du_timed_out:
+        warnings.append("du_timeout")
+    if tokei_timed_out:
+        warnings.append(f"tokei_timeout({total_bytes}B)")
+    if warnings:
+        result["warnings"] = warnings
 
     return result
 

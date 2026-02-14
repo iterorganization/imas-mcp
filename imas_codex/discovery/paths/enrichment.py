@@ -168,8 +168,9 @@ class EnrichmentResult:
     # Lines of code
     total_lines: int | None = None
     language_breakdown: dict[str, int] = field(default_factory=dict)
-    # Errors
+    # Errors and warnings
     error: str | None = None
+    warnings: list[str] = field(default_factory=list)  # e.g., ["tokei_timeout(61GB)"]
 
     def to_graph_dict(self) -> dict[str, Any]:
         """Convert to dict for graph update."""
@@ -287,6 +288,11 @@ def enrich_paths(
         if pattern_cats:
             result.pattern_categories = pattern_cats
 
+        # Warnings (e.g., tokei_timeout)
+        warnings = data.get("warnings", [])
+        if warnings:
+            result.warnings = warnings
+
         results.append(result)
 
     # Fill missing paths
@@ -360,6 +366,9 @@ def _parse_enrich_output(
         pattern_cats = data.get("pattern_categories", {})
         if pattern_cats:
             result.pattern_categories = pattern_cats
+        warnings = data.get("warnings", [])
+        if warnings:
+            result.warnings = warnings
         results.append(result)
 
     result_paths = {r.path for r in results}

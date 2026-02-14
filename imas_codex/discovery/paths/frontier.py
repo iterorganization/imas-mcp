@@ -2643,6 +2643,10 @@ def mark_enrichment_complete(
             if isinstance(lang_breakdown, dict):
                 lang_breakdown = json.dumps(lang_breakdown) if lang_breakdown else None
 
+            # Serialize warnings to string for Neo4j
+            warnings = result.get("warnings", [])
+            warn_str = ", ".join(warnings) if warnings else None
+
             gc.query(
                 """
                 MATCH (p:FacilityPath {id: $id})
@@ -2652,7 +2656,8 @@ def mark_enrichment_complete(
                     p.total_bytes = $total_bytes,
                     p.total_lines = $total_lines,
                     p.language_breakdown = $language_breakdown,
-                    p.is_multiformat = $is_multiformat
+                    p.is_multiformat = $is_multiformat,
+                    p.enrich_warnings = $enrich_warnings
                 """,
                 id=path_id,
                 now=now,
@@ -2660,6 +2665,7 @@ def mark_enrichment_complete(
                 total_lines=result.get("total_lines"),
                 language_breakdown=lang_breakdown,
                 is_multiformat=result.get("is_multiformat"),
+                enrich_warnings=warn_str,
             )
             updated += 1
 
