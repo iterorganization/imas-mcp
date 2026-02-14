@@ -122,7 +122,7 @@ def wiki(
     use_rich = not no_rich and sys.stdout.isatty()
 
     # Always configure file logging (DEBUG level to disk)
-    configure_cli_logging("wiki", verbose=verbose)
+    configure_cli_logging("wiki", facility=facility, verbose=verbose)
 
     if use_rich:
         console = Console()

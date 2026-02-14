@@ -106,7 +106,7 @@ def signals(
     # Always configure file logging (DEBUG level to disk)
     from imas_codex.cli.logging import configure_cli_logging
 
-    configure_cli_logging("signals")
+    configure_cli_logging("signals", facility=facility)
 
     if use_rich:
         console = Console()

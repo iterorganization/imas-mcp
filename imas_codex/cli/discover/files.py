@@ -91,7 +91,7 @@ def files(
     # Always configure file logging (DEBUG level to disk)
     from imas_codex.cli.logging import configure_cli_logging
 
-    configure_cli_logging("files")
+    configure_cli_logging("files", facility=facility)
 
     if use_rich:
         console = Console()

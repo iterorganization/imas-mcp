@@ -248,7 +248,7 @@ def _sanitize_content(content: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Prompt caching configuration (data-driven from config/prompt_caching.yaml)
+# Prompt caching (data-driven from config/prompt_caching.yaml)
 # ---------------------------------------------------------------------------
 
 _PROMPT_CACHING_CONFIG = (
@@ -257,66 +257,20 @@ _PROMPT_CACHING_CONFIG = (
 
 
 @lru_cache(maxsize=1)
-def _load_caching_config() -> dict[str, Any]:
-    """Load prompt caching configuration from YAML.
-
-    Returns:
-        Parsed config dict with provider entries.
-    """
+def _cache_control_patterns() -> tuple[str, ...]:
+    """Match patterns for providers needing explicit cache_control breakpoints."""
     with _PROMPT_CACHING_CONFIG.open() as f:
-        return yaml.safe_load(f)
-
-
-@lru_cache(maxsize=1)
-def _explicit_cache_patterns() -> tuple[str, ...]:
-    """Return match patterns for providers supporting explicit cache_control.
-
-    These are providers where injecting ``cache_control`` breakpoints into
-    messages enables prompt caching (Anthropic, Google Gemini, etc.).
-    Providers with implicit caching don't need breakpoints but tolerate them.
-
-    Returns:
-        Tuple of lowercase match strings (e.g., ("claude", "anthropic", "gemini", ...)).
-    """
-    config = _load_caching_config()
+        config = yaml.safe_load(f)
     patterns: list[str] = []
-    for _name, provider in config.get("providers", {}).items():
-        # Include both explicit and implicit — breakpoints are harmless
-        # on implicit providers and help if OpenRouter re-routes.
+    for provider in config.get("providers", {}).values():
         patterns.extend(provider.get("match", []))
     return tuple(patterns)
 
 
 def _supports_cache_control(model: str) -> bool:
-    """Check if a model benefits from explicit cache_control breakpoints.
-
-    Uses data-driven matching from ``config/prompt_caching.yaml``.
-    Includes both explicit providers (Anthropic, Gemini) where breakpoints
-    are required, and implicit providers (OpenAI, DeepSeek) where they are
-    harmless but help if OpenRouter re-routes to an explicit provider.
-    """
+    """Check if a model needs explicit cache_control breakpoints."""
     model_lower = model.lower()
-    return any(pattern in model_lower for pattern in _explicit_cache_patterns())
-
-
-def get_caching_info(model: str) -> dict[str, Any] | None:
-    """Return caching config for a model, or None if no provider matches.
-
-    Looks up the model against ``config/prompt_caching.yaml`` and returns
-    the matching provider's configuration (mode, read_discount, min_tokens, etc.).
-
-    Args:
-        model: Model identifier (e.g., "anthropic/claude-sonnet-4.5").
-
-    Returns:
-        Provider config dict or None.
-    """
-    config = _load_caching_config()
-    model_lower = model.lower()
-    for name, provider in config.get("providers", {}).items():
-        if any(pattern in model_lower for pattern in provider.get("match", [])):
-            return {"provider": name, **provider}
-    return None
+    return any(p in model_lower for p in _cache_control_patterns())
 
 
 def inject_cache_control(

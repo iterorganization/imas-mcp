@@ -494,6 +494,7 @@ def claim_paths_for_enriching(
     else:
         enrich_clause = "p.should_enrich = true"
 
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             f"""
@@ -501,6 +502,7 @@ def claim_paths_for_enriching(
             WHERE p.status = $scored
               AND {enrich_clause}
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
+              AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
             WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
             SET p.claimed_at = datetime()
@@ -510,6 +512,7 @@ def claim_paths_for_enriching(
             facility=facility,
             limit=limit,
             scored=PathStatus.scored.value,
+            cutoff=cutoff,
             root_filter=root_filter or [],
             auto_enrich_threshold=auto_enrich_threshold,
         )
@@ -542,12 +545,14 @@ def claim_paths_for_rescoring(
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
               AND p.rescored_at IS NULL
+              AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
             WITH p ORDER BY p.score DESC LIMIT $limit
             SET p.claimed_at = datetime()
@@ -574,6 +579,7 @@ def claim_paths_for_rescoring(
             """,
             facility=facility,
             limit=limit,
+            cutoff=cutoff,
             root_filter=root_filter or [],
         )
         return list(result)
@@ -773,9 +779,12 @@ async def scan_worker(
             if state.ssh_retry_count >= state.max_ssh_retries:
                 logger.error(
                     f"SSH connection to {state.facility} failed after "
-                    f"{state.max_ssh_retries} attempts. Check VPN and SSH config."
+                    f"{state.max_ssh_retries} attempts. "
+                    f"Scan worker stopping (other workers continue)."
                 )
-                state.stop_requested = True
+                # Only stop this scan worker — don't kill all workers.
+                # Enrich, rescore, and embed workers may still have work.
+                state.scan_idle_count = 3  # Mark as idle so should_stop can evaluate
                 if on_progress:
                     on_progress(
                         f"SSH failed: {state.ssh_error_message}",

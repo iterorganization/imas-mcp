@@ -1,21 +1,25 @@
 """CLI logging configuration with file output.
 
 Provides a shared ``configure_cli_logging`` function that sets up both
-console and file logging for CLI commands.  Each CLI tool writes a
-rotating log file under ``~/.local/share/imas-codex/logs/<command>.log``.
+console and file logging for CLI commands.  Log files are split by
+CLI tool *and* facility under ``~/.local/share/imas-codex/logs/``.
+
+Naming convention::
+
+    <command>_<facility>.log   # e.g. paths_tcv.log, wiki_jet.log
+    <command>.log              # fallback when no facility is specified
 
 Usage from any CLI command::
 
     from imas_codex.cli.logging import configure_cli_logging
 
-    log_dir = configure_cli_logging("wiki", verbose=verbose)
-    # Returns the log directory path for display
+    configure_cli_logging("wiki", facility="tcv", verbose=verbose)
 
 Agents can access the logs via::
 
-    cat ~/.local/share/imas-codex/logs/wiki.log
-    tail -f ~/.local/share/imas-codex/logs/wiki.log   # Follow live
-    ls -la ~/.local/share/imas-codex/logs/             # List all logs
+    tail -f ~/.local/share/imas-codex/logs/paths_tcv.log   # Follow live
+    ls -la ~/.local/share/imas-codex/logs/                  # List all logs
+    rg ERROR ~/.local/share/imas-codex/logs/                # Search errors
 """
 
 from __future__ import annotations
@@ -34,14 +38,23 @@ def get_log_dir() -> Path:
     return LOG_DIR
 
 
-def get_log_file(command: str) -> Path:
-    """Return the log file path for a given CLI command."""
-    return get_log_dir() / f"{command}.log"
+def get_log_file(command: str, facility: str | None = None) -> Path:
+    """Return the log file path for a given CLI command and facility.
+
+    Args:
+        command: CLI command name (e.g., "paths", "wiki").
+        facility: Optional facility ID.  When provided the file is named
+            ``<command>_<facility>.log`` so parallel facility runs don't
+            clobber each other.
+    """
+    stem = f"{command}_{facility}" if facility else command
+    return get_log_dir() / f"{stem}.log"
 
 
 def configure_cli_logging(
     command: str,
     *,
+    facility: str | None = None,
     verbose: bool = False,
     console_level: int | None = None,
     file_level: int = logging.DEBUG,
@@ -52,11 +65,13 @@ def configure_cli_logging(
 
     Sets up:
     - File handler: DEBUG-level rotating log at
-      ``~/.local/share/imas-codex/logs/<command>.log``
+      ``~/.local/share/imas-codex/logs/<command>_<facility>.log``
     - Console handler: WARNING (or VERBOSE if requested)
 
     Args:
         command: CLI command name (e.g., "wiki", "paths", "ingest")
+        facility: Facility ID (e.g., "tcv").  Splits the log file per
+            facility so parallel runs don't interleave.
         verbose: If True, set console to INFO level
         console_level: Override console level (takes precedence over verbose)
         file_level: File log level (default: DEBUG)
@@ -66,7 +81,7 @@ def configure_cli_logging(
     Returns:
         Path to the log directory
     """
-    log_file = get_log_file(command)
+    log_file = get_log_file(command, facility=facility)
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Root logger gets file handler at DEBUG level

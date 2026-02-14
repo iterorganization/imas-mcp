@@ -150,6 +150,9 @@ def _persist_embeddings(
 ) -> int:
     """Persist embeddings back to graph nodes.
 
+    Sets both the ``embedding`` vector and an ``embedded_at`` timestamp so
+    downstream consumers can verify when the embedding was computed.
+
     Args:
         label: Node label
         items: List of dicts with 'id' and 'embedding' keys
@@ -171,7 +174,8 @@ def _persist_embeddings(
             f"""
             UNWIND $batch AS item
             MATCH (n:{label} {{id: item.id}})
-            SET n.embedding = item.embedding
+            SET n.embedding = item.embedding,
+                n.embedded_at = datetime()
             """,
             batch=batch,
         )

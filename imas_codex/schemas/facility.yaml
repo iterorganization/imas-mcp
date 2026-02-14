@@ -740,6 +740,9 @@ classes:
         description: Vector embedding of description for semantic search
         multivalued: true
         range: float
+      embedded_at:
+        description: When the description embedding was last computed
+        range: datetime
       discovered_at:
         description: When this path was first discovered
         range: datetime
@@ -1346,6 +1349,9 @@ classes:
         description: Vector embedding of description for semantic search
         multivalued: true
         range: float
+      embedded_at:
+        description: When the description embedding was last computed
+        range: datetime
       physics_domain:
         description: Physics domain for categorization and filtering
       example_shot:
@@ -1758,6 +1764,9 @@ classes:
         description: Vector embedding of description for semantic search
         multivalued: true
         range: float
+      embedded_at:
+        description: When the description embedding was last computed
+        range: datetime
       units:
         description: >-
           Physical units of the signal data. Extracted from MDSplus node.units,
@@ -2481,6 +2490,9 @@ classes:
         description: Vector embedding for semantic search (stored as list of floats)
         multivalued: true
         range: float
+      embedded_at:
+        description: When the embedding was last computed
+        range: datetime
       ref_count:
         description: Count of DataReference nodes linked to this chunk
         range: integer
@@ -2885,6 +2897,9 @@ classes:
         description: Vector embedding for semantic search (256-dim, Qwen3-Embedding-8B)
         multivalued: true
         range: float
+      embedded_at:
+        description: When the embedding was last computed
+        range: datetime
       mdsplus_paths_mentioned:
         description: MDSplus paths found in this chunk (e.g., ATLAS::IP). Only populated for MDSplus-capable facilities.
         multivalued: true
@@ -3141,6 +3156,9 @@ classes:
         description: Vector embedding of caption for semantic search (256-dim)
         multivalued: true
         range: float
+      embedded_at:
+        description: When the embedding was last computed
+        range: datetime
       
       # Context from parent resource (fed to VLM for better captions)
       page_title:

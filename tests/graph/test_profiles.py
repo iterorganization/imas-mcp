@@ -11,6 +11,7 @@ from imas_codex.graph.profiles import (
     _convention_http_port,
     _get_all_hosts,
     _get_all_offsets,
+    _resolved_uri_cache,
     check_graph_conflict,
     get_active_graph_name,
     is_port_bound_by_tunnel,
@@ -18,6 +19,15 @@ from imas_codex.graph.profiles import (
     resolve_graph,
 )
 from imas_codex.settings import _load_pyproject_settings
+
+
+@pytest.fixture(autouse=True)
+def _clear_uri_cache():
+    """Clear the URI resolution cache before each test to avoid cross-test pollution."""
+    _resolved_uri_cache.clear()
+    yield
+    _resolved_uri_cache.clear()
+
 
 # ── Port convention ─────────────────────────────────────────────────────────
 

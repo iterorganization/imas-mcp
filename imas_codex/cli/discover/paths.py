@@ -205,7 +205,7 @@ def _run_iterative_discovery(
     # Always configure file logging (DEBUG level to disk)
     from imas_codex.cli.logging import configure_cli_logging
 
-    configure_cli_logging("paths")
+    configure_cli_logging("paths", facility=facility)
 
     if use_rich:
         console = Console()
