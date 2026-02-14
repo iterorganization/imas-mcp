@@ -142,27 +142,6 @@ class GraphClient:
 
             self.profile_name = get_active_graph_name()
 
-        # Lightweight conflict warning: if both a tunnel and local Neo4j
-        # might be on the same port, warn the user.
-        try:
-            from imas_codex.graph.profiles import is_port_bound_by_tunnel
-
-            # Extract port from URI for the check
-            if ":" in self.uri:
-                port_str = self.uri.rsplit(":", 1)[-1].split("/")[0]
-                if port_str.isdigit():
-                    port = int(port_str)
-                    if is_port_bound_by_tunnel(port):
-                        logger.warning(
-                            "Port %d appears bound by an SSH tunnel AND "
-                            "may conflict with a local Neo4j instance. "
-                            "Consider setting IMAS_CODEX_TUNNEL_BOLT_{HOST} "
-                            "in .env to use a different tunnel port.",
-                            port,
-                        )
-        except Exception:
-            pass  # Best-effort check, never block initialization
-
         self._driver = GraphDatabase.driver(
             self.uri, auth=(self.username, self.password)
         )

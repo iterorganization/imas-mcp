@@ -2083,6 +2083,14 @@ async def run_parallel_discovery(
 
         normalize_scores(facility)
 
+    # Force garbage collection while the event loop is still running so that
+    # orphaned asyncio subprocess transports are cleaned up before the loop
+    # closes.  Without this, BaseSubprocessTransport.__del__ fires after the
+    # loop is closed and prints harmless but noisy RuntimeError tracebacks.
+    import gc
+
+    gc.collect()
+
     elapsed = max(
         state.scan_stats.elapsed,
         state.expand_stats.elapsed,

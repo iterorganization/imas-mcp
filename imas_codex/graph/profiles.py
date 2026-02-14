@@ -40,6 +40,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Cache for resolved URIs — avoids repeated tunnel checks and log spam.
+# Key: (host, bolt_port), Value: resolved URI string.
+_resolved_uri_cache: dict[tuple[str | None, int], str] = {}
+
 # ─── Port convention ────────────────────────────────────────────────────────
 # Port offsets and host defaults are managed exclusively in pyproject.toml:
 #   [tool.imas-codex.graph].locations  — list of locations (index = port offset)
@@ -209,10 +213,24 @@ def get_active_graph_name() -> str:
 def _resolve_uri(host: str | None, bolt_port: int) -> str:
     """Resolve the bolt URI based on host locality, with auto-tunneling.
 
+    Results are cached per (host, bolt_port) pair so tunnel checks and
+    log messages only fire once per process lifetime.
+
     1. If host is None / "local" / matches local machine → direct localhost
     2. If not local → check ``IMAS_CODEX_TUNNEL_BOLT_{HOST}`` env for override
     3. If no override → auto-tunnel with +10000 offset
     """
+    cache_key = (host, bolt_port)
+    if cache_key in _resolved_uri_cache:
+        return _resolved_uri_cache[cache_key]
+
+    uri = _resolve_uri_uncached(host, bolt_port)
+    _resolved_uri_cache[cache_key] = uri
+    return uri
+
+
+def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
+    """Uncached URI resolution — called once per (host, bolt_port) pair."""
     from imas_codex.remote.executor import is_local_host
 
     if host is None or host == "local" or is_local_host(host):
