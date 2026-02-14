@@ -408,14 +408,17 @@ def claim_signals_for_enrichment(
     """Claim a batch of discovered signals for enrichment.
 
     Returns signals sorted by tdi_function to enable batching by function.
+    Uses claimed_at timeout for orphan recovery (parallel-safe).
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     try:
         with GraphClient() as gc:
             result = gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $discovered
-                  AND s.claimed_at IS NULL
+                  AND (s.claimed_at IS NULL
+                       OR s.claimed_at < datetime() - duration($cutoff))
                 WITH s ORDER BY s.tdi_function, s.id LIMIT $batch_size
                 SET s.claimed_at = datetime()
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
@@ -425,6 +428,7 @@ def claim_signals_for_enrichment(
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
                 batch_size=batch_size,
+                cutoff=cutoff,
             )
             return list(result) if result else []
     except Exception as e:
@@ -440,14 +444,17 @@ def claim_signals_for_check(
     """Claim a batch of enriched signals for check.
 
     Uses reference_shot from config for TDI-based checking.
+    Uses claimed_at timeout for orphan recovery (parallel-safe).
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     try:
         with GraphClient() as gc:
             result = gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $enriched
-                  AND s.claimed_at IS NULL
+                  AND (s.claimed_at IS NULL
+                       OR s.claimed_at < datetime() - duration($cutoff))
                 WITH s LIMIT $batch_size
                 SET s.claimed_at = datetime()
                 // Derive data_access ID based on signal type
@@ -464,6 +471,7 @@ def claim_signals_for_check(
                 facility=facility,
                 enriched=FacilitySignalStatus.enriched.value,
                 batch_size=batch_size,
+                cutoff=cutoff,
             )
             # Add reference_shot to each result
             signals = list(result) if result else []

@@ -425,46 +425,52 @@ def has_pending_ingest_work(facility: str) -> bool:
 
 
 # =============================================================================
-# Startup Reset
+# Orphan Recovery (timeout-based, safe for parallel instances)
 # =============================================================================
 
 
 def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, int]:
-    """Reset claimed_at on all wiki pages and artifacts on CLI startup.
+    """Release stale claims older than CLAIM_TIMEOUT_SECONDS.
 
-    Since only one CLI process runs per facility at a time, any items with
-    claimed_at set are orphans from a previous crashed/killed process.
-    Simply clear claimed_at to make them reclaimable.
+    Uses timeout-based recovery so multiple CLI instances can run
+    concurrently on the same facility without wiping each other's claims.
+    Only claims older than the timeout are considered orphaned.
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.claimed_at IS NOT NULL
+              AND wp.claimed_at < datetime() - duration($cutoff)
             SET wp.claimed_at = null
             RETURN count(wp) AS reset_count
             """,
             facility=facility,
+            cutoff=cutoff,
         )
         page_reset = result[0]["reset_count"] if result else 0
 
-        # Also clear artifact claims
+        # Also clear stale artifact claims
         result = gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
             WHERE wa.claimed_at IS NOT NULL
+              AND wa.claimed_at < datetime() - duration($cutoff)
             SET wa.claimed_at = null
             RETURN count(wa) AS reset_count
             """,
             facility=facility,
+            cutoff=cutoff,
         )
         artifact_reset = result[0]["reset_count"] if result else 0
 
     total_reset = page_reset + artifact_reset
     if not silent and total_reset > 0:
         logger.info(
-            "Reset %d orphaned claims on startup (%d pages, %d artifacts)",
+            "Released %d orphaned claims older than %ds (%d pages, %d artifacts)",
             total_reset,
+            CLAIM_TIMEOUT_SECONDS,
             page_reset,
             artifact_reset,
         )

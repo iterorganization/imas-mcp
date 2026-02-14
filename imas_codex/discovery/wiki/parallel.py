@@ -391,9 +391,9 @@ async def run_parallel_wiki_discovery(
             download and ingest artifacts discovered during scanning.
             Artifacts go through score→ingest pipeline:
             discovered → scored (LLM) → ingested (embed)
-        skip_reset: If True, skip reset_transient_pages on entry. Set this
-            when called from multi-site loop where the CLI has already
-            reset orphans once at startup.
+        skip_reset: If True, skip orphan recovery on entry. The reset
+            is now timeout-based and parallel-safe, so this is mainly
+            a performance optimization for multi-site loops.
         on_artifact_progress: Progress callback for artifact ingest worker.
         on_artifact_score_progress: Progress callback for artifact score worker.
         on_worker_status: Callback for worker status changes. Called with
@@ -407,8 +407,7 @@ async def run_parallel_wiki_discovery(
     """
     start_time = time.time()
 
-    # Reset orphans from previous runs (skip when called from multi-site
-    # loop since the CLI already resets once at the start)
+    # Release stale claims from crashed processes (timeout-based, parallel-safe)
     if not skip_reset:
         reset_transient_pages(facility)
 

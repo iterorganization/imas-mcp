@@ -247,16 +247,16 @@ def has_pending_work(facility: str) -> bool:
 
 
 # ============================================================================
-# Startup Reset (single CLI process per facility)
+# Orphan Recovery (timeout-based, safe for parallel instances)
 # ============================================================================
 
 
 def reset_orphaned_claims(facility: str, *, silent: bool = False) -> int:
-    """Reset all claimed_at timestamps on CLI startup.
+    """Release stale claims older than CLAIM_TIMEOUT_SECONDS.
 
-    Since only one CLI process runs per facility at a time, any claimed
-    paths are orphans from a previous crashed/killed process.
-    Clear claimed_at immediately without waiting for timeout.
+    Uses timeout-based recovery so multiple CLI instances can run
+    concurrently on the same facility without wiping each other's claims.
+    Only claims older than the timeout are considered orphaned.
 
     Args:
         facility: Facility identifier
@@ -267,20 +267,23 @@ def reset_orphaned_claims(facility: str, *, silent: bool = False) -> int:
     """
     from imas_codex.graph import GraphClient
 
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
             WHERE p.claimed_at IS NOT NULL
+              AND p.claimed_at < datetime() - duration($cutoff)
             SET p.claimed_at = null
             RETURN count(p) AS reset_count
             """,
             facility=facility,
+            cutoff=cutoff,
         )
         reset_count = result[0]["reset_count"] if result else 0
 
     if reset_count and not silent:
-        logger.info(f"Reset {reset_count} orphaned claims on startup")
+        logger.info(f"Released {reset_count} orphaned claims (older than {CLAIM_TIMEOUT_SECONDS}s)")
 
     return reset_count
 
@@ -1941,7 +1944,7 @@ async def run_parallel_discovery(
         logger.error(f"SSH preflight failed: {ssh_message}")
         raise ConnectionError(f"Cannot connect to facility {facility}: {ssh_message}")
 
-    # Reset any orphaned claims from previous runs (single CLI per facility)
+    # Release stale claims from crashed processes (timeout-based, parallel-safe)
     reset_orphaned_claims(facility)
 
     # Ensure we have paths to discover
