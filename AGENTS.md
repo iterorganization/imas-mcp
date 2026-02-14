@@ -447,27 +447,33 @@ All discovery CLI commands write DEBUG-level rotating logs to disk. The rich pro
 
 **Log directory:** `~/.local/share/imas-codex/logs/`
 
+**Log naming:** `{command}_{facility}.log` — each facility gets its own log file, enabling parallel runs without interleaved output.
+
 | CLI Command | Log File |
 |-------------|----------|
-| `discover wiki` | `wiki.log` |
-| `discover paths` | `paths.log` |
-| `discover signals` | `signals.log` |
-| `discover files` | `files.log` |
+| `discover paths tcv` | `paths_tcv.log` |
+| `discover paths iter` | `paths_iter.log` |
+| `discover wiki jet` | `wiki_jet.log` |
+| `discover signals jt60sa` | `signals_jt60sa.log` |
+| `discover files tcv` | `files_tcv.log` |
 
 ```bash
 # View logs during or after a run
-tail -f ~/.local/share/imas-codex/logs/wiki.log     # Follow live
-cat ~/.local/share/imas-codex/logs/paths.log         # Full log
-ls -la ~/.local/share/imas-codex/logs/               # List all logs
+tail -f ~/.local/share/imas-codex/logs/paths_tcv.log  # Follow live
+cat ~/.local/share/imas-codex/logs/wiki_iter.log       # Full log
+ls -la ~/.local/share/imas-codex/logs/                 # List all logs
 
 # Search for errors across all CLI logs
 rg "ERROR|WARNING" ~/.local/share/imas-codex/logs/
 
+# Compare facilities side-by-side
+tail -f ~/.local/share/imas-codex/logs/paths_*.log
+
 # Diagnose a specific worker (e.g., artifact worker hang)
-rg "artifact_worker" ~/.local/share/imas-codex/logs/wiki.log
+rg "artifact_worker" ~/.local/share/imas-codex/logs/wiki_tcv.log
 ```
 
-Logs rotate at 10 MB with 3 backups (e.g., `wiki.log`, `wiki.log.1`, `wiki.log.2`). The file handler captures all `imas_codex.*` loggers at DEBUG level regardless of the `--no-rich` or `--verbose` flags.
+Logs rotate at 10 MB with 3 backups (e.g., `paths_tcv.log`, `paths_tcv.log.1`). The file handler captures all `imas_codex.*` loggers at DEBUG level regardless of the `--no-rich` or `--verbose` flags.
 
 ## Testing
 
