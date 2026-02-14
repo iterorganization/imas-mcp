@@ -420,7 +420,9 @@ def wiki(
                 "access_method": access_method,
             }
 
-            if site_type == "twiki":
+            if site_type == "confluence":
+                discover_kwargs["space_key"] = portal_page
+            elif site_type == "twiki":
                 discover_kwargs["webs"] = site.get("webs", ["Main"])
             elif site_type == "twiki_raw":
                 discover_kwargs["data_path"] = site.get("data_path", base_url)

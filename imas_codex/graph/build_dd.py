@@ -1395,7 +1395,8 @@ def _ensure_indexes(client: GraphClient) -> None:
 
     # IMASSemanticCluster.id - for cluster lookups
     client.query(
-        "CREATE INDEX imassemcluster_id IF NOT EXISTS FOR (c:IMASSemanticCluster) ON (c.id)"
+        "CREATE CONSTRAINT imassemanticcluster_id IF NOT EXISTS "
+        "FOR (c:IMASSemanticCluster) REQUIRE c.id IS UNIQUE"
     )
 
     # Vector indexes for semantic search

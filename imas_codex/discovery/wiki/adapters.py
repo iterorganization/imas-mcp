@@ -2562,7 +2562,7 @@ class StaticHtmlAdapter(WikiAdapter):
 class ConfluenceAdapter(WikiAdapter):
     """Adapter for Confluence sites.
 
-    Page discovery: GET /rest/api/content
+    Page discovery: GET /rest/api/content?spaceKey=X
     Artifact discovery: GET /rest/api/content/{pageId}/child/attachment
     """
 
@@ -2573,6 +2573,7 @@ class ConfluenceAdapter(WikiAdapter):
         api_token: str | None = None,
         ssh_host: str | None = None,
         session: Any = None,
+        space_key: str | None = None,
     ):
         """Initialize Confluence adapter.
 
@@ -2580,10 +2581,14 @@ class ConfluenceAdapter(WikiAdapter):
             api_token: API token for REST API authentication
             ssh_host: SSH host for proxied commands (alternative to token)
             session: Authenticated requests.Session for direct HTTP
+            space_key: Confluence space key to scope discovery (e.g. "IMP").
+                When set, only pages from this space are discovered.
+                Without this, ALL pages from the entire Confluence site are returned.
         """
         self.api_token = api_token
         self.ssh_host = ssh_host
         self.session = session
+        self.space_key = space_key
 
     def _fetch_page_batch(
         self,
@@ -2603,7 +2608,10 @@ class ConfluenceAdapter(WikiAdapter):
         """
         import json
 
-        url = f"{api_url}?type=page&start={start}&limit={limit}&expand=space"
+        params = f"type=page&start={start}&limit={limit}&expand=space"
+        if self.space_key:
+            params += f"&spaceKey={self.space_key}"
+        url = f"{api_url}?{params}"
 
         if self.ssh_host:
             cmd = f'curl -sk "{url}"'
@@ -2966,6 +2974,7 @@ def get_adapter(
     session: Any = None,
     exclude_prefixes: list[str] | None = None,
     max_depth: int | None = None,
+    space_key: str | None = None,
 ) -> WikiAdapter:
     """Get the appropriate adapter for a wiki site type.
 
@@ -2986,6 +2995,7 @@ def get_adapter(
         session: Pre-authenticated requests.Session (Keycloak, Basic auth)
         exclude_prefixes: URL path prefixes to exclude (for static_html)
         max_depth: BFS depth limit (for static_html, default 3)
+        space_key: Confluence space key to scope discovery (for confluence)
 
     Returns:
         WikiAdapter instance for the site type
@@ -3030,7 +3040,10 @@ def get_adapter(
         )
     elif site_type == "confluence":
         return ConfluenceAdapter(
-            api_token=api_token, ssh_host=ssh_host, session=session
+            api_token=api_token,
+            ssh_host=ssh_host,
+            session=session,
+            space_key=space_key,
         )
     else:
         raise ValueError(f"Unknown site type: {site_type}")

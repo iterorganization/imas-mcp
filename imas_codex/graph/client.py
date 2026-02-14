@@ -210,12 +210,15 @@ class GraphClient:
 
         Handles conflicts where a RANGE index exists with the same name
         as a constraint (e.g., from DD build) by dropping the index first.
-        """
-        # Get constraints from schema (derived from identifier fields)
-        constraints = self.schema.constraint_statements()
 
-        # Get indexes from schema (common lookup patterns)
+        Processes both facility and DD schemas to cover all node types.
+        """
+        # Get constraints and indexes from both schemas
+        dd_schema = GraphSchema(schema_path="imas_codex/schemas/imas_dd.yaml")
+        constraints = self.schema.constraint_statements()
+        constraints.extend(dd_schema.constraint_statements())
         indexes = self.schema.index_statements()
+        indexes.extend(dd_schema.index_statements())
 
         with self.session() as sess:
             # Get existing indexes and constraints to detect conflicts

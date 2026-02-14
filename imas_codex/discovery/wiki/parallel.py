@@ -108,6 +108,7 @@ def bulk_discover_pages(
     exclude_patterns: list[str] | None = None,
     exclude_prefixes: list[str] | None = None,
     max_depth: int | None = None,
+    space_key: str | None = None,
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all wiki pages for a site using the appropriate adapter.
@@ -210,7 +211,10 @@ def bulk_discover_pages(
             close_session = True
 
     # Platform-specific adapter kwargs
-    if site_type == "twiki":
+    if site_type == "confluence":
+        if space_key:
+            adapter_kwargs["space_key"] = space_key
+    elif site_type == "twiki":
         adapter_kwargs["webs"] = webs or ["Main"]
         adapter_kwargs["base_url"] = base_url
     elif site_type == "twiki_static":
