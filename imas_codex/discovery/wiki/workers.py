@@ -1140,6 +1140,7 @@ async def _ingest_page(
                     page_title=title,
                     facility=facility,
                     ssh_host=ssh_host,
+                    confluence_client=confluence_client,
                 )
                 if image_count:
                     logger.debug("Extracted %d images from %s", image_count, page_id)
@@ -1393,11 +1394,12 @@ def _extract_image_refs(
 ) -> list[dict[str, str]]:
     """Extract image references from HTML content.
 
-    Parses <img> tags, resolves relative URLs, filters decorative images,
+    Parses standard ``<img>`` tags **and** Confluence storage-format
+    ``<ac:image>`` tags, resolves relative URLs, filters decorative images,
     and captures surrounding context for VLM scoring.
 
     Args:
-        html: Raw HTML content of the page
+        html: Raw HTML content of the page (rendered or Confluence storage)
         page_url: Canonical URL of the page (for resolving relative paths)
         page_title: Page title for context
 
@@ -1431,6 +1433,17 @@ def _extract_image_refs(
     width_pattern = re.compile(r'width=["\']?(\d+)', re.IGNORECASE)
     height_pattern = re.compile(r'height=["\']?(\d+)', re.IGNORECASE)
 
+    # Confluence storage format: <ac:image ...><ri:attachment ri:filename="..." />
+    # or <ac:image ...><ri:url ri:value="..." /></ac:image>
+    ac_image_pattern = re.compile(
+        r"<ac:image([^>]*)>(.*?)</ac:image>", re.IGNORECASE | re.DOTALL
+    )
+    ac_filename_pattern = re.compile(r'ri:filename="([^"]+)"', re.IGNORECASE)
+    ac_url_pattern = re.compile(r'ri:value="([^"]+)"', re.IGNORECASE)
+    ac_width_pattern = re.compile(r'ac:width="(\d+)"', re.IGNORECASE)
+    ac_height_pattern = re.compile(r'ac:height="(\d+)"', re.IGNORECASE)
+    ac_alt_pattern = re.compile(r'ac:alt="([^"]*)"', re.IGNORECASE)
+
     # Build section map: sorted list of (position, section_name)
     section_map: list[tuple[int, str]] = []
     for m in heading_pattern.finditer(html):
@@ -1451,6 +1464,43 @@ def _extract_image_refs(
     text_only = re.sub(r"<[^>]+>", " ", html)
     text_only = re.sub(r"\s+", " ", text_only)
 
+    def _get_surrounding_text(pos: int) -> str:
+        """Extract ~500 chars of surrounding text at an HTML position."""
+        html_before = html[:pos]
+        text_pos = len(re.sub(r"<[^>]+>", " ", html_before))
+        text_pos = min(text_pos, len(text_only))
+        start_ctx = max(0, text_pos - 250)
+        end_ctx = min(len(text_only), text_pos + 250)
+        return text_only[start_ctx:end_ctx].strip()
+
+    def _add_ref(src: str, alt_text: str, width: int, height: int, pos: int) -> None:
+        """Validate and add an image reference."""
+        # Check extension — only process known image types
+        path_part = urllib.parse.urlparse(src).path.lower()
+        ext = "." + path_part.rsplit(".", 1)[-1] if "." in path_part else ""
+        if ext not in _IMAGE_EXTENSIONS:
+            return
+
+        # Check skip patterns in the full URL path
+        if any(pat in src.lower() for pat in _SKIP_PATTERNS):
+            return
+
+        # Skip tiny images (1x1 pixels, tracking pixels)
+        if (width > 0 and width < 32) or (height > 0 and height < 32):
+            return
+
+        refs.append(
+            {
+                "src": src,
+                "alt_text": alt_text,
+                "section": _get_section_at(pos),
+                "surrounding_text": _get_surrounding_text(pos),
+                "width": str(width),
+                "height": str(height),
+            }
+        )
+
+    # --- Standard <img> tags ---
     for m in img_pattern.finditer(html):
         src_raw = m.group(1).strip()
 
@@ -1466,58 +1516,56 @@ def _extract_image_refs(
         elif src_raw.startswith("http://") or src_raw.startswith("https://"):
             src = src_raw
         else:
-            # Relative path
             src = f"{page_dir}/{src_raw}"
 
-        # Check extension — only process known image types
-        # Strip query params for extension check
-        path_part = urllib.parse.urlparse(src).path.lower()
-        ext = "." + path_part.rsplit(".", 1)[-1] if "." in path_part else ""
-        if ext not in _IMAGE_EXTENSIONS:
-            continue
-
-        # Check skip patterns in the full URL path
-        path_lower = src.lower()
-        if any(pat in path_lower for pat in _SKIP_PATTERNS):
-            continue
-
-        # Parse width/height from tag attributes
         tag_text = m.group(0)
         w_match = width_pattern.search(tag_text)
         h_match = height_pattern.search(tag_text)
         width = int(w_match.group(1)) if w_match else 0
         height = int(h_match.group(1)) if h_match else 0
 
-        # Skip tiny images (1x1 pixels, tracking pixels)
-        if (width > 0 and width < 32) or (height > 0 and height < 32):
-            continue
-
-        # Extract alt text
         alt_match = alt_pattern.search(tag_text)
         alt_text = alt_match.group(1) if alt_match else ""
 
-        # Get section context
-        section = _get_section_at(m.start())
+        _add_ref(src, alt_text, width, height, m.start())
 
-        # Extract surrounding text (500 chars around the image position)
-        # Map HTML position to approximate text position
-        html_before = html[: m.start()]
-        text_pos = len(re.sub(r"<[^>]+>", " ", html_before))
-        text_pos = min(text_pos, len(text_only))
-        start_ctx = max(0, text_pos - 250)
-        end_ctx = min(len(text_only), text_pos + 250)
-        surrounding = text_only[start_ctx:end_ctx].strip()
+    # --- Confluence <ac:image> tags (storage format) ---
+    # Extract Confluence page ID from URL for constructing download paths
+    confluence_page_id = ""
+    qs = urllib.parse.parse_qs(parsed_page.query)
+    if "pageId" in qs:
+        confluence_page_id = qs["pageId"][0]
 
-        refs.append(
-            {
-                "src": src,
-                "alt_text": alt_text,
-                "section": section,
-                "surrounding_text": surrounding,
-                "width": str(width),
-                "height": str(height),
-            }
-        )
+    for m in ac_image_pattern.finditer(html):
+        attrs = m.group(1)  # attributes on <ac:image>
+        inner = m.group(2)  # inner content (ri:attachment or ri:url)
+
+        # Try ri:attachment (page attachment filename)
+        fn_match = ac_filename_pattern.search(inner)
+        url_match = ac_url_pattern.search(inner)
+
+        if fn_match and confluence_page_id:
+            filename = fn_match.group(1)
+            src = (
+                f"{origin}/download/attachments/"
+                f"{confluence_page_id}/{urllib.parse.quote(filename)}"
+            )
+        elif url_match:
+            src = url_match.group(1)
+            if src.startswith("/"):
+                src = f"{origin}{src}"
+        else:
+            continue
+
+        w_match = ac_width_pattern.search(attrs)
+        h_match = ac_height_pattern.search(attrs)
+        width = int(w_match.group(1)) if w_match else 0
+        height = int(h_match.group(1)) if h_match else 0
+
+        alt_match = ac_alt_pattern.search(attrs)
+        alt_text = alt_match.group(1) if alt_match else ""
+
+        _add_ref(src, alt_text, width, height, m.start())
 
     return refs[:_MAX_IMAGES_PER_PAGE]
 
@@ -1529,12 +1577,17 @@ async def _extract_and_persist_images(
     page_title: str,
     facility: str,
     ssh_host: str | None = None,
+    confluence_client: Any = None,
 ) -> int:
     """Extract images from page HTML, downsample, and persist as Image nodes.
 
     Creates Image nodes with status='ingested' and HAS_IMAGE relationships
     to the WikiPage. Images are then available for VLM captioning by
     image_score_worker.
+
+    When image bytes cannot be downloaded (e.g. F5/SAML blocks the download
+    endpoint), a metadata-only Image node with status='discovered' is
+    created so the reference is still tracked.
 
     Args:
         html: Raw HTML of the ingested page
@@ -1543,6 +1596,7 @@ async def _extract_and_persist_images(
         page_title: Page title for context
         facility: Facility ID
         ssh_host: Optional SSH host for fetching images
+        confluence_client: Optional ConfluenceClient for authenticated downloads
 
     Returns:
         Number of images persisted
@@ -1562,6 +1616,11 @@ async def _extract_and_persist_images(
             seen_urls.add(ref["src"])
             unique_refs.append(ref)
 
+    # Get authenticated session for Confluence downloads
+    session = None
+    if confluence_client is not None:
+        session = getattr(confluence_client, "_session", None)
+
     images_to_persist: list[dict[str, Any]] = []
 
     for ref in unique_refs:
@@ -1569,30 +1628,51 @@ async def _extract_and_persist_images(
         image_id = make_image_id(facility, src)
 
         try:
-            # Fetch image bytes
-            image_bytes = await _fetch_image_bytes(src, ssh_host)
-            if not image_bytes or len(image_bytes) < 512:
-                continue
+            # Fetch image bytes (with optional authenticated session)
+            image_bytes = await _fetch_image_bytes(src, ssh_host, session=session)
+            if image_bytes and len(image_bytes) >= 512:
+                # Downsample to WebP
+                result = downsample_image(image_bytes)
+                if result is not None:
+                    b64_data, stored_w, stored_h, orig_w, orig_h = result
+                    images_to_persist.append(
+                        {
+                            "id": image_id,
+                            "facility_id": facility,
+                            "source_url": src,
+                            "source_type": "wiki_inline",
+                            "status": "ingested",
+                            "image_format": "webp",
+                            "width": stored_w,
+                            "height": stored_h,
+                            "original_width": orig_w,
+                            "original_height": orig_h,
+                            "page_title": page_title,
+                            "section": ref.get("section", ""),
+                            "alt_text": ref.get("alt_text", ""),
+                            "surrounding_text": ref.get("surrounding_text", "")[:500],
+                            "page_id": page_id,
+                        }
+                    )
+                    continue
 
-            # Downsample to WebP
-            result = downsample_image(image_bytes)
-            if result is None:
-                continue
-
-            b64_data, stored_w, stored_h, orig_w, orig_h = result
-
+            # Download failed or bytes too small — persist metadata-only node
+            # so the image reference is tracked even when the download endpoint
+            # is unreachable (e.g. Confluence F5/SAML gateway).
+            width = int(ref.get("width") or 0)
+            height = int(ref.get("height") or 0)
             images_to_persist.append(
                 {
                     "id": image_id,
                     "facility_id": facility,
                     "source_url": src,
                     "source_type": "wiki_inline",
-                    "status": "ingested",
-                    "image_format": "webp",
-                    "width": stored_w,
-                    "height": stored_h,
-                    "original_width": orig_w,
-                    "original_height": orig_h,
+                    "status": "discovered",
+                    "image_format": "",
+                    "width": width,
+                    "height": height,
+                    "original_width": width,
+                    "original_height": height,
                     "page_title": page_title,
                     "section": ref.get("section", ""),
                     "alt_text": ref.get("alt_text", ""),
@@ -1602,7 +1682,28 @@ async def _extract_and_persist_images(
             )
         except Exception as e:
             logger.debug("Failed to fetch/process image %s: %s", src, e)
-            continue
+            # Still persist metadata-only node on exception
+            width = int(ref.get("width") or 0)
+            height = int(ref.get("height") or 0)
+            images_to_persist.append(
+                {
+                    "id": image_id,
+                    "facility_id": facility,
+                    "source_url": src,
+                    "source_type": "wiki_inline",
+                    "status": "discovered",
+                    "image_format": "",
+                    "width": width,
+                    "height": height,
+                    "original_width": width,
+                    "original_height": height,
+                    "page_title": page_title,
+                    "section": ref.get("section", ""),
+                    "alt_text": ref.get("alt_text", ""),
+                    "surrounding_text": ref.get("surrounding_text", "")[:500],
+                    "page_id": page_id,
+                }
+            )
 
     if not images_to_persist:
         return 0

@@ -131,3 +131,107 @@ class TestExtractImageRefs:
         html = "<html><body><p>Just text, no images.</p></body></html>"
         refs = _extract_image_refs(html, self.BASE_URL, "Test")
         assert len(refs) == 0
+
+
+class TestConfluenceImageExtraction:
+    """Test _extract_image_refs with Confluence storage format (ac:image tags)."""
+
+    BASE_URL = "https://confluence.iter.org/pages/viewpage.action?pageId=887861486"
+
+    def test_ac_image_attachment(self):
+        """Confluence pages embed images as <ac:image><ri:attachment>."""
+        html = (
+            '<ac:image ac:height="250">'
+            '<ri:attachment ri:filename="plot.png" />'
+            "</ac:image>"
+        )
+        refs = _extract_image_refs(html, self.BASE_URL, "Test")
+        assert len(refs) == 1
+        assert refs[0]["src"] == (
+            "https://confluence.iter.org/download/attachments/887861486/plot.png"
+        )
+        assert refs[0]["height"] == "250"
+
+    def test_ac_image_with_alt(self):
+        html = (
+            '<ac:image ac:alt="EQDSK output" ac:width="400" ac:height="300">'
+            '<ri:attachment ri:filename="eqdsk.jpg" />'
+            "</ac:image>"
+        )
+        refs = _extract_image_refs(html, self.BASE_URL, "Test")
+        assert len(refs) == 1
+        assert refs[0]["alt_text"] == "EQDSK output"
+        assert refs[0]["width"] == "400"
+        assert refs[0]["height"] == "300"
+
+    def test_ac_image_external_url(self):
+        """Confluence <ac:image> with <ri:url> for external images."""
+        html = (
+            '<ac:image ac:height="100">'
+            '<ri:url ri:value="https://external.org/graph.png" />'
+            "</ac:image>"
+        )
+        refs = _extract_image_refs(html, self.BASE_URL, "Test")
+        assert len(refs) == 1
+        assert refs[0]["src"] == "https://external.org/graph.png"
+
+    def test_ac_image_section_context(self):
+        html = """
+        <h2>Equilibrium Results</h2>
+        <p>Reconstructed profiles</p>
+        <ac:image ac:height="250">
+            <ri:attachment ri:filename="eq_profile.png" />
+        </ac:image>
+        """
+        refs = _extract_image_refs(html, self.BASE_URL, "Test")
+        assert len(refs) == 1
+        assert refs[0]["section"] == "Equilibrium Results"
+        assert "Reconstructed" in refs[0]["surrounding_text"]
+
+    def test_ac_image_filename_url_encoding(self):
+        """Filenames with special chars should be URL-encoded."""
+        html = (
+            '<ac:image ac:height="200">'
+            '<ri:attachment ri:filename="image with spaces.png" />'
+            "</ac:image>"
+        )
+        refs = _extract_image_refs(html, self.BASE_URL, "Test")
+        assert len(refs) == 1
+        assert "image%20with%20spaces.png" in refs[0]["src"]
+
+    def test_multiple_ac_images(self):
+        html = (
+            '<ac:image><ri:attachment ri:filename="a.png" /></ac:image>'
+            '<ac:image><ri:attachment ri:filename="b.jpg" /></ac:image>'
+            '<ac:image><ri:attachment ri:filename="c.gif" /></ac:image>'
+        )
+        refs = _extract_image_refs(html, self.BASE_URL, "Test")
+        assert len(refs) == 3
+
+    def test_ac_image_without_page_id_skipped(self):
+        """If page URL doesn't contain pageId, attachment images are skipped."""
+        html = '<ac:image><ri:attachment ri:filename="plot.png" /></ac:image>'
+        refs = _extract_image_refs(
+            html, "https://confluence.iter.org/display/SPACE/Page", "Test"
+        )
+        # No pageId in URL → can't construct download URL → skipped
+        assert len(refs) == 0
+
+    def test_ac_image_non_image_extension_skipped(self):
+        html = '<ac:image><ri:attachment ri:filename="document.pdf" /></ac:image>'
+        refs = _extract_image_refs(html, self.BASE_URL, "Test")
+        assert len(refs) == 0
+
+    def test_mixed_img_and_ac_image(self):
+        """Both standard img and Confluence ac:image should be extracted."""
+        html = """
+        <img src="https://example.com/standard.png" alt="standard">
+        <ac:image ac:height="200">
+            <ri:attachment ri:filename="confluence.png" />
+        </ac:image>
+        """
+        refs = _extract_image_refs(html, self.BASE_URL, "Test")
+        assert len(refs) == 2
+        srcs = {r["src"] for r in refs}
+        assert "https://example.com/standard.png" in srcs
+        assert any("confluence.png" in s for s in srcs)
