@@ -261,6 +261,8 @@ def bulk_discover_artifacts(
     access_method: str = "direct",
     data_path: str | None = None,
     pub_path: str | None = None,
+    session: Any = None,
+    space_key: str | None = None,
     on_progress: Callable | None = None,
 ) -> tuple[int, dict[str, list[str]]]:
     """Bulk discover all wiki artifacts via platform API.
@@ -282,6 +284,8 @@ def bulk_discover_artifacts(
         access_method: Access method ("direct" or "vpn")
         data_path: TWiki data directory path (for twiki_raw)
         pub_path: TWiki pub directory path (for twiki_raw)
+        session: Authenticated requests.Session (for Confluence)
+        space_key: Confluence space key (for scoped discovery)
         on_progress: Progress callback
 
     Returns:
@@ -291,6 +295,29 @@ def bulk_discover_artifacts(
     from imas_codex.discovery.wiki.adapters import get_adapter
 
     logger.debug(f"Starting bulk artifact discovery for {site_type}...")
+
+    # For Confluence with session auth, create session if not provided
+    close_session = False
+    if site_type == "confluence" and not session and not ssh_host:
+        if credential_service:
+            try:
+                from imas_codex.discovery.wiki.confluence import ConfluenceClient
+
+                confluence_client = ConfluenceClient(
+                    base_url=base_url,
+                    credential_service=credential_service,
+                )
+                if confluence_client.authenticate():
+                    session = confluence_client._get_session()
+                    close_session = True
+                    logger.info("Created Confluence session for artifact discovery")
+                else:
+                    logger.warning(
+                        "Confluence auth failed for artifact discovery at %s",
+                        base_url,
+                    )
+            except Exception as e:
+                logger.warning("Failed to create Confluence session: %s", e)
 
     # Get the appropriate adapter
     adapter = get_adapter(
@@ -302,10 +329,19 @@ def bulk_discover_artifacts(
         access_method=access_method,
         data_path=data_path,
         pub_path=pub_path,
+        session=session,
+        space_key=space_key,
     )
 
-    # Discover artifacts
-    artifacts = adapter.bulk_discover_artifacts(facility, base_url, on_progress)
+    try:
+        # Discover artifacts
+        artifacts = adapter.bulk_discover_artifacts(facility, base_url, on_progress)
+    finally:
+        if close_session and session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
 
     if not artifacts:
         logger.debug("No artifacts discovered")
@@ -519,7 +555,10 @@ async def run_parallel_wiki_discovery(
             if on_artifact_progress:
                 on_artifact_progress(f"bulk: {msg}", state.artifact_stats)
 
-        # Bulk discovery uses SSH when available, no async wiki client support yet
+        # Determine space_key for Confluence sites (stored on portal_page)
+        _space_key = portal_page if site_type == "confluence" else None
+
+        # Bulk discovery uses SSH when available, session for Confluence
         bulk_result = await asyncio.to_thread(
             bulk_discover_artifacts,
             facility,
@@ -529,6 +568,7 @@ async def run_parallel_wiki_discovery(
             wiki_client=None,  # removed, use SSH path
             credential_service=state.credential_service,
             access_method="vpn" if ssh_host else "direct",
+            space_key=_space_key,
             on_progress=artifact_progress,
         )
         # bulk_discover_artifacts returns (count, page_artifacts_dict)

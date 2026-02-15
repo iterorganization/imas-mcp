@@ -904,8 +904,14 @@ async def image_score_worker(
         for img in images:
             source_url = img.get("source_url")
             source_type = img.get("source_type", "")
+            stored_data = img.get("image_data")
+            if source_type == "document_figure" and stored_data:
+                # Document figures have pre-stored base64 data (no URL to fetch)
+                img["image_data"] = stored_data
+                images_ready.append(img)
+                continue
             if not source_url or source_type == "document_figure":
-                # document_figure source_urls are synthetic (artifact#pageN)
+                # document_figure without stored data — can't fetch
                 images_unfetchable.append(img["id"])
                 continue
             try:
@@ -1270,6 +1276,7 @@ async def _persist_document_figures(
                 "original_height": orig_h,
                 "content_hash": content_hash,
                 "artifact_id": artifact_id,
+                "image_data": b64_data,  # Store for VLM scoring (no re-fetch URL)
             }
         )
 
@@ -1292,6 +1299,7 @@ async def _persist_document_figures(
                           i.original_width = img.original_width,
                           i.original_height = img.original_height,
                           i.content_hash = img.content_hash,
+                          i.image_data = img.image_data,
                           i.ingested_at = datetime()
             WITH i, img
             MATCH (wa:WikiArtifact {id: img.artifact_id})

@@ -573,6 +573,7 @@ def wiki(
                         access_method=access_method,
                         data_path=site.get("data_path"),
                         pub_path=site.get("pub_path"),
+                        space_key=portal_page if site_type == "confluence" else None,
                         on_progress=artifact_progress_rich,
                     )
             else:
@@ -586,6 +587,7 @@ def wiki(
                     access_method=access_method,
                     data_path=site.get("data_path"),
                     pub_path=site.get("pub_path"),
+                    space_key=portal_page if site_type == "confluence" else None,
                     on_progress=artifact_progress_log,
                 )
 

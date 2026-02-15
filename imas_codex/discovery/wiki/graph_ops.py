@@ -801,9 +801,7 @@ def mark_page_failed(page_id: str, error: str, fallback_status: str) -> None:
         )
 
 
-def _release_claimed_pages(
-    page_ids: list[str], *, max_fetch_retries: int = 3
-) -> None:
+def _release_claimed_pages(page_ids: list[str], *, max_fetch_retries: int = 3) -> None:
     """Release claimed pages back for reprocessing.
 
     Increments fetch_retries counter on each page. Pages that exceed
@@ -1296,7 +1294,8 @@ def claim_images_for_scoring(
                    img.page_title AS page_title,
                    img.section AS section,
                    img.surrounding_text AS surrounding_text,
-                   img.alt_text AS alt_text
+                   img.alt_text AS alt_text,
+                   img.image_data AS image_data
             """,
             facility=facility,
             token=claim_token,
@@ -1354,7 +1353,8 @@ def mark_images_scored(
                 img.score_cost = item.score_cost,
                 img.scored_at = datetime(),
                 img.captioned_at = datetime(),
-                img.claimed_at = null
+                img.claimed_at = null,
+                img.image_data = null
             """,
             batch=results,
         )
