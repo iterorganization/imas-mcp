@@ -477,6 +477,17 @@ rg "artifact_worker" ~/.local/share/imas-codex/logs/wiki_tcv.log
 
 Logs rotate at 10 MB with 3 backups (e.g., `paths_tcv.log`, `paths_tcv.log.1`). The file handler captures all `imas_codex.*` loggers at DEBUG level regardless of the `--no-rich` or `--verbose` flags.
 
+**Never pipe CLI output to /tmp files.** Since per-facility logs capture full DEBUG output to disk automatically, there is no need to redirect stdout/stderr to temporary files. Piping to `/tmp` prevents commands from being auto-approved, slowing progress. Instead, run the command directly and read the log file afterwards:
+
+```bash
+# WRONG — prevents auto-approval
+uv run imas-codex discover wiki tcv --no-rich 2>&1 | tee /tmp/wiki_tcv.txt
+
+# RIGHT — run directly, read log after
+uv run imas-codex discover wiki tcv --no-rich
+cat ~/.local/share/imas-codex/logs/wiki_tcv.log
+```
+
 ## Testing
 
 ```bash

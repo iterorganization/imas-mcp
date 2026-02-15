@@ -1676,26 +1676,28 @@ def _fetch_html(
 
     Strategy depends on access_method:
     - "direct": Only try direct HTTP (for auth-protected sites)
-    - "vpn": Try direct, then SOCKS proxy, then SSH fallback
+    - "vpn" / "tunnel": Try direct, then SOCKS proxy, then SSH fallback
 
     Args:
         url: URL to fetch
-        ssh_host: SSH host for fallback proxy access (only used if access_method="vpn")
-        access_method: "direct" or "vpn" - controls whether proxies are attempted
+        ssh_host: SSH host for fallback proxy access
+        access_method: "direct", "vpn", or "tunnel"
         timeout: Direct HTTP timeout in seconds
 
     Returns:
         HTML content string, or None if all methods fail
     """
-    # For VPN sites, use a short timeout for direct — the server is almost
-    # certainly unreachable from the workstation.  Saves ~10s per page.
-    direct_timeout = 2.0 if access_method == "vpn" else timeout
+    needs_proxy = access_method in ("vpn", "tunnel")
+
+    # For VPN/tunnel sites, use a short timeout for direct — the server is
+    # almost certainly unreachable from the workstation.  Saves ~10s per page.
+    direct_timeout = 2.0 if needs_proxy else timeout
     html = _fetch_html_direct(url, timeout=direct_timeout)
     if html is not None:
         return html
 
-    # For VPN-protected sites, try proxy methods
-    if access_method == "vpn":
+    # For VPN/tunnel-protected sites, try proxy methods
+    if needs_proxy:
         # Try SOCKS proxy via laptop — fast path when on iter
         html = _fetch_html_via_socks(url)
         if html is not None:
@@ -2692,6 +2694,45 @@ class ConfluenceAdapter(WikiAdapter):
 
         return pages
 
+    def _fetch_json(self, url: str) -> dict[str, Any] | None:
+        """Fetch JSON from Confluence REST API.
+
+        Uses the same auth strategy as _fetch_page_batch: SSH proxy
+        or authenticated session.
+
+        Args:
+            url: Full API URL
+
+        Returns:
+            Parsed JSON dict, or None on failure
+        """
+        import json
+
+        if self.ssh_host:
+            cmd = f'curl -sk "{url}"'
+            try:
+                result = subprocess.run(
+                    ["ssh", self.ssh_host, cmd],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode != 0:
+                    return None
+                return json.loads(result.stdout)
+            except Exception:
+                return None
+
+        if self.session:
+            try:
+                response = self.session.get(url, timeout=60)
+                response.raise_for_status()
+                return response.json()
+            except Exception:
+                return None
+
+        return None
+
     def bulk_discover_artifacts(
         self,
         facility: str,
@@ -2700,17 +2741,106 @@ class ConfluenceAdapter(WikiAdapter):
     ) -> list[DiscoveredArtifact]:
         """Discover all attachments via Confluence REST API.
 
-        Note: Requires iterating through pages to get attachments.
-        For large wikis, this should be done in batches.
-        """
-        # For Confluence, we'd need to:
-        # 1. List all pages
-        # 2. For each page, GET /rest/api/content/{id}/child/attachment
-        # This is O(n) API calls but still faster than parsing pages
+        Iterates through all pages and fetches attachments for each
+        using GET /rest/api/content/{id}/child/attachment.
 
-        # For now, return empty - implement later if needed
-        logger.info("Confluence artifact discovery not yet implemented")
-        return []
+        Args:
+            facility: Facility ID
+            base_url: Confluence base URL
+            on_progress: Progress callback
+
+        Returns:
+            List of discovered artifacts
+        """
+        # Step 1: Get all page IDs (reuse _fetch_page_batch)
+        api_url = f"{base_url}/rest/api/content"
+        page_ids: list[tuple[str, str]] = []  # (page_id, title)
+        start = 0
+        limit = 100
+
+        if on_progress:
+            on_progress("listing pages for attachment scan", None)
+
+        while True:
+            data = self._fetch_page_batch(api_url, start, limit)
+            if data is None:
+                break
+            results = data.get("results", [])
+            if not results:
+                break
+            for page in results:
+                pid = page.get("id")
+                title = page.get("title", "")
+                if pid:
+                    page_ids.append((pid, title))
+            if data.get("size", 0) < limit:
+                break
+            start += limit
+
+        if not page_ids:
+            logger.info("No pages found for Confluence artifact discovery")
+            return []
+
+        logger.info("Scanning %d pages for attachments in %s", len(page_ids), base_url)
+
+        # Step 2: Fetch attachments for each page
+        artifacts: list[DiscoveredArtifact] = []
+        seen_urls: set[str] = set()
+
+        for i, (page_id, title) in enumerate(page_ids):
+            att_url = (
+                f"{base_url}/rest/api/content/{page_id}/child/attachment?limit=100"
+            )
+            data = self._fetch_json(att_url)
+            if data is None:
+                continue
+
+            for att in data.get("results", []):
+                att_title = att.get("title", "")
+                download = att.get("_links", {}).get("download", "")
+                if not download:
+                    continue
+
+                artifact_url = f"{base_url}{download}"
+                if artifact_url in seen_urls:
+                    # Add page linkage to existing artifact
+                    for a in artifacts:
+                        if a.url == artifact_url and title not in a.linked_pages:
+                            a.linked_pages.append(title)
+                            break
+                    continue
+                seen_urls.add(artifact_url)
+
+                media_type = att.get("metadata", {}).get("mediaType", "")
+                size = att.get("extensions", {}).get("fileSize", 0)
+                artifact_type = _get_artifact_type_from_filename(att_title)
+
+                artifact = DiscoveredArtifact(
+                    filename=att_title,
+                    url=artifact_url,
+                    artifact_type=artifact_type,
+                    size_bytes=size if size else None,
+                    mime_type=media_type if media_type else None,
+                )
+                artifact.linked_pages.append(title)
+                artifacts.append(artifact)
+
+            if on_progress and (i + 1) % 50 == 0:
+                on_progress(
+                    f"scanned {i + 1}/{len(page_ids)} pages, "
+                    f"found {len(artifacts)} attachments",
+                    None,
+                )
+
+        if on_progress:
+            on_progress(f"discovered {len(artifacts)} attachments", None)
+
+        logger.info(
+            "Confluence attachment discovery: %d artifacts from %d pages",
+            len(artifacts),
+            len(page_ids),
+        )
+        return artifacts
 
 
 class TWikiRawAdapter(WikiAdapter):
