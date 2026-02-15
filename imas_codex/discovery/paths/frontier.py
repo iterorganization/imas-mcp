@@ -1332,44 +1332,26 @@ def get_top_paths_by_purpose(
 def clear_facility_paths(facility: str, batch_size: int = 5000) -> dict[str, int]:
     """Delete all FacilityPath nodes and related data for a facility.
 
-    Always cascades: deletes SourceFile, FacilityUser, FacilityPath nodes
-    and cleans up orphaned SoftwareRepo/Person nodes.
+    Cascades to FacilityUser nodes and cleans up orphaned SoftwareRepo/Person
+    nodes. Does NOT delete SourceFile nodes — those belong to the files domain.
 
     Deletion order follows referential integrity:
-    1. SourceFile nodes by facility_id
-    2. FacilityUser nodes by AT_FACILITY relationship
-    3. FacilityPath nodes by AT_FACILITY relationship
-    4. Orphaned SoftwareRepo and Person nodes
+    1. FacilityUser nodes by AT_FACILITY relationship
+    2. FacilityPath nodes by AT_FACILITY relationship
+    3. Orphaned SoftwareRepo and Person nodes
 
     Args:
         facility: Facility ID
         batch_size: Nodes to delete per batch (default 5000)
 
     Returns:
-        Dict with counts: paths_deleted, source_files_deleted, users_deleted
+        Dict with counts: paths_deleted, users_deleted
     """
     from imas_codex.graph import GraphClient
 
-    results = {"paths_deleted": 0, "source_files_deleted": 0, "users_deleted": 0}
+    results = {"paths_deleted": 0, "users_deleted": 0}
 
     with GraphClient() as gc:
-        # First delete SourceFile nodes for this facility
-        while True:
-            result = gc.query(
-                """
-                MATCH (sf:SourceFile {facility_id: $facility})
-                WITH sf LIMIT $batch_size
-                DETACH DELETE sf
-                RETURN count(sf) AS deleted
-                """,
-                facility=facility,
-                batch_size=batch_size,
-            )
-            deleted = result[0]["deleted"] if result else 0
-            results["source_files_deleted"] += deleted
-            if deleted < batch_size:
-                break
-
         # Delete FacilityUser nodes with facility relationship
         while True:
             result = gc.query(

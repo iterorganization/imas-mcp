@@ -368,27 +368,109 @@ def get_file_discovery_stats(facility: str) -> dict[str, int]:
         return stats
 
 
-def clear_facility_files(facility: str) -> dict[str, int]:
-    """Clear all SourceFile nodes for a facility.
+def clear_facility_files(facility: str, batch_size: int = 1000) -> dict[str, int]:
+    """Clear all SourceFile nodes and dependent nodes for a facility.
+
+    Cascades in referential-integrity order:
+    1. DataReference nodes linked to CodeChunks from facility SourceFiles
+    2. CodeChunk nodes linked to CodeExamples from facility SourceFiles
+    3. CodeExample nodes linked to facility SourceFiles
+    4. SourceFile nodes by facility_id
+    5. Orphaned Image nodes (no remaining HAS_IMAGE from other domains)
 
     Args:
         facility: Facility ID
+        batch_size: Nodes to delete per batch (default 1000)
 
     Returns:
-        Dict with count of deleted nodes
+        Dict with counts of deleted nodes
     """
+    results = {
+        "source_files_deleted": 0,
+        "code_chunks_deleted": 0,
+    }
+
     with GraphClient() as client:
-        result = client.query(
-            """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            DETACH DELETE sf
-            RETURN count(*) AS deleted
-            """,
-            facility=facility,
-        )
-        count = result[0]["deleted"] if result else 0
-        logger.info("Deleted %d SourceFile nodes for %s", count, facility)
-        return {"deleted": count}
+        # Delete CodeChunks (and their DataReferences cascade via DETACH)
+        # linked through CodeExample -> SourceFile chain
+        while True:
+            result = client.query(
+                """
+                MATCH (sf:SourceFile {facility_id: $facility})
+                      <-[:FROM_FILE]-(ce)
+                      -[:HAS_CHUNK]->(cc:CodeChunk)
+                WITH cc LIMIT $batch_size
+                DETACH DELETE cc
+                RETURN count(cc) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            results["code_chunks_deleted"] += deleted
+            if deleted < batch_size:
+                break
+
+        # Delete CodeExample nodes linked to facility SourceFiles
+        while True:
+            result = client.query(
+                """
+                MATCH (sf:SourceFile {facility_id: $facility})
+                      <-[:FROM_FILE]-(ce)
+                WITH ce LIMIT $batch_size
+                DETACH DELETE ce
+                RETURN count(ce) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            if deleted < batch_size:
+                break
+
+        # Delete SourceFile nodes in batches
+        while True:
+            result = client.query(
+                """
+                MATCH (sf:SourceFile {facility_id: $facility})
+                WITH sf LIMIT $batch_size
+                DETACH DELETE sf
+                RETURN count(sf) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            results["source_files_deleted"] += deleted
+            if deleted < batch_size:
+                break
+
+        # Delete orphaned Image nodes (no remaining HAS_IMAGE from any domain)
+        images_deleted = 0
+        while True:
+            result = client.query(
+                """
+                MATCH (img:Image {facility_id: $facility})
+                WHERE NOT (img)<-[:HAS_IMAGE]-()
+                WITH img LIMIT $batch_size
+                DETACH DELETE img
+                RETURN count(img) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            images_deleted += deleted
+            if deleted < batch_size:
+                break
+        if images_deleted > 0:
+            results["images_deleted"] = images_deleted
+
+        logger.info("Deleted %d SourceFile + %d CodeChunk nodes for %s",
+                    results["source_files_deleted"], results["code_chunks_deleted"],
+                    facility)
+
+    return results
 
 
 __all__ = [

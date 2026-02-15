@@ -178,9 +178,14 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
                     f=facility,
                 )
                 artifacts = artifact_result[0]["cnt"] if artifact_result else 0
-            if pages > 0 or artifacts > 0:
-                label = f"wiki pages + {chunks} chunks + {artifacts} artifacts"
-                items_to_clear.append((label, pages or artifacts, clear_facility_wiki))
+                image_result = gc.query(
+                    "MATCH (i:Image {facility_id: $f}) RETURN count(i) AS cnt",
+                    f=facility,
+                )
+                images = image_result[0]["cnt"] if image_result else 0
+            if pages > 0 or artifacts > 0 or images > 0:
+                label = f"wiki pages + {chunks} chunks + {artifacts} artifacts + {images} images"
+                items_to_clear.append((label, pages or artifacts or images, clear_facility_wiki))
 
         # Signals domain
         if domain is None or domain == "signals":
@@ -236,12 +241,15 @@ def _print_clear_result(name: str, result: dict | int, facility: str) -> None:
             "pages_deleted",
             "chunks_deleted",
             "artifacts_deleted",
+            "images_deleted",
             "signals_deleted",
             "data_access_deleted",
             "epochs_deleted",
             "checkpoints_deleted",
             "paths_deleted",
             "source_files_deleted",
+            "code_chunks_deleted",
+            "data_references_deleted",
             "users_deleted",
         ):
             if result.get(key):

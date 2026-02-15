@@ -1336,6 +1336,7 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
     chunks_deleted = 0
     artifacts_deleted = 0
     pages_deleted = 0
+    images_deleted = 0
 
     with GraphClient() as gc:
         # First delete WikiChunks linked to WikiPages
@@ -1425,10 +1426,32 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
             if deleted < batch_size:
                 break
 
+        # Delete orphaned Image nodes — only those with no remaining
+        # HAS_IMAGE relationships from other domains (e.g. SourceFile).
+        # Wiki nodes (WikiPage, WikiArtifact) are already deleted above,
+        # so any Image still linked via HAS_IMAGE belongs to another domain.
+        while True:
+            result = gc.query(
+                """
+                MATCH (img:Image {facility_id: $facility})
+                WHERE NOT (img)<-[:HAS_IMAGE]-()
+                WITH img LIMIT $batch_size
+                DETACH DELETE img
+                RETURN count(img) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            images_deleted += deleted
+            if deleted < batch_size:
+                break
+
     return {
         "pages_deleted": pages_deleted,
         "chunks_deleted": chunks_deleted,
         "artifacts_deleted": artifacts_deleted,
+        "images_deleted": images_deleted,
     }
 
 

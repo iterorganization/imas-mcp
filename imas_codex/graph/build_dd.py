@@ -26,6 +26,7 @@ import json
 import logging
 import re
 from contextlib import contextmanager
+from pathlib import Path
 
 import imas
 import numpy as np
@@ -1912,17 +1913,18 @@ def _import_clusters(
     dry_run: bool,
     use_rich: bool | None = None,
 ) -> int:
-    """Import semantic clusters from existing cluster data with centroids.
+    """Build semantic clusters and store them in the graph (graph-first).
 
-    Stores cluster centroids for hierarchical semantic search - first match
-    clusters by centroid similarity, then search within matching clusters.
+    Pipeline:
+    1. Run HDBSCAN clustering via the Clusters manager (reads embeddings
+       from IMASPath nodes in the graph).
+    2. Import cluster metadata + IN_CLUSTER relationships in batches.
+    3. Compute centroids as the mean of member path embeddings directly
+       in Neo4j — the graph is the primary store for centroids.
+    4. Export centroids to .npz as a backup for CI environments without
+       a live graph.
+
     Model name is tracked on DDVersion, not on clusters.
-
-    Graph-first: if the graph already contains IMASSemanticCluster nodes
-    whose count matches the clusters.json, the import is skipped.
-
-    Passes the graph client to the cluster builder so embeddings are read
-    directly from IMASPath nodes instead of regenerated from scratch.
 
     Args:
         client: GraphClient instance
@@ -1942,43 +1944,58 @@ def _import_clusters(
                 encoder_config=encoder_config,
                 graph_client=client,
             )
-            if not clusters_manager.is_available():
-                logger.warning("Cluster data not available")
+
+            # Single call — get_clusters() triggers build internally if
+            # the data is stale. Do NOT also call is_available() as that
+            # would run the dependency check a second time and trigger a
+            # redundant HDBSCAN rebuild (the build takes minutes, which
+            # exceeds the 1-second dependency_check_interval).
+            cluster_data = clusters_manager.get_clusters()
+            if not cluster_data:
+                logger.warning("No cluster data produced")
                 return 0
 
-            cluster_data = clusters_manager.get_clusters()
+            if not dry_run:
+                # --- Clear stale clusters before import ---
+                deleted = 0
+                while True:
+                    result = client.query(
+                        """
+                        MATCH (c:IMASSemanticCluster)
+                        WITH c LIMIT 5000
+                        DETACH DELETE c
+                        RETURN count(c) AS deleted
+                        """
+                    )
+                    batch = result[0]["deleted"] if result else 0
+                    deleted += batch
+                    if batch < 5000:
+                        break
+                if deleted > 0:
+                    logger.info("Cleared %d stale cluster nodes before import", deleted)
 
-            # Check if graph already has the right number of clusters
-            existing = client.query(
-                "MATCH (c:IMASSemanticCluster) RETURN count(c) AS cnt"
-            )
-            existing_count = existing[0]["cnt"] if existing else 0
-            if existing_count == len(cluster_data) and existing_count > 0:
-                logger.info(
-                    f"Graph already has {existing_count} clusters — skipping import"
-                )
-                return existing_count
+            # --- Batch import cluster nodes ---
+            cluster_batch: list[dict] = []
+            membership_batch: list[dict] = []
             cluster_count = 0
-            missing_centroids = 0
 
             for cluster in cluster_data:
-                cluster_id = cluster.get("id", cluster_count)
+                cluster_id = cluster.get("id", str(cluster_count))
                 if dry_run:
                     cluster_count += 1
                     continue
 
-                # Extract cluster properties
                 label = cluster.get("label", f"cluster_{cluster_id}")
                 physics_domain = cluster.get("physics_domain", "general")
                 paths = cluster.get("paths", [])
                 cross_ids = cluster.get("cross_ids", False)
-                centroid = cluster.get("centroid")
-                similarity_score = cluster.get("similarity_score", 0.0)
-                ids_names = cluster.get("ids_names", [])
+                similarity_score = cluster.get(
+                    "similarity_score", cluster.get("similarity", 0.0)
+                )
+                ids_names = cluster.get("ids_names", cluster.get("ids", []))
                 scope = cluster.get("scope", "global")
 
-                # Build cluster properties dict - always include all params to avoid Neo4j errors
-                cluster_props = {
+                cluster_batch.append({
                     "cluster_id": str(cluster_id),
                     "label": label,
                     "physics_domain": physics_domain,
@@ -1986,36 +2003,9 @@ def _import_clusters(
                     "cross_ids": cross_ids,
                     "similarity_score": similarity_score,
                     "scope": scope,
-                    "centroid": centroid
-                    if centroid and isinstance(centroid, list)
-                    else None,
                     "ids_names": ids_names if ids_names else [],
-                }
+                })
 
-                if cluster_props["centroid"] is None:
-                    missing_centroids += 1
-
-                # Create IMASSemanticCluster node with all properties
-                # Use CASE expressions to handle null centroid
-                client.query(
-                    """
-                    MERGE (c:IMASSemanticCluster {id: $cluster_id})
-                    SET c.label = $label,
-                        c.physics_domain = $physics_domain,
-                        c.path_count = $path_count,
-                        c.cross_ids = $cross_ids,
-                        c.similarity_score = $similarity_score,
-                        c.scope = $scope,
-                        c.ids_names = $ids_names
-                    WITH c, $centroid AS centroid
-                    WHERE centroid IS NOT NULL
-                    SET c.centroid = centroid
-                    """,
-                    **cluster_props,
-                )
-
-                # Batch create IN_CLUSTER relationships for efficiency
-                path_memberships = []
                 for path_info in paths:
                     if isinstance(path_info, dict):
                         path = path_info.get("path", "")
@@ -2024,46 +2014,147 @@ def _import_clusters(
                         path = str(path_info)
                         distance = 0.0
                     if path:
-                        path_memberships.append({"path": path, "distance": distance})
+                        membership_batch.append({
+                            "cluster_id": str(cluster_id),
+                            "path": path,
+                            "distance": distance,
+                        })
 
-                if path_memberships:
+                cluster_count += 1
+
+            if not dry_run and cluster_batch:
+                # Batch create all cluster nodes
+                client.query(
+                    """
+                    UNWIND $clusters AS c
+                    MERGE (n:IMASSemanticCluster {id: c.cluster_id})
+                    SET n.label = c.label,
+                        n.physics_domain = c.physics_domain,
+                        n.path_count = c.path_count,
+                        n.cross_ids = c.cross_ids,
+                        n.similarity_score = c.similarity_score,
+                        n.scope = c.scope,
+                        n.ids_names = c.ids_names
+                    """,
+                    clusters=cluster_batch,
+                )
+                logger.info("Created %d cluster nodes", len(cluster_batch))
+
+                # Batch create IN_CLUSTER relationships
+                batch_size = 2000
+                for i in range(0, len(membership_batch), batch_size):
+                    batch = membership_batch[i : i + batch_size]
                     client.query(
                         """
                         UNWIND $memberships AS m
                         MATCH (p:IMASPath {id: m.path})
-                        MATCH (c:IMASSemanticCluster {id: $cluster_id})
+                        MATCH (c:IMASSemanticCluster {id: m.cluster_id})
                         MERGE (p)-[r:IN_CLUSTER]->(c)
                         SET r.distance = m.distance
                         """,
-                        memberships=path_memberships,
-                        cluster_id=str(cluster_id),
+                        memberships=batch,
                     )
-
-                cluster_count += 1
-
-            if missing_centroids > 0:
-                logger.warning(
-                    "%d/%d clusters imported without centroid vectors — "
-                    "rebuild clusters with embeddings to fix",
-                    missing_centroids,
-                    cluster_count,
+                logger.info(
+                    "Created %d IN_CLUSTER relationships", len(membership_batch)
                 )
 
-            # Update DDVersion with cluster metadata
-            client.query(
-                """
-                MATCH (v:DDVersion {is_current: true})
-                SET v.clusters_built_at = datetime(),
-                    v.clusters_count = $count
-                """,
-                count=cluster_count,
-            )
+                # --- Graph-first: compute centroids from member embeddings ---
+                centroid_result = client.query(
+                    """
+                    MATCH (p:IMASPath)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+                    WHERE p.embedding IS NOT NULL
+                    WITH c, collect(p.embedding) AS embeddings, count(p) AS member_count
+                    WHERE member_count > 0
+                    WITH c, embeddings, member_count,
+                         size(embeddings[0]) AS dim
+                    WITH c, member_count, dim,
+                         [i IN range(0, dim - 1) |
+                            reduce(s = 0.0, emb IN embeddings | s + emb[i]) / member_count
+                         ] AS centroid
+                    SET c.centroid = centroid
+                    RETURN count(c) AS centroids_set
+                    """
+                )
+                centroids_set = (
+                    centroid_result[0]["centroids_set"] if centroid_result else 0
+                )
+                missing = cluster_count - centroids_set
+                logger.info(
+                    "Computed %d/%d cluster centroids from graph embeddings",
+                    centroids_set,
+                    cluster_count,
+                )
+                if missing > 0:
+                    logger.warning(
+                        "%d clusters have no centroid (members may lack embeddings)",
+                        missing,
+                    )
+
+                # --- Export centroids to .npz as CI fallback ---
+                _export_centroids_npz(client, clusters_manager.file_path.parent)
+
+                # Update DDVersion with cluster metadata
+                client.query(
+                    """
+                    MATCH (v:DDVersion {is_current: true})
+                    SET v.clusters_built_at = datetime(),
+                        v.clusters_count = $count
+                    """,
+                    count=cluster_count,
+                )
 
             return cluster_count
 
         except Exception as e:
             logger.error(f"Error importing clusters: {e}")
             return 0
+
+
+def _export_centroids_npz(
+    client: GraphClient,
+    output_dir: Path,
+    filename: str = "cluster_embeddings.npz",
+) -> None:
+    """Export cluster centroids from the graph to .npz as a CI fallback.
+
+    Args:
+        client: GraphClient instance
+        output_dir: Directory to write the .npz file
+        filename: Output filename
+    """
+    try:
+        results = client.query(
+            """
+            MATCH (c:IMASSemanticCluster)
+            WHERE c.centroid IS NOT NULL
+            RETURN c.id AS cluster_id, c.centroid AS centroid
+            ORDER BY c.id
+            """
+        )
+        if not results:
+            logger.debug("No centroids to export")
+            return
+
+        cluster_ids = [r["cluster_id"] for r in results]
+        centroids = np.array([r["centroid"] for r in results], dtype=np.float32)
+
+        output_file = output_dir / filename
+        output_dir.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            output_file,
+            centroids=centroids,
+            centroid_cluster_ids=np.array(cluster_ids, dtype=object),
+            # Empty arrays for label embeddings (not exported from graph)
+            label_embeddings=np.array([], dtype=np.float32),
+            label_cluster_ids=np.array([], dtype=object),
+        )
+        logger.info(
+            "Exported %d centroids to %s",
+            len(cluster_ids),
+            output_file.name,
+        )
+    except Exception as e:
+        logger.warning("Failed to export centroids to .npz: %s", e)
 
 
 def import_semantic_clusters(
@@ -2166,12 +2257,6 @@ def clear_dd_graph(
     results["orphaned_units"] = orphan_result[0]["deleted"] if orphan_result else 0
     if results["orphaned_units"] > 0:
         logger.debug(f"Deleted {results['orphaned_units']} orphaned Unit nodes")
-
-    # Clear build hash from DDVersion (idempotency marker)
-    client.query("""
-        MATCH (d:DDVersion)
-        REMOVE d.build_hash
-    """)
 
     # Drop DD-specific vector indexes (they're empty now)
     for index_name in ("imas_path_embedding", "cluster_centroid"):

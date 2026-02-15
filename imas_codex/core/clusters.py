@@ -180,6 +180,12 @@ class Clusters:
     def _check_graph_embeddings_available(self) -> tuple[bool, int]:
         """Check if the Neo4j graph has embeddings we can use for clustering.
 
+        Only counts embeddable paths (those that are NOT error fields or
+        metadata-only) when computing coverage.  Non-embeddable paths are
+        intentionally left without embeddings by the DD build pipeline, so
+        including them would deflate the coverage ratio and trigger spurious
+        rebuilds.
+
         Returns:
             Tuple of (has_sufficient_coverage, embedding_count).
         """
@@ -191,9 +197,13 @@ class Clusters:
                 """
                 MATCH (p:IMASPath)
                 WITH count(p) AS total,
-                     count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb
-                RETURN total, with_emb,
-                       CASE WHEN total > 0 THEN toFloat(with_emb) / total ELSE 0.0 END AS coverage
+                     count(CASE WHEN p.embedding IS NOT NULL THEN 1 END) AS with_emb,
+                     count(CASE WHEN p.is_error_field = true THEN 1 END) AS error_fields
+                WITH total, with_emb, total - error_fields AS embeddable
+                RETURN total, with_emb, embeddable,
+                       CASE WHEN embeddable > 0
+                            THEN toFloat(with_emb) / embeddable
+                            ELSE 0.0 END AS coverage
                 """
             )
             if result:
@@ -201,7 +211,8 @@ class Clusters:
                 count = row["with_emb"]
                 coverage = row["coverage"]
                 logger.debug(
-                    f"Graph embedding coverage: {count}/{row['total']} ({coverage:.0%})"
+                    "Graph embedding coverage: %d/%d embeddable (%d total, %.0f%%)",
+                    count, row["embeddable"], row["total"], coverage * 100,
                 )
                 return coverage >= 0.5, count
             return False, 0

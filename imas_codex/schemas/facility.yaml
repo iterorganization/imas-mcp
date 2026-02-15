@@ -2885,6 +2885,12 @@ classes:
       mdsplus_paths_found:
         description: Number of MDSplus tree paths found in page content
         range: integer
+      embedded_at:
+        description: Timestamp when description embedding was computed
+        range: datetime
+      fetch_retries:
+        description: Number of times content fetch was attempted and failed
+        range: integer
 
   WikiChunk:
     description: >-

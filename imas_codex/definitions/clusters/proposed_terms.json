@@ -1,1 +1,8399 @@
-[]
+[
+  {
+    "cluster_id": "412d644b-a670-47d7-a475-ddd1eb3f0045",
+    "type": "concept",
+    "terms": [
+      "heat_decay_length"
+    ]
+  },
+  {
+    "cluster_id": "5a5af04b-8996-4e26-929d-e93e5cc18d2d",
+    "type": "concept",
+    "terms": [
+      "real_time_signal"
+    ]
+  },
+  {
+    "cluster_id": "341f16ec-f164-4c2a-8ad1-ee4c24368561",
+    "type": "concept",
+    "terms": [
+      "flux_expansion"
+    ]
+  },
+  {
+    "cluster_id": "6851bfe2-67ba-4431-9b57-6e2d08d4c697",
+    "type": "concept",
+    "terms": [
+      "nuclear_heating",
+      "neutron_flux"
+    ]
+  },
+  {
+    "cluster_id": "afee5925-9982-4554-a83f-f74dba346c39",
+    "type": "concept",
+    "terms": [
+      "thermal_load"
+    ]
+  },
+  {
+    "cluster_id": "45f3f8a0-c8fe-4738-a5a1-9061c83e7b19",
+    "type": "concept",
+    "terms": [
+      "calorimetry"
+    ]
+  },
+  {
+    "cluster_id": "2797772d-a2ff-449f-b2ce-3602c4e044dc",
+    "type": "concept",
+    "terms": [
+      "data_quality"
+    ]
+  },
+  {
+    "cluster_id": "851595f9-757e-442b-87d4-94614c79c925",
+    "type": "concept",
+    "terms": [
+      "thermal_power"
+    ]
+  },
+  {
+    "cluster_id": "e2566a66-c663-4c6d-8bf2-073557df2ab5",
+    "type": "concept",
+    "terms": [
+      "pedestal_top"
+    ]
+  },
+  {
+    "cluster_id": "7bed0e1d-9117-479b-9f0a-e4aad4447962",
+    "type": "concept",
+    "terms": [
+      "electrical_power"
+    ]
+  },
+  {
+    "cluster_id": "97872499-1e0b-4aaf-bbcd-297237904c5a",
+    "type": "concept",
+    "terms": [
+      "internal_inductance"
+    ]
+  },
+  {
+    "cluster_id": "1894de72-d242-401a-a8e7-e2ec477c15db",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "41d4c3ec-9d8b-41f8-8f97-0b2ae433a24b",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "002401ea-233f-4459-9b5b-98d19a0dc737",
+    "type": "concept",
+    "terms": [
+      "surface_roughness"
+    ]
+  },
+  {
+    "cluster_id": "f6dfdbcd-1ff7-4d68-8c91-6cc4b953dd56",
+    "type": "concept",
+    "terms": [
+      "vacuum_pressure"
+    ]
+  },
+  {
+    "cluster_id": "1c472f27-6b91-4c50-ada4-a32aeb1d5a2a",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "5b8d5c66-5ad0-462a-bf76-035b4849b36f",
+    "type": "concept",
+    "terms": [
+      "gyrokinetics"
+    ]
+  },
+  {
+    "cluster_id": "b146aef3-5f72-4f74-a42a-5c4b38ebe227",
+    "type": "concept",
+    "terms": [
+      "collisionality"
+    ]
+  },
+  {
+    "cluster_id": "cda3215d-2c52-4c3b-a04d-a5832dbe39f0",
+    "type": "concept",
+    "terms": [
+      "focs"
+    ]
+  },
+  {
+    "cluster_id": "6d9845e5-df3e-40a7-8934-deab03eb82bf",
+    "type": "concept",
+    "terms": [
+      "fiber_properties"
+    ]
+  },
+  {
+    "cluster_id": "5f214cfa-b33b-456d-b0dd-7a40ef1d80fe",
+    "type": "concept",
+    "terms": [
+      "stokes_parameters"
+    ]
+  },
+  {
+    "cluster_id": "e1bbb831-df7b-4d95-93ad-baaa5e712ca7",
+    "type": "concept",
+    "terms": [
+      "chi_squared"
+    ]
+  },
+  {
+    "cluster_id": "3f4afa3b-248b-43a3-bee6-a81577a188b5",
+    "type": "concept",
+    "terms": [
+      "wave_power"
+    ]
+  },
+  {
+    "cluster_id": "065c49b1-c204-4327-8101-479da87be0c0",
+    "type": "concept",
+    "terms": [
+      "resistivity"
+    ]
+  },
+  {
+    "cluster_id": "fccd0e20-a071-4d0e-b4ae-8fef1b42f37f",
+    "type": "concept",
+    "terms": [
+      "pedestal_stability"
+    ]
+  },
+  {
+    "cluster_id": "fd6549ac-8ff2-4277-a30b-4f028dee10f2",
+    "type": "concept",
+    "terms": [
+      "pid_gains"
+    ]
+  },
+  {
+    "cluster_id": "d55e1663-e939-461d-8813-b0d98bd96a00",
+    "type": "concept",
+    "terms": [
+      "control_envelope"
+    ]
+  },
+  {
+    "cluster_id": "eb17ed98-fb40-4aa0-8ed1-b8058245e3ab",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "f920ae5c-de7f-41b4-96bb-bcc4b8504ea7",
+    "type": "concept",
+    "terms": [
+      "state_space"
+    ]
+  },
+  {
+    "cluster_id": "4384aaa1-b495-4a8b-8e11-9bc7d5cfab27",
+    "type": "concept",
+    "terms": [
+      "orbit_fractions"
+    ]
+  },
+  {
+    "cluster_id": "ccfbded3-c1d1-4a66-9970-3dff9239e7e4",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "49311146-f162-4329-a104-666edfa37346",
+    "type": "concept",
+    "terms": [
+      "control_system"
+    ]
+  },
+  {
+    "cluster_id": "22da6070-8b4a-4625-8647-2879f8afa741",
+    "type": "concept",
+    "terms": [
+      "control_gains"
+    ]
+  },
+  {
+    "cluster_id": "94f12111-f786-4ffc-a4fb-e779f8491480",
+    "type": "concept",
+    "terms": [
+      "state_space"
+    ]
+  },
+  {
+    "cluster_id": "8d1e733f-db0d-4c6f-9c41-f56e06180146",
+    "type": "concept",
+    "terms": [
+      "pid_control"
+    ]
+  },
+  {
+    "cluster_id": "471d877b-4ab1-437a-92a4-41e4f6ffce16",
+    "type": "concept",
+    "terms": [
+      "collisionality"
+    ]
+  },
+  {
+    "cluster_id": "3e219d43-d5bc-424c-ac91-919d7dd69bda",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "4ec82eb0-47f1-47ad-bee9-c6611a952ab6",
+    "type": "concept",
+    "terms": [
+      "ejima_coefficient"
+    ]
+  },
+  {
+    "cluster_id": "c0d1ac14-590b-44bd-a107-3606034961f3",
+    "type": "concept",
+    "terms": [
+      "stark_effect"
+    ]
+  },
+  {
+    "cluster_id": "443121b8-d27d-4b7e-be72-ce375f6da349",
+    "type": "concept",
+    "terms": [
+      "gyrokinetics"
+    ]
+  },
+  {
+    "cluster_id": "2a626825-a6b9-475a-8bfb-24a559772b8e",
+    "type": "concept",
+    "terms": [
+      "wavevector"
+    ]
+  },
+  {
+    "cluster_id": "afce7322-812a-4f43-bece-30d740ea53bd",
+    "type": "concept",
+    "terms": [
+      "gyrokinetics"
+    ]
+  },
+  {
+    "cluster_id": "cadab801-ce40-4fd2-86e3-acac349a8a45",
+    "type": "concept",
+    "terms": [
+      "straight_field_line_theta"
+    ]
+  },
+  {
+    "cluster_id": "fab82876-295e-46f1-b3cd-e8d5bdccc3cc",
+    "type": "concept",
+    "terms": [
+      "eigenmode"
+    ]
+  },
+  {
+    "cluster_id": "61854666-60d3-4aee-91b8-07e4dea746b0",
+    "type": "concept",
+    "terms": [
+      "gyrokinetics"
+    ]
+  },
+  {
+    "cluster_id": "bf579120-2b87-4096-9ffd-5f23be826151",
+    "type": "concept",
+    "terms": [
+      "magnetic_potential"
+    ]
+  },
+  {
+    "cluster_id": "7e505fb5-d3ee-4218-ab53-5804149fa5ee",
+    "type": "concept",
+    "terms": [
+      "turbulent_flux"
+    ]
+  },
+  {
+    "cluster_id": "e398443f-1c42-4b7d-b47f-f2d34561e7af",
+    "type": "concept",
+    "terms": [
+      "field_intensity"
+    ]
+  },
+  {
+    "cluster_id": "cba83f08-8d31-42d6-b251-2a51e91913a9",
+    "type": "concept",
+    "terms": [
+      "blanket_thickness"
+    ]
+  },
+  {
+    "cluster_id": "9ffd8910-4e19-4c1e-b754-5e34e8f07181",
+    "type": "concept",
+    "terms": [
+      "magnetic_fluctuations"
+    ]
+  },
+  {
+    "cluster_id": "ea0a9782-2f9f-4bab-823b-effed52d73d2",
+    "type": "concept",
+    "terms": [
+      "gyrokinetics"
+    ]
+  },
+  {
+    "cluster_id": "eea781ac-2beb-4062-8294-d7f6982152d7",
+    "type": "concept",
+    "terms": [
+      "anisotropic_pressure"
+    ]
+  },
+  {
+    "cluster_id": "1b56f4cc-b9f0-4e83-8f8a-2c413b8ed2de",
+    "type": "concept",
+    "terms": [
+      "electrostatic_potential"
+    ]
+  },
+  {
+    "cluster_id": "2e7a4e2d-7d23-48c6-8143-e89bab4e2372",
+    "type": "concept",
+    "terms": [
+      "velocity_moments"
+    ]
+  },
+  {
+    "cluster_id": "2335f3cc-dfc7-40f4-aa57-96d9a552da62",
+    "type": "concept",
+    "terms": [
+      "velocity_moments"
+    ]
+  },
+  {
+    "cluster_id": "a7e502bb-c33f-4ee9-8644-d39b7cb03f04",
+    "type": "concept",
+    "terms": [
+      "anisotropic_pressure"
+    ]
+  },
+  {
+    "cluster_id": "cc866b77-489b-4fb8-addf-4551f94a0f71",
+    "type": "concept",
+    "terms": [
+      "gyrokinetics"
+    ]
+  },
+  {
+    "cluster_id": "34f034a0-7f71-4c78-8527-86d704c61943",
+    "type": "concept",
+    "terms": [
+      "energy_weight"
+    ]
+  },
+  {
+    "cluster_id": "fe852f2d-4b03-44f6-832d-b36c1a68988d",
+    "type": "concept",
+    "terms": [
+      "momentum_weight"
+    ]
+  },
+  {
+    "cluster_id": "79c145bc-4af9-4685-8467-65b02b756128",
+    "type": "concept",
+    "terms": [
+      "particle_weight"
+    ]
+  },
+  {
+    "cluster_id": "d5bd25c4-3c3f-452c-ba82-15027d5dea12",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "44b241dc-43bc-4623-851c-ccb49348db13",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "3d77531b-f092-4f18-94ed-470f418bc8cd",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "018fafc9-99fd-42e4-8b2e-8c658dab7100",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "aafa88c4-192d-4ad1-aa03-2b2989858ce9",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "bd832fd2-93ce-4f3a-b6c6-88f1d6562122",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "6da135f2-4bf1-438d-8f8e-d3328f2698e2",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "6c1d6a11-7364-428d-98d1-16b5c618728b",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "71c9e72f-2bf3-428e-8db2-4772c37844c7",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "7e505fb5-d3ee-4218-ab53-5804149fa5ee",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "dc4e15b6-06c2-4164-89ea-74d8934d545f",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "62125704-21d2-446c-bee9-773ab2aad337",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "6da3a2e5-cdb9-4422-ad62-f533e1460af2",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "5428fc7f-750b-4ce9-ae0e-167a6e19e64b",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "d690cb09-412b-4cb5-8f32-eea27de2d878",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "de911fb8-b8d0-47ec-9c44-1eb60f167e51",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "3892aa8f-a09e-4ed5-a4fc-1ae6406e261d",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "227f87ba-11f9-41c3-bba7-6d8cc8624c4d",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "918433ef-7733-4e2a-a286-7ce510d8ee7a",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "d9b39f6c-4401-4658-b762-4227c2c8120d",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "4b6075ca-bca1-41ba-b92d-d56c7a1c4868",
+    "type": "concept",
+    "terms": [
+      "turbulent_transport"
+    ]
+  },
+  {
+    "cluster_id": "2ff1caa3-4453-49fd-8e0c-6da69d43f84e",
+    "type": "concept",
+    "terms": [
+      "collision_frequency"
+    ]
+  },
+  {
+    "cluster_id": "83d55c53-6781-4bed-b797-35a09a6654ef",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "2969968c-b56c-4905-9f89-959679c599fb",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "54cbc6b9-c591-4cf9-834e-aed49d4fbf6a",
+    "type": "concept",
+    "terms": [
+      "fast_particle_energy"
+    ]
+  },
+  {
+    "cluster_id": "a85986e2-a510-4898-825f-efe735da8ce6",
+    "type": "concept",
+    "terms": [
+      "diagnostic_latency"
+    ]
+  },
+  {
+    "cluster_id": "1e8d2143-2191-4b64-b8cb-8b484784f530",
+    "type": "concept",
+    "terms": [
+      "diagnostic_latency"
+    ]
+  },
+  {
+    "cluster_id": "0e9c6216-212a-44bd-a38b-906681f64ad8",
+    "type": "concept",
+    "terms": [
+      "diagnostic_latency"
+    ]
+  },
+  {
+    "cluster_id": "d1e799e7-e0ee-4e1a-96a3-d04c611c117e",
+    "type": "concept",
+    "terms": [
+      "beam_divergence"
+    ]
+  },
+  {
+    "cluster_id": "0742a421-6ed5-4672-83e9-5e287864a122",
+    "type": "concept",
+    "terms": [
+      "normalized_gradient"
+    ]
+  },
+  {
+    "cluster_id": "e7e2ea3d-f15b-437a-af16-e0a9aa5de1b7",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "60b1b5e2-5ae0-456e-9b60-58802c9e1ea2",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "3af5d6b8-1246-4eca-8cc5-3a72a1d0e37e",
+    "type": "concept",
+    "terms": [
+      "validity_flag"
+    ]
+  },
+  {
+    "cluster_id": "30fbc726-f79f-408d-9389-2678e58e7606",
+    "type": "concept",
+    "terms": [
+      "validity_flag"
+    ]
+  },
+  {
+    "cluster_id": "a85d1ad3-10c6-4bd1-b320-684ed7132613",
+    "type": "concept",
+    "terms": [
+      "validity_flag"
+    ]
+  },
+  {
+    "cluster_id": "f28eadd6-8153-4ce5-915f-37d98e701c38",
+    "type": "concept",
+    "terms": [
+      "validity_flag"
+    ]
+  },
+  {
+    "cluster_id": "587bf625-cc90-45ee-b9d1-cfcec34c1177",
+    "type": "concept",
+    "terms": [
+      "etendue"
+    ]
+  },
+  {
+    "cluster_id": "c5b6a5bb-7380-42d1-9094-df79a29cd016",
+    "type": "concept",
+    "terms": [
+      "validity_flag"
+    ]
+  },
+  {
+    "cluster_id": "9af6f80c-fe53-4397-9303-589111b035e2",
+    "type": "concept",
+    "terms": [
+      "validity_flag"
+    ]
+  },
+  {
+    "cluster_id": "5b7af223-a0de-4ad2-8861-0a5883de3d45",
+    "type": "concept",
+    "terms": [
+      "floating_potential"
+    ]
+  },
+  {
+    "cluster_id": "0b76ba30-00d6-4474-a7ed-c8f28ae19fdc",
+    "type": "concept",
+    "terms": [
+      "ion_saturation_current"
+    ]
+  },
+  {
+    "cluster_id": "7ee33ddc-3b24-43c3-a620-c41799085cd1",
+    "type": "concept",
+    "terms": [
+      "gas_injection_rate"
+    ]
+  },
+  {
+    "cluster_id": "20617b87-9b43-4028-97b3-da0692c12c28",
+    "type": "concept",
+    "terms": [
+      "atomic_state"
+    ]
+  },
+  {
+    "cluster_id": "996b0696-0165-4dcf-9166-b35ad6c1be57",
+    "type": "concept",
+    "terms": [
+      "ion_saturation_current"
+    ]
+  },
+  {
+    "cluster_id": "0a206efe-ea81-4339-9af2-4a678f3a08c4",
+    "type": "concept",
+    "terms": [
+      "ion_saturation_current"
+    ]
+  },
+  {
+    "cluster_id": "7a2ad821-2964-4897-873b-10ef553608f2",
+    "type": "concept",
+    "terms": [
+      "floating_potential"
+    ]
+  },
+  {
+    "cluster_id": "5bbcf683-84e8-42fc-b5f6-cba1555289a0",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "2935186e-b43b-4cf3-a0b1-a733d40dbfaa",
+    "type": "concept",
+    "terms": [
+      "mach_number"
+    ]
+  },
+  {
+    "cluster_id": "8cf7c72c-e5df-4091-97bf-4d20c161314d",
+    "type": "concept",
+    "terms": [
+      "floating_potential"
+    ]
+  },
+  {
+    "cluster_id": "4acfccda-5e61-4c3d-aa1d-3f482587abfa",
+    "type": "concept",
+    "terms": [
+      "isotope_injection"
+    ]
+  },
+  {
+    "cluster_id": "18ad3617-aecc-4589-b3e4-fe00a5d9ece8",
+    "type": "concept",
+    "terms": [
+      "optical_transmission"
+    ]
+  },
+  {
+    "cluster_id": "a46ed136-d4e6-4071-86f6-a2f8a60282c4",
+    "type": "concept",
+    "terms": [
+      "ionization_potential"
+    ]
+  },
+  {
+    "cluster_id": "9c735e3a-9399-4083-8162-0af658916dee",
+    "type": "concept",
+    "terms": [
+      "volume_element"
+    ]
+  },
+  {
+    "cluster_id": "382d4327-b130-4ece-8e48-b03478bb42a5",
+    "type": "concept",
+    "terms": [
+      "mode_location"
+    ]
+  },
+  {
+    "cluster_id": "affa95e0-06b0-451b-9759-2eae64d68f44",
+    "type": "concept",
+    "terms": [
+      "sensor_metadata"
+    ]
+  },
+  {
+    "cluster_id": "d47c039a-6d11-4123-8d8e-a405446605af",
+    "type": "concept",
+    "terms": [
+      "mechanical_strain"
+    ]
+  },
+  {
+    "cluster_id": "460eebf3-407a-4ebc-a730-85f2c66a4013",
+    "type": "concept",
+    "terms": [
+      "toroidal_mode_number"
+    ]
+  },
+  {
+    "cluster_id": "ee6d9d21-b90d-4b6a-b469-4ee8bd064126",
+    "type": "concept",
+    "terms": [
+      "wave_vector"
+    ]
+  },
+  {
+    "cluster_id": "5ca16bf9-44a6-473e-90a8-4a7449d8135f",
+    "type": "concept",
+    "terms": [
+      "beam_tracing"
+    ]
+  },
+  {
+    "cluster_id": "1716278d-fb34-439e-87f2-bf85c9158af5",
+    "type": "concept",
+    "terms": [
+      "toroidal_mode_number"
+    ]
+  },
+  {
+    "cluster_id": "56ae908f-01ee-4b7b-bf7a-92e88db22ee7",
+    "type": "concept",
+    "terms": [
+      "poloidal_mode_number"
+    ]
+  },
+  {
+    "cluster_id": "af149615-cee8-421a-886f-467e1036ef82",
+    "type": "concept",
+    "terms": [
+      "delta_prime",
+      "plasma_torque"
+    ]
+  },
+  {
+    "cluster_id": "a463f040-83b6-4599-adbf-6c5edb50657b",
+    "type": "concept",
+    "terms": [
+      "island_width"
+    ]
+  },
+  {
+    "cluster_id": "3a11ae3a-de57-41a4-891b-66732e122f86",
+    "type": "concept",
+    "terms": [
+      "mode_phase"
+    ]
+  },
+  {
+    "cluster_id": "a6681fb3-8a1a-4b73-8548-8ba2157f3319",
+    "type": "concept",
+    "terms": [
+      "mode_frequency"
+    ]
+  },
+  {
+    "cluster_id": "38b76897-c1f9-45a7-a796-15e0e1a7ba37",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_energy"
+    ]
+  },
+  {
+    "cluster_id": "1575b6cb-1eb2-4dde-a159-ed05329b002a",
+    "type": "concept",
+    "terms": [
+      "gas_flow_rate"
+    ]
+  },
+  {
+    "cluster_id": "216c2962-6d80-45db-9f49-f809d0efdbb7",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "302409c1-65ae-437a-a1e9-96a5fa960670",
+    "type": "concept",
+    "terms": [
+      "nuclear_charge"
+    ]
+  },
+  {
+    "cluster_id": "59ed5b74-6797-4add-b990-e743f5236850",
+    "type": "concept",
+    "terms": [
+      "wave_driven_current"
+    ]
+  },
+  {
+    "cluster_id": "30b63023-9321-4529-96c2-de658b83ce20",
+    "type": "concept",
+    "terms": [
+      "pellet_injection"
+    ]
+  },
+  {
+    "cluster_id": "51c3da67-12e8-4502-975a-5f08b87c2110",
+    "type": "concept",
+    "terms": [
+      "wavelength"
+    ]
+  },
+  {
+    "cluster_id": "15b9c0ef-578a-43a7-a6a7-4f59cc6d7e5a",
+    "type": "concept",
+    "terms": [
+      "pedestal_gradient"
+    ]
+  },
+  {
+    "cluster_id": "70ffd9b1-5ec4-415d-b9d2-dd3e515f2c76",
+    "type": "concept",
+    "terms": [
+      "mtanh_fit"
+    ]
+  },
+  {
+    "cluster_id": "168f6078-e6ae-4504-b469-372edf1a3f30",
+    "type": "concept",
+    "terms": [
+      "disruption_decay_time"
+    ]
+  },
+  {
+    "cluster_id": "9148b04e-d3f7-4219-9013-370e0edce26f",
+    "type": "concept",
+    "terms": [
+      "workflow_metadata"
+    ]
+  },
+  {
+    "cluster_id": "2d80c0d9-75bd-496b-91b0-b2c16fd95f80",
+    "type": "concept",
+    "terms": [
+      "simulation_time"
+    ]
+  },
+  {
+    "cluster_id": "6d0bb90e-cba5-46f0-9790-ef0775879ee3",
+    "type": "concept",
+    "terms": [
+      "peaking_factor"
+    ]
+  },
+  {
+    "cluster_id": "c827e6f5-61ec-488d-9303-f49fac3bf129",
+    "type": "concept",
+    "terms": [
+      "volume_average"
+    ]
+  },
+  {
+    "cluster_id": "e00d27bf-29fb-4fd1-9395-bd2b707390b3",
+    "type": "concept",
+    "terms": [
+      "pedestal_top"
+    ]
+  },
+  {
+    "cluster_id": "9e29116f-435f-4d5b-a527-09f804451e62",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "92e0e54c-e914-4062-ba03-ed9223072da2",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "f3d13d64-300e-41dc-b325-086e83460c05",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "12ae9023-9479-4f7c-bf7e-88cef3fe6ee7",
+    "type": "concept",
+    "terms": [
+      "conductivity"
+    ]
+  },
+  {
+    "cluster_id": "dd0cf587-403b-4a31-88c9-fef61a80d44f",
+    "type": "concept",
+    "terms": [
+      "coil_current",
+      "coil_voltage"
+    ]
+  },
+  {
+    "cluster_id": "cd30e4f0-8fba-4b8b-87c0-e4432cbaccfc",
+    "type": "concept",
+    "terms": [
+      "vessel_geometry"
+    ]
+  },
+  {
+    "cluster_id": "47f17a37-ff36-4313-b96c-6772bcb450c7",
+    "type": "concept",
+    "terms": [
+      "atomic_data"
+    ]
+  },
+  {
+    "cluster_id": "91a4f86f-6ca2-43a3-b83f-e4c71ba0154f",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "b5522c68-90c3-436d-ab50-9a6931f89a09",
+    "type": "concept",
+    "terms": [
+      "neutron_emissivity",
+      "fusion_power"
+    ]
+  },
+  {
+    "cluster_id": "a9f93fbf-e5fb-43bd-af78-6fc9661885ef",
+    "type": "concept",
+    "terms": [
+      "uncertainty_quantification"
+    ]
+  },
+  {
+    "cluster_id": "1e4bde53-3908-4bc7-b493-9ffdb48f5fd3",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "f8b068b0-8709-4ab7-acd4-5f14c0623573",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "499c67af-bc6e-479b-829d-a57739e39362",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "e20455d0-c9e5-4986-89d0-be7ebe5418e9",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "9babc87f-24a7-4ae6-98ba-ed325b9d0c23",
+    "type": "concept",
+    "terms": [
+      "sensor_geometry"
+    ]
+  },
+  {
+    "cluster_id": "f19b496d-a21f-4f75-8b23-1777c4c2b9bd",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "626b9ae6-76cb-4f71-824a-9bd9fce9e798",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "4b2b9f53-1e66-461c-8718-2a024d3eb202",
+    "type": "concept",
+    "terms": [
+      "wave_particle_interaction"
+    ]
+  },
+  {
+    "cluster_id": "a597946c-7a1a-492b-8f95-bb813c198b94",
+    "type": "concept",
+    "terms": [
+      "wave_particle_interaction"
+    ]
+  },
+  {
+    "cluster_id": "5e742e0a-e39a-43b0-9474-d008791a2ffa",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "a0d026e4-8aa2-42cb-b012-9029760acf44",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "14fa6366-db1d-44b3-8640-b3053c48925e",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "309e5f47-7451-4e39-be7d-7f49e62131a7",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "e339a837-c86d-453f-919f-6cf59469a056",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "9838c80e-7a73-4fa4-b601-9c16b5a55be1",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "9d89a1af-af67-4c32-abc5-188097fdd82e",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "23ff6d4b-29f4-477a-9d05-02b16bf7ddd1",
+    "type": "concept",
+    "terms": [
+      "shinethrough"
+    ]
+  },
+  {
+    "cluster_id": "70e9f194-ecf0-4d88-b926-5606186b549e",
+    "type": "concept",
+    "terms": [
+      "uncertainty_quantification"
+    ]
+  },
+  {
+    "cluster_id": "b73f9fac-6b5a-40af-973b-5425039c70ee",
+    "type": "concept",
+    "terms": [
+      "uncertainty_quantification"
+    ]
+  },
+  {
+    "cluster_id": "db7008e7-5eda-4113-a8ed-8cebaf6a0920",
+    "type": "concept",
+    "terms": [
+      "detector_response"
+    ]
+  },
+  {
+    "cluster_id": "c2482bf3-e483-481b-90ac-9b9fe22162be",
+    "type": "concept",
+    "terms": [
+      "detector_response"
+    ]
+  },
+  {
+    "cluster_id": "84ec16e4-9183-4813-b660-65c9593e257f",
+    "type": "concept",
+    "terms": [
+      "uncertainty_quantification"
+    ]
+  },
+  {
+    "cluster_id": "eb2e726e-73f2-4f9c-be61-0f37c1e38573",
+    "type": "concept",
+    "terms": [
+      "uncertainty_quantification"
+    ]
+  },
+  {
+    "cluster_id": "7209964b-cee6-4467-898f-c2a830d2af7a",
+    "type": "concept",
+    "terms": [
+      "beam_tracing"
+    ]
+  },
+  {
+    "cluster_id": "0861a28d-9007-4c33-b010-8989dd705540",
+    "type": "concept",
+    "terms": [
+      "iron_core_geometry"
+    ]
+  },
+  {
+    "cluster_id": "7bca1704-3f2b-4999-b6d8-f151c43f4842",
+    "type": "concept",
+    "terms": [
+      "iron_core_geometry"
+    ]
+  },
+  {
+    "cluster_id": "9a812047-b4a4-4c84-8ae8-b06c2d04708b",
+    "type": "concept",
+    "terms": [
+      "wave_vector"
+    ]
+  },
+  {
+    "cluster_id": "08219621-e285-4f1e-acf9-39aa1fcf534d",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "96d7f774-c3d4-4d6b-aa2b-42976e7643e5",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "13aac6c8-187e-4ee2-98b9-92060aac5328",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "9a38cf6a-3524-465f-994a-c2f14294e58e",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "ce083623-5943-4608-855f-480cb68c87db",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "566a9474-4e50-4d45-ad10-0349a9c57661",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "cbd467ae-4a70-4c66-acec-dac9507d2aa5",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "7d2c965f-4265-4f33-83ab-bd2c2ea01e5d",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "97c0c939-93d3-4dca-ae04-d33141de1d76",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "f77a9091-175a-43c7-a988-16100abd257d",
+    "type": "concept",
+    "terms": [
+      "hardware_description"
+    ]
+  },
+  {
+    "cluster_id": "1304bc68-b247-419d-b749-f42be56c999d",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "67a385d7-fdb7-43e7-b42c-4c37b63bdb01",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "993a8791-af5e-4dc9-8021-a02c1851f8ea",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "f93298b0-952d-43f5-85eb-2a5d761a7b56",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "8927d5fb-2173-4804-b763-164f2019cd6a",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "072041d5-e3f5-4a61-966d-063daabc8be6",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "4ed6d397-6fb9-4797-91a8-0715ee9896e0",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "40407e9c-dc28-4ad8-9d8d-e0ab5f6e2712",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "66a639ca-5d97-4c8f-89ae-aa9c904cb2a8",
+    "type": "concept",
+    "terms": [
+      "fast_ions"
+    ]
+  },
+  {
+    "cluster_id": "99cabf06-551e-4bfb-86f3-1fb0fb6fa9be",
+    "type": "concept",
+    "terms": [
+      "optical_filter"
+    ]
+  },
+  {
+    "cluster_id": "f0045b37-a79a-4520-83d8-4b47e2a4f7d2",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "c36d0119-e6e2-437a-86fb-df1c1dc3febb",
+    "type": "concept",
+    "terms": [
+      "diagnostic_metadata"
+    ]
+  },
+  {
+    "cluster_id": "389e7a7e-d17c-4341-aaba-97524b261f6e",
+    "type": "concept",
+    "terms": [
+      "diagnostic_metadata"
+    ]
+  },
+  {
+    "cluster_id": "da21f518-d449-4bcb-8d8c-5c84a3f22239",
+    "type": "concept",
+    "terms": [
+      "spectral_range"
+    ]
+  },
+  {
+    "cluster_id": "80562c5f-cd12-4b55-b87b-7f9439cdd537",
+    "type": "concept",
+    "terms": [
+      "passive_structure"
+    ]
+  },
+  {
+    "cluster_id": "4ab638c0-7024-4164-bd85-5c904280a891",
+    "type": "concept",
+    "terms": [
+      "surface_temperature"
+    ]
+  },
+  {
+    "cluster_id": "126d725f-7f3c-4a39-a66d-133d40d0a8b0",
+    "type": "concept",
+    "terms": [
+      "orbit_frequency"
+    ]
+  },
+  {
+    "cluster_id": "a4d381f3-401f-4a01-b036-0f1b9e550e4e",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "6068716c-d149-4096-805f-6460b7a76ba0",
+    "type": "concept",
+    "terms": [
+      "energy_spectrum"
+    ]
+  },
+  {
+    "cluster_id": "cb496b93-e9dc-4851-9f05-256d27d5cba7",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "19176283-550f-436a-a023-de2aeda2dcb5",
+    "type": "concept",
+    "terms": [
+      "orbit_integral"
+    ]
+  },
+  {
+    "cluster_id": "4f2bee3f-e93d-44de-8445-eec94fb45f18",
+    "type": "concept",
+    "terms": [
+      "orbit_integral"
+    ]
+  },
+  {
+    "cluster_id": "c756f67d-68e9-44a3-a77b-99c74b199879",
+    "type": "concept",
+    "terms": [
+      "geometry_matrix"
+    ]
+  },
+  {
+    "cluster_id": "134d3455-130b-4d1a-8c7d-f8edcd7f2439",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "533ff3ab-b744-42dc-a0b4-efdd06cafd00",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "280130e9-ae3f-4045-9462-8ec626229ea1",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "f96275c2-aec6-4d34-88e5-5977c678795f",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "e9cb880f-a231-4724-84ea-d4dd598c514e",
+    "type": "concept",
+    "terms": [
+      "analytic_fit"
+    ]
+  },
+  {
+    "cluster_id": "50b40ccf-96a0-40be-85f7-08b2b51b6c63",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "022487b5-f5d2-4902-a8be-38ba1ef4d234",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "d49eae69-a4f0-42b4-8a0c-6583b466a853",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "1b273ef3-2401-48ba-8ed9-3f5dfea68120",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "4531cb0d-1d64-4c27-940f-9ad7f5938739",
+    "type": "concept",
+    "terms": [
+      "ec_launchers"
+    ]
+  },
+  {
+    "cluster_id": "ea90cdcb-9ed6-4f75-9a27-885bd77115ea",
+    "type": "concept",
+    "terms": [
+      "geometry_matrix"
+    ]
+  },
+  {
+    "cluster_id": "8ee7d5e4-4e77-4e93-9218-418eaf10cde2",
+    "type": "concept",
+    "terms": [
+      "distribution_functions"
+    ]
+  },
+  {
+    "cluster_id": "cb055806-b897-4dd6-847f-52ea069adbb3",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "8eb2f21b-ad76-47b2-b97b-d6b2b4e3b0d8",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "a90107a7-5cc8-4b1e-8550-cc306fb93f83",
+    "type": "concept",
+    "terms": [
+      "itb"
+    ]
+  },
+  {
+    "cluster_id": "2e094b8b-cbb1-4479-8490-6498e100dbda",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "d31ccafb-d934-4c08-95ff-b0df6df87b67",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "00faaadf-1dc3-4b1e-b537-fe65aaf85697",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "ec615c90-7ee3-4dcb-92ec-5357f246f1ea",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "4e5d7779-4865-4e60-8f45-ef8ce941ec54",
+    "type": "concept",
+    "terms": [
+      "disruption"
+    ]
+  },
+  {
+    "cluster_id": "564f531b-5779-42c1-9911-b08e3119902e",
+    "type": "concept",
+    "terms": [
+      "rotation_frequency"
+    ]
+  },
+  {
+    "cluster_id": "e3766808-d59f-4afb-9158-f415f1a91c34",
+    "type": "concept",
+    "terms": [
+      "disruption"
+    ]
+  },
+  {
+    "cluster_id": "249aaf07-7040-4e8d-9a3e-95767450fce7",
+    "type": "concept",
+    "terms": [
+      "disruption"
+    ]
+  },
+  {
+    "cluster_id": "76275138-7d1a-4488-a800-b21280928f31",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "bed6e5c6-e592-4809-98a4-c11172d70c42",
+    "type": "concept",
+    "terms": [
+      "confinement_scaling",
+      "internal_inductance"
+    ]
+  },
+  {
+    "cluster_id": "a87c2f8d-8321-4816-be19-f16fc51f0a85",
+    "type": "concept",
+    "terms": [
+      "calibration"
+    ]
+  },
+  {
+    "cluster_id": "6983760a-c1bb-4adf-a028-6219a4705332",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "6e5fa275-c436-4cba-bc07-5b6526c242b4",
+    "type": "concept",
+    "terms": [
+      "filter_geometry"
+    ]
+  },
+  {
+    "cluster_id": "a77cf59f-a1c0-4e21-9dbe-4ca485955fe7",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "ab58008f-d9ef-4151-bfee-ac96587d454e",
+    "type": "concept",
+    "terms": [
+      "detector_specs"
+    ]
+  },
+  {
+    "cluster_id": "cd6d5736-40bd-4494-a0f0-f2855431400b",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "b8207206-e8db-46f5-8b45-484f4a51e653",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "a8c53f55-c3d9-44d4-8096-699f1de77fa3",
+    "type": "concept",
+    "terms": [
+      "optics"
+    ]
+  },
+  {
+    "cluster_id": "8e0d9e7b-2327-4ab4-b991-af1319f29007",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "3c1381c0-2f55-4cef-a3f8-ed2889a795d1",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "9655725a-02da-4d36-8bad-b3644524078b",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "a2b334c4-5af3-4ab5-9efa-0766847990fd",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "da64e67d-85ea-4945-8fa7-11c1e0b3610f",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "f5548533-ef97-4676-9d6f-cfb0badb7a30",
+    "type": "concept",
+    "terms": [
+      "calibration"
+    ]
+  },
+  {
+    "cluster_id": "36dfe964-aad6-4af2-bc80-19cfb20d576a",
+    "type": "concept",
+    "terms": [
+      "quality_flag"
+    ]
+  },
+  {
+    "cluster_id": "808c9ac7-27ab-42f0-932d-9ea2e5b5a3e9",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "9b2f0d93-0f5f-408d-8ef3-331986209999",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "a11d9419-38c4-4c61-aaa0-e13515aa275d",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "fbe8a13f-57e3-4061-a839-9ad98b4d912b",
+    "type": "concept",
+    "terms": [
+      "doppler_shift"
+    ]
+  },
+  {
+    "cluster_id": "fd42d9f3-f92f-4fc9-b7af-629c31b9a025",
+    "type": "concept",
+    "terms": [
+      "radiance"
+    ]
+  },
+  {
+    "cluster_id": "f92202df-1f86-43fe-ae21-ba31df551747",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "0c2e7f75-4b69-497a-b0b2-294a282ccf36",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "f6f2a012-cdbe-4540-b700-038aebcd05da",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "31bae1ff-6599-4405-8438-d6345f60c868",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "f92f5548-b6e9-4a1d-9c44-003338b51030",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "1f59d397-440a-4a68-811b-e955c073c15f",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "6c18b4a8-1882-4378-92c0-c11950b26600",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "4f34106d-8a70-47f8-bae3-b678aab45b5b",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "9d117d0e-3ea9-4769-95ed-0f84f729e36c",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "3da527fb-aea0-416b-812b-274e01b1a7a8",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "4e63aa71-5163-418a-97aa-fbe4bb7bf321",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "c2a0c8ca-a9af-403f-ade5-ae41b248c781",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "246b9f05-b225-4fa6-b80a-9d63e3f238fb",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "30693309-c248-4802-b5b1-758b7b6e4551",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "741b0238-5621-48a8-873c-b434c91313d9",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "eb249790-977e-484e-9130-ec8e97f23c6e",
+    "type": "concept",
+    "terms": [
+      "surface_temperature"
+    ]
+  },
+  {
+    "cluster_id": "b2d15205-2470-483a-8d18-0b4215e88e18",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "a64ec6bb-d282-43f2-9eb5-46810dc74960",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "9d32a38c-7b13-4ceb-adfb-99df37b93342",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "16372e29-34de-4fec-8117-28c76d5bc83e",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "1567522a-1e0c-4d96-a3fc-3f9cf396831d",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "afc216f4-d60c-4e01-b2fb-0446d8d01066",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "cab65674-76fd-4aa4-aef7-93445d03a852",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "82255912-5003-41a5-8f64-2e131d060003",
+    "type": "concept",
+    "terms": [
+      "neutron_yield"
+    ]
+  },
+  {
+    "cluster_id": "e1088590-e9a5-4c39-9cf8-51cc1c593ca5",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "da173d56-e745-4710-822f-268ed7672126",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "93d0dd38-f5c0-4c8a-942e-e1e85fabeca8",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "1b7e646b-7940-4dd5-bb9f-663b4299eb89",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "1fc12aba-10c9-49c1-a07b-8716914e7746",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "380e1d86-48fa-4671-a3bd-c7fa9060bbac",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "ae407d84-0209-4b77-b000-88957edca8fd",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "d3c0a603-3d64-4427-8cbf-01b583943251",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "de4938cf-b263-4e17-a1b1-4a5bceabea11",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "051d5a2b-256b-48a6-b832-f8f7ebf47291",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "9c40c203-cbc5-471e-83b6-b9178208fa04",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "4c5c5834-87dc-4618-abca-86cfb7a048c4",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "6a649e73-7888-4132-b30f-29cfac2c4729",
+    "type": "concept",
+    "terms": [
+      "spectral_radiance"
+    ]
+  },
+  {
+    "cluster_id": "8d35644a-4fea-4c0c-9025-c6fcf534974a",
+    "type": "concept",
+    "terms": [
+      "polarimetry"
+    ]
+  },
+  {
+    "cluster_id": "eb2e6511-17e4-41c0-b757-929011e43b5d",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "ade171f2-4ac1-4008-9a3e-a8088829975e",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "569f2a83-29ac-4159-8475-256f12b13e99",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "2c0760ff-186d-45a4-953f-26aae586c513",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "df12147b-3d06-4480-bfb9-6c5098d2673f",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "0a1d623a-2fa4-4d22-a2b0-9b200e040c36",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "aa9eb359-0af5-463e-bd6a-9c1f03493572",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "0eaee362-f95d-46c9-a835-cbd1812013cd",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "8e623c3e-e3e0-489b-9498-1c4e77908c13",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "96dbd4f4-b13a-408c-8f50-c1680eacc10e",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "6073741f-1648-468b-a223-04923d22a5d9",
+    "type": "concept",
+    "terms": [
+      "polarimetry"
+    ]
+  },
+  {
+    "cluster_id": "35a46650-2d70-4400-b7f5-c8ba9558fe2b",
+    "type": "concept",
+    "terms": [
+      "polarimetry"
+    ]
+  },
+  {
+    "cluster_id": "a4ed1d58-ba64-466e-b033-1f6872cdd19d",
+    "type": "concept",
+    "terms": [
+      "synchronization"
+    ]
+  },
+  {
+    "cluster_id": "8d043189-f714-40a1-bee3-b86da83eb03c",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "88a5b57d-0cfa-4990-9710-dd7503832b88",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "c54693a4-e673-484a-b256-a9fe099c3086",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "563d38d3-7889-4507-8996-3f940b32a141",
+    "type": "concept",
+    "terms": [
+      "photon_counting"
+    ]
+  },
+  {
+    "cluster_id": "60c2a420-145a-4be4-baec-50361641151c",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "0bfc0fae-a334-48fa-b3b8-6a44ac6dc528",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "f7cd8b22-aeab-4056-8c58-80306a1608db",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "b5b48766-50a5-4925-bc74-071975a63db9",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "3738d391-bab1-41fa-81ac-c42230d1ef75",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "7c137acb-97b4-4636-8f2b-6c3e81e3e7f4",
+    "type": "concept",
+    "terms": [
+      "instrument_geometry"
+    ]
+  },
+  {
+    "cluster_id": "b447e242-7b51-4871-962d-41bc4feff610",
+    "type": "concept",
+    "terms": [
+      "source_power"
+    ]
+  },
+  {
+    "cluster_id": "b0546d0b-f9fb-41bc-bcf6-6453e41d3d01",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "fc24f27a-f9a0-4caf-9d7b-b22119b06c91",
+    "type": "concept",
+    "terms": [
+      "electromagnetic_force"
+    ]
+  },
+  {
+    "cluster_id": "d1c84f17-bfc8-4cc2-bfaf-fcde8fe0a7d7",
+    "type": "concept",
+    "terms": [
+      "disruption_mitigation"
+    ]
+  },
+  {
+    "cluster_id": "5d02fc96-798e-4528-9bb0-ff8ddc607b59",
+    "type": "concept",
+    "terms": [
+      "electromagnetic_force"
+    ]
+  },
+  {
+    "cluster_id": "ae5c507e-b336-486a-a883-6cb449c9e0c4",
+    "type": "concept",
+    "terms": [
+      "confinement_time"
+    ]
+  },
+  {
+    "cluster_id": "67f62340-2b81-4fb7-b4f0-8d1adec51f4d",
+    "type": "concept",
+    "terms": [
+      "wetted_area"
+    ]
+  },
+  {
+    "cluster_id": "5defe06b-59e4-4316-9c91-b63812b88fae",
+    "type": "concept",
+    "terms": [
+      "gas_injection_rate"
+    ]
+  },
+  {
+    "cluster_id": "f8342b23-2f41-4f64-b06b-1de34fe43277",
+    "type": "concept",
+    "terms": [
+      "resistivity"
+    ]
+  },
+  {
+    "cluster_id": "69ab5c3c-eb93-42c7-bcf1-2f43d0f754bd",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "40ef9f67-c228-4eff-8197-14697cd5a7b3",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "8faf94bb-8ed5-4b5b-884c-b4db4e77d74b",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "821d42ae-3622-4610-b972-6994bdbffa68",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "ddf54e29-f8a0-477c-a11e-537f1a299519",
+    "type": "concept",
+    "terms": [
+      "time_coordinate"
+    ]
+  },
+  {
+    "cluster_id": "7c143631-b7c2-42a3-bbd4-3cca816b47ba",
+    "type": "concept",
+    "terms": [
+      "decay_length"
+    ]
+  },
+  {
+    "cluster_id": "dba8f0a1-63db-4cf8-b73b-a8245cb34921",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "431a26ef-059f-4caf-97d6-c4d2d3c3c71c",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "6b3c2dd6-2922-45ae-a5d1-0d731af35f59",
+    "type": "concept",
+    "terms": [
+      "pedestal_energy"
+    ]
+  },
+  {
+    "cluster_id": "9b42fb25-532e-4b17-94da-31dbc12dc719",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "76a80344-3816-4646-963c-d1ab347850a5",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "743c6a1c-5d66-4b2d-af00-16df3d896f33",
+    "type": "concept",
+    "terms": [
+      "strike_point"
+    ]
+  },
+  {
+    "cluster_id": "5ee4e35c-2f9e-473a-a51f-b1f7d8a22f4f",
+    "type": "concept",
+    "terms": [
+      "wave_grid"
+    ]
+  },
+  {
+    "cluster_id": "4b12951a-5828-4c7d-84d9-a391dbb83dbf",
+    "type": "concept",
+    "terms": [
+      "collision_frequency"
+    ]
+  },
+  {
+    "cluster_id": "0ab8c0d1-dfcf-4be7-a2c5-e8b857f3899e",
+    "type": "concept",
+    "terms": [
+      "wave_particle_interaction"
+    ]
+  },
+  {
+    "cluster_id": "a2104db4-723d-4720-aa55-a1391a3cede8",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "905f4ce5-e4f0-4d87-8bf0-44dd6f566420",
+    "type": "concept",
+    "terms": [
+      "boundary_condition"
+    ]
+  },
+  {
+    "cluster_id": "8f4877a9-30e9-47ed-8bbc-d48fafcc5a1a",
+    "type": "concept",
+    "terms": [
+      "boundary_condition"
+    ]
+  },
+  {
+    "cluster_id": "f3717274-6fa0-43fc-9b9f-43520775c106",
+    "type": "concept",
+    "terms": [
+      "recombination"
+    ]
+  },
+  {
+    "cluster_id": "a984f709-e657-4304-bbae-7ab26260bc6c",
+    "type": "concept",
+    "terms": [
+      "pedestal_height"
+    ]
+  },
+  {
+    "cluster_id": "6be689e5-fdee-4e38-b039-8731609da0a8",
+    "type": "concept",
+    "terms": [
+      "fusion_power"
+    ]
+  },
+  {
+    "cluster_id": "34824d62-8143-4cbf-bbc9-72021d5562c8",
+    "type": "concept",
+    "terms": [
+      "component_description"
+    ]
+  },
+  {
+    "cluster_id": "ecfe80fd-e5a8-42a1-8424-d1d6c472066e",
+    "type": "concept",
+    "terms": [
+      "pedestal_fit"
+    ]
+  },
+  {
+    "cluster_id": "3691aaec-2c28-45d7-bb16-083c22155406",
+    "type": "concept",
+    "terms": [
+      "pedestal_width"
+    ]
+  },
+  {
+    "cluster_id": "de73a36c-03ed-4e9f-84f7-dae06bd410da",
+    "type": "concept",
+    "terms": [
+      "pedestal_stability"
+    ]
+  },
+  {
+    "cluster_id": "087c796f-5bd7-4340-8cdc-e5269fa2dd90",
+    "type": "concept",
+    "terms": [
+      "rho_star"
+    ]
+  },
+  {
+    "cluster_id": "42252c15-d7da-46ec-9c1a-e10fd6b6c1d1",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "0aa57afb-4066-4a67-9d7e-6de09adb6ea0",
+    "type": "concept",
+    "terms": [
+      "strike_point"
+    ]
+  },
+  {
+    "cluster_id": "31f59848-c9b2-4793-b236-5e1f05971b86",
+    "type": "concept",
+    "terms": [
+      "pedestal_fit"
+    ]
+  },
+  {
+    "cluster_id": "dc74bb33-3ccd-4075-83c7-ba13cbfacf96",
+    "type": "concept",
+    "terms": [
+      "recombination"
+    ]
+  },
+  {
+    "cluster_id": "033c632f-a596-4ac7-a97a-931e74580074",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "8f760c30-638e-4261-ba30-909abf33250b",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "f129ece8-93ce-4781-b56e-9aed3cad151c",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "869e2cb8-1132-4ff3-be9c-e20e3134caae",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "1614e9c6-186a-4274-b734-a092267495be",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "90e1f99d-48bf-44fd-ada5-bb43c685176d",
+    "type": "concept",
+    "terms": [
+      "atomic_state"
+    ]
+  },
+  {
+    "cluster_id": "a0de786b-fdd7-4c74-a81f-7bea9554ef6c",
+    "type": "concept",
+    "terms": [
+      "disruption_timescale"
+    ]
+  },
+  {
+    "cluster_id": "a2d31ed1-14e7-4f55-8854-01c94aa79e91",
+    "type": "concept",
+    "terms": [
+      "runaway_current"
+    ]
+  },
+  {
+    "cluster_id": "1d17be22-9bad-476b-94de-8a87ba08d445",
+    "type": "concept",
+    "terms": [
+      "fusion_power"
+    ]
+  },
+  {
+    "cluster_id": "2ca980ee-0f01-4a3a-8b34-9ada0fc40fd4",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "0c5600b3-7bc6-4ae4-a0d6-8d5610486201",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "200af69b-a435-486e-bea7-51ebf2712db7",
+    "type": "concept",
+    "terms": [
+      "pedestal_stability"
+    ]
+  },
+  {
+    "cluster_id": "f89716b7-095a-4bff-a97d-0ae06f040489",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "b4171344-0289-43f0-a0d9-41f60a445a57",
+    "type": "concept",
+    "terms": [
+      "metric_coefficients"
+    ]
+  },
+  {
+    "cluster_id": "bb344cec-37d0-4e17-85d2-8822c2f42840",
+    "type": "concept",
+    "terms": [
+      "z_effective"
+    ]
+  },
+  {
+    "cluster_id": "33611b89-a5da-460b-b7a2-659aabdfaadb",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "77a56358-a884-4af1-acf8-b03b3786e6aa",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "14a9ee15-6d1c-40e6-9bc7-ff65a4a581fb",
+    "type": "concept",
+    "terms": [
+      "energy_density"
+    ]
+  },
+  {
+    "cluster_id": "a12501bc-bd9d-4ca6-bcb8-dd7a2ffa9d87",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "3082c352-4846-4d9d-b193-c4041841ec23",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "89561832-3897-4f4e-97e5-b5df2cab837f",
+    "type": "concept",
+    "terms": [
+      "pitch_angle"
+    ]
+  },
+  {
+    "cluster_id": "d5ad26c4-4a1e-497e-94af-27f815eff636",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_velocity"
+    ]
+  },
+  {
+    "cluster_id": "3ccd5fc8-c00f-4f96-8e09-9ad7704db498",
+    "type": "concept",
+    "terms": [
+      "numerical_step"
+    ]
+  },
+  {
+    "cluster_id": "5a041f00-a77c-42b2-b5f6-d5461d6e09b4",
+    "type": "concept",
+    "terms": [
+      "radiation_process"
+    ]
+  },
+  {
+    "cluster_id": "39c90ef5-c7b0-4eca-86d7-6a7100738f03",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "3efcb300-61da-4562-a821-2a42ccab5e9e",
+    "type": "concept",
+    "terms": [
+      "radiation_process"
+    ]
+  },
+  {
+    "cluster_id": "1eed3228-3ac5-4c6b-9a64-b4afef0fdb87",
+    "type": "concept",
+    "terms": [
+      "momentum_source"
+    ]
+  },
+  {
+    "cluster_id": "7fbef573-ca2f-4559-a276-6cc91788f7d5",
+    "type": "concept",
+    "terms": [
+      "flux_limiter"
+    ]
+  },
+  {
+    "cluster_id": "d476e9a9-34b6-4d01-bc38-c99edae83cd5",
+    "type": "concept",
+    "terms": [
+      "energy_source"
+    ]
+  },
+  {
+    "cluster_id": "fbdf68fa-22d2-4764-9876-a8f6cc6877d8",
+    "type": "concept",
+    "terms": [
+      "numerical_index"
+    ]
+  },
+  {
+    "cluster_id": "54eeb8bb-08d6-4e3a-b236-84604be92ee7",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "420cdecd-41c4-4acf-8cff-1222471a6805",
+    "type": "concept",
+    "terms": [
+      "anisotropic_pressure"
+    ]
+  },
+  {
+    "cluster_id": "ed2468f6-4f75-4aeb-b48e-b0256ecc0c4f",
+    "type": "concept",
+    "terms": [
+      "dreicer_field"
+    ]
+  },
+  {
+    "cluster_id": "fc80bb40-ee81-4e55-a63c-85c7d03d3539",
+    "type": "concept",
+    "terms": [
+      "instantaneous_change"
+    ]
+  },
+  {
+    "cluster_id": "9271e0bb-1c87-4810-a647-77cdb8b3a01b",
+    "type": "concept",
+    "terms": [
+      "momentum_source"
+    ]
+  },
+  {
+    "cluster_id": "81f5e157-0c19-4262-94ab-8deb9d7d74c5",
+    "type": "concept",
+    "terms": [
+      "flux_limiter"
+    ]
+  },
+  {
+    "cluster_id": "34f5e7ce-e277-4bcc-b5f3-1a47bd6bc32e",
+    "type": "concept",
+    "terms": [
+      "collision_frequency"
+    ]
+  },
+  {
+    "cluster_id": "7f86ce72-69b0-407b-abb6-d944b90b84f2",
+    "type": "concept",
+    "terms": [
+      "collision_frequency"
+    ]
+  },
+  {
+    "cluster_id": "67ebf48a-0301-46ae-9a8b-a47f98e966c9",
+    "type": "concept",
+    "terms": [
+      "instantaneous_change"
+    ]
+  },
+  {
+    "cluster_id": "d8f71db6-f414-49b0-b938-decd9a443968",
+    "type": "concept",
+    "terms": [
+      "nbi_energy"
+    ]
+  },
+  {
+    "cluster_id": "b663750b-e24e-44ae-b8d5-80bddc297002",
+    "type": "concept",
+    "terms": [
+      "instantaneous_change"
+    ]
+  },
+  {
+    "cluster_id": "c268deaa-0472-4d05-990e-9ec0eabb0211",
+    "type": "concept",
+    "terms": [
+      "fast_particle_density"
+    ]
+  },
+  {
+    "cluster_id": "a8b5160f-78b0-4c91-8d77-3446656802cf",
+    "type": "concept",
+    "terms": [
+      "flux_limiter"
+    ]
+  },
+  {
+    "cluster_id": "fa7d6193-e4ba-4dda-bac6-4e4ad6f868e8",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "237d4a40-940b-44dc-8e2b-266c8bf86a1f",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "1a3ad246-3d14-46dd-bbca-8792d944c0f6",
+    "type": "concept",
+    "terms": [
+      "atomic_number"
+    ]
+  },
+  {
+    "cluster_id": "677d9216-b560-4d73-9a3d-ccd348a38424",
+    "type": "concept",
+    "terms": [
+      "grid_metadata"
+    ]
+  },
+  {
+    "cluster_id": "ae74d530-a020-416c-9ef2-63c44349b749",
+    "type": "concept",
+    "terms": [
+      "exb_velocity"
+    ]
+  },
+  {
+    "cluster_id": "2907aa6c-288c-4811-afda-d7182dd75f33",
+    "type": "concept",
+    "terms": [
+      "wave_field"
+    ]
+  },
+  {
+    "cluster_id": "fac7fcfd-2c4e-4090-9b97-b6fd216cc955",
+    "type": "concept",
+    "terms": [
+      "viscous_current"
+    ]
+  },
+  {
+    "cluster_id": "135ed74b-2467-4bf4-b447-c66f2f04148c",
+    "type": "concept",
+    "terms": [
+      "momentum_source"
+    ]
+  },
+  {
+    "cluster_id": "d82bd712-01eb-4429-a281-64a399da4943",
+    "type": "concept",
+    "terms": [
+      "grid_index"
+    ]
+  },
+  {
+    "cluster_id": "9b90bc50-8d7c-40d6-b637-f29a843d852b",
+    "type": "concept",
+    "terms": [
+      "instant_change"
+    ]
+  },
+  {
+    "cluster_id": "fc67e4e7-6b00-44f6-8668-b21d4c227a38",
+    "type": "concept",
+    "terms": [
+      "atom_count"
+    ]
+  },
+  {
+    "cluster_id": "588bb5c5-4d95-47f1-8a1c-97f559fc735e",
+    "type": "concept",
+    "terms": [
+      "source_type"
+    ]
+  },
+  {
+    "cluster_id": "75763407-892d-4879-9c40-ca1bb33b621e",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_flux"
+    ]
+  },
+  {
+    "cluster_id": "07819215-aa35-44f1-aab6-e01022702dad",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "38d28ab9-6244-4a22-b5ca-f017840353cc",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "ed88afa0-dc67-492f-9b02-0528356b5f8f",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "955347e0-525f-42a3-baac-d1adb79f2878",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "21bcc17c-c8e6-424f-9f24-e448f20d18ce",
+    "type": "concept",
+    "terms": [
+      "flux_limiter"
+    ]
+  },
+  {
+    "cluster_id": "b16cad97-d663-444e-b0b5-eab881620963",
+    "type": "concept",
+    "terms": [
+      "time"
+    ]
+  },
+  {
+    "cluster_id": "90214641-f95f-42e1-8f78-e77aad0144ab",
+    "type": "concept",
+    "terms": [
+      "recycling_coefficient"
+    ]
+  },
+  {
+    "cluster_id": "8659fc49-9089-4c66-b474-709ae9b4430d",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "fa9c950a-bc6b-47a4-95d7-dc0543463066",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "fe88ccf6-a132-43e1-ab02-9f825b1a019e",
+    "type": "concept",
+    "terms": [
+      "flux_limiter"
+    ]
+  },
+  {
+    "cluster_id": "128dabdf-7b4b-4dae-b5c3-7ca653d15ef5",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "7515b0a2-8fc9-4173-99cc-7b8dcf826266",
+    "type": "concept",
+    "terms": [
+      "instant_change"
+    ]
+  },
+  {
+    "cluster_id": "c1814319-1cfb-4b6d-912c-d7fb6c27f947",
+    "type": "concept",
+    "terms": [
+      "instant_change"
+    ]
+  },
+  {
+    "cluster_id": "f85fa426-e48a-4661-820d-ec94d71a24ff",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "ea0aa78e-cbfb-4ab5-a983-c09774aab417",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "9100df7b-3039-419e-8858-5c7881764844",
+    "type": "concept",
+    "terms": [
+      "critical_momentum"
+    ]
+  },
+  {
+    "cluster_id": "7a309d46-9ff1-4827-95b3-1870d1f23ad4",
+    "type": "concept",
+    "terms": [
+      "vessel_geometry"
+    ]
+  },
+  {
+    "cluster_id": "cbc82245-f69d-4dcd-b0e5-ab2bb1d1fc33",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_drift"
+    ]
+  },
+  {
+    "cluster_id": "fd6eb3e9-c988-448a-91dd-34e1e02dd6e4",
+    "type": "concept",
+    "terms": [
+      "recycling_coefficient"
+    ]
+  },
+  {
+    "cluster_id": "b9f937a1-b1f0-4bd3-81c8-261c9ea02f43",
+    "type": "concept",
+    "terms": [
+      "runaway_electron_distribution"
+    ]
+  },
+  {
+    "cluster_id": "8346d74d-90e6-414a-b996-55edee464362",
+    "type": "concept",
+    "terms": [
+      "recycling_coefficient"
+    ]
+  },
+  {
+    "cluster_id": "f714f676-791b-42b4-a41d-c1324234b144",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "c9a48314-bde5-49d0-8ab9-507aac7f3b50",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "06b5f33c-046f-48eb-9b65-a83d8696d7a8",
+    "type": "concept",
+    "terms": [
+      "pfirsch_schlueter_current"
+    ]
+  },
+  {
+    "cluster_id": "778d4d52-65cc-452c-8f5b-f84ef7464015",
+    "type": "concept",
+    "terms": [
+      "wall_temperature"
+    ]
+  },
+  {
+    "cluster_id": "1eac3dcb-4eea-449e-a0ed-f296d72e856a",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "598ea19f-97cb-410a-ac86-b276eaca5a56",
+    "type": "concept",
+    "terms": [
+      "lorentz_force"
+    ]
+  },
+  {
+    "cluster_id": "7fc9ce1a-b46f-4ae5-abe6-adce6ba79a74",
+    "type": "concept",
+    "terms": [
+      "bolometry"
+    ]
+  },
+  {
+    "cluster_id": "b6539e84-67fa-441b-8a8c-aa65f0e1d02b",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "1768ea9d-2acc-48c7-a57e-d436a5a8a2e5",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "2b409376-5a16-4e63-ab32-182c5d338dce",
+    "type": "concept",
+    "terms": [
+      "energy_density"
+    ]
+  },
+  {
+    "cluster_id": "bbab0525-9cb6-4ece-a751-250ef4956726",
+    "type": "concept",
+    "terms": [
+      "particle_source_rate"
+    ]
+  },
+  {
+    "cluster_id": "f8830a7c-7f1c-4754-8bec-4a57bd483725",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "d078de43-fb6f-4725-84f5-4d2dd31442a9",
+    "type": "concept",
+    "terms": [
+      "transport_model"
+    ]
+  },
+  {
+    "cluster_id": "f8e1c80e-cfaf-4ccc-8486-476548f2bcf2",
+    "type": "concept",
+    "terms": [
+      "wall_material"
+    ]
+  },
+  {
+    "cluster_id": "d8090fed-84a0-4a5a-be00-845857a32a2f",
+    "type": "concept",
+    "terms": [
+      "recombination_flux"
+    ]
+  },
+  {
+    "cluster_id": "ac5ad0d5-cd3b-4c11-b76f-be67f30d6a2f",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "4a2eea01-06b9-4f1c-9ee8-f82e66ef329b",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "a4e84bf5-d675-4fba-8325-1c2a90936b5e",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "d162ea01-4924-458e-87d5-73a510867d97",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "f53bf6d0-a3cd-4ee1-894c-b2fd565a71ef",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "c13c80c8-b1b3-4e8b-9d20-84c115bc7f7f",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "3d6d0954-8bee-4f40-ae0c-22c3761131bc",
+    "type": "concept",
+    "terms": [
+      "fast_particle_pressure"
+    ]
+  },
+  {
+    "cluster_id": "694b40aa-6d5b-4284-96b8-2703e8781934",
+    "type": "concept",
+    "terms": [
+      "fast_particle_pressure"
+    ]
+  },
+  {
+    "cluster_id": "6b102791-3c3d-414d-9489-0ab6c2a85f95",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "c2ad976b-cda6-4664-8eef-62f9a663accb",
+    "type": "concept",
+    "terms": [
+      "source_identifier"
+    ]
+  },
+  {
+    "cluster_id": "27a7b60f-e8b6-43f4-a1d3-4936a5d686a2",
+    "type": "concept",
+    "terms": [
+      "reactant_energy"
+    ]
+  },
+  {
+    "cluster_id": "1e52e329-eb16-447d-913b-47fd255ea3a5",
+    "type": "concept",
+    "terms": [
+      "energy_density"
+    ]
+  },
+  {
+    "cluster_id": "cb42fe51-d1ae-481a-96d6-6d65d5c2a63e",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "264486f7-5f8b-4b1e-94a0-733664eb43b7",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "1c102f44-8602-4af5-957b-840fcbd33264",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "cc2ef941-a92e-4c0b-a2ba-a2cc15b41f6a",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_velocity"
+    ]
+  },
+  {
+    "cluster_id": "13ab7310-545c-48dd-9fbd-b232ca64e3c5",
+    "type": "concept",
+    "terms": [
+      "energy_density"
+    ]
+  },
+  {
+    "cluster_id": "d5ecd9e2-ef24-41eb-838c-665f3f0d9a5d",
+    "type": "concept",
+    "terms": [
+      "energy_density"
+    ]
+  },
+  {
+    "cluster_id": "dbfa388e-0eaa-4026-ae3f-11c57dfb9031",
+    "type": "concept",
+    "terms": [
+      "average_charge"
+    ]
+  },
+  {
+    "cluster_id": "0caeefff-9138-41c6-a7f3-562aa8bd8cf3",
+    "type": "concept",
+    "terms": [
+      "neutral_pressure"
+    ]
+  },
+  {
+    "cluster_id": "8100e390-ca33-4372-8295-b306b9656607",
+    "type": "concept",
+    "terms": [
+      "neutral_pressure"
+    ]
+  },
+  {
+    "cluster_id": "258ca420-c2ee-4b89-adcf-ac58902ae074",
+    "type": "concept",
+    "terms": [
+      "kinetic_energy_density"
+    ]
+  },
+  {
+    "cluster_id": "8fa9b0ee-26d0-4699-bfcd-3698dac17677",
+    "type": "concept",
+    "terms": [
+      "power_density"
+    ]
+  },
+  {
+    "cluster_id": "1cdb404e-dcb0-4864-8560-5a47eb6de436",
+    "type": "concept",
+    "terms": [
+      "power_density"
+    ]
+  },
+  {
+    "cluster_id": "afb1dc4f-b451-4e04-8860-8c53557b761b",
+    "type": "concept",
+    "terms": [
+      "power_density"
+    ]
+  },
+  {
+    "cluster_id": "7f30a3dc-a21f-408a-96f6-89510b0920a5",
+    "type": "concept",
+    "terms": [
+      "power_density"
+    ]
+  },
+  {
+    "cluster_id": "2da1a968-b0e0-4f49-980a-bc544a870584",
+    "type": "concept",
+    "terms": [
+      "antenna_geometry"
+    ]
+  },
+  {
+    "cluster_id": "a982fd24-15ae-4387-813c-59bf262b6e79",
+    "type": "concept",
+    "terms": [
+      "ec_frequency"
+    ]
+  },
+  {
+    "cluster_id": "8b56bfbb-e8b8-4dc1-a049-0f88fac9c96e",
+    "type": "concept",
+    "terms": [
+      "steering_angle"
+    ]
+  },
+  {
+    "cluster_id": "e1edabeb-5b2c-4ba3-8034-68f1d75f0169",
+    "type": "concept",
+    "terms": [
+      "wave_solver"
+    ]
+  },
+  {
+    "cluster_id": "98c6f443-93ef-4a99-a4b3-8c0e175bc138",
+    "type": "concept",
+    "terms": [
+      "wave_field"
+    ]
+  },
+  {
+    "cluster_id": "28cf4b5c-8b40-47e0-a710-cf2d896ad988",
+    "type": "concept",
+    "terms": [
+      "lh_coupling"
+    ]
+  },
+  {
+    "cluster_id": "58dc263e-3fa0-4b34-be39-dd92cc086a4a",
+    "type": "concept",
+    "terms": [
+      "launch_angle"
+    ]
+  },
+  {
+    "cluster_id": "0d4e7298-0c23-4462-b951-68d1090aa026",
+    "type": "concept",
+    "terms": [
+      "rf_phase"
+    ]
+  },
+  {
+    "cluster_id": "12613695-a1c8-45b7-9a83-3c60c3567b78",
+    "type": "concept",
+    "terms": [
+      "nuclear_heating"
+    ]
+  },
+  {
+    "cluster_id": "45190151-e0be-4612-b03a-6280a24c4547",
+    "type": "concept",
+    "terms": [
+      "electrical_resistance"
+    ]
+  },
+  {
+    "cluster_id": "061e6bd2-8ca1-4103-9dcc-c4a2813c872a",
+    "type": "concept",
+    "terms": [
+      "eddy_currents"
+    ]
+  },
+  {
+    "cluster_id": "f3051348-58f6-4262-88a5-aacefc82dc33",
+    "type": "concept",
+    "terms": [
+      "coolant_properties"
+    ]
+  },
+  {
+    "cluster_id": "56a059aa-3abc-4264-836f-dc0c3a2c4832",
+    "type": "concept",
+    "terms": [
+      "optical_properties"
+    ]
+  },
+  {
+    "cluster_id": "d381100d-dae6-43b8-85a6-cabc72b4401f",
+    "type": "concept",
+    "terms": [
+      "stark_effect"
+    ]
+  },
+  {
+    "cluster_id": "c988b150-b881-4a87-82ab-4cfcaa620ab5",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "c4c10bd8-6510-4d1e-ad9e-f76978cdddf3",
+    "type": "concept",
+    "terms": [
+      "detector_orientation"
+    ]
+  },
+  {
+    "cluster_id": "14456f69-3e8f-4dfd-a673-4e39b39fda0c",
+    "type": "concept",
+    "terms": [
+      "surface_temperature"
+    ]
+  },
+  {
+    "cluster_id": "6ecb886d-1d02-44d2-a704-557bc1c8f165",
+    "type": "concept",
+    "terms": [
+      "optical_geometry"
+    ]
+  },
+  {
+    "cluster_id": "619021d0-f32c-49c7-9f86-e1d99f602314",
+    "type": "concept",
+    "terms": [
+      "optical_geometry"
+    ]
+  },
+  {
+    "cluster_id": "d1ec4217-f64c-4ae5-b16e-7ac988db1c7f",
+    "type": "concept",
+    "terms": [
+      "effective_charge"
+    ]
+  },
+  {
+    "cluster_id": "8a3ef153-d535-4522-b37f-b5721c7456bf",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "35fcb5f9-5986-49c9-be03-56db4a05bba7",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "87d92aff-8f4f-43ac-b424-50630428f05c",
+    "type": "concept",
+    "terms": [
+      "x_ray_emission"
+    ]
+  },
+  {
+    "cluster_id": "96cae63e-9f39-4ff4-b503-0444b0d21710",
+    "type": "concept",
+    "terms": [
+      "surface_temperature"
+    ]
+  },
+  {
+    "cluster_id": "f711c266-aa9c-4053-b70a-371a87e3e006",
+    "type": "concept",
+    "terms": [
+      "line_emission"
+    ]
+  },
+  {
+    "cluster_id": "fa111355-29e6-47c3-8990-4f9d30f047bc",
+    "type": "concept",
+    "terms": [
+      "isotope_ratio"
+    ]
+  },
+  {
+    "cluster_id": "1861b57a-dc12-4a6e-bb75-baff518529a8",
+    "type": "concept",
+    "terms": [
+      "spectral_radiance"
+    ]
+  },
+  {
+    "cluster_id": "7ca415e7-4d61-43a4-9a39-c66bfdd00b4f",
+    "type": "concept",
+    "terms": [
+      "radiation_intensity"
+    ]
+  },
+  {
+    "cluster_id": "4e0c89aa-7bf2-4241-9000-9fd0196eec8d",
+    "type": "concept",
+    "terms": [
+      "photon_statistics"
+    ]
+  },
+  {
+    "cluster_id": "262c9d10-fabe-49e3-90b9-cf39f71bf77d",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "e669f0e3-3172-4f85-be7e-d97c9bf830b7",
+    "type": "concept",
+    "terms": [
+      "tomography"
+    ]
+  },
+  {
+    "cluster_id": "6966cacd-0003-4ecf-94b4-c2cd58aa7c3d",
+    "type": "concept",
+    "terms": [
+      "surface_temperature"
+    ]
+  },
+  {
+    "cluster_id": "57936191-6c68-4d4c-a3e6-2ac80cfdbbc9",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "6e1c7894-0ca6-4715-99b7-c9542908a006",
+    "type": "concept",
+    "terms": [
+      "x_ray_emission"
+    ]
+  },
+  {
+    "cluster_id": "4d93bcdd-91ac-48b6-a2c2-bcad7d0a5cb8",
+    "type": "concept",
+    "terms": [
+      "optical_geometry"
+    ]
+  },
+  {
+    "cluster_id": "be95650a-0fc6-40e7-8b90-fc49fac55f0f",
+    "type": "concept",
+    "terms": [
+      "pedestal_position"
+    ]
+  },
+  {
+    "cluster_id": "46acc89a-13fb-4e4d-9d35-d45a096df692",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "94f76f12-93e2-498a-8f92-0f3e5175dec0",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "123d426f-781b-427e-bd2a-baf1b1f31ec9",
+    "type": "concept",
+    "terms": [
+      "pedestal_stability"
+    ]
+  },
+  {
+    "cluster_id": "74e8e94c-b8c7-4760-89f3-920107f713b5",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "2e594dcc-3ccd-4238-99c0-8b8d2e9454d9",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "cb257eb4-d0e7-42c2-becb-8051adb9b529",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "af52efe7-e488-4856-876a-dfa1cfb0bef0",
+    "type": "concept",
+    "terms": [
+      "atomic_data"
+    ]
+  },
+  {
+    "cluster_id": "2596a528-59db-4bd0-8f4d-c6a3684fb19c",
+    "type": "concept",
+    "terms": [
+      "profile_fitting"
+    ]
+  },
+  {
+    "cluster_id": "4534dce5-c77b-49dc-84cb-f3a404f4d2a2",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "0dab494b-527a-44ee-a890-042b84fea919",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "21a275ea-7377-460f-ae52-c020e82775ba",
+    "type": "concept",
+    "terms": [
+      "atomic_physics"
+    ]
+  },
+  {
+    "cluster_id": "46c8a907-4aec-4a84-be1a-9d7b1d77cbd7",
+    "type": "concept",
+    "terms": [
+      "metastable_states"
+    ]
+  },
+  {
+    "cluster_id": "ff394beb-c011-4a4d-ba3f-2f7f79eb3c01",
+    "type": "concept",
+    "terms": [
+      "reaction_kinetics"
+    ]
+  },
+  {
+    "cluster_id": "dcf60fde-6579-44e0-8fc5-a05b4c06b077",
+    "type": "concept",
+    "terms": [
+      "species_properties"
+    ]
+  },
+  {
+    "cluster_id": "cc470b97-4641-4ad9-a4a3-45e2fabf78cf",
+    "type": "concept",
+    "terms": [
+      "isotopes"
+    ]
+  },
+  {
+    "cluster_id": "22782174-d5fe-4e41-b0ce-0a23f297fb05",
+    "type": "concept",
+    "terms": [
+      "data_grid"
+    ]
+  },
+  {
+    "cluster_id": "05cd7ccc-f47d-4126-bf86-4425b81813dc",
+    "type": "concept",
+    "terms": [
+      "rate_coefficients"
+    ]
+  },
+  {
+    "cluster_id": "a0b09b82-f789-400f-a766-0fd58994f93e",
+    "type": "concept",
+    "terms": [
+      "atomic_data"
+    ]
+  },
+  {
+    "cluster_id": "ad2d04cc-e0a6-4687-919b-621ff2f73966",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "d9f69385-388c-414d-a128-e44e9edf5f55",
+    "type": "concept",
+    "terms": [
+      "profile_fitting"
+    ]
+  },
+  {
+    "cluster_id": "e4c92e87-9aa0-4da8-9457-b4ce3db1652c",
+    "type": "concept",
+    "terms": [
+      "fast_ions"
+    ]
+  },
+  {
+    "cluster_id": "1b567502-5d46-4c47-b162-8451bc2b6c20",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "95157bb1-1171-4f2a-8b56-b718bf495452",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "45e97ed8-8077-48ad-879c-ac3f6b7ad102",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "a4f81091-905c-4017-9388-1097a3250a1c",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "14f6504a-e4b3-46e7-8d2a-ff72b333de4b",
+    "type": "concept",
+    "terms": [
+      "radial_coordinates"
+    ]
+  },
+  {
+    "cluster_id": "38c9f733-f860-45ea-a435-6feba4de980c",
+    "type": "concept",
+    "terms": [
+      "radial_coordinates"
+    ]
+  },
+  {
+    "cluster_id": "7297831a-eaab-4795-9228-c5ae161d5fda",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "79db5c2e-0783-4fa8-9d78-865271459a73",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "1418e3f4-806b-40ff-af74-a786cddf6a5b",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "392de2de-a646-4008-9c39-87a762a34764",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "595fe390-6b4e-4ef8-abc6-b3b42c0e586e",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "b2bb30fe-595d-4aff-9d7d-0330064e1d38",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "b164ab43-9d40-4485-997c-50db75db1215",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "321a8cf7-7a07-435f-bf31-f905b3200b43",
+    "type": "concept",
+    "terms": [
+      "isotope_transport"
+    ]
+  },
+  {
+    "cluster_id": "ffcdaca1-710e-4492-98b1-bf8066cceee0",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "f2d252bf-acc0-46e9-9015-2a2e0c43690c",
+    "type": "concept",
+    "terms": [
+      "temporary_data"
+    ]
+  },
+  {
+    "cluster_id": "17d0a1c8-56f4-4e19-b96e-9f0bb2557b24",
+    "type": "concept",
+    "terms": [
+      "impurity_transport"
+    ]
+  },
+  {
+    "cluster_id": "a3c2bb58-42dc-4709-99eb-41548b3dc985",
+    "type": "concept",
+    "terms": [
+      "pedestal_gradients"
+    ]
+  },
+  {
+    "cluster_id": "237bc409-34c8-47f2-9101-e18e34e95521",
+    "type": "concept",
+    "terms": [
+      "disruption_physics"
+    ]
+  },
+  {
+    "cluster_id": "5be7fc8d-40c0-4463-8d99-48b81391acf9",
+    "type": "concept",
+    "terms": [
+      "pedestal_gradients"
+    ]
+  },
+  {
+    "cluster_id": "0a8e4089-c8a4-41c3-8ae1-2394708cf1b6",
+    "type": "concept",
+    "terms": [
+      "pedestal_gradients"
+    ]
+  },
+  {
+    "cluster_id": "e7676b3b-b0c1-46fd-baa3-d512bfc47c05",
+    "type": "concept",
+    "terms": [
+      "pedestal_physics"
+    ]
+  },
+  {
+    "cluster_id": "29a00664-1ee3-4c24-a7d5-bfed97de2e44",
+    "type": "concept",
+    "terms": [
+      "elm_type"
+    ]
+  },
+  {
+    "cluster_id": "8c34ff26-fa87-4b97-a45e-115ca4739f80",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "c9fedb64-8671-462e-9c43-cf08b56ccb74",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "a6fa49a2-8928-4131-9df3-de6dcd2207c7",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "b6d2c009-3f1e-4d74-a496-89a26ee2b654",
+    "type": "concept",
+    "terms": [
+      "disruption_type"
+    ]
+  },
+  {
+    "cluster_id": "6e872e03-72fb-4c7c-9903-e0bd1be3365f",
+    "type": "concept",
+    "terms": [
+      "confinement_scaling"
+    ]
+  },
+  {
+    "cluster_id": "8de9639f-d967-455b-9d26-65a62e8e6059",
+    "type": "concept",
+    "terms": [
+      "disruption_mitigation"
+    ]
+  },
+  {
+    "cluster_id": "4bb85fa3-3511-4e38-8261-136f5c87f585",
+    "type": "concept",
+    "terms": [
+      "quench_time"
+    ]
+  },
+  {
+    "cluster_id": "937d9061-dfb7-435e-9612-3aea1e8e8843",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "e646a238-fea3-40d6-9582-6d2538562a72",
+    "type": "concept",
+    "terms": [
+      "decay_length"
+    ]
+  },
+  {
+    "cluster_id": "c5523be0-e119-45a4-809e-60064b866561",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "b1d0009c-7989-4ec8-8f3e-e549b451bb4d",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "a285782b-1fe7-415f-8eaf-15cdfca215c0",
+    "type": "concept",
+    "terms": [
+      "strike_point"
+    ]
+  },
+  {
+    "cluster_id": "38ed089d-0193-4fdc-ace3-53b8e54e92cb",
+    "type": "concept",
+    "terms": [
+      "pedestal_stability"
+    ]
+  },
+  {
+    "cluster_id": "97da2357-f0cf-478c-80c3-b2970ef6b95b",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "78730ac6-0815-486f-850e-58e641b6397f",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "3551a007-8560-4fe5-b28c-3743913340c3",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "70256034-f217-4fab-a101-9ed9d14fa3e7",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "feb270c8-a0e3-4d46-b30f-33fcb139ca6d",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "4a874fcd-4a2c-4630-b4a5-5bf00860d601",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "b15d3427-5504-4e48-9df7-ac66837fa6e5",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "e6712bc4-2639-4695-8906-2ee607400a10",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "ba26d992-3cac-4924-8eef-c63a3664add9",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "1d500bf3-3b1c-4cf7-b244-d2f90653ceb0",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "8e9235cb-761d-4066-a90a-79d641bd686e",
+    "type": "concept",
+    "terms": [
+      "collisionality"
+    ]
+  },
+  {
+    "cluster_id": "0090c2f1-ae05-46d7-a945-6954ea9a7aeb",
+    "type": "concept",
+    "terms": [
+      "normalized_larmor_radius"
+    ]
+  },
+  {
+    "cluster_id": "b0b419eb-0b52-46c8-adfb-9dbe904ec940",
+    "type": "concept",
+    "terms": [
+      "disruption_time"
+    ]
+  },
+  {
+    "cluster_id": "2046a6ab-bae2-4da6-96ef-f37581eceea9",
+    "type": "concept",
+    "terms": [
+      "orbit_integrals"
+    ]
+  },
+  {
+    "cluster_id": "3f5564e9-7fd9-4fe9-859c-6864330fb51b",
+    "type": "concept",
+    "terms": [
+      "time_base"
+    ]
+  },
+  {
+    "cluster_id": "1fd0eed3-31fa-428b-bca3-dc9c4f1f0c28",
+    "type": "concept",
+    "terms": [
+      "integration_time"
+    ]
+  },
+  {
+    "cluster_id": "70f60a9d-fc28-44be-bd58-712561e9134a",
+    "type": "concept",
+    "terms": [
+      "grid_definition"
+    ]
+  },
+  {
+    "cluster_id": "f8c6d75d-e614-424c-b7a6-e2c55d178404",
+    "type": "concept",
+    "terms": [
+      "radiation_power"
+    ]
+  },
+  {
+    "cluster_id": "31ee9db0-cc55-4d6f-93a6-bfb80d9094fc",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "9359f5ad-c345-4e7a-a48b-1c514284e4c6",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "66e61349-8636-4c9a-817b-7399b95bb017",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "f872757c-41e8-415f-a9b7-5b4304648f00",
+    "type": "concept",
+    "terms": [
+      "rf_heating"
+    ]
+  },
+  {
+    "cluster_id": "14527923-5adb-437c-897d-50f8de4eb791",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "13b5e5d8-30b0-49bf-ba83-069888ebe955",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "90577e88-ac24-4a12-ae25-b350c486393a",
+    "type": "concept",
+    "terms": [
+      "orbit_integration"
+    ]
+  },
+  {
+    "cluster_id": "f828a548-0564-4d20-8492-a0e9fbf1165f",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "a918d1dc-ee84-4d43-9df0-a166e5341b44",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "9e87a499-b49a-4133-88c8-92d8b7a84f74",
+    "type": "concept",
+    "terms": [
+      "charge_number"
+    ]
+  },
+  {
+    "cluster_id": "5cd7527b-03da-4670-9883-ab71876a7a98",
+    "type": "concept",
+    "terms": [
+      "charge_number"
+    ]
+  },
+  {
+    "cluster_id": "65914791-5af7-4062-a2c8-05c137d6ddf5",
+    "type": "concept",
+    "terms": [
+      "nuclear_charge"
+    ]
+  },
+  {
+    "cluster_id": "36f30424-8da7-437f-a64c-47621878590e",
+    "type": "concept",
+    "terms": [
+      "nuclear_charge"
+    ]
+  },
+  {
+    "cluster_id": "9238cb88-4e7a-4450-8296-95dfe0ecdb0e",
+    "type": "concept",
+    "terms": [
+      "velocity_space_grid"
+    ]
+  },
+  {
+    "cluster_id": "029c1410-5e91-4e92-a39c-0f0371bbd935",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "16ed68b5-c249-490a-9863-e3292b56a56b",
+    "type": "concept",
+    "terms": [
+      "kinetic_energy_density"
+    ]
+  },
+  {
+    "cluster_id": "59e65b78-514f-4ba3-b4c3-702b9b18bdd0",
+    "type": "concept",
+    "terms": [
+      "effective_charge"
+    ]
+  },
+  {
+    "cluster_id": "0b60d98f-1422-4bcf-b421-85de993aa5ea",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "c4559a1d-3974-436c-bedc-ef81a870d289",
+    "type": "concept",
+    "terms": [
+      "energy_density"
+    ]
+  },
+  {
+    "cluster_id": "bebfab2a-103c-4d10-8935-1506c44a02e8",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "9b01121a-ee75-4d77-b7c1-dae35511d686",
+    "type": "concept",
+    "terms": [
+      "pitch_angle"
+    ]
+  },
+  {
+    "cluster_id": "cdbbc713-79d2-4671-aba8-6d8c01db5c37",
+    "type": "concept",
+    "terms": [
+      "particle_source"
+    ]
+  },
+  {
+    "cluster_id": "8b350aa2-0783-4706-b036-bba1de33cf90",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "e2f65d73-8237-46b1-b3ab-71c6f8758dc2",
+    "type": "concept",
+    "terms": [
+      "toroidal_flux"
+    ]
+  },
+  {
+    "cluster_id": "8abeb996-b6b7-43e3-8fb9-7afefeac74d2",
+    "type": "concept",
+    "terms": [
+      "toroidal_flux"
+    ]
+  },
+  {
+    "cluster_id": "10a7660b-6c23-46fe-9909-ab1ab6b9ceba",
+    "type": "concept",
+    "terms": [
+      "toroidal_flux"
+    ]
+  },
+  {
+    "cluster_id": "ddf2f060-0fca-4c1c-a596-ab7cdd4152c9",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "42694fc9-fb0e-4009-b270-8a72537f2554",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "463c4861-8148-4473-98e0-489bc743c91e",
+    "type": "concept",
+    "terms": [
+      "perpendicular_pressure"
+    ]
+  },
+  {
+    "cluster_id": "ea7e5850-2963-498b-80d6-6233a2f90fde",
+    "type": "concept",
+    "terms": [
+      "parallel_pressure"
+    ]
+  },
+  {
+    "cluster_id": "a56e1cf0-5276-4605-b5df-9f0f815202fb",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "211b8e16-1214-4f21-84cf-1991e408365b",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "31da50a4-97e5-4770-addb-96b288a48c34",
+    "type": "concept",
+    "terms": [
+      "neutral_pressure"
+    ]
+  },
+  {
+    "cluster_id": "10b204d5-8e38-4035-9737-db4546803354",
+    "type": "concept",
+    "terms": [
+      "kinetic_energy_density"
+    ]
+  },
+  {
+    "cluster_id": "78b36df6-a7eb-4e9b-ad68-a392585f93aa",
+    "type": "concept",
+    "terms": [
+      "floating_potential",
+      "plasma_potential"
+    ]
+  },
+  {
+    "cluster_id": "dc6bc181-e1b8-4dcc-8bab-a2e5796e0bb2",
+    "type": "concept",
+    "terms": [
+      "fusion_power_density"
+    ]
+  },
+  {
+    "cluster_id": "307a7898-8632-40a0-9399-16871b446921",
+    "type": "concept",
+    "terms": [
+      "fusion_power",
+      "neutron_emissivity"
+    ]
+  },
+  {
+    "cluster_id": "0c00d32c-60bf-4e9e-b2ba-c186eb3aae35",
+    "type": "concept",
+    "terms": [
+      "ion_saturation_current"
+    ]
+  },
+  {
+    "cluster_id": "bb7cbaa0-2c78-44e9-b4b4-a749da1d91da",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "3c796f10-a25b-4f21-ac17-9e7216a264ac",
+    "type": "concept",
+    "terms": [
+      "mode_number"
+    ]
+  },
+  {
+    "cluster_id": "659a15cc-ab8a-4e20-96c5-9470d5d14a00",
+    "type": "concept",
+    "terms": [
+      "mode_number"
+    ]
+  },
+  {
+    "cluster_id": "460cde91-b4cd-48c3-8913-7621bba0ee50",
+    "type": "concept",
+    "terms": [
+      "tearing_modes"
+    ]
+  },
+  {
+    "cluster_id": "ea680282-cf36-48ea-a2d4-c017ba842d93",
+    "type": "concept",
+    "terms": [
+      "mhd_torque",
+      "delta_w"
+    ]
+  },
+  {
+    "cluster_id": "498e51dc-1b6b-4917-a078-3155ffc7d441",
+    "type": "concept",
+    "terms": [
+      "mode_frequency",
+      "mode_phase"
+    ]
+  },
+  {
+    "cluster_id": "8e0685b4-dcf2-4d36-9526-44730e8b6560",
+    "type": "concept",
+    "terms": [
+      "island_width"
+    ]
+  },
+  {
+    "cluster_id": "8aa9db7f-9488-4755-aaef-c5fe19b0e7a0",
+    "type": "concept",
+    "terms": [
+      "maxwell_stress",
+      "reynolds_stress",
+      "ntv"
+    ]
+  },
+  {
+    "cluster_id": "2a74b577-9900-4736-98fa-0908f92936e9",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "7285366a-7b5f-4dca-8e56-f8be81c15825",
+    "type": "concept",
+    "terms": [
+      "mass_density"
+    ]
+  },
+  {
+    "cluster_id": "77e9ad99-7530-463c-b75b-30bcaa96be0d",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "45fd2ed0-ea1e-4b92-a53b-529b4b1ff547",
+    "type": "concept",
+    "terms": [
+      "latency"
+    ]
+  },
+  {
+    "cluster_id": "b8e3cdd3-4e73-43d5-b409-95a4703fcbbc",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "f6051e1d-bf34-4694-98ad-c3ad9c5e4ed5",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "2456a159-4e86-4bc9-a44f-c8fcc246a9eb",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "a10b46ac-ff3e-4c6b-ace0-9b82537988ad",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "4843cd20-9616-4f54-a106-c90e5ae8ee36",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "d3f2cc33-fc39-4a37-9bad-ae52b8abf7d9",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "a036356f-4994-4620-9bbe-19840ac45ee8",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "afcb19d4-0d1e-4d35-886b-d80d488f5756",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "4419a39a-8e2b-4407-a0e6-f28c2ca8d838",
+    "type": "concept",
+    "terms": [
+      "beam_tracing"
+    ]
+  },
+  {
+    "cluster_id": "9bced871-2e20-4076-b247-022e68d2105b",
+    "type": "concept",
+    "terms": [
+      "wave_vector"
+    ]
+  },
+  {
+    "cluster_id": "73d1225c-4eac-43bd-897a-1e788462342a",
+    "type": "concept",
+    "terms": [
+      "wave_polarization"
+    ]
+  },
+  {
+    "cluster_id": "1fb8993b-8453-469e-9368-11ecf62a5ee4",
+    "type": "concept",
+    "terms": [
+      "wave_polarization"
+    ]
+  },
+  {
+    "cluster_id": "96c47e6c-148e-4082-8d06-81612963a435",
+    "type": "concept",
+    "terms": [
+      "chi_squared"
+    ]
+  },
+  {
+    "cluster_id": "d7623e01-3923-4ce1-a496-3343e1fbe6f3",
+    "type": "concept",
+    "terms": [
+      "magnetic_ripple"
+    ]
+  },
+  {
+    "cluster_id": "50086dc5-d4ba-4b95-a1ba-ef0447216c7a",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "6b70e66a-bf36-470c-abb1-642cfca4c8d8",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "30c6fa8f-0402-4aee-b5a3-33400080f8d2",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "d535ab14-f323-4798-bc90-f5a169a910f9",
+    "type": "concept",
+    "terms": [
+      "jacobian"
+    ]
+  },
+  {
+    "cluster_id": "6395314c-1542-4977-ac70-73c0ead7e71d",
+    "type": "concept",
+    "terms": [
+      "rho_tor"
+    ]
+  },
+  {
+    "cluster_id": "2165026c-9ea4-4d79-9617-1ce4a9996e54",
+    "type": "concept",
+    "terms": [
+      "magnetization"
+    ]
+  },
+  {
+    "cluster_id": "c22b8d88-12af-4dd8-98d0-9342f006575a",
+    "type": "concept",
+    "terms": [
+      "geometric_coefficients"
+    ]
+  },
+  {
+    "cluster_id": "131fe216-4659-4faf-b471-55cd9adb394a",
+    "type": "concept",
+    "terms": [
+      "mse"
+    ]
+  },
+  {
+    "cluster_id": "0c3d556d-1799-4221-98ff-6e72641fb24c",
+    "type": "concept",
+    "terms": [
+      "equilibrium_constraints"
+    ]
+  },
+  {
+    "cluster_id": "9b19fd25-1dc4-4288-970e-b8af2b92eee4",
+    "type": "concept",
+    "terms": [
+      "geometric_axis"
+    ]
+  },
+  {
+    "cluster_id": "9d536f8c-a610-4075-8880-31917eacca33",
+    "type": "concept",
+    "terms": [
+      "fitting_weights"
+    ]
+  },
+  {
+    "cluster_id": "2f543e88-9373-4943-bc27-a2fc762af476",
+    "type": "concept",
+    "terms": [
+      "iron_core_magnetization"
+    ]
+  },
+  {
+    "cluster_id": "82584958-648a-41ed-a9f9-7188b2afaa59",
+    "type": "concept",
+    "terms": [
+      "numerical_convergence"
+    ]
+  },
+  {
+    "cluster_id": "fda14641-c2ba-46e2-bb5d-faef33bd4b33",
+    "type": "concept",
+    "terms": [
+      "chi_squared"
+    ]
+  },
+  {
+    "cluster_id": "e692ec0e-f59a-4518-ad06-d788f03eaced",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "aeb7b2b1-becc-4fa8-a1d9-c9775a89d33b",
+    "type": "concept",
+    "terms": [
+      "electron_configuration"
+    ]
+  },
+  {
+    "cluster_id": "e3159dea-a90c-4534-96be-120caafb5379",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "37cade25-0c8c-4795-bb19-0119937d7e8e",
+    "type": "concept",
+    "terms": [
+      "vibrational_mode"
+    ]
+  },
+  {
+    "cluster_id": "bc53813d-9138-46d3-aac6-997567b6dcca",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "21baa298-0033-47b0-9f88-f3500c6b8d35",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "6a7d3cc4-b97e-440c-a58b-4110dd88df8b",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "f35bf25d-8f33-499c-bb23-04b232dc456c",
+    "type": "concept",
+    "terms": [
+      "vibrational_mode"
+    ]
+  },
+  {
+    "cluster_id": "6aa5f289-52d8-4f0c-a1cf-4e0f1a8863b9",
+    "type": "concept",
+    "terms": [
+      "uncertainty_quantification"
+    ]
+  },
+  {
+    "cluster_id": "5092d0a8-7283-4809-b2fc-9e4050ef5027",
+    "type": "concept",
+    "terms": [
+      "jacobian"
+    ]
+  },
+  {
+    "cluster_id": "878a169d-8cd8-4108-b71b-d39f69e17d6c",
+    "type": "concept",
+    "terms": [
+      "average_charge"
+    ]
+  },
+  {
+    "cluster_id": "0862e3bf-6630-4374-95c6-1302e430bb4e",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "106dcfc2-cc39-40ef-aba4-dddc793327fa",
+    "type": "concept",
+    "terms": [
+      "molecular_composition"
+    ]
+  },
+  {
+    "cluster_id": "d83c6118-15ae-4ac0-a18b-7e4822dec808",
+    "type": "concept",
+    "terms": [
+      "integration_time"
+    ]
+  },
+  {
+    "cluster_id": "c41957ed-3a03-493f-883c-9319348aed28",
+    "type": "concept",
+    "terms": [
+      "molecular_composition"
+    ]
+  },
+  {
+    "cluster_id": "09f17409-be5d-44bf-b060-a2f67c994f64",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "0fcd5a96-68bd-4a1a-b2b0-af7f48381344",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "daa71d87-eace-4918-a824-338e927fb2ec",
+    "type": "concept",
+    "terms": [
+      "kinetic_energy_density"
+    ]
+  },
+  {
+    "cluster_id": "2e54177f-823a-4cfb-b66a-a177f96cf5ad",
+    "type": "concept",
+    "terms": [
+      "effective_charge"
+    ]
+  },
+  {
+    "cluster_id": "2ea088c3-8dc8-4f82-bd0c-ab84fc0a3bf9",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_velocity"
+    ]
+  },
+  {
+    "cluster_id": "31fb327f-caf4-4548-87ec-77e81c791d1a",
+    "type": "concept",
+    "terms": [
+      "kinetic_energy_density"
+    ]
+  },
+  {
+    "cluster_id": "11650947-b1dd-488e-b6d1-4cefcd511e9b",
+    "type": "concept",
+    "terms": [
+      "neutral_pressure"
+    ]
+  },
+  {
+    "cluster_id": "9fad9364-8026-4230-9db0-f55af3e5fcd1",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "e397080a-8305-4587-bdf9-4e7ab64ef88b",
+    "type": "concept",
+    "terms": [
+      "kinetic_energy_density"
+    ]
+  },
+  {
+    "cluster_id": "93e6847e-c509-42ec-9783-e6058742c0b3",
+    "type": "concept",
+    "terms": [
+      "neutral_pressure"
+    ]
+  },
+  {
+    "cluster_id": "02c6a0ff-b28d-434a-ae49-79ba6693dff2",
+    "type": "concept",
+    "terms": [
+      "energy_density"
+    ]
+  },
+  {
+    "cluster_id": "d3ab957f-1016-4ec0-b29a-83ebf0557994",
+    "type": "concept",
+    "terms": [
+      "electrostatic_potential"
+    ]
+  },
+  {
+    "cluster_id": "4622fe98-2aeb-422e-9d7f-fca960494d55",
+    "type": "concept",
+    "terms": [
+      "turbulent_flux"
+    ]
+  },
+  {
+    "cluster_id": "fad5b56f-90e1-4ac7-b378-de9534baefe4",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "9c5c05ac-62e2-43fb-abb4-fc38b43be1aa",
+    "type": "concept",
+    "terms": [
+      "wetted_area"
+    ]
+  },
+  {
+    "cluster_id": "7ccc864d-80c8-40f4-9431-c4a6a0e178c6",
+    "type": "concept",
+    "terms": [
+      "electrical_resistivity"
+    ]
+  },
+  {
+    "cluster_id": "a03148b2-6dd9-4e6a-a73d-8d06688ca93c",
+    "type": "concept",
+    "terms": [
+      "machine_geometry"
+    ]
+  },
+  {
+    "cluster_id": "d6ae6c88-ef7f-4a99-9b4a-1996bb9dd411",
+    "type": "concept",
+    "terms": [
+      "temporary_storage"
+    ]
+  },
+  {
+    "cluster_id": "78a8f426-2f1e-41f6-ba29-f70c87e78d15",
+    "type": "concept",
+    "terms": [
+      "identifier"
+    ]
+  },
+  {
+    "cluster_id": "04e8c98b-5947-4f4c-b90b-8294e6ecc496",
+    "type": "concept",
+    "terms": [
+      "identifier"
+    ]
+  },
+  {
+    "cluster_id": "40e0720e-4883-40f7-a27f-62b7bc9f49e5",
+    "type": "concept",
+    "terms": [
+      "identifier"
+    ]
+  },
+  {
+    "cluster_id": "3eafbd3a-2c92-47b6-be74-07cfd6355130",
+    "type": "concept",
+    "terms": [
+      "metadata_description"
+    ]
+  },
+  {
+    "cluster_id": "a6980c9f-46fb-41f6-9d86-651c6076d1a1",
+    "type": "concept",
+    "terms": [
+      "metadata_description"
+    ]
+  },
+  {
+    "cluster_id": "9fa6ff6a-0e7f-4395-9adc-5a9c9c2c9fe9",
+    "type": "concept",
+    "terms": [
+      "stark_effect"
+    ]
+  },
+  {
+    "cluster_id": "9f0e38b8-02fa-4909-8259-8530d97fe81b",
+    "type": "concept",
+    "terms": [
+      "neutral_velocity"
+    ]
+  },
+  {
+    "cluster_id": "09b82c0c-3cae-473c-9cf8-9ab4f3b85831",
+    "type": "concept",
+    "terms": [
+      "optical_geometry"
+    ]
+  },
+  {
+    "cluster_id": "49043e05-0957-412d-bf0b-99c1ece64084",
+    "type": "concept",
+    "terms": [
+      "optical_surface"
+    ]
+  },
+  {
+    "cluster_id": "e70e760c-6ff7-4584-9c1f-72c6d03caeae",
+    "type": "concept",
+    "terms": [
+      "etendue"
+    ]
+  },
+  {
+    "cluster_id": "cf204fb4-75d7-4c90-a4a2-052dff6f1d89",
+    "type": "concept",
+    "terms": [
+      "wavelength"
+    ]
+  },
+  {
+    "cluster_id": "0ce7efb8-0ab9-4db7-a6e0-14f25a0dce72",
+    "type": "concept",
+    "terms": [
+      "toroidal_angle"
+    ]
+  },
+  {
+    "cluster_id": "ac4fd481-3fdb-49f0-9e63-fd2d999d03b0",
+    "type": "concept",
+    "terms": [
+      "voxel_geometry"
+    ]
+  },
+  {
+    "cluster_id": "410f31fc-9087-4e3c-945f-61b20f45df00",
+    "type": "concept",
+    "terms": [
+      "optical_curvature"
+    ]
+  },
+  {
+    "cluster_id": "b5d5bd7e-346f-4ae5-8c0e-4fab82dbd669",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "ef12432d-4a1f-4f48-a181-4c853b02d5de",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "232375d9-b7a3-4676-b909-bdf779b308d0",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "a7527f5f-57b7-4eb3-9528-0858be6d0fba",
+    "type": "concept",
+    "terms": [
+      "position_vector"
+    ]
+  },
+  {
+    "cluster_id": "2daa2a42-f071-4bfc-bbea-18e7106485cc",
+    "type": "concept",
+    "terms": [
+      "boundary_outline"
+    ]
+  },
+  {
+    "cluster_id": "358c8e7c-caa6-438a-9fe6-f4e38a7e562d",
+    "type": "concept",
+    "terms": [
+      "curvature_type"
+    ]
+  },
+  {
+    "cluster_id": "731a546f-a3ed-4927-92a5-40eb29f73d9c",
+    "type": "concept",
+    "terms": [
+      "refractive_index"
+    ]
+  },
+  {
+    "cluster_id": "da3295b1-a6d9-43e9-b4e4-ddbfd19058c5",
+    "type": "concept",
+    "terms": [
+      "radial_coordinate"
+    ]
+  },
+  {
+    "cluster_id": "54d53456-42a0-4a55-91ed-5166e3f5adac",
+    "type": "concept",
+    "terms": [
+      "calibration_factor"
+    ]
+  },
+  {
+    "cluster_id": "06f92869-f14f-4c73-af64-511291c2ee63",
+    "type": "concept",
+    "terms": [
+      "detector_voltage"
+    ]
+  },
+  {
+    "cluster_id": "16a599f7-38e8-40db-8de4-9fd65daf625f",
+    "type": "concept",
+    "terms": [
+      "fiber_position"
+    ]
+  },
+  {
+    "cluster_id": "88c3e544-5b8f-44b6-89c9-3d9613b3e3e8",
+    "type": "concept",
+    "terms": [
+      "voxel_index"
+    ]
+  },
+  {
+    "cluster_id": "548cbf7c-bff0-423e-82ed-e252106a1fd2",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "9ff664ab-0218-404d-bfb5-7c43dc8a47f2",
+    "type": "concept",
+    "terms": [
+      "calibration_date"
+    ]
+  },
+  {
+    "cluster_id": "d5c0b728-1990-4897-ae6e-b4150b6cdc45",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "5b15a5db-e0d7-42af-85fd-837f6cb57ebf",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "499bedec-c2cf-4efb-8779-b014fb880027",
+    "type": "concept",
+    "terms": [
+      "spectral_line"
+    ]
+  },
+  {
+    "cluster_id": "3d4ce984-701a-42c1-9799-e38b63bcb71a",
+    "type": "concept",
+    "terms": [
+      "time_vector"
+    ]
+  },
+  {
+    "cluster_id": "a0ac7a32-cc65-4876-955d-00753d4a67f3",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "1dccdacd-b10d-4c6c-abc7-0ed5aa494dda",
+    "type": "concept",
+    "terms": [
+      "vertical_coordinate"
+    ]
+  },
+  {
+    "cluster_id": "ea0aee2f-a61e-4c4a-aa82-7c8433755a67",
+    "type": "concept",
+    "terms": [
+      "boundary_outline"
+    ]
+  },
+  {
+    "cluster_id": "1a3da1b2-81a1-4ee0-bfe3-04b564d8d18c",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "61523b18-6a45-4374-bde8-5a267eefcd3e",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "a8ea4fbe-f24c-4dd7-bfbd-ac39b9fc64c4",
+    "type": "concept",
+    "terms": [
+      "grid_dimension"
+    ]
+  },
+  {
+    "cluster_id": "0b46e333-1aae-4a99-809e-e13c65396cf3",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "1bb1bcb0-eff1-459e-9573-c991f99da132",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "663bf42d-34dd-4156-aff1-0ed0b458676e",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "49bcf572-e8c1-4d14-9b77-306f84a21e94",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "e3dbbdb5-8a85-45a9-882c-dbf98a12432d",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "2d49e6c0-e1c1-4d0f-a20b-3b5081c33fe0",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "58183a6f-6ceb-4cef-841b-331363556026",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "e470d0f0-847c-4dd3-b621-5b56736acba8",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "bcb0182b-26fb-484f-b613-fe55d229b235",
+    "type": "concept",
+    "terms": [
+      "unit_vector"
+    ]
+  },
+  {
+    "cluster_id": "f1b779bc-a087-4b5f-a573-4a682ddd97a3",
+    "type": "concept",
+    "terms": [
+      "isotope_ratio"
+    ]
+  },
+  {
+    "cluster_id": "7b4d6a33-3ec6-4540-8e3f-65cbb6c39605",
+    "type": "concept",
+    "terms": [
+      "component_radius"
+    ]
+  },
+  {
+    "cluster_id": "fae2bdc8-9231-4d8a-9974-c64161890782",
+    "type": "concept",
+    "terms": [
+      "runaway_momentum"
+    ]
+  },
+  {
+    "cluster_id": "2cb64987-7a06-46ca-a07b-5550baa39bd0",
+    "type": "concept",
+    "terms": [
+      "launcher_geometry"
+    ]
+  },
+  {
+    "cluster_id": "c4786c39-b949-4682-829b-a872a1eabf3b",
+    "type": "concept",
+    "terms": [
+      "polarization"
+    ]
+  },
+  {
+    "cluster_id": "5b784e1f-d290-4e11-828a-64691014865c",
+    "type": "concept",
+    "terms": [
+      "steering_angle"
+    ]
+  },
+  {
+    "cluster_id": "d86bf91e-d9c8-4ebd-96f0-c0a25d9013a0",
+    "type": "concept",
+    "terms": [
+      "wave_vector"
+    ]
+  },
+  {
+    "cluster_id": "198983ac-b9b4-45bb-9ff5-974d813b2d34",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "a0402b25-7a4b-44b1-8030-7732a1930615",
+    "type": "concept",
+    "terms": [
+      "vibrational_mode"
+    ]
+  },
+  {
+    "cluster_id": "1f35097c-7699-46ee-8b89-daa588bf38f4",
+    "type": "concept",
+    "terms": [
+      "atomic_state"
+    ]
+  },
+  {
+    "cluster_id": "f6dd0ba2-13a4-4585-9cc1-77d9d1f570b0",
+    "type": "concept",
+    "terms": [
+      "orbit_topology"
+    ]
+  },
+  {
+    "cluster_id": "ac44c4eb-025a-4915-be87-97f28e6bdf64",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "2b02559b-5e98-4f34-a022-67498d257c67",
+    "type": "concept",
+    "terms": [
+      "collisional_heating"
+    ]
+  },
+  {
+    "cluster_id": "9e314aad-3f24-4298-8753-014d572fc228",
+    "type": "concept",
+    "terms": [
+      "thermalization"
+    ]
+  },
+  {
+    "cluster_id": "b687d798-a121-4f28-bfed-db24aa08a61e",
+    "type": "concept",
+    "terms": [
+      "orbit_integrals"
+    ]
+  },
+  {
+    "cluster_id": "7f12c616-682a-4bb3-8798-44ffe4a5904c",
+    "type": "concept",
+    "terms": [
+      "toroidal_torque"
+    ]
+  },
+  {
+    "cluster_id": "6df48dd6-e31c-455e-975e-6b02f9dd48ba",
+    "type": "concept",
+    "terms": [
+      "toroidal_torque"
+    ]
+  },
+  {
+    "cluster_id": "abc2b1c7-c2d3-458a-a926-269c17350d59",
+    "type": "concept",
+    "terms": [
+      "fast_particle_density"
+    ]
+  },
+  {
+    "cluster_id": "13b7e14c-70d8-4791-873d-d5224eb03ab5",
+    "type": "concept",
+    "terms": [
+      "anisotropic_pressure"
+    ]
+  },
+  {
+    "cluster_id": "65a0b12c-ef67-4505-9465-e98c35d2f687",
+    "type": "concept",
+    "terms": [
+      "jx_b_torque"
+    ]
+  },
+  {
+    "cluster_id": "baee4546-844b-4110-933b-74e5b8173a84",
+    "type": "concept",
+    "terms": [
+      "torque_density"
+    ]
+  },
+  {
+    "cluster_id": "16172830-ea17-4223-86f5-66046975f5b4",
+    "type": "concept",
+    "terms": [
+      "torque_density"
+    ]
+  },
+  {
+    "cluster_id": "1e1e91e3-4615-4664-b2ee-992b85548131",
+    "type": "concept",
+    "terms": [
+      "torque_density"
+    ]
+  },
+  {
+    "cluster_id": "7c73e930-6dfa-49c9-98b1-fad87c34b2a0",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "7827ba65-1de1-4e40-a037-3353bb8bcb95",
+    "type": "concept",
+    "terms": [
+      "orbit_frequency"
+    ]
+  },
+  {
+    "cluster_id": "e121d4d6-89d4-406d-afb7-a4f194728fef",
+    "type": "concept",
+    "terms": [
+      "rf_heating"
+    ]
+  },
+  {
+    "cluster_id": "f3734324-9d2e-4f63-beac-dbe1bcb7d581",
+    "type": "concept",
+    "terms": [
+      "nbi_heating"
+    ]
+  },
+  {
+    "cluster_id": "b151e975-f0ff-4051-80ed-73ac0739dca6",
+    "type": "concept",
+    "terms": [
+      "ntm_location"
+    ]
+  },
+  {
+    "cluster_id": "e90fd2a9-603c-4e8a-9441-63308865ec91",
+    "type": "concept",
+    "terms": [
+      "mode_number"
+    ]
+  },
+  {
+    "cluster_id": "14a00f1b-f388-4225-b56b-c7244b350db5",
+    "type": "concept",
+    "terms": [
+      "mode_number"
+    ]
+  },
+  {
+    "cluster_id": "3c9854fc-b197-4fcb-8d8e-f915a3d0ef66",
+    "type": "concept",
+    "terms": [
+      "delta_w",
+      "mode_torque"
+    ]
+  },
+  {
+    "cluster_id": "7d36803d-a00d-47a2-8fd9-7a2afd9bc344",
+    "type": "concept",
+    "terms": [
+      "mode_frequency"
+    ]
+  },
+  {
+    "cluster_id": "ba254c07-be4c-48fb-833d-1720f5db822d",
+    "type": "concept",
+    "terms": [
+      "island_width"
+    ]
+  },
+  {
+    "cluster_id": "25a42719-c48e-4999-91ef-835da58b4a4a",
+    "type": "concept",
+    "terms": [
+      "gas_flow_rate"
+    ]
+  },
+  {
+    "cluster_id": "dccd1bc7-7afa-4c38-8dab-206029df3fca",
+    "type": "concept",
+    "terms": [
+      "pellet_density"
+    ]
+  },
+  {
+    "cluster_id": "da690b72-49c2-4208-8388-dc4e5ac56b5c",
+    "type": "concept",
+    "terms": [
+      "atomic_number"
+    ]
+  },
+  {
+    "cluster_id": "c8b0b10c-c4b6-4931-b0af-2aa181d33ed8",
+    "type": "concept",
+    "terms": [
+      "toroidal_position"
+    ]
+  },
+  {
+    "cluster_id": "4f904d83-f811-4f34-95a6-08711a66a2e1",
+    "type": "concept",
+    "terms": [
+      "shatter_cone_geometry"
+    ]
+  },
+  {
+    "cluster_id": "233a9523-56c7-456a-a9be-f87cb2f679dc",
+    "type": "concept",
+    "terms": [
+      "pellet_velocity"
+    ]
+  },
+  {
+    "cluster_id": "3931c618-fead-417e-aaaa-1f9898472b0c",
+    "type": "concept",
+    "terms": [
+      "particle_inventory"
+    ]
+  },
+  {
+    "cluster_id": "1e8281da-7308-48f2-9e0c-ae9d480b8da3",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "5d3d18a7-81e5-4429-9895-166797e18d7e",
+    "type": "concept",
+    "terms": [
+      "nuclear_heating"
+    ]
+  },
+  {
+    "cluster_id": "748067f6-1f60-4581-bf7a-04cd145f1987",
+    "type": "concept",
+    "terms": [
+      "quantum_state"
+    ]
+  },
+  {
+    "cluster_id": "10db07a1-5f8a-4ebb-a0b7-a7008681afc5",
+    "type": "concept",
+    "terms": [
+      "shinethrough_fraction"
+    ]
+  },
+  {
+    "cluster_id": "4de959e3-2b5a-4f75-b845-638cab13c7a3",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "73a3fc6d-61f0-480d-8ede-2a2b60864782",
+    "type": "concept",
+    "terms": [
+      "orbit_integrals"
+    ]
+  },
+  {
+    "cluster_id": "d0510441-d3bb-4b98-8030-cde0a675c673",
+    "type": "concept",
+    "terms": [
+      "orbit_integrals"
+    ]
+  },
+  {
+    "cluster_id": "38a793c9-22f9-499e-87fd-85826d6707f8",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "b71288c0-d049-487c-a200-45a4f0ea66e6",
+    "type": "concept",
+    "terms": [
+      "atomic_process"
+    ]
+  },
+  {
+    "cluster_id": "4714c95e-839f-4267-9d50-11384a1924b5",
+    "type": "concept",
+    "terms": [
+      "electron_configuration"
+    ]
+  },
+  {
+    "cluster_id": "6ca6be18-f0e4-4508-b67d-4b6bd83517c2",
+    "type": "concept",
+    "terms": [
+      "pumping_speed"
+    ]
+  },
+  {
+    "cluster_id": "5ad73d41-601b-47dc-accf-5ca6b355dfe7",
+    "type": "concept",
+    "terms": [
+      "nuclear_heating"
+    ]
+  },
+  {
+    "cluster_id": "34266162-c681-420f-8258-536fe89b0c6a",
+    "type": "concept",
+    "terms": [
+      "sputtering_yield"
+    ]
+  },
+  {
+    "cluster_id": "305c006a-5783-4af4-bd04-dc5b1825e52b",
+    "type": "concept",
+    "terms": [
+      "vibrational_level"
+    ]
+  },
+  {
+    "cluster_id": "3f492a47-9f73-4c84-93f6-d495b1cf0a7f",
+    "type": "concept",
+    "terms": [
+      "vibrational_mode"
+    ]
+  },
+  {
+    "cluster_id": "67bb22b2-83ee-49de-8dfb-e9996c41477f",
+    "type": "concept",
+    "terms": [
+      "resistivity"
+    ]
+  },
+  {
+    "cluster_id": "b65dc38e-bdd8-48e3-b99a-ae584ffbe662",
+    "type": "concept",
+    "terms": [
+      "eddy_currents"
+    ]
+  },
+  {
+    "cluster_id": "fafb46b8-4acc-432f-a539-1295ec306126",
+    "type": "concept",
+    "terms": [
+      "recycling_coefficient"
+    ]
+  },
+  {
+    "cluster_id": "c975eb2e-06c3-46ae-90e3-06f08d01f893",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "c94da28d-c8d8-4077-8a3e-c43e7487a00c",
+    "type": "concept",
+    "terms": [
+      "recycling_coefficient"
+    ]
+  },
+  {
+    "cluster_id": "a52a0476-d445-42a8-9162-43886e66534d",
+    "type": "concept",
+    "terms": [
+      "surface_reflectivity"
+    ]
+  },
+  {
+    "cluster_id": "b6e6be98-f705-4aec-873d-6df235f81004",
+    "type": "concept",
+    "terms": [
+      "workflow_control"
+    ]
+  },
+  {
+    "cluster_id": "11c79e50-a7a0-454f-b0dc-d190d9c06cd8",
+    "type": "concept",
+    "terms": [
+      "average_charge_state"
+    ]
+  },
+  {
+    "cluster_id": "c6f6d71a-66d6-475c-a42d-38690ec0e24f",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_velocity"
+    ]
+  },
+  {
+    "cluster_id": "c9c00da2-2265-4021-8377-f921757309e5",
+    "type": "concept",
+    "terms": [
+      "pellet_injection"
+    ]
+  },
+  {
+    "cluster_id": "c6d79c24-90d2-4fd8-9ec0-1cc29ec0d015",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "1f41b572-5886-4ba9-96d5-675e808bd361",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "b7656c78-19f0-4df2-be4f-a5231f6fd57e",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "e7dbb1f6-b769-4225-854a-6ac70de764f7",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "12e5ab4e-0fe8-4290-9ba6-fd2cac0282e6",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "539f215a-6ecf-4003-836f-40508a3b3e88",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "75bf1354-fa61-476b-bc89-fd1497096c11",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "ac8da128-9638-49b4-9777-570bcfba59c6",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "c7ba5c91-d9dc-4d49-b3e1-48d557379d68",
+    "type": "concept",
+    "terms": [
+      "data_quality"
+    ]
+  },
+  {
+    "cluster_id": "0b4b0da3-7728-4642-9249-c10d80d8f499",
+    "type": "concept",
+    "terms": [
+      "phase_correction"
+    ]
+  },
+  {
+    "cluster_id": "030033b7-866e-4fea-b31c-52b6a63a98cc",
+    "type": "concept",
+    "terms": [
+      "thermal_power"
+    ]
+  },
+  {
+    "cluster_id": "9c6eeb40-f547-4c69-843c-7538cbb2ff6d",
+    "type": "concept",
+    "terms": [
+      "electrical_power"
+    ]
+  },
+  {
+    "cluster_id": "793fc730-6402-454f-a769-6e1f075d26bb",
+    "type": "concept",
+    "terms": [
+      "system_description"
+    ]
+  },
+  {
+    "cluster_id": "0686dc85-4c5c-4263-b236-69e7ae207898",
+    "type": "concept",
+    "terms": [
+      "system_identity"
+    ]
+  },
+  {
+    "cluster_id": "66a7f1c8-0f8b-4e54-bbdc-219843d28f4b",
+    "type": "concept",
+    "terms": [
+      "optical_transmission"
+    ]
+  },
+  {
+    "cluster_id": "9bd8cc7b-8fcb-493b-850b-f21c5e36d4a2",
+    "type": "concept",
+    "terms": [
+      "lens_geometry"
+    ]
+  },
+  {
+    "cluster_id": "576ca923-aaaf-4611-80b6-1e5299d9b1ae",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "7e5f2b78-311e-46a0-8207-cd6ae5f2f30e",
+    "type": "concept",
+    "terms": [
+      "refractive_index"
+    ]
+  },
+  {
+    "cluster_id": "57b28c70-6ad6-4f57-8dc0-3a7c2677fdda",
+    "type": "concept",
+    "terms": [
+      "surface_temperature"
+    ]
+  },
+  {
+    "cluster_id": "be1f6795-eb5d-47c6-a660-4191c20b4698",
+    "type": "concept",
+    "terms": [
+      "optical_design"
+    ]
+  },
+  {
+    "cluster_id": "80e79c08-e4b4-4e98-adc2-1de8d02d8cb5",
+    "type": "concept",
+    "terms": [
+      "sensor_resolution"
+    ]
+  },
+  {
+    "cluster_id": "237f90e8-a175-4cb1-ad1d-09415ddbf596",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "8d2e8a99-413b-448b-9955-41cf8e581ec5",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "677cb02e-c649-4e45-898a-6a0e6352afe1",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "baa6d223-cbe9-4308-a455-347f14923ced",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "f4527f79-cb0a-4ecd-8476-99074d08c628",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "971b71dc-4252-4366-9f98-d60e6ade99bc",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "0b3298f8-a6b8-4a31-97e8-873fe157ca9f",
+    "type": "concept",
+    "terms": [
+      "instrument_status"
+    ]
+  },
+  {
+    "cluster_id": "25c4499a-484e-4637-80ae-67a3aac3afd7",
+    "type": "concept",
+    "terms": [
+      "instrument_orientation"
+    ]
+  },
+  {
+    "cluster_id": "c6fbc795-1423-4733-a208-e510898c1632",
+    "type": "concept",
+    "terms": [
+      "neutron_emissivity"
+    ]
+  },
+  {
+    "cluster_id": "d0a5779a-8ad7-4879-b3df-cb48b5cdb127",
+    "type": "concept",
+    "terms": [
+      "neutron_emissivity"
+    ]
+  },
+  {
+    "cluster_id": "55253f32-6dba-45ed-9e8d-0805bfb68a8d",
+    "type": "concept",
+    "terms": [
+      "signal_processing_parameters"
+    ]
+  },
+  {
+    "cluster_id": "e08971f4-36e3-47ef-a6c0-f809b1150379",
+    "type": "concept",
+    "terms": [
+      "signal_processing_parameters"
+    ]
+  },
+  {
+    "cluster_id": "571d71b0-10e3-4aaf-84c8-0a9337a97257",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "7d2afe8e-a94d-4f5b-8929-5c690eeefbba",
+    "type": "concept",
+    "terms": [
+      "detector_properties"
+    ]
+  },
+  {
+    "cluster_id": "e730eb02-23ee-45f9-8fbe-9b236e4dd00e",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "c5ba1905-5151-48db-aa27-5fcab97f53e0",
+    "type": "concept",
+    "terms": [
+      "reconstruction_method"
+    ]
+  },
+  {
+    "cluster_id": "631fdd31-119f-4075-94be-30d219d5c482",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "afe5a0f7-d2e9-4764-8a41-7cd68bf92f4d",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "f08235fb-304a-46ef-94ce-24d2ae9e6c13",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "dfa1a428-3061-4e78-816f-70ce697554ab",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "c13b7691-d136-43d0-9045-0dd3ab43e84f",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "8ddc8caf-92c1-44ba-a7f7-ddcfc190abd8",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "2363a5ee-66a5-42ad-bec9-aef93b41aaa5",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "dee1466d-2184-46a6-b676-9fe3ef475f44",
+    "type": "concept",
+    "terms": [
+      "power_supply_monitoring"
+    ]
+  },
+  {
+    "cluster_id": "dafe3c14-cfb4-4de9-aa89-86bcf563e9a3",
+    "type": "concept",
+    "terms": [
+      "power_supply_monitoring"
+    ]
+  },
+  {
+    "cluster_id": "48f61e8b-d4ee-4ed1-ba52-32139a903de3",
+    "type": "concept",
+    "terms": [
+      "sensor_monitoring"
+    ]
+  },
+  {
+    "cluster_id": "f624b1bd-48b4-4c75-96ea-f3870751d7a7",
+    "type": "concept",
+    "terms": [
+      "neutron_flux"
+    ]
+  },
+  {
+    "cluster_id": "2557d08e-beab-41a7-a625-7ac4b6995c25",
+    "type": "concept",
+    "terms": [
+      "pf_coil_geometry"
+    ]
+  },
+  {
+    "cluster_id": "c3beafa0-aa69-4b53-a72a-ee532344d917",
+    "type": "concept",
+    "terms": [
+      "pf_coil_geometry"
+    ]
+  },
+  {
+    "cluster_id": "d8e3ed4b-5410-4ccf-af5a-44f7ffb6a18b",
+    "type": "concept",
+    "terms": [
+      "pf_coil_geometry"
+    ]
+  },
+  {
+    "cluster_id": "5c6d4dc5-5d16-431f-92fc-397f09d65907",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "16473a87-6064-428d-bc89-85781a726213",
+    "type": "concept",
+    "terms": [
+      "optical_filter_properties"
+    ]
+  },
+  {
+    "cluster_id": "48c94492-0645-4aca-aebf-04e1180afe39",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "9c34fc3c-edfd-4b78-b8d8-3ce5beb6c90e",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "4af06f8f-4763-41ab-9713-a6d18d1e3417",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "07f5252d-2525-43d0-a643-99071073b150",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "2060a520-c068-4291-867b-60427b72fc36",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "ef731d38-4575-4a92-8b1a-0b01798fa976",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "478974a4-8d79-42c5-ad9e-0bc81f38a1a2",
+    "type": "concept",
+    "terms": [
+      "sxr_brightness"
+    ]
+  },
+  {
+    "cluster_id": "94fbe1ef-8685-41e3-94d7-49b70a70784c",
+    "type": "concept",
+    "terms": [
+      "photon_energy_range"
+    ]
+  },
+  {
+    "cluster_id": "095ba6b1-7778-4282-b107-f54b56ad7bdc",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "6ea5726d-1a96-4dc3-bde9-d0b84d81b6fd",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "c177d2d4-8d2a-4205-9310-dc2f5f39bebb",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "f410f230-4552-458b-951f-876a58a5552c",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "03562773-d7a9-4748-b574-e14475e4e02e",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "90dd3175-bf6e-48e7-b291-9e0186530a57",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "f97b2080-e960-4881-8908-adbc2a0aecf1",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "6c5595b1-f117-4124-b40c-474060193634",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "4ab77863-7ca1-407f-843f-295934099d2d",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "c2c97075-4d75-428c-ab45-bf06f36a402d",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "dfdecd78-ab59-4dd6-9d55-b5fe1426bf16",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "594f9b7c-6e54-42c2-84cb-c246970c71b9",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "138d5258-db70-4b28-8c39-6c127c4ea3f9",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "1a8d5034-2910-41e3-914b-a450252bc4f6",
+    "type": "concept",
+    "terms": [
+      "diagnostic_position"
+    ]
+  },
+  {
+    "cluster_id": "c3aff39d-c1ef-4e09-a4de-d7ec39a1cff9",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "33d74022-5b10-443c-aea0-db1f7c4c0f1f",
+    "type": "concept",
+    "terms": [
+      "atomic_state"
+    ]
+  },
+  {
+    "cluster_id": "f843bbc2-00fc-4144-9410-a306ae5749cd",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "a1585617-f5db-4307-9c4c-ee98cf7b34d7",
+    "type": "concept",
+    "terms": [
+      "molecular_state"
+    ]
+  },
+  {
+    "cluster_id": "1ffa02b4-d915-44dc-bc3d-73184ad2d151",
+    "type": "concept",
+    "terms": [
+      "vibrational_mode"
+    ]
+  },
+  {
+    "cluster_id": "f942a2ba-f6c7-4986-b122-7a8a56039837",
+    "type": "concept",
+    "terms": [
+      "uncertainty_quantification"
+    ]
+  },
+  {
+    "cluster_id": "df7b953e-58d8-4d8a-957a-4bd3fb19b82d",
+    "type": "concept",
+    "terms": [
+      "effective_charge"
+    ]
+  },
+  {
+    "cluster_id": "a0ab1416-02c7-4b6d-a070-c0c0ae5428c1",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "2ade1e5b-6004-4619-82eb-af04840e230e",
+    "type": "concept",
+    "terms": [
+      "molecular_composition"
+    ]
+  },
+  {
+    "cluster_id": "0ad0dbfd-5071-48e3-a899-44a98420b9e4",
+    "type": "concept",
+    "terms": [
+      "integration_time"
+    ]
+  },
+  {
+    "cluster_id": "694b6e80-612e-4ed0-a915-c99ea73f33ba",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "2c713e67-cf92-47e3-8647-60ceecdc44eb",
+    "type": "concept",
+    "terms": [
+      "data_processing_method"
+    ]
+  },
+  {
+    "cluster_id": "a318ed62-35d4-4d42-8cb7-ed70e0d5f8a1",
+    "type": "concept",
+    "terms": [
+      "rho_pol_norm"
+    ]
+  },
+  {
+    "cluster_id": "1cbb8d35-431d-4071-a5d2-508fbe282c0e",
+    "type": "concept",
+    "terms": [
+      "rho_tor_norm"
+    ]
+  },
+  {
+    "cluster_id": "9845659f-280f-4478-878b-d37694a12c1b",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "1e8ac2b2-1524-43d2-85e1-1333260b511e",
+    "type": "concept",
+    "terms": [
+      "atomic_number"
+    ]
+  },
+  {
+    "cluster_id": "de6f6fd4-7655-478c-ae56-8d72718d6785",
+    "type": "concept",
+    "terms": [
+      "data_source"
+    ]
+  },
+  {
+    "cluster_id": "48dab2a1-22f3-47b6-8284-b06454080730",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "2a19bf0f-d05c-467b-b836-a6ef9081e109",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "f2cc0e6e-7d53-4619-9e9f-927c0d58afed",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "51636780-b404-4231-b619-f1ab783bc858",
+    "type": "concept",
+    "terms": [
+      "grid_subset"
+    ]
+  },
+  {
+    "cluster_id": "c9ed1aac-756c-450f-980e-c72a20a75dbd",
+    "type": "concept",
+    "terms": [
+      "grid_identifier"
+    ]
+  },
+  {
+    "cluster_id": "f7d93e97-2035-4227-99af-976fb0534918",
+    "type": "concept",
+    "terms": [
+      "energy_density"
+    ]
+  },
+  {
+    "cluster_id": "df1913c9-3a2d-4c33-870d-6ebafb503898",
+    "type": "concept",
+    "terms": [
+      "z_effective"
+    ]
+  },
+  {
+    "cluster_id": "d7a4882f-1d03-48b6-af94-e82948ad88f9",
+    "type": "concept",
+    "terms": [
+      "drift_velocity"
+    ]
+  },
+  {
+    "cluster_id": "806d4901-e14a-4635-bf52-319adff75376",
+    "type": "concept",
+    "terms": [
+      "pfirsch_schlueter_current"
+    ]
+  },
+  {
+    "cluster_id": "709a069a-46ed-4520-8dd3-96db0de07528",
+    "type": "concept",
+    "terms": [
+      "viscous_current"
+    ]
+  },
+  {
+    "cluster_id": "81bd7533-a04a-4882-b388-ddf733a3af1e",
+    "type": "concept",
+    "terms": [
+      "ggd_coefficients"
+    ]
+  },
+  {
+    "cluster_id": "10144de0-bdd3-4f85-8250-c8731b799305",
+    "type": "concept",
+    "terms": [
+      "ggd_coefficients"
+    ]
+  },
+  {
+    "cluster_id": "65105fda-9156-44c3-bb91-7122d678d102",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_velocity"
+    ]
+  },
+  {
+    "cluster_id": "cb6f0232-ee5b-4851-8d98-4b79db587868",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_current"
+    ]
+  },
+  {
+    "cluster_id": "e993edca-47bf-46ab-9bed-7fb3b0107eee",
+    "type": "concept",
+    "terms": [
+      "viscous_current"
+    ]
+  },
+  {
+    "cluster_id": "f0faeb20-7120-42f9-9d3c-586d4cf8dc53",
+    "type": "concept",
+    "terms": [
+      "ggd_coefficients"
+    ]
+  },
+  {
+    "cluster_id": "b55d4105-c197-4daa-9090-1f414baefb87",
+    "type": "concept",
+    "terms": [
+      "ggd_coefficients"
+    ]
+  },
+  {
+    "cluster_id": "1d45afff-2734-4b04-af32-ad6dfeec5150",
+    "type": "concept",
+    "terms": [
+      "anisotropic_pressure"
+    ]
+  },
+  {
+    "cluster_id": "4d4f8eca-3c2e-40f5-a834-5e0b57fc724e",
+    "type": "concept",
+    "terms": [
+      "kinetic_energy_density"
+    ]
+  },
+  {
+    "cluster_id": "7d59f288-8685-4db3-83b2-adda921c0635",
+    "type": "concept",
+    "terms": [
+      "average_charge_state"
+    ]
+  },
+  {
+    "cluster_id": "c101fd0e-039a-4334-84c6-f713285bf858",
+    "type": "concept",
+    "terms": [
+      "neutral_pressure"
+    ]
+  },
+  {
+    "cluster_id": "58a40240-e9b7-4959-bcc7-c67236ff1b45",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "984dc9af-0cd8-4660-b8d2-6b28c17ba513",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "4b84d01f-40f3-4f6b-8b1c-c2b35ab4bb2b",
+    "type": "concept",
+    "terms": [
+      "kinetic_energy_density"
+    ]
+  },
+  {
+    "cluster_id": "2bf18ef9-ea71-4a92-b10e-c361a1a5c7f7",
+    "type": "concept",
+    "terms": [
+      "neutral_pressure"
+    ]
+  },
+  {
+    "cluster_id": "37b38e9d-4f38-43fa-b4ee-f21bebadf8ca",
+    "type": "concept",
+    "terms": [
+      "floating_potential",
+      "plasma_potential"
+    ]
+  },
+  {
+    "cluster_id": "2a21da08-85af-42c8-8421-2a2661020894",
+    "type": "concept",
+    "terms": [
+      "mach_number"
+    ]
+  },
+  {
+    "cluster_id": "a3ca2e01-b6f8-4bb6-b6bd-bed4dd889167",
+    "type": "concept",
+    "terms": [
+      "coulomb_logarithm"
+    ]
+  },
+  {
+    "cluster_id": "629c2987-93a5-4abc-ae18-95c2e9f98f77",
+    "type": "concept",
+    "terms": [
+      "growth_rate"
+    ]
+  },
+  {
+    "cluster_id": "3d72c510-15c2-4778-87d8-c30b31fd496e",
+    "type": "concept",
+    "terms": [
+      "damping_rate"
+    ]
+  },
+  {
+    "cluster_id": "72946298-3929-4aa6-9530-d9b35ec4fa83",
+    "type": "concept",
+    "terms": [
+      "species_metadata"
+    ]
+  },
+  {
+    "cluster_id": "ec2de599-eeb4-4204-a1e9-3e3d193870cf",
+    "type": "concept",
+    "terms": [
+      "rho_tor_norm"
+    ]
+  },
+  {
+    "cluster_id": "dbca647a-c4ed-423c-b84d-46d447f781ba",
+    "type": "concept",
+    "terms": [
+      "rho_pol_norm"
+    ]
+  },
+  {
+    "cluster_id": "45515818-99bb-411d-87e5-5531474a20c6",
+    "type": "concept",
+    "terms": [
+      "volume_profile"
+    ]
+  },
+  {
+    "cluster_id": "d2d52eb0-68c0-451d-a739-3b876652cc69",
+    "type": "concept",
+    "terms": [
+      "area_profile"
+    ]
+  },
+  {
+    "cluster_id": "31313dca-86d4-4f11-965b-fc3eef6c2525",
+    "type": "concept",
+    "terms": [
+      "surface_area_profile"
+    ]
+  },
+  {
+    "cluster_id": "c09ba131-a830-4699-8828-7cbf81b69d2a",
+    "type": "concept",
+    "terms": [
+      "power_load"
+    ]
+  },
+  {
+    "cluster_id": "252cc989-7625-47ba-9149-325764a034b3",
+    "type": "concept",
+    "terms": [
+      "wetted_area"
+    ]
+  },
+  {
+    "cluster_id": "19275375-a94a-4165-bade-0e84fa41c80e",
+    "type": "concept",
+    "terms": [
+      "power_exhaust"
+    ]
+  },
+  {
+    "cluster_id": "0f1adafe-29b2-4bf6-8539-ff97441141e6",
+    "type": "concept",
+    "terms": [
+      "peak_heat_flux"
+    ]
+  },
+  {
+    "cluster_id": "760b9a56-752d-480d-bbf0-ccf897639a83",
+    "type": "concept",
+    "terms": [
+      "recombination_power"
+    ]
+  },
+  {
+    "cluster_id": "902dd60f-8201-4b44-9f20-ead98e361963",
+    "type": "concept",
+    "terms": [
+      "chi_squared"
+    ]
+  },
+  {
+    "cluster_id": "eb5e0987-ebb0-4d5d-a442-2d72e84ed3d1",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "8205491a-53df-4b5d-96be-0c181970cac5",
+    "type": "concept",
+    "terms": [
+      "integration_time"
+    ]
+  },
+  {
+    "cluster_id": "5a95a569-0dcd-42fa-8683-d43fdcb76c15",
+    "type": "concept",
+    "terms": [
+      "validity_flag"
+    ]
+  },
+  {
+    "cluster_id": "921e69a8-788b-45a5-ad1e-e69f81c23ee6",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_velocity"
+    ]
+  },
+  {
+    "cluster_id": "9ee0a31c-8498-4147-98d0-3431340bb141",
+    "type": "concept",
+    "terms": [
+      "thermal_density"
+    ]
+  },
+  {
+    "cluster_id": "f82e5849-a060-46d4-9f7f-e1c7dda83a33",
+    "type": "concept",
+    "terms": [
+      "fast_density"
+    ]
+  },
+  {
+    "cluster_id": "817c0ef9-82be-4fb0-aed6-2002233fdd6b",
+    "type": "concept",
+    "terms": [
+      "thermal_pressure"
+    ]
+  },
+  {
+    "cluster_id": "ef633163-f5b2-4b90-a068-9258c2594977",
+    "type": "concept",
+    "terms": [
+      "perpendicular_pressure"
+    ]
+  },
+  {
+    "cluster_id": "7be26bae-661a-43a6-a29b-b804a6e7eda4",
+    "type": "concept",
+    "terms": [
+      "parallel_pressure"
+    ]
+  },
+  {
+    "cluster_id": "80d36ba9-d214-42b4-bea5-73544db43d79",
+    "type": "concept",
+    "terms": [
+      "z_effective"
+    ]
+  },
+  {
+    "cluster_id": "f87fcd9f-1c34-49ee-a9c8-36e920f16c57",
+    "type": "concept",
+    "terms": [
+      "event_identifier"
+    ]
+  },
+  {
+    "cluster_id": "a4723287-c5c3-4b78-907b-8d5296df0b1f",
+    "type": "concept",
+    "terms": [
+      "fit_coefficients"
+    ]
+  },
+  {
+    "cluster_id": "7ddba9e4-f922-4673-bc0a-fd804ecbd328",
+    "type": "concept",
+    "terms": [
+      "statistical_weight"
+    ]
+  },
+  {
+    "cluster_id": "e48a6be8-3dc6-4060-b13c-9de90f2173ef",
+    "type": "concept",
+    "terms": [
+      "local_fit"
+    ]
+  },
+  {
+    "cluster_id": "eee58ad3-15de-43c8-bb72-e8f78787aa5b",
+    "type": "concept",
+    "terms": [
+      "mse_geometry"
+    ]
+  },
+  {
+    "cluster_id": "ed9457ce-0c0e-4c97-b5b2-861b245d4a5a",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "5ea8f922-f262-4d5e-adc6-ba69e58c2555",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "260981c0-b5dd-4873-9224-f0e7fcab7623",
+    "type": "concept",
+    "terms": [
+      "polarization_angle"
+    ]
+  },
+  {
+    "cluster_id": "9f72b356-8e57-4e48-b6c7-c7b54543a119",
+    "type": "concept",
+    "terms": [
+      "spatial_resolution"
+    ]
+  },
+  {
+    "cluster_id": "630c188c-ec93-418f-83a2-c7ffbdf30f49",
+    "type": "concept",
+    "terms": [
+      "beam_tracing"
+    ]
+  },
+  {
+    "cluster_id": "32b3df24-09a9-47b7-a61c-464087d6638e",
+    "type": "concept",
+    "terms": [
+      "data_quality"
+    ]
+  },
+  {
+    "cluster_id": "46afb488-15a2-40b2-b16e-92b8d3151c92",
+    "type": "concept",
+    "terms": [
+      "gaussian_beam"
+    ]
+  },
+  {
+    "cluster_id": "07518754-1fb7-4825-8976-b7cfaba8f5e3",
+    "type": "concept",
+    "terms": [
+      "wave_vector"
+    ]
+  },
+  {
+    "cluster_id": "6290e3b2-81c1-4137-aaab-64f92e37cb03",
+    "type": "concept",
+    "terms": [
+      "wave_vector"
+    ]
+  },
+  {
+    "cluster_id": "d7d1d8ab-1f85-4027-a243-de74a1944e7c",
+    "type": "concept",
+    "terms": [
+      "radiation_temperature"
+    ]
+  },
+  {
+    "cluster_id": "124836cc-805d-4764-8eea-1e1b231da484",
+    "type": "concept",
+    "terms": [
+      "calibration"
+    ]
+  },
+  {
+    "cluster_id": "3fc49bd8-6b26-4c70-913a-d77d3eea7ad0",
+    "type": "concept",
+    "terms": [
+      "radiation_temperature"
+    ]
+  },
+  {
+    "cluster_id": "17958ff6-d5e3-4481-83f5-1f02b894834b",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "bfbc0e73-b43d-48b2-967e-4b8205a8170a",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "4e2be455-b729-4d39-b5df-9ecf853fc989",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "d40a2c46-e3b4-4974-8996-767ae4f82950",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "d3f9ad6e-5fb2-4038-a3af-04628dcef192",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "6f9ebbfc-a5fe-419f-9957-576bce5ba15a",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "faa0d318-69b1-4bae-a858-5cbb4c8fcc4d",
+    "type": "concept",
+    "terms": [
+      "vibrational_level"
+    ]
+  },
+  {
+    "cluster_id": "797c2cbb-7885-4792-9f6e-734dbc5d4a0c",
+    "type": "concept",
+    "terms": [
+      "vibrational_mode"
+    ]
+  },
+  {
+    "cluster_id": "db6a3ef9-904e-42da-863a-9d65eba50f8f",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "257a24dd-b88a-46d7-b054-d0f5a99e5e28",
+    "type": "concept",
+    "terms": [
+      "covariance_matrix"
+    ]
+  },
+  {
+    "cluster_id": "1317019f-bbe1-40b2-83b1-297c93911a63",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "28c011b5-7b64-4b9f-ab98-2c69ad31b072",
+    "type": "concept",
+    "terms": [
+      "atomic_species"
+    ]
+  },
+  {
+    "cluster_id": "60ea76e9-6abe-4dd2-86a6-b7ce6400d94c",
+    "type": "concept",
+    "terms": [
+      "molecular_composition"
+    ]
+  },
+  {
+    "cluster_id": "8ad13eb3-e5f3-470c-b1ef-46523c5ce6fb",
+    "type": "concept",
+    "terms": [
+      "flux_surface_volume"
+    ]
+  },
+  {
+    "cluster_id": "a48776f7-9f81-429a-9799-a9970804da91",
+    "type": "concept",
+    "terms": [
+      "effective_charge"
+    ]
+  },
+  {
+    "cluster_id": "48f8785e-a2be-409c-8eec-80a511301fb9",
+    "type": "concept",
+    "terms": [
+      "integration_time"
+    ]
+  },
+  {
+    "cluster_id": "6b09b253-25bd-4479-9fb2-68588c657412",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "4d1bce2f-14d0-4bbf-9ba4-1c346fe218a2",
+    "type": "concept",
+    "terms": [
+      "nuclear_charge"
+    ]
+  },
+  {
+    "cluster_id": "3550f58d-94cf-4aaf-a485-3f9c902ba7c8",
+    "type": "concept",
+    "terms": [
+      "grid_topology"
+    ]
+  },
+  {
+    "cluster_id": "8b42da49-6d0a-4fb3-af22-da0cf27e4d3b",
+    "type": "concept",
+    "terms": [
+      "rho_tor_norm"
+    ]
+  },
+  {
+    "cluster_id": "07142ce0-15f2-4cb6-90fb-fc966ec7c6f2",
+    "type": "concept",
+    "terms": [
+      "rho_pol_norm"
+    ]
+  },
+  {
+    "cluster_id": "3c5bd012-3f01-4ac0-b0eb-a744c042cad1",
+    "type": "concept",
+    "terms": [
+      "rotation_frequency"
+    ]
+  },
+  {
+    "cluster_id": "2ca7dfbc-111d-4570-ba13-5cdb4a15c55e",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "f2b6b082-90d9-4865-acc1-7b48f52082a7",
+    "type": "concept",
+    "terms": [
+      "exb_velocity",
+      "diamagnetic_velocity"
+    ]
+  },
+  {
+    "cluster_id": "7a44d53e-0542-4a73-b87a-a19c6f160e6a",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "a8812fc1-bed8-4e37-8305-468cbbd94533",
+    "type": "concept",
+    "terms": [
+      "kinetic_energy_density"
+    ]
+  },
+  {
+    "cluster_id": "41b91e10-c77c-4099-9cd4-34bc8d4462cf",
+    "type": "concept",
+    "terms": [
+      "viscous_current"
+    ]
+  },
+  {
+    "cluster_id": "9e5caa7a-b211-4226-95ca-d2bdd8a85545",
+    "type": "concept",
+    "terms": [
+      "distribution_function"
+    ]
+  },
+  {
+    "cluster_id": "62ebf4d7-fadd-416b-b752-184431c7959d",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "c4aea634-05dd-42b1-98ea-1b501c74c2df",
+    "type": "concept",
+    "terms": [
+      "effective_charge"
+    ]
+  },
+  {
+    "cluster_id": "7e3a2dc8-b970-4628-8aa9-12e241ed1478",
+    "type": "concept",
+    "terms": [
+      "energy_density"
+    ]
+  },
+  {
+    "cluster_id": "f689185d-dd23-4270-9b5a-cea0c31dca26",
+    "type": "concept",
+    "terms": [
+      "parallel_pressure"
+    ]
+  },
+  {
+    "cluster_id": "c4c17e1e-3d11-424f-b1a0-0c3d99f79ae9",
+    "type": "concept",
+    "terms": [
+      "perpendicular_pressure"
+    ]
+  },
+  {
+    "cluster_id": "d4dcccca-e88a-48bd-b895-9bad8366cae6",
+    "type": "concept",
+    "terms": [
+      "z_effective"
+    ]
+  },
+  {
+    "cluster_id": "4ad364f5-451e-43f9-af54-78a88e4640e0",
+    "type": "concept",
+    "terms": [
+      "antenna_position"
+    ]
+  },
+  {
+    "cluster_id": "931440c8-99ac-4d63-9f0e-ff15194266b4",
+    "type": "concept",
+    "terms": [
+      "antenna_position"
+    ]
+  },
+  {
+    "cluster_id": "77f29886-bd07-4462-a0a2-eb0aca3ba199",
+    "type": "concept",
+    "terms": [
+      "non_axisymmetric_field"
+    ]
+  },
+  {
+    "cluster_id": "dff0e6e7-c028-4817-b251-c31abda594dd",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "e72b465e-b3be-4973-978f-0ca63630090c",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "09e7e3d9-773f-4c15-9dcb-9842566b7016",
+    "type": "concept",
+    "terms": [
+      "flux_limiter"
+    ]
+  },
+  {
+    "cluster_id": "08467d0d-7a62-45c8-a351-d234adddaf65",
+    "type": "concept",
+    "terms": [
+      "diamagnetic_flux"
+    ]
+  },
+  {
+    "cluster_id": "37375c62-1b02-4e32-9f7b-62832979765c",
+    "type": "concept",
+    "terms": [
+      "neoclassical_toroidal_viscosity"
+    ]
+  },
+  {
+    "cluster_id": "6e941205-925b-42b2-9775-d15833953d07",
+    "type": "concept",
+    "terms": [
+      "maxwell_stress",
+      "reynolds_stress",
+      "ntv_torque"
+    ]
+  },
+  {
+    "cluster_id": "bc039bc5-a0b4-4687-93e4-e9f1aeebed92",
+    "type": "concept",
+    "terms": [
+      "perturbed_velocity"
+    ]
+  },
+  {
+    "cluster_id": "8b61df70-ae4c-4509-b7a8-6085021242be",
+    "type": "concept",
+    "terms": [
+      "perturbed_velocity"
+    ]
+  },
+  {
+    "cluster_id": "39fb2d3d-626f-4850-bcfe-c955af6e0be3",
+    "type": "concept",
+    "terms": [
+      "perturbed_magnetic_field"
+    ]
+  },
+  {
+    "cluster_id": "8a5214f1-2093-4cac-8f24-3a7624a928ca",
+    "type": "concept",
+    "terms": [
+      "perturbed_magnetic_field"
+    ]
+  },
+  {
+    "cluster_id": "5e3d119f-884b-409e-a2e3-c7f8e2e0f2b7",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "fc781918-67db-4d97-b7a5-c9663ef504dc",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "015f3126-f4e0-4214-a85b-1059084fe6d5",
+    "type": "concept",
+    "terms": [
+      "perturbed_magnetic_field"
+    ]
+  },
+  {
+    "cluster_id": "ae338b57-92c6-401d-b8d5-af48da361d2c",
+    "type": "concept",
+    "terms": [
+      "perturbed_magnetic_field"
+    ]
+  },
+  {
+    "cluster_id": "4c67500a-921c-4486-90f6-d7adf7ecafea",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "8f7e42c8-b5cb-45e6-9e5e-7e8780201dad",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "c7846146-4ea5-4213-8fea-d8cf749706f1",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "3abe2c5d-cfe7-454d-88c8-d54a7e9f43b7",
+    "type": "concept",
+    "terms": [
+      "line_of_sight"
+    ]
+  },
+  {
+    "cluster_id": "ba336240-5645-49ce-9419-565c2944f1c8",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "600d1fe2-74c5-43e4-89cc-5f2a99c4ed55",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "30693d05-0929-41ac-9529-14e54e317728",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "0b1dc834-e4f2-4997-aaf7-d14e67f629e2",
+    "type": "concept",
+    "terms": [
+      "atomic_state"
+    ]
+  },
+  {
+    "cluster_id": "3b61511c-5b92-4666-b340-8458a8330831",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "8b4567f4-b07d-44cd-ba63-844347ba0bc1",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "916bf23e-7fda-4e03-8cd0-9c2fa11e9fe4",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "d641506f-9a41-4224-9fd2-6f9632f62d11",
+    "type": "concept",
+    "terms": [
+      "source_term"
+    ]
+  },
+  {
+    "cluster_id": "3349b35b-ab50-4952-8dd8-3077a2255392",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "840d5f83-1548-4d6d-9e05-f582a5d0237b",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "a4682c93-4f21-4ab8-88d9-44585066fad0",
+    "type": "concept",
+    "terms": [
+      "atomic_number"
+    ]
+  },
+  {
+    "cluster_id": "b127dfa2-a4c2-474c-b618-095113a7a47a",
+    "type": "concept",
+    "terms": [
+      "source_decomposition"
+    ]
+  },
+  {
+    "cluster_id": "91cad303-3bf6-40cd-948f-9cbb8fc6231a",
+    "type": "concept",
+    "terms": [
+      "neutral_type"
+    ]
+  },
+  {
+    "cluster_id": "e1d7b56f-c95d-4dc2-b3b9-408ec2d687ca",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "0863f34d-1428-43e0-96da-cb6d7674b3a5",
+    "type": "concept",
+    "terms": [
+      "rho_tor_norm"
+    ]
+  },
+  {
+    "cluster_id": "bc7cf198-3da3-463c-876a-c154a7a15daa",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "186b0ccf-472a-4008-b6ca-b9301f7d2ae9",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "8d255d76-78e3-4ae0-a750-1674c8427d22",
+    "type": "concept",
+    "terms": [
+      "disruption"
+    ]
+  },
+  {
+    "cluster_id": "8fd77d1b-623d-42b2-8107-aae143a32366",
+    "type": "concept",
+    "terms": [
+      "confinement_time"
+    ]
+  },
+  {
+    "cluster_id": "4c0161ff-be05-46b0-9242-73915e207a08",
+    "type": "concept",
+    "terms": [
+      "confinement_time"
+    ]
+  },
+  {
+    "cluster_id": "60d718ff-d3a2-4a12-93c8-b765f620c170",
+    "type": "concept",
+    "terms": [
+      "runaway_electrons"
+    ]
+  },
+  {
+    "cluster_id": "807fae7b-84fc-4f3d-bfbb-447bb4c58b11",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "7985d110-3485-4b81-ade6-7ee181d4b2be",
+    "type": "concept",
+    "terms": [
+      "ballooning_stability"
+    ]
+  },
+  {
+    "cluster_id": "19e26bae-b2e8-401d-9a3e-82a8f317d9a5",
+    "type": "concept",
+    "terms": [
+      "dimensionless_parameters"
+    ]
+  },
+  {
+    "cluster_id": "2c433934-170a-4dd4-ac41-017edc84e68a",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "0bb4a388-27c2-4660-a5e9-37010c64f615",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "f529ac67-2612-4296-ab43-2a0d44818287",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "cc44efa3-d2a6-455e-9aea-3c49bb65c7dc",
+    "type": "concept",
+    "terms": [
+      "disruption"
+    ]
+  },
+  {
+    "cluster_id": "d7a52496-687b-4437-960d-3e350734ffc7",
+    "type": "concept",
+    "terms": [
+      "disruption_time"
+    ]
+  },
+  {
+    "cluster_id": "7e9579f2-9ac7-4e23-b18b-6a54c599e257",
+    "type": "concept",
+    "terms": [
+      "disruption_decay_time"
+    ]
+  },
+  {
+    "cluster_id": "bc882fd7-f61c-47ae-928e-38eac7961c96",
+    "type": "concept",
+    "terms": [
+      "runaway_current"
+    ]
+  },
+  {
+    "cluster_id": "c5784054-b614-450a-9c9e-fd5a46312f06",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "14ad858f-f511-4e8a-8fd7-ce110b0afeeb",
+    "type": "concept",
+    "terms": [
+      "runaway_current"
+    ]
+  },
+  {
+    "cluster_id": "4cd41eb2-1554-4512-a30e-9098f2a4bdf5",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "98fd92d4-4d9d-4266-a6b7-942e8ff6a450",
+    "type": "concept",
+    "terms": [
+      "decay_length"
+    ]
+  },
+  {
+    "cluster_id": "3d80311c-6157-4706-bf35-6adf9373e94d",
+    "type": "concept",
+    "terms": [
+      "fusion_gain"
+    ]
+  },
+  {
+    "cluster_id": "64096de6-74d1-495c-962a-ea0f17e149e5",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "9662f607-ff90-414a-ba30-2a21ee951275",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "451cec9a-5f5d-44fa-b46a-58f9243b4e45",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "b8b31935-7f47-49b5-83ee-f2bd506a7299",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "22729aaa-7b30-4997-add1-9a3b714ee5e8",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "2d441ddb-d539-4dc2-8cfe-550565a8cdb9",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "edd80261-4cf5-40c2-8b2a-7ce1c4cb4836",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "15236fe6-693a-43f6-a0f4-151034ce17f6",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "2dedd80b-99be-4375-8236-f2504fe4ad8d",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "89434179-bdff-4b80-ab92-ad09cf57ed75",
+    "type": "concept",
+    "terms": [
+      "pedestal_stability"
+    ]
+  },
+  {
+    "cluster_id": "c678c86a-35cc-4c91-b29e-2f14edb210ba",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "beeae9b4-ee3d-40f1-8cab-6ae2d136274d",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "68958cf3-0c2d-49ba-b162-422515d58079",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "a36233cf-bbbe-4aae-8d05-52fbc7414576",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "e59cd1b5-3f87-47ef-88f8-2e866be40d43",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "c6631807-d366-45d6-80fe-d1441e1d2920",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "ba0616b1-a8fe-47e7-acce-70bf6c9202c6",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "df327a4f-4515-4a78-86f4-b1a950d7c3e6",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "d9e02753-35d9-4e73-9860-c7266e415721",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "0d1b055c-87ef-438f-970d-21e243e1f586",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "0c41277f-c77c-40e1-8dcd-824ea4e57bfa",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "9503c36b-e433-42f6-a00a-bca3a14ecf44",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "241e927e-dcba-4e2a-b41e-5d89a2fca15a",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "241e927e-dcba-4e2a-b41e-5d89a2fca15a",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "2c143d9b-1260-48ce-8c7d-ed6460c711c6",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "cec1b784-e548-40c7-9355-94f8195a8f85",
+    "type": "concept",
+    "terms": [
+      "gas_injection"
+    ]
+  },
+  {
+    "cluster_id": "d2230769-9ef7-42b5-b63b-4412dbbbc779",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "4cd963ee-edae-429b-aeb2-821d4acd7e60",
+    "type": "concept",
+    "terms": [
+      "collisionality"
+    ]
+  },
+  {
+    "cluster_id": "ed61eaeb-d98a-4596-af5a-6c01543a8561",
+    "type": "concept",
+    "terms": [
+      "beam_width"
+    ]
+  },
+  {
+    "cluster_id": "f0548de0-600a-40e7-a7c2-12061f2f77c2",
+    "type": "concept",
+    "terms": [
+      "engineering_sensor"
+    ]
+  },
+  {
+    "cluster_id": "34af48fb-2668-499a-aade-92d4a29b25d4",
+    "type": "concept",
+    "terms": [
+      "mechanical_strain",
+      "acceleration"
+    ]
+  },
+  {
+    "cluster_id": "000beca5-2006-4854-8d39-b9c264262b13",
+    "type": "concept",
+    "terms": [
+      "pumping_speed"
+    ]
+  },
+  {
+    "cluster_id": "9a06f317-afbf-4a52-ba5f-b70873439359",
+    "type": "concept",
+    "terms": [
+      "gas_flow_rate"
+    ]
+  },
+  {
+    "cluster_id": "80ecb580-8703-4dc0-9131-1e1520a8ba53",
+    "type": "concept",
+    "terms": [
+      "atomic_physics"
+    ]
+  },
+  {
+    "cluster_id": "9066febb-b660-4c42-b750-026bbe28b92c",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "5bc28422-22d8-41c6-ae86-a4d18d144014",
+    "type": "concept",
+    "terms": [
+      "vibrational_state"
+    ]
+  },
+  {
+    "cluster_id": "8f20bddf-05e4-41cf-a0c1-1902b6b367ad",
+    "type": "concept",
+    "terms": [
+      "numerical_method"
+    ]
+  },
+  {
+    "cluster_id": "2c9a5dcc-b43c-49f1-b4aa-2de70b271f0e",
+    "type": "concept",
+    "terms": [
+      "numerical_method"
+    ]
+  },
+  {
+    "cluster_id": "0c704218-d948-4ba1-90fc-2746277d7332",
+    "type": "concept",
+    "terms": [
+      "disruption"
+    ]
+  },
+  {
+    "cluster_id": "fd2155a5-9845-45a4-b043-354eb2e27489",
+    "type": "concept",
+    "terms": [
+      "disruption"
+    ]
+  },
+  {
+    "cluster_id": "31d92ba6-b936-47f6-b44f-fce361114684",
+    "type": "concept",
+    "terms": [
+      "disruption"
+    ]
+  },
+  {
+    "cluster_id": "8e35819d-674d-4fd2-8fa5-92c1c1546272",
+    "type": "concept",
+    "terms": [
+      "ohmic_power"
+    ]
+  },
+  {
+    "cluster_id": "40894eed-c22d-44cf-8dd6-d20ad73c4ef2",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "edfb34b2-ebbd-436e-892c-3e35fc5789a2",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "66e10120-7b99-42fe-952e-34b41473b148",
+    "type": "concept",
+    "terms": [
+      "vorticity"
+    ]
+  },
+  {
+    "cluster_id": "e20ef110-b05a-4962-98fd-131cafeeb678",
+    "type": "concept",
+    "terms": [
+      "mass_density"
+    ]
+  },
+  {
+    "cluster_id": "425b1c01-3d3e-4e0d-baff-80872ee445eb",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "52059af1-575c-44c0-9cc8-bc4a771c8159",
+    "type": "concept",
+    "terms": [
+      "optical_geometry"
+    ]
+  },
+  {
+    "cluster_id": "915999bb-77e7-468f-b4fa-71d65b75041f",
+    "type": "concept",
+    "terms": [
+      "viewing_angle"
+    ]
+  },
+  {
+    "cluster_id": "361854f9-702d-458d-9943-368c9afce98f",
+    "type": "concept",
+    "terms": [
+      "geometry_matrix"
+    ]
+  },
+  {
+    "cluster_id": "61e0d823-5b4e-45fa-9d91-465bfc09ca37",
+    "type": "concept",
+    "terms": [
+      "lens_curvature"
+    ]
+  },
+  {
+    "cluster_id": "94d6a63c-7c7c-4ff0-ba92-ec070c1022fa",
+    "type": "concept",
+    "terms": [
+      "voxel_indices"
+    ]
+  },
+  {
+    "cluster_id": "39619af8-21a0-48bf-ad75-ef987afa4bf8",
+    "type": "concept",
+    "terms": [
+      "integration_time"
+    ]
+  },
+  {
+    "cluster_id": "e1b1ffbe-26f1-4ea2-aadb-f95de7bfa471",
+    "type": "concept",
+    "terms": [
+      "beam_energy"
+    ]
+  },
+  {
+    "cluster_id": "df9de50b-2b3e-4a41-a162-112519322932",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "3f4d2265-8c4c-45e0-b114-59510d16c56d",
+    "type": "concept",
+    "terms": [
+      "vector_potential"
+    ]
+  },
+  {
+    "cluster_id": "02ac3642-f383-4518-bee9-15da888edf7b",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "b67af896-c616-4e88-93a3-1d99f3fb727d",
+    "type": "concept",
+    "terms": [
+      "magnetic_permeability"
+    ]
+  },
+  {
+    "cluster_id": "a55d97e6-d913-4e2b-a702-b39865650687",
+    "type": "concept",
+    "terms": [
+      "magnetic_moment"
+    ]
+  },
+  {
+    "cluster_id": "4c1b7aff-cb6b-4cb0-947d-3de6b044d9a7",
+    "type": "concept",
+    "terms": [
+      "hard_x_ray_emission"
+    ]
+  },
+  {
+    "cluster_id": "30270f2a-d7b4-48f8-bb04-f465d8bf543e",
+    "type": "concept",
+    "terms": [
+      "photon_energy"
+    ]
+  },
+  {
+    "cluster_id": "a98c40ad-9ffd-4ab7-a63b-a4fba27fe96d",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "b71b4c09-f6ab-4b45-bbc9-f04760258720",
+    "type": "concept",
+    "terms": [
+      "atomic_state"
+    ]
+  },
+  {
+    "cluster_id": "2301831a-e3f8-4bbf-8855-e778f7e633e1",
+    "type": "concept",
+    "terms": [
+      "coil_current",
+      "coil_voltage"
+    ]
+  },
+  {
+    "cluster_id": "df1dc561-2690-4076-a20a-54fc28116666",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "32925055-80d4-4815-9249-f194f0cbdaa6",
+    "type": "concept",
+    "terms": [
+      "squareness"
+    ]
+  },
+  {
+    "cluster_id": "6b606457-d148-489d-bcd4-3ed4ff6a35cc",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "599624c7-6230-4f1a-b483-6c12a91ff8d5",
+    "type": "concept",
+    "terms": [
+      "jacobian"
+    ]
+  },
+  {
+    "cluster_id": "f845a6d5-63ac-4db0-8a16-65400f713b28",
+    "type": "concept",
+    "terms": [
+      "rho_tor"
+    ]
+  },
+  {
+    "cluster_id": "5e477bf5-6c7f-4bef-ba26-94fd977470c1",
+    "type": "concept",
+    "terms": [
+      "magnetization"
+    ]
+  },
+  {
+    "cluster_id": "1832fe77-c201-4e66-95d5-eb61c82a6b84",
+    "type": "concept",
+    "terms": [
+      "metric_coefficients"
+    ]
+  },
+  {
+    "cluster_id": "e18fe5bc-bd0d-4431-ba83-bcb21c6d94ee",
+    "type": "concept",
+    "terms": [
+      "mse"
+    ]
+  },
+  {
+    "cluster_id": "5f830af8-fa13-4356-8313-d0ff145a378a",
+    "type": "concept",
+    "terms": [
+      "convergence"
+    ]
+  },
+  {
+    "cluster_id": "f306ac06-c14e-4cca-80a9-3716d5787816",
+    "type": "concept",
+    "terms": [
+      "etendue"
+    ]
+  },
+  {
+    "cluster_id": "1ba1f5c9-07dd-44e0-8ec6-b029a18b700e",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "5d712295-b773-4347-90aa-686b5d56d6bc",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "70a09fb4-db4b-43c5-82a7-50bb6c4244a8",
+    "type": "concept",
+    "terms": [
+      "aperture_outline"
+    ]
+  },
+  {
+    "cluster_id": "e4aca70f-0989-4652-ac83-ff38a8ee4523",
+    "type": "concept",
+    "terms": [
+      "zeff"
+    ]
+  },
+  {
+    "cluster_id": "e64a4c28-c688-4512-a9a4-ec4a8438d889",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "f4e8d848-9e70-4230-bad3-a3b8ce6ea1a9",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "ba29b951-7a31-4373-b1fa-7d9449364929",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "bc6b9ce9-b811-492b-beed-703503ee721c",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "c1b85db7-e637-4a92-861c-d4d4b045556f",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "9e5eb003-818d-4579-8838-a2a9f1ed223a",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "3ece25f6-d8d2-46fa-89c4-9cd43b9cd863",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "8f51fba7-99f7-41ad-9d72-52a408dee148",
+    "type": "concept",
+    "terms": [
+      "measurement_position"
+    ]
+  },
+  {
+    "cluster_id": "b7873af0-527f-4731-8c2e-54c44817d600",
+    "type": "concept",
+    "terms": [
+      "doppler_shift"
+    ]
+  },
+  {
+    "cluster_id": "b4c7a9eb-f1a6-47d5-9114-ff83f54a559e",
+    "type": "concept",
+    "terms": [
+      "radiance"
+    ]
+  },
+  {
+    "cluster_id": "d3fb3738-56be-4740-a2ec-ca424f5bc43f",
+    "type": "concept",
+    "terms": [
+      "toroidal_angle"
+    ]
+  },
+  {
+    "cluster_id": "544d0654-0559-4011-9774-43b89fee8fdc",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "7b244fdc-0e91-4171-849f-69daebc28963",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "e83aa74d-68e5-4250-ad6c-8b83abe88876",
+    "type": "concept",
+    "terms": [
+      "orientation_vectors"
+    ]
+  },
+  {
+    "cluster_id": "d82aa0d0-33f0-4811-b2d9-c33ae7a45fa7",
+    "type": "concept",
+    "terms": [
+      "detector_status"
+    ]
+  },
+  {
+    "cluster_id": "9df64ed5-161e-4ee7-98d2-54beed34092c",
+    "type": "concept",
+    "terms": [
+      "material_properties"
+    ]
+  },
+  {
+    "cluster_id": "325d7f52-bbac-4431-9f4f-9f4525635b32",
+    "type": "concept",
+    "terms": [
+      "detector_geometry"
+    ]
+  },
+  {
+    "cluster_id": "d54c05f5-8ca8-4694-b504-1bbf47d32a44",
+    "type": "concept",
+    "terms": [
+      "calorimetry"
+    ]
+  },
+  {
+    "cluster_id": "1f4d2014-7e2d-49f1-9dac-f205fc98124b",
+    "type": "concept",
+    "terms": [
+      "data_quality"
+    ]
+  },
+  {
+    "cluster_id": "940d326b-8de1-4695-83f4-2bba870648cb",
+    "type": "concept",
+    "terms": [
+      "atomic_physics"
+    ]
+  },
+  {
+    "cluster_id": "4c4f0f1b-8bde-4083-a274-1d333d7af06e",
+    "type": "concept",
+    "terms": [
+      "metric_tensor"
+    ]
+  },
+  {
+    "cluster_id": "24863fe4-666c-4c51-a4f5-f9ba72135420",
+    "type": "concept",
+    "terms": [
+      "flux_coordinates"
+    ]
+  },
+  {
+    "cluster_id": "b5b2b6d6-10d5-4201-8c4d-d4c5e4ddad11",
+    "type": "concept",
+    "terms": [
+      "quantum_numbers"
+    ]
+  },
+  {
+    "cluster_id": "70e5ce4b-3e7e-414a-b537-88a1d45dab0f",
+    "type": "concept",
+    "terms": [
+      "molecular_physics"
+    ]
+  },
+  {
+    "cluster_id": "61385828-e55a-4a91-afe7-a42cabde873b",
+    "type": "concept",
+    "terms": [
+      "molecular_physics"
+    ]
+  },
+  {
+    "cluster_id": "fb77e37e-e360-4580-b46b-b454a5c31b47",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "064ea587-68d7-467a-8229-b30bb58b792b",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "2336fdf9-6613-4050-a123-c0d7eb31d0dd",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "700f0972-9a89-4226-919b-5950f765c9f0",
+    "type": "concept",
+    "terms": [
+      "radiated_power"
+    ]
+  },
+  {
+    "cluster_id": "b66ecdf8-9d7f-4558-8a42-d47ac8948701",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "1949a640-cbc1-47a4-928d-630836c48e01",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "32434a81-49c2-43f8-9099-abf131c7d079",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "cabcbdd0-4c13-4c7a-89ba-f1d1b1e92239",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "169ef3e5-8583-4c5f-a9b3-1d6c5af059ff",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "4f090b9e-bd2b-46de-92eb-b3d6ea817624",
+    "type": "concept",
+    "terms": [
+      "atomic_mass"
+    ]
+  },
+  {
+    "cluster_id": "c104cca7-d361-439f-90cb-f2c46ff5d1d3",
+    "type": "concept",
+    "terms": [
+      "charge_state"
+    ]
+  },
+  {
+    "cluster_id": "61b374c6-3a7e-4e82-a621-bcbcad0db558",
+    "type": "concept",
+    "terms": [
+      "atomic_composition"
+    ]
+  },
+  {
+    "cluster_id": "2a752efd-8912-4b17-9027-60879ae00043",
+    "type": "concept",
+    "terms": [
+      "emissivity"
+    ]
+  },
+  {
+    "cluster_id": "c6bf5ea9-cc87-4a17-9aa8-f97a9f8d60ae",
+    "type": "concept",
+    "terms": [
+      "vacuum_magnetic_field"
+    ]
+  },
+  {
+    "cluster_id": "5d9067e8-3b10-4101-bcdb-e99374553e20",
+    "type": "concept",
+    "terms": [
+      "electrostatic_potential"
+    ]
+  },
+  {
+    "cluster_id": "38a69bc1-cc38-4df2-801a-2d43ebfacf08",
+    "type": "concept",
+    "terms": [
+      "pellet_injection"
+    ]
+  },
+  {
+    "cluster_id": "9d2c1f19-f3c5-4f9b-8fa1-c6a6e58abd0e",
+    "type": "concept",
+    "terms": [
+      "tritium_breeding"
+    ]
+  },
+  {
+    "cluster_id": "35fc25c6-7262-4869-a109-95b891cd0fc4",
+    "type": "concept",
+    "terms": [
+      "alfven_waves"
+    ]
+  },
+  {
+    "cluster_id": "3b436f03-cdc0-4110-9fed-b28a297e4941",
+    "type": "concept",
+    "terms": [
+      "plasma_potential"
+    ]
+  },
+  {
+    "cluster_id": "fe941c75-61d3-4de4-873a-15292d1ee264",
+    "type": "concept",
+    "terms": [
+      "material_composition"
+    ]
+  },
+  {
+    "cluster_id": "d35c35f3-6cd3-493f-bc6e-97ad40da30f8",
+    "type": "concept",
+    "terms": [
+      "average_charge"
+    ]
+  },
+  {
+    "cluster_id": "8c5d9046-558e-4667-9acf-245a4b289307",
+    "type": "concept",
+    "terms": [
+      "beam_divergence"
+    ]
+  },
+  {
+    "cluster_id": "2f56d1f3-d235-4c3e-9710-e7d07a5521a5",
+    "type": "concept",
+    "terms": [
+      "confinement_time"
+    ]
+  },
+  {
+    "cluster_id": "f6e60a90-81b1-4756-9385-d085f294356a",
+    "type": "concept",
+    "terms": [
+      "electrostatic_potential"
+    ]
+  },
+  {
+    "cluster_id": "f6d86a41-d3aa-41e7-bbb7-4072584c4cfd",
+    "type": "concept",
+    "terms": [
+      "pellet_injection"
+    ]
+  },
+  {
+    "cluster_id": "82d060f9-4653-4dbe-abd3-16886bdfbcb0",
+    "type": "concept",
+    "terms": [
+      "wave_vector"
+    ]
+  },
+  {
+    "cluster_id": "33089a2a-179d-4864-ad55-aad65e53d3d5",
+    "type": "concept",
+    "terms": [
+      "diagnostic_geometry"
+    ]
+  },
+  {
+    "cluster_id": "69289c0f-54fa-4bd3-a3de-de6bb196b8c5",
+    "type": "concept",
+    "terms": [
+      "pellet_injection"
+    ]
+  },
+  {
+    "cluster_id": "98fb2cf5-7b6d-43a7-a616-2fe30d817603",
+    "type": "concept",
+    "terms": [
+      "beam_waist"
+    ]
+  },
+  {
+    "cluster_id": "2fe9cf94-5e1d-4cb5-ac8d-e87a4a73ab7e",
+    "type": "concept",
+    "terms": [
+      "event_flag"
+    ]
+  },
+  {
+    "cluster_id": "51193b2a-71e8-49bd-8307-888ae2976eb1",
+    "type": "concept",
+    "terms": [
+      "gas_injection_rate"
+    ]
+  },
+  {
+    "cluster_id": "62db6a6d-1940-4f03-9385-8695c72b9069",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "e40e8ba1-be58-4ca7-8869-69722544fcbe",
+    "type": "concept",
+    "terms": [
+      "neutron_rate"
+    ]
+  },
+  {
+    "cluster_id": "580b1027-ce39-4848-aead-5bc9321c596a",
+    "type": "concept",
+    "terms": [
+      "gas_injection_rate"
+    ]
+  },
+  {
+    "cluster_id": "69270ba6-6cf5-4713-b82a-bde24e7ed997",
+    "type": "concept",
+    "terms": [
+      "parallel_current_density"
+    ]
+  }
+]

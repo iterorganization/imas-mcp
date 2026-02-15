@@ -113,9 +113,13 @@ def imas_build(
         imas-codex imas build --ids-filter "core_profiles equilibrium"  # Test subset
     """
     from imas_codex import dd_version as current_dd_version
+    from imas_codex.cli.logging import configure_cli_logging
     from imas_codex.graph.build_dd import build_dd_graph, get_all_dd_versions
 
-    # Set up logging
+    # Set up file-based logging (always writes DEBUG to disk)
+    configure_cli_logging("imas_dd", verbose=verbose)
+
+    # Set up console logging
     if quiet:
         log_level = logging.ERROR
     elif verbose:
@@ -123,10 +127,20 @@ def imas_build(
     else:
         log_level = logging.INFO
 
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    # Configure console handler (file handler already set by configure_cli_logging)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     )
+    root_logger = logging.getLogger("imas_codex")
+    # Remove any existing console/stream handlers to avoid duplicates
+    for h in root_logger.handlers[:]:
+        if isinstance(h, logging.StreamHandler) and not isinstance(
+            h, logging.FileHandler
+        ):
+            root_logger.removeHandler(h)
+    root_logger.addHandler(console_handler)
 
     # Suppress imas library's verbose logging
     logging.getLogger("imas").setLevel(logging.WARNING)
@@ -630,18 +644,25 @@ def imas_clear(force: bool, dump_first: bool) -> None:
       imas-codex imas clear --force     # Skip confirmation
       imas-codex imas clear --dump-first  # Backup before clearing
     """
+    from imas_codex.cli.logging import configure_cli_logging
     from imas_codex.graph import GraphClient
     from imas_codex.graph.build_dd import clear_dd_graph
+
+    configure_cli_logging("imas_dd")
 
     with GraphClient() as gc:
         # Count nodes that will be deleted
         counts = gc.query("""
-            MATCH (p:IMASPath) WITH count(p) AS paths
-            MATCH (v:DDVersion) WITH paths, count(v) AS versions
-            MATCH (i:IDS) WITH paths, versions, count(i) AS ids
-            MATCH (c:IMASSemanticCluster) WITH paths, versions, ids, count(c) AS clusters
-            MATCH (ch:IMASPathChange) WITH paths, versions, ids, clusters, count(ch) AS changes
-            RETURN paths, versions, ids, clusters, changes
+            OPTIONAL MATCH (p:IMASPath)
+            WITH count(p) AS paths
+            OPTIONAL MATCH (v:DDVersion)
+            WITH paths, count(v) AS versions
+            OPTIONAL MATCH (i:IDS)
+            WITH paths, versions, count(i) AS ids
+            OPTIONAL MATCH (c:IMASSemanticCluster)
+            WITH paths, versions, ids, count(c) AS clusters
+            OPTIONAL MATCH (ch:IMASPathChange)
+            RETURN paths, versions, ids, clusters, count(ch) AS changes
         """)
 
         if not counts or counts[0]["paths"] == 0:

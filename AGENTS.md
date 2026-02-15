@@ -443,11 +443,11 @@ End every response that modifies files with the **full commit message** and a br
 
 ## CLI Logs
 
-All discovery CLI commands write DEBUG-level rotating logs to disk. The rich progress display suppresses most log output to keep the TUI clean, but full details are always available in the log files.
+All discovery and DD CLI commands write DEBUG-level rotating logs to disk. The rich progress display suppresses most log output to keep the TUI clean, but full details are always available in the log files.
 
 **Log directory:** `~/.local/share/imas-codex/logs/`
 
-**Log naming:** `{command}_{facility}.log` — each facility gets its own log file, enabling parallel runs without interleaved output.
+**Log naming:** `{command}_{facility}.log` — each facility gets its own log file, enabling parallel runs without interleaved output. Commands without a facility parameter use `{command}.log`.
 
 | CLI Command | Log File |
 |-------------|----------|
@@ -456,6 +456,8 @@ All discovery CLI commands write DEBUG-level rotating logs to disk. The rich pro
 | `discover wiki jet` | `wiki_jet.log` |
 | `discover signals jt60sa` | `signals_jt60sa.log` |
 | `discover files tcv` | `files_tcv.log` |
+| `imas build` | `imas_dd.log` |
+| `imas clear` | `imas_dd.log` |
 
 ```bash
 # View logs during or after a run

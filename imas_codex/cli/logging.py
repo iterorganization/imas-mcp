@@ -108,8 +108,10 @@ def configure_cli_logging(
     )
     root_logger.addHandler(file_handler)
 
-    # Ensure root logger threshold allows file handler to receive events
-    if root_logger.level > file_level:
+    # Ensure root logger threshold allows file handler to receive events.
+    # NOTSET (0) means "inherit from parent" which defaults to WARNING,
+    # so we must explicitly set the level when it's NOTSET or too high.
+    if root_logger.level == logging.NOTSET or root_logger.level > file_level:
         root_logger.setLevel(file_level)
 
     return log_file.parent

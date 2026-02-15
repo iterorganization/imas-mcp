@@ -801,11 +801,14 @@ def mark_page_failed(page_id: str, error: str, fallback_status: str) -> None:
         )
 
 
-def _release_claimed_pages(page_ids: list[str]) -> None:
+def _release_claimed_pages(
+    page_ids: list[str], *, max_fetch_retries: int = 3
+) -> None:
     """Release claimed pages back for reprocessing.
 
-    Clears claimed_at without changing status, allowing pages to be
-    reclaimed by the next worker iteration.
+    Increments fetch_retries counter on each page. Pages that exceed
+    max_fetch_retries are marked as 'failed' instead of released,
+    preventing infinite retry loops for unfetchable pages.
 
     If Neo4j is unavailable, logs a warning and silently fails.
     Pages will be reclaimed after CLAIM_TIMEOUT_SECONDS anyway.
@@ -815,14 +818,35 @@ def _release_claimed_pages(page_ids: list[str]) -> None:
 
     try:
         with GraphClient() as gc:
-            gc.query(
+            result = gc.query(
                 """
                 UNWIND $ids AS id
                 MATCH (wp:WikiPage {id: id})
-                SET wp.claimed_at = null
+                SET wp.fetch_retries = coalesce(wp.fetch_retries, 0) + 1
+                WITH wp
+                CALL {
+                    WITH wp
+                    WITH wp WHERE wp.fetch_retries >= $max_retries
+                    SET wp.status = $failed, wp.claimed_at = null,
+                        wp.claim_token = null
+                    RETURN wp.id AS failed_id
+                }
+                WITH wp WHERE wp.fetch_retries < $max_retries
+                SET wp.claimed_at = null, wp.claim_token = null
+                RETURN count(wp) AS released
                 """,
                 ids=page_ids,
+                max_retries=max_fetch_retries,
+                failed=WikiPageStatus.failed.value,
             )
+            released = result[0]["released"] if result else 0
+            failed_count = len(page_ids) - released
+            if failed_count > 0:
+                logger.warning(
+                    "Marked %d pages as failed after %d fetch retries",
+                    failed_count,
+                    max_fetch_retries,
+                )
     except Exception as e:
         logger.warning(
             "Could not release %d claimed pages (Neo4j unavailable): %s",
