@@ -507,11 +507,15 @@ class HTTPBackend(TransferBackend):
     async def get_size(self, url: str, timeout: int = 30) -> int | None:
         """Get file size via HTTP HEAD request."""
         try:
+            # Override Accept header for binary downloads — Confluence sessions
+            # set Accept: application/json for REST API, but file downloads
+            # need Accept: */*.  Content-Type is meaningless for GET/HEAD.
             response = self._get_session().head(
                 url,
                 timeout=timeout,
                 verify=self.verify_ssl,
                 allow_redirects=True,
+                headers={"Accept": "*/*"},
             )
             if response.status_code == 200:
                 content_length = response.headers.get("content-length")
@@ -525,11 +529,16 @@ class HTTPBackend(TransferBackend):
     async def download(self, url: str, timeout: int = 120) -> TransferResult:
         """Download file via HTTP GET."""
         try:
+            # Override Accept header for binary downloads — Confluence sessions
+            # set Accept: application/json for REST API, but file downloads
+            # need Accept: */*.  Per-request headers override session defaults
+            # without mutating the shared session.
             response = self._get_session().get(
                 url,
                 timeout=timeout,
                 verify=self.verify_ssl,
                 allow_redirects=True,
+                headers={"Accept": "*/*"},
             )
 
             if response.status_code != 200:
