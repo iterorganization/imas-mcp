@@ -26,6 +26,7 @@ async def _extract_artifact_preview(
     artifact_type: str,
     facility: str,
     max_chars: int = 1500,
+    session: Any = None,
 ) -> str:
     """Extract a text preview from an artifact for LLM scoring.
 
@@ -42,6 +43,7 @@ async def _extract_artifact_preview(
         artifact_type: Type of artifact (pdf, docx, pptx, xlsx, ipynb)
         facility: Facility ID (for SSH proxy)
         max_chars: Maximum characters to extract
+        session: Optional authenticated requests.Session (bypasses SSH)
 
     Returns:
         Extracted text preview or empty string on failure
@@ -49,7 +51,9 @@ async def _extract_artifact_preview(
     from imas_codex.discovery.wiki.pipeline import fetch_artifact_content
 
     try:
-        _, content_bytes = await fetch_artifact_content(url, facility=facility)
+        _, content_bytes = await fetch_artifact_content(
+            url, facility=facility, session=session
+        )
     except Exception as e:
         logger.debug("Failed to download %s: %s", url, e)
         return ""

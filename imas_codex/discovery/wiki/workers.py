@@ -453,15 +453,19 @@ async def artifact_worker(
         use_rich=False,
     )
 
-    # Get authenticated session for Confluence sites (direct HTTP instead of SSH curl)
+    # Confluence session is lazily acquired inside the loop — the client may
+    # not be initialized yet when the worker starts (race with page discovery).
     auth_session = None
-    if state.site_type == "confluence" and hasattr(state, "_confluence_client"):
-        confluence_client = state._confluence_client
-        if confluence_client is not None:
-            auth_session = confluence_client._get_session()
-            logger.info("artifact_worker: using Confluence session for downloads")
 
     while not state.should_stop_artifact_worker():
+        # Lazily acquire Confluence session when first needed
+        if auth_session is None and state.site_type == "confluence":
+            confluence_client = await state.get_confluence_client()
+            if confluence_client is not None:
+                auth_session = confluence_client._get_session()
+                logger.info(
+                    "artifact_worker: acquired Confluence session for downloads"
+                )
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
             if on_progress:
@@ -649,6 +653,9 @@ async def artifact_score_worker(
     worker_id = id(asyncio.current_task())
     logger.info(f"artifact_score_worker started (task={worker_id})")
 
+    # Confluence session for artifact preview downloads (lazily acquired)
+    auth_session = None
+
     # Load facility-specific data access patterns for scorer context
     facility_access_patterns: dict[str, Any] | None = None
     try:
@@ -671,6 +678,15 @@ async def artifact_score_worker(
         )
 
     while not state.should_stop_artifact_scoring():
+        # Lazily acquire Confluence session when first needed
+        if auth_session is None and state.site_type == "confluence":
+            confluence_client = await state.get_confluence_client()
+            if confluence_client is not None:
+                auth_session = confluence_client._get_session()
+                logger.info(
+                    "artifact_score_worker %s: acquired Confluence session", worker_id
+                )
+
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
             if on_progress:
@@ -718,6 +734,7 @@ async def artifact_score_worker(
                     artifact_type=artifact_type,
                     facility=state.facility,
                     max_chars=1500,
+                    session=auth_session,
                 )
                 artifacts_with_text.append(
                     {
@@ -1645,10 +1662,17 @@ async def _fetch_image_bytes(
     import httpx
 
     if session:
-        # Use authenticated session (e.g. Confluence)
+        # Use authenticated session (e.g. Confluence) with binary-friendly headers.
+        # Confluence sessions have Accept: application/json for REST API — override
+        # for binary downloads.
+        import requests as _req
+
+        dl_session = _req.Session()
+        dl_session.cookies.update(session.cookies)
+        dl_session.headers["Accept"] = "*/*"
         try:
             resp = await asyncio.to_thread(
-                session.get, url, timeout=timeout, verify=False
+                dl_session.get, url, timeout=timeout, verify=False
             )
             if resp.status_code == 200:
                 return resp.content
