@@ -96,6 +96,11 @@ class WikiDiscoveryState:
     artifact_score_idle_count: int = 0
     image_idle_count: int = 0
 
+    # Stall detection: tracks consecutive should_stop() calls that detected
+    # pending work but couldn't make progress (workers already exited).
+    _work_stall_count: int = 0
+    _STALL_THRESHOLD: int = 120  # ~30s at 0.25s poll interval
+
     # SSH retry tracking
     ssh_retry_count: int = 0
     max_ssh_retries: int = 5
@@ -231,6 +236,21 @@ class WikiDiscoveryState:
                 )
 
             if has_work:
+                self._work_stall_count += 1
+                if self._work_stall_count >= self._STALL_THRESHOLD:
+                    # Workers have exited but pending work remains.
+                    # This happens when score workers produce scored pages
+                    # after ingest workers have already exited. Continuing
+                    # would spin forever — force stop and let the next run
+                    # pick up the remaining work.
+                    logger.warning(
+                        "Stall detected: pending work but no worker progress "
+                        "after %d checks (~%.0fs). Forcing stop. "
+                        "Re-run to process remaining items.",
+                        self._work_stall_count,
+                        self._work_stall_count * 0.25,
+                    )
+                    return True
                 # Reset only I/O worker idle counts when limits are hit
                 # (LLM workers are already stopped and won't re-poll).
                 # Reset all idle counts when no limit is hit.
@@ -245,6 +265,7 @@ class WikiDiscoveryState:
                     self.artifact_score_idle_count = 0
                     self.image_idle_count = 0
                 return False
+            self._work_stall_count = 0
             return True
         return False
 

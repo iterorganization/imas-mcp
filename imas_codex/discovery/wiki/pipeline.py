@@ -1487,15 +1487,19 @@ def fetch_artifact_size(
     url: str,
     facility: str = "tcv",
     timeout: int = 30,
+    session: Any = None,
 ) -> int | None:
     """Fetch artifact file size via HTTP HEAD request.
 
     Uses the transfer module for SSH-proxied or direct HTTP access.
+    When a session is provided (e.g. Confluence auth), uses direct HTTP
+    instead of SSH curl.
 
     Args:
         url: Full URL to artifact
         facility: SSH host alias (None for direct HTTP)
         timeout: Timeout in seconds
+        session: Optional authenticated requests.Session (bypasses SSH)
 
     Returns:
         File size in bytes, or None if size cannot be determined
@@ -1505,7 +1509,8 @@ def fetch_artifact_size(
     from imas_codex.discovery.base.transfer import TransferClient
 
     async def _get_size():
-        async with TransferClient(ssh_host=facility) as client:
+        ssh = None if session else facility
+        async with TransferClient(ssh_host=ssh, session=session) as client:
             return await client.get_size(url, timeout=timeout)
 
     # Run async in sync context
@@ -1529,16 +1534,19 @@ async def fetch_artifact_content(
     url: str,
     facility: str = "tcv",
     timeout: int = 120,
+    session: Any = None,
 ) -> tuple[str, bytes]:
     """Fetch artifact content with validation.
 
     Uses the transfer module for SSH-proxied or direct HTTP access.
-    Validates content type matches expected file extension.
+    When a session is provided (e.g. Confluence auth), uses direct HTTP
+    instead of SSH curl.
 
     Args:
         url: Full URL to artifact
         facility: SSH host alias (None for direct HTTP)
         timeout: Timeout in seconds
+        session: Optional authenticated requests.Session (bypasses SSH)
 
     Returns:
         Tuple of (content_type, raw_bytes)
@@ -1552,7 +1560,8 @@ async def fetch_artifact_content(
     # Get expected type from URL extension
     ext = url.rsplit(".", 1)[-1].lower()
 
-    async with TransferClient(ssh_host=facility) as client:
+    ssh = None if session else facility
+    async with TransferClient(ssh_host=ssh, session=session) as client:
         result = await client.download(url, timeout=timeout, expected_type=ext)
 
     if not result.success:

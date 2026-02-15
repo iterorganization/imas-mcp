@@ -453,6 +453,14 @@ async def artifact_worker(
         use_rich=False,
     )
 
+    # Get authenticated session for Confluence sites (direct HTTP instead of SSH curl)
+    auth_session = None
+    if state.site_type == "confluence" and hasattr(state, "_confluence_client"):
+        confluence_client = state._confluence_client
+        if confluence_client is not None:
+            auth_session = confluence_client._get_session()
+            logger.info("artifact_worker: using Confluence session for downloads")
+
     while not state.should_stop_artifact_worker():
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
@@ -523,6 +531,7 @@ async def artifact_worker(
                         filename=filename,
                         facility=state.facility,
                         ssh_host=getattr(state, "ssh_host", None),
+                        session=auth_session,
                     )
                     results.append(
                         {
@@ -538,7 +547,9 @@ async def artifact_worker(
                     continue
 
                 # Check size before downloading text-extractable artifacts
-                size_bytes = fetch_artifact_size(url, facility=state.facility)
+                size_bytes = fetch_artifact_size(
+                    url, facility=state.facility, session=auth_session
+                )
 
                 if size_bytes is not None and size_bytes > max_size_bytes:
                     size_mb = size_bytes / (1024 * 1024)
@@ -562,7 +573,9 @@ async def artifact_worker(
                     continue
 
                 # Download and ingest
-                _, content = await fetch_artifact_content(url, facility=state.facility)
+                _, content = await fetch_artifact_content(
+                    url, facility=state.facility, session=auth_session
+                )
                 stats = await pipeline.ingest_artifact(
                     artifact_id, content, artifact_type
                 )
@@ -1133,6 +1146,7 @@ async def _ingest_image_artifact(
     filename: str,
     facility: str,
     ssh_host: str | None = None,
+    session: Any = None,
 ) -> None:
     """Convert an image-type WikiArtifact into an Image node.
 
@@ -1146,11 +1160,15 @@ async def _ingest_image_artifact(
         filename: Original filename
         facility: Facility ID
         ssh_host: Optional SSH host for proxied fetching
+        session: Optional authenticated requests.Session (bypasses SSH)
     """
     from imas_codex.discovery.wiki.image import downsample_image, make_image_id
 
-    # Fetch image bytes
-    image_bytes = await _fetch_image_bytes(url, ssh_host)
+    # Fetch image bytes - prefer session over SSH when available
+    if session:
+        image_bytes = await _fetch_image_bytes(url, session=session)
+    else:
+        image_bytes = await _fetch_image_bytes(url, ssh_host)
     if not image_bytes or len(image_bytes) < 512:
         logger.debug(
             "Image artifact %s: insufficient bytes (%d)",
@@ -1609,13 +1627,15 @@ async def _fetch_image_bytes(
     url: str,
     ssh_host: str | None = None,
     timeout: int = 15,
+    session: Any = None,
 ) -> bytes | None:
-    """Fetch image bytes from URL, optionally via SSH proxy.
+    """Fetch image bytes from URL, optionally via SSH proxy or auth session.
 
     Args:
         url: Image URL
         ssh_host: Optional SSH host for proxied fetching
         timeout: Timeout in seconds
+        session: Optional authenticated requests.Session (bypasses SSH)
 
     Returns:
         Raw image bytes or None on failure
@@ -1624,7 +1644,18 @@ async def _fetch_image_bytes(
 
     import httpx
 
-    if ssh_host:
+    if session:
+        # Use authenticated session (e.g. Confluence)
+        try:
+            resp = await asyncio.to_thread(
+                session.get, url, timeout=timeout, verify=False
+            )
+            if resp.status_code == 200:
+                return resp.content
+            return None
+        except Exception:
+            return None
+    elif ssh_host:
         # Fetch via SSH proxy using curl
         cmd = f'curl -sk --noproxy "*" -m {timeout} "{url}" 2>/dev/null'
         try:
