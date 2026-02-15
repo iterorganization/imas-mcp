@@ -1509,18 +1509,10 @@ def fetch_artifact_size(
     from imas_codex.discovery.base.transfer import TransferClient
 
     async def _get_size():
-        # For Confluence sessions, create a clean session with auth cookies
-        # but without JSON Accept headers (HEAD request for binary file)
-        download_session = session
-        if session is not None:
-            import requests as _req
-
-            download_session = _req.Session()
-            download_session.cookies.update(session.cookies)
-            download_session.headers["Accept"] = "*/*"
-
-        ssh = None if download_session else facility
-        async with TransferClient(ssh_host=ssh, session=download_session) as client:
+        # Use the authenticated session directly — keeps connection pool
+        # and TLS state intact for BigIP/load-balanced Confluence.
+        ssh = None if session else facility
+        async with TransferClient(ssh_host=ssh, session=session) as client:
             return await client.get_size(url, timeout=timeout)
 
     # Run async in sync context
@@ -1570,24 +1562,13 @@ async def fetch_artifact_content(
     # Get expected type from URL extension
     ext = url.rsplit(".", 1)[-1].lower()
 
-    # When using an authenticated session for binary downloads (e.g. Confluence),
-    # override Accept header — the Confluence session sets Accept: application/json
-    # for REST API calls, but attachment downloads need binary Accept.
-    download_session = session
-    if session is not None:
-        import requests as _req
-
-        download_session = _req.Session()
-        download_session.cookies.update(session.cookies)
-        download_session.headers.update(
-            {
-                "Accept": "*/*",
-                "User-Agent": session.headers.get("User-Agent", "imas-codex/1.0"),
-            }
-        )
-
-    ssh = None if download_session else facility
-    async with TransferClient(ssh_host=ssh, session=download_session) as client:
+    # Use the authenticated session directly for downloads. Confluence's
+    # /download/attachments/ endpoint serves binary content regardless of
+    # Accept header (Accept: application/json only affects /rest/api/ endpoints).
+    # Creating a new Session() would lose connection pool and TLS state needed
+    # by load balancers like BigIP.
+    ssh = None if session else facility
+    async with TransferClient(ssh_host=ssh, session=session) as client:
         result = await client.download(url, timeout=timeout, expected_type=ext)
 
     if not result.success:

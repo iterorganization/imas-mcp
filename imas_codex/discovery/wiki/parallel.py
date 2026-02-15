@@ -1069,7 +1069,8 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             MATCH (img:Image {facility_id: $facility})
             RETURN
                 count(CASE WHEN img.caption IS NOT NULL THEN 1 END) AS scored,
-                count(CASE WHEN img.caption IS NULL THEN 1 END) AS pending
+                count(CASE WHEN img.caption IS NULL
+                              AND img.status IN ['ingested'] THEN 1 END) AS pending
             """,
             facility=facility,
         )
