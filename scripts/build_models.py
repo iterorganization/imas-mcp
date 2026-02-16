@@ -92,6 +92,45 @@ def _generate_physics_domain(
         return 1
 
 
+def _generate_schema_reference(
+    logger: logging.Logger,
+    force: bool,
+    dry_run: bool,
+) -> int:
+    """Generate agents/schema-reference.md from LinkML schemas.
+
+    Returns:
+        0 on success, non-zero on failure.
+    """
+    from scripts.gen_schema_reference import generate
+
+    root = get_project_root()
+    output_file = root / "agents" / "schema-reference.md"
+    schemas_dir = get_schemas_dir()
+
+    # Check freshness
+    if output_file.exists() and not force:
+        output_mtime = output_file.stat().st_mtime
+        schema_files = list(schemas_dir.glob("*.yaml"))
+        if all(f.stat().st_mtime <= output_mtime for f in schema_files):
+            logger.info(f"Schema reference up to date at {output_file}")
+            return 0
+        logger.info("Schema files newer than reference, regenerating...")
+
+    if dry_run:
+        click.echo(f"Would generate: {output_file}")
+        return 0
+
+    try:
+        generate(force=True)
+        logger.info(f"Generated schema reference at {output_file}")
+        click.echo(f"Generated: {output_file}")
+        return 0
+    except Exception as e:
+        logger.warning(f"Schema reference generation failed (non-fatal): {e}")
+        return 0  # Non-fatal — models are the priority
+
+
 @click.command()
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging output")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress all logging except errors")
@@ -289,6 +328,9 @@ To regenerate:
                 click.echo(f"IMAS DD models up to date: {imas_output_file}")
         else:
             logger.debug(f"IMAS DD schema not found: {imas_schema_file}")
+
+        # Generate schema reference for agents
+        _generate_schema_reference(logger, force, dry_run)
 
         # Generate facility config models
         config_schema_file = schemas_dir / "facility_config.yaml"

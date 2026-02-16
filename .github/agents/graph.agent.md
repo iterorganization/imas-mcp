@@ -53,3 +53,5 @@ uv run imas-codex neo4j shell
 ## Full Instructions
 
 See [agents/graph.md](../../agents/graph.md) for complete graph operations, schema evolution rules, and release workflows.
+
+See [agents/schema-reference.md](../../agents/schema-reference.md) for auto-generated node labels, properties, vector indexes, and relationships.

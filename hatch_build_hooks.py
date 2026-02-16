@@ -129,6 +129,41 @@ class CustomBuildHook(BuildHookInterface):
         finally:
             sys.path[:] = original_path
 
+    def _generate_schema_reference(self, package_root: Path) -> None:
+        """Generate agents/schema-reference.md from LinkML schemas."""
+        output_file = package_root / "agents" / "schema-reference.md"
+        schemas_dir = package_root / "imas_codex" / "schemas"
+
+        # Freshness check
+        schema_files = [
+            schemas_dir / "facility.yaml",
+            schemas_dir / "common.yaml",
+            schemas_dir / "imas_dd.yaml",
+        ]
+        existing = [f for f in schema_files if f.exists()]
+        if not existing:
+            return
+
+        if output_file.exists():
+            output_mtime = output_file.stat().st_mtime
+            if all(f.stat().st_mtime <= output_mtime for f in existing):
+                self._trace("Schema reference up to date")
+                return
+
+        original_path = sys.path[:]
+        if str(package_root) not in sys.path:
+            sys.path.insert(0, str(package_root))
+
+        try:
+            from scripts.gen_schema_reference import generate_schema_reference
+
+            generate_schema_reference(force=True)
+            self._trace("Schema reference generated")
+        except Exception as e:
+            self._trace(f"Failed to generate schema reference: {e}")
+        finally:
+            sys.path[:] = original_path
+
     def _check_schemas_exist(self, schemas_dir: Path) -> bool:
         """Check if schema files already exist and are valid."""
         catalog_path = schemas_dir / "ids_catalog.json"
@@ -214,6 +249,9 @@ class CustomBuildHook(BuildHookInterface):
         if not graph_models_exist:
             self._trace("Generating graph models from LinkML schema...")
             self._generate_graph_models(package_root)
+
+        # Generate schema reference for agents (after models exist)
+        self._generate_schema_reference(package_root)
 
         # Get resource paths for this version
         path_accessor = ResourcePathAccessor(dd_version=resolved_dd_version)

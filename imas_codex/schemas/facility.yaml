@@ -3087,6 +3087,15 @@ classes:
         description: Number of WikiChunk nodes created from this artifact
         range: integer
       
+      # Embedding (populated by embed-update CLI, not by workers)
+      embedding:
+        description: Vector embedding of description for semantic search (256-dim)
+        multivalued: true
+        range: float
+      embedded_at:
+        description: When the description embedding was last computed
+        range: datetime
+      
       # Timestamps
       discovered_at:
         description: When this artifact was first discovered

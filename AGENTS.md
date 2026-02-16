@@ -88,6 +88,7 @@ All graph node types, relationships, and properties are defined in LinkML schema
 - `imas_codex/graph/dd_models.py`
 - `imas_codex/config/models.py`
 - `imas_codex/core/physics_domain.py`
+- `agents/schema-reference.md`
 
 Always import enums and classes from generated models. Never hardcode status values:
 
@@ -104,6 +105,8 @@ add_to_graph("SourceFile", [sf.model_dump()])
 ```
 
 **Extending schemas:** Edit LinkML YAML → `uv run build-models --force` → import from `imas_codex.graph.models`. Schema changes are additive only — add properties, never rename or remove.
+
+**Full schema reference:** [agents/schema-reference.md](agents/schema-reference.md) — auto-generated list of all node labels, properties, vector indexes, relationships, and enums. Rebuilt on `uv sync`.
 
 ## Facility Configuration
 
@@ -282,18 +285,7 @@ gc.query(f"""
 """)
 ```
 
-**Existing indexes:**
-
-| Index | Content |
-|-------|---------|
-| `imas_path_embedding` | IMASPath nodes (61k) |
-| `cluster_centroid` | IMASSemanticCluster centroids |
-| `code_chunk_embedding` | CodeChunk nodes (8.5k) |
-| `wiki_chunk_embedding` | WikiChunk nodes (25k) |
-| `facility_signal_desc_embedding` | FacilitySignal descriptions |
-| `facility_path_desc_embedding` | FacilityPath descriptions |
-| `tree_node_desc_embedding` | TreeNode descriptions |
-| `wiki_artifact_desc_embedding` | WikiArtifact descriptions |
+**Existing indexes:** See [agents/schema-reference.md](agents/schema-reference.md) for the full list of vector indexes derived from the LinkML schema.
 
 ### Semantic Search & Graph RAG
 

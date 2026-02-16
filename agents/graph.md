@@ -123,14 +123,7 @@ uv run imas-codex release v4.0.0 -m 'Graph only' --skip-git
 
 ## Vector Indexes
 
-Available for semantic search:
-
-| Index | Content |
-|-------|---------|
-| `imas_path_embedding` | IMAS Data Dictionary paths (61k) |
-| `code_chunk_embedding` | Code examples (8.5k chunks) |
-| `wiki_chunk_embedding` | Wiki documentation (25k chunks) |
-| `cluster_centroid` | Semantic clusters |
+See [schema-reference.md](schema-reference.md) for the full list of vector indexes, node labels, properties, and relationships.
 
 ## Useful Cypher Aggregations
 

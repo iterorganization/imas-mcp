@@ -47,6 +47,10 @@ YIELD node, score
 RETURN node.id, node.description, score
 ```
 
+## Schema Reference
+
+See [agents/schema-reference.md](../../agents/schema-reference.md) for auto-generated node labels, properties, vector indexes, and relationships.
+
 ## Cost Awareness
 
 - Prefer Cypher aggregations over Python post-processing
