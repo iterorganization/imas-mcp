@@ -6,7 +6,8 @@ It calls eddbreadOne() for each signal to verify data exists.
 
 Requirements:
 - Python 3.8+ (stdlib only except eddb_pwrapper)
-- eddb_pwrapper (available at /analysis/lib)
+- eddb_pwrapper (available at /analysis/src/eddb)
+- libeddb.so (available at /analysis/lib/libeddb.so)
 
 Usage:
     echo '{"signals": [...], "ref_shot": "E012345"}' | python3 check_edas.py
@@ -45,49 +46,75 @@ def main():
     ref_shot = config.get("ref_shot", "")
 
     if not ref_shot:
-        print(json.dumps({"results": [
-            {"id": s["id"], "success": False, "error": "no ref_shot"}
-            for s in signals
-        ]}))
+        print(
+            json.dumps(
+                {
+                    "results": [
+                        {"id": s["id"], "success": False, "error": "no ref_shot"}
+                        for s in signals
+                    ]
+                }
+            )
+        )
         sys.exit(0)
 
     try:
-        sys.path.insert(0, "/analysis/lib")
+        sys.path.insert(0, "/analysis/src/eddb")
         from eddb_pwrapper import eddbWrapper
     except ImportError:
-        print(json.dumps({"results": [
-            {"id": s["id"], "success": False, "error": "eddb_pwrapper not available"}
-            for s in signals
-        ]}))
-        sys.exit(0)
+        try:
+            sys.path.insert(0, "/analysis/lib")
+            from eddb_pwrapper import eddbWrapper
+        except ImportError:
+            print(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "id": s["id"],
+                                "success": False,
+                                "error": "eddb_pwrapper not available",
+                            }
+                            for s in signals
+                        ]
+                    }
+                )
+            )
+            sys.exit(0)
 
-    db = eddbWrapper()
-    db.opendb("EDDB")
+    db = eddbWrapper("/analysis/lib/libeddb.so")
+    db.eddbOpen()
 
     results = []
     for sig in signals:
         try:
-            data = db._eddbreadOne(ref_shot, sig["category"], sig["data_name"], 1)
+            data = db.eddbreadOne(ref_shot, sig["category"], sig["data_name"], 1)
             if data is not None:
-                results.append({
-                    "id": sig["id"],
-                    "success": True,
-                    "dtype": str(type(data).__name__),
-                })
+                results.append(
+                    {
+                        "id": sig["id"],
+                        "success": True,
+                        "dtype": str(type(data).__name__),
+                    }
+                )
             else:
-                results.append({
+                results.append(
+                    {
+                        "id": sig["id"],
+                        "success": False,
+                        "error": "eddbreadOne returned None",
+                    }
+                )
+        except Exception as e:
+            results.append(
+                {
                     "id": sig["id"],
                     "success": False,
-                    "error": "eddbreadOne returned None",
-                })
-        except Exception as e:
-            results.append({
-                "id": sig["id"],
-                "success": False,
-                "error": str(e)[:200],
-            })
+                    "error": str(e)[:200],
+                }
+            )
 
-    db.closedb()
+    db.eddbClose()
     print(json.dumps({"results": results}))
 
 

@@ -28,6 +28,12 @@ data_sources:
     sal_endpoint: https://sal.jet.uk  # SAL REST API
     reference_pulse: 99896
     default_owner: jetppf
+    # Python interpreter with numpy for ppf array handling
+    python_command: /common/software/micromamba/root/envs/python-3.12-minibundle/bin/python3
+    # Module loads for PPF library access
+    setup_commands:
+      - source /etc/profile.d/modules.sh
+      - module load jet/1.0
     # Exclude DDAs with raw/engineering data (high volume, low physics value)
     exclude_ddas: []
 

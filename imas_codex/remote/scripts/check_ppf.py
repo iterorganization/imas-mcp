@@ -47,29 +47,59 @@ def main():
     owner = config.get("owner", "jetppf")
 
     if not pulse:
-        print(json.dumps({"results": [
-            {"id": s["id"], "success": False, "error": "no pulse"}
-            for s in signals
-        ]}))
+        print(
+            json.dumps(
+                {
+                    "results": [
+                        {"id": s["id"], "success": False, "error": "no pulse"}
+                        for s in signals
+                    ]
+                }
+            )
+        )
         sys.exit(0)
 
     try:
-        sys.path.insert(0, "/jet/share/DEPOT/pyppf/21260/lib/python")
+        sys.path.insert(0, "/jet/share/lib/python")
         import ppf
     except ImportError:
-        print(json.dumps({"results": [
-            {"id": s["id"], "success": False, "error": "ppf module not available"}
-            for s in signals
-        ]}))
-        sys.exit(0)
+        try:
+            sys.path.insert(0, "/jet/share/DEPOT/pyppf/21260/lib/python")
+            import ppf
+        except ImportError:
+            print(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "id": s["id"],
+                                "success": False,
+                                "error": "ppf module not available",
+                            }
+                            for s in signals
+                        ]
+                    }
+                )
+            )
+            sys.exit(0)
 
     ppf.ppfuid(owner, rw="R")
     ier = ppf.ppfgo(pulse, seq=0)
     if ier != 0:
-        print(json.dumps({"results": [
-            {"id": s["id"], "success": False, "error": f"ppfgo failed: ier={ier}"}
-            for s in signals
-        ]}))
+        print(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "id": s["id"],
+                            "success": False,
+                            "error": f"ppfgo failed: ier={ier}",
+                        }
+                        for s in signals
+                    ]
+                }
+            )
+        )
         sys.exit(0)
 
     results = []
@@ -77,24 +107,34 @@ def main():
         try:
             data, x, t, ier = ppf.ppfdata(pulse, sig["dda"], sig["dtype"], uid=owner)
             if ier == 0 and data is not None:
-                results.append({
-                    "id": sig["id"],
-                    "success": True,
-                    "shape": list(data.shape) if hasattr(data, "shape") else [len(data)],
-                    "dtype": str(data.dtype) if hasattr(data, "dtype") else "unknown",
-                })
+                results.append(
+                    {
+                        "id": sig["id"],
+                        "success": True,
+                        "shape": list(data.shape)
+                        if hasattr(data, "shape")
+                        else [len(data)],
+                        "dtype": str(data.dtype)
+                        if hasattr(data, "dtype")
+                        else "unknown",
+                    }
+                )
             else:
-                results.append({
+                results.append(
+                    {
+                        "id": sig["id"],
+                        "success": False,
+                        "error": f"ppfdata ier={ier}",
+                    }
+                )
+        except Exception as e:
+            results.append(
+                {
                     "id": sig["id"],
                     "success": False,
-                    "error": f"ppfdata ier={ier}",
-                })
-        except Exception as e:
-            results.append({
-                "id": sig["id"],
-                "success": False,
-                "error": str(e)[:200],
-            })
+                    "error": str(e)[:200],
+                }
+            )
 
     print(json.dumps({"results": results}))
 

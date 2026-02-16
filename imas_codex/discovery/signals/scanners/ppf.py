@@ -117,6 +117,8 @@ class PPFScanner:
                 },
                 ssh_host=ssh_host,
                 timeout=120,
+                python_command=config.get("python_command", "python3"),
+                setup_commands=config.get("setup_commands"),
             )
             data = json.loads(output.strip().split("\n")[-1])
         except Exception as e:
@@ -237,6 +239,8 @@ class PPFScanner:
                 },
                 ssh_host=ssh_host,
                 timeout=120,
+                python_command=config.get("python_command", "python3"),
+                setup_commands=config.get("setup_commands"),
             )
             response = json.loads(output.strip().split("\n")[-1])
             return [

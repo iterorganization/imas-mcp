@@ -408,34 +408,63 @@ tree.close()
 async def ingest_tdi_functions(
     gc: GraphClient,
     facility: str,
-    functions: list[TDIFunctionMeta],
+    functions: list[TDIFunctionMeta] | list[dict],
 ) -> int:
     """Ingest TDI function metadata into the graph.
 
     Creates TDIFunction nodes with source_code for LLM enrichment context.
+
+    Accepts both TDIFunctionMeta objects (from discover_tdi_signals) and
+    plain dicts (from scanner metadata). When dicts are passed, only
+    available keys are used.
     """
     if not functions:
         return 0
 
     func_dicts = []
     for func in functions:
-        func_id = f"{facility}:tdi:{func.name}"
-        func_dicts.append(
-            {
-                "id": func_id,
-                "facility_id": facility,
-                "name": func.name,
-                "path": func.path,
-                "description": func.description,
-                "signature": func.signature,
-                "source_code": func.source_code,
-                "parameters": func.parameters,
-                "mdsplus_trees": func.mdsplus_trees,
-                "tdi_dependencies": func.tdi_dependencies,
-                "has_shot_conditional": func.has_shot_conditional,
-                "quantity_count": len(func.quantities),
-            }
-        )
+        # Support both TDIFunctionMeta objects and plain dicts
+        if isinstance(func, dict):
+            name = func.get("name", "")
+            if not name:
+                continue
+            func_id = f"{facility}:tdi:{name}"
+            func_dicts.append(
+                {
+                    "id": func_id,
+                    "facility_id": facility,
+                    "name": name,
+                    "path": func.get("path", ""),
+                    "description": func.get("description", ""),
+                    "signature": func.get("signature", ""),
+                    "source_code": func.get("source_code", ""),
+                    "parameters": func.get("parameters", []),
+                    "mdsplus_trees": func.get("mdsplus_trees", []),
+                    "tdi_dependencies": func.get("tdi_dependencies", []),
+                    "has_shot_conditional": func.get("has_shot_conditional", False),
+                    "quantity_count": func.get(
+                        "quantity_count", len(func.get("quantities", []))
+                    ),
+                }
+            )
+        else:
+            func_id = f"{facility}:tdi:{func.name}"
+            func_dicts.append(
+                {
+                    "id": func_id,
+                    "facility_id": facility,
+                    "name": func.name,
+                    "path": func.path,
+                    "description": func.description,
+                    "signature": func.signature,
+                    "source_code": func.source_code,
+                    "parameters": func.parameters,
+                    "mdsplus_trees": func.mdsplus_trees,
+                    "tdi_dependencies": func.tdi_dependencies,
+                    "has_shot_conditional": func.has_shot_conditional,
+                    "quantity_count": len(func.quantities),
+                }
+            )
 
     gc.query(
         """

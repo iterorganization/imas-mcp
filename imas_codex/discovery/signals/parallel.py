@@ -100,6 +100,7 @@ class DataDiscoveryState:
     # Control
     stop_requested: bool = False
     enrich_only: bool = False  # When True, discover/check workers not started
+    scan_complete: bool = False  # Set True when scan_worker finishes all scanners
     discover_idle_count: int = 0
     enrich_idle_count: int = 0
     check_idle_count: int = 0
@@ -136,7 +137,9 @@ class DataDiscoveryState:
         limit_done = self.budget_exhausted or self.signal_limit_reached
 
         # LLM workers: idle OR limit-stopped counts as "done"
-        enrich_done = self.enrich_idle_count >= 3 or limit_done
+        # But enrichment can't be "idle-done" until scan is actually complete,
+        # otherwise workers idle during the scan phase and get killed early.
+        enrich_done = limit_done or (self.scan_complete and self.enrich_idle_count >= 3)
 
         all_idle = (
             self.discover_idle_count >= 3 and enrich_done and self.check_idle_count >= 3
@@ -187,8 +190,10 @@ class DataDiscoveryState:
         if self.deadline_expired:
             return True
         if self.check_idle_count >= 3:
-            # Only stop if enriching is done AND no pending validation work
-            enriching_done = self.enrich_idle_count >= 3 or self.budget_exhausted
+            # Only stop if scan is done AND enriching is done AND no pending validation work
+            enriching_done = (
+                self.scan_complete and self.enrich_idle_count >= 3
+            ) or self.budget_exhausted
             if enriching_done and not has_pending_check_work(self.facility):
                 return True
         return False
@@ -1275,6 +1280,7 @@ async def scan_worker(
                 )
 
     # Mark scan as complete
+    state.scan_complete = True
     state.discover_idle_count = 100
 
     if on_progress:
@@ -2071,6 +2077,7 @@ async def run_parallel_data_discovery(
         # Set idle counts high so should_stop() doesn't block on them.
         state.discover_idle_count = 10
         state.check_idle_count = 10
+        state.scan_complete = True
 
     # In enrich_only mode, scan worker was already skipped above.
     # Set discover_idle_count for the general case too.

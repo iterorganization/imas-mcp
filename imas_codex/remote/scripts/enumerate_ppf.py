@@ -51,12 +51,24 @@ def main():
         sys.exit(0)
 
     # Import ppf — available on JET compute nodes
+    # Primary path: /jet/share/lib/python (set by 'module load jet/1.0')
+    # Fallback: legacy DEPOT path
     try:
-        sys.path.insert(0, "/jet/share/DEPOT/pyppf/21260/lib/python")
+        sys.path.insert(0, "/jet/share/lib/python")
         import ppf
     except ImportError:
-        print(json.dumps({"error": "ppf module not available"}))
-        sys.exit(0)
+        try:
+            sys.path.insert(0, "/jet/share/DEPOT/pyppf/21260/lib/python")
+            import ppf
+        except ImportError:
+            print(
+                json.dumps(
+                    {
+                        "error": "ppf module not available. Tried /jet/share/lib/python and /jet/share/DEPOT/pyppf/"
+                    }
+                )
+            )
+            sys.exit(0)
 
     # Set default user
     ppf.ppfuid(owner, rw="R")
@@ -91,12 +103,16 @@ def main():
         except Exception:
             pass
 
-    print(json.dumps({
-        "signals": results,
-        "pulse": pulse,
-        "owner": owner,
-        "ndda": ndda,
-    }))
+    print(
+        json.dumps(
+            {
+                "signals": results,
+                "pulse": pulse,
+                "owner": owner,
+                "ndda": ndda,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

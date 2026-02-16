@@ -744,6 +744,8 @@ def run_python_script(
     input_data: dict | list | None = None,
     ssh_host: str | None = None,
     timeout: int = 60,
+    python_command: str = "python3",
+    setup_commands: list[str] | None = None,
 ) -> str:
     """Execute a Python script from the remote/scripts package.
 
@@ -758,6 +760,10 @@ def run_python_script(
         input_data: Dict/list to pass as JSON on stdin (None = no input)
         ssh_host: SSH host to connect to (None = local)
         timeout: Command timeout in seconds
+        python_command: Python interpreter to use (default: "python3").
+            Can be full path (e.g., "/path/to/python3").
+        setup_commands: Shell commands to run before Python (e.g., module loads).
+            Only used for remote (SSH) execution.
 
     Returns:
         Script output (stdout)
@@ -794,7 +800,7 @@ def run_python_script(
 
     if is_local:
         result = subprocess.run(
-            ["python3", "-c", runner],
+            [python_command, "-c", runner],
             input=json_input,
             capture_output=True,
             text=True,
@@ -804,9 +810,17 @@ def run_python_script(
         # Check SSH health once per host per session (prevents stale socket hangs)
         _ensure_ssh_healthy_once(ssh_host)
 
+        # Build remote command with optional setup commands
+        python_cmd = f"{python_command} -c '{runner}'"
+        if setup_commands:
+            setup = " && ".join(setup_commands)
+            remote_cmd = f"{setup} && {python_cmd}"
+        else:
+            remote_cmd = python_cmd
+
         # SSH execution with JSON piped through
         result = subprocess.run(
-            ["ssh", "-T", ssh_host, f"python3 -c '{runner}'"],
+            ["ssh", "-T", ssh_host, remote_cmd],
             input=json_input,
             capture_output=True,
             text=True,
@@ -839,6 +853,8 @@ async def async_run_python_script(
     input_data: dict | list | None = None,
     ssh_host: str | None = None,
     timeout: int = 60,
+    python_command: str = "python3",
+    setup_commands: list[str] | None = None,
 ) -> str:
     """Async version of run_python_script using asyncio subprocesses.
 
@@ -850,6 +866,10 @@ async def async_run_python_script(
         input_data: Dict/list to pass as JSON on stdin (None = no input)
         ssh_host: SSH host to connect to (None = local)
         timeout: Command timeout in seconds
+        python_command: Python interpreter to use (default: "python3").
+            Can be full path (e.g., "/path/to/python3").
+        setup_commands: Shell commands to run before Python (e.g., module loads).
+            Only used for remote (SSH) execution.
 
     Returns:
         Script output (stdout)
@@ -887,11 +907,19 @@ async def async_run_python_script(
     )
 
     if is_local:
-        cmd = ["python3", "-c", runner]
+        cmd = [python_command, "-c", runner]
     else:
         # Check SSH health once per host per session (sync, cached)
         _ensure_ssh_healthy_once(ssh_host)
-        cmd = ["ssh", "-T", ssh_host, f"python3 -c '{runner}'"]
+        # Build remote command with optional setup commands
+        python_cmd = f"{python_command} -c '{runner}'"
+        if setup_commands:
+            # Prepend setup commands (module loads, env setup) before Python
+            setup = " && ".join(setup_commands)
+            remote_cmd = f"{setup} && {python_cmd}"
+        else:
+            remote_cmd = python_cmd
+        cmd = ["ssh", "-T", ssh_host, remote_cmd]
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,

@@ -25,9 +25,12 @@ data_sources:
   # EDAS is JT-60SA's primary experiment data access system.
   # Wraps proprietary data formats with C/Fortran/Python APIs.
   edas:
-    api_path: /analysis/src/edas
+    api_path: /analysis/src/eddb
+    lib_path: /analysis/lib/libeddb.so
     header_path: /analysis/src/edas/include
     reference_shot: 1000  # TODO: confirm valid reference shot
+    # No special Python or module setup needed — eddb_pwrapper uses ctypes
+    # and the script handles sys.path insertion internally
 
   # IMAS data available via modules
   imas:

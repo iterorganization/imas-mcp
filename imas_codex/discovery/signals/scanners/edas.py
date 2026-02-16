@@ -96,6 +96,8 @@ class EDASScanner:
                 {"ref_shot": shot_str},
                 ssh_host=ssh_host,
                 timeout=180,
+                python_command=config.get("python_command", "python3"),
+                setup_commands=config.get("setup_commands"),
             )
             data = json.loads(output.strip().split("\n")[-1])
         except Exception as e:
@@ -117,12 +119,14 @@ class EDASScanner:
             library="eddb_pwrapper",
             access_type="local",
             template_python=(
+                "import sys\n"
+                "sys.path.insert(0, '/analysis/src/eddb')\n"
                 "from eddb_pwrapper import eddbWrapper\n"
-                "db = eddbWrapper()\n"
-                "db.opendb('EDDB')\n"
-                "data = db.get_time_seriese_data("
-                "'{shot}', t1, t2, '{data_name}', '{category}')\n"
-                "db.closedb()"
+                "db = eddbWrapper('/analysis/lib/libeddb.so')\n"
+                "db.eddbOpen()\n"
+                "data = db.eddbreadTime("
+                "'{shot}', '{category}', '{data_name}', t1, t2)\n"
+                "db.eddbClose()"
             ),
         )
 
@@ -218,6 +222,8 @@ class EDASScanner:
                 },
                 ssh_host=ssh_host,
                 timeout=180,
+                python_command=config.get("python_command", "python3"),
+                setup_commands=config.get("setup_commands"),
             )
             response = json.loads(output.strip().split("\n")[-1])
             return [

@@ -52,31 +52,50 @@ def main():
         sys.exit(0)
 
     # Import eddb_pwrapper — available on JT-60SA compute nodes
+    # Primary path: /analysis/src/eddb (eddb_pwrapper.py)
+    # The wrapper needs libeddb.so at /analysis/lib/libeddb.so
     try:
-        sys.path.insert(0, "/analysis/lib")
+        sys.path.insert(0, "/analysis/src/eddb")
         from eddb_pwrapper import eddbWrapper
     except ImportError:
         try:
-            sys.path.insert(0, "/analysis/src/edas2/v2.1.15/edas_share/database_api")
-            import edas_eddb_api  # noqa: F401
-            print(json.dumps({
-                "error": "eddb_pwrapper not available, edas_eddb_api loaded but unsupported"
-            }))
-            sys.exit(0)
+            sys.path.insert(0, "/analysis/lib")
+            from eddb_pwrapper import eddbWrapper
         except ImportError:
-            print(json.dumps({"error": "No EDAS Python API available"}))
-            sys.exit(0)
+            try:
+                sys.path.insert(
+                    0, "/analysis/src/edas2/v2.1.15/edas_share/database_api"
+                )
+                import edas_eddb_api  # noqa: F401
 
-    db = eddbWrapper()
-    db.opendb("EDDB")
+                print(
+                    json.dumps(
+                        {
+                            "error": "eddb_pwrapper not available, edas_eddb_api loaded but unsupported"
+                        }
+                    )
+                )
+                sys.exit(0)
+            except ImportError:
+                print(
+                    json.dumps(
+                        {
+                            "error": "No EDAS Python API available. Tried /analysis/src/eddb and /analysis/lib"
+                        }
+                    )
+                )
+                sys.exit(0)
+
+    # eddbWrapper requires the path to libeddb.so
+    db = eddbWrapper("/analysis/lib/libeddb.so")
+    # eddbOpen takes no arguments (connects to default EDDB)
+    db.eddbOpen()
 
     # Step 1: Get category listing
     try:
-        cat_result = db._eddbreadCatTable("EDDB")
+        cat_result = db.eddbreadCatTable()
         categories = (
-            cat_result.get("categories", [])
-            if isinstance(cat_result, dict)
-            else []
+            cat_result.get("categories", []) if isinstance(cat_result, dict) else []
         )
     except Exception:
         # Fallback: use known categories from exploration
@@ -88,7 +107,7 @@ def main():
             continue
         try:
             # Step 2: Read data table for this category
-            table = db._eddbreadTable(ref_shot, cat, "")
+            table = db.eddbreadTable(shot=ref_shot, cat=cat)
             if table is None:
                 continue
 
@@ -100,23 +119,29 @@ def main():
             for i, dname in enumerate(dnames):
                 if not dname or not dname.strip():
                     continue
-                signals.append({
-                    "category": cat,
-                    "data_name": dname.strip(),
-                    "alias": aliases[i].strip() if i < len(aliases) else "",
-                    "units": units[i].strip() if i < len(units) else "",
-                    "description": descs[i].strip() if i < len(descs) else "",
-                })
+                signals.append(
+                    {
+                        "category": cat,
+                        "data_name": dname.strip(),
+                        "alias": aliases[i].strip() if i < len(aliases) else "",
+                        "units": units[i].strip() if i < len(units) else "",
+                        "description": descs[i].strip() if i < len(descs) else "",
+                    }
+                )
         except Exception:
             pass
 
-    db.closedb()
-    print(json.dumps({
-        "signals": signals,
-        "shot": ref_shot,
-        "categories": categories,
-        "ncats": len(categories),
-    }))
+    db.eddbClose()
+    print(
+        json.dumps(
+            {
+                "signals": signals,
+                "shot": ref_shot,
+                "categories": categories,
+                "ncats": len(categories),
+            }
+        )
+    )
 
 
 if __name__ == "__main__":
