@@ -51,12 +51,12 @@ _DDA_DOMAIN_HINTS: dict[str, str] = {
     "ICRH": "auxiliary_heating",
     "LHCD": "auxiliary_heating",
     "SXR": "radiation_measurement_diagnostics",
-    "KS3": "spectroscopic_diagnostics",
-    "EDG7": "spectroscopic_diagnostics",
-    "EDG8": "spectroscopic_diagnostics",
-    "GASH": "gas_injection",
+    "KS3": "electromagnetic_wave_diagnostics",
+    "EDG7": "electromagnetic_wave_diagnostics",
+    "EDG8": "electromagnetic_wave_diagnostics",
+    "GASH": "plant_systems",
     "CXSE": "particle_measurement_diagnostics",
-    "KAD": "spectroscopic_diagnostics",
+    "KAD": "electromagnetic_wave_diagnostics",
 }
 
 

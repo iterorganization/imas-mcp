@@ -86,9 +86,8 @@ def main():
                 )
                 sys.exit(0)
 
-    # eddbWrapper Python wrapper — no constructor arguments needed
-    # (the C API path is handled internally by the wrapper)
-    db = eddbWrapper()
+    # eddbWrapper Python wrapper — needs library path on JT-60SA host
+    db = eddbWrapper("/analysis/lib/libeddb.so")
     # eddbOpen returns rtn_bool — True on success
     ok = db.eddbOpen()
     if not ok:
@@ -115,10 +114,11 @@ def main():
         cat = cat.strip()
         try:
             # Step 2: Read data table for this category
+            # Use shot=None for catalog listing (returns latest/all data names)
             # eddbreadTable returns (rtn_bool, rtn_data) where rtn_data is dict
             # with keys: count, data, dnamelist, aliaslist, udpidlist,
             #            classlist, shotlist, unitlist, desclist, ircgrp, irc
-            tbl_ok, tbl_data = db.eddbreadTable(shot=ref_shot, cat=cat)
+            tbl_ok, tbl_data = db.eddbreadTable(cat=cat)
             if not tbl_ok or tbl_data is None:
                 continue
 

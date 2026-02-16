@@ -82,8 +82,8 @@ def main():
             )
             sys.exit(0)
 
-    # eddbWrapper Python wrapper — no constructor arguments
-    db = eddbWrapper()
+    # eddbWrapper Python wrapper — needs library path on JT-60SA host
+    db = eddbWrapper("/analysis/lib/libeddb.so")
     ok = db.eddbOpen()
     if not ok:
         print(

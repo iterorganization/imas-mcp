@@ -123,7 +123,7 @@ class EDASScanner:
                 "import sys\n"
                 "sys.path.insert(0, '/analysis/src/eddb')\n"
                 "from eddb_pwrapper import eddbWrapper\n"
-                "db = eddbWrapper()\n"
+                "db = eddbWrapper('/analysis/lib/libeddb.so')\n"
                 "db.eddbOpen()"
             ),
             data_template=(
