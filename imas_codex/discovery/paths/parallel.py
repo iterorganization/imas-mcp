@@ -1577,7 +1577,7 @@ def _rescore_with_llm(
             r = path_to_result[p["path"]]
             result: dict = {
                 "path": p["path"],
-                "score": max(0.0, min(1.5, r.new_score)),
+                "score": max(0.0, min(1.0, r.new_score)),
                 "adjustment_reason": (r.adjustment_reason[:80] or ""),
             }
 
@@ -1596,7 +1596,7 @@ def _rescore_with_llm(
             ]:
                 llm_value = getattr(r, dim, None)
                 if llm_value is not None:
-                    result[dim] = max(0.0, llm_value)  # Allow scores > 1.0
+                    result[dim] = max(0.0, min(1.0, llm_value))
                 else:
                     # Keep original value
                     result[dim] = p.get(dim, 0.0)
@@ -1778,7 +1778,7 @@ async def _async_rescore_with_llm(
             r = path_to_result[p["path"]]
             result: dict = {
                 "path": p["path"],
-                "score": max(0.0, min(1.5, r.new_score)),
+                "score": max(0.0, min(1.0, r.new_score)),
                 "adjustment_reason": (r.adjustment_reason[:80] or ""),
             }
 
@@ -1797,7 +1797,7 @@ async def _async_rescore_with_llm(
             ]:
                 llm_value = getattr(r, dim, None)
                 if llm_value is not None:
-                    result[dim] = max(0.0, llm_value)  # Allow scores > 1.0
+                    result[dim] = max(0.0, min(1.0, llm_value))
                 else:
                     # Keep original value
                     result[dim] = p.get(dim, 0.0)
