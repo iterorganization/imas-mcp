@@ -86,35 +86,46 @@ def main():
                 )
                 sys.exit(0)
 
-    # eddbWrapper requires the path to libeddb.so
-    db = eddbWrapper("/analysis/lib/libeddb.so")
-    # eddbOpen takes no arguments (connects to default EDDB)
-    db.eddbOpen()
+    # eddbWrapper Python wrapper — no constructor arguments needed
+    # (the C API path is handled internally by the wrapper)
+    db = eddbWrapper()
+    # eddbOpen returns rtn_bool — True on success
+    ok = db.eddbOpen()
+    if not ok:
+        print(json.dumps({"error": "eddbOpen() failed"}))
+        sys.exit(0)
 
     # Step 1: Get category listing
+    # eddbreadCatTable returns (rtn_bool, rtn_data) where rtn_data is dict
+    # with keys: count, catlist, desclist, rolist, ircgrp, irc
     try:
-        cat_result = db.eddbreadCatTable()
-        categories = (
-            cat_result.get("categories", []) if isinstance(cat_result, dict) else []
-        )
+        cat_ok, cat_data = db.eddbreadCatTable()
+        if cat_ok and cat_data:
+            categories = cat_data.get("catlist", [])
+        else:
+            categories = []
     except Exception:
         # Fallback: use known categories from exploration
-        categories = ["EDDB"]
+        categories = []
 
     signals = []
     for cat in categories:
-        if not cat:
+        if not cat or not cat.strip():
             continue
+        cat = cat.strip()
         try:
             # Step 2: Read data table for this category
-            table = db.eddbreadTable(shot=ref_shot, cat=cat)
-            if table is None:
+            # eddbreadTable returns (rtn_bool, rtn_data) where rtn_data is dict
+            # with keys: count, data, dnamelist, aliaslist, udpidlist,
+            #            classlist, shotlist, unitlist, desclist, ircgrp, irc
+            tbl_ok, tbl_data = db.eddbreadTable(shot=ref_shot, cat=cat)
+            if not tbl_ok or tbl_data is None:
                 continue
 
-            dnames = table.get("dnamelist", [])
-            aliases = table.get("aliaslist", [])
-            units = table.get("unitlist", [])
-            descs = table.get("desclist", [])
+            dnames = tbl_data.get("dnamelist", [])
+            aliases = tbl_data.get("aliaslist", [])
+            units = tbl_data.get("unitlist", [])
+            descs = tbl_data.get("desclist", [])
 
             for i, dname in enumerate(dnames):
                 if not dname or not dname.strip():

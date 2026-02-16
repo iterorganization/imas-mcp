@@ -105,7 +105,11 @@ def main():
     results = []
     for sig in signals:
         try:
-            data, x, t, ier = ppf.ppfdata(pulse, sig["dda"], sig["dtype"], uid=owner)
+            # ppfdata returns 13-element tuple:
+            # (data, x, t, ..., units, xunits, tunits, desc, ..., count, ier)
+            result = ppf.ppfdata(pulse, sig["dda"], sig["dtype"], uid=owner)
+            data = result[0]
+            ier = result[-1]  # last element is error code
             if ier == 0 and data is not None:
                 results.append(
                     {

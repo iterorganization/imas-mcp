@@ -80,28 +80,52 @@ def main():
         sys.exit(0)
 
     # Enumerate DDAs for this pulse
-    ddas, ndda, ier = ppf.ppfdda(pulse)
-    if ier != 0:
-        print(json.dumps({"error": f"ppfdda failed: ier={ier}"}))
-        sys.exit(0)
+    # New API: ppfdds(pulse) returns (count, dda_list, dtype_list, seq_array, ier)
+    # Old API: ppfdda(pulse) returns (dda_list, ndda, ier)
+    try:
+        ndds, ddas_list, dtypes_list, _seqs, ier = ppf.ppfdds(pulse)
+        if ier != 0:
+            print(json.dumps({"error": f"ppfdds failed: ier={ier}"}))
+            sys.exit(0)
 
-    results = []
-    for dda in ddas[:ndda]:
-        dda = dda.strip()
-        if not dda or dda in exclude_ddas:
-            continue
-        # Enumerate Dtypes for each DDA
-        try:
-            dtypes, ndtype, ier = ppf.ppfdti(pulse, dda)
-            if ier != 0:
+        # Build unique DDA/Dtype pairs from the flat lists
+        seen = set()
+        results = []
+        for i in range(ndds):
+            dda = ddas_list[i].strip()
+            dtype = dtypes_list[i].strip()
+            if not dda or not dtype or dda in exclude_ddas:
                 continue
-            for dtype in dtypes[:ndtype]:
-                dtype = dtype.strip()
-                if not dtype:
+            key = (dda, dtype)
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append({"dda": dda, "dtype": dtype})
+
+        ndda = len({r["dda"] for r in results})
+    except (TypeError, ValueError):
+        # Fallback: Old API with ppfdda + ppfdti
+        ddas, ndda, ier = ppf.ppfdda(pulse)
+        if ier != 0:
+            print(json.dumps({"error": f"ppfdda failed: ier={ier}"}))
+            sys.exit(0)
+
+        results = []
+        for dda in ddas[:ndda]:
+            dda = dda.strip()
+            if not dda or dda in exclude_ddas:
+                continue
+            try:
+                dtypes, ndtype, ier = ppf.ppfdti(pulse, dda)
+                if ier != 0:
                     continue
-                results.append({"dda": dda, "dtype": dtype})
-        except Exception:
-            pass
+                for dtype in dtypes[:ndtype]:
+                    dtype = dtype.strip()
+                    if not dtype:
+                        continue
+                    results.append({"dda": dda, "dtype": dtype})
+            except Exception:
+                pass
 
     print(
         json.dumps(

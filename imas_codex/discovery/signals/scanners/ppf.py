@@ -139,13 +139,16 @@ class PPFScanner:
             method_type="ppf",
             library="ppf",
             access_type="local",
-            template_python=(
-                "import ppf\n"
-                "ppf.ppfuid('{owner}', rw='R')\n"
-                "ppf.ppfgo({pulse}, seq=0)\n"
-                "data, x, t, ier = ppf.ppfdata("
-                "{pulse}, '{dda}', '{dtype}', uid='{owner}')"
+            data_source="ppf",
+            connection_template=(
+                "import ppf\nppf.ppfuid('{owner}', rw='R')\nppf.ppfgo({shot}, seq=0)"
             ),
+            data_template=(
+                "result = ppf.ppfdata({shot}, '{dda}', '{dtype}', uid='{owner}')\n"
+                "data = result[0]  # data array\n"
+                "ier = result[-1]  # error code"
+            ),
+            setup_commands=config.get("setup_commands"),
         )
 
         # Convert to FacilitySignal nodes

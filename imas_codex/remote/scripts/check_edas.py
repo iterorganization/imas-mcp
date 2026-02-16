@@ -82,19 +82,42 @@ def main():
             )
             sys.exit(0)
 
-    db = eddbWrapper("/analysis/lib/libeddb.so")
-    db.eddbOpen()
+    # eddbWrapper Python wrapper — no constructor arguments
+    db = eddbWrapper()
+    ok = db.eddbOpen()
+    if not ok:
+        print(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "id": s["id"],
+                            "success": False,
+                            "error": "eddbOpen() failed",
+                        }
+                        for s in signals
+                    ]
+                }
+            )
+        )
+        sys.exit(0)
 
     results = []
     for sig in signals:
         try:
-            data = db.eddbreadOne(ref_shot, sig["category"], sig["data_name"], 1)
-            if data is not None:
+            # Use eddbreadTable to check if the signal exists in the catalog
+            # eddbreadTable returns (rtn_bool, rtn_data)
+            tbl_ok, tbl_data = db.eddbreadTable(
+                shot=ref_shot,
+                cat=sig["category"],
+                dname=sig["data_name"],
+            )
+            if tbl_ok and tbl_data and tbl_data.get("count", 0) > 0:
                 results.append(
                     {
                         "id": sig["id"],
                         "success": True,
-                        "dtype": str(type(data).__name__),
+                        "dtype": "edas_table",
                     }
                 )
             else:
@@ -102,7 +125,7 @@ def main():
                     {
                         "id": sig["id"],
                         "success": False,
-                        "error": "eddbreadOne returned None",
+                        "error": "not found in eddbreadTable",
                     }
                 )
         except Exception as e:

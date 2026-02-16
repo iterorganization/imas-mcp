@@ -118,16 +118,20 @@ class EDASScanner:
             method_type="edas",
             library="eddb_pwrapper",
             access_type="local",
-            template_python=(
+            data_source="eddb",
+            connection_template=(
                 "import sys\n"
                 "sys.path.insert(0, '/analysis/src/eddb')\n"
                 "from eddb_pwrapper import eddbWrapper\n"
-                "db = eddbWrapper('/analysis/lib/libeddb.so')\n"
-                "db.eddbOpen()\n"
-                "data = db.eddbreadTime("
-                "'{shot}', '{category}', '{data_name}', t1, t2)\n"
-                "db.eddbClose()"
+                "db = eddbWrapper()\n"
+                "db.eddbOpen()"
             ),
+            data_template=(
+                "ok, rtn = db.eddbreadTime('{shot}', '{category}', '{data_name}', 0, 99)\n"
+                "data = rtn['data'] if ok else None"
+            ),
+            cleanup_template="db.eddbClose()",
+            setup_commands=config.get("setup_commands"),
         )
 
         # Convert to FacilitySignal nodes
