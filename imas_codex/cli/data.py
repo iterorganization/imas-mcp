@@ -60,9 +60,9 @@ class Neo4jOperation:
         password: str = "imas-codex",
         graph: str | None = None,
     ):
-        from imas_codex.graph.profiles import resolve_graph
+        from imas_codex.graph.profiles import resolve_neo4j
 
-        self.profile = resolve_graph(graph)
+        self.profile = resolve_neo4j(graph)
         self.operation_name = operation_name
         self.require_stopped = require_stopped
         self.reset_password_on_restart = reset_password_on_restart
@@ -569,9 +569,9 @@ def db_start(
     """Start Neo4j server via Apptainer."""
     import platform
 
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_graph(graph)
+    profile = resolve_neo4j(graph)
     password = password or profile.password
 
     if platform.system() in ("Windows", "Darwin"):
@@ -668,9 +668,9 @@ def db_stop(data_dir: str | None, graph: str | None) -> None:
     """Stop Neo4j server."""
     import signal
 
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_graph(graph)
+    profile = resolve_neo4j(graph)
     data_path = Path(data_dir) if data_dir else profile.data_dir
     pid_file = data_path / "neo4j.pid"
 
@@ -698,9 +698,9 @@ def db_stop(data_dir: str | None, graph: str | None) -> None:
 )
 def db_status(graph: str | None) -> None:
     """Check Neo4j server status."""
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_graph(graph)
+    profile = resolve_neo4j(graph)
     try:
         import urllib.request
 
@@ -726,6 +726,7 @@ def db_profiles() -> None:
     from imas_codex.graph.profiles import get_active_graph_name, list_profiles
 
     active = get_active_graph_name()
+
     profiles = list_profiles()
 
     click.echo("Graph profiles:")
@@ -750,9 +751,9 @@ def db_profiles() -> None:
 )
 def db_shell(image: str | None, password: str | None, graph: str | None) -> None:
     """Open Cypher shell to Neo4j."""
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_graph(graph)
+    profile = resolve_neo4j(graph)
     password = password or profile.password
     image_path = Path(image) if image else NEO4J_IMAGE
 
@@ -803,9 +804,9 @@ def db_service(
     """Manage Neo4j as a systemd user service."""
     import platform
 
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_graph(graph)
+    profile = resolve_neo4j(graph)
     password = password or profile.password
 
     if platform.system() != "Linux":
@@ -1337,11 +1338,11 @@ def secrets_status() -> None:
 )
 def data_dump(output: str | None, no_restart: bool, graph: str | None) -> None:
     """Export graph database to archive."""
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
 
     require_apptainer()
 
-    profile = resolve_graph(graph)
+    profile = resolve_neo4j(graph)
 
     git_info = get_git_info()
     version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
@@ -1430,10 +1431,10 @@ def data_load(
     graph: str | None,
 ) -> None:
     """Load graph database from archive."""
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
     from imas_codex.settings import get_graph_password
 
-    profile = resolve_graph(graph)
+    profile = resolve_neo4j(graph)
     password = password or get_graph_password()
     require_apptainer()
 
@@ -1791,11 +1792,11 @@ def data_pull(
     When no --version is specified, pulls 'latest'. If 'latest' doesn't
     exist, falls back to the most recent tag in the registry.
     """
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
 
     require_oras()
 
-    profile = resolve_graph(graph)
+    profile = resolve_neo4j(graph)
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
 

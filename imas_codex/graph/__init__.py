@@ -47,10 +47,8 @@ from imas_codex.graph.models import (  # noqa: E402
     TreeNodeType,
 )
 from imas_codex.graph.profiles import (  # noqa: E402
-    GraphProfile,
     Neo4jProfile,
     list_profiles,
-    resolve_graph,
     resolve_neo4j,
 )
 from imas_codex.graph.schema import (  # noqa: E402
@@ -74,9 +72,7 @@ __all__ = [
     "init_graph_meta",
     "remove_facility_from_meta",
     # Neo4j profiles
-    "GraphProfile",
     "Neo4jProfile",
-    "resolve_graph",
     "resolve_neo4j",
     "list_profiles",
     # Schema-driven utilities

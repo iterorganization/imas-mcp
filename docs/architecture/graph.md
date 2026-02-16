@@ -34,12 +34,12 @@ The `host` field on each profile records where Neo4j physically runs:
 
 **From ITER** (host matches local machine):
 ```
-resolve_graph("iter") → bolt://localhost:7687  (direct)
+resolve_neo4j("iter") → bolt://localhost:7687  (direct)
 ```
 
 **From WSL** (host is remote):
 ```
-resolve_graph("iter") → bolt://localhost:7687  (via SSH tunnel)
+resolve_neo4j("iter") → bolt://localhost:7687  (via SSH tunnel)
 ```
 
 **Dual-instance** (local + tunneled, conflicting ports):

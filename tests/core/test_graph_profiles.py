@@ -295,22 +295,3 @@ class TestListProfiles:
         profiles = list_profiles()
         locations = [p.location for p in profiles]
         assert locations == sorted(locations)
-
-
-# ── Backward compat ─────────────────────────────────────────────────────────
-
-
-class TestBackwardCompat:
-    """Tests for backward-compatible aliases."""
-
-    def test_graph_profile_alias(self):
-        """GraphProfile is an alias for Neo4jProfile."""
-        from imas_codex.graph.profiles import GraphProfile
-
-        assert GraphProfile is Neo4jProfile
-
-    def test_resolve_graph_alias(self):
-        """resolve_graph is an alias for resolve_neo4j."""
-        from imas_codex.graph.profiles import resolve_graph
-
-        assert resolve_graph is resolve_neo4j

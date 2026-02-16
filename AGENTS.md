@@ -9,6 +9,7 @@ Greenfield project under active development. No backwards compatibility.
 - Breaking changes are expected - remove deprecated code decisively
 - Avoid "enhanced", "new", "refactored" in names - just use the good name
 - When patterns change, update all usages - don't leave old patterns alongside new
+- **No backward-compatible aliases** — when renaming a function, class, or module, update every caller and delete the old name. Never leave `OldName = NewName` aliases.
 - Prefer explicit over clever - future agents will read this code
 - Exploration notes go in facility YAML, not markdown files
 - `docs/` is for mature infrastructure only

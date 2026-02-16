@@ -654,8 +654,8 @@ imas-codex graph db shell
 
 The `host` field on each profile records where Neo4j physically runs. At connection time, `is_local_host(host)` determines direct vs tunnel access:
 
-- **On ITER**: `resolve_graph("iter")` detects the local machine → `bolt://localhost:7687` (direct)
-- **On WSL**: `resolve_graph("iter")` detects a remote host → uses SSH tunnel → `bolt://localhost:7687`
+- **On ITER**: `resolve_neo4j("iter")` detects the local machine → `bolt://localhost:7687` (direct)
+- **On WSL**: `resolve_neo4j("iter")` detects a remote host → uses SSH tunnel → `bolt://localhost:7687`
 
 For dual-instance setups (local + tunneled), set a tunnel port override in `.env`:
 ```bash

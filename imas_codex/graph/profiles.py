@@ -129,10 +129,6 @@ class Neo4jProfile:
     data_dir: Path
 
 
-# Backward-compat alias (will be removed)
-GraphProfile = Neo4jProfile
-
-
 # ─── Tunnel conflict detection ──────────────────────────────────────────────
 
 
@@ -338,10 +334,6 @@ def resolve_neo4j(
         http_port=http_port,
         data_dir=_convention_data_dir(name),
     )
-
-
-# Backward-compat alias
-resolve_graph = resolve_neo4j
 
 
 # ─── Convention helpers ─────────────────────────────────────────────────────
