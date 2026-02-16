@@ -368,6 +368,66 @@ def is_neo4j_running(http_port: int | None = None) -> bool:
         return False
 
 
+def check_stale_neo4j_process(data_dir: Path) -> tuple[bool, str | None]:
+    """Check for stale Neo4j processes that may hold locks.
+
+    Returns (has_stale, message) where has_stale indicates a hung/stale
+    process was detected and message describes the issue.
+    """
+    pid_file = data_dir / "neo4j.pid"
+    if not pid_file.exists():
+        return False, None
+
+    try:
+        pid = int(pid_file.read_text().strip())
+    except (ValueError, OSError):
+        return False, None
+
+    # Check if process exists
+    try:
+        os.kill(pid, 0)  # Signal 0 just checks if process exists
+    except ProcessLookupError:
+        # Process gone, clean up stale PID file
+        try:
+            pid_file.unlink()
+        except OSError:
+            pass
+        return False, None
+    except PermissionError:
+        # Process exists but owned by another user
+        return True, f"Neo4j process (PID {pid}) exists but is owned by another user"
+
+    # Process exists - check if it's responding
+    # Read http_port from proc cmdline if possible
+    try:
+        cmdline_file = Path(f"/proc/{pid}/cmdline")
+        if cmdline_file.exists():
+            # Process is running - we confirmed it exists
+            return False, None
+    except (OSError, PermissionError):
+        pass
+
+    return False, None
+
+
+def check_database_locks(data_dir: Path) -> tuple[bool, str | None]:
+    """Check for database lock files that indicate another process.
+
+    Returns (has_lock, message).
+    """
+    lock_file = data_dir / "data" / "databases" / "store_lock"
+    if lock_file.exists():
+        mtime = datetime.fromtimestamp(lock_file.stat().st_mtime, tz=UTC)
+        age_hours = (datetime.now(tz=UTC) - mtime).total_seconds() / 3600
+        if age_hours > 24:
+            return True, (
+                f"Stale database lock file detected (age: {age_hours:.1f}h).\n"
+                f"This may indicate a previous Neo4j crash.\n"
+                f"If Neo4j won't start, try: rm {lock_file}"
+            )
+    return False, None
+
+
 def get_package_name(facility: str | None = None) -> str:
     """Get the GHCR package name, optionally scoped to a facility.
 
@@ -584,6 +644,16 @@ def neo4j_start(
         )
         return
 
+    # Check for stale processes and locks before starting
+    has_stale, stale_msg = check_stale_neo4j_process(data_path)
+    if has_stale and stale_msg:
+        click.echo(f"Warning: {stale_msg}", err=True)
+
+    has_lock, lock_msg = check_database_locks(data_path)
+    if has_lock and lock_msg:
+        click.echo(f"Warning: {lock_msg}", err=True)
+        return
+
     for subdir in ["data", "logs", "conf", "import"]:
         (data_path / subdir).mkdir(parents=True, exist_ok=True)
 
@@ -747,6 +817,29 @@ def neo4j_status(graph: str | None) -> None:
             else:
                 click.echo("  Tunnel: not active")
                 click.echo(f"  Start tunnel: imas-codex tunnel start {profile.host}")
+        else:
+            # Local graph - check for hung process
+            pid_file = profile.data_dir / "neo4j.pid"
+            if pid_file.exists():
+                try:
+                    pid = int(pid_file.read_text().strip())
+                    os.kill(pid, 0)  # Check if process exists
+                    click.echo(
+                        f"  WARNING: Neo4j process exists (PID {pid}) but is not responding",
+                        err=True,
+                    )
+                    click.echo(
+                        "  This may indicate a hung process. To recover:", err=True
+                    )
+                    click.echo(
+                        f"    kill {pid} && imas-codex serve neo4j start", err=True
+                    )
+                except (ProcessLookupError, ValueError, OSError):
+                    pass
+            # Check for stale locks
+            has_lock, lock_msg = check_database_locks(profile.data_dir)
+            if has_lock and lock_msg:
+                click.echo(f"  {lock_msg}", err=True)
 
 
 @neo4j.command("profiles")
