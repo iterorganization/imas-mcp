@@ -1180,19 +1180,24 @@ def _link_tdi_to_mdsplus(facility: str) -> int:
             key = ts["quantity"].upper()
             tdi_by_quantity.setdefault(key, []).append(ts)
 
-        # Match TDI quantities to MDSplus signals by name
-        # MDSplus signal names are the leaf node name (uppercase)
+        # Match TDI quantities to MDSplus signals by node path leaf name
+        # MDSplus node_path like \RESULTS::LIUQE:PSI → leaf name PSI
+        # Extract leaf name from node_path using Cypher string functions
         quantity_list = list(tdi_by_quantity.keys())
 
         # Use Cypher UNWIND for efficient batch matching
+        # Split node_path on : and . to get leaf name, compare to TDI quantity
         result = gc.query(
             """
             UNWIND $quantities AS qty
             MATCH (mds:FacilitySignal {facility_id: $facility})
             WHERE mds.discovery_source = 'tree_traversal'
-              AND toUpper(mds.name) CONTAINS qty
+              AND mds.node_path IS NOT NULL
+            WITH qty, mds,
+                 split(split(mds.node_path, ':')[-1], '.')[0] AS leaf_name
+            WHERE toUpper(leaf_name) = qty
             WITH qty, mds
-            ORDER BY size(mds.name) ASC
+            ORDER BY size(mds.id) ASC
             WITH qty, collect(mds)[0] AS best_match
             WHERE best_match IS NOT NULL
             RETURN qty, best_match.id AS mds_id, best_match.node_path AS node_path
