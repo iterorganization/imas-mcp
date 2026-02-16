@@ -20,7 +20,10 @@ from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.embed_worker import embed_description_worker
 from imas_codex.discovery.base.supervision import (
+    OrphanRecoverySpec,
     SupervisedWorkerGroup,
+    make_orphan_recovery_tick,
+    run_supervised_loop,
     supervised_worker,
 )
 from imas_codex.graph import GraphClient
@@ -31,7 +34,6 @@ from .graph_ops import (
     SCORABLE_ARTIFACT_TYPES,
     _bulk_create_wiki_artifacts,
     _bulk_create_wiki_pages,
-    release_orphaned_claims,
     reset_transient_pages,
 )
 from .state import WikiDiscoveryState
@@ -728,52 +730,23 @@ async def run_parallel_wiki_discovery(
         f"ingest_artifacts={ingest_artifacts}"
     )
 
-    # Send initial worker status update immediately so display shows workers
-    if on_worker_status:
-        try:
-            on_worker_status(worker_group)
-        except Exception as e:
-            logger.warning("Initial worker status callback failed: %s", e)
+    # Periodic orphan recovery during discovery (every 60s)
+    orphan_tick = make_orphan_recovery_tick(
+        facility,
+        [
+            OrphanRecoverySpec("WikiPage"),
+            OrphanRecoverySpec("WikiArtifact"),
+        ],
+    )
 
-    # Wait for termination condition with periodic orphan recovery
-    orphan_check_interval = 60  # Check every 60 seconds
-    last_orphan_check = time.time()
-    status_update_interval = 0.5  # Update status every 0.5 seconds
-    last_status_update = time.time()
-
-    while not state.should_stop():
-        await asyncio.sleep(0.25)
-
-        # Update worker status for display
-        if (
-            on_worker_status
-            and time.time() - last_status_update > status_update_interval
-        ):
-            try:
-                on_worker_status(worker_group)
-            except Exception as e:
-                logger.warning("Worker status callback failed: %s", e)
-            last_status_update = time.time()
-
-        # Periodically release orphaned claims (from crashed workers)
-        if time.time() - last_orphan_check > orphan_check_interval:
-            try:
-                released = release_orphaned_claims(facility)
-                if released.get("released_pages", 0) or released.get(
-                    "released_artifacts", 0
-                ):
-                    logger.info(
-                        "Recovered %d orphaned page claims, %d artifact claims",
-                        released.get("released_pages", 0),
-                        released.get("released_artifacts", 0),
-                    )
-            except Exception as e:
-                logger.debug("Orphan recovery check failed: %s", e)
-            last_orphan_check = time.time()
-
-    # Stop workers
+    # Run supervision loop — handles status updates and clean shutdown
+    await run_supervised_loop(
+        worker_group,
+        state.should_stop,
+        on_worker_status=on_worker_status,
+        on_tick=orphan_tick,
+    )
     state.stop_requested = True
-    await worker_group.cancel_all()
 
     # Clean up async wiki client
     await state.close_async_wiki_client()

@@ -503,3 +503,137 @@ async def release_orphaned_claims_generic(
             results[label] = OrphanRecoveryResult(error=str(e))
 
     return results
+
+
+# =============================================================================
+# Periodic Orphan Recovery
+# =============================================================================
+
+
+@dataclass
+class OrphanRecoverySpec:
+    """Specification for a node type's orphan recovery.
+
+    Args:
+        label: Neo4j node label (e.g., "FacilityPath", "WikiPage")
+        facility_field: Property containing the facility ID (default: "facility_id")
+        timeout_seconds: How old a claim must be to be orphaned (default: 300)
+    """
+
+    label: str
+    facility_field: str = "facility_id"
+    timeout_seconds: int = 300
+
+
+def make_orphan_recovery_tick(
+    facility: str,
+    specs: list[OrphanRecoverySpec],
+    *,
+    interval: float = 60.0,
+) -> Callable[[], None]:
+    """Create a periodic orphan recovery tick for ``run_supervised_loop``.
+
+    Returns a callable suitable for the ``on_tick`` parameter of
+    :func:`run_supervised_loop`.  Each invocation checks whether enough
+    time has elapsed since the last recovery pass.  If so, it releases
+    stale claims for every node type listed in *specs*.
+
+    Args:
+        facility: Facility ID to recover claims for
+        specs: List of :class:`OrphanRecoverySpec` describing which node
+            labels to check
+        interval: Minimum seconds between recovery passes (default: 60)
+
+    Returns:
+        A zero-argument callable that performs time-gated orphan recovery
+    """
+    from imas_codex.discovery.base.claims import reset_stale_claims
+
+    last_check = time.time()
+
+    def _tick() -> None:
+        nonlocal last_check
+        if time.time() - last_check < interval:
+            return
+        for spec in specs:
+            try:
+                released = reset_stale_claims(
+                    spec.label,
+                    facility,
+                    timeout_seconds=spec.timeout_seconds,
+                    facility_field=spec.facility_field,
+                )
+                if released:
+                    logger.info(
+                        "Orphan recovery: released %d %s claims for %s",
+                        released,
+                        spec.label,
+                        facility,
+                    )
+            except Exception as e:
+                logger.debug("Orphan recovery check failed for %s: %s", spec.label, e)
+        last_check = time.time()
+
+    return _tick
+
+
+# =============================================================================
+# Common Discovery Loop
+# =============================================================================
+
+
+async def run_supervised_loop(
+    worker_group: SupervisedWorkerGroup,
+    should_stop: Callable[[], bool],
+    *,
+    on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
+    on_tick: Callable[[], Coroutine | None] | None = None,
+    status_interval: float = 0.5,
+    poll_interval: float = 0.25,
+    shutdown_timeout: float = 10.0,
+) -> None:
+    """Run the common supervision polling loop used by all discovery engines.
+
+    Polls ``should_stop`` periodically, sends worker status updates to the
+    display callback, and performs clean shutdown when discovery completes
+    or is cancelled.
+
+    Args:
+        worker_group: Group of supervised workers to monitor
+        should_stop: Function returning True when discovery should stop
+        on_worker_status: Optional callback for worker status updates
+        on_tick: Optional async callback called each tick (e.g., orphan recovery)
+        status_interval: Seconds between worker status updates (default: 0.5)
+        poll_interval: Seconds between stop-condition checks (default: 0.25)
+        shutdown_timeout: Seconds to wait for workers after cancellation
+    """
+    # Send initial worker status update
+    if on_worker_status:
+        try:
+            on_worker_status(worker_group)
+        except Exception as e:
+            logger.warning("Initial worker status callback failed: %s", e)
+
+    last_status_update = time.time()
+
+    try:
+        while not should_stop():
+            await asyncio.sleep(poll_interval)
+
+            # Update worker status for display
+            if on_worker_status and time.time() - last_status_update > status_interval:
+                try:
+                    on_worker_status(worker_group)
+                except Exception as e:
+                    logger.warning("Worker status callback failed: %s", e)
+                last_status_update = time.time()
+
+            # Run optional per-tick callback (e.g., orphan recovery)
+            if on_tick:
+                result = on_tick()
+                if asyncio.iscoroutine(result):
+                    await result
+    except asyncio.CancelledError:
+        logger.debug("Supervised loop cancelled")
+    finally:
+        await worker_group.cancel_all(timeout=shutdown_timeout)

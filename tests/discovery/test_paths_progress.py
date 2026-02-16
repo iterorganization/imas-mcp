@@ -1,17 +1,23 @@
 """Tests for paths discovery progress display.
 
 Covers ProgressState properties, ParallelProgressDisplay pipeline rendering,
-and display items (ScanItem, ScoreItem, EnrichItem).
+display items (ScanItem, ScoreItem, EnrichItem), and _count_group_workers.
 """
 
 from __future__ import annotations
 
 import time
+from unittest.mock import MagicMock
 
 import pytest
 from rich.panel import Panel
 from rich.text import Text
 
+from imas_codex.discovery.base.supervision import (
+    SupervisedWorkerGroup,
+    WorkerState,
+    WorkerStatus,
+)
 from imas_codex.discovery.paths.progress import (
     EnrichItem,
     ParallelProgressDisplay,
@@ -535,3 +541,182 @@ class TestDisplayLayout:
         display = ParallelProgressDisplay(facility="test", cost_limit=1.0, console=None)
         # gauge_width uses GAUGE_METRICS_WIDTH which is larger than METRICS_WIDTH
         assert display.gauge_width <= display.bar_width
+
+
+# =============================================================================
+# Worker group support
+# =============================================================================
+
+
+class TestCountGroupWorkers:
+    """Tests for the _count_group_workers method."""
+
+    def _display_with_workers(
+        self, workers: dict[str, WorkerStatus]
+    ) -> ParallelProgressDisplay:
+        """Create display with mocked SupervisedWorkerGroup."""
+        display = ParallelProgressDisplay(facility="test", cost_limit=10.0)
+        group = MagicMock(spec=SupervisedWorkerGroup)
+        group.workers = workers
+        display.state.worker_group = group
+        return display
+
+    def test_no_worker_group(self):
+        """Returns (0, '') when no worker group set."""
+        display = ParallelProgressDisplay(facility="test", cost_limit=10.0)
+        count, ann = display._count_group_workers("scan")
+        assert count == 0
+        assert ann == ""
+
+    def test_counts_matching_group(self):
+        """Counts workers whose group matches."""
+        workers = {
+            "scan_worker_0": WorkerStatus(
+                name="scan_worker_0", group="scan", state=WorkerState.running
+            ),
+            "scan_worker_1": WorkerStatus(
+                name="scan_worker_1", group="scan", state=WorkerState.running
+            ),
+            "score_worker_0": WorkerStatus(
+                name="score_worker_0", group="score", state=WorkerState.running
+            ),
+        }
+        display = self._display_with_workers(workers)
+        count, ann = display._count_group_workers("scan")
+        assert count == 2
+
+    def test_counts_different_groups(self):
+        """Different groups counted separately."""
+        workers = {
+            "scan_worker_0": WorkerStatus(
+                name="scan_worker_0", group="scan", state=WorkerState.running
+            ),
+            "expand_worker_0": WorkerStatus(
+                name="expand_worker_0", group="scan", state=WorkerState.running
+            ),
+            "score_worker_0": WorkerStatus(
+                name="score_worker_0", group="score", state=WorkerState.running
+            ),
+            "rescore_worker_0": WorkerStatus(
+                name="rescore_worker_0", group="score", state=WorkerState.idle
+            ),
+            "enrich_worker_0": WorkerStatus(
+                name="enrich_worker_0", group="enrich", state=WorkerState.running
+            ),
+        }
+        display = self._display_with_workers(workers)
+        assert display._count_group_workers("scan")[0] == 2
+        assert display._count_group_workers("score")[0] == 2
+        assert display._count_group_workers("enrich")[0] == 1
+
+    def test_backoff_annotation(self):
+        """Workers in backoff state get annotated."""
+        workers = {
+            "score_worker_0": WorkerStatus(
+                name="score_worker_0", group="score", state=WorkerState.running
+            ),
+            "score_worker_1": WorkerStatus(
+                name="score_worker_1", group="score", state=WorkerState.backoff
+            ),
+        }
+        display = self._display_with_workers(workers)
+        count, ann = display._count_group_workers("score")
+        assert count == 2
+        assert "1 backoff" in ann
+
+    def test_crashed_annotation(self):
+        """Workers in crashed state get annotated."""
+        workers = {
+            "enrich_worker_0": WorkerStatus(
+                name="enrich_worker_0", group="enrich", state=WorkerState.crashed
+            ),
+        }
+        display = self._display_with_workers(workers)
+        count, ann = display._count_group_workers("enrich")
+        assert count == 1
+        assert "1 failed" in ann
+
+    def test_multiple_annotations(self):
+        """Both backoff and crashed get annotated."""
+        workers = {
+            "score_worker_0": WorkerStatus(
+                name="score_worker_0", group="score", state=WorkerState.running
+            ),
+            "score_worker_1": WorkerStatus(
+                name="score_worker_1", group="score", state=WorkerState.backoff
+            ),
+            "score_worker_2": WorkerStatus(
+                name="score_worker_2", group="score", state=WorkerState.crashed
+            ),
+        }
+        display = self._display_with_workers(workers)
+        count, ann = display._count_group_workers("score")
+        assert count == 3
+        assert "backoff" in ann
+        assert "failed" in ann
+
+    def test_group_fallback_to_name_prefix(self):
+        """Falls back to name prefix when group is empty."""
+        workers = {
+            "scan_worker_0": WorkerStatus(
+                name="scan_worker_0", group="", state=WorkerState.running
+            ),
+        }
+        display = self._display_with_workers(workers)
+        count, ann = display._count_group_workers("scan")
+        assert count == 1
+
+    def test_embed_worker_in_scan_group(self):
+        """Embed worker assigned to scan group counts correctly."""
+        workers = {
+            "scan_worker_0": WorkerStatus(
+                name="scan_worker_0", group="scan", state=WorkerState.running
+            ),
+            "embed_worker": WorkerStatus(
+                name="embed_worker", group="scan", state=WorkerState.running
+            ),
+        }
+        display = self._display_with_workers(workers)
+        count, ann = display._count_group_workers("scan")
+        assert count == 2
+
+
+class TestWorkerStatusUpdate:
+    """Tests for update_worker_status method."""
+
+    def test_update_worker_status_sets_group(self):
+        """update_worker_status stores the worker group."""
+        display = ParallelProgressDisplay(facility="test", cost_limit=10.0)
+        group = SupervisedWorkerGroup()
+        group.create_status("scan_worker_0", group="scan")
+        display.update_worker_status(group)
+        assert display.state.worker_group is group
+
+    def test_pipeline_shows_worker_counts(self):
+        """Pipeline rows include worker count annotations."""
+        display = ParallelProgressDisplay(facility="test", cost_limit=10.0)
+        group = MagicMock(spec=SupervisedWorkerGroup)
+        group.workers = {
+            "scan_worker_0": WorkerStatus(
+                name="scan_worker_0", group="scan", state=WorkerState.running
+            ),
+            "expand_worker_0": WorkerStatus(
+                name="expand_worker_0", group="scan", state=WorkerState.running
+            ),
+            "score_worker_0": WorkerStatus(
+                name="score_worker_0", group="score", state=WorkerState.running
+            ),
+            "enrich_worker_0": WorkerStatus(
+                name="enrich_worker_0", group="enrich", state=WorkerState.running
+            ),
+        }
+        display.state.worker_group = group
+        display.state.total = 100
+        display.state.scored = 50
+
+        section = display._build_pipeline_section()
+        text = section.plain
+
+        # Worker counts should appear as "×N" in the output
+        assert "×2" in text  # scan group (scan + expand)
+        assert "×1" in text  # score or enrich group

@@ -34,7 +34,10 @@ from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.progress import WorkerStats
 from imas_codex.discovery.base.supervision import (
+    OrphanRecoverySpec,
     SupervisedWorkerGroup,
+    make_orphan_recovery_tick,
+    run_supervised_loop,
     supervised_worker,
 )
 from imas_codex.graph import GraphClient
@@ -1990,7 +1993,7 @@ async def run_parallel_data_discovery(
     # Start scan worker (unless enrich_only)
     if not enrich_only:
         worker_name = "scan_worker_0"
-        status = worker_group.create_status(worker_name, group="ingest")
+        status = worker_group.create_status(worker_name, group="scan")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
@@ -2004,22 +2007,21 @@ async def run_parallel_data_discovery(
             )
         )
 
-    if discover_only:
-        # Report worker status
-        if on_worker_status:
-            on_worker_status(worker_group)
+    # Periodic orphan recovery during discovery (every 60s)
+    orphan_tick = make_orphan_recovery_tick(
+        facility,
+        [OrphanRecoverySpec("FacilitySignal", timeout_seconds=CLAIM_TIMEOUT_SECONDS)],
+    )
 
-        # Wait for scan worker to complete
-        try:
-            while state.discover_idle_count < 100:
-                if on_worker_status:
-                    on_worker_status(worker_group)
-                await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
-            logger.info("Discovery cancelled")
-        finally:
-            state.stop_requested = True
-            await worker_group.cancel_all()
+    if discover_only:
+        # Run supervision loop — scan worker only
+        await run_supervised_loop(
+            worker_group,
+            lambda: state.discover_idle_count >= 100,
+            on_worker_status=on_worker_status,
+            on_tick=orphan_tick,
+        )
+        state.stop_requested = True
 
         return {
             "scanned": state.discover_stats.processed,
@@ -2033,7 +2035,7 @@ async def run_parallel_data_discovery(
     # Start enrich workers
     for i in range(num_enrich_workers):
         worker_name = f"enrich_worker_{i}"
-        status = worker_group.create_status(worker_name, group="score")
+        status = worker_group.create_status(worker_name, group="enrich")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
@@ -2051,7 +2053,7 @@ async def run_parallel_data_discovery(
     if not enrich_only:
         for i in range(num_check_workers):
             worker_name = f"check_worker_{i}"
-            status = worker_group.create_status(worker_name, group="ingest")
+            status = worker_group.create_status(worker_name, group="check")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
@@ -2078,7 +2080,7 @@ async def run_parallel_data_discovery(
     # Embed description worker: embeds FacilitySignal descriptions as they are enriched
     from imas_codex.discovery.base.embed_worker import embed_description_worker
 
-    embed_status = worker_group.create_status("embed_worker", group="ingest")
+    embed_status = worker_group.create_status("embed_worker", group="scan")
     worker_group.add_task(
         asyncio.create_task(
             supervised_worker(
@@ -2092,21 +2094,14 @@ async def run_parallel_data_discovery(
         )
     )
 
-    # Report worker status
-    if on_worker_status:
-        on_worker_status(worker_group)
-
-    # Wait for completion
-    try:
-        while not state.should_stop():
-            if on_worker_status:
-                on_worker_status(worker_group)
-            await asyncio.sleep(0.5)
-    except asyncio.CancelledError:
-        logger.info("Discovery cancelled")
-    finally:
-        state.stop_requested = True
-        await worker_group.cancel_all()
+    # Run supervision loop — handles status updates and clean shutdown
+    await run_supervised_loop(
+        worker_group,
+        state.should_stop,
+        on_worker_status=on_worker_status,
+        on_tick=orphan_tick,
+    )
+    state.stop_requested = True
 
     elapsed = time.time() - start_time
     return {

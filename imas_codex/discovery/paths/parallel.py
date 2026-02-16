@@ -26,6 +26,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.progress import WorkerStats
+from imas_codex.discovery.base.supervision import (
+    OrphanRecoverySpec,
+    SupervisedWorkerGroup,
+    make_orphan_recovery_tick,
+    run_supervised_loop,
+    supervised_worker,
+)
 from imas_codex.graph.models import PathStatus, TerminalReason
 
 if TYPE_CHECKING:
@@ -1880,6 +1887,7 @@ async def run_parallel_discovery(
     | None = None,
     on_rescore_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
+    on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     graceful_shutdown_timeout: float = 5.0,
     deadline: float | None = None,
 ) -> dict[str, Any]:
@@ -1916,6 +1924,8 @@ async def run_parallel_discovery(
         on_score_progress: Callback for score progress
         on_enrich_progress: Callback for enrich progress
         on_rescore_progress: Callback for rescore progress
+        on_worker_status: Callback for worker status changes. Called with
+            SupervisedWorkerGroup for display integration.
         graceful_shutdown_timeout: Seconds to wait for workers to finish after
             limit reached before cancelling (default: 5.0)
         deadline: Unix timestamp when discovery should stop (optional)
@@ -1973,114 +1983,154 @@ async def run_parallel_discovery(
     # Capture initial terminal count for session-based --limit tracking
     state.initial_terminal_count = state.terminal_count
 
-    # Create worker tasks
-    scan_tasks = [
-        scan_worker(state, on_progress=on_scan_progress, batch_size=scan_batch_size)
-        for _ in range(num_scan_workers)
-    ]
-    expand_tasks = [
-        expand_worker(
-            state, on_progress=on_expand_progress, batch_size=expand_batch_size
-        )
-        for _ in range(num_expand_workers)
-    ]
-    score_tasks = [
-        score_worker(state, on_progress=on_score_progress, batch_size=score_batch_size)
-        for _ in range(num_score_workers)
-    ]
-    enrich_tasks = [
-        enrich_worker(
-            state, on_progress=on_enrich_progress, batch_size=enrich_batch_size
-        )
-        for _ in range(num_enrich_workers)
-    ]
-    rescore_tasks = [
-        rescore_worker(
-            state, on_progress=on_rescore_progress, batch_size=rescore_batch_size
-        )
-        for _ in range(num_rescore_workers)
-    ]
+    # Create supervised worker group
+    worker_group = SupervisedWorkerGroup()
 
-    # Embed description worker: embeds FacilityPath descriptions as they are scored
+    # Scan workers (group="scan")
+    for i in range(num_scan_workers):
+        worker_name = f"scan_worker_{i}"
+        status = worker_group.create_status(worker_name, group="scan")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    scan_worker,
+                    worker_name,
+                    state,
+                    state.should_stop,
+                    on_progress=on_scan_progress,
+                    batch_size=scan_batch_size,
+                    status_tracker=status,
+                )
+            )
+        )
+
+    # Expand workers (group="scan" — same pipeline stage)
+    for i in range(num_expand_workers):
+        worker_name = f"expand_worker_{i}"
+        status = worker_group.create_status(worker_name, group="scan")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    expand_worker,
+                    worker_name,
+                    state,
+                    state.should_stop,
+                    on_progress=on_expand_progress,
+                    batch_size=expand_batch_size,
+                    status_tracker=status,
+                )
+            )
+        )
+
+    # Score workers (group="score")
+    for i in range(num_score_workers):
+        worker_name = f"score_worker_{i}"
+        status = worker_group.create_status(worker_name, group="score")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    score_worker,
+                    worker_name,
+                    state,
+                    state.should_stop,
+                    on_progress=on_score_progress,
+                    batch_size=score_batch_size,
+                    status_tracker=status,
+                )
+            )
+        )
+
+    # Enrich workers (group="enrich")
+    for i in range(num_enrich_workers):
+        worker_name = f"enrich_worker_{i}"
+        status = worker_group.create_status(worker_name, group="enrich")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    enrich_worker,
+                    worker_name,
+                    state,
+                    state.should_stop,
+                    on_progress=on_enrich_progress,
+                    batch_size=enrich_batch_size,
+                    status_tracker=status,
+                )
+            )
+        )
+
+    # Rescore workers (group="score" — same pipeline stage)
+    for i in range(num_rescore_workers):
+        worker_name = f"rescore_worker_{i}"
+        status = worker_group.create_status(worker_name, group="score")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    rescore_worker,
+                    worker_name,
+                    state,
+                    state.should_stop,
+                    on_progress=on_rescore_progress,
+                    batch_size=rescore_batch_size,
+                    status_tracker=status,
+                )
+            )
+        )
+
+    # Embed description worker (group="scan" — lightweight I/O)
     from imas_codex.discovery.base.embed_worker import embed_description_worker
 
-    embed_tasks = [embed_description_worker(state, labels=["FacilityPath"])]
-
-    all_tasks = [
-        asyncio.create_task(t)
-        for t in scan_tasks
-        + expand_tasks
-        + score_tasks
-        + enrich_tasks
-        + rescore_tasks
-        + embed_tasks
-    ]
-
-    # Track when monitor triggers stop so we can apply a hard timeout
-    stop_triggered = asyncio.Event()
-
-    # Monitor for limit reached and cancel workers gracefully
-    async def limit_monitor():
-        """Monitor for budget/path limits and cancel workers when reached."""
-        while not state.should_stop():
-            await asyncio.sleep(0.25)
-        # Determine why we're stopping for better logging
-        if state.budget_exhausted:
-            logger.info("Budget limit reached, initiating graceful shutdown...")
-        elif state.path_limit_reached:
-            logger.info("Path limit reached, initiating graceful shutdown...")
-        elif state.stop_requested:
-            logger.info("Stop requested, initiating graceful shutdown...")
-        else:
-            logger.info("Discovery complete (no pending work), shutting down...")
-        # Signal all workers to stop via state
-        state.stop_requested = True
-        stop_triggered.set()
-        await asyncio.sleep(graceful_shutdown_timeout)
-        # Cancel any still-running tasks (may not work for thread-blocked ones)
-        for task in all_tasks:
-            if not task.done():
-                task.cancel()
-
-    monitor_task = asyncio.create_task(limit_monitor())
-
-    # Run all workers concurrently. Thread-blocked tasks (enrich SSH calls)
-    # may not respond to cancellation, so we apply a hard timeout once
-    # the monitor triggers shutdown.
-    async def guarded_gather():
-        """Gather all tasks, but abort if stop takes too long."""
-        gather_fut = asyncio.gather(*all_tasks, return_exceptions=True)
-        # Wait for either all tasks to complete or stop to be triggered
-        stop_wait = asyncio.create_task(stop_triggered.wait())
-        done, _ = await asyncio.wait(
-            [gather_fut, stop_wait], return_when=asyncio.FIRST_COMPLETED
+    embed_status = worker_group.create_status("embed_worker", group="scan")
+    worker_group.add_task(
+        asyncio.create_task(
+            supervised_worker(
+                embed_description_worker,
+                "embed_worker",
+                state,
+                state.should_stop,
+                labels=["FacilityPath"],
+                status_tracker=embed_status,
+            )
         )
-        if gather_fut in done:
-            stop_wait.cancel()
-            return
-        # Stop triggered — give tasks a hard deadline to finish
-        hard_limit = graceful_shutdown_timeout + 10
-        logger.debug(f"Stop triggered, hard timeout in {hard_limit}s")
-        try:
-            await asyncio.wait_for(gather_fut, timeout=hard_limit)
-        except TimeoutError:
-            logger.warning("Hard timeout reached, abandoning thread-blocked tasks")
+    )
 
-    try:
-        await guarded_gather()
-    except asyncio.CancelledError:
-        state.stop_requested = True
-    finally:
-        # Ensure monitor is stopped
-        monitor_task.cancel()
-        try:
-            await monitor_task
-        except asyncio.CancelledError:
-            pass
-        # Graceful shutdown: reset any in-progress claims for next run
-        reset_count = reset_orphaned_claims(facility, silent=True)
-        if reset_count:
-            logger.info(f"Shutdown cleanup: {reset_count} claimed paths reset")
+    logger.info(
+        f"Started {worker_group.get_active_count()} supervised workers: "
+        f"scan={num_scan_workers}, expand={num_expand_workers}, "
+        f"score={num_score_workers}, enrich={num_enrich_workers}, "
+        f"rescore={num_rescore_workers}, embed=1"
+    )
+
+    # Periodic orphan recovery during discovery (every 60s)
+    orphan_tick = make_orphan_recovery_tick(
+        facility,
+        [OrphanRecoverySpec("FacilityPath", timeout_seconds=CLAIM_TIMEOUT_SECONDS)],
+    )
+
+    # Run supervision loop — handles status updates and clean shutdown
+    await run_supervised_loop(
+        worker_group,
+        state.should_stop,
+        on_worker_status=on_worker_status,
+        on_tick=orphan_tick,
+        shutdown_timeout=graceful_shutdown_timeout,
+    )
+
+    # Determine why we stopped for logging
+    if state.budget_exhausted:
+        logger.info("Budget limit reached")
+    elif state.path_limit_reached:
+        logger.info("Path limit reached")
+    elif state.stop_requested:
+        logger.info("Stop requested")
+    else:
+        logger.info("Discovery complete (no pending work)")
+
+    state.stop_requested = True
+
+    # Graceful shutdown: reset any in-progress claims for next run
+    reset_count = reset_orphaned_claims(facility, silent=True)
+    if reset_count:
+        logger.info(f"Shutdown cleanup: {reset_count} claimed paths reset")
 
     # Auto-normalize scores after scoring completes
     if state.score_stats.processed > 0:

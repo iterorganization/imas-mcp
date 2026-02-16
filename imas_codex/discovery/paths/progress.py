@@ -39,6 +39,10 @@ from imas_codex.discovery.base.progress import (
     compute_bar_width,
     compute_gauge_width,
 )
+from imas_codex.discovery.base.supervision import (
+    SupervisedWorkerGroup,
+    WorkerState,
+)
 
 if TYPE_CHECKING:
     from imas_codex.discovery.paths.parallel import WorkerStats
@@ -164,6 +168,9 @@ class ProgressState:
     # Tracking
     scored_paths: set[str] = field(default_factory=set)
     start_time: float = field(default_factory=time.time)
+
+    # Worker group for supervision display
+    worker_group: SupervisedWorkerGroup | None = None
 
     # Enrichment aggregates for summary display
     total_bytes_enriched: int = 0
@@ -387,6 +394,39 @@ class ParallelProgressDisplay:
         """Calculate resource gauge width (shorter than bar to fit metrics)."""
         return compute_gauge_width(self.width)
 
+    def _count_group_workers(self, group: str) -> tuple[int, str]:
+        """Count workers in a group and build annotation string.
+
+        Returns (count, annotation) where annotation describes
+        unhealthy workers (e.g., "(1 backoff)").
+        """
+        wg = self.state.worker_group
+        if not wg:
+            return 0, ""
+
+        count = 0
+        running = 0
+        backoff = 0
+        crashed = 0
+        for _name, status in wg.workers.items():
+            grp = status.group or _name.split("_worker")[0]
+            if grp == group:
+                count += 1
+                if status.state == WorkerState.running:
+                    running += 1
+                elif status.state == WorkerState.backoff:
+                    backoff += 1
+                elif status.state == WorkerState.crashed:
+                    crashed += 1
+
+        ann_parts: list[str] = []
+        if backoff > 0:
+            ann_parts.append(f"{backoff} backoff")
+        if crashed > 0:
+            ann_parts.append(f"{crashed} failed")
+        annotation = f"({', '.join(ann_parts)})" if ann_parts else ""
+        return count, annotation
+
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
         header = Text()
@@ -453,6 +493,11 @@ class ParallelProgressDisplay:
             else None
         )
 
+        # Worker counts per group
+        scan_count, scan_ann = self._count_group_workers("scan")
+        score_count, score_ann = self._count_group_workers("score")
+        enrich_count, enrich_ann = self._count_group_workers("enrich")
+
         # --- Build activity data ---
 
         scan = self.state.current_scan
@@ -514,9 +559,7 @@ class ParallelProgressDisplay:
                 parts.append(("skipped", "yellow"))
                 if score.skip_reason:
                     reason = clean_text(score.skip_reason)
-                    parts.append(
-                        (f"  {clip_text(reason, content_width - 16)}", "dim")
-                    )
+                    parts.append((f"  {clip_text(reason, content_width - 16)}", "dim"))
             score_detail = parts or None
 
         # ENRICH activity
@@ -575,6 +618,8 @@ class ParallelProgressDisplay:
                 primary_text=scan_text,
                 detail_parts=scan_detail,
                 is_processing=self.state.scan_processing,
+                worker_count=scan_count,
+                worker_annotation=scan_ann,
                 queue_size=(
                     len(self.state.scan_queue)
                     if not self.state.scan_queue.is_empty()
@@ -594,6 +639,8 @@ class ParallelProgressDisplay:
                 primary_text=score_text,
                 detail_parts=score_detail,
                 is_processing=self.state.score_processing,
+                worker_count=score_count,
+                worker_annotation=score_ann,
                 queue_size=(
                     len(self.state.score_queue)
                     if not self.state.score_queue.is_empty()
@@ -612,6 +659,8 @@ class ParallelProgressDisplay:
                 primary_text=enrich_text,
                 detail_parts=enrich_detail,
                 is_processing=self.state.enrich_processing,
+                worker_count=enrich_count,
+                worker_annotation=enrich_ann,
             ),
         ]
         return build_pipeline_section(rows, self.bar_width)
@@ -966,6 +1015,11 @@ class ParallelProgressDisplay:
                 )
             self.state.score_queue.add(items, stats.rate if stats.rate else 1.0)
 
+        self._refresh()
+
+    def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
+        """Update worker status from supervised worker group."""
+        self.state.worker_group = worker_group
         self._refresh()
 
     def refresh_from_graph(self, facility: str) -> None:

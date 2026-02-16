@@ -669,6 +669,9 @@ async def _async_discovery_loop(
             def on_rescore(msg, stats, results=None):
                 display.update_rescore(msg, stats, results=results)
 
+            def on_worker_status(worker_group):
+                display.update_worker_status(worker_group)
+
             try:
                 result = await run_parallel_discovery(
                     facility=facility,
@@ -685,6 +688,7 @@ async def _async_discovery_loop(
                     on_score_progress=on_score,
                     on_enrich_progress=on_enrich,
                     on_rescore_progress=on_rescore,
+                    on_worker_status=on_worker_status,
                     deadline=deadline,
                 )
             finally:
