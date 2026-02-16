@@ -252,7 +252,9 @@ def _init_repl() -> dict[str, Any]:
             - wiki_artifact_desc_embedding: Artifact descriptions
 
         Returns:
-            List of {node: ..., score: float} dicts
+            List of flat dicts with all node properties + score + labels.
+            For wiki_chunk_embedding: also includes page_title, page_url.
+            For code_chunk_embedding: also includes source_file.
 
         Raises:
             EmbeddingBackendError: If embedding backend is unavailable
@@ -260,6 +262,12 @@ def _init_repl() -> dict[str, Any]:
         encoder = _get_encoder()
         embeddings = encoder.embed_texts([text])
         embedding = embeddings[0].tolist()
+
+        # Use index-specific queries for richer context
+        if index == "wiki_chunk_embedding":
+            return _search_wiki_chunks(embedding, k)
+        if index == "code_chunk_embedding":
+            return _search_code_chunks(embedding, k)
 
         # Filter deprecated paths for imas_path_embedding unless explicitly included
         where_clause = ""
@@ -277,14 +285,77 @@ def _init_repl() -> dict[str, Any]:
             k=k,
             embedding=embedding,
         )
-        # Reconstruct clean dicts without embedding arrays
+        # Flatten: properties at top level alongside score and labels
         return [
             {
-                "node": {"labels": r["labels"], **dict(r["properties"])},
+                **dict(r["properties"]),
+                "labels": r["labels"],
                 "score": r["score"],
             }
             for r in results
         ]
+
+    def _search_wiki_chunks(embedding: list[float], k: int) -> list[dict[str, Any]]:
+        """Wiki-specific search that enriches results with parent page context."""
+        results = gc.query(
+            'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
+            "YIELD node, score "
+            "OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(node) "
+            "OPTIONAL MATCH (wa:WikiArtifact)-[:HAS_CHUNK]->(node) "
+            "RETURN [k IN keys(node) "
+            "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
+            "AS properties, labels(node) AS labels, score, "
+            "p.title AS page_title, p.url AS page_url, "
+            "wa.id AS artifact_id, wa.title AS artifact_title, wa.url AS artifact_url "
+            "ORDER BY score DESC",
+            k=k,
+            embedding=embedding,
+        )
+        out = []
+        for r in results:
+            d: dict[str, Any] = {
+                **dict(r["properties"]),
+                "labels": r["labels"],
+                "score": r["score"],
+            }
+            # Add parent page context (WikiPage or WikiArtifact)
+            if r.get("page_title"):
+                d["page_title"] = r["page_title"]
+                d["page_url"] = r["page_url"]
+            elif r.get("artifact_id"):
+                d["page_title"] = r["artifact_title"] or r["artifact_id"]
+                if r.get("artifact_url"):
+                    d["page_url"] = r["artifact_url"]
+            out.append(d)
+        return out
+
+    def _search_code_chunks(embedding: list[float], k: int) -> list[dict[str, Any]]:
+        """Code-specific search that enriches results with source file context."""
+        results = gc.query(
+            'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
+            "YIELD node, score "
+            "OPTIONAL MATCH (sf:SourceFile)-[:HAS_CHUNK]->(node) "
+            "RETURN [k IN keys(node) "
+            "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
+            "AS properties, labels(node) AS labels, score, "
+            "sf.path AS source_file, sf.facility_id AS source_facility "
+            "ORDER BY score DESC",
+            k=k,
+            embedding=embedding,
+        )
+        out = []
+        for r in results:
+            d: dict[str, Any] = {
+                **dict(r["properties"]),
+                "labels": r["labels"],
+                "score": r["score"],
+            }
+            if r.get("source_file"):
+                d["source_file"] = r["source_file"]
+            if r.get("source_facility"):
+                d["source_facility"] = r["source_facility"]
+            out.append(d)
+        return out
 
     # =========================================================================
     # Facility utilities
