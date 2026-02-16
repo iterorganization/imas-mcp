@@ -39,7 +39,6 @@ from imas_codex.core.progress_monitor import (
     create_progress_monitor,
 )
 from imas_codex.graph.client import GraphClient
-from imas_codex.settings import get_embedding_dimension
 
 logger = logging.getLogger(__name__)
 
@@ -1401,61 +1400,7 @@ def _ensure_indexes(client: GraphClient) -> None:
     )
 
     # Vector indexes for semantic search
-    _ensure_vector_indexes(client)
-
-
-def _ensure_vector_indexes(client: GraphClient) -> None:
-    """Create vector indexes for semantic search on embeddings.
-
-    Creates two vector indexes:
-    - imas_path_embedding: For searching IMASPath nodes by embedding
-    - cluster_centroid: For hierarchical cluster-first search
-
-    Dimension is determined by the configured embedding model.
-    """
-    # Check if vector indexes already exist
-    try:
-        existing = client.query("SHOW INDEXES YIELD name RETURN collect(name) AS names")
-        existing_names = set(existing[0]["names"]) if existing else set()
-    except Exception:
-        existing_names = set()
-
-    # Get dimension from configured embedding model
-    dim = get_embedding_dimension()
-
-    # Create IMASPath embedding index
-    if "imas_path_embedding" not in existing_names:
-        try:
-            client.query(f"""
-                CREATE VECTOR INDEX imas_path_embedding IF NOT EXISTS
-                FOR (p:IMASPath) ON p.embedding
-                OPTIONS {{
-                    indexConfig: {{
-                        `vector.dimensions`: {dim},
-                        `vector.similarity_function`: 'cosine'
-                    }}
-                }}
-            """)
-            logger.info(f"Created vector index: imas_path_embedding ({dim} dims)")
-        except Exception as e:
-            logger.warning(f"Failed to create imas_path_embedding index: {e}")
-
-    # Create IMASSemanticCluster centroid index
-    if "cluster_centroid" not in existing_names:
-        try:
-            client.query(f"""
-                CREATE VECTOR INDEX cluster_centroid IF NOT EXISTS
-                FOR (c:IMASSemanticCluster) ON c.centroid
-                OPTIONS {{
-                    indexConfig: {{
-                        `vector.dimensions`: {dim},
-                        `vector.similarity_function`: 'cosine'
-                    }}
-                }}
-            """)
-            logger.info(f"Created vector index: cluster_centroid ({dim} dims)")
-        except Exception as e:
-            logger.warning(f"Failed to create cluster_centroid index: {e}")
+    client.ensure_vector_indexes()
 
 
 def _create_unit_nodes(client: GraphClient, units: set[str]) -> None:
@@ -1919,10 +1864,10 @@ def _import_clusters(
     1. Run HDBSCAN clustering via the Clusters manager (reads embeddings
        from IMASPath nodes in the graph).
     2. Import cluster metadata + IN_CLUSTER relationships in batches.
-    3. Compute centroids as the mean of member path embeddings directly
-       in Neo4j — the graph is the primary store for centroids.
-    4. Export centroids to .npz as a backup for CI environments without
-       a live graph.
+    3. Compute cluster embeddings as the mean of member path embeddings
+       directly in Neo4j — the graph is the primary store.
+    4. Export cluster embeddings to .npz as a backup for CI environments
+       without a live graph.
 
     Model name is tracked on DDVersion, not on clusters.
 
@@ -2058,7 +2003,7 @@ def _import_clusters(
                     "Created %d IN_CLUSTER relationships", len(membership_batch)
                 )
 
-                # --- Graph-first: compute centroids from member embeddings ---
+                # --- Graph-first: compute cluster embeddings from member embeddings ---
                 centroid_result = client.query(
                     """
                     MATCH (p:IMASPath)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
@@ -2070,28 +2015,28 @@ def _import_clusters(
                     WITH c, member_count, dim,
                          [i IN range(0, dim - 1) |
                             reduce(s = 0.0, emb IN embeddings | s + emb[i]) / member_count
-                         ] AS centroid
-                    SET c.centroid = centroid
-                    RETURN count(c) AS centroids_set
+                         ] AS cluster_emb
+                    SET c.embedding = cluster_emb
+                    RETURN count(c) AS embeddings_set
                     """
                 )
-                centroids_set = (
-                    centroid_result[0]["centroids_set"] if centroid_result else 0
+                embeddings_set = (
+                    centroid_result[0]["embeddings_set"] if centroid_result else 0
                 )
-                missing = cluster_count - centroids_set
+                missing = cluster_count - embeddings_set
                 logger.info(
-                    "Computed %d/%d cluster centroids from graph embeddings",
-                    centroids_set,
+                    "Computed %d/%d cluster embeddings from graph",
+                    embeddings_set,
                     cluster_count,
                 )
                 if missing > 0:
                     logger.warning(
-                        "%d clusters have no centroid (members may lack embeddings)",
+                        "%d clusters have no embedding (members may lack embeddings)",
                         missing,
                     )
 
-                # --- Export centroids to .npz as CI fallback ---
-                _export_centroids_npz(client, clusters_manager.file_path.parent)
+                # --- Export cluster embeddings to .npz as CI fallback ---
+                _export_cluster_embeddings_npz(client, clusters_manager.file_path.parent)
 
                 # Update DDVersion with cluster metadata
                 client.query(
@@ -2110,12 +2055,12 @@ def _import_clusters(
             return 0
 
 
-def _export_centroids_npz(
+def _export_cluster_embeddings_npz(
     client: GraphClient,
     output_dir: Path,
     filename: str = "cluster_embeddings.npz",
 ) -> None:
-    """Export cluster centroids from the graph to .npz as a CI fallback.
+    """Export cluster embeddings from the graph to .npz as a CI fallback.
 
     Args:
         client: GraphClient instance
@@ -2126,17 +2071,17 @@ def _export_centroids_npz(
         results = client.query(
             """
             MATCH (c:IMASSemanticCluster)
-            WHERE c.centroid IS NOT NULL
-            RETURN c.id AS cluster_id, c.centroid AS centroid
+            WHERE c.embedding IS NOT NULL
+            RETURN c.id AS cluster_id, c.embedding AS embedding
             ORDER BY c.id
             """
         )
         if not results:
-            logger.debug("No centroids to export")
+            logger.debug("No cluster embeddings to export")
             return
 
         cluster_ids = [r["cluster_id"] for r in results]
-        centroids = np.array([r["centroid"] for r in results], dtype=np.float32)
+        centroids = np.array([r["embedding"] for r in results], dtype=np.float32)
 
         output_file = output_dir / filename
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -2149,12 +2094,12 @@ def _export_centroids_npz(
             label_cluster_ids=np.array([], dtype=object),
         )
         logger.info(
-            "Exported %d centroids to %s",
+            "Exported %d cluster embeddings to %s",
             len(cluster_ids),
             output_file.name,
         )
     except Exception as e:
-        logger.warning("Failed to export centroids to .npz: %s", e)
+        logger.warning("Failed to export cluster embeddings to .npz: %s", e)
 
 
 def import_semantic_clusters(
@@ -2259,7 +2204,14 @@ def clear_dd_graph(
         logger.debug(f"Deleted {results['orphaned_units']} orphaned Unit nodes")
 
     # Drop DD-specific vector indexes (they're empty now)
-    for index_name in ("imas_path_embedding", "cluster_centroid"):
+    # Derive DD index names from schema rather than hardcoding
+    from imas_codex.graph.schema import GraphSchema
+
+    dd_schema = GraphSchema(
+        schema_path=str(Path(__file__).parent.parent / "schemas" / "imas_dd.yaml")
+    )
+    dd_index_names = [idx[0] for idx in dd_schema.vector_indexes]
+    for index_name in dd_index_names:
         try:
             client.query(f"DROP INDEX {index_name} IF EXISTS")
             logger.debug(f"Dropped vector index: {index_name}")

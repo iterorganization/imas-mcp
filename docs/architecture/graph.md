@@ -197,7 +197,7 @@ uv run build-models --force
 | Index | Content |
 |-------|---------|
 | `imas_path_embedding` | IMASPath nodes |
-| `cluster_centroid` | IMASSemanticCluster centroids |
+| `cluster_embedding` | IMASSemanticCluster embeddings |
 | `code_chunk_embedding` | CodeChunk nodes |
 | `wiki_chunk_embedding` | WikiChunk nodes |
 | `facility_signal_desc_embedding` | FacilitySignal descriptions |

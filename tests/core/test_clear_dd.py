@@ -104,14 +104,13 @@ class TestClearDdGraph:
         client = self._make_client()
         clear_dd_graph(client)
 
-        # Check that DROP INDEX was called for both DD indexes
+        # Check that DROP INDEX was called for DD-specific indexes (schema-derived)
         drop_calls = [
             call for call in client.query.call_args_list if "DROP INDEX" in str(call)
         ]
-        assert len(drop_calls) == 2
         drop_text = " ".join(str(c) for c in drop_calls)
         assert "imas_path_embedding" in drop_text
-        assert "cluster_centroid" in drop_text
+        assert "cluster_embedding" in drop_text
 
     def test_clears_dd_versions(self):
         """DDVersion nodes are deleted (build_hash cleared with them)."""

@@ -127,7 +127,7 @@ Available for `semantic_search()`:
 | `imas_path_embedding` | IMAS Data Dictionary paths | 61k |
 | `code_chunk_embedding` | Code examples | 8.5k |
 | `wiki_chunk_embedding` | Wiki documentation | 25k |
-| `cluster_centroid` | Semantic clusters | ~500 |
+| `cluster_embedding` | Semantic clusters | ~500 |
 
 ## Agent Types
 

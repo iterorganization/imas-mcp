@@ -406,8 +406,8 @@ class RelationshipExtractor:
                 cluster_entry["mapping_relevance"] = label_info["mapping_relevance"]
 
             # Collect embeddings for .npz file
-            if cluster.centroid is not None and len(cluster.centroid) > 0:
-                centroid_embeddings.append(cluster.centroid)
+            if cluster.embedding is not None and len(cluster.embedding) > 0:
+                centroid_embeddings.append(cluster.embedding)
                 centroid_cluster_ids.append(cluster_id)
 
             if cluster_id in label_embeddings_map:

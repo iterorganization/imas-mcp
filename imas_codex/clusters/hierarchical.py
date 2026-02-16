@@ -265,7 +265,7 @@ class HierarchicalClusterer:
                 is_cross_ids=is_cross_ids,
                 ids_names=sorted(ids_set),
                 paths=cluster_paths,
-                centroid=centroid,
+                embedding=centroid,
                 scope=scope,
                 scope_detail=scope_detail,
             )

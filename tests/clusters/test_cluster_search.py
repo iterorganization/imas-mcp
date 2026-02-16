@@ -71,11 +71,11 @@ class TestCentroidComputation:
         np.testing.assert_array_almost_equal(centroid, expected)
 
 
-class TestClusterInfoWithCentroid:
-    """Tests for ClusterInfo model with centroid field."""
+class TestClusterInfoWithEmbedding:
+    """Tests for ClusterInfo model with embedding field."""
 
-    def test_cluster_info_with_centroid(self):
-        """ClusterInfo should accept centroid field."""
+    def test_cluster_info_with_embedding(self):
+        """ClusterInfo should accept embedding field."""
         cluster = ClusterInfo(
             id="test-uuid-001",
             similarity_score=0.9,
@@ -83,16 +83,16 @@ class TestClusterInfoWithCentroid:
             is_cross_ids=True,
             ids_names=["core_profiles", "equilibrium"],
             paths=["core_profiles/a", "equilibrium/b"],
-            centroid=[0.1, 0.2, 0.3],
+            embedding=[0.1, 0.2, 0.3],
             scope="global",
         )
 
-        assert cluster.centroid == [0.1, 0.2, 0.3]
+        assert cluster.embedding == [0.1, 0.2, 0.3]
         assert cluster.id == "test-uuid-001"
         assert cluster.is_cross_ids
 
-    def test_cluster_info_without_centroid(self):
-        """ClusterInfo should work without centroid."""
+    def test_cluster_info_without_embedding(self):
+        """ClusterInfo should work without embedding."""
         cluster = ClusterInfo(
             id="test-uuid-002",
             similarity_score=0.9,
@@ -103,7 +103,7 @@ class TestClusterInfoWithCentroid:
             scope="global",
         )
 
-        assert cluster.centroid is None
+        assert cluster.embedding is None
         assert cluster.id == "test-uuid-002"
 
 

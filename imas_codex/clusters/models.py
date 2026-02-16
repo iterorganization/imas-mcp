@@ -36,7 +36,7 @@ class ClusterInfo(BaseModel):
     is_cross_ids: bool
     ids_names: list[str]
     paths: list[str]
-    centroid: list[float] | None = None  # Centroid embedding for semantic search
+    embedding: list[float] | None = None  # Cluster embedding for semantic search
 
     # Hierarchical scope (NEW)
     scope: ClusterScope = "global"

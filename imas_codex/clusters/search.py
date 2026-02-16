@@ -90,10 +90,14 @@ class ClusterSearchResult:
 
 @dataclass
 class ClusterSearcher:
-    """Searches clusters using centroid and label embeddings for semantic similarity.
+    """Searches clusters using embedding vectors and label embeddings for semantic similarity.
 
     Embeddings are loaded from a compressed .npz file for efficiency.
     The embeddings file must match the expected hash stored in clusters.json.
+
+    The ``centroids`` attribute holds cluster-level embedding vectors (mean of
+    member path embeddings). In the graph these are stored as the ``embedding``
+    property on IMASSemanticCluster nodes.
     """
 
     clusters: list[dict[str, Any]]

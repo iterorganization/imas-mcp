@@ -102,7 +102,7 @@ def _generate_schema_reference(
     Returns:
         0 on success, non-zero on failure.
     """
-    from scripts.gen_schema_reference import generate
+    from scripts.gen_schema_reference import generate_schema_reference
 
     root = get_project_root()
     output_file = root / "agents" / "schema-reference.md"
@@ -122,7 +122,7 @@ def _generate_schema_reference(
         return 0
 
     try:
-        generate(force=True)
+        generate_schema_reference(force=True)
         logger.info(f"Generated schema reference at {output_file}")
         click.echo(f"Generated: {output_file}")
         return 0

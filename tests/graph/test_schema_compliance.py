@@ -52,7 +52,7 @@ class TestLabelsAndRelationships:
         dd_schema = GraphSchema(schema_path="imas_codex/schemas/imas_dd.yaml")
 
         # Internal properties added by Neo4j or our infrastructure
-        INTERNAL_PROPERTIES = {"embedding", "centroid"}
+        INTERNAL_PROPERTIES = {"embedding"}
 
         violations = []
         for label in sorted(graph_labels):

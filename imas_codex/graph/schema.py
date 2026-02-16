@@ -167,7 +167,7 @@ class GraphSchema:
 
     @cached_property
     def vector_indexes(self) -> list[tuple[str, str, str]]:
-        """Derive vector indexes from schema based on embedding/centroid slots.
+        """Derive vector indexes from schema based on embedding slots.
 
         Returns list of (index_name, node_label, property_name) tuples.
 
@@ -176,7 +176,6 @@ class GraphSchema:
         - Otherwise follows convention:
           - Classes with embedding + description: {label_snake}_desc_embedding
           - Classes with embedding only: {label_snake}_embedding
-          - Classes with centroid: {label_snake}_centroid
         """
         import re
 
@@ -205,23 +204,21 @@ class GraphSchema:
             for slot in self._view.class_induced_slots(label):
                 slot_name = slot.name
 
-                # Check for embedding or centroid slots
-                if slot_name not in ("embedding", "centroid"):
+                # Only process embedding slots
+                if slot_name != "embedding":
                     continue
 
                 # Check for explicit index name annotation
                 custom_name = get_vector_annotation(slot)
                 if custom_name:
                     index_name = custom_name
-                elif slot_name == "embedding":
+                else:
                     slots = self.get_all_slots(label)
                     has_desc = "description" in slots
                     if has_desc:
                         index_name = f"{label_snake}_desc_embedding"
                     else:
                         index_name = f"{label_snake}_embedding"
-                else:  # centroid
-                    index_name = f"{label_snake}_centroid"
 
                 indexes.append((index_name, label, slot_name))
 

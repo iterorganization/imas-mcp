@@ -40,7 +40,7 @@ Vector similarity search on graph embeddings.
 - `imas_path_embedding`: IMAS Data Dictionary paths (61k)
 - `code_chunk_embedding`: Code examples (8.5k chunks)
 - `wiki_chunk_embedding`: Wiki documentation (25k chunks)
-- `cluster_centroid`: Semantic clusters
+- `cluster_embedding`: Semantic clusters
 
 **Examples:**
 ```python

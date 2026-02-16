@@ -9,6 +9,17 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 logger = logging.getLogger(__name__)
 
 
+def _get_embeddable_labels() -> list[str]:
+    """Get node labels that have both description and embedding slots.
+
+    Derived from LinkML schemas — no hardcoded list.
+    """
+    from imas_codex.graph import get_schema
+
+    schema = get_schema()
+    return schema.description_embeddable_labels
+
+
 @click.group()
 def embed():
     """Manage embeddings for graph nodes.
@@ -27,11 +38,8 @@ def embed():
     "--label",
     "-l",
     required=True,
-    type=click.Choice(
-        ["FacilitySignal", "FacilityPath", "TreeNode", "WikiArtifact"],
-        case_sensitive=True,
-    ),
-    help="Node label to update embeddings for",
+    type=str,
+    help="Node label to update embeddings for (schema-derived, e.g. FacilitySignal)",
 )
 @click.option(
     "--facility",
@@ -79,6 +87,14 @@ def update(
     """
     from imas_codex.embeddings.description import embed_descriptions_batch
     from imas_codex.graph.client import GraphClient
+
+    # Validate label against schema-derived list
+    valid_labels = _get_embeddable_labels()
+    if label not in valid_labels:
+        raise click.BadParameter(
+            f"'{label}' is not embeddable. Valid labels: {', '.join(valid_labels)}",
+            param_hint="'--label'",
+        )
 
     console = Console() if not no_rich else None
 
@@ -259,12 +275,7 @@ def status(no_rich: bool) -> None:
 
     console = Console() if not no_rich else None
 
-    labels_with_desc_embedding = [
-        "FacilitySignal",
-        "FacilityPath",
-        "TreeNode",
-        "WikiArtifact",
-    ]
+    labels_with_desc_embedding = _get_embeddable_labels()
 
     stats = []
     with GraphClient() as gc:

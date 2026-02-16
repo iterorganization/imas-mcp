@@ -403,8 +403,8 @@ classes:
       A semantic cluster of related IMAS paths, derived from HDBSCAN
       clustering on path embeddings. Paths link to clusters via IN_CLUSTER.
       
-      Centroid embeddings enable fast cluster-based semantic search:
-      query embedding is compared against cluster centroids first, then
+      Embedding vectors enable fast cluster-based semantic search:
+      query embedding is compared against cluster embeddings first, then
       individual paths within matching clusters are searched.
     class_uri: imas_dd:IMASSemanticCluster
     attributes:
@@ -427,18 +427,18 @@ classes:
         description: Whether cluster spans multiple IDS
         range: boolean
       representative_path:
-        description: Most central path (closest to centroid)
+        description: Most central path (closest to cluster center)
         range: IMASPath
-      # Cluster centroid for semantic search
-      centroid:
+      # Cluster embedding for semantic search
+      embedding:
         description: >-
-          Cluster centroid embedding vector (256-dim, L2-normalized).
+          Cluster embedding vector (256-dim, L2-normalized).
           Mean of member path embeddings. Enables hierarchical search:
-          first match clusters by centroid, then search within cluster.
+          first match clusters by embedding, then search within cluster.
         multivalued: true
         range: float
         annotations:
-          vector_index_name: cluster_centroid
+          vector_index_name: cluster_embedding
       similarity_score:
         description: Average intra-cluster cosine similarity (0-1)
         range: float
@@ -542,7 +542,7 @@ classes:
   ClusterMembership:
     description: >-
       Represents membership of an IMASPath in a IMASSemanticCluster.
-      Distance indicates proximity to cluster centroid.
+      Distance indicates proximity to cluster center.
     class_uri: imas_dd:ClusterMembership
     attributes:
       path:
@@ -554,5 +554,5 @@ classes:
         range: IMASSemanticCluster
         required: true
       distance:
-        description: Distance to cluster centroid (lower = more central)
+        description: Distance to cluster center (lower = more central)
         range: float

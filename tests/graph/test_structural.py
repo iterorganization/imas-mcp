@@ -102,18 +102,18 @@ class TestVectorIndexes:
 class TestClusterIntegrity:
     """Verify semantic cluster structure."""
 
-    def test_clusters_have_centroids(self, graph_client, label_counts):
-        """IMASSemanticCluster nodes should have centroid vectors."""
+    def test_clusters_have_embeddings(self, graph_client, label_counts):
+        """IMASSemanticCluster nodes should have embedding vectors."""
         if not label_counts.get("IMASSemanticCluster"):
             pytest.skip("No IMASSemanticCluster nodes in graph")
 
         result = graph_client.query(
             "MATCH (c:IMASSemanticCluster) "
-            "WHERE c.centroid IS NULL "
+            "WHERE c.embedding IS NULL "
             "RETURN count(c) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} IMASSemanticCluster nodes without centroid vector"
+        assert count == 0, f"{count} IMASSemanticCluster nodes without embedding vector"
 
     def test_clusters_have_members(self, graph_client, label_counts):
         """Clusters should have at least one IN_CLUSTER member."""
@@ -130,21 +130,21 @@ class TestClusterIntegrity:
             f"{count} IMASSemanticCluster nodes with no IN_CLUSTER members"
         )
 
-    def test_cluster_centroid_dimensions(
+    def test_cluster_embedding_dimensions(
         self, graph_client, label_counts, embedding_dimension
     ):
-        """Cluster centroids must match the embedding dimension."""
+        """Cluster embeddings must match the embedding dimension."""
         if not label_counts.get("IMASSemanticCluster"):
             pytest.skip("No IMASSemanticCluster nodes in graph")
 
         result = graph_client.query(
             "MATCH (c:IMASSemanticCluster) "
-            "WHERE c.centroid IS NOT NULL "
-            "RETURN DISTINCT size(c.centroid) AS dim "
+            "WHERE c.embedding IS NOT NULL "
+            "RETURN DISTINCT size(c.embedding) AS dim "
             "LIMIT 10"
         )
         wrong = [r for r in result if r["dim"] != embedding_dimension]
         assert not wrong, (
-            f"Cluster centroids have wrong dimension: "
+            f"Cluster embeddings have wrong dimension: "
             f"{[r['dim'] for r in wrong]} (expected {embedding_dimension})"
         )

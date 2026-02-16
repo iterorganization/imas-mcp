@@ -55,13 +55,5 @@ MERGE (n)-[:AT_FACILITY]->(f)
 ```
 
 ## Vector Indexes
-| Index | Content |
-|-------|---------|
-| imas_path_embedding | IMASPath nodes (61k) |
-| cluster_centroid | IMASSemanticCluster centroids |
-| code_chunk_embedding | CodeChunk nodes (8.5k) |
-| wiki_chunk_embedding | WikiChunk nodes (25k) |
-| facility_signal_desc_embedding | FacilitySignal descriptions |
-| facility_path_desc_embedding | FacilityPath descriptions |
-| tree_node_desc_embedding | TreeNode descriptions |
-| wiki_artifact_desc_embedding | WikiArtifact descriptions |
+
+See [agents/schema-reference.md](../../agents/schema-reference.md) for the full list of vector indexes derived from the LinkML schema.

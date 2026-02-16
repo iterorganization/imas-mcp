@@ -233,23 +233,10 @@ def _init_repl() -> dict[str, Any]:
 
         Args:
             text: Query text to embed and search
-            index: Vector index name
+            index: Vector index name (use get_graph_schema() to list all)
             k: Number of results to return
             include_deprecated: If True, include deprecated IMAS paths in results.
                 Only applies to imas_path_embedding index. Default False (active only).
-
-        Available indexes:
-            Document content:
-            - imas_path_embedding: IMAS Data Dictionary paths (61k)
-            - code_chunk_embedding: Code examples (8.5k chunks)
-            - wiki_chunk_embedding: Wiki documentation (25k chunks)
-            - cluster_centroid: Semantic clusters
-
-            Description metadata:
-            - facility_signal_desc_embedding: Signal descriptions
-            - facility_path_desc_embedding: Path descriptions
-            - tree_node_desc_embedding: TreeNode descriptions
-            - wiki_artifact_desc_embedding: Artifact descriptions
 
         Returns:
             List of flat dicts with all node properties + score + labels.
@@ -1191,10 +1178,7 @@ class AgentsServer:
             cocos_info(cocos_value) - Get COCOS parameters
 
             Vector indexes for semantic_search:
-            - imas_path_embedding: IMAS Data Dictionary paths (61k)
-            - code_chunk_embedding: Code examples (8.5k chunks)
-            - wiki_chunk_embedding: Wiki documentation (25k chunks)
-            - cluster_centroid: Semantic clusters
+            Call get_graph_schema() to list all available indexes.
 
             Args:
                 code: Python code to execute (multi-line supported)
@@ -1263,11 +1247,12 @@ class AgentsServer:
             Get complete graph schema for Cypher query generation.
 
             Returns node labels with all properties, enums with valid values,
-            relationship types, and private field annotations.
+            relationship types, vector indexes, and private field annotations.
             Call this before writing Cypher queries in the python() REPL.
 
             Returns:
-                Schema dict with node_labels, enums, relationship_types, notes
+                Schema dict with node_labels, enums, relationship_types,
+                vector_indexes, notes
             """
             schema = get_schema()
 
@@ -1280,13 +1265,23 @@ class AgentsServer:
                     "private_fields": schema.get_private_slots(label),
                 }
 
+            # Derive vector indexes from all schemas (facility + DD)
+            from imas_codex.graph.client import EXPECTED_VECTOR_INDEXES
+
+            vector_indexes = {
+                idx_name: {"label": label, "property": prop}
+                for idx_name, label, prop in EXPECTED_VECTOR_INDEXES
+            }
+
             return {
                 "node_labels": node_labels,
                 "enums": schema.get_enums(),
                 "relationship_types": schema.relationship_types,
+                "vector_indexes": vector_indexes,
                 "notes": {
                     "private_fields": "Fields with is_private:true are never stored in graph",
                     "mutations": "Use add_to_graph() tool for writes, or query() for reads in python REPL",
+                    "semantic_search": "Use semantic_search(text, index, k) with any index from vector_indexes",
                 },
             }
 

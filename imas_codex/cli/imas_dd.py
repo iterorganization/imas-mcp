@@ -678,7 +678,7 @@ def imas_clear(force: bool, dump_first: bool) -> None:
         console.print(f"  {c['changes']:,} IMASPathChange nodes")
         console.print("  + IMASCoordinateSpec, IdentifierSchema, orphaned Units")
         console.print(
-            "  + DD vector indexes (imas_path_embedding, imas_cluster_centroid)"
+            "  + DD vector indexes (imas_path_embedding, cluster_embedding)"
         )
 
         if not force:

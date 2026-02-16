@@ -168,7 +168,7 @@ class EmbeddingClusterer:
                 is_cross_ids=is_cross_ids,
                 ids_names=ids_names,
                 paths=cluster_paths,
-                centroid=centroid,
+                embedding=centroid,
                 scope="global",
             )
             clusters.append(cluster)
