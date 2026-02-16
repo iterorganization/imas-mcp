@@ -1693,6 +1693,8 @@ async def check_worker(
                         facility_id=state.facility,
                         name=s.get("name"),
                         accessor=s.get("accessor", ""),
+                        physics_domain=s.get("physics_domain", "general"),
+                        data_access=s.get("data_access", ""),
                     )
                     for s in group
                 ]
