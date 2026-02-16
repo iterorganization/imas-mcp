@@ -1,17 +1,16 @@
-"""
-LLM-based directory scoring with grounded evidence.
+"""LLM-based directory scoring.
 
 This module implements the scoring phase of graph-led discovery:
 1. Query graph for scanned but unscored paths
-2. Build batched prompts with directory context
+2. Build batched prompts with directory context (parent/sibling scores,
+   tree structure, file types, quality indicators)
 3. Call LLM with structured output schema for reliable parsing
-4. Apply grounded scoring function to compute final scores
-5. Set expand_to for high-value paths
+4. Trust the LLM's scores and expansion decisions directly
 
-The scorer uses LiteLLM for model access (via OpenRouter) with Pydantic
-models for structured output, then a deterministic function computes
-the final score from evidence. This "grounded scoring" approach ensures
-reproducibility.
+The LLM sees all relevant context in the prompt and makes calibrated
+scoring and expansion decisions. The code applies only structural
+overrides (git repos, data containers) that encode facts the LLM
+cannot verify.
 
 Retry logic handles rate limiting (OpenRouter "Overloaded" errors).
 """
@@ -52,17 +51,11 @@ PURPOSE_SCORE_NAMES = [
     "score_imas",
 ]
 
-# Purposes that should be suppressed (lower scores)
-# These get a 0.3 multiplier and should_expand=False
-SUPPRESSED_PURPOSES = {
-    ResourcePurpose.system,
-    ResourcePurpose.build_artifact,
-    ResourcePurpose.archive,
-}
-
-# Purposes that are containers (score = exploration potential)
-CONTAINER_PURPOSES = {
-    ResourcePurpose.container,
+# Structural expansion blocks — these encode facts the LLM cannot verify,
+# not scoring judgments. Everything else is LLM-driven.
+_DATA_PURPOSES = {
+    ResourcePurpose.modeling_data,
+    ResourcePurpose.experimental_data,
 }
 
 
@@ -71,76 +64,27 @@ def grounded_score(
     input_data: dict[str, Any],
     purpose: ResourcePurpose,
 ) -> float:
-    """Compute combined score from per-purpose scores with input-derived adjustments.
+    """Compute combined score from per-dimension LLM scores.
 
-    Uses MAX of per-purpose scores (not weighted average) so that paths excelling
-    in a single dimension (e.g., pure data, pure docs) are not penalized.
+    Uses MAX of per-dimension scores so that paths excelling in a single
+    dimension (e.g., pure data access, pure docs) are not penalized.
 
-    Grounded scoring with purpose-aware semantics:
-
-    For CONTAINER purposes:
-        Score = exploration potential (should we scan children?)
-
-    For CODE/DATA purposes:
-        Score = ingestion priority (should we process this?)
-
-    For SKIP purposes (system, build_artifact, archive):
-        Score = always low (0.3 multiplier)
+    The LLM has already seen all input context — file types, README,
+    git indicators, tree structure, parent/sibling scores — and factored
+    it into each dimension score. No post-hoc boosts, multipliers, or
+    caps are applied. The prompt is the sole source of scoring logic.
 
     Args:
-        scores: Dict of per-purpose scores (score_modeling_code, score_imas, etc.)
-        input_data: Directory info dict with has_readme, has_git, file_type_counts, etc.
-        purpose: Classified purpose
+        scores: Dict of per-dimension scores (score_modeling_code, score_imas, etc.)
+        input_data: Directory info dict (available for future use)
+        purpose: Classified purpose (available for future use)
 
     Returns:
         Combined score (0.0-1.0)
     """
-    # Use max of all per-purpose scores - paths may excel in only one dimension
-    base_score = max(scores.values()) if scores else 0.0
-
-    # Quality boost from input data (previously from LLM evidence)
-    quality_boost = 0.0
-    if input_data.get("has_readme"):
-        quality_boost += 0.05
-    if input_data.get("has_makefile"):
-        quality_boost += 0.05
-    if input_data.get("has_git"):
-        quality_boost += 0.05
-
-    # IMAS boost (from score_imas)
-    if scores.get("score_imas", 0.0) > 0.3:
-        quality_boost += 0.10
-
-    # Code diversity boost from file_type_counts
-    file_types = input_data.get("file_type_counts") or {}
-    if isinstance(file_types, str):
-        import json as json_module
-
-        try:
-            file_types = json_module.loads(file_types)
-        except (json_module.JSONDecodeError, TypeError):
-            file_types = {}
-    code_extensions = {"py", "f90", "f", "cpp", "c", "h", "jl", "m", "pro", "idl"}
-    code_type_count = sum(1 for ext in file_types if ext.lower() in code_extensions)
-    if code_type_count > 3:
-        quality_boost += 0.05
-
-    # Purpose-based multipliers
-    # - Suppressed (system, build_artifact, archive): 0.3 - low value
-    # - Test suite: 0.6 - some value but not primary
-    # - Container: 1.0 - score already reflects exploration potential
-    # - All others: 1.0 - full value
-    purpose_multiplier = 1.0
-    if purpose in SUPPRESSED_PURPOSES:
-        purpose_multiplier = 0.3
-    elif purpose == ResourcePurpose.test_suite:
-        purpose_multiplier = 0.6
-
-    combined = (base_score + quality_boost) * purpose_multiplier
-
-    # Cap at 1.0 — scores are 0.0-1.0 by design. The quality boost
-    # differentiates paths that would otherwise tie at 1.0 on base_score.
-    return max(0.0, min(1.0, combined))
+    if not scores:
+        return 0.0
+    return max(scores.values())
 
 
 @dataclass
@@ -575,36 +519,18 @@ class DirectoryScorer:
             # handles clones/forks via root_commit or remote_url matching. Repos
             # are scored on their own merit; expansion is blocked for all git repos.
 
-            # Expansion decision
-            # Containers: trust LLM's should_expand but require minimum score
-            # to avoid expanding empty/useless containers. Root-level containers
-            # (depth 0) always expand since seeded roots are high-confidence.
-            # Non-containers: require score >= threshold plus LLM agreement.
-            if purpose in CONTAINER_PURPOSES:
-                is_root = directories[i].get("depth", 0) == 0
-                should_expand = (
-                    result.should_expand
-                    and purpose not in SUPPRESSED_PURPOSES
-                    and (is_root or combined >= 0.3)
-                )
-            else:
-                should_expand = (
-                    combined >= threshold
-                    and result.should_expand
-                    and purpose not in SUPPRESSED_PURPOSES
-                )
+            # Expansion: trust the LLM's should_expand decision directly.
+            # The prompt gives the LLM rich context (depth, parent/sibling
+            # scores, tree structure, file types) to make calibrated decisions.
+            # Only structural constraints override the LLM:
+            should_expand = result.should_expand
 
-            # CRITICAL: Never expand git repos (code is available via git clone)
-            # Even private repos don't need child expansion - files are at repo root
+            # STRUCTURAL: Never expand git repos (code available via git clone)
             if has_git:
                 should_expand = False
 
-            # CRITICAL: Never expand data containers (too many files)
-            data_purposes = {
-                ResourcePurpose.modeling_data,
-                ResourcePurpose.experimental_data,
-            }
-            if purpose in data_purposes:
+            # STRUCTURAL: Never expand data containers (too many files)
+            if purpose in _DATA_PURPOSES:
                 should_expand = False
 
             # Enrichment decision - LLM decides, but override for known-large paths
@@ -625,7 +551,7 @@ class DirectoryScorer:
                 pass
 
             # Override: never enrich data containers (too many files)
-            if purpose in data_purposes:
+            if purpose in _DATA_PURPOSES:
                 should_enrich = False
                 enrich_skip_reason = (
                     enrich_skip_reason or "data container - too many files"
@@ -772,26 +698,15 @@ class DirectoryScorer:
             git_remote_url = directories[i].get("git_remote_url")
             # Note: No score penalty - SoftwareRepo dedup handles clone/fork detection
 
-            # Expansion decision
-            # Containers: trust LLM's should_expand but require minimum score
-            # Root-level containers (depth 0) always expand.
-            # Non-containers: require score >= threshold plus LLM agreement
-            if purpose in CONTAINER_PURPOSES:
-                is_root = directories[i].get("depth", 0) == 0
-                should_expand = (
-                    result.get("should_expand", False)
-                    and purpose not in SUPPRESSED_PURPOSES
-                    and (is_root or combined >= 0.3)
-                )
-            else:
-                should_expand = (
-                    combined >= threshold
-                    and result.get("should_expand", False)
-                    and purpose not in SUPPRESSED_PURPOSES
-                )
+            # Expansion: trust the LLM's should_expand decision directly.
+            should_expand = result.get("should_expand", False)
 
-            # Never expand git repos
+            # STRUCTURAL: Never expand git repos (code available via git clone)
             if has_git:
+                should_expand = False
+
+            # STRUCTURAL: Never expand data containers (too many files)
+            if purpose in _DATA_PURPOSES:
                 should_expand = False
 
             # Enrichment override for git repos with remotes

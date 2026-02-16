@@ -66,9 +66,9 @@ Pattern categories map directly to score dimensions:
 ## Combined Score
 
 The new combined score should reflect the evidence:
-- Use maximum of adjusted dimension scores
-- Can exceed 1.0 for directories with strong evidence across multiple dimensions
-- `is_multiformat=true` with high pattern counts → combined score 1.0+
+- Use maximum of adjusted dimension scores (combined = max of all dimensions)
+- All dimension scores must be 0.0-1.0
+- `is_multiformat=true` with high pattern counts → combined score near 1.0
 
 ## Evidence Tracking
 

@@ -8,7 +8,6 @@ import pytest
 
 from imas_codex.discovery.paths.models import ResourcePurpose, ScoreBatch, ScoreResult
 from imas_codex.discovery.paths.scorer import (
-    CONTAINER_PURPOSES,
     DirectoryScorer,
     grounded_score,
 )
@@ -54,26 +53,27 @@ class TestGroundedScore:
         result = grounded_score(scores, {}, ResourcePurpose.container)
         assert result == 0.0
 
-    def test_suppressed_purpose_gets_penalized(self):
-        """System directories get 0.3 multiplier."""
+    def test_suppressed_purpose_no_penalty(self):
+        """System directories get no penalty — LLM scores them low via prompt."""
         scores = {"score_modeling_code": 0.5}
         result = grounded_score(scores, {}, ResourcePurpose.system)
-        assert result < 0.5 * 0.4  # 0.3 multiplier
+        # No multiplier — score is just max(scores)
+        assert result == pytest.approx(0.5, abs=0.01)
 
-    def test_score_capped_at_1(self):
-        """Score with quality boosts is capped at 1.0."""
+    def test_score_is_max_of_dimensions(self):
+        """Score is simply max of dimension scores, no boosts or caps."""
         scores = {
             "score_modeling_code": 0.95,
-            "score_imas": 0.5,  # trigger IMAS boost (+0.10)
+            "score_imas": 0.5,
         }
         input_data = {
-            "has_readme": True,  # +0.05
-            "has_makefile": True,  # +0.05
-            "has_git": True,  # +0.05
+            "has_readme": True,
+            "has_makefile": True,
+            "has_git": True,
         }
         result = grounded_score(scores, input_data, ResourcePurpose.modeling_code)
-        # base=0.95 + boosts=0.25 = 1.20 → capped at 1.0
-        assert result == 1.0
+        # No boosts — score is just max(0.95, 0.5) = 0.95
+        assert result == pytest.approx(0.95, abs=0.01)
 
 
 class TestContainerExpansion:
@@ -217,8 +217,8 @@ class TestContainerExpansion:
         # Expands because LLM said yes — root containers always expand
         assert results[0].should_expand is True
 
-    def test_non_root_container_requires_minimum_score(self):
-        """Non-root containers need score >= 0.3 to expand, even if LLM says yes."""
+    def test_non_root_container_expands_when_llm_says_yes(self):
+        """Non-root containers expand when LLM says yes — no minimum score."""
         scorer = DirectoryScorer(facility="test")
         batch = self._score_batch(
             [
@@ -252,11 +252,11 @@ class TestContainerExpansion:
 
         results = scorer._map_scored_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
-        # Does NOT expand — score 0.0 < 0.3 threshold for non-root containers
-        assert results[0].should_expand is False
+        # LLM decision is trusted directly — no minimum score for containers
+        assert results[0].should_expand is True
 
-    def test_non_container_requires_score_threshold(self):
-        """Non-container paths must meet score threshold to expand."""
+    def test_non_container_trusts_llm_expand(self):
+        """Non-container paths expand when LLM says yes — no score threshold."""
         scorer = DirectoryScorer(facility="test")
         batch = self._score_batch(
             [
@@ -264,7 +264,7 @@ class TestContainerExpansion:
                     "/work/codes/analysis",
                     purpose=ResourcePurpose.analysis_code,
                     should_expand=True,
-                    score_analysis_code=0.3,  # Below 0.7 threshold
+                    score_analysis_code=0.3,  # Below old 0.7 threshold
                 ),
             ]
         )
@@ -281,8 +281,8 @@ class TestContainerExpansion:
 
         results = scorer._map_scored_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
-        # LLM said expand, but score 0.3 < threshold 0.7 → no expand
-        assert results[0].should_expand is False
+        # LLM said expand — trusted directly regardless of score vs threshold
+        assert results[0].should_expand is True
 
     def test_non_container_data_never_expands(self):
         """Data containers are blocked from expansion regardless."""

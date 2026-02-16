@@ -8,6 +8,8 @@ dynamic: true
 
 You are analyzing directories at a fusion research facility to classify and score them for knowledge graph enrichment.
 
+**Your scores and expansion decisions are final.** There is no post-processing, no deterministic adjustments, no score caps, no purpose-based multipliers. The combined score IS the maximum of your per-dimension scores. Your `should_expand` decision IS the expansion decision. Engineer your responses accordingly — if a directory should score low, score it low. If it should not expand, set `should_expand=false`.
+
 ## Goal
 
 We are building a knowledge graph of **unique, facility-specific code** that reveals how data is accessed, processed, and analyzed at this facility. We want to discover:
@@ -45,11 +47,15 @@ Each dimension represents a distinct value category. Score dimensions independen
 
 ### Scoring Philosophy
 
+**Your scores are the ONLY scores.** There are no boosts, multipliers, or caps applied after your response. If a directory has a README, Makefile, and git — factor that into your dimension scores directly. If it has IMAS integration code — score `score_imas` high directly. The combined score = max of your dimension scores, period.
+
 **We value unique content over well-known software.** A researcher's custom 200-line Python script that reads MDSplus data and computes q-profiles is far more valuable to our knowledge graph than a clone of a major simulation framework with 100k lines of well-documented public code.
 
 **Score what is UNIQUE to this facility.** Researcher-written scripts, facility-specific wrappers, custom analysis pipelines, and local tools that encode domain expertise about this facility's data systems.
 
 **Score LOW what is available elsewhere.** Clones of public repositories (GitHub/GitLab), installations of well-known frameworks (IMAS, JINTRAC, JOREK, ASTRA, ETS, SOLPS, EDGE2D, EIRENE, etc.), system packages, and standard library installations.
+
+**Score VERY LOW for system/infrastructure/archive directories.** Directories classified as `system`, `build_artifact`, or `archive` should score below 0.15 on ALL dimensions. These contain no unique facility-specific code. Examples: `/usr/lib/`, `/opt/modules/`, `.cache/`, `__pycache__/`, `.tox/`, build output directories.
 
 **Infer from path and contents.** The full path reveals context — parent directories, naming conventions, and position in the filesystem hierarchy indicate purpose. `/home/username/analysis/` is likely custom code; `/opt/imas/` is an IMAS installation.
 
@@ -103,23 +109,22 @@ Boost scores by ~0.15 for paths matching this focus.
 
 ## Expansion Decision
 
-Set `should_expand=true` ONLY when subdirectories likely contain distinct, valuable content to discover.
+**Your `should_expand` is the SOLE driver of expansion** (except: git repos and data containers are structurally blocked by the code regardless). Set it carefully — every expansion triggers SSH scanning and LLM scoring of all children.
 
-**Expansion is expensive** — each expanded directory triggers SSH scanning of all children, then LLM scoring of each child. Be conservative.
-
-### When to expand:
-- **Top-level containers** (depth 0): `/home`, `/work`, `/common` — navigation roots
-- **Shared code directories**: `/home/codes`, `/common/codes` — curated code collections
+### When to expand (`should_expand=true`):
+- **Top-level containers** (depth 0): `/home`, `/work`, `/common` — navigation roots that must be explored
+- **Shared code directories**: `/home/codes`, `/common/codes` — curated code collections with multiple projects
 - **Promising user homes** (depth 1): only when the tree structure shows code (Python/Fortran files, src/, analysis/, scripts/) — NOT empty or configuration-only homes
 
-### When NOT to expand (set `should_expand=false`):
-- **Code repositories** with `.git` — code is available via git clone
-- **Data containers** — directories of shot data, run outputs, or numeric-named subdirs
+### When NOT to expand (`should_expand=false`):
+- **Code repositories** with `.git` — code is available via git clone (also blocked structurally)
+- **Data containers** — directories of shot data, run outputs, or numeric-named subdirs (also blocked structurally)
 - **Leaf code directories** — a directory with source files IS the project; its subdirectories (`src/`, `lib/`, `tests/`) are implementation details, not new discoveries
 - **Well-known software installations** — `/opt/imas/`, any public framework clone
 - **Deep paths** (depth 4+) — diminishing returns; valuable code is usually found by depth 2-3
-- **Directories scoring < 0.4** on all dimensions
+- **Directories you scored < 0.3 on all dimensions** — not worth exploring further
 - **Empty or configuration-only user homes** — homes with only dotfiles, no source code
+- **System, build_artifact, archive directories** — never expand these
 - **Large user-directory containers** with 50+ children and no code in tree structure — expanding creates hundreds of paths to scan
 
 ### Key insight:
