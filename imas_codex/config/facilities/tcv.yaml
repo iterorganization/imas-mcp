@@ -63,24 +63,53 @@ data_sources:
       - close_action
       - store_action
 
-  # MDSplus configuration (used for data validation, not signal discovery)
+  # MDSplus configuration for signal discovery and data validation.
+  # The tcv_shot tree contains 13 subtrees (83k+ nodes total).
+  # Only physics-relevant subtrees are scanned for signal discovery;
+  # hardware/control trees (ATLAS=35k, PCS=15k, HYBRID=16k) are skipped.
   mdsplus:
     connection_tree: tcv_shot  # Default tree for TDI context
-    # MDSplus subtrees discovered via SSH (mdsplus -s localhost -p 8000)
+    reference_shot: 85000
+    # Physics-relevant subtrees to scan for signal discovery.
+    # Each is opened as a separate MDSplus tree.
+    trees:
+      - results      # Equilibrium, analysis outputs (~1500 signals w/ data)
+      - magnetics     # Magnetic field measurements (~215 signals)
+      - diagz         # Diagnostic measurements (~220 signals)
+      - base          # Core plasma parameters (~287 signals)
+      - ecrh          # Electron cyclotron heating (~416 signals)
+    # All subtrees (including hardware/control, not scanned)
     subtrees:
-      - ATLAS
+      - ATLAS         # Raw acquisition hardware (35k nodes - skip)
       - BASE
       - DIAGZ
       - DIAG_ACT
       - ECRH
-      - HYBRID
+      - HYBRID        # Hybrid heating internals (16k nodes - skip)
       - MAGNETICS
       - MANUAL
       - POWER
       - RESULTS
       - VSYSTEM
-      - PCS
+      - PCS           # Plasma control system (15k nodes - skip)
       - APCS
+    # Skip metadata nodes that are not physics signals
+    exclude_node_names:
+      - COMMENTS
+      - DATE
+      - LAST_TRIAL
+      - OK_TRIALINDX
+      - USER_TRIAL
+      - SUBCALL
+      - ROUTINE
+      - VERSION_NUM
+      - CONFIDENCE
+      - ERROR_BAR
+      - IGNORE
+      - FOO
+      - NODES_USED
+      - TEST
+      - TRIAL
 
 # Data access patterns discovered during facility exploration.
 # Informs wiki scoring, code ingestion, and signal discovery.

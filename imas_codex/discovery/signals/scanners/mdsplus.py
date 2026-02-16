@@ -1,10 +1,14 @@
 """MDSplus tree scanner plugin.
 
-Direct MDSplus tree traversal for facilities that use raw tree/node access
-rather than a higher-level abstraction layer (TDI, PPF, EDAS).
+Direct MDSplus tree traversal for facilities that use raw tree/node access.
+Discovers physics-relevant SIGNAL nodes by walking configured subtrees
+via SSH, filtering out hardware/control channels and metadata nodes.
 
-This scanner walks MDSplus tree nodes via SSH, extracting SIGNAL, NUMERIC,
-and AXIS nodes as FacilitySignal candidates.
+Strategy:
+- Only scan configured physics subtrees (skip hardware: ATLAS, PCS, HYBRID)
+- Only SIGNAL usage nodes (not NUMERIC/AXIS which are mostly config params)
+- Filter: must have data for reference shot, skip metadata node names
+- Deduplicate array channels (BPOL_003..BPOL_255 → single BPOL entry)
 
 Config key: data_sources.mdsplus
 Facility: Any facility with MDSplus (TCV, JET, JT-60SA, ITER)
@@ -12,6 +16,8 @@ Facility: Any facility with MDSplus (TCV, JET, JT-60SA, ITER)
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from typing import Any
 
@@ -19,7 +25,8 @@ from imas_codex.discovery.signals.scanners.base import (
     ScanResult,
     register_scanner,
 )
-from imas_codex.graph.models import FacilitySignal
+from imas_codex.graph.models import DataAccess, FacilitySignal
+from imas_codex.remote.executor import run_python_script
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +34,15 @@ logger = logging.getLogger(__name__)
 class MDSplusScanner:
     """Discover signals from MDSplus tree traversal.
 
-    Walks MDSplus trees via SSH to enumerate data-bearing nodes.
-    Useful as a complement to higher-level scanners (e.g., TDI on TCV)
-    to find signals not exposed through the abstraction layer.
+    Walks MDSplus trees via SSH using enumerate_mdsplus.py to extract
+    SIGNAL nodes with data. Produces FacilitySignal entries that
+    complement higher-level scanners (TDI, PPF, EDAS).
 
     Config (data_sources.mdsplus):
         connection_tree: str - Default tree for TDI context
-        trees: list[str] - Tree names to scan
+        trees: list[str] - Subtree names to scan for signals
         reference_shot: int - Shot for tree introspection
+        exclude_node_names: list[str] - Node names to skip
     """
 
     scanner_type: str = "mdsplus"
@@ -46,10 +54,10 @@ class MDSplusScanner:
         config: dict[str, Any],
         reference_shot: int | None = None,
     ) -> ScanResult:
-        """Discover signals from MDSplus trees.
+        """Discover signals from MDSplus trees via SSH.
 
-        Uses the existing discover_mdsplus_signals() function from parallel.py
-        which walks tree nodes via SSH and extracts SIGNAL/NUMERIC/AXIS nodes.
+        Uses enumerate_mdsplus.py remote script to walk trees and extract
+        SIGNAL nodes with data, filtering metadata and deduplicating channels.
         """
         trees = config.get("trees", [])
         ref_shot = reference_shot or config.get("reference_shot")
@@ -65,7 +73,7 @@ class MDSplusScanner:
                 metadata={"connection_tree": connection_tree},
                 stats={
                     "signals_discovered": 0,
-                    "note": "No trees configured for scanning; connection_tree used for TDI context only",
+                    "note": "No trees configured; connection_tree used for TDI only",
                 },
             )
 
@@ -75,69 +83,120 @@ class MDSplusScanner:
                 stats={"error": "no reference_shot configured"},
             )
 
-        # Import the existing MDSplus discovery function
-        from imas_codex.discovery.signals.parallel import discover_mdsplus_signals
+        # Build input for the remote enumerate script
+        exclude_names = config.get("exclude_node_names", [])
+        input_data = {
+            "trees": trees,
+            "shot": ref_shot,
+            "exclude_names": exclude_names,
+            "max_nodes_per_tree": 5000,
+        }
 
-        all_signals: list[dict] = []
-        tree_stats: dict[str, int] = {}
+        try:
+            output = await asyncio.to_thread(
+                run_python_script,
+                "enumerate_mdsplus.py",
+                input_data,
+                ssh_host=ssh_host,
+                timeout=300,  # Trees can be large
+            )
 
+            # Parse last non-empty line as JSON (skip any MDSplus warnings)
+            lines = [ln for ln in output.strip().split("\n") if ln.strip()]
+            response = json.loads(lines[-1])
+        except Exception as e:
+            logger.error("MDSplus enumerate failed for %s: %s", facility, e)
+            return ScanResult(
+                stats={"error": f"enumerate failed: {e}"},
+            )
+
+        if "error" in response:
+            logger.error(
+                "MDSplus enumerate error for %s: %s", facility, response["error"]
+            )
+            return ScanResult(stats={"error": response["error"]})
+
+        raw_signals = response.get("signals", [])
+        tree_stats = response.get("tree_stats", {})
+
+        # Create DataAccess for each tree
+        data_access_nodes = {}
         for tree_name in trees:
-            data_access_id = f"{facility}:mdsplus:{tree_name}"
+            da_id = f"{facility}:mdsplus:{tree_name}"
+            data_access_nodes[tree_name] = da_id
+
+        # Convert to FacilitySignal objects
+        from imas_codex.graph.models import FacilitySignalStatus
+
+        facility_signals: list[FacilitySignal] = []
+        for sig in raw_signals:
+            tree_name = sig["tree"]
+            name = sig["name"]
+            path = sig["path"]
+            group = sig.get("group", "TOP")
+
+            # Build unique signal ID: facility:tree/group/name
+            signal_id = f"{facility}:{tree_name}/{group.lower()}/{name.lower()}"
+
+            # Build accessor: MDSplus path expression
+            accessor = f"data({path})"
+
+            # Note channel count in name if it's a channel group
+            display_name = name
+            channel_count = sig.get("channel_count")
+            if channel_count and channel_count > 1:
+                display_name = f"{name} [{channel_count} channels]"
+
             try:
-                signals = discover_mdsplus_signals(
-                    facility=facility,
-                    ssh_host=ssh_host,
+                fs = FacilitySignal(
+                    id=signal_id,
+                    facility_id=facility,
+                    status=FacilitySignalStatus.discovered,
+                    physics_domain="general",  # Enriched by LLM later
+                    name=display_name,
+                    accessor=accessor,
+                    data_access=data_access_nodes.get(tree_name, ""),
                     tree_name=tree_name,
-                    shot=ref_shot,
-                    data_access_id=data_access_id,
+                    node_path=path,
+                    units=sig.get("units", ""),
+                    discovery_source="tree_traversal",
+                    example_shot=ref_shot,
                 )
-                all_signals.extend(signals)
-                tree_stats[tree_name] = len(signals)
-                logger.info(
-                    "MDSplus %s:%s shot %d: %d signals",
-                    facility,
-                    tree_name,
-                    ref_shot,
-                    len(signals),
-                )
+                facility_signals.append(fs)
             except Exception as e:
-                logger.error(
-                    "MDSplus scan failed for %s:%s: %s", facility, tree_name, e
-                )
-                tree_stats[tree_name] = -1
+                logger.debug("Could not create FacilitySignal for %s: %s", path, e)
 
-        # Convert raw dicts to FacilitySignal objects
-        from imas_codex.graph.models import FacilitySignal as FS, FacilitySignalStatus
+        # Build DataAccess model for the primary connection tree
+        data_access = DataAccess(
+            id=f"{facility}:mdsplus:{connection_tree or trees[0]}",
+            facility_id=facility,
+            method_type="mdsplus",
+            library="MDSplus",
+            access_type="local",
+            connection_template=(
+                f"import MDSplus\n"
+                f"tree = MDSplus.Tree('{connection_tree or trees[0]}', "
+                f"{{shot}}, 'readonly')"
+            ),
+            data_template="data = tree.getNode('{node_path}').data()",
+            data_source="mdsplus",
+        )
 
-        facility_signals = []
-        for sig_dict in all_signals:
-            try:
-                facility_signals.append(
-                    FS(
-                        id=sig_dict["id"],
-                        facility_id=facility,
-                        status=FacilitySignalStatus.discovered,
-                        physics_domain=sig_dict.get("physics_domain", "general"),
-                        name=sig_dict.get("name", ""),
-                        accessor=sig_dict.get("accessor", ""),
-                        data_access=sig_dict.get("data_access"),
-                        tree_name=sig_dict.get("tree_name"),
-                        node_path=sig_dict.get("node_path"),
-                        units=sig_dict.get("units"),
-                        discovery_source="tree_traversal",
-                    )
-                )
-            except Exception as e:
-                logger.debug(
-                    "Could not create FacilitySignal from %s: %s", sig_dict.get("id"), e
-                )
+        logger.info(
+            "MDSplus scanner %s: %d signals from %d trees (shot %d)",
+            facility,
+            len(facility_signals),
+            len(trees),
+            ref_shot,
+        )
 
         return ScanResult(
             signals=facility_signals,
+            data_access=data_access,
             metadata={
                 "trees_scanned": list(trees),
                 "reference_shot": ref_shot,
-                "tree_signal_counts": tree_stats,
+                "tree_stats": tree_stats,
             },
             stats={
                 "signals_discovered": len(facility_signals),
@@ -158,11 +217,6 @@ class MDSplusScanner:
         Uses check_signals_batch.py which groups signals by tree/shot
         for efficient batch validation.
         """
-        import asyncio
-        import json
-
-        from imas_codex.remote.executor import run_python_script
-
         ref_shot = reference_shot or config.get("reference_shot")
         if not ref_shot:
             return [

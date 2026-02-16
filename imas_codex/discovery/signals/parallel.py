@@ -1140,6 +1140,121 @@ def ingest_discovered_signals(signals: list[dict]) -> int:
         return 0
 
 
+def _link_tdi_to_mdsplus(facility: str) -> int:
+    """Link TDI signals to their backing MDSplus tree signals.
+
+    TDI functions are an abstraction layer on top of MDSplus. Each TDI
+    quantity (e.g., tcv_eq("PSI")) resolves to a physical MDSplus path
+    (e.g., \\RESULTS::LIUQE:PSI). This function creates cross-references
+    between the two discovery layers:
+
+    1. Sets ``node_path`` on TDI signals when a matching MDSplus signal exists
+    2. Sets ``tdi_function`` on MDSplus signals when a TDI accessor wraps them
+
+    Matching is by name: TDI ``tdi_quantity`` (e.g., "PSI") ↔ MDSplus node
+    name (extracted from signal id). Case-insensitive.
+
+    Returns:
+        Number of relationships created.
+    """
+    with GraphClient() as gc:
+        # Find TDI signals that have tdi_quantity set
+        tdi_signals = gc.query(
+            """
+            MATCH (s:FacilitySignal {facility_id: $facility})
+            WHERE s.discovery_source = 'tdi_introspection'
+              AND s.tdi_quantity IS NOT NULL
+            RETURN s.id AS id, s.tdi_quantity AS quantity,
+                   s.tdi_function AS tdi_func
+            """,
+            facility=facility,
+        )
+
+        if not tdi_signals:
+            logger.debug("No TDI signals found for %s, skipping linking", facility)
+            return 0
+
+        # Build lookup: uppercase quantity name → list of TDI signal ids
+        tdi_by_quantity: dict[str, list[dict]] = {}
+        for ts in tdi_signals:
+            key = ts["quantity"].upper()
+            tdi_by_quantity.setdefault(key, []).append(ts)
+
+        # Match TDI quantities to MDSplus signals by name
+        # MDSplus signal names are the leaf node name (uppercase)
+        quantity_list = list(tdi_by_quantity.keys())
+
+        # Use Cypher UNWIND for efficient batch matching
+        result = gc.query(
+            """
+            UNWIND $quantities AS qty
+            MATCH (mds:FacilitySignal {facility_id: $facility})
+            WHERE mds.discovery_source = 'tree_traversal'
+              AND toUpper(mds.name) CONTAINS qty
+            WITH qty, mds
+            ORDER BY size(mds.name) ASC
+            WITH qty, collect(mds)[0] AS best_match
+            WHERE best_match IS NOT NULL
+            RETURN qty, best_match.id AS mds_id, best_match.node_path AS node_path
+            """,
+            facility=facility,
+            quantities=quantity_list,
+        )
+
+        if not result:
+            logger.debug("No TDI→MDSplus matches for %s", facility)
+            return 0
+
+        # Build updates: set node_path on TDI signals, tdi_function on MDSplus signals
+        tdi_updates = []
+        mds_updates = []
+        for match in result:
+            qty = match["qty"]
+            mds_id = match["mds_id"]
+            node_path = match.get("node_path", "")
+
+            for ts in tdi_by_quantity.get(qty, []):
+                if node_path:
+                    tdi_updates.append({"id": ts["id"], "node_path": node_path})
+                if ts.get("tdi_func"):
+                    mds_updates.append(
+                        {"id": mds_id, "tdi_function": ts["tdi_func"]}
+                    )
+
+        # Apply TDI signal updates (add node_path from MDSplus)
+        if tdi_updates:
+            gc.query(
+                """
+                UNWIND $updates AS u
+                MATCH (s:FacilitySignal {id: u.id})
+                SET s.node_path = u.node_path
+                """,
+                updates=tdi_updates,
+            )
+
+        # Apply MDSplus signal updates (add tdi_function reference)
+        if mds_updates:
+            gc.query(
+                """
+                UNWIND $updates AS u
+                MATCH (s:FacilitySignal {id: u.id})
+                SET s.tdi_function = u.tdi_function
+                """,
+                updates=mds_updates,
+            )
+
+        linked = len(result)
+        logger.info(
+            "TDI→MDSplus linking for %s: %d matches, "
+            "%d TDI paths set, %d MDSplus TDI refs set",
+            facility,
+            linked,
+            len(tdi_updates),
+            len(mds_updates),
+        )
+        return linked
+
+
 # =============================================================================
 # Async Workers
 # =============================================================================
@@ -1278,6 +1393,21 @@ async def scan_worker(
                     f"{scanner_type}: failed - {e}",
                     state.discover_stats,
                 )
+
+    # Link TDI signals to MDSplus signals by matching quantity names
+    # TDI is an abstraction layer on top of MDSplus — the graph should reflect this
+    if "tdi" in state.scanner_types and "mdsplus" in state.scanner_types:
+        try:
+            linked = _link_tdi_to_mdsplus(state.facility)
+            if linked > 0:
+                logger.info("Linked %d TDI signals to MDSplus backing nodes", linked)
+                if on_progress:
+                    on_progress(
+                        f"linked {linked} TDI→MDSplus signals",
+                        state.discover_stats,
+                    )
+        except Exception as e:
+            logger.warning("TDI→MDSplus linking failed: %s", e)
 
     # Mark scan as complete
     state.scan_complete = True
