@@ -611,7 +611,7 @@ async def run_parallel_wiki_discovery(
 
     for i in range(num_score_workers):
         worker_name = f"score_worker_{i}"
-        status = worker_group.create_status(worker_name, group="score")
+        status = worker_group.create_status(worker_name, group="triage")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
@@ -628,7 +628,7 @@ async def run_parallel_wiki_discovery(
     if ingest_artifacts:
         # Artifact score worker: LLM scoring with text preview extraction
         artifact_score_status = worker_group.create_status(
-            "artifact_score_worker", group="score"
+            "artifact_score_worker", group="docs"
         )
         worker_group.add_task(
             asyncio.create_task(
@@ -644,7 +644,9 @@ async def run_parallel_wiki_discovery(
         )
 
     # Image score worker: VLM caption + scoring for ingested images
-    image_score_status = worker_group.create_status("image_score_worker", group="score")
+    image_score_status = worker_group.create_status(
+        "image_score_worker", group="images"
+    )
     worker_group.add_task(
         asyncio.create_task(
             supervised_worker(
@@ -660,7 +662,7 @@ async def run_parallel_wiki_discovery(
 
     # Embed description worker: embeds descriptions for all wiki node types
     # Runs continuously, picking up newly-described nodes from score/ingest workers
-    embed_status = worker_group.create_status("embed_worker", group="ingest")
+    embed_status = worker_group.create_status("embed_worker", group="pages")
     worker_group.add_task(
         asyncio.create_task(
             supervised_worker(
@@ -679,7 +681,7 @@ async def run_parallel_wiki_discovery(
     if not score_only:
         for i in range(num_ingest_workers):
             worker_name = f"ingest_worker_{i}"
-            ingest_status = worker_group.create_status(worker_name, group="ingest")
+            ingest_status = worker_group.create_status(worker_name, group="pages")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
@@ -696,7 +698,7 @@ async def run_parallel_wiki_discovery(
         if ingest_artifacts:
             # Artifact ingest worker: download and embed scored artifacts
             artifact_ingest_status = worker_group.create_status(
-                "artifact_worker", group="ingest"
+                "artifact_worker", group="docs"
             )
             worker_group.add_task(
                 asyncio.create_task(

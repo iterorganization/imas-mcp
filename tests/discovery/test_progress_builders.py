@@ -14,9 +14,11 @@ from rich.text import Text
 
 from imas_codex.discovery.base.progress import (
     ActivityRowConfig,
+    PipelineRowConfig,
     ProgressRowConfig,
     ResourceConfig,
     build_activity_section,
+    build_pipeline_section,
     build_progress_section,
     build_resource_section,
 )
@@ -419,6 +421,245 @@ class TestBuildResourceSection:
         result = build_resource_section(config, gauge_width=20)
         # Should not have ETA text
         assert "ETA" not in result.plain
+
+
+# =============================================================================
+# build_pipeline_section (unified progress + activity)
+# =============================================================================
+
+
+class TestBuildPipelineSection:
+    """Tests for the unified pipeline section builder."""
+
+    def test_single_row_renders_three_lines(self):
+        """A single pipeline row renders 3 lines: bar, activity, detail."""
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
+                style="bold blue",
+                completed=50,
+                total=100,
+                primary_text="Thomson_Scattering",
+                detail_parts=[("0.85  ", "green"), ("diagnostics", "cyan")],
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        text = result.plain
+        assert "TRIAGE" in text
+        assert "50" in text
+        assert "Thomson_Scattering" in text
+        assert "0.85" in text
+        assert "diagnostics" in text
+        # Should have 3 lines
+        lines = text.split("\n")
+        assert len(lines) == 3
+
+    def test_cost_displayed_when_present(self):
+        """Per-stage cost is shown in the progress bar line."""
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
+                style="bold blue",
+                completed=10,
+                total=100,
+                cost=2.50,
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "$2.50" in result.plain
+
+    def test_cost_hidden_when_none(self):
+        """No cost text when cost is None."""
+        rows = [
+            PipelineRowConfig(
+                name="PAGES",
+                style="bold magenta",
+                completed=10,
+                total=100,
+                cost=None,
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "$" not in result.plain
+
+    def test_worker_count_annotation(self):
+        """Worker count shows ×N suffix."""
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
+                style="bold blue",
+                completed=10,
+                total=100,
+                worker_count=4,
+                primary_text="some page",
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "×4" in result.plain
+
+    def test_worker_annotation_with_backoff(self):
+        """Worker annotation adds extra info after ×N."""
+        rows = [
+            PipelineRowConfig(
+                name="DOCS",
+                style="bold yellow",
+                completed=5,
+                total=50,
+                worker_count=2,
+                worker_annotation="(1 backoff)",
+                primary_text="report.pdf",
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "×2" in result.plain
+        assert "1 backoff" in result.plain
+
+    def test_idle_state(self):
+        """No content shows 'idle'."""
+        rows = [
+            PipelineRowConfig(name="IMAGES", style="bold green", completed=0, total=1),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "idle" in result.plain
+
+    def test_processing_state(self):
+        """Processing without content shows processing label."""
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
+                style="bold blue",
+                completed=5,
+                total=100,
+                is_processing=True,
+                processing_label="scoring...",
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "scoring..." in result.plain
+
+    def test_paused_state(self):
+        """Paused processing shows 'paused'."""
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
+                style="bold blue",
+                completed=5,
+                total=100,
+                is_processing=True,
+                is_paused=True,
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "paused" in result.plain
+
+    def test_complete_state(self):
+        """Complete state shows complete label."""
+        rows = [
+            PipelineRowConfig(
+                name="DOCS",
+                style="bold yellow",
+                completed=50,
+                total=50,
+                is_complete=True,
+                complete_label="cost limit",
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "cost limit" in result.plain
+
+    def test_queue_streaming(self):
+        """Queue with items shows streaming message."""
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
+                style="bold blue",
+                completed=5,
+                total=100,
+                queue_size=42,
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "streaming 42 items" in result.plain
+
+    def test_disabled_row_skipped(self):
+        """Disabled rows are not rendered."""
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
+                style="bold blue",
+                disabled=True,
+            ),
+            PipelineRowConfig(
+                name="PAGES",
+                style="bold magenta",
+                completed=10,
+                total=100,
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        text = result.plain
+        assert "TRIAGE" not in text
+        assert "PAGES" in text
+
+    def test_multiple_rows_separated(self):
+        """Multiple rows are separated by newlines."""
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
+                style="bold blue",
+                completed=50,
+                total=100,
+                primary_text="page A",
+            ),
+            PipelineRowConfig(
+                name="PAGES",
+                style="bold magenta",
+                completed=25,
+                total=50,
+                primary_text="page B",
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        text = result.plain
+        assert "TRIAGE" in text
+        assert "PAGES" in text
+        assert "page A" in text
+        assert "page B" in text
+
+    def test_has_content_property(self):
+        """has_content reflects primary_text presence."""
+        row = PipelineRowConfig(name="TRIAGE", style="bold blue", primary_text="text")
+        assert row.has_content is True
+
+        row_empty = PipelineRowConfig(name="TRIAGE", style="bold blue")
+        assert row_empty.has_content is False
+
+    def test_rate_displayed(self):
+        """Rate appears as N/s."""
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
+                style="bold blue",
+                completed=50,
+                total=100,
+                rate=3.7,
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "3.7/s" in result.plain
+
+    def test_percentage_displayed(self):
+        """Percentage is shown when show_pct=True (default)."""
+        rows = [
+            PipelineRowConfig(
+                name="PAGES",
+                style="bold magenta",
+                completed=25,
+                total=100,
+            ),
+        ]
+        result = build_pipeline_section(rows, bar_width=20)
+        assert "25%" in result.plain
 
 
 # =============================================================================

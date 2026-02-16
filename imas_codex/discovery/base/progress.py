@@ -272,6 +272,9 @@ class WorkerStats:
     """Statistics for a single async worker.
 
     Reusable across discovery domains (paths, wiki, etc.).
+
+    Tracks both a lifetime average rate and an exponential moving average
+    (EMA) over recent batches for smoother, more responsive rate display.
     """
 
     processed: int = 0
@@ -280,15 +283,62 @@ class WorkerStats:
     last_batch_time: float = 0.0
     cost: float = 0.0  # LLM cost (for scorer workers)
 
+    # EMA rate tracking
+    _ema_rate: float = 0.0  # Exponential moving average rate (items/s)
+    _ema_alpha: float = 0.3  # Smoothing factor (0.3 = responsive to recent)
+    _prev_processed: int = 0  # Items at last batch
+    _prev_batch_time: float = 0.0  # Time at last batch
+
     @property
     def elapsed(self) -> float:
         return time.time() - self.start_time
 
     @property
     def rate(self) -> float | None:
+        """Overall average rate (items/second) since start."""
         if self.processed == 0 or self.elapsed <= 0:
             return None
         return self.processed / self.elapsed
+
+    @property
+    def ema_rate(self) -> float | None:
+        """Exponential moving average rate over recent batches.
+
+        Falls back to overall rate if no batch data available.
+        """
+        if self._ema_rate > 0:
+            return self._ema_rate
+        return self.rate
+
+    def record_batch(self, batch_size: int | None = None) -> None:
+        """Record a batch completion for EMA rate calculation.
+
+        Call after each batch of items is processed. Uses delta between
+        calls to compute instantaneous rate, then smooths with EMA.
+
+        Args:
+            batch_size: Items in this batch. If None, inferred from
+                ``processed - _prev_processed``.
+        """
+        now = time.time()
+        if batch_size is None:
+            batch_size = self.processed - self._prev_processed
+        if batch_size <= 0:
+            return
+
+        dt = now - self._prev_batch_time if self._prev_batch_time > 0 else 0
+        if dt > 0:
+            instant_rate = batch_size / dt
+            if self._ema_rate > 0:
+                self._ema_rate = (
+                    self._ema_alpha * instant_rate
+                    + (1 - self._ema_alpha) * self._ema_rate
+                )
+            else:
+                self._ema_rate = instant_rate
+
+        self._prev_processed = self.processed
+        self._prev_batch_time = now
 
 
 # =============================================================================
@@ -457,6 +507,164 @@ def build_progress_section(
         if i > 0:
             section.append("\n")
         section.append_text(build_progress_row(config, bar_width))
+    return section
+
+
+# =============================================================================
+# Unified Pipeline Section (progress + activity merged)
+# =============================================================================
+
+
+@dataclass
+class PipelineRowConfig:
+    """Configuration for a unified pipeline row (3 lines).
+
+    Merges ProgressRowConfig (bar) and ActivityRowConfig (current item)
+    into a single block.  Each pipeline stage renders as:
+
+        TRIAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━    2,238  29%  0.2/s  $8.30
+               Mailinglists                                            ×4
+               0.00  general  Information regarding SPC mailing lists...
+
+    This is the standard layout for discovery CLI tools that want
+    integrated per-stage progress and activity display.
+    """
+
+    # Identity
+    name: str  # e.g., "TRIAGE", "PAGES", "DOCS", "IMAGES"
+    style: str  # e.g., "bold blue"
+
+    # Progress bar data
+    completed: int = 0
+    total: int = 1
+    rate: float | None = None  # items/second (EMA preferred)
+    cost: float | None = None  # LLM/VLM cost for this stage
+    disabled: bool = False
+    disabled_msg: str = "disabled"
+    show_pct: bool = True
+
+    # Worker annotation
+    worker_count: int = 0  # Number of workers in this group
+    worker_annotation: str = ""  # e.g., "(1 backoff)" or "(budget)"
+
+    # Activity (current item)
+    primary_text: str = ""  # Line 2: current item title/path
+    detail_parts: list[tuple[str, str]] | None = None  # Line 3: score+domain+desc
+
+    # Activity state (used when no primary_text)
+    is_processing: bool = False
+    processing_label: str = "processing..."
+    is_complete: bool = False
+    complete_label: str = "complete"
+    is_paused: bool = False
+    queue_size: int = 0
+
+    @property
+    def has_content(self) -> bool:
+        """True when an item is available to display."""
+        return bool(self.primary_text)
+
+
+def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
+    """Build a unified pipeline row (progress bar + activity).
+
+    Renders 3 lines:
+      Line 1: label + progress bar + count + pct + rate + cost
+      Line 2: current item title + worker count annotation
+      Line 3: detail (score, domain, description)
+
+    Args:
+        config: Pipeline row configuration.
+        bar_width: Width of the progress bar.
+    """
+    row = Text()
+
+    if config.disabled:
+        row.append(f"  {config.name:<6} ", style="dim")
+        row.append("─" * bar_width, style="dim")
+        row.append(f"    {config.disabled_msg}", style="dim italic")
+        return row
+
+    # Line 1: Label + progress bar + metrics
+    row.append(f"  {config.name:<6} ", style=config.style)
+
+    total = max(config.total, 1)
+    ratio = min(config.completed / total, 1.0)
+    pct = ratio * 100
+    row.append(make_bar(ratio, bar_width), style=config.style.split()[-1])
+
+    row.append(f" {config.completed:>6,}", style="bold")
+    if config.show_pct:
+        row.append(f" {pct:>3.0f}%", style="cyan")
+    else:
+        row.append("     ", style="dim")
+
+    if config.rate and config.rate > 0:
+        row.append(f" {config.rate:>5.1f}/s", style="dim")
+
+    if config.cost is not None and config.cost > 0:
+        row.append(f"  ${config.cost:.2f}", style="yellow dim")
+
+    # Line 2: Current item + worker count
+    row.append("\n")
+    row.append("         ", style="dim")  # indent to align with bar
+
+    if config.has_content:
+        row.append(config.primary_text, style="white")
+    elif config.is_processing:
+        label = "paused" if config.is_paused else config.processing_label
+        style = "dim italic" if config.is_paused else "cyan italic"
+        row.append(label, style=style)
+    elif config.queue_size > 0:
+        row.append(f"streaming {config.queue_size} items...", style="cyan italic")
+    elif config.is_complete:
+        row.append(config.complete_label, style="green")
+    elif config.is_paused:
+        row.append("paused", style="dim italic")
+    else:
+        row.append("idle", style="dim italic")
+
+    # Worker count annotation (right-aligned conceptually, appended after text)
+    if config.worker_count > 0:
+        annotation = f"  ×{config.worker_count}"
+        if config.worker_annotation:
+            annotation += f" {config.worker_annotation}"
+        row.append(annotation, style="dim")
+
+    # Line 3: Detail parts (score + domain + description)
+    row.append("\n")
+    row.append("    ", style="dim")  # indent
+    if config.detail_parts:
+        for text, style in config.detail_parts:
+            row.append(text, style=style)
+
+    return row
+
+
+def build_pipeline_section(
+    rows: list[PipelineRowConfig],
+    bar_width: int = 40,
+) -> Text:
+    """Build a unified pipeline section with merged progress + activity.
+
+    Each stage gets a 3-line block: progress bar, current item, detail.
+    Stages are separated by a blank line for readability.
+
+    This is the recommended layout for discovery CLIs that want
+    per-stage visibility. Use ``build_progress_section`` +
+    ``build_activity_section`` for the legacy split layout.
+
+    Args:
+        rows: Pipeline row configurations (one per stage).
+        bar_width: Width of progress bars.
+    """
+    section = Text()
+    for i, config in enumerate(rows):
+        if config.disabled:
+            continue
+        if i > 0:
+            section.append("\n")
+        section.append_text(build_pipeline_row(config, bar_width))
     return section
 
 

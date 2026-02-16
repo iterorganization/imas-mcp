@@ -3,23 +3,23 @@ Progress display for parallel wiki discovery.
 
 Design principles (matching paths parallel_progress.py):
 - Minimal visual clutter (no emojis, no stopwatch icons)
-- Clear hierarchy: Target → Progress → Activity → Resources
+- Clear hierarchy: Target → Pipeline → Resources
+- Unified per-stage blocks: progress bar + current activity + detail
+- Per-stage cost and worker count annotations
 - Gradient progress bars with percentage
 - Resource gauges for time and cost budgets
-- Compact current activity with relevant details only
 - Live embedding source indicator (shows remote/openrouter/local)
 
-Display layout: WORKERS → PROGRESS → ACTIVITY → RESOURCES
-- WORKERS: Live worker status showing counts by task and state
-- SCORE: Content-aware LLM scoring (fetches content, scores with LLM)
-- PAGE: Chunk and embed high-value pages (score >= 0.5)
-- ARTFCT: Artifact scoring and ingestion pipeline
-- IMAGE: VLM captioning and scoring of wiki images
+Display layout: SERVERS → PIPELINE → RESOURCES
+  TRIAGE: Content-aware LLM scoring (fetches content, scores with LLM)
+  PAGES:  Chunk and embed high-value pages (score >= 0.5)
+  DOCS:   Artifact scoring and ingestion pipeline
+  IMAGES: VLM captioning and scoring of wiki images
 
 Progress is tracked against total pages in graph, not just this session.
 ETA/ETC metrics calculated like paths discovery.
 
-Uses common progress infrastructure from progress_common module.
+Uses common pipeline infrastructure from base.progress module.
 """
 
 from __future__ import annotations
@@ -38,15 +38,12 @@ from imas_codex.discovery.base.progress import (
     LABEL_WIDTH,
     METRICS_WIDTH,
     MIN_WIDTH,
-    ActivityRowConfig,
-    ProgressRowConfig,
+    PipelineRowConfig,
     ResourceConfig,
     StreamQueue,
-    build_activity_section,
-    build_progress_section,
+    build_pipeline_section,
     build_resource_section,
     build_servers_section,
-    build_worker_status_section,
     clean_text,
     clip_text,
     compute_bar_width,
@@ -443,30 +440,21 @@ class ProgressState:
 class WikiProgressDisplay:
     """Clean progress display for parallel wiki discovery.
 
-    Layout (100 chars wide - matching paths summary panel):
-    ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │                               TCV Wiki Discovery                                                 │
-    │                           Focus: diagnostics                                                     │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  SCORE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────    388  5%   0.6/s              │
-    │  PAGE   ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────     136  35%  0.3/s              │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  SCORE 0.70 Microwave_lab/software                                                               │
-    │    [physics domain] Power supply calibration for gyrotron system                                 │
-    │  PAGE  Service_Mécanique/Information_TCV/Connexion_dans_l                                        │
-    │    0.65 [equilibrium] Vacuum vessel port documentation with coordinates                          │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  TIME    ━━━━━━━━━━━━━━━━━━━━━━  7m     ETA 2h 15m                                              │
-    │  COST    ━━━━━━━━━━━━━━━━━━━━━━  $0.04 / $0.01  cost limit reached                              │
-    │  TOTAL   ━━━━━━━━━━━━━━━━━━━━━━  $0.04  ETC $1.50                                               │
-    │  STATS  scored=388  ingested=136  skipped=0  pending=[score:7386 ingest:252]                     │
-    └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+    Layout: HEADER → SERVERS → PIPELINE → RESOURCES
 
-    Workflow:
-    - SCORE: Content-aware LLM scoring (scanned → scored)
-    - PAGE: Chunk and embed high-value pages (scored → ingested)
-    - ARTFCT: Score and ingest wiki artifacts (PDFs, CSVs, etc.)
-    - IMAGE: VLM captioning + scoring (ingested → captioned)
+    Pipeline stages (unified progress + activity per stage):
+    - TRIAGE: Content-aware LLM scoring (scanned → scored)
+    - PAGES: Chunk and embed high-value pages (scored → ingested)
+    - DOCS: Score and ingest wiki artifacts (PDFs, CSVs, etc.)
+    - IMAGES: VLM captioning + scoring (ingested → captioned)
+
+    Each stage shows a 3-line block:
+      Line 1: progress bar + count + pct + rate + cost
+      Line 2: current item title + ×N worker count
+      Line 3: score + physics domain + description
+
+    Progress is tracked against total pages in graph, not just this session.
+    Uses common pipeline infrastructure from base.progress.
     """
 
     # Layout constants imported from base.progress
@@ -537,109 +525,86 @@ class WikiProgressDisplay:
 
         return header
 
-    def _build_worker_section(self) -> Text:
-        """Build worker status section grouped by functional role.
+    def _count_group_workers(self, group: str) -> tuple[int, str]:
+        """Count workers in a group and build annotation string.
 
-        Uses the unified builder from base.progress. Workers are grouped
-        by their ``group`` field (score vs ingest) set during creation
-        in parallel.py.
-
-        Appends embedding source indicator when no service monitor is
-        providing that information.
+        Returns:
+            (count, annotation) where annotation describes backoff/failed state.
         """
-        monitor = self.state.service_monitor
-        is_paused = monitor is not None and monitor.paused
+        wg = self.state.worker_group
+        if not wg:
+            return 0, ""
 
-        # Build extra indicators (embedding source)
-        extra: list[tuple[str, str]] = []
-        if self.state.service_monitor is None:
-            embed_health = get_embed_status()
-            if embed_health != "ready":
-                extra.append((f"embed:{embed_health}", "red"))
-            else:
-                embed_source = get_embedding_source()
-                if embed_source.startswith("iter-"):
-                    extra.append((f"embed:{embed_source}", "green"))
-                elif embed_source == "remote":
-                    extra.append(("embed:remote", "green"))
-                elif embed_source == "openrouter":
-                    extra.append(("embed:openrouter", "yellow"))
-                elif embed_source == "local":
-                    extra.append(("embed:local", "cyan"))
-                else:
-                    extra.append((f"embed:{embed_source}", "dim"))
+        count = 0
+        backoff = 0
+        failed = 0
+        for _name, status in wg.workers.items():
+            if status.group == group:
+                count += 1
+                if status.state == WorkerState.backoff:
+                    backoff += 1
+                elif status.state == WorkerState.crashed:
+                    failed += 1
 
-        return build_worker_status_section(
-            self.state.worker_group,
-            budget_exhausted=self.state.cost_limit_reached,
-            is_paused=is_paused,
-            budget_sensitive_groups={"score"},
-            extra_indicators=extra or None,
-        )
+        parts: list[str] = []
+        if backoff > 0:
+            parts.append(f"{backoff} backoff")
+        if failed > 0:
+            parts.append(f"{failed} failed")
 
-    def _build_progress_section(self) -> Text:
-        """Build the main progress bars using unified builder.
+        # Budget annotation for triage/docs/images groups
+        if count > 0 and self.state.cost_limit_reached:
+            budget_groups = {"triage", "docs", "images"}
+            if group in budget_groups:
+                all_stopped = all(
+                    s.state == WorkerState.stopped
+                    for _n, s in wg.workers.items()
+                    if s.group == group
+                )
+                if all_stopped:
+                    parts.append("budget")
 
-        Progress is measured against total pages in graph, not just this session.
-        """
-        score_total = self.state.total_pages or 1
-        scored_pages = self.state.pages_scored + self.state.pages_ingested
-        ingest_total = max(self.state.pages_scored + self.state.pages_ingested, 1)
+        return count, f"({', '.join(parts)})" if parts else ""
 
-        # Artifact progress
-        art_scored = self.state.artifacts_scored
-        art_ingested = self.state.artifacts_ingested
-        art_pending_score = self.state.pending_artifact_score
-        art_completed = art_scored + art_ingested
-        art_total = art_pending_score + art_completed
+    def _worker_complete(self, group: str) -> bool:
+        """Check if all workers in a group have stopped."""
+        wg = self.state.worker_group
+        if not wg:
+            return False
+        workers = [s for _n, s in wg.workers.items() if s.group == group]
+        return len(workers) > 0 and all(s.state == WorkerState.stopped for s in workers)
 
-        # Artifact combined rate
-        art_score_rate = self.state.artifact_score_rate
-        art_ingest_rate = self.state.artifact_rate
-        art_rate = (
-            sum(r for r in [art_score_rate, art_ingest_rate] if r and r > 0) or None
-        )
-
-        # Image progress
-        img_scored = self.state.images_scored
-        img_pending = self.state.pending_image_score
-        img_total = img_scored + img_pending
-
-        rows = [
-            ProgressRowConfig(
-                name="SCORE",
-                style="bold blue",
-                completed=scored_pages,
-                total=score_total,
-                rate=self.state.score_rate,
-                disabled=self.state.scan_only,
-            ),
-            ProgressRowConfig(
-                name="PAGE",
-                style="bold magenta",
-                completed=self.state.pages_ingested,
-                total=ingest_total,
-                rate=self.state.ingest_rate,
-                disabled=self.state.scan_only,
-            ),
-            ProgressRowConfig(
-                name="ARTFCT",
-                style="bold yellow",
-                completed=art_completed,
-                total=max(art_total, 1),
-                rate=art_rate,
-                disabled=self.state.scan_only,
-            ),
-            ProgressRowConfig(
-                name="IMAGE",
-                style="bold green",
-                completed=img_scored,
-                total=max(img_total, 1),
-                rate=self.state.image_score_rate,
-                disabled=self.state.scan_only,
-            ),
-        ]
-        return build_progress_section(rows, self.bar_width)
+    def _score_detail(
+        self,
+        score_val: float | None,
+        domain: str | None,
+        description: str,
+        *,
+        is_physics: bool = False,
+        content_width: int = 80,
+    ) -> list[tuple[str, str]]:
+        """Build detail parts for a score + domain + description line."""
+        parts: list[tuple[str, str]] = []
+        used = 4  # indent
+        if score_val is not None:
+            style = (
+                "bold green"
+                if score_val >= 0.7
+                else "yellow"
+                if score_val >= 0.4
+                else "red"
+            )
+            s = f"{score_val:.2f}"
+            parts.append((f"{s}  ", style))
+            used += len(s) + 2
+        d = domain or ("physics" if is_physics else "")
+        if d:
+            parts.append((f"{d}  ", "cyan"))
+            used += len(d) + 2
+        if description:
+            desc = clean_text(description)
+            parts.append((clip_text(desc, max(10, content_width - used)), "italic dim"))
+        return parts
 
     def _clip_title(self, title: str, max_len: int = 70) -> str:
         """Clip title to max length, preferring end truncation."""
@@ -647,69 +612,172 @@ class WikiProgressDisplay:
             return title
         return title[: max_len - 3] + "..."
 
-    def _build_activity_section(self) -> Text:
-        """Build the current activity section using unified builder.
+    def _build_pipeline_section(self) -> Text:
+        """Build the unified pipeline section (progress + activity merged).
 
-        Shows physics domain and LLM description for all worker types.
-        All content is clipped to fit within the panel width.
+        Each pipeline stage gets a 3-line block:
+          Line 1: TRIAGE ━━━━━━━━━━━━━━━━━━    2,238  29%  0.2/s  $8.30
+          Line 2:        Mailinglists                                 ×4
+          Line 3:        0.00  general  Information regarding SPC...
+
+        Stages: TRIAGE → PAGES → DOCS → IMAGES
         """
         content_width = self.width - 6
         monitor = self.state.service_monitor
         is_paused = monitor is not None and monitor.paused
-        rows: list[ActivityRowConfig] = []
 
-        def _score_detail(
-            score_val: float | None,
-            domain: str | None,
-            description: str,
-            *,
-            is_physics: bool = False,
-        ) -> list[tuple[str, str]]:
-            """Build detail parts for a score + domain + description line."""
-            parts: list[tuple[str, str]] = []
-            used = 4  # indent
-            if score_val is not None:
-                style = (
-                    "bold green"
-                    if score_val >= 0.7
-                    else "yellow"
-                    if score_val >= 0.4
-                    else "red"
-                )
-                s = f"{score_val:.2f}"
-                parts.append((f"{s}  ", style))
-                used += len(s) + 2
-            d = domain or ("physics" if is_physics else "")
-            if d:
-                parts.append((f"{d}  ", "cyan"))
-                used += len(d) + 2
-            if description:
-                desc = clean_text(description)
-                parts.append(
-                    (clip_text(desc, max(10, content_width - used)), "italic dim")
-                )
-            return parts
+        # --- Compute progress data ---
 
-        def _worker_complete(task_type: str) -> bool:
-            wg = self.state.worker_group
-            if not wg:
-                return False
-            workers = [
-                (name, status.state)
-                for name, status in wg.workers.items()
-                if task_type in name
-            ]
-            return len(workers) > 0 and all(
-                s == WorkerState.stopped for _, s in workers
+        # TRIAGE: LLM page scoring
+        score_total = self.state.total_pages or 1
+        scored_pages = self.state.pages_scored + self.state.pages_ingested
+        triage_count, triage_ann = self._count_group_workers("triage")
+
+        # PAGES: chunk + embed high-value pages
+        ingest_total = max(self.state.pages_scored + self.state.pages_ingested, 1)
+        pages_count, pages_ann = self._count_group_workers("pages")
+
+        # DOCS: artifact scoring + ingestion
+        art_scored = self.state.artifacts_scored
+        art_ingested = self.state.artifacts_ingested
+        art_pending_score = self.state.pending_artifact_score
+        art_completed = art_scored + art_ingested
+        art_total = art_pending_score + art_completed
+        art_score_rate = self.state.artifact_score_rate
+        art_ingest_rate = self.state.artifact_rate
+        art_rate = (
+            sum(r for r in [art_score_rate, art_ingest_rate] if r and r > 0) or None
+        )
+        docs_cost = (
+            self.state._run_artifact_score_cost
+            if self.state._run_artifact_score_cost > 0
+            else None
+        )
+        docs_count, docs_ann = self._count_group_workers("docs")
+
+        # IMAGES: VLM captioning + scoring
+        img_scored = self.state.images_scored
+        img_pending = self.state.pending_image_score
+        img_total = img_scored + img_pending
+        images_cost = (
+            self.state._run_image_score_cost
+            if self.state._run_image_score_cost > 0
+            else None
+        )
+        images_count, images_ann = self._count_group_workers("images")
+
+        # --- Build activity data ---
+
+        # TRIAGE activity
+        score = self.state.current_score
+        triage_text = ""
+        triage_detail: list[tuple[str, str]] | None = None
+        triage_complete = False
+        triage_complete_label = "complete"
+        if self._worker_complete("triage") and not score:
+            triage_complete = True
+            if self.state.cost_limit_reached:
+                triage_complete_label = "cost limit"
+        if score:
+            triage_text = self._clip_title(score.title, content_width - LABEL_WIDTH)
+            if score.skipped:
+                reason = score.skip_reason[:40] if score.skip_reason else ""
+                triage_detail = [(f"skipped: {reason}", "yellow dim")]
+            else:
+                triage_detail = self._score_detail(
+                    score.score,
+                    score.physics_domain,
+                    score.description,
+                    is_physics=score.is_physics,
+                    content_width=content_width,
+                )
+
+        # PAGES activity
+        ingest = self.state.current_ingest
+        pages_text = ""
+        pages_detail: list[tuple[str, str]] | None = None
+        pages_complete = False
+        if self._worker_complete("pages") and not ingest:
+            pages_complete = True
+        if ingest:
+            pages_text = self._clip_title(ingest.title, content_width - LABEL_WIDTH)
+            pages_detail = self._score_detail(
+                ingest.score,
+                ingest.physics_domain,
+                ingest.description,
+                content_width=content_width,
             )
 
-        # SCORE activity
-        if not self.state.scan_only:
-            score = self.state.current_score
-            score_row = ActivityRowConfig(
-                name="SCORE",
+        # DOCS activity
+        artifact = self.state.current_artifact
+        docs_text = ""
+        docs_detail: list[tuple[str, str]] | None = None
+        docs_complete = False
+        docs_complete_label = "complete"
+        if self._worker_complete("docs") and not artifact:
+            docs_complete = True
+            if self.state.cost_limit_reached:
+                docs_complete_label = "cost limit"
+        if artifact:
+            display_name = artifact.filename
+            if artifact.chunk_count > 0:
+                display_name += f" ({artifact.chunk_count} chunks)"
+            elif artifact.score is not None and artifact.score < 0.5:
+                display_name += " (skipped)"
+            docs_text = self._clip_title(display_name, content_width - LABEL_WIDTH)
+            docs_detail = self._score_detail(
+                artifact.score,
+                artifact.physics_domain,
+                artifact.description,
+                content_width=content_width,
+            )
+
+        # IMAGES activity
+        image = self.state.current_image
+        images_text = ""
+        images_detail: list[tuple[str, str]] | None = None
+        images_complete = False
+        images_complete_label = "complete"
+        if self._worker_complete("images") and not image:
+            images_complete = True
+            if self.state.cost_limit_reached:
+                images_complete_label = "cost limit"
+        if image:
+            images_text = self._clip_title(
+                image.display_name, content_width - LABEL_WIDTH
+            )
+            desc = image.caption or image.description
+            images_detail = self._score_detail(
+                image.score,
+                image.physics_domain,
+                desc,
+                content_width=content_width,
+            )
+
+        # --- Build pipeline rows ---
+
+        scan_only = self.state.scan_only
+
+        rows = [
+            PipelineRowConfig(
+                name="TRIAGE",
                 style="bold blue",
+                completed=scored_pages,
+                total=score_total,
+                rate=self.state.score_rate,
+                cost=(
+                    self.state._run_score_cost
+                    if self.state._run_score_cost > 0
+                    else None
+                ),
+                disabled=scan_only,
+                worker_count=triage_count,
+                worker_annotation=triage_ann,
+                primary_text=triage_text,
+                detail_parts=triage_detail,
                 is_processing=self.state.score_processing,
+                is_complete=triage_complete,
+                complete_label=triage_complete_label,
                 is_paused=is_paused,
                 queue_size=(
                     len(self.state.score_queue)
@@ -718,34 +786,20 @@ class WikiProgressDisplay:
                     and not self.state.score_processing
                     else 0
                 ),
-            )
-            if _worker_complete("score") and not score:
-                score_row.is_complete = True
-                if self.state.cost_limit_reached:
-                    score_row.complete_label = "cost limit"
-            if score:
-                score_row.primary_text = self._clip_title(
-                    score.title, content_width - LABEL_WIDTH
-                )
-                if score.skipped:
-                    reason = score.skip_reason[:40] if score.skip_reason else ""
-                    score_row.detail_parts = [(f"skipped: {reason}", "yellow dim")]
-                else:
-                    score_row.detail_parts = _score_detail(
-                        score.score,
-                        score.physics_domain,
-                        score.description,
-                        is_physics=score.is_physics,
-                    )
-            rows.append(score_row)
-
-        # PAGE activity
-        if not self.state.scan_only:
-            ingest = self.state.current_ingest
-            page_row = ActivityRowConfig(
-                name="PAGE",
+            ),
+            PipelineRowConfig(
+                name="PAGES",
                 style="bold magenta",
+                completed=self.state.pages_ingested,
+                total=ingest_total,
+                rate=self.state.ingest_rate,
+                disabled=scan_only,
+                worker_count=pages_count,
+                worker_annotation=pages_ann,
+                primary_text=pages_text,
+                detail_parts=pages_detail,
                 is_processing=self.state.ingest_processing,
+                is_complete=pages_complete,
                 is_paused=is_paused,
                 queue_size=(
                     len(self.state.ingest_queue)
@@ -754,25 +808,22 @@ class WikiProgressDisplay:
                     and not self.state.ingest_processing
                     else 0
                 ),
-            )
-            if _worker_complete("ingest") and not ingest:
-                page_row.is_complete = True
-            if ingest:
-                page_row.primary_text = self._clip_title(
-                    ingest.title, content_width - LABEL_WIDTH
-                )
-                page_row.detail_parts = _score_detail(
-                    ingest.score, ingest.physics_domain, ingest.description
-                )
-            rows.append(page_row)
-
-        # ARTIFACT activity
-        if not self.state.scan_only:
-            artifact = self.state.current_artifact
-            art_row = ActivityRowConfig(
-                name="ARTFCT",
+            ),
+            PipelineRowConfig(
+                name="DOCS",
                 style="bold yellow",
+                completed=art_completed,
+                total=max(art_total, 1),
+                rate=art_rate,
+                cost=docs_cost,
+                disabled=scan_only,
+                worker_count=docs_count,
+                worker_annotation=docs_ann,
+                primary_text=docs_text,
+                detail_parts=docs_detail,
                 is_processing=self.state.artifact_processing,
+                is_complete=docs_complete,
+                complete_label=docs_complete_label,
                 is_paused=is_paused,
                 queue_size=(
                     (
@@ -787,34 +838,22 @@ class WikiProgressDisplay:
                     and not self.state.artifact_processing
                     else 0
                 ),
-            )
-            if _worker_complete("artifact") and not artifact:
-                art_row.is_complete = True
-                if self.state.cost_limit_reached:
-                    art_row.complete_label = "cost limit"
-            if artifact:
-                display_name = artifact.filename
-                if artifact.chunk_count > 0:
-                    display_name += f" ({artifact.chunk_count} chunks)"
-                elif artifact.score is not None and artifact.score < 0.5:
-                    display_name += " (skipped)"
-                art_row.primary_text = self._clip_title(
-                    display_name, content_width - LABEL_WIDTH
-                )
-                art_row.detail_parts = _score_detail(
-                    artifact.score,
-                    artifact.physics_domain,
-                    artifact.description,
-                )
-            rows.append(art_row)
-
-        # IMAGE activity
-        if not self.state.scan_only:
-            image = self.state.current_image
-            img_row = ActivityRowConfig(
-                name="IMAGE",
+            ),
+            PipelineRowConfig(
+                name="IMAGES",
                 style="bold green",
+                completed=img_scored,
+                total=max(img_total, 1),
+                rate=self.state.image_score_rate,
+                cost=images_cost,
+                disabled=scan_only,
+                worker_count=images_count,
+                worker_annotation=images_ann,
+                primary_text=images_text,
+                detail_parts=images_detail,
                 is_processing=self.state.image_processing,
+                is_complete=images_complete,
+                complete_label=images_complete_label,
                 is_paused=is_paused,
                 queue_size=(
                     len(self.state.image_queue)
@@ -823,22 +862,40 @@ class WikiProgressDisplay:
                     and not self.state.image_processing
                     else 0
                 ),
-            )
-            if _worker_complete("image") and not image:
-                img_row.is_complete = True
-                if self.state.cost_limit_reached:
-                    img_row.complete_label = "cost limit"
-            if image:
-                img_row.primary_text = self._clip_title(
-                    image.display_name, content_width - LABEL_WIDTH
-                )
-                desc = image.caption or image.description
-                img_row.detail_parts = _score_detail(
-                    image.score, image.physics_domain, desc
-                )
-            rows.append(img_row)
+            ),
+        ]
 
-        return build_activity_section(rows, content_width)
+        # Embedding source indicator appended to PAGES row
+        embed_indicator = self._get_embed_indicator()
+        if embed_indicator and pages_count > 0 and pages_ann:
+            pages_ann_with_embed = (
+                pages_ann[:-1] + f", {embed_indicator[0]})"
+                if pages_ann
+                else f"({embed_indicator[0]})"
+            )
+            rows[1].worker_annotation = pages_ann_with_embed
+        elif embed_indicator and not pages_ann:
+            rows[1].worker_annotation = f"({embed_indicator[0]})"
+
+        return build_pipeline_section(rows, self.bar_width)
+
+    def _get_embed_indicator(self) -> tuple[str, str] | None:
+        """Get embedding source indicator label and style."""
+        if self.state.service_monitor is not None:
+            return None  # Service monitor handles embed display
+        embed_health = get_embed_status()
+        if embed_health != "ready":
+            return (f"embed:{embed_health}", "red")
+        embed_source = get_embedding_source()
+        if embed_source.startswith("iter-"):
+            return (f"embed:{embed_source}", "green")
+        if embed_source == "remote":
+            return ("embed:remote", "green")
+        if embed_source == "openrouter":
+            return ("embed:openrouter", "yellow")
+        if embed_source == "local":
+            return ("embed:local", "cyan")
+        return (f"embed:{embed_source}", "dim")
 
     def _build_resources_section(self) -> Text:
         """Build the resource consumption gauges using unified builder."""
@@ -910,28 +967,27 @@ class WikiProgressDisplay:
         return build_servers_section(statuses)
 
     def _build_display(self) -> Panel:
-        """Build the complete display."""
+        """Build the complete display.
+
+        Layout: HEADER → SERVERS → PIPELINE (unified) → RESOURCES
+        """
         sections = [
             self._build_header(),
         ]
 
-        # SERVERS and WORKERS are always grouped together (no separator between)
-        sections.append(Text("─" * (self.width - 4), style="dim"))
+        # SERVERS section (optional — only when service monitor is configured)
         servers = self._build_servers_section()
         if servers is not None:
+            sections.append(Text("─" * (self.width - 4), style="dim"))
             sections.append(servers)
-        sections.append(self._build_worker_section())
 
-        sections.extend(
-            [
-                Text("─" * (self.width - 4), style="dim"),
-                self._build_progress_section(),
-                Text("─" * (self.width - 4), style="dim"),
-                self._build_activity_section(),
-                Text("─" * (self.width - 4), style="dim"),
-                self._build_resources_section(),
-            ]
-        )
+        # Unified pipeline section (progress bars + activity merged)
+        sections.append(Text("─" * (self.width - 4), style="dim"))
+        sections.append(self._build_pipeline_section())
+
+        # Resource gauges
+        sections.append(Text("─" * (self.width - 4), style="dim"))
+        sections.append(self._build_resources_section())
 
         content = Text()
         for i, section in enumerate(sections):
@@ -1396,35 +1452,35 @@ class WikiProgressDisplay:
         """Build final summary text."""
         summary = Text()
 
-        # SCORE stats (pages + artifacts combined)
+        # TRIAGE stats (pages + artifacts combined)
         total_scored = self.state.pages_scored + self.state.pages_ingested
         total_score_cost = self.state.total_score_cost
-        summary.append("  SCORE ", style="bold blue")
-        summary.append(f"scored={total_scored:,}", style="blue")
+        summary.append("  TRIAGE", style="bold blue")
+        summary.append(f"  scored={total_scored:,}", style="blue")
         artifacts_scored = self.state.total_run_artifacts_scored
         if artifacts_scored > 0:
-            summary.append(f"+{artifacts_scored:,}art", style="blue dim")
+            summary.append(f"+{artifacts_scored:,}docs", style="blue dim")
         summary.append(f"  skipped={self.state.pages_skipped:,}", style="yellow")
         summary.append(f"  cost=${total_score_cost:.3f}", style="yellow")
         if self.state.score_rate:
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # PAGE stats (pages + artifacts combined)
+        # PAGES stats
         total_ingested = self.state.pages_ingested
-        summary.append("  PAGE  ", style="bold magenta")
+        summary.append("  PAGES ", style="bold magenta")
         summary.append(f"  ingested={total_ingested:,}", style="magenta")
         artifacts_ingested = self.state.total_run_artifacts
         if artifacts_ingested > 0:
-            summary.append(f"+{artifacts_ingested:,}art", style="magenta dim")
+            summary.append(f"+{artifacts_ingested:,}docs", style="magenta dim")
         if self.state.ingest_rate:
             summary.append(f"  {self.state.ingest_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # IMAGE stats
+        # IMAGES stats
         images_scored = self.state.total_run_images_scored
         if images_scored > 0:
-            summary.append("  IMAGE ", style="bold green")
+            summary.append("  IMAGES", style="bold green")
             summary.append(f"  scored={images_scored:,}", style="green")
             if self.state.image_score_rate:
                 summary.append(f"  {self.state.image_score_rate:.1f}/s", style="dim")
