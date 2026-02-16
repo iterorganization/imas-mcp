@@ -287,11 +287,21 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
         return {}
 
 
-def reset_transient_signals(facility: str, silent: bool = False) -> dict[str, int]:
+def reset_transient_signals(
+    facility: str,
+    silent: bool = False,
+    force: bool = False,
+) -> dict[str, int]:
     """Reset orphaned signals from previous runs.
 
-    Clears claimed_at for any signal that's been claimed too long.
+    Clears claimed_at for signals that have been claimed too long.
     Delegates to the common claims module for the actual reset.
+
+    Args:
+        facility: Facility ID
+        silent: Suppress logging
+        force: Clear ALL claims regardless of age (use at startup).
+            When False, only clears claims older than CLAIM_TIMEOUT_SECONDS.
     """
     from imas_codex.discovery.base.claims import reset_stale_claims
 
@@ -299,7 +309,7 @@ def reset_transient_signals(facility: str, silent: bool = False) -> dict[str, in
         released = reset_stale_claims(
             "FacilitySignal",
             facility,
-            timeout_seconds=CLAIM_TIMEOUT_SECONDS,
+            timeout_seconds=0 if force else CLAIM_TIMEOUT_SECONDS,
             silent=silent,
         )
         return {"released": released}
@@ -1222,9 +1232,7 @@ def _link_tdi_to_mdsplus(facility: str) -> int:
                 if node_path:
                     tdi_updates.append({"id": ts["id"], "node_path": node_path})
                 if ts.get("tdi_func"):
-                    mds_updates.append(
-                        {"id": mds_id, "tdi_function": ts["tdi_func"]}
-                    )
+                    mds_updates.append({"id": mds_id, "tdi_function": ts["tdi_func"]})
 
         # Apply TDI signal updates (add node_path from MDSplus)
         if tdi_updates:
@@ -2098,8 +2106,11 @@ async def run_parallel_data_discovery(
         config = get_facility(facility)
         ssh_host = config.get("ssh_host", facility)
 
-    # Reset orphaned claims
-    reset_transient_signals(facility)
+    # Reset ALL orphaned claims from previous runs.
+    # At startup, no other process should have active claims for this facility,
+    # so force-clear everything regardless of claim age.  This prevents stale
+    # claims from a recently-crashed run from blocking the new one.
+    reset_transient_signals(facility, force=True)
 
     # Ensure Facility node exists so AT_FACILITY relationships don't fail
     from imas_codex.graph import GraphClient

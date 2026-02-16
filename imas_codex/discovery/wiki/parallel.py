@@ -449,9 +449,11 @@ async def run_parallel_wiki_discovery(
     """
     start_time = time.time()
 
-    # Release stale claims from crashed processes (timeout-based, parallel-safe)
+    # Release ALL claims from previous runs.  At startup, this process is the
+    # only one that should own claims for this facility, so force-clearing is
+    # safe and prevents stale claims from a recently-crashed run blocking work.
     if not skip_reset:
-        reset_transient_pages(facility)
+        reset_transient_pages(facility, force=True)
 
     # Ensure Facility node exists so AT_FACILITY relationships don't fail
     with GraphClient() as gc:

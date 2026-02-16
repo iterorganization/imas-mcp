@@ -439,7 +439,9 @@ def has_pending_ingest_work(facility: str) -> bool:
 # =============================================================================
 
 
-def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, int]:
+def reset_transient_pages(
+    facility: str, *, silent: bool = False, force: bool = False
+) -> dict[str, int]:
     """Release stale claims older than CLAIM_TIMEOUT_SECONDS.
 
     Uses timeout-based recovery so multiple CLI instances can run
@@ -448,29 +450,36 @@ def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, i
 
     Delegates to the common claims module for both WikiPage and
     WikiArtifact node types.
+
+    Args:
+        facility: Facility ID
+        silent: Suppress logging
+        force: Clear ALL claims regardless of age (use at startup)
     """
     from imas_codex.discovery.base.claims import reset_stale_claims
+
+    timeout = 0 if force else CLAIM_TIMEOUT_SECONDS
 
     page_reset = reset_stale_claims(
         "WikiPage",
         facility,
-        timeout_seconds=CLAIM_TIMEOUT_SECONDS,
+        timeout_seconds=timeout,
         silent=True,  # We log our own combined message
     )
 
     artifact_reset = reset_stale_claims(
         "WikiArtifact",
         facility,
-        timeout_seconds=CLAIM_TIMEOUT_SECONDS,
+        timeout_seconds=timeout,
         silent=True,
     )
 
     total_reset = page_reset + artifact_reset
     if not silent and total_reset > 0:
         logger.info(
-            "Released %d orphaned claims older than %ds (%d pages, %d artifacts)",
+            "Released %d orphaned claims%s (%d pages, %d artifacts)",
             total_reset,
-            CLAIM_TIMEOUT_SECONDS,
+            "" if force else f" older than {CLAIM_TIMEOUT_SECONDS}s",
             page_reset,
             artifact_reset,
         )

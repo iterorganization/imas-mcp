@@ -258,7 +258,9 @@ def has_pending_work(facility: str) -> bool:
 # ============================================================================
 
 
-def reset_orphaned_claims(facility: str, *, silent: bool = False) -> int:
+def reset_orphaned_claims(
+    facility: str, *, silent: bool = False, force: bool = False
+) -> int:
     """Release stale claims older than CLAIM_TIMEOUT_SECONDS.
 
     Uses timeout-based recovery so multiple CLI instances can run
@@ -268,6 +270,7 @@ def reset_orphaned_claims(facility: str, *, silent: bool = False) -> int:
     Args:
         facility: Facility identifier
         silent: If True, suppress logging (caller will log)
+        force: Clear ALL claims regardless of age (use at startup)
 
     Returns:
         Number of paths with claims cleared
@@ -277,7 +280,7 @@ def reset_orphaned_claims(facility: str, *, silent: bool = False) -> int:
     return reset_stale_claims(
         "FacilityPath",
         facility,
-        timeout_seconds=CLAIM_TIMEOUT_SECONDS,
+        timeout_seconds=0 if force else CLAIM_TIMEOUT_SECONDS,
         silent=silent,
     )
 
@@ -1950,8 +1953,10 @@ async def run_parallel_discovery(
         logger.error(f"SSH preflight failed: {ssh_message}")
         raise ConnectionError(f"Cannot connect to facility {facility}: {ssh_message}")
 
-    # Release stale claims from crashed processes (timeout-based, parallel-safe)
-    reset_orphaned_claims(facility)
+    # Release ALL claims from previous runs.  At startup, this process is the
+    # only one that should own claims for this facility, so force-clearing is
+    # safe and prevents stale claims from a recently-crashed run blocking work.
+    reset_orphaned_claims(facility, force=True)
 
     # Ensure we have paths to discover
     stats = get_discovery_stats(facility)
