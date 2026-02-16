@@ -28,12 +28,10 @@ from imas_codex.discovery.base.progress import (
     LABEL_WIDTH,
     METRICS_WIDTH,
     MIN_WIDTH,
-    ActivityRowConfig,
-    ProgressRowConfig,
+    PipelineRowConfig,
     ResourceConfig,
     StreamQueue,
-    build_activity_section,
-    build_progress_section,
+    build_pipeline_section,
     build_resource_section,
     clean_text,
     clip_path,
@@ -409,11 +407,20 @@ class ParallelProgressDisplay:
 
         return header
 
-    def _build_progress_section(self) -> Text:
-        """Build the main progress bars using unified builder.
+    def _build_pipeline_section(self) -> Text:
+        """Build the unified pipeline section (progress + activity merged).
 
-        Pipeline: discovered → scanning → scanned → scoring → scored/skipped
+        Each pipeline stage gets a 3-line block:
+          Line 1: SCAN  ━━━━━━━━━━━━━━━━━━    1,234  42%  77.1/s
+          Line 2:       /gss/work/imas/codes/chease/src
+          Line 3:       45 files, 3 dirs  code project
+
+        Stages: SCAN → SCORE → ENRICH
         """
+        content_width = self.width - 6
+
+        # --- Compute progress data ---
+
         # SCAN: paths that finished scan / total needing scan
         scanned_paths = (
             self.state.pending_score
@@ -439,57 +446,24 @@ class ParallelProgressDisplay:
             or None
         )
 
-        rows = [
-            ProgressRowConfig(
-                name="SCAN",
-                style="bold blue",
-                completed=scanned_paths,
-                total=scan_total,
-                rate=scan_rate,
-                disabled=self.state.score_only,
-            ),
-            ProgressRowConfig(
-                name="SCORE",
-                style="bold green",
-                completed=scored_paths,
-                total=score_total,
-                rate=score_rate,
-                disabled=self.state.scan_only,
-            ),
-            ProgressRowConfig(
-                name="ENRICH",
-                style="bold magenta",
-                completed=self.state.run_enriched,
-                total=enrich_total,
-                rate=self.state.enrich_rate,
-                disabled=self.state.scan_only,
-            ),
-        ]
-        return build_progress_section(rows, self.bar_width)
+        # Score cost for display
+        score_cost = (
+            self.state._run_score_cost + self.state._run_rescore_cost
+            if self.state._run_score_cost > 0 or self.state._run_rescore_cost > 0
+            else None
+        )
 
-    def _build_activity_section(self) -> Text:
-        """Build the current activity section using unified builder."""
-        content_width = self.width - 6
-        rows: list[ActivityRowConfig] = []
+        # --- Build activity data ---
 
         scan = self.state.current_scan
         score = self.state.current_score
+        enrich = self.state.current_enrich
 
         # SCAN activity
-        scan_row = ActivityRowConfig(
-            name="SCAN",
-            style="bold blue",
-            is_processing=self.state.scan_processing,
-            queue_size=(
-                len(self.state.scan_queue)
-                if not self.state.scan_queue.is_empty()
-                and not scan
-                and not self.state.scan_processing
-                else 0
-            ),
-        )
+        scan_text = ""
+        scan_detail: list[tuple[str, str]] | None = None
         if scan:
-            scan_row.primary_text = clip_path(scan.path, self.width - LABEL_WIDTH - 4)
+            scan_text = clip_path(scan.path, content_width - LABEL_WIDTH)
             parts: list[tuple[str, str]] = [
                 (f"{scan.files} files", "cyan"),
                 (", ", "dim"),
@@ -498,14 +472,127 @@ class ParallelProgressDisplay:
             if scan.has_code:
                 parts.append(("  ", "dim"))
                 parts.append(("code project", "green dim"))
-            scan_row.detail_parts = parts
-        rows.append(scan_row)
+            scan_detail = parts
 
-        # SCORE activity (skip in scan_only)
-        if not self.state.scan_only:
-            score_row = ActivityRowConfig(
+        # SCORE activity
+        score_text = ""
+        score_detail: list[tuple[str, str]] | None = None
+        if score:
+            path_display = clip_path(score.path, content_width - LABEL_WIDTH - 14)
+            if not score.should_expand:
+                path_display += " terminal"
+            score_text = path_display
+
+            parts = []
+            if score.score is not None:
+                style = (
+                    "bold green"
+                    if score.score >= 0.7
+                    else "yellow"
+                    if score.score >= 0.4
+                    else "red"
+                )
+                parts.append((f"{score.score:.2f}", style))
+
+                desc_width = content_width - 12
+                if score.terminal_reason:
+                    desc = score.terminal_reason.replace("_", " ")
+                elif score.description:
+                    desc = clean_text(score.description)
+                elif score.purpose:
+                    desc = clean_text(score.purpose)
+                else:
+                    desc = ""
+                if desc:
+                    parts.append(
+                        (
+                            f"  {clip_text(desc, min(desc_width, 65))}",
+                            "italic dim",
+                        )
+                    )
+            elif score.skipped:
+                parts.append(("skipped", "yellow"))
+                if score.skip_reason:
+                    reason = clean_text(score.skip_reason)
+                    parts.append(
+                        (f"  {clip_text(reason, content_width - 16)}", "dim")
+                    )
+            score_detail = parts or None
+
+        # ENRICH activity
+        enrich_text = ""
+        enrich_detail: list[tuple[str, str]] | None = None
+        queue_empty = self.state.enrich_queue.is_empty()
+        if enrich and (not queue_empty or self.state.enrich_processing):
+            enrich_text = clip_path(enrich.path, content_width - LABEL_WIDTH)
+            parts = []
+            if enrich.error:
+                parts.append((enrich.error, "red"))
+            elif enrich.warnings:
+                if enrich.total_bytes >= 1_000_000:
+                    size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
+                elif enrich.total_bytes >= 1_000:
+                    size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
+                else:
+                    size_str = f"{enrich.total_bytes}B"
+                parts.append((size_str, "cyan"))
+                warn_str = ", ".join(enrich.warnings)
+                parts.append((f"  [{warn_str}]", "yellow"))
+            else:
+                if enrich.total_bytes >= 1_000_000:
+                    size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
+                elif enrich.total_bytes >= 1_000:
+                    size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
+                else:
+                    size_str = f"{enrich.total_bytes}B"
+                parts.append((size_str, "cyan"))
+                if enrich.total_lines > 0:
+                    parts.append((f"  {enrich.total_lines:,} LOC", "cyan"))
+                if enrich.languages:
+                    langs = ", ".join(enrich.languages[:3])
+                    parts.append((f"  [{langs}]", "green dim"))
+                if enrich.is_multiformat:
+                    parts.append(("  multiformat", "yellow"))
+                elif enrich.read_matches > 0 or enrich.write_matches > 0:
+                    parts.append(
+                        (
+                            f"  r:{enrich.read_matches} w:{enrich.write_matches}",
+                            "dim",
+                        )
+                    )
+            enrich_detail = parts
+
+        # --- Build pipeline rows ---
+
+        rows = [
+            PipelineRowConfig(
+                name="SCAN",
+                style="bold blue",
+                completed=scanned_paths,
+                total=scan_total,
+                rate=scan_rate,
+                disabled=self.state.score_only,
+                primary_text=scan_text,
+                detail_parts=scan_detail,
+                is_processing=self.state.scan_processing,
+                queue_size=(
+                    len(self.state.scan_queue)
+                    if not self.state.scan_queue.is_empty()
+                    and not scan
+                    and not self.state.scan_processing
+                    else 0
+                ),
+            ),
+            PipelineRowConfig(
                 name="SCORE",
                 style="bold green",
+                completed=scored_paths,
+                total=score_total,
+                rate=score_rate,
+                cost=score_cost,
+                disabled=self.state.scan_only,
+                primary_text=score_text,
+                detail_parts=score_detail,
                 is_processing=self.state.score_processing,
                 queue_size=(
                     len(self.state.score_queue)
@@ -514,108 +601,20 @@ class ParallelProgressDisplay:
                     and not self.state.score_processing
                     else 0
                 ),
-            )
-            if score:
-                # Path with terminal indicator
-                path_display = clip_path(score.path, self.width - LABEL_WIDTH - 14)
-                if not score.should_expand:
-                    path_display += " terminal"
-                score_row.primary_text = path_display
-
-                # Detail line
-                parts = []
-                if score.score is not None:
-                    style = (
-                        "bold green"
-                        if score.score >= 0.7
-                        else "yellow"
-                        if score.score >= 0.4
-                        else "red"
-                    )
-                    parts.append((f"{score.score:.2f}", style))
-
-                    desc_width = self.width - 12
-                    if score.terminal_reason:
-                        desc = score.terminal_reason.replace("_", " ")
-                    elif score.description:
-                        desc = clean_text(score.description)
-                    elif score.purpose:
-                        desc = clean_text(score.purpose)
-                    else:
-                        desc = ""
-                    if desc:
-                        parts.append(
-                            (
-                                f"  {clip_text(desc, min(desc_width, 65))}",
-                                "italic dim",
-                            )
-                        )
-                elif score.skipped:
-                    parts.append(("skipped", "yellow"))
-                    if score.skip_reason:
-                        reason = clean_text(score.skip_reason)
-                        parts.append((f"  {clip_text(reason, self.width - 16)}", "dim"))
-
-                score_row.detail_parts = parts or None
-            rows.append(score_row)
-
-        # ENRICH activity (skip in scan_only)
-        if not self.state.scan_only:
-            enrich = self.state.current_enrich
-            enrich_row = ActivityRowConfig(
+            ),
+            PipelineRowConfig(
                 name="ENRICH",
                 style="bold magenta",
+                completed=self.state.run_enriched,
+                total=enrich_total,
+                rate=self.state.enrich_rate,
+                disabled=self.state.scan_only,
+                primary_text=enrich_text,
+                detail_parts=enrich_detail,
                 is_processing=self.state.enrich_processing,
-            )
-            queue_empty = self.state.enrich_queue.is_empty()
-            if enrich and (not queue_empty or self.state.enrich_processing):
-                enrich_row.primary_text = clip_path(
-                    enrich.path, self.width - LABEL_WIDTH - 4
-                )
-                parts = []
-                # Show error/warning state prominently
-                if enrich.error:
-                    parts.append((enrich.error, "red"))
-                elif enrich.warnings:
-                    # Show partial result (du worked but tokei timed out)
-                    if enrich.total_bytes >= 1_000_000:
-                        size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
-                    elif enrich.total_bytes >= 1_000:
-                        size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
-                    else:
-                        size_str = f"{enrich.total_bytes}B"
-                    parts.append((size_str, "cyan"))
-                    warn_str = ", ".join(enrich.warnings)
-                    parts.append((f"  [{warn_str}]", "yellow"))
-                else:
-                    # Size
-                    if enrich.total_bytes >= 1_000_000:
-                        size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
-                    elif enrich.total_bytes >= 1_000:
-                        size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
-                    else:
-                        size_str = f"{enrich.total_bytes}B"
-                    parts.append((size_str, "cyan"))
-                    if enrich.total_lines > 0:
-                        parts.append((f"  {enrich.total_lines:,} LOC", "cyan"))
-                    if enrich.languages:
-                        langs = ", ".join(enrich.languages[:3])
-                        parts.append((f"  [{langs}]", "green dim"))
-                    if enrich.is_multiformat:
-                        parts.append(("  multiformat", "yellow"))
-                    elif enrich.read_matches > 0 or enrich.write_matches > 0:
-                        parts.append(
-                            (
-                                f"  r:{enrich.read_matches} w:{enrich.write_matches}",
-                                "dim",
-                            )
-                        )
-                enrich_row.detail_parts = parts
-            elif not self.state.enrich_processing and queue_empty:
-                pass  # Will show "idle"
-            rows.append(enrich_row)
-
-        return build_activity_section(rows, content_width)
+            ),
+        ]
+        return build_pipeline_section(rows, self.bar_width)
 
     def _build_resources_section(self) -> Text:
         """Build the resource consumption gauges using unified builder."""
@@ -666,9 +665,7 @@ class ParallelProgressDisplay:
         sections = [
             self._build_header(),
             Text("─" * (self.width - 4), style="dim"),
-            self._build_progress_section(),
-            Text("─" * (self.width - 4), style="dim"),
-            self._build_activity_section(),
+            self._build_pipeline_section(),
             Text("─" * (self.width - 4), style="dim"),
             self._build_resources_section(),
         ]
@@ -1232,7 +1229,7 @@ def print_discovery_status(
     # --------------------------------------------------------------------------
     if domain is None or domain == "signals":
         try:
-            from imas_codex.discovery.data import get_data_discovery_stats
+            from imas_codex.discovery.signals import get_data_discovery_stats
 
             signal_stats = get_data_discovery_stats(facility)
             signal_total = signal_stats.get("total", 0)

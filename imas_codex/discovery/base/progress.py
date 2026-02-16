@@ -423,94 +423,6 @@ class BaseProgressState:
 
 
 # =============================================================================
-# Worker Row Configuration
-# =============================================================================
-
-
-@dataclass
-class ProgressRowConfig:
-    """Configuration for a single pipeline progress row.
-
-    Each row represents a pipeline stage (SCAN, SCORE, PAGE, etc.)
-    with a progress bar, count, percentage, and optional rate.
-    """
-
-    name: str  # e.g., "SCAN", "SCORE", "PAGE"
-    style: str  # e.g., "bold blue", "bold green"
-    completed: int = 0
-    total: int = 1
-    rate: float | None = None
-    disabled: bool = False
-    disabled_msg: str = "disabled"
-    show_pct: bool = True  # False for rows like SCAN that just show count
-
-
-# Keep old name as alias for compatibility
-WorkerRowConfig = ProgressRowConfig
-
-
-def build_progress_row(config: ProgressRowConfig, bar_width: int = 40) -> Text:
-    """Build a single pipeline progress row.
-
-    Format: "  SCAN   ━━━━━━━━━━────────────────  1,234  42%  77.1/s"
-    """
-    row = Text()
-
-    if config.disabled:
-        row.append(f"  {config.name:<6} ", style="dim")
-        row.append("─" * bar_width, style="dim")
-        row.append(f"    {config.disabled_msg}", style="dim italic")
-        return row
-
-    # Pipeline stage name
-    row.append(f"  {config.name:<6} ", style=config.style)
-
-    # Progress bar
-    total = max(config.total, 1)
-    ratio = min(config.completed / total, 1.0)
-    pct = ratio * 100
-    row.append(make_bar(ratio, bar_width), style=config.style.split()[-1])
-
-    # Stats
-    row.append(f" {config.completed:>6,}", style="bold")
-    if config.show_pct:
-        row.append(f" {pct:>3.0f}%", style="cyan")
-    else:
-        row.append("     ", style="dim")
-
-    # Rate (if available)
-    if config.rate and config.rate > 0:
-        row.append(f" {config.rate:>5.1f}/s", style="dim")
-
-    return row
-
-
-# Keep old name as alias for compatibility
-build_worker_row = build_progress_row
-
-
-def build_progress_section(
-    rows: list[ProgressRowConfig],
-    bar_width: int = 40,
-) -> Text:
-    """Build the PROGRESS section from a list of pipeline stage rows.
-
-    Each CLI defines its pipeline stages as ``ProgressRowConfig`` objects,
-    and this function renders them uniformly.
-
-    Args:
-        rows: Pipeline stage configurations.
-        bar_width: Width of progress bars (use ``compute_bar_width()``).
-    """
-    section = Text()
-    for i, config in enumerate(rows):
-        if i > 0:
-            section.append("\n")
-        section.append_text(build_progress_row(config, bar_width))
-    return section
-
-
-# =============================================================================
 # Unified Pipeline Section (progress + activity merged)
 # =============================================================================
 
@@ -519,7 +431,7 @@ def build_progress_section(
 class PipelineRowConfig:
     """Configuration for a unified pipeline row (3 lines).
 
-    Merges ProgressRowConfig (bar) and ActivityRowConfig (current item)
+    Unified pipeline row combining progress bar and current activity
     into a single block.  Each pipeline stage renders as:
 
         TRIAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━    2,238  29%  0.2/s  $8.30
@@ -650,9 +562,8 @@ def build_pipeline_section(
     Each stage gets a 3-line block: progress bar, current item, detail.
     Stages are separated by a blank line for readability.
 
-    This is the recommended layout for discovery CLIs that want
-    per-stage visibility. Use ``build_progress_section`` +
-    ``build_activity_section`` for the legacy split layout.
+    This is the standard layout for discovery CLIs that want
+    per-stage visibility.
 
     Args:
         rows: Pipeline row configurations (one per stage).
@@ -921,126 +832,6 @@ class BaseProgressDisplay(ABC):
         Override in subclasses to pop from domain-specific queues.
         Default implementation does nothing.
         """
-
-
-# =============================================================================
-# Common Activity Item Base
-# =============================================================================
-
-
-@dataclass
-class ActivityItem:
-    """Base class for current activity display items."""
-
-    path: str = ""
-    is_processing: bool = False  # True when awaiting batch result
-    error: str | None = None
-
-
-# =============================================================================
-# Unified Activity Section Builder
-# =============================================================================
-
-
-@dataclass
-class ActivityRowConfig:
-    """Configuration for a single activity display row (2 lines).
-
-    Each activity row shows what a pipeline stage is currently doing.
-    The row always occupies 2 lines for layout stability.
-
-    States (checked in order):
-    1. ``content`` provided → render primary_text on line 1, detail_text on line 2
-    2. ``is_processing`` → show ``processing_label``
-    3. ``queue_size > 0`` → show "streaming N items..."
-    4. ``is_complete`` → show "complete" (or ``complete_label``)
-    5. ``is_paused`` → show "paused"
-    6. else → show "idle"
-    """
-
-    name: str  # Row label, e.g., "SCAN", "SCORE"
-    style: str  # Label style, e.g., "bold blue"
-
-    # Content (when an item is being displayed)
-    primary_text: str = ""  # Line 1: path, title, or ID
-    detail_parts: list[tuple[str, str]] | None = None  # Line 2: [(text, style), ...]
-
-    # State flags
-    is_processing: bool = False
-    processing_label: str = "processing..."
-    is_complete: bool = False
-    complete_label: str = "complete"
-    is_paused: bool = False
-    disabled: bool = False
-
-    # Queue state
-    queue_size: int = 0
-
-    @property
-    def has_content(self) -> bool:
-        """True when content is available to display."""
-        return bool(self.primary_text)
-
-
-def build_activity_section(
-    rows: list[ActivityRowConfig],
-    content_width: int = 80,
-) -> Text:
-    """Build the ACTIVITY section from a list of activity row configs.
-
-    Each row occupies exactly 2 lines for visual stability.
-    The ``content_width`` is typically ``display_width - 6`` to account
-    for panel padding and borders.
-
-    Args:
-        rows: Activity row configurations (one per pipeline stage).
-        content_width: Available width for content text.
-    """
-    label_width = LABEL_WIDTH
-    section = Text()
-
-    for i, row in enumerate(rows):
-        if i > 0:
-            section.append("\n")
-
-        if row.disabled:
-            continue
-
-        section.append(f"  {row.name:<6} ", style=row.style)
-
-        if row.has_content:
-            # Line 1: primary text
-            max_text = content_width - label_width
-            primary = row.primary_text
-            if len(primary) > max_text:
-                primary = primary[: max_text - 3] + "..."
-            section.append(primary, style="white")
-            section.append("\n")
-
-            # Line 2: detail parts
-            section.append("    ", style="dim")
-            if row.detail_parts:
-                for text, style in row.detail_parts:
-                    section.append(text, style=style)
-        elif row.is_processing:
-            label = "paused" if row.is_paused else row.processing_label
-            style = "dim italic" if row.is_paused else "cyan italic"
-            section.append(label, style=style)
-            section.append("\n    ", style="dim")
-        elif row.queue_size > 0:
-            section.append(f"streaming {row.queue_size} items...", style="cyan italic")
-            section.append("\n    ", style="dim")
-        elif row.is_complete:
-            section.append(row.complete_label, style="green")
-            section.append("\n    ", style="dim")
-        elif row.is_paused:
-            section.append("paused", style="dim italic")
-            section.append("\n    ", style="dim")
-        else:
-            section.append("idle", style="dim italic")
-            section.append("\n    ", style="dim")
-
-    return section
 
 
 # =============================================================================
