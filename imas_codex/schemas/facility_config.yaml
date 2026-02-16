@@ -369,17 +369,51 @@ classes:
         multivalued: true
 
   MDSplusConfig:
-    description: MDSplus data source configuration
+    description: >-
+      MDSplus data source configuration for signal discovery.
+      Controls which trees are scanned, how nodes are filtered,
+      and what constitutes a physics-relevant signal.
     class_uri: fc:MDSplusConfig
     attributes:
       connection_tree:
-        description: Default tree for TDI context
+        description: Default MDSplus tree for TDI context and data access
       trees:
-        description: MDSplus tree names to scan
+        description: >-
+          Physics-relevant tree/subtree names to scan for signals.
+          Only these trees are walked during discovery. Omit large
+          hardware/control trees (e.g., ATLAS, PCS) to avoid
+          scanning tens of thousands of non-physics nodes.
+        multivalued: true
+      subtrees:
+        description: >-
+          Complete list of all available subtrees (scanned and unscanned).
+          Documentary only — used for reference and exploration notes.
         multivalued: true
       reference_shot:
-        description: Shot number for tree introspection
+        description: Shot number for tree introspection and signal validation
         range: integer
+      exclude_node_names:
+        description: >-
+          Node names to skip during tree traversal (case-insensitive).
+          Typically metadata nodes like COMMENTS, DATE, ROUTINE,
+          VERSION_NUM that are not physics signals.
+        multivalued: true
+      max_nodes_per_tree:
+        description: >-
+          Safety limit on signals extracted per tree. Prevents
+          runaway scans on unexpectedly large trees. Default 5000.
+        range: integer
+      node_usages:
+        description: >-
+          MDSplus node usage types to include (e.g., SIGNAL, NUMERIC).
+          Default is SIGNAL only. NUMERIC nodes are typically
+          configuration parameters, AXIS nodes are time bases.
+        multivalued: true
+      setup_commands:
+        description: >-
+          Shell commands to run before MDSplus operations (e.g., module loads).
+          Applied to all remote script invocations for this facility.
+        multivalued: true
 
   PPFConfig:
     description: >-

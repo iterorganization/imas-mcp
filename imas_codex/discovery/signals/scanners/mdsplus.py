@@ -83,22 +83,27 @@ class MDSplusScanner:
                 stats={"error": "no reference_shot configured"},
             )
 
-        # Build input for the remote enumerate script
+        # Build input for the remote enumerate script from facility config
         exclude_names = config.get("exclude_node_names", [])
+        max_nodes = config.get("max_nodes_per_tree", 5000)
+        node_usages = config.get("node_usages", ["SIGNAL"])
         input_data = {
             "trees": trees,
             "shot": ref_shot,
             "exclude_names": exclude_names,
-            "max_nodes_per_tree": 5000,
+            "max_nodes_per_tree": max_nodes,
+            "node_usages": node_usages,
         }
 
         try:
+            setup_cmds = config.get("setup_commands")
             output = await asyncio.to_thread(
                 run_python_script,
                 "enumerate_mdsplus.py",
                 input_data,
                 ssh_host=ssh_host,
                 timeout=300,  # Trees can be large
+                setup_commands=setup_cmds,
             )
 
             # Find JSON in output — MDSplus C libraries may print warnings
@@ -252,6 +257,8 @@ class MDSplusScanner:
             for s in signals
         ]
 
+        setup_cmds = config.get("setup_commands")
+
         try:
             output = await asyncio.to_thread(
                 run_python_script,
@@ -259,6 +266,7 @@ class MDSplusScanner:
                 {"signals": batch_input, "timeout_per_group": 30},
                 ssh_host=ssh_host,
                 timeout=60 + len(batch_input),
+                setup_commands=setup_cmds,
             )
 
             response = json.loads(output.strip().split("\n")[-1])

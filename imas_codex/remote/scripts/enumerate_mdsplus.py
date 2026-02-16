@@ -60,6 +60,7 @@ def enumerate_tree(
     shot: int,
     exclude_names: set[str],
     max_nodes: int = 5000,
+    node_usages: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Walk an MDSplus tree and extract physics-relevant signal nodes.
 
@@ -95,9 +96,10 @@ def enumerate_tree(
     raw_signals: list[dict[str, Any]] = []
     for node in nodes:
         usage = str(node.usage)
-        if usage not in ("SIGNAL",):
-            # Only SIGNAL usage - NUMERIC is mostly config params, AXIS is
-            # typically time bases. We want physics measurement signals.
+        usages = node_usages if node_usages else {"SIGNAL"}
+        if usage not in usages:
+            # Filter by configured usage types. Default: SIGNAL only.
+            # NUMERIC is mostly config params, AXIS is typically time bases.
             continue
 
         stats["data_nodes"] += 1
@@ -209,6 +211,7 @@ def main() -> None:
     shot = config.get("shot")
     exclude_names = {n.upper() for n in config.get("exclude_names", [])}
     max_nodes = config.get("max_nodes_per_tree", 5000)
+    node_usages = {u.upper() for u in config.get("node_usages", ["SIGNAL"])}
 
     if not trees or not shot:
         print(
@@ -237,7 +240,9 @@ def main() -> None:
     tree_stats: dict[str, Any] = {}
 
     for tree_name in trees:
-        signals, stats = enumerate_tree(tree_name, shot, exclude_names, max_nodes)
+        signals, stats = enumerate_tree(
+            tree_name, shot, exclude_names, max_nodes, node_usages
+        )
         all_signals.extend(signals)
         tree_stats[tree_name] = stats
 
