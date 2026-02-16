@@ -107,18 +107,20 @@ Set `should_expand=true` ONLY when subdirectories likely contain distinct, valua
 
 **Expansion is expensive** — each expanded directory triggers SSH scanning of all children, then LLM scoring of each child. Be conservative.
 
-### Always expand:
-- **Top-level containers**: `/home`, `/work`, `/solhome/*` (depth 0-1 navigation)
-- **Shared code directories**: `/home/codes`, `/usr/local/*/codes`, `/common/codes`
-- **User home directories** (depth 1): `/home/username/` — researchers keep custom code here
+### When to expand:
+- **Top-level containers** (depth 0): `/home`, `/work`, `/common` — navigation roots
+- **Shared code directories**: `/home/codes`, `/common/codes` — curated code collections
+- **Promising user homes** (depth 1): only when the tree structure shows code (Python/Fortran files, src/, analysis/, scripts/) — NOT empty or configuration-only homes
 
-### Almost never expand:
+### When NOT to expand (set `should_expand=false`):
 - **Code repositories** with `.git` — code is available via git clone
 - **Data containers** — directories of shot data, run outputs, or numeric-named subdirs
 - **Leaf code directories** — a directory with source files IS the project; its subdirectories (`src/`, `lib/`, `tests/`) are implementation details, not new discoveries
 - **Well-known software installations** — `/opt/imas/`, any public framework clone
 - **Deep paths** (depth 4+) — diminishing returns; valuable code is usually found by depth 2-3
 - **Directories scoring < 0.4** on all dimensions
+- **Empty or configuration-only user homes** — homes with only dotfiles, no source code
+- **Large user-directory containers** with 50+ children and no code in tree structure — expanding creates hundreds of paths to scan
 
 ### Key insight:
 A directory containing Python/Fortran source files is typically a **leaf** — it IS the project. Set `should_expand=false` for code-containing directories unless they clearly contain multiple independent projects.

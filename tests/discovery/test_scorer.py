@@ -60,6 +60,21 @@ class TestGroundedScore:
         result = grounded_score(scores, {}, ResourcePurpose.system)
         assert result < 0.5 * 0.4  # 0.3 multiplier
 
+    def test_score_capped_at_1(self):
+        """Score with quality boosts is capped at 1.0."""
+        scores = {
+            "score_modeling_code": 0.95,
+            "score_imas": 0.5,  # trigger IMAS boost (+0.10)
+        }
+        input_data = {
+            "has_readme": True,  # +0.05
+            "has_makefile": True,  # +0.05
+            "has_git": True,  # +0.05
+        }
+        result = grounded_score(scores, input_data, ResourcePurpose.modeling_code)
+        # base=0.95 + boosts=0.25 = 1.20 → capped at 1.0
+        assert result == 1.0
+
 
 class TestContainerExpansion:
     """Test that container expansion is driven by the LLM's should_expand decision.
@@ -199,8 +214,46 @@ class TestContainerExpansion:
 
         results = scorer._map_scored_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
-        # Expands because LLM said yes — no score threshold for containers
+        # Expands because LLM said yes — root containers always expand
         assert results[0].should_expand is True
+
+    def test_non_root_container_requires_minimum_score(self):
+        """Non-root containers need score >= 0.3 to expand, even if LLM says yes."""
+        scorer = DirectoryScorer(facility="test")
+        batch = self._score_batch(
+            [
+                self._make_score_result(
+                    "/home/empty_user",
+                    should_expand=True,  # LLM says yes
+                    score_modeling_code=0.0,
+                    score_analysis_code=0.0,
+                    score_operations_code=0.0,
+                    score_modeling_data=0.0,
+                    score_experimental_data=0.0,
+                    score_data_access=0.0,
+                    score_workflow=0.0,
+                    score_visualization=0.0,
+                    score_documentation=0.0,
+                    score_imas=0.0,
+                ),
+            ]
+        )
+        directories = [
+            {
+                "path": "/home/empty_user",
+                "depth": 1,  # Not root
+                "total_files": 0,
+                "total_dirs": 2,
+                "has_readme": False,
+                "has_makefile": False,
+                "has_git": False,
+            }
+        ]
+
+        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        assert len(results) == 1
+        # Does NOT expand — score 0.0 < 0.3 threshold for non-root containers
+        assert results[0].should_expand is False
 
     def test_non_container_requires_score_threshold(self):
         """Non-container paths must meet score threshold to expand."""

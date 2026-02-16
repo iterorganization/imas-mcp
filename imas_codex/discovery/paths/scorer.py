@@ -138,11 +138,9 @@ def grounded_score(
 
     combined = (base_score + quality_boost) * purpose_multiplier
 
-    # No upper cap - allow natural values > 1.0 for paths with multiple
-    # quality indicators. Use percentile normalization for ranking.
-    # Scores > 1.0 indicate exceptional paths (e.g., git repo with README,
-    # Makefile, IMAS indicators, and high dimension scores).
-    return max(0.0, combined)
+    # Cap at 1.0 — scores are 0.0-1.0 by design. The quality boost
+    # differentiates paths that would otherwise tie at 1.0 on base_score.
+    return max(0.0, min(1.0, combined))
 
 
 @dataclass
@@ -578,11 +576,16 @@ class DirectoryScorer:
             # are scored on their own merit; expansion is blocked for all git repos.
 
             # Expansion decision
-            # Containers: trust LLM's should_expand (prompt guides the decision)
-            # Non-containers: require score >= threshold plus LLM agreement
+            # Containers: trust LLM's should_expand but require minimum score
+            # to avoid expanding empty/useless containers. Root-level containers
+            # (depth 0) always expand since seeded roots are high-confidence.
+            # Non-containers: require score >= threshold plus LLM agreement.
             if purpose in CONTAINER_PURPOSES:
+                is_root = directories[i].get("depth", 0) == 0
                 should_expand = (
-                    result.should_expand and purpose not in SUPPRESSED_PURPOSES
+                    result.should_expand
+                    and purpose not in SUPPRESSED_PURPOSES
+                    and (is_root or combined >= 0.3)
                 )
             else:
                 should_expand = (
@@ -770,12 +773,15 @@ class DirectoryScorer:
             # Note: No score penalty - SoftwareRepo dedup handles clone/fork detection
 
             # Expansion decision
-            # Containers: trust LLM's should_expand (prompt guides the decision)
+            # Containers: trust LLM's should_expand but require minimum score
+            # Root-level containers (depth 0) always expand.
             # Non-containers: require score >= threshold plus LLM agreement
             if purpose in CONTAINER_PURPOSES:
+                is_root = directories[i].get("depth", 0) == 0
                 should_expand = (
                     result.get("should_expand", False)
                     and purpose not in SUPPRESSED_PURPOSES
+                    and (is_root or combined >= 0.3)
                 )
             else:
                 should_expand = (
