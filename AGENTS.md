@@ -159,6 +159,8 @@ Ingestion is interrupt-safe — rerun to continue. Already-ingested files are sk
 
 ## Command Execution
 
+**CRITICAL: Never pipe, tee, or redirect CLI output.** All `imas-codex` CLI commands auto-log full DEBUG output to `~/.local/share/imas-codex/logs/<command>_<facility>.log`. Piping (`|`), teeing (`tee`), or redirecting (`>`, `2>&1`) to files prevents auto-approval of terminal commands, stalling agentic workflows. Run commands directly and read the log file afterwards.
+
 **Decision tree:**
 1. Single command, local → Terminal directly (`rg`, `fd`, `tokei`, `uv run`)
 2. Single command, remote → SSH (`ssh facility "command"`)
@@ -478,16 +480,26 @@ rg "artifact_worker" ~/.local/share/imas-codex/logs/wiki_tcv.log
 
 Logs rotate at 10 MB with 3 backups (e.g., `paths_tcv.log`, `paths_tcv.log.1`). The file handler captures all `imas_codex.*` loggers at DEBUG level regardless of the `--no-rich` or `--verbose` flags.
 
-**Never pipe CLI output to /tmp files.** Since per-facility logs capture full DEBUG output to disk automatically, there is no need to redirect stdout/stderr to temporary files. Piping to `/tmp` prevents commands from being auto-approved, slowing progress. Instead, run the command directly and read the log file afterwards:
+**NEVER pipe, tee, or redirect CLI output.** This is the #1 cause of stalled agentic workflows. The logging infrastructure already captures everything — piping adds zero value and blocks auto-approval.
 
 ```bash
-# WRONG — prevents auto-approval
+# WRONG — blocks auto-approval, requires user interaction
 uv run imas-codex discover wiki tcv --no-rich 2>&1 | tee /tmp/wiki_tcv.txt
+uv run imas-codex discover signals tcv --no-rich > /tmp/signals.log 2>&1
+uv run imas-codex discover paths jet --no-rich 2>&1 | cat
 
-# RIGHT — run directly, read log after
+# RIGHT — run directly, logs are written automatically
 uv run imas-codex discover wiki tcv --no-rich
-cat ~/.local/share/imas-codex/logs/wiki_tcv.log
+uv run imas-codex discover signals tcv --no-rich
+uv run imas-codex discover paths jet --no-rich
+
+# MONITOR — read the auto-generated logs
+tail -f ~/.local/share/imas-codex/logs/signals_tcv.log  # Follow live
+rg "ERROR|WARNING" ~/.local/share/imas-codex/logs/      # Find errors
+cat ~/.local/share/imas-codex/logs/wiki_tcv.log          # Full output
 ```
+
+**Why this matters:** Terminal commands with pipes (`|`), redirects (`>`), or subshells require explicit user approval in agentic contexts. A single piped command can block an entire parallel workflow for minutes. The built-in `RotatingFileHandler` writes DEBUG-level logs to disk automatically — the same data you would capture via piping is already there.
 
 ## Testing
 
