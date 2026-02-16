@@ -428,6 +428,37 @@ def check_database_locks(data_dir: Path) -> tuple[bool, str | None]:
     return False, None
 
 
+def secure_data_directory(data_path: Path) -> None:
+    """Set restrictive permissions on Neo4j data directory.
+
+    Ensures only the owner can access the database files, preventing
+    accidental conflicts on shared filesystems where multiple users
+    might run their own Neo4j instances.
+
+    Sets directories to 700 (rwx------) and files to 600 (rw-------).
+    """
+    import stat
+
+    if not data_path.exists():
+        return
+
+    # Secure the root directory
+    try:
+        data_path.chmod(stat.S_IRWXU)  # 700
+    except OSError:
+        pass  # May fail if we don't own it
+
+    # Recursively secure subdirectories and files
+    for item in data_path.rglob("*"):
+        try:
+            if item.is_dir():
+                item.chmod(stat.S_IRWXU)  # 700
+            else:
+                item.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 600
+        except OSError:
+            pass  # Skip files we can't chmod
+
+
 def get_package_name(facility: str | None = None) -> str:
     """Get the GHCR package name, optionally scoped to a facility.
 
@@ -657,6 +688,9 @@ def neo4j_start(
     for subdir in ["data", "logs", "conf", "import"]:
         (data_path / subdir).mkdir(parents=True, exist_ok=True)
 
+    # Secure permissions to prevent other users accessing our database
+    secure_data_directory(data_path)
+
     cmd = [
         "apptainer",
         "exec",
@@ -861,6 +895,35 @@ def neo4j_profiles() -> None:
             f"  {marker} {p.name:<10s}  bolt:{p.bolt_port}  http:{p.http_port}  "
             f"{location:<10s}  [{running}]"
         )
+
+
+@neo4j.command("secure")
+@click.option(
+    "--graph",
+    "-g",
+    envvar="IMAS_CODEX_GRAPH",
+    default=None,
+    help="Graph profile name (default: active profile)",
+)
+def neo4j_secure(graph: str | None) -> None:
+    """Secure Neo4j data directory permissions.
+
+    Sets restrictive permissions (700 for dirs, 600 for files) on the
+    Neo4j data directory to prevent other users on shared filesystems
+    from accessing your database.
+    """
+    from imas_codex.graph.profiles import resolve_graph
+
+    profile = resolve_graph(graph)
+    data_path = profile.data_dir
+
+    if not data_path.exists():
+        click.echo(f"Data directory does not exist: {data_path}")
+        return
+
+    click.echo(f"Securing {data_path} ...")
+    secure_data_directory(data_path)
+    click.echo(f"Permissions set to owner-only (700/600) for [{profile.name}]")
 
 
 @neo4j.command("shell")
