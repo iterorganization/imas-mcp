@@ -60,6 +60,7 @@ from imas_codex.agentic.prompt_loader import (
 from imas_codex.discovery import (
     get_facility as _get_facility_config,
     get_facility_infrastructure,
+    get_facility_validated,
     update_infrastructure,
     update_metadata,
 )
@@ -292,29 +293,32 @@ def _init_repl() -> dict[str, Any]:
     def get_facility(facility: str) -> dict[str, Any]:
         """Get comprehensive facility info including graph state.
 
+        Loads the full facility config validated against the LinkML schema
+        (FacilityConfig model) so all typed fields (data_sources, data_systems,
+        data_access_patterns, wiki_sites, etc.) are included.
+
         Args:
             facility: Facility ID (e.g., 'tcv')
 
         Returns:
-            Dict with config, tools, paths, graph_summary, actionable_paths
+            Dict with config (full LinkML-validated), graph_summary,
+            actionable_paths
         """
         result: dict[str, Any] = {"facility": facility}
 
-        # Load facility config
+        # Load facility config via LinkML-validated Pydantic model
         try:
-            data = _get_facility_config(facility)
-            result["config"] = {
-                "ssh_host": data.get("ssh_host"),
-                "description": data.get("description"),
-                "machine": data.get("machine"),
-                "name": data.get("name"),
-            }
-            result["tools"] = data.get("tools", {})
-            result["paths"] = data.get("paths", {})
-            result["exploration_notes"] = data.get("exploration_notes", [])
+            validated = get_facility_validated(facility)
+            result["config"] = validated.model_dump(exclude_none=True)
         except Exception as e:
-            result["error"] = str(e)
-            return result
+            # Fall back to raw dict if validation fails
+            try:
+                data = _get_facility_config(facility)
+                result["config"] = data
+                result["validation_error"] = str(e)
+            except Exception as e2:
+                result["error"] = str(e2)
+                return result
 
         # Query graph for facility summary
         try:

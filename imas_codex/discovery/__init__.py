@@ -27,6 +27,7 @@ from imas_codex.discovery.base import (
     get_facility,
     get_facility_infrastructure,
     get_facility_metadata,
+    get_facility_validated,
     list_facilities,
     update_infrastructure,
     update_metadata,
@@ -53,6 +54,7 @@ __all__ = [
     # Base infrastructure
     "get_facility",
     "get_facility_metadata",
+    "get_facility_validated",
     "get_facility_infrastructure",
     "update_infrastructure",
     "update_metadata",
