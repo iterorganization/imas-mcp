@@ -1,4 +1,9 @@
-"""Tests for graph profile resolution."""
+"""Tests for graph profile resolution.
+
+These tests verify port conventions, data-dir conventions, and profile
+resolution logic.  They do NOT require a live Neo4j connection.
+All calls to ``is_local_host`` are mocked so no SSH probes occur.
+"""
 
 import pytest
 
@@ -27,6 +32,15 @@ def _clear_uri_cache():
     _resolved_uri_cache.clear()
     yield
     _resolved_uri_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _mock_is_local_host(monkeypatch):
+    """Prevent any SSH probes — treat all hosts as local."""
+    monkeypatch.setattr(
+        "imas_codex.remote.executor.is_local_host",
+        lambda h: True,
+    )
 
 
 # ── Port convention ─────────────────────────────────────────────────────────
@@ -109,11 +123,6 @@ class TestResolveGraph:
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
-        # Treat tcv as local so auto-tunnel doesn't fire
-        monkeypatch.setattr(
-            "imas_codex.remote.executor.is_local_host",
-            lambda h: True,
-        )
 
         profile = resolve_graph("tcv")
         assert isinstance(profile, GraphProfile)
@@ -129,11 +138,6 @@ class TestResolveGraph:
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
-        # Treat iter as local so auto-tunnel doesn't fire
-        monkeypatch.setattr(
-            "imas_codex.remote.executor.is_local_host",
-            lambda h: True,
-        )
 
         profile = resolve_graph("iter")
         assert profile.name == "iter"
@@ -148,10 +152,6 @@ class TestResolveGraph:
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
         monkeypatch.delenv("IMAS_CODEX_GRAPH_LOCATION", raising=False)
-        monkeypatch.setattr(
-            "imas_codex.remote.executor.is_local_host",
-            lambda h: True,
-        )
 
         profile = resolve_graph("codex")
         assert profile.name == "codex"
@@ -227,10 +227,6 @@ class TestHostField:
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
-        monkeypatch.setattr(
-            "imas_codex.remote.executor.is_local_host",
-            lambda h: True,
-        )
 
         profile = resolve_graph("kstar")
         assert profile.host == "kstar"

@@ -798,7 +798,9 @@ class TestCheckGraphEmbeddingsAvailable:
     def test_returns_true_with_sufficient_coverage(self, encoder_config, clusters_file):
         """Graph reports >50% coverage → True."""
         mock_gc = MagicMock()
-        mock_gc.query.return_value = [{"total": 100, "with_emb": 90, "coverage": 0.9}]
+        mock_gc.query.return_value = [
+            {"total": 100, "with_emb": 90, "embeddable": 100, "coverage": 0.9}
+        ]
 
         clusters = Clusters(
             encoder_config=encoder_config,
@@ -812,7 +814,9 @@ class TestCheckGraphEmbeddingsAvailable:
     def test_returns_false_with_low_coverage(self, encoder_config, clusters_file):
         """Graph reports <50% coverage → False."""
         mock_gc = MagicMock()
-        mock_gc.query.return_value = [{"total": 100, "with_emb": 30, "coverage": 0.3}]
+        mock_gc.query.return_value = [
+            {"total": 100, "with_emb": 30, "embeddable": 100, "coverage": 0.3}
+        ]
 
         clusters = Clusters(
             encoder_config=encoder_config,
@@ -885,7 +889,9 @@ class TestGraphFirstDependencyFreshness:
     ):
         """Graph embedding count matches clusters metadata → no rebuild."""
         mock_gc = MagicMock()
-        mock_gc.query.return_value = [{"total": 100, "with_emb": 100, "coverage": 1.0}]
+        mock_gc.query.return_value = [
+            {"total": 100, "with_emb": 100, "embeddable": 100, "coverage": 1.0}
+        ]
 
         clusters = Clusters(
             encoder_config=encoder_config,
@@ -899,7 +905,9 @@ class TestGraphFirstDependencyFreshness:
     ):
         """Graph embedding count differs from clusters metadata → rebuild."""
         mock_gc = MagicMock()
-        mock_gc.query.return_value = [{"total": 200, "with_emb": 200, "coverage": 1.0}]
+        mock_gc.query.return_value = [
+            {"total": 200, "with_emb": 200, "embeddable": 200, "coverage": 1.0}
+        ]
 
         clusters = Clusters(
             encoder_config=encoder_config,
@@ -913,7 +921,9 @@ class TestGraphFirstDependencyFreshness:
     ):
         """Graph has no embeddings → rebuild."""
         mock_gc = MagicMock()
-        mock_gc.query.return_value = [{"total": 100, "with_emb": 0, "coverage": 0.0}]
+        mock_gc.query.return_value = [
+            {"total": 100, "with_emb": 0, "embeddable": 100, "coverage": 0.0}
+        ]
 
         clusters = Clusters(
             encoder_config=encoder_config,
@@ -931,7 +941,9 @@ class TestGraphFirstDependencyFreshness:
         fp.write_text(json.dumps(data))
 
         mock_gc = MagicMock()
-        mock_gc.query.return_value = [{"total": 100, "with_emb": 100, "coverage": 1.0}]
+        mock_gc.query.return_value = [
+            {"total": 100, "with_emb": 100, "embeddable": 100, "coverage": 1.0}
+        ]
 
         clusters = Clusters(
             encoder_config=encoder_config,

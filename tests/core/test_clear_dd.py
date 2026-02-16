@@ -113,19 +113,15 @@ class TestClearDdGraph:
         assert "imas_path_embedding" in drop_text
         assert "cluster_centroid" in drop_text
 
-    def test_clears_build_hash(self):
-        """DDVersion build_hash is cleared."""
+    def test_clears_dd_versions(self):
+        """DDVersion nodes are deleted (build_hash cleared with them)."""
         from imas_codex.graph.build_dd import clear_dd_graph
 
         client = self._make_client()
-        clear_dd_graph(client)
+        results = clear_dd_graph(client)
 
-        hash_calls = [
-            call
-            for call in client.query.call_args_list
-            if "REMOVE" in str(call) and "build_hash" in str(call)
-        ]
-        assert len(hash_calls) == 1
+        # DDVersion nodes are deleted entirely, which removes build_hash
+        assert results["versions"] == 5
 
     def test_batch_deletion(self):
         """Large node sets are deleted in batches."""
