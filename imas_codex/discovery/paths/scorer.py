@@ -604,34 +604,6 @@ class DirectoryScorer:
             if purpose in data_purposes:
                 should_expand = False
 
-            # Depth-based expansion gating: code directories at depth >= 3
-            # rarely yield new discoveries — they're implementation details.
-            # Only containers and very high-scoring dirs may expand at depth >= 3.
-            depth = directories[i].get("depth")
-            code_purposes = {
-                ResourcePurpose.modeling_code,
-                ResourcePurpose.analysis_code,
-                ResourcePurpose.operations_code,
-                ResourcePurpose.data_access,
-                ResourcePurpose.workflow,
-                ResourcePurpose.visualization,
-                ResourcePurpose.documentation,
-                ResourcePurpose.test_suite,
-                ResourcePurpose.configuration,
-            }
-            if (
-                should_expand
-                and depth is not None
-                and depth >= 3
-                and purpose in code_purposes
-                and combined < 0.85
-            ):
-                should_expand = False
-
-            # Hard depth limit: never expand beyond depth 5
-            if should_expand and depth is not None and depth >= 5:
-                should_expand = False
-
             # Enrichment decision - LLM decides, but override for known-large paths
             should_enrich = result.should_enrich
             enrich_skip_reason = result.enrich_skip_reason
@@ -814,31 +786,6 @@ class DirectoryScorer:
 
             # Never expand git repos
             if has_git:
-                should_expand = False
-
-            # Depth-based expansion gating (same as structured path)
-            depth = directories[i].get("depth")
-            code_purposes = {
-                ResourcePurpose.modeling_code,
-                ResourcePurpose.analysis_code,
-                ResourcePurpose.operations_code,
-                ResourcePurpose.data_access,
-                ResourcePurpose.workflow,
-                ResourcePurpose.visualization,
-                ResourcePurpose.documentation,
-                ResourcePurpose.test_suite,
-                ResourcePurpose.configuration,
-            }
-            if (
-                should_expand
-                and depth is not None
-                and depth >= 3
-                and purpose in code_purposes
-                and combined < 0.85
-            ):
-                should_expand = False
-
-            if should_expand and depth is not None and depth >= 5:
                 should_expand = False
 
             # Enrichment override for git repos with remotes
