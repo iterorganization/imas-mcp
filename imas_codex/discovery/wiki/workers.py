@@ -988,6 +988,13 @@ async def image_score_worker(
                 facility_id=state.facility,
             )
 
+            # Enrich results with source metadata for display
+            img_lookup = {img["id"]: img for img in images_ready}
+            for r in results:
+                src = img_lookup.get(r["id"], {})
+                r.setdefault("source_url", src.get("source_url", ""))
+                r.setdefault("page_title", src.get("page_title", ""))
+
             # Persist to graph
             await asyncio.to_thread(mark_images_scored, state.facility, results)
             state.image_stats.processed += len(results)

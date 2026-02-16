@@ -329,41 +329,37 @@ class TestBuildResourceSection:
         assert "cost limit reached" in result.plain
 
     def test_cost_row_displayed(self):
-        """COST row appears when run_cost and cost_limit are set."""
-        config = ResourceConfig(elapsed=60.0, run_cost=2.50, cost_limit=10.0)
+        """COST row appears when run_cost is set."""
+        config = ResourceConfig(elapsed=60.0, run_cost=2.50)
         result = build_resource_section(config, gauge_width=20)
         text = result.plain
         assert "COST" in text
         assert "$2.50" in text
-        assert "$10.00" in text
 
     def test_cost_hidden_in_scan_only(self):
         """COST row is hidden when scan_only=True."""
-        config = ResourceConfig(
-            elapsed=60.0, run_cost=2.50, cost_limit=10.0, scan_only=True
-        )
+        config = ResourceConfig(elapsed=60.0, run_cost=2.50, scan_only=True)
         result = build_resource_section(config, gauge_width=20)
         assert "COST" not in result.plain
 
-    def test_total_row_with_accumulated(self):
-        """TOTAL row shows accumulated + run cost."""
+    def test_cost_with_accumulated(self):
+        """COST row shows accumulated total when accumulated_cost > 0."""
         config = ResourceConfig(
             elapsed=60.0,
             run_cost=2.50,
-            cost_limit=10.0,
             accumulated_cost=5.0,
         )
         result = build_resource_section(config, gauge_width=20)
         text = result.plain
-        assert "TOTAL" in text
-        assert "$7.50" in text  # 5.0 + 2.5
+        assert "COST" in text
+        assert "$2.50" in text
+        assert "total $7.50" in text  # 5.0 + 2.5
 
-    def test_total_row_with_etc(self):
-        """TOTAL row shows ETC when projection exceeds current total."""
+    def test_cost_with_etc(self):
+        """COST row shows ETC when projection exceeds current total."""
         config = ResourceConfig(
             elapsed=60.0,
             run_cost=1.0,
-            cost_limit=10.0,
             accumulated_cost=0.0,
             etc=5.0,
         )
@@ -412,7 +408,7 @@ class TestBuildResourceSection:
         assert "pending" not in text
 
     def test_no_cost_row_when_none(self):
-        """No COST row when run_cost or cost_limit is None."""
+        """No COST row when run_cost is None."""
         config = ResourceConfig(elapsed=60.0)
         result = build_resource_section(config, gauge_width=20)
         assert "COST" not in result.plain

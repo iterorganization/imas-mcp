@@ -116,6 +116,23 @@ class ImageItem:
     physics_domain: str | None = None
     description: str = ""
     purpose: str = ""
+    source_url: str = ""
+    page_title: str = ""
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable name: filename from source_url, page title, or ID."""
+        if self.source_url:
+            # Extract filename from URL
+            from urllib.parse import unquote, urlparse
+
+            path = urlparse(self.source_url).path
+            filename = unquote(path.rsplit("/", 1)[-1]) if path else ""
+            if filename:
+                return filename
+        if self.page_title:
+            return self.page_title
+        return self.image_id
 
 
 # =============================================================================
@@ -813,7 +830,7 @@ class WikiProgressDisplay:
                     img_row.complete_label = "cost limit"
             if image:
                 img_row.primary_text = self._clip_title(
-                    image.image_id, content_width - LABEL_WIDTH
+                    image.display_name, content_width - LABEL_WIDTH
                 )
                 desc = image.caption or image.description
                 img_row.detail_parts = _score_detail(
@@ -1010,6 +1027,8 @@ class WikiProgressDisplay:
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
                 purpose=item.get("purpose", ""),
+                source_url=item.get("source_url", ""),
+                page_title=item.get("page_title", ""),
             )
 
         self._refresh()
@@ -1228,6 +1247,8 @@ class WikiProgressDisplay:
                     "physics_domain": r.get("physics_domain"),
                     "description": r.get("description", ""),
                     "purpose": r.get("purpose", ""),
+                    "source_url": r.get("source_url", ""),
+                    "page_title": r.get("page_title", ""),
                 }
                 for r in results
             ]

@@ -873,8 +873,8 @@ def build_resource_section(
 ) -> Text:
     """Build the RESOURCES section (TIME, COST, TOTAL, STATS).
 
-    This replaces the per-CLI ``_build_resources_section`` methods with
-    a single unified implementation.
+    TIME and COST rows show informational metrics without limit-based gauges.
+    TIME shows elapsed + ETA. COST shows spend + ETC projection.
 
     Args:
         config: Resource configuration.
@@ -882,11 +882,12 @@ def build_resource_section(
     """
     section = Text()
 
-    # TIME row
+    # TIME row — elapsed ticker, no limit gauge
     section.append("  TIME    ", style="bold cyan")
 
     eta = None if config.scan_only else config.eta
     if eta is not None and eta > 0:
+        # Show work-based progress (elapsed / estimated-total)
         total_est = config.elapsed + eta
         section.append_text(make_resource_gauge(config.elapsed, total_est, gauge_width))
     else:
@@ -906,35 +907,24 @@ def build_resource_section(
             section.append(f"  ETA {format_time(eta)}", style="dim")
     section.append("\n")
 
-    # COST row (hidden in scan_only mode)
-    if (
-        not config.scan_only
-        and config.run_cost is not None
-        and config.cost_limit is not None
-    ):
+    # COST row — informational spend display, no limit gauge
+    if not config.scan_only and config.run_cost is not None:
         section.append("  COST    ", style="bold yellow")
-        section.append_text(
-            make_resource_gauge(config.run_cost, config.cost_limit, gauge_width)
-        )
-        section.append(f"  ${config.run_cost:.2f}", style="bold")
-        section.append(f" / ${config.cost_limit:.2f}", style="dim")
-        section.append("\n")
 
-        # TOTAL row - accumulated + run cost with ETC
+        # Show spend-to-projection gauge when ETC is available
         total_cost = config.accumulated_cost + config.run_cost
         etc = config.etc
-        show_total = total_cost > 0 or (etc is not None and etc > total_cost)
+        if etc is not None and etc > total_cost:
+            section.append_text(make_resource_gauge(total_cost, etc, gauge_width))
+        else:
+            section.append("━" * gauge_width, style="yellow")
 
-        if show_total:
-            section.append("  TOTAL   ", style="bold white")
-            if etc is not None and etc > total_cost:
-                section.append_text(make_resource_gauge(total_cost, etc, gauge_width))
-            else:
-                section.append("━" * gauge_width, style="white")
-            section.append(f"  ${total_cost:.2f}", style="bold")
-            if etc is not None and etc > total_cost:
-                section.append(f"  ETC ${etc:.2f}", style="dim")
-            section.append("\n")
+        section.append(f"  ${config.run_cost:.2f}", style="bold")
+        if etc is not None and etc > total_cost:
+            section.append(f"  ETC ${etc:.2f}", style="dim")
+        elif config.accumulated_cost > 0:
+            section.append(f"  total ${total_cost:.2f}", style="dim")
+        section.append("\n")
 
     # STATS row
     if config.stats:
