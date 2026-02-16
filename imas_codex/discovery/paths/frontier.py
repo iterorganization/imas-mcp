@@ -2914,3 +2914,115 @@ def mark_rescore_complete(
             updated += 1
 
     return updated
+
+
+def get_hierarchy_context(
+    facility: str,
+    paths: list[str],
+    max_siblings: int = 8,
+) -> dict[str, dict[str, Any]]:
+    """Get parent and sibling context for a batch of paths.
+
+    For each path, returns the parent directory's score/purpose and
+    already-scored sibling directories. This context helps the LLM
+    make relative scoring decisions — seeing that /home/user1 was
+    scored as analysis_code(0.72) helps calibrate /home/user2.
+
+    Args:
+        facility: Facility ID
+        paths: List of paths to get context for
+        max_siblings: Maximum scored siblings to return per path
+
+    Returns:
+        Dict mapping path -> {
+            "parent": {"path": ..., "purpose": ..., "score": ..., "description": ...} | None,
+            "siblings": [{"path": ..., "purpose": ..., "score": ...}],
+            "depth": int,
+        }
+    """
+    import posixpath
+
+    from imas_codex.graph import GraphClient
+
+    if not paths:
+        return {}
+
+    # Compute parent paths
+    path_parents: dict[str, str] = {}
+    parent_set: set[str] = set()
+    for p in paths:
+        parent = posixpath.dirname(p.rstrip("/"))
+        if parent and parent != p.rstrip("/"):
+            path_parents[p] = parent
+            parent_set.add(parent)
+
+    context: dict[str, dict[str, Any]] = {
+        p: {"parent": None, "siblings": [], "depth": 0} for p in paths
+    }
+
+    if not parent_set:
+        return context
+
+    with GraphClient() as gc:
+        # Batch query: get parent info + scored children for all parent paths
+        parent_ids = [f"{facility}:{p}" for p in parent_set]
+        result = gc.query(
+            """
+            UNWIND $parent_ids AS pid
+            OPTIONAL MATCH (parent:FacilityPath {id: pid})
+            WHERE parent.status = 'scored'
+            OPTIONAL MATCH (sibling:FacilityPath {facility_id: $facility})
+            WHERE sibling.status = 'scored'
+              AND sibling.path STARTS WITH parent.path + '/'
+              AND NOT sibling.path CONTAINS substring(parent.path + '/', size(parent.path) + 1) + '/'
+            WITH parent, pid,
+                 collect({
+                     path: sibling.path,
+                     purpose: sibling.path_purpose,
+                     score: sibling.score,
+                     description: left(coalesce(sibling.description, ''), 60)
+                 })[0..$max_siblings] AS siblings
+            RETURN pid,
+                   parent.path AS parent_path,
+                   parent.path_purpose AS parent_purpose,
+                   parent.score AS parent_score,
+                   left(coalesce(parent.description, ''), 80) AS parent_description,
+                   parent.depth AS parent_depth,
+                   siblings
+            """,
+            parent_ids=parent_ids,
+            facility=facility,
+            max_siblings=max_siblings,
+        )
+
+        # Build lookup: parent_path -> parent_info + siblings
+        parent_info: dict[str, dict[str, Any]] = {}
+        for r in result:
+            parent_path_from_id = r["pid"].split(":", 1)[1] if ":" in r["pid"] else ""
+            if r["parent_path"]:
+                parent_info[parent_path_from_id] = {
+                    "parent": {
+                        "path": r["parent_path"],
+                        "purpose": r["parent_purpose"],
+                        "score": r["parent_score"],
+                        "description": r["parent_description"],
+                    },
+                    "siblings": [
+                        s for s in (r["siblings"] or []) if s.get("path") is not None
+                    ],
+                    "depth": (r["parent_depth"] or 0) + 1,
+                }
+
+        # Map back to input paths
+        for p in paths:
+            parent = path_parents.get(p)
+            if parent and parent in parent_info:
+                info = parent_info[parent]
+                context[p]["parent"] = info["parent"]
+                # Exclude the current path from siblings
+                context[p]["siblings"] = [
+                    s for s in info["siblings"] if s["path"] != p
+                ][:max_siblings]
+                context[p]["depth"] = info["depth"]
+
+    return context

@@ -332,8 +332,22 @@ class DirectoryScorer:
 
         Includes child file/directory names for context - these are
         critical for the LLM to infer purpose from naming conventions.
+
+        Also injects parent/sibling context from the graph to enable
+        relative scoring decisions.
         """
         import json as json_module
+
+        from imas_codex.discovery.paths.frontier import get_hierarchy_context
+
+        # Query hierarchy context for all paths in the batch
+        paths = [d["path"] for d in directories]
+        hierarchy = {}
+        if self.facility:
+            try:
+                hierarchy = get_hierarchy_context(self.facility, paths)
+            except Exception:
+                logger.debug("Failed to get hierarchy context", exc_info=True)
 
         lines = [
             "Score these directories.",
@@ -345,6 +359,11 @@ class DirectoryScorer:
             # Full path is critical context - shown prominently
             lines.append(f"\n## Directory {i}")
             lines.append(f"Path: {d['path']}")
+
+            # Depth info
+            depth = d.get("depth")
+            if depth is not None:
+                lines.append(f"Depth: {depth}")
 
             # Add DirStats
             lines.append(
@@ -382,6 +401,28 @@ class DirectoryScorer:
                     f"⚠️ DATA CONTAINER: {numeric_ratio:.0%} of subdirs are "
                     f"numeric (shot IDs/runs). Set should_expand=false."
                 )
+
+            # Parent/sibling context from graph
+            ctx = hierarchy.get(d["path"])
+            if ctx:
+                parent = ctx.get("parent")
+                if parent and parent.get("score") is not None:
+                    lines.append(
+                        f"Parent: {parent['path']} → "
+                        f"{parent.get('purpose', '?')} "
+                        f"(score: {parent['score']:.2f})"
+                    )
+
+                siblings = ctx.get("siblings", [])
+                if siblings:
+                    sib_strs = []
+                    for s in siblings[:6]:
+                        basename = s["path"].rstrip("/").split("/")[-1]
+                        sib_strs.append(
+                            f"{basename}={s.get('purpose', '?')}"
+                            f"({s.get('score', 0):.1f})"
+                        )
+                    lines.append(f"Scored siblings: {', '.join(sib_strs)}")
 
             # Prefer tree context over flat child_names (shows hierarchy)
             tree_context = d.get("tree_context")
@@ -561,6 +602,34 @@ class DirectoryScorer:
                 ResourcePurpose.experimental_data,
             }
             if purpose in data_purposes:
+                should_expand = False
+
+            # Depth-based expansion gating: code directories at depth >= 3
+            # rarely yield new discoveries — they're implementation details.
+            # Only containers and very high-scoring dirs may expand at depth >= 3.
+            depth = directories[i].get("depth")
+            code_purposes = {
+                ResourcePurpose.modeling_code,
+                ResourcePurpose.analysis_code,
+                ResourcePurpose.operations_code,
+                ResourcePurpose.data_access,
+                ResourcePurpose.workflow,
+                ResourcePurpose.visualization,
+                ResourcePurpose.documentation,
+                ResourcePurpose.test_suite,
+                ResourcePurpose.configuration,
+            }
+            if (
+                should_expand
+                and depth is not None
+                and depth >= 3
+                and purpose in code_purposes
+                and combined < 0.85
+            ):
+                should_expand = False
+
+            # Hard depth limit: never expand beyond depth 5
+            if should_expand and depth is not None and depth >= 5:
                 should_expand = False
 
             # Enrichment decision - LLM decides, but override for known-large paths
@@ -745,6 +814,31 @@ class DirectoryScorer:
 
             # Never expand git repos
             if has_git:
+                should_expand = False
+
+            # Depth-based expansion gating (same as structured path)
+            depth = directories[i].get("depth")
+            code_purposes = {
+                ResourcePurpose.modeling_code,
+                ResourcePurpose.analysis_code,
+                ResourcePurpose.operations_code,
+                ResourcePurpose.data_access,
+                ResourcePurpose.workflow,
+                ResourcePurpose.visualization,
+                ResourcePurpose.documentation,
+                ResourcePurpose.test_suite,
+                ResourcePurpose.configuration,
+            }
+            if (
+                should_expand
+                and depth is not None
+                and depth >= 3
+                and purpose in code_purposes
+                and combined < 0.85
+            ):
+                should_expand = False
+
+            if should_expand and depth is not None and depth >= 5:
                 should_expand = False
 
             # Enrichment override for git repos with remotes

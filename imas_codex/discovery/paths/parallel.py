@@ -411,8 +411,11 @@ def claim_paths_for_scoring(
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
                    p.has_readme AS has_readme, p.has_makefile AS has_makefile,
-                   p.has_git AS has_git, p.patterns_detected AS patterns_detected,
-                   p.child_names AS child_names
+                   p.has_git AS has_git, p.git_remote_url AS git_remote_url,
+                   p.patterns_detected AS patterns_detected,
+                   p.child_names AS child_names,
+                   p.tree_context AS tree_context,
+                   p.numeric_dir_ratio AS numeric_dir_ratio
             """,
             facility=facility,
             limit=limit,
