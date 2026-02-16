@@ -721,7 +721,7 @@ def _provide_signal_enrichment_schema() -> dict[str, Any]:
 
     Used by discovery/signal-enrichment prompt for batch signal classification.
     """
-    from imas_codex.discovery.data.models import (
+    from imas_codex.discovery.signals.models import (
         SignalEnrichmentBatch,
         SignalEnrichmentResult,
     )

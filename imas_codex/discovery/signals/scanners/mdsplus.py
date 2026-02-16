@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from imas_codex.discovery.data.scanners.base import (
+from imas_codex.discovery.signals.scanners.base import (
     ScanResult,
     register_scanner,
 )
@@ -76,7 +76,7 @@ class MDSplusScanner:
             )
 
         # Import the existing MDSplus discovery function
-        from imas_codex.discovery.data.parallel import discover_mdsplus_signals
+        from imas_codex.discovery.signals.parallel import discover_mdsplus_signals
 
         all_signals: list[dict] = []
         tree_stats: dict[str, int] = {}

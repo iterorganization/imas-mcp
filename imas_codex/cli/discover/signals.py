@@ -1,4 +1,9 @@
-"""Signals discovery command: TDI expression scanning and enrichment."""
+"""Signals discovery command: facility-agnostic signal scanning and enrichment.
+
+Dispatches to registered scanner plugins based on facility config data_sources.
+Scanner plugins handle facility-specific enumeration (TDI, PPF, EDAS, MDSplus,
+IMAS, wiki), while shared infrastructure handles LLM enrichment and validation.
+"""
 
 from __future__ import annotations
 
@@ -30,8 +35,12 @@ logger = logging.getLogger(__name__)
     help="Maximum signals to process",
 )
 @click.option(
-    "--tdi-path",
-    help="TDI expression path to scan (e.g., /home/tdi/...)",
+    "--scanners",
+    "-s",
+    type=str,
+    default=None,
+    help="Comma-separated scanner types to run (e.g., 'tdi,mdsplus'). "
+    "Default: auto-detect from facility config data_sources.",
 )
 @click.option(
     "--focus",
@@ -73,11 +82,17 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Maximum runtime in minutes (e.g., 5). Discovery halts when time expires.",
 )
+@click.option(
+    "--reference-shot",
+    type=int,
+    default=None,
+    help="Override reference shot/pulse for validation",
+)
 def signals(
     facility: str,
     cost_limit: float,
     signal_limit: int | None,
-    tdi_path: str | None,
+    scanners: str | None,
     focus: str | None,
     scan_only: bool,
     enrich_only: bool,
@@ -85,20 +100,27 @@ def signals(
     check_workers: int,
     no_rich: bool,
     time_limit: int | None,
+    reference_shot: int | None,
 ) -> None:
-    """Discover signals from MDSplus TDI expressions.
+    """Discover signals from facility data sources.
 
-    Scans TDI expression files to discover facility signals, then enriches
-    them with descriptions, physics domains, and IMAS mappings.
+    Scans configured data sources to discover facility signals, then enriches
+    them with descriptions, physics domains, and IMAS mappings. Scanners are
+    auto-detected from facility config data_sources section.
 
     \b
     Examples:
       imas-codex discover signals tcv
       imas-codex discover signals tcv --scan-only
-      imas-codex discover signals tcv -f equilibrium -c 2.0
-      imas-codex discover signals tcv --tdi-path /home/tdi/magnetics
+      imas-codex discover signals jet -s ppf -c 2.0
+      imas-codex discover signals jt60sa -s edas --scan-only
+      imas-codex discover signals tcv -s tdi,mdsplus -f equilibrium
     """
     from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.signals.scanners.base import (
+        get_scanners_for_facility,
+        list_scanners,
+    )
 
     # Auto-detect rich output
     use_rich = not no_rich and sys.stdout.isatty()
@@ -118,7 +140,7 @@ def signals(
             datefmt="%H:%M:%S",
         )
 
-    sig_logger = logging.getLogger("imas_codex.discovery.data")
+    sig_logger = logging.getLogger("imas_codex.discovery.signals")
 
     def log_print(msg: str, style: str | None = None) -> None:
         import re
@@ -140,32 +162,43 @@ def signals(
         log_print(f"[red]No SSH host configured for {facility}[/red]")
         raise SystemExit(1)
 
-    # Auto-configure TDI path and reference shot from schema-backed config
-    data_sources = config.get("data_sources", {})
-    tdi_config = data_sources.get("tdi", {})
-    mdsplus_config = data_sources.get("mdsplus", {})
+    # Resolve scanner types
+    if scanners:
+        scanner_types = [s.strip() for s in scanners.split(",")]
+        # Validate requested scanner types exist
+        available = list_scanners()
+        invalid = [s for s in scanner_types if s not in available]
+        if invalid:
+            log_print(
+                f"[red]Unknown scanner types: {invalid}. Available: {available}[/red]"
+            )
+            raise SystemExit(1)
+    else:
+        # Auto-detect from facility config
+        scanner_instances = get_scanners_for_facility(facility)
+        scanner_types = [s.scanner_type for s in scanner_instances]
 
-    if tdi_path is None:
-        tdi_path = tdi_config.get("primary_path")
-
-    if tdi_path is None:
+    if not scanner_types:
         log_print(
-            f"[red]No TDI path configured for {facility}.[/red]\n"
-            "Specify with --tdi-path or configure data_sources.tdi.primary_path "
-            "in facility YAML"
+            f"[red]No data sources configured for {facility}.[/red]\n"
+            "Configure data_sources in facility YAML or specify --scanners."
         )
         raise SystemExit(1)
 
-    # Get reference shot from TDI config (primary) or MDSplus config (fallback)
-    reference_shot = tdi_config.get("reference_shot") or mdsplus_config.get(
-        "reference_shot"
-    )
-
-    # Get exclude functions for TDI scanning
-    exclude_functions = tdi_config.get("exclude_functions", [])
+    # Resolve reference shot from config if not specified
+    data_sources = config.get("data_sources", {})
+    if reference_shot is None:
+        for source_config in data_sources.values():
+            if isinstance(source_config, dict):
+                ref = source_config.get("reference_shot") or source_config.get(
+                    "reference_pulse"
+                )
+                if ref:
+                    reference_shot = int(ref)
+                    break
 
     log_print(f"\n[bold]Signal Discovery: {facility}[/bold]")
-    log_print(f"  TDI path: {tdi_path}")
+    log_print(f"  Scanners: {', '.join(scanner_types)}")
     log_print(f"  SSH host: {ssh_host}")
     if reference_shot:
         log_print(f"  Reference shot: {reference_shot}")
@@ -177,12 +210,10 @@ def signals(
     if focus:
         log_print(f"  Focus: {focus}")
     log_print(f"  Workers: {enrich_workers} enrich, {check_workers} check")
-    if exclude_functions:
-        log_print(f"  Exclude functions: {len(exclude_functions)}")
     log_print("")
 
     try:
-        from imas_codex.discovery.data.parallel import run_parallel_data_discovery
+        from imas_codex.discovery.signals.parallel import run_parallel_data_discovery
 
         # Compute deadline from time limit
         deadline: float | None = None
@@ -205,8 +236,8 @@ def signals(
             result = asyncio.run(
                 run_parallel_data_discovery(
                     facility=facility,
-                    tdi_path=tdi_path,
                     ssh_host=ssh_host,
+                    scanner_types=scanner_types,
                     reference_shot=reference_shot,
                     cost_limit=cost_limit,
                     signal_limit=signal_limit,
@@ -224,19 +255,19 @@ def signals(
         else:
             # Rich progress display
             from imas_codex.cli.discover.common import create_discovery_monitor
-            from imas_codex.discovery.data.progress import DataProgressDisplay
+            from imas_codex.discovery.signals.progress import DataProgressDisplay
 
             service_monitor = create_discovery_monitor(
                 config,
                 check_graph=True,
                 check_embed=not scan_only,
-                check_auth=False,  # Signals don't access wikis
+                check_auth=False,
             )
 
             # Suppress noisy INFO during rich display
             for mod in (
                 "imas_codex.embeddings",
-                "imas_codex.discovery.data",
+                "imas_codex.discovery.signals",
             ):
                 logging.getLogger(mod).setLevel(logging.WARNING)
 
@@ -281,8 +312,8 @@ def signals(
                     try:
                         return await run_parallel_data_discovery(
                             facility=facility,
-                            tdi_path=tdi_path,
                             ssh_host=ssh_host,
+                            scanner_types=scanner_types,
                             reference_shot=reference_shot,
                             cost_limit=cost_limit,
                             signal_limit=signal_limit,

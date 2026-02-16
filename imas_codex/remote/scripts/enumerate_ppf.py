@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Enumerate JET PPF DDAs and Dtypes for a reference pulse.
+
+This script runs on the JET host where libppf.so and ppf.py are available.
+It uses ppfdda()/ppfdti() to enumerate all DDAs and their Dtypes.
+
+Requirements:
+- Python 3.8+ (stdlib only except ppf)
+- ppf Python bindings (available on JET via /jet/share/DEPOT/pyppf/)
+
+Usage:
+    echo '{"pulse": 99999, "owner": "jetppf"}' | python3 enumerate_ppf.py
+
+Input (JSON on stdin):
+    {
+        "pulse": 99999,
+        "owner": "jetppf",
+        "exclude_ddas": ["PRIV"]
+    }
+
+Output (JSON on stdout):
+    {
+        "signals": [
+            {"dda": "EFIT", "dtype": "BVAC"},
+            {"dda": "EFIT", "dtype": "FBND"},
+            ...
+        ],
+        "pulse": 99999,
+        "owner": "jetppf",
+        "ndda": 42
+    }
+"""
+
+import json
+import sys
+
+
+def main():
+    try:
+        config = json.load(sys.stdin)
+    except json.JSONDecodeError as e:
+        print(json.dumps({"error": f"Invalid JSON input: {e}"}))
+        sys.exit(0)
+
+    pulse = config.get("pulse")
+    owner = config.get("owner", "jetppf")
+    exclude_ddas = set(config.get("exclude_ddas", []))
+
+    if not pulse:
+        print(json.dumps({"error": "No pulse specified"}))
+        sys.exit(0)
+
+    # Import ppf — available on JET compute nodes
+    try:
+        sys.path.insert(0, "/jet/share/DEPOT/pyppf/21260/lib/python")
+        import ppf
+    except ImportError:
+        print(json.dumps({"error": "ppf module not available"}))
+        sys.exit(0)
+
+    # Set default user
+    ppf.ppfuid(owner, rw="R")
+
+    # Open pulse context
+    ier = ppf.ppfgo(pulse, seq=0)
+    if ier != 0:
+        print(json.dumps({"error": f"ppfgo failed: ier={ier}"}))
+        sys.exit(0)
+
+    # Enumerate DDAs for this pulse
+    ddas, ndda, ier = ppf.ppfdda(pulse)
+    if ier != 0:
+        print(json.dumps({"error": f"ppfdda failed: ier={ier}"}))
+        sys.exit(0)
+
+    results = []
+    for dda in ddas[:ndda]:
+        dda = dda.strip()
+        if not dda or dda in exclude_ddas:
+            continue
+        # Enumerate Dtypes for each DDA
+        try:
+            dtypes, ndtype, ier = ppf.ppfdti(pulse, dda)
+            if ier != 0:
+                continue
+            for dtype in dtypes[:ndtype]:
+                dtype = dtype.strip()
+                if not dtype:
+                    continue
+                results.append({"dda": dda, "dtype": dtype})
+        except Exception:
+            pass
+
+    print(json.dumps({
+        "signals": results,
+        "pulse": pulse,
+        "owner": owner,
+        "ndda": ndda,
+    }))
+
+
+if __name__ == "__main__":
+    main()

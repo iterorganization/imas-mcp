@@ -85,7 +85,7 @@ def discover_status(
 
     from imas_codex.cli.discover.common import use_rich_output
     from imas_codex.discovery import get_discovery_stats, get_high_value_paths
-    from imas_codex.discovery.data.parallel import get_data_discovery_stats
+    from imas_codex.discovery.signals.parallel import get_data_discovery_stats
     from imas_codex.discovery.wiki.parallel import get_wiki_discovery_stats
 
     use_rich = use_rich_output(no_rich)
@@ -149,7 +149,7 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
       imas-codex discover clear jet --force      # Skip confirmation
     """
     from imas_codex.discovery import clear_facility_paths, get_discovery_stats
-    from imas_codex.discovery.data import (
+    from imas_codex.discovery.signals import (
         clear_facility_signals,
         get_data_discovery_stats,
     )

@@ -74,7 +74,14 @@ class DataDiscoveryState:
 
     # Data source configuration
     reference_shot: int | None = None
+    scanner_types: list[str] = field(default_factory=list)
+
+    # Legacy — kept for backwards compat with progress display
     tdi_path: str | None = None
+
+    # Wiki context for enrichment (populated by wiki scanner)
+    # Keyed by MDSplus path (uppercase), values have description/units/page
+    wiki_context: dict[str, dict[str, str]] = field(default_factory=dict)
 
     # Limits
     cost_limit: float = 10.0
@@ -416,7 +423,9 @@ def claim_signals_for_enrichment(
                 SET s.claimed_at = datetime()
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
                        s.node_path AS node_path, s.units AS units, s.name AS name,
-                       s.tdi_function AS tdi_function
+                       s.tdi_function AS tdi_function,
+                       s.discovery_source AS discovery_source,
+                       s.description AS description
                 """,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
@@ -459,6 +468,7 @@ def claim_signals_for_check(
                           ELSE null END AS derived_data_access
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
                        s.physics_domain AS physics_domain, s.tdi_function AS tdi_function,
+                       s.discovery_source AS discovery_source, s.name AS name,
                        COALESCE(s.data_access, derived_data_access) AS data_access
                 """,
                 facility=facility,
@@ -1007,7 +1017,7 @@ def discover_tdi_signals(
     # Run the extraction script synchronously (will be called in to_thread)
     import asyncio
 
-    from imas_codex.discovery.data.tdi import (
+    from imas_codex.discovery.signals.tdi import (
         build_signal_id,
         build_tdi_accessor,
         classify_tdi_quantity,
@@ -1131,88 +1141,144 @@ async def scan_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
-    """Worker that scans TDI function files for signals.
+    """Worker that dispatches to registered scanner plugins.
 
-    Discovers signals from TDI .fun files, creates TDIFunction nodes
-    for LLM enrichment context.
+    Iterates through configured scanner_types, calling each scanner's scan()
+    method and ingesting the discovered signals into the graph. Falls back
+    to TDI-specific discovery if scanner_types includes 'tdi' and the
+    legacy tdi_path is set.
     """
-    from imas_codex.discovery.data.tdi import (
-        create_tdi_data_access,
-        discover_tdi_signals,
-        ingest_tdi_functions,
-        ingest_tdi_signals,
-    )
+    from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.signals.scanners.base import get_scanner
 
-    # Scan TDI functions (primary data source)
-    if state.tdi_path and not state.should_stop_discovering():
+    facility_config = get_facility(state.facility)
+    data_sources = facility_config.get("data_sources", {})
+    ssh_host = state.ssh_host or facility_config.get("ssh_host", state.facility)
+
+    total_discovered = 0
+
+    for scanner_type in state.scanner_types:
+        if state.should_stop_discovering():
+            break
+
         if on_progress:
             on_progress(
-                f"scanning TDI {state.tdi_path}",
+                f"scanning {scanner_type}",
                 state.discover_stats,
-                [{"tree_name": "TDI", "node_path": state.tdi_path}],
             )
 
         try:
-            with GraphClient() as gc:
-                # Create/verify TDI access method
-                am = await create_tdi_data_access(gc, state.facility)
+            scanner = get_scanner(scanner_type)
+        except KeyError:
+            logger.warning("Scanner '%s' not registered, skipping", scanner_type)
+            continue
 
-                # Discover signals and extract TDI function metadata
-                signals, functions = await discover_tdi_signals(
-                    facility=state.facility,
-                    ssh_host=state.ssh_host,
-                    tdi_path=state.tdi_path,
-                    data_access_id=am.id,
+        # Get scanner-specific config from facility data_sources
+        scanner_config = data_sources.get(scanner_type, {})
+        if not isinstance(scanner_config, dict):
+            scanner_config = {}
+
+        try:
+            result = await scanner.scan(
+                facility=state.facility,
+                ssh_host=ssh_host,
+                config=scanner_config,
+                reference_shot=state.reference_shot,
+            )
+
+            # Store wiki context for use by enrich_worker
+            if result.wiki_context:
+                state.wiki_context.update(result.wiki_context)
+                logger.info(
+                    "Wiki context: %d entries for %s",
+                    len(result.wiki_context),
+                    state.facility,
                 )
 
-                if signals:
-                    # Ingest TDI functions (stores source_code for LLM enrichment)
-                    if functions:
-                        func_count = await ingest_tdi_functions(
-                            gc, state.facility, functions
+            if result.signals:
+                # Ingest signals to graph
+                count = ingest_discovered_signals(
+                    [s.model_dump(exclude_none=True) for s in result.signals]
+                )
+                total_discovered += count
+                state.discover_stats.processed += count
+
+                # Ingest DataAccess node if provided
+                if result.data_access:
+                    try:
+                        with GraphClient() as gc:
+                            gc.query(
+                                """
+                                MERGE (da:DataAccess {id: $id})
+                                SET da += $props
+                                WITH da
+                                MATCH (f:Facility {id: $facility})
+                                MERGE (da)-[:AT_FACILITY]->(f)
+                                """,
+                                id=result.data_access.id,
+                                props=result.data_access.model_dump(exclude_none=True),
+                                facility=state.facility,
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to ingest DataAccess for %s: %s",
+                            scanner_type,
+                            e,
                         )
-                        logger.info("Ingested %d TDI functions", func_count)
 
-                    # Ingest signals
-                    count = await ingest_tdi_signals(gc, signals)
-                    state.discover_stats.processed += count
-
-                    if on_progress:
-                        results = [
+                if on_progress:
+                    on_progress(
+                        f"{scanner_type}: discovered {count} signals",
+                        state.discover_stats,
+                        [
                             {
                                 "id": s.id,
-                                "tree_name": "TDI",
+                                "tree_name": scanner_type,
                                 "node_path": s.accessor,
                                 "signals_in_tree": count,
                             }
-                            for s in signals[:20]
-                        ]
-                        on_progress(
-                            f"discovered {count} TDI signals ({len(functions)} functions)",
-                            state.discover_stats,
-                            results,
+                            for s in result.signals[:20]
+                        ],
+                    )
+            else:
+                logger.info(
+                    "No signals from %s scanner for %s", scanner_type, state.facility
+                )
+                if on_progress:
+                    on_progress(
+                        f"{scanner_type}: no signals found",
+                        state.discover_stats,
+                    )
+
+            # Handle scanner-specific metadata (e.g., TDI function ingestion)
+            if scanner_type == "tdi" and result.metadata.get("functions"):
+                try:
+                    from imas_codex.discovery.signals.tdi import ingest_tdi_functions
+
+                    with GraphClient() as gc:
+                        func_count = await ingest_tdi_functions(
+                            gc, state.facility, result.metadata["functions"]
                         )
-                else:
-                    logger.info("No TDI signals discovered from %s", state.tdi_path)
-                    if on_progress:
-                        on_progress(
-                            "no TDI signals found",
-                            state.discover_stats,
-                        )
+                        logger.info("Ingested %d TDI functions", func_count)
+                except Exception as e:
+                    logger.warning("Failed to ingest TDI functions: %s", e)
 
         except Exception as e:
-            logger.error("TDI discovery failed: %s", e)
+            logger.error("%s scan failed for %s: %s", scanner_type, state.facility, e)
             if on_progress:
                 on_progress(
-                    f"TDI discovery failed: {e}",
+                    f"{scanner_type}: failed - {e}",
                     state.discover_stats,
                 )
 
     # Mark scan as complete
-    state.discover_idle_count = 100  # Signal scan is fully done
+    state.discover_idle_count = 100
 
     if on_progress:
-        on_progress("scan complete", state.discover_stats)
+        on_progress(
+            f"scan complete: {total_discovered} signals from {len(state.scanner_types)} scanners",
+            state.discover_stats,
+        )
 
 
 async def enrich_worker(
@@ -1221,7 +1287,16 @@ async def enrich_worker(
 ) -> None:
     """Worker that enriches signals with LLM classification.
 
-    Groups signals by TDI function and includes function source code as context.
+    Handles signals from all scanner types (TDI, PPF, EDAS, MDSplus, wiki).
+    Groups signals by context source for efficient prompt construction:
+    - TDI signals: grouped by function, source code included
+    - PPF signals: grouped by DDA, access pattern noted
+    - EDAS signals: grouped by category, existing description included
+    - Other signals: grouped generically
+
+    Wiki context is injected for any signal whose MDSplus path or accessor
+    has a matching entry in state.wiki_context, reducing LLM hallucination.
+
     Uses Jinja2 prompt template with schema-injected physics domains.
     Uses centralized LLM access via acall_llm_structured() from base.llm.
     """
@@ -1229,7 +1304,7 @@ async def enrich_worker(
 
     from imas_codex.agentic.prompt_loader import render_prompt
     from imas_codex.discovery.base.llm import acall_llm_structured
-    from imas_codex.discovery.data.models import SignalEnrichmentBatch
+    from imas_codex.discovery.signals.models import SignalEnrichmentBatch
     from imas_codex.settings import get_model
 
     # Get model configured for enrichment task
@@ -1266,6 +1341,54 @@ async def enrich_worker(
         tdi_source_cache[func_name] = ""
         return ""
 
+    def _find_wiki_context(signal: dict) -> dict[str, str] | None:
+        """Find wiki context matching a signal's path or accessor."""
+        if not state.wiki_context:
+            return None
+
+        # Try node_path (uppercase for matching)
+        node_path = signal.get("node_path")
+        if node_path:
+            ctx = state.wiki_context.get(node_path.upper())
+            if ctx:
+                return ctx
+
+        # Try accessor pattern - extract path from data() or similar
+        accessor = signal.get("accessor", "")
+        if accessor.startswith("data(") and accessor.endswith(")"):
+            path = accessor[5:-1].strip("'\"")
+            ctx = state.wiki_context.get(path.upper())
+            if ctx:
+                return ctx
+
+        return None
+
+    def _signal_context_key(signal: dict) -> str:
+        """Determine grouping key for a signal based on its discovery source."""
+        # TDI signals: group by function name
+        tdi_func = signal.get("tdi_function")
+        if tdi_func:
+            return f"tdi:{tdi_func}"
+
+        # PPF signals: group by DDA (first part of name like "EFIT/IP")
+        source = signal.get("discovery_source", "")
+        name = signal.get("name", "")
+
+        if source == "ppf_enumeration" and "/" in name:
+            dda = name.split("/")[0]
+            return f"ppf:{dda}"
+
+        if source == "edas_enumeration" and "/" in name:
+            cat = name.split("/")[0]
+            return f"edas:{cat}"
+
+        # MDSplus tree traversal: group by tree
+        tree = signal.get("tree_name")
+        if tree:
+            return f"tree:{tree}"
+
+        return "_ungrouped_"
+
     while not state.should_stop_enriching():
         # Claim batch of signals (sorted by tdi_function)
         # Batch size 50 - signals grouped by function so one source code per group
@@ -1287,26 +1410,25 @@ async def enrich_worker(
         if on_progress:
             on_progress("enriching batch", state.enrich_stats)
 
-        # Group signals by TDI function for efficient source code inclusion
-        func_groups: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+        # Group signals by context source for efficient prompting
+        context_groups: dict[str, list[tuple[int, dict]]] = defaultdict(list)
         for i, signal in enumerate(signals):
-            func_name = signal.get("tdi_function") or "_none_"
-            func_groups[func_name].append((i, signal))
+            key = _signal_context_key(signal)
+            context_groups[key].append((i, signal))
 
-        # Build user prompt with function source code context
+        # Build user prompt with context from each signal group
         user_lines = [
             f"Classify these {len(signals)} signals.\n",
             "Return results in the same order using signal_index (1-based).\n",
         ]
 
-        # For each function group, include source code once then list signals
         signal_index = 0
-        for func_name, indexed_signals in func_groups.items():
-            if func_name != "_none_":
-                # Fetch function source code
+        for group_key, indexed_signals in context_groups.items():
+            # Add group-level context header
+            if group_key.startswith("tdi:"):
+                func_name = group_key[4:]
                 source_code = await get_tdi_source(func_name)
                 if source_code:
-                    # Truncate very long source files (>8000 chars)
                     if len(source_code) > 8000:
                         source_code = source_code[:8000] + "\n... (truncated)"
                     user_lines.append(f"\n## TDI Function: {func_name}")
@@ -1315,6 +1437,33 @@ async def enrich_worker(
                     user_lines.append("```")
                     user_lines.append("\nSignals from this function:")
 
+            elif group_key.startswith("ppf:"):
+                dda = group_key[4:]
+                user_lines.append(f"\n## PPF DDA: {dda}")
+                user_lines.append(
+                    f"JET Processed Pulse File signals from diagnostic data area {dda}."
+                )
+                user_lines.append("Access: ppfdata(pulse, dda, dtype, uid='jetppf')")
+                user_lines.append("\nSignals from this DDA:")
+
+            elif group_key.startswith("edas:"):
+                cat = group_key[5:]
+                user_lines.append(f"\n## EDAS Category: {cat}")
+                user_lines.append(
+                    f"JT-60SA Experiment Data Access System signals from category {cat}."
+                )
+                user_lines.append(
+                    "Access: eddbreadTime(shot, category, data_name, t1, t2)"
+                )
+                user_lines.append("\nSignals from this category:")
+
+            elif group_key.startswith("tree:"):
+                tree = group_key[5:]
+                user_lines.append(f"\n## MDSplus Tree: {tree}")
+                user_lines.append(f"Direct MDSplus tree traversal signals from {tree}.")
+                user_lines.append("\nSignals from this tree:")
+
+            # Add individual signal entries
             for _, signal in indexed_signals:
                 signal_index += 1
                 user_lines.append(f"\n### Signal {signal_index}")
@@ -1326,6 +1475,22 @@ async def enrich_worker(
                     user_lines.append(f"tree_name: {signal['tree_name']}")
                 if signal.get("node_path"):
                     user_lines.append(f"node_path: {signal['node_path']}")
+
+                # Inject existing description from scanner (e.g., EDAS Japanese desc)
+                if signal.get("description"):
+                    user_lines.append(f"existing_description: {signal['description']}")
+
+                # Inject wiki context if available
+                wiki_ctx = _find_wiki_context(signal)
+                if wiki_ctx:
+                    if wiki_ctx.get("description"):
+                        user_lines.append(
+                            f"wiki_description: {wiki_ctx['description']}"
+                        )
+                    if wiki_ctx.get("units"):
+                        user_lines.append(f"wiki_units: {wiki_ctx['units']}")
+                    if wiki_ctx.get("page"):
+                        user_lines.append(f"wiki_source: {wiki_ctx['page']}")
 
         user_prompt = "\n".join(user_lines)
 
@@ -1436,12 +1601,37 @@ async def check_worker(
 ) -> None:
     """Worker that checks signals by testing data access.
 
-    Uses highly batched SSH execution with grouping by (tree, shot) to minimize
-    MDSplus tree open overhead. Uses reference_shot from config for TDI signals.
+    Routes signals to the appropriate check method based on discovery source:
+    - TDI/MDSplus signals: batched SSH via check_signals_batch.py
+    - PPF signals: scanner check() via check_ppf.py
+    - EDAS signals: scanner check() via check_edas.py
+    - Wiki-only signals: skipped (validated by primary scanner)
+
+    Uses reference_shot from config for validation.
     """
+    from collections import defaultdict
+
+    from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.signals.scanners.base import get_scanner
+    from imas_codex.graph.models import FacilitySignal as FacilitySignalModel
+
+    facility_config = get_facility(state.facility)
+    data_sources = facility_config.get("data_sources", {})
+
     # Large batch size - signals are grouped by tree/shot on the remote side
-    # so we can efficiently check many signals with minimal tree opens
     BATCH_SIZE = 100
+
+    def _get_signal_scanner_type(signal: dict) -> str:
+        """Determine which scanner should check this signal."""
+        source = signal.get("discovery_source", "")
+        if source == "ppf_enumeration":
+            return "ppf"
+        if source == "edas_enumeration":
+            return "edas"
+        if source == "wiki_extraction":
+            return "wiki"
+        # Default to MDSplus/TDI batch check
+        return "mdsplus"
 
     while not state.should_stop_checking():
         # Claim batch of signals with reference_shot
@@ -1464,111 +1654,52 @@ async def check_worker(
         if on_progress:
             on_progress(f"checking {len(signals)} signals", state.check_stats)
 
-        # Prepare batch for remote check script
-        # Build map of signal ID -> data_access for CHECKED_WITH relationship
-        batch_input = []
+        # Route signals by scanner type
+        scanner_groups: dict[str, list[dict]] = defaultdict(list)
         signal_data_access: dict[str, str | None] = {}
+
         for signal in signals:
-            # Use reference_shot from config
-            shot = signal.get("check_shot") or state.reference_shot
-            if not shot:
-                logger.warning(
-                    "Signal %s has no check_shot and no reference_shot", signal["id"]
-                )
-                await asyncio.to_thread(release_signal_claim, signal["id"])
-                continue
+            scanner_type = _get_signal_scanner_type(signal)
+            scanner_groups[scanner_type].append(signal)
+            signal_data_access[signal["id"]] = signal.get("data_access")
 
-            signal_id = signal["id"]
-            signal_data_access[signal_id] = signal.get("data_access")
+        checked: list[dict] = []
 
-            # TDI signals use tcv_shot tree
-            tree_name = signal.get("tree_name")
-            if signal.get("tdi_function") and not tree_name:
-                tree_name = "tcv_shot"
-
-            batch_input.append(
-                {
-                    "id": signal_id,
-                    "accessor": signal["accessor"],
-                    "tree_name": tree_name or "tcv_shot",
-                    "shot": shot,
-                }
-            )
-
-        if not batch_input:
-            continue
-
-        # Execute batched check via optimized remote script (single SSH call)
-        # The script groups signals by tree/shot for efficient processing
-        checked = []
-        try:
-            # Use batched script with 30s timeout per tree/shot group
-            output = await asyncio.to_thread(
-                run_python_script,
-                "check_signals_batch.py",
-                {"signals": batch_input, "timeout_per_group": 30},
-                ssh_host=state.ssh_host,
-                timeout=60 + len(batch_input),  # Base + 1s per signal
-            )
-
-            # Parse results - handle empty output gracefully
-            if not output or not output.strip():
-                logger.warning(
-                    "Check script returned empty output for %d signals",
-                    len(batch_input),
-                )
-                for sig in batch_input:
-                    await asyncio.to_thread(release_signal_claim, sig["id"])
+        # --- Scanner-based checks (PPF, EDAS) ---
+        for scanner_type in ("ppf", "edas"):
+            group = scanner_groups.get(scanner_type, [])
+            if not group:
                 continue
 
             try:
-                # Find JSON in output (may have stderr mixed in)
-                json_line = None
-                for line in output.split("\n"):
-                    line = line.strip()
-                    if line.startswith("{"):
-                        json_line = line
-                        break
+                scanner = get_scanner(scanner_type)
+                scanner_config = data_sources.get(scanner_type, {})
+                if not isinstance(scanner_config, dict):
+                    scanner_config = {}
 
-                if not json_line:
-                    logger.warning(
-                        "No JSON found in check output: %s",
-                        output[:200] if output else "(empty)",
+                # Build FacilitySignal model instances for scanner.check()
+                signal_models = [
+                    FacilitySignalModel(
+                        id=s["id"],
+                        facility_id=state.facility,
+                        name=s.get("name"),
+                        accessor=s.get("accessor", ""),
                     )
-                    for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
-                    continue
+                    for s in group
+                ]
 
-                response = json.loads(json_line)
+                results = await scanner.check(
+                    facility=state.facility,
+                    ssh_host=state.ssh_host or state.facility,
+                    signals=signal_models,
+                    config=scanner_config,
+                    reference_shot=state.reference_shot,
+                )
 
-                # Check for script-level error
-                if "error" in response and not response.get("results"):
-                    logger.warning("Check script error: %s", response["error"])
-                    for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
-                    continue
-
-                results = response.get("results", [])
-                stats = response.get("stats", {})
-
-                if stats:
-                    logger.debug(
-                        "Check batch: %d signals in %d groups, %d success, %d failed",
-                        stats.get("total", 0),
-                        stats.get("groups", 0),
-                        stats.get("success", 0),
-                        stats.get("failed", 0),
-                    )
-
-                for result in results:
-                    signal_id = result.get("id")
-                    shot = None
-                    # Find the shot used for this signal from batch_input
-                    for bi in batch_input:
-                        if bi["id"] == signal_id:
-                            shot = bi.get("shot")
-                            break
-                    success = bool(result.get("success"))
+                for r in results:
+                    signal_id = r.get("signal_id")
+                    shot = state.reference_shot
+                    success = bool(r.get("valid", False))
                     entry = {
                         "id": signal_id,
                         "success": success,
@@ -1576,46 +1707,178 @@ async def check_worker(
                         "data_access": signal_data_access.get(signal_id),
                     }
                     if success:
-                        entry["shape"] = result.get("shape")
-                        entry["dtype"] = result.get("dtype")
+                        entry["shape"] = r.get("shape")
+                        entry["dtype"] = r.get("dtype")
                     else:
-                        error_msg = result.get("error", "check failed")
+                        error_msg = r.get("error", "check failed")
                         entry["error"] = error_msg
-                        # Classify common MDSplus error types
                         entry["error_type"] = _classify_check_error(error_msg)
                     checked.append(entry)
 
-            except (json.JSONDecodeError, KeyError) as e:
+            except Exception as e:
                 logger.warning(
-                    "Failed to parse check response (%s): %s",
+                    "%s check failed for %d signals: %s",
+                    scanner_type,
+                    len(group),
                     e,
-                    output[:200] if output else "(empty)",
                 )
-                for sig in batch_input:
+                for sig in group:
                     await asyncio.to_thread(release_signal_claim, sig["id"])
-                continue
 
-        except subprocess.CalledProcessError as e:
-            stderr = e.stderr[:200] if e.stderr else str(e)
-            logger.warning("Check script failed (exit %d): %s", e.returncode, stderr)
-            for sig in batch_input:
-                await asyncio.to_thread(release_signal_claim, sig["id"])
-            continue
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                "Check script timed out for batch of %d signals", len(batch_input)
+        # --- Wiki signals: auto-pass (validated by primary scanner) ---
+        wiki_group = scanner_groups.get("wiki", [])
+        for sig in wiki_group:
+            checked.append(
+                {
+                    "id": sig["id"],
+                    "success": True,
+                    "shot": state.reference_shot,
+                    "data_access": signal_data_access.get(sig["id"]),
+                    "note": "wiki-sourced; validate via primary scanner",
+                }
             )
-            for sig in batch_input:
-                await asyncio.to_thread(release_signal_claim, sig["id"])
-            continue
-        except Exception as e:
-            logger.warning("Failed to run check: %s", e)
-            for sig in batch_input:
-                await asyncio.to_thread(release_signal_claim, sig["id"])
-            continue
 
-        # All results (success + failure) go through mark_signals_checked
-        # which creates CHECKED_WITH relationships with outcome metadata
+        # --- MDSplus/TDI batch check (existing optimized path) ---
+        mdsplus_group = scanner_groups.get("mdsplus", [])
+        if mdsplus_group:
+            batch_input = []
+            for signal in mdsplus_group:
+                shot = signal.get("check_shot") or state.reference_shot
+                if not shot:
+                    logger.warning(
+                        "Signal %s has no check_shot and no reference_shot",
+                        signal["id"],
+                    )
+                    await asyncio.to_thread(release_signal_claim, signal["id"])
+                    continue
+
+                # TDI signals use tcv_shot tree
+                tree_name = signal.get("tree_name")
+                if signal.get("tdi_function") and not tree_name:
+                    tree_name = "tcv_shot"
+
+                batch_input.append(
+                    {
+                        "id": signal["id"],
+                        "accessor": signal["accessor"],
+                        "tree_name": tree_name or "tcv_shot",
+                        "shot": shot,
+                    }
+                )
+
+            if batch_input:
+                try:
+                    output = await asyncio.to_thread(
+                        run_python_script,
+                        "check_signals_batch.py",
+                        {"signals": batch_input, "timeout_per_group": 30},
+                        ssh_host=state.ssh_host,
+                        timeout=60 + len(batch_input),
+                    )
+
+                    if not output or not output.strip():
+                        logger.warning(
+                            "Check script returned empty output for %d signals",
+                            len(batch_input),
+                        )
+                        for sig in batch_input:
+                            await asyncio.to_thread(release_signal_claim, sig["id"])
+                    else:
+                        # Find JSON in output (may have stderr mixed in)
+                        json_line = None
+                        for line in output.split("\n"):
+                            line = line.strip()
+                            if line.startswith("{"):
+                                json_line = line
+                                break
+
+                        if not json_line:
+                            logger.warning(
+                                "No JSON found in check output: %s",
+                                output[:200] if output else "(empty)",
+                            )
+                            for sig in batch_input:
+                                await asyncio.to_thread(release_signal_claim, sig["id"])
+                        else:
+                            response = json.loads(json_line)
+
+                            if "error" in response and not response.get("results"):
+                                logger.warning(
+                                    "Check script error: %s", response["error"]
+                                )
+                                for sig in batch_input:
+                                    await asyncio.to_thread(
+                                        release_signal_claim, sig["id"]
+                                    )
+                            else:
+                                results = response.get("results", [])
+                                stats = response.get("stats", {})
+
+                                if stats:
+                                    logger.debug(
+                                        "Check batch: %d signals in %d groups, "
+                                        "%d success, %d failed",
+                                        stats.get("total", 0),
+                                        stats.get("groups", 0),
+                                        stats.get("success", 0),
+                                        stats.get("failed", 0),
+                                    )
+
+                                for result in results:
+                                    signal_id = result.get("id")
+                                    shot = None
+                                    for bi in batch_input:
+                                        if bi["id"] == signal_id:
+                                            shot = bi.get("shot")
+                                            break
+                                    success = bool(result.get("success"))
+                                    entry = {
+                                        "id": signal_id,
+                                        "success": success,
+                                        "shot": shot,
+                                        "data_access": signal_data_access.get(
+                                            signal_id
+                                        ),
+                                    }
+                                    if success:
+                                        entry["shape"] = result.get("shape")
+                                        entry["dtype"] = result.get("dtype")
+                                    else:
+                                        error_msg = result.get("error", "check failed")
+                                        entry["error"] = error_msg
+                                        entry["error_type"] = _classify_check_error(
+                                            error_msg
+                                        )
+                                    checked.append(entry)
+
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning(
+                        "Failed to parse check response (%s): %s",
+                        e,
+                        str(e)[:200],
+                    )
+                    for sig in batch_input:
+                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                except subprocess.CalledProcessError as e:
+                    stderr = e.stderr[:200] if e.stderr else str(e)
+                    logger.warning(
+                        "Check script failed (exit %d): %s", e.returncode, stderr
+                    )
+                    for sig in batch_input:
+                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "Check script timed out for batch of %d signals",
+                        len(batch_input),
+                    )
+                    for sig in batch_input:
+                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                except Exception as e:
+                    logger.warning("Failed to run check: %s", e)
+                    for sig in batch_input:
+                        await asyncio.to_thread(release_signal_claim, sig["id"])
+
+        # All results go through mark_signals_checked
         if checked:
             await asyncio.to_thread(mark_signals_checked, checked)
             state.check_stats.processed += len(checked)
@@ -1640,6 +1903,7 @@ async def check_worker(
 async def run_parallel_data_discovery(
     facility: str,
     ssh_host: str | None = None,
+    scanner_types: list[str] | None = None,
     tdi_path: str | None = None,
     reference_shot: int | None = None,
     cost_limit: float = 10.0,
@@ -1657,13 +1921,15 @@ async def run_parallel_data_discovery(
 ) -> dict[str, Any]:
     """Run parallel data discovery with async workers.
 
-    Discovers signals from TDI function files, enriches with LLM classification,
-    and validates data access.
+    Dispatches to registered scanner plugins for signal discovery, enriches
+    with LLM classification, and validates data access.
 
     Args:
         facility: Facility ID (e.g., "tcv")
         ssh_host: SSH host for remote discovery
-        tdi_path: Path to TDI function directory
+        scanner_types: Scanner types to run (e.g., ["tdi", "ppf"]).
+            Auto-detected from facility config if not specified.
+        tdi_path: Legacy path to TDI directory (deprecated, use scanner config)
         reference_shot: Reference shot for validation
         cost_limit: Maximum LLM cost in USD
         signal_limit: Maximum signals to process
@@ -1695,11 +1961,21 @@ async def run_parallel_data_discovery(
     with GraphClient() as gc:
         gc.ensure_facility(facility)
 
+    # Auto-detect scanner types if not specified
+    if not scanner_types:
+        from imas_codex.discovery.signals.scanners.base import (
+            get_scanners_for_facility,
+        )
+
+        scanner_instances = get_scanners_for_facility(facility)
+        scanner_types = [s.scanner_type for s in scanner_instances]
+
     # Initialize state
     state = DataDiscoveryState(
         facility=facility,
         ssh_host=ssh_host,
         reference_shot=reference_shot,
+        scanner_types=scanner_types,
         tdi_path=tdi_path,
         cost_limit=cost_limit,
         signal_limit=signal_limit,
@@ -1746,6 +2022,7 @@ async def run_parallel_data_discovery(
             await worker_group.cancel_all()
 
         return {
+            "scanned": state.discover_stats.processed,
             "discovered": state.discover_stats.processed,
             "enriched": 0,
             "checked": 0,
@@ -1833,6 +2110,7 @@ async def run_parallel_data_discovery(
 
     elapsed = time.time() - start_time
     return {
+        "scanned": state.discover_stats.processed,
         "discovered": state.discover_stats.processed,
         "enriched": state.enrich_stats.processed,
         "checked": state.check_stats.processed,

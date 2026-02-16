@@ -22,7 +22,7 @@ class TestGetCheckpointDir:
         # Patch home to use tmp_path
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        from imas_codex.discovery.data.parallel import get_checkpoint_dir
+        from imas_codex.discovery.signals.parallel import get_checkpoint_dir
 
         checkpoint_dir = get_checkpoint_dir()
 
@@ -37,7 +37,7 @@ class TestGetCheckpointDir:
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        from imas_codex.discovery.data.parallel import get_checkpoint_dir
+        from imas_codex.discovery.signals.parallel import get_checkpoint_dir
 
         dir1 = get_checkpoint_dir()
         dir2 = get_checkpoint_dir()

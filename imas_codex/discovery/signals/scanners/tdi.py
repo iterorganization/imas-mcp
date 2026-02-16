@@ -1,6 +1,6 @@
 """TDI function scanner plugin.
 
-Wraps the existing TDI discovery pipeline (imas_codex.discovery.data.tdi)
+Wraps the existing TDI discovery pipeline (imas_codex.discovery.signals.tdi)
 as a DataSourceScanner for the plugin registry.
 
 Config key: data_sources.tdi
@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from imas_codex.discovery.data.scanners.base import (
+from imas_codex.discovery.signals.scanners.base import (
     ScanResult,
     register_scanner,
 )
@@ -52,7 +52,7 @@ class TDIScanner:
         - Physics domain heuristic classification
         - Signal/function node creation
         """
-        from imas_codex.discovery.data.tdi import (
+        from imas_codex.discovery.signals.tdi import (
             create_tdi_data_access,
             discover_tdi_signals,
         )

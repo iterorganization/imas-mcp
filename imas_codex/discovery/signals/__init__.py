@@ -15,7 +15,7 @@ Supported data sources:
 - HDF5: dataset path enumeration (future)
 
 Usage:
-    from imas_codex.discovery.data import (
+    from imas_codex.discovery.signals import (
         run_parallel_data_discovery,
         get_data_discovery_stats,
     )
@@ -27,7 +27,7 @@ Usage:
     )
 """
 
-from imas_codex.discovery.data.parallel import (
+from imas_codex.discovery.signals.parallel import (
     clear_facility_signals,
     get_data_discovery_stats,
     reset_transient_signals,

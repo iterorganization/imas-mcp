@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from imas_codex.discovery.data.scanners.base import (
+from imas_codex.discovery.signals.scanners.base import (
     ScanResult,
     register_scanner,
 )

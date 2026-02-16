@@ -1,7 +1,7 @@
 ---
 name: discovery/signal-enrichment
-description: Batch signal enrichment for physics domain classification with TDI function context
-used_by: imas_codex.discovery.data.parallel.enrich_worker
+description: Batch signal enrichment for physics domain classification with multi-source context
+used_by: imas_codex.discovery.signals.parallel.enrich_worker
 task: enrichment
 dynamic: true
 schema_needs:
@@ -23,10 +23,14 @@ For each signal, provide:
 
 {% include "schema/physics-domains.md" %}
 
-## TDI Function Context
+## Signal Context Sources
 
-Signals may be grouped by TDI function with source code provided. TDI functions are
-high-level data access abstractions that encapsulate:
+Signals come from multiple data access systems across fusion facilities.
+Context is provided per-signal to help classification:
+
+### TDI Functions (TCV)
+
+TDI functions are high-level MDSplus data access abstractions that encapsulate:
 - Shot-conditional logic for selecting data sources
 - Versioned paths that changed over the facility's history
 - Sign convention handling
@@ -37,6 +41,33 @@ When TDI source code is provided:
 - Use MDSplus path patterns in the code to infer physics domain
 - The function name and structure reveal analysis codes (e.g., LIUQE, FBTE)
 
+### PPF (JET Processed Pulse Files)
+
+PPF data is organized as DDA (Diagnostic Data Area) / Dtype.
+- DDA names often indicate the diagnostic or analysis code
+- The DDA name is the primary context for classification
+- Common DDAs: EFIT (equilibrium), HRTS (Thomson), KK3 (ECE), BOLO (bolometry)
+
+### EDAS (JT-60SA Experiment Data Access)
+
+EDAS data is organized by category / data_name.
+- Signals may have pre-existing descriptions (sometimes in Japanese)
+- If `existing_description` is provided, use it to inform classification
+- If the description is in Japanese, translate and classify accordingly
+
+### Wiki Documentation
+
+When `wiki_description` or `wiki_units` are provided:
+- These come from curated facility documentation (high confidence)
+- Use wiki descriptions as the primary source for the signal description
+- Wiki units are authoritative — use them for `units_extracted`
+
+### MDSplus Tree Nodes
+
+Direct tree traversal signals have tree_name and node_path:
+- Path structure reveals diagnostics: `\RESULTS::LIUQE:*` → equilibrium
+- Tree name reveals data organization
+
 ## Classification Guidelines
 
 ### Using TDI Context
@@ -45,6 +76,21 @@ The TDI function source code and accessor reveal signal purpose:
 - `tcv_eq('PSI')` → equilibrium reconstruction (from tcv_eq function)
 - `tcv_get('IP')` → plasma current registry access
 - `tcv_ip()` → dedicated plasma current function
+
+### Using PPF Context
+
+The DDA name is the primary classification signal:
+- `EFIT/IP` → equilibrium, plasma current
+- `HRTS/TE` → Thomson scattering, electron temperature
+- `KK3/TE` → ECE, electron temperature
+- `BOLO/TOPI` → bolometry, total radiated power
+
+### Using EDAS Context
+
+The category and data_name provide classification context:
+- Look at the category for diagnostic grouping
+- Use existing descriptions (including Japanese) for physics domain
+- Data names often follow MDSplus-like conventions
 
 ### Using Path Context
 
@@ -85,23 +131,26 @@ The MDSplus path structure reveals signal purpose:
 **CRITICAL: Do NOT infer or guess units.**
 
 - If `units` field in input is populated → copy to `units_extracted`
-- If `units` field is empty → leave `units_extracted` empty
+- If `wiki_units` is provided → use it for `units_extracted` (authoritative)
+- If both `units` and `wiki_units` are present → prefer `wiki_units`
+- If neither is available → leave `units_extracted` empty
 - NEVER guess units based on signal name (e.g., don't assume plasma current is in Amperes)
 
 Units will be validated separately from authoritative sources.
 
 ## Batch Processing
 
-You will receive multiple signals per request, potentially grouped by TDI function.
+You will receive multiple signals per request, potentially grouped by context source
+(TDI function, PPF DDA, EDAS category, or MDSplus tree).
 Process each independently but maintain consistent classification standards across the batch.
 
 **Return results in the same order as input signals using `signal_index`** (1-based: Signal 1 = signal_index 1).
 
 {{ signal_enrichment_schema_fields }}
 
-## Example
+## Examples
 
-For TDI function and signal:
+### TDI Function Signal (TCV)
 ```
 ## TDI Function: tcv_eq
 ```tdi
@@ -134,6 +183,31 @@ Classification:
   "units_extracted": "",
   "confidence": 0.95,
   "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]
+}
+```
+
+### PPF Signal (JET)
+```
+## PPF DDA: HRTS
+### Signal 2
+accessor: ppfdata(99999, 'HRTS', 'TE')
+name: HRTS/TE
+wiki_description: Electron temperature profile from High Resolution Thomson Scattering
+wiki_units: eV
+```
+
+Classification:
+```json
+{
+  "signal_index": 2,
+  "physics_domain": "particle_measurement_diagnostics",
+  "name": "Electron Temperature (HRTS)",
+  "description": "Electron temperature profile from High Resolution Thomson Scattering diagnostic.",
+  "diagnostic": "hrts",
+  "analysis_code": "",
+  "units_extracted": "eV",
+  "confidence": 0.95,
+  "keywords": ["electron temperature", "thomson scattering", "hrts", "te"]
 }
 ```
 

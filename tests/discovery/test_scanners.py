@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from imas_codex.discovery.data.scanners.base import (
+from imas_codex.discovery.signals.scanners.base import (
     DataSourceScanner,
     ScanResult,
     _registry,
@@ -58,7 +58,7 @@ class TestGetScannersForFacility:
 
     def test_tcv_returns_tdi(self, monkeypatch):
         """TCV facility should dispatch TDI scanner."""
-        from imas_codex.discovery.data.scanners import base
+        from imas_codex.discovery.signals.scanners import base
 
         monkeypatch.setattr(
             base,
@@ -72,7 +72,7 @@ class TestGetScannersForFacility:
         )
 
         # Just test that the registry works with manual registration
-        from imas_codex.discovery.data.scanners.tdi import TDIScanner
+        from imas_codex.discovery.signals.scanners.tdi import TDIScanner
 
         register_scanner(TDIScanner())
         assert get_scanner("tdi").scanner_type == "tdi"
