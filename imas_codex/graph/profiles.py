@@ -405,7 +405,8 @@ def list_profiles() -> list[GraphProfile]:
     """List all available graph profiles (convention + explicit).
 
     Returns profiles for all known facilities plus any explicit profiles
-    defined in pyproject.toml.
+    defined in pyproject.toml.  Uses ``auto_tunnel=False`` to avoid
+    side-effects (tunnel starts) when just listing metadata.
     """
     from imas_codex.settings import _get_section
 
@@ -416,7 +417,7 @@ def list_profiles() -> list[GraphProfile]:
     result = []
     for name in sorted(all_names):
         try:
-            result.append(resolve_graph(name))
+            result.append(resolve_graph(name, auto_tunnel=False))
         except ValueError:
             continue
     return result

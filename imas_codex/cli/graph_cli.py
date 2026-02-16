@@ -683,31 +683,77 @@ def neo4j_stop(data_dir: str | None, graph: str | None) -> None:
 def neo4j_status(graph: str | None) -> None:
     """Check Neo4j server status."""
     from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.remote.executor import is_local_host
+    from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
 
     profile = resolve_graph(graph)
+
+    # Determine connection topology
+    is_remote = profile.host is not None and not is_local_host(profile.host)
+    tunneled_http = profile.http_port + TUNNEL_OFFSET
+    tunneled_bolt = profile.bolt_port + TUNNEL_OFFSET
+
+    # Choose the HTTP port to probe — prefer tunneled for remote graphs
+    if is_remote and is_tunnel_active(tunneled_http):
+        probe_port = tunneled_http
+        connection_method = "tunnel"
+    elif is_tunnel_active(profile.http_port):
+        probe_port = profile.http_port
+        # Port is active — but is it an SSH tunnel or local server?
+        connection_method = "tunnel" if is_remote else "local"
+    else:
+        probe_port = profile.http_port
+        connection_method = "local"
+
     try:
         import urllib.request
 
         with urllib.request.urlopen(
-            f"http://localhost:{profile.http_port}/", timeout=5
+            f"http://localhost:{probe_port}/", timeout=5
         ) as resp:
             resp_data = json.loads(resp.read().decode())
             click.echo(f"Neo4j [{profile.name}] is running")
             click.echo(f"  Version: {resp_data.get('neo4j_version', 'unknown')}")
             click.echo(f"  Edition: {resp_data.get('neo4j_edition', 'unknown')}")
-            click.echo(f"  Bolt: localhost:{profile.bolt_port}")
-            click.echo(f"  HTTP: localhost:{profile.http_port}")
-            click.echo(f"  Data: {profile.data_dir}")
+
+            # Connection info — show actual URI and location
+            if is_remote:
+                click.echo(f"  Location: {profile.location} (remote)")
+                if connection_method == "tunnel":
+                    click.echo(
+                        f"  Bolt: localhost:{tunneled_bolt} → "
+                        f"{profile.host}:{profile.bolt_port}"
+                    )
+                    click.echo(
+                        f"  HTTP: localhost:{tunneled_http} → "
+                        f"{profile.host}:{profile.http_port}"
+                    )
+                else:
+                    click.echo(f"  Bolt: localhost:{profile.bolt_port}")
+                    click.echo(f"  HTTP: localhost:{profile.http_port}")
+            else:
+                click.echo("  Location: local")
+                click.echo(f"  Bolt: localhost:{profile.bolt_port}")
+                click.echo(f"  HTTP: localhost:{profile.http_port}")
+                click.echo(f"  Data: {profile.data_dir}")
+            click.echo(f"  URI: {profile.uri}")
     except Exception:
-        click.echo(
-            f"Neo4j [{profile.name}] is not responding on port {profile.http_port}"
-        )
+        click.echo(f"Neo4j [{profile.name}] is not responding on port {probe_port}")
+        if is_remote:
+            click.echo(f"  Location: {profile.location} (remote)")
+            has_tunnel = is_tunnel_active(tunneled_bolt)
+            if has_tunnel:
+                click.echo(f"  Tunnel: active (localhost:{tunneled_bolt})")
+            else:
+                click.echo("  Tunnel: not active")
+                click.echo(f"  Start tunnel: imas-codex tunnel start {profile.host}")
 
 
 @neo4j.command("profiles")
 def neo4j_profiles() -> None:
     """List available graph profiles and their port assignments."""
     from imas_codex.graph.profiles import get_active_graph_name, list_profiles
+    from imas_codex.remote.executor import is_local_host
 
     active = get_active_graph_name()
     profiles = list_profiles()
@@ -716,9 +762,11 @@ def neo4j_profiles() -> None:
     for p in profiles:
         marker = "→" if p.name == active else " "
         running = "running" if is_neo4j_running(p.http_port) else "stopped"
+        is_remote = p.host is not None and not is_local_host(p.host)
+        location = f"@{p.location}" if is_remote else "local"
         click.echo(
             f"  {marker} {p.name:<10s}  bolt:{p.bolt_port}  http:{p.http_port}  "
-            f"{p.data_dir}  [{running}]"
+            f"{location:<10s}  [{running}]"
         )
 
 
@@ -1815,14 +1863,21 @@ def graph_status(registry: str | None) -> None:
 
     click.echo(f"\nNeo4j: {'running' if is_neo4j_running() else 'stopped'}")
 
-    # Show graph profiles
+    # Show graph profiles with location awareness
     from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.remote.executor import is_local_host
 
     try:
         profile = resolve_graph()
+        is_remote = profile.host is not None and not is_local_host(profile.host)
         click.echo(f"  Active profile: {profile.name}")
+        if is_remote:
+            click.echo(f"  Location: {profile.location} (remote)")
+            click.echo(f"  URI: {profile.uri}")
+        else:
+            click.echo("  Location: local")
+            click.echo(f"  Data: {profile.data_dir}")
         click.echo(f"  Bolt: {profile.bolt_port}, HTTP: {profile.http_port}")
-        click.echo(f"  Data: {profile.data_dir}")
     except Exception:
         pass
 
