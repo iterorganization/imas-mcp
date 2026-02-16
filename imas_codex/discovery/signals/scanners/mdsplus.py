@@ -101,9 +101,27 @@ class MDSplusScanner:
                 timeout=300,  # Trees can be large
             )
 
-            # Parse last non-empty line as JSON (skip any MDSplus warnings)
-            lines = [ln for ln in output.strip().split("\n") if ln.strip()]
-            response = json.loads(lines[-1])
+            # Find JSON in output — MDSplus C libraries may print warnings
+            # to stdout (fd 1) before our JSON. Find the line starting with {.
+            response = None
+            for line in reversed(output.strip().split("\n")):
+                line = line.strip()
+                if line.startswith("{"):
+                    try:
+                        response = json.loads(line)
+                        break
+                    except json.JSONDecodeError:
+                        continue
+
+            if response is None:
+                logger.error(
+                    "MDSplus enumerate for %s: no JSON in output (%d bytes)",
+                    facility,
+                    len(output),
+                )
+                return ScanResult(
+                    stats={"error": "no JSON in remote script output"},
+                )
         except Exception as e:
             logger.error("MDSplus enumerate failed for %s: %s", facility, e)
             return ScanResult(

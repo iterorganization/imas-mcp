@@ -198,9 +198,7 @@ def main() -> None:
     """Read config from stdin, enumerate trees, output JSON."""
     import os
 
-    # Suppress MDSplus warnings
-    sys.stderr = open(os.devnull, "w")  # noqa: SIM115
-
+    # Read stdin BEFORE redirecting fds
     try:
         config = json.load(sys.stdin)
     except json.JSONDecodeError as e:
@@ -223,6 +221,18 @@ def main() -> None:
         )
         sys.exit(0)
 
+    # Suppress MDSplus C library warnings that go to stdout/stderr at fd level.
+    # MDSplus libvaccess.so prints "Error loading libvaccess.so" directly to
+    # file descriptor 1 (stdout), bypassing Python's sys.stdout. This happens
+    # lazily during Tree() constructor calls, not just at import time.
+    # We redirect fd 1 and 2 to /dev/null for the entire tree enumeration,
+    # then restore fd 1 only for our JSON output.
+    saved_stdout_fd = os.dup(1)
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull_fd, 1)
+    os.dup2(devnull_fd, 2)
+    os.close(devnull_fd)
+
     all_signals: list[dict] = []
     tree_stats: dict[str, Any] = {}
 
@@ -230,6 +240,10 @@ def main() -> None:
         signals, stats = enumerate_tree(tree_name, shot, exclude_names, max_nodes)
         all_signals.extend(signals)
         tree_stats[tree_name] = stats
+
+    # Restore stdout fd for JSON output (was suppressed during tree ops)
+    os.dup2(saved_stdout_fd, 1)
+    os.close(saved_stdout_fd)
 
     print(
         json.dumps(
