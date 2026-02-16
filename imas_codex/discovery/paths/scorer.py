@@ -395,7 +395,7 @@ class DirectoryScorer:
                 lines.append(f"Patterns: {', '.join(patterns)}")
 
             # Numeric directory ratio warning (shot folders, run dirs)
-            numeric_ratio = d.get("numeric_dir_ratio", 0)
+            numeric_ratio = d.get("numeric_dir_ratio") or 0
             if numeric_ratio > 0.5:
                 lines.append(
                     f"⚠️ DATA CONTAINER: {numeric_ratio:.0%} of subdirs are "
