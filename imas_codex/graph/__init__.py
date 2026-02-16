@@ -23,10 +23,11 @@ del _ensure_fresh
 from imas_codex.graph.client import GraphClient  # noqa: E402
 from imas_codex.graph.meta import (  # noqa: E402
     add_facility_to_meta,
-    check_graph_identity,
+    compute_facilities_hash,
     ensure_graph_meta,
     gate_ingestion,
     get_graph_meta,
+    init_graph_meta,
     remove_facility_from_meta,
 )
 from imas_codex.graph.models import (  # noqa: E402
@@ -47,8 +48,10 @@ from imas_codex.graph.models import (  # noqa: E402
 )
 from imas_codex.graph.profiles import (  # noqa: E402
     GraphProfile,
+    Neo4jProfile,
     list_profiles,
     resolve_graph,
+    resolve_neo4j,
 )
 from imas_codex.graph.schema import (  # noqa: E402
     GraphSchema,
@@ -64,14 +67,17 @@ __all__ = [
     "GraphClient",
     # Graph identity (meta)
     "add_facility_to_meta",
-    "check_graph_identity",
+    "compute_facilities_hash",
     "ensure_graph_meta",
     "gate_ingestion",
     "get_graph_meta",
+    "init_graph_meta",
     "remove_facility_from_meta",
-    # Graph profiles
+    # Neo4j profiles
     "GraphProfile",
+    "Neo4jProfile",
     "resolve_graph",
+    "resolve_neo4j",
     "list_profiles",
     # Schema-driven utilities
     "GraphSchema",

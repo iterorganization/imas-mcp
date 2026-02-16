@@ -1,4 +1,4 @@
-"""Tests for graph profile resolution.
+"""Tests for Neo4j profile resolution.
 
 These tests verify port conventions, data-dir conventions, and profile
 resolution logic.  They do NOT require a live Neo4j connection.
@@ -10,7 +10,7 @@ import pytest
 from imas_codex.graph.profiles import (
     BOLT_BASE_PORT,
     HTTP_BASE_PORT,
-    GraphProfile,
+    Neo4jProfile,
     _convention_bolt_port,
     _convention_data_dir,
     _convention_http_port,
@@ -21,7 +21,7 @@ from imas_codex.graph.profiles import (
     get_active_graph_name,
     is_port_bound_by_tunnel,
     list_profiles,
-    resolve_graph,
+    resolve_neo4j,
 )
 from imas_codex.settings import _load_pyproject_settings
 
@@ -91,74 +91,73 @@ class TestPortConvention:
 class TestDataDirConvention:
     """Tests for convention-based data directory mapping."""
 
-    def test_codex_uses_plain_neo4j(self):
-        """Default graph (codex) uses neo4j/ without suffix."""
+    def test_codex_uses_neo4j_codex(self):
+        """codex graph uses neo4j-codex/ like all other names."""
         data_dir = _convention_data_dir("codex")
-        assert data_dir.name == "neo4j"
+        assert data_dir.name == "neo4j-codex"
 
-    def test_tcv_uses_suffixed_dir(self):
-        """Non-default names use neo4j-{name}/ suffix."""
+    def test_tcv_uses_neo4j_tcv(self):
         data_dir = _convention_data_dir("tcv")
         assert data_dir.name == "neo4j-tcv"
 
-    def test_iter_uses_suffixed_dir(self):
-        """iter (a location name, not the default) gets neo4j-iter/."""
+    def test_dev_uses_neo4j_dev(self):
+        data_dir = _convention_data_dir("dev")
+        assert data_dir.name == "neo4j-dev"
+
+    def test_iter_uses_neo4j_iter(self):
         data_dir = _convention_data_dir("iter")
         assert data_dir.name == "neo4j-iter"
-
-    def test_jt60sa_uses_suffixed_dir(self):
-        data_dir = _convention_data_dir("jt60sa")
-        assert data_dir.name == "neo4j-jt60sa"
 
 
 # ── Profile resolution ──────────────────────────────────────────────────────
 
 
-class TestResolveGraph:
-    """Tests for resolve_graph() profile resolution."""
+class TestResolveNeo4j:
+    """Tests for resolve_neo4j() profile resolution."""
 
-    def test_resolve_known_facility(self, monkeypatch):
-        """Known facility resolves by convention."""
+    def test_resolve_default(self, monkeypatch):
+        """Default resolution uses 'codex' name and iter location."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+        monkeypatch.delenv("IMAS_CODEX_GRAPH", raising=False)
+        monkeypatch.delenv("IMAS_CODEX_GRAPH_LOCATION", raising=False)
 
-        profile = resolve_graph("tcv")
-        assert isinstance(profile, GraphProfile)
-        assert profile.name == "tcv"
-        assert profile.bolt_port == 7688
-        assert profile.http_port == 7475
-        assert profile.uri == "bolt://localhost:7688"
-        assert profile.data_dir.name == "neo4j-tcv"
-
-    def test_resolve_iter_as_location(self, monkeypatch):
-        """iter is a known location — resolves directly to iter's port slot."""
-        _load_pyproject_settings.cache_clear()
-        monkeypatch.delenv("NEO4J_URI", raising=False)
-        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
-        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
-
-        profile = resolve_graph("iter")
-        assert profile.name == "iter"
+        profile = resolve_neo4j()
+        assert isinstance(profile, Neo4jProfile)
+        assert profile.name == "codex"
+        assert profile.location == "iter"
         assert profile.bolt_port == 7687
         assert profile.http_port == 7474
         assert profile.uri == "bolt://localhost:7687"
+        assert profile.data_dir.name == "neo4j-codex"
 
-    def test_resolve_codex_uses_location(self, monkeypatch):
-        """codex (not a location) resolves via get_graph_location → iter."""
+    def test_resolve_explicit_name(self, monkeypatch):
+        """Explicit name sets data dir but uses default location ports."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
         monkeypatch.delenv("IMAS_CODEX_GRAPH_LOCATION", raising=False)
 
-        profile = resolve_graph("codex")
-        assert profile.name == "codex"
-        # codex is not a location, so ports come from default location (iter)
+        profile = resolve_neo4j("dev")
+        assert profile.name == "dev"
+        assert profile.data_dir.name == "neo4j-dev"
+        # Ports come from default location (iter)
         assert profile.bolt_port == 7687
-        assert profile.http_port == 7474
-        assert profile.data_dir.name == "neo4j"  # codex gets the plain dir
+
+    def test_env_graph_name_override(self, monkeypatch):
+        """IMAS_CODEX_GRAPH env var sets the graph name."""
+        _load_pyproject_settings.cache_clear()
+        monkeypatch.setenv("IMAS_CODEX_GRAPH", "staging")
+        monkeypatch.delenv("NEO4J_URI", raising=False)
+        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
+        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+
+        profile = resolve_neo4j()
+        assert profile.name == "staging"
+        assert profile.data_dir.name == "neo4j-staging"
 
     def test_env_uri_overrides_convention(self, monkeypatch):
         """NEO4J_URI env var overrides convention URI."""
@@ -167,10 +166,10 @@ class TestResolveGraph:
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
 
-        profile = resolve_graph("tcv")
+        profile = resolve_neo4j("codex")
         assert profile.uri == "bolt://remote:9999"
         # Convention ports still available for service management
-        assert profile.bolt_port == 7688
+        assert profile.bolt_port == 7687
 
     def test_env_password_overrides_convention(self, monkeypatch):
         """NEO4J_PASSWORD env var overrides convention password."""
@@ -179,7 +178,7 @@ class TestResolveGraph:
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
 
-        profile = resolve_graph("iter")
+        profile = resolve_neo4j()
         assert profile.password == "super-secret"
 
     def test_shared_credentials(self, monkeypatch):
@@ -189,47 +188,28 @@ class TestResolveGraph:
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
 
-        iter_p = resolve_graph("iter")
-        tcv_p = resolve_graph("tcv")
-        assert iter_p.username == tcv_p.username
-        assert iter_p.password == tcv_p.password
+        p1 = resolve_neo4j("codex")
+        p2 = resolve_neo4j("dev")
+        assert p1.username == p2.username
+        assert p1.password == p2.password
 
 
 # ── Host field ──────────────────────────────────────────────────────────────
 
 
 class TestHostField:
-    """Tests for the host field on GraphProfile."""
+    """Tests for the host field on Neo4jProfile."""
 
-    def test_known_facility_has_host(self, monkeypatch):
-        """Known facilities in graph.hosts config get host set."""
+    def test_default_location_has_host(self, monkeypatch):
+        """Default location (iter) sets host."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
+        monkeypatch.delenv("IMAS_CODEX_GRAPH_LOCATION", raising=False)
 
-        profile = resolve_graph("iter")
+        profile = resolve_neo4j()
         assert profile.host == "iter"
-
-    def test_tcv_has_host(self, monkeypatch):
-        """tcv facility has host set."""
-        _load_pyproject_settings.cache_clear()
-        monkeypatch.delenv("NEO4J_URI", raising=False)
-        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
-        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
-
-        profile = resolve_graph("tcv")
-        assert profile.host == "tcv"
-
-    def test_location_in_list_has_implicit_host(self, monkeypatch):
-        """Every location in the list gets an implicit host = name."""
-        _load_pyproject_settings.cache_clear()
-        monkeypatch.delenv("NEO4J_URI", raising=False)
-        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
-        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
-
-        profile = resolve_graph("kstar")
-        assert profile.host == "kstar"
 
     def test_host_defaults_match_known_locations(self):
         """All hosts have a corresponding location offset."""
@@ -261,7 +241,7 @@ class TestGetActiveGraphName:
     """Tests for get_active_graph_name()."""
 
     def test_default_is_codex(self, monkeypatch):
-        """Default active graph is codex (from pyproject.toml)."""
+        """Default active graph is codex (hardcoded default)."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("IMAS_CODEX_GRAPH", raising=False)
         name = get_active_graph_name()
@@ -275,16 +255,17 @@ class TestGetActiveGraphName:
         assert name == "tcv"
 
     def test_resolve_none_uses_active(self, monkeypatch):
-        """resolve_graph(None) resolves via get_active_graph_name."""
+        """resolve_neo4j(None) resolves via get_active_graph_name."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.setenv("IMAS_CODEX_GRAPH", "jet")
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
 
-        profile = resolve_graph()
+        profile = resolve_neo4j()
         assert profile.name == "jet"
-        assert profile.bolt_port == 7690
+        # Uses default location ports (iter)
+        assert profile.bolt_port == 7687
 
 
 # ── List profiles ───────────────────────────────────────────────────────────
@@ -293,24 +274,43 @@ class TestGetActiveGraphName:
 class TestListProfiles:
     """Tests for list_profiles()."""
 
-    def test_returns_all_known_locations(self, monkeypatch):
-        """list_profiles returns at least all known locations."""
+    def test_returns_profiles_per_location(self, monkeypatch):
+        """list_profiles returns one profile per location."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
 
         profiles = list_profiles()
-        names = {p.name for p in profiles}
-        assert names >= set(_get_all_offsets().keys())
+        locations = {p.location for p in profiles}
+        assert locations >= set(_get_all_offsets().keys())
 
-    def test_profiles_sorted_by_name(self, monkeypatch):
-        """list_profiles returns sorted by name."""
+    def test_profiles_sorted_by_location(self, monkeypatch):
+        """list_profiles returns sorted by location."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
 
         profiles = list_profiles()
-        names = [p.name for p in profiles]
-        assert names == sorted(names)
+        locations = [p.location for p in profiles]
+        assert locations == sorted(locations)
+
+
+# ── Backward compat ─────────────────────────────────────────────────────────
+
+
+class TestBackwardCompat:
+    """Tests for backward-compatible aliases."""
+
+    def test_graph_profile_alias(self):
+        """GraphProfile is an alias for Neo4jProfile."""
+        from imas_codex.graph.profiles import GraphProfile
+
+        assert GraphProfile is Neo4jProfile
+
+    def test_resolve_graph_alias(self):
+        """resolve_graph is an alias for resolve_neo4j."""
+        from imas_codex.graph.profiles import resolve_graph
+
+        assert resolve_graph is resolve_neo4j

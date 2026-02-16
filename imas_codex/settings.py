@@ -189,14 +189,14 @@ def get_embed_server_port() -> int:
 
 
 def get_graph_profile():  # type: ignore[return]
-    """Get the fully resolved :class:`GraphProfile` for the active graph.
+    """Get the fully resolved :class:`Neo4jProfile` for the active graph.
 
     This is the canonical entry point — all other ``get_graph_*()``
     accessors delegate here.
     """
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
 
-    return resolve_graph()
+    return resolve_neo4j()
 
 
 def get_graph_uri() -> str:

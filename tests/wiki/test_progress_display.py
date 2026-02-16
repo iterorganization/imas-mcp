@@ -19,7 +19,6 @@ from imas_codex.discovery.wiki.progress import (
     WikiProgressDisplay,
 )
 
-
 # =============================================================================
 # ProgressState properties
 # =============================================================================

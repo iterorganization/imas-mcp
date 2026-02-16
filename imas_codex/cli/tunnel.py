@@ -63,9 +63,9 @@ def _resolve_host(host: str | None) -> str:
         return host
 
     try:
-        from imas_codex.graph.profiles import resolve_graph
+        from imas_codex.graph.profiles import resolve_neo4j
 
-        profile = resolve_graph(auto_tunnel=False)
+        profile = resolve_neo4j(auto_tunnel=False)
         if profile.host:
             return profile.host
     except Exception:
@@ -93,9 +93,9 @@ def _get_tunnel_ports(
 
     if neo4j or all_services:
         try:
-            from imas_codex.graph.profiles import resolve_graph
+            from imas_codex.graph.profiles import resolve_neo4j
 
-            profile = resolve_graph(auto_tunnel=False)
+            profile = resolve_neo4j(auto_tunnel=False)
             ports.append(
                 (
                     profile.bolt_port,
@@ -372,9 +372,9 @@ def tunnel_status() -> None:
     # so that labels match (graph name "codex", not location "iter").
     known_ports: dict[int, str] = {}
     try:
-        from imas_codex.graph.profiles import resolve_graph
+        from imas_codex.graph.profiles import resolve_neo4j
 
-        profile = resolve_graph(auto_tunnel=False)
+        profile = resolve_neo4j(auto_tunnel=False)
         name = profile.name
         known_ports[profile.bolt_port] = f"neo4j-bolt ({name})"
         known_ports[profile.bolt_port + TUNNEL_OFFSET] = (

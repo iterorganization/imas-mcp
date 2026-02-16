@@ -12,7 +12,6 @@ import pytest
 
 from tests.wiki.conftest import CONFLUENCE_HTML, MEDIAWIKI_HTML, TWIKI_HTML
 
-
 # =============================================================================
 # _extract_image_refs
 # =============================================================================

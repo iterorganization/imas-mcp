@@ -109,9 +109,9 @@ def _build_env_exports(login_hostname: str) -> str:
     reach the login node's embedding server and Neo4j instance.
     Uses the active graph profile for port and password resolution.
     """
-    from imas_codex.graph.profiles import resolve_graph
+    from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_graph()
+    profile = resolve_neo4j()
     return (
         f'export IMAS_CODEX_EMBED_REMOTE_URL="http://{login_hostname}:18765"\n'
         f'export NEO4J_URI="bolt://{login_hostname}:{profile.bolt_port}"\n'

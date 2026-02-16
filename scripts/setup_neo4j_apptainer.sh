@@ -63,16 +63,17 @@ fi
 echo "Creating neo4j.conf..."
 cat > "${NEO4J_DATA_DIR}/conf/neo4j.conf" << 'EOF'
 # Neo4j configuration for IMAS Codex
-# Memory settings optimized for 4GB systemd limit
+# Memory settings sized for shared HPC login node
+# heap (4g) + pagecache (4g) + JVM overhead fits within 12G systemd limit
 
 # Initial heap size
-server.memory.heap.initial_size=512m
+server.memory.heap.initial_size=1g
 
 # Maximum heap size
-server.memory.heap.max_size=2g
+server.memory.heap.max_size=4g
 
-# Page cache size
-server.memory.pagecache.size=1g
+# Page cache size - covers full graph data in memory
+server.memory.pagecache.size=4g
 
 # Network settings
 server.default_listen_address=0.0.0.0
@@ -128,9 +129,9 @@ ExecStart=/usr/bin/apptainer exec \\
     neo4j console
 Restart=on-failure
 RestartSec=5
-CPUQuota=200%
-MemoryMax=4G
-MemoryHigh=3G
+CPUQuota=400%
+MemoryMax=12G
+MemoryHigh=10G
 Nice=10
 
 [Install]"

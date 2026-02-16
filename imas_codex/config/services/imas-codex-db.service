@@ -50,10 +50,11 @@ TimeoutStopSec=60
 Restart=on-failure
 RestartSec=30
 
-# Resource limits - adjust based on your machine
-CPUQuota=200%
-MemoryMax=4G
-MemoryHigh=3G
+# Resource limits - sized for shared HPC login node (64 GiB cgroup)
+# Neo4j needs heap + pagecache + JVM overhead; allow ~12G total
+CPUQuota=400%
+MemoryMax=12G
+MemoryHigh=10G
 Nice=10
 
 [Install]

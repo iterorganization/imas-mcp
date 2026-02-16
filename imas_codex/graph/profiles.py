@@ -1,13 +1,16 @@
-"""Named graph profiles for multi-instance Neo4j management.
+"""Neo4j connection profiles for server access and graph switching.
 
-Two orthogonal concerns:
+Two orthogonal concerns, each with its own authority:
 
-- **name** — what data lives in the graph (``"codex"``, ``"tcv-only"``,
-  ``"sandbox"``).  The default graph ``"codex"`` contains all facilities
-  plus the IMAS data dictionary.
-- **location** — where Neo4j physically runs.  Locations correspond to
-  SSH aliases (``"iter"``, ``"tcv"``) or ``"local"`` for a machine-local
-  instance.  Each location has a fixed port slot.
+- **location** (pyproject.toml) — where Neo4j physically runs.  Locations
+  correspond to SSH aliases (``"iter"``, ``"tcv"``) or ``"local"``.
+  Each location has a fixed port slot.  This is deploy-time config.
+
+- **name** (CLI / env) — which graph data directory to use.  Each named
+  graph lives in its own Neo4j data dir (``neo4j-codex/``, ``neo4j-dev/``).
+  Switching graphs means stopping Neo4j and starting with a different
+  data dir.  The graph's identity (name + facilities) is stored in a
+  ``(:GraphMeta)`` node inside the graph itself.
 
 Port convention (both bolt and HTTP offset together)::
 
@@ -23,12 +26,11 @@ a +10 000 offset to prevent port clashes::
     Direct (on the host):    bolt = 7687 + offset
     Tunneled (remote):       bolt = 17687 + offset
 
-Configuration lives in ``[tool.imas-codex.graph]`` in pyproject.toml::
+Server configuration lives in ``[tool.imas-codex.graph]`` in pyproject.toml::
 
-    name = "codex"        # graph identity  (override: IMAS_CODEX_GRAPH)
-    location = "iter"     # where it runs   (override: IMAS_CODEX_GRAPH_LOCATION)
-
-Custom profiles override convention via ``[tool.imas-codex.graph.profiles.*]``.
+    location = "iter"     # where Neo4j runs  (override: IMAS_CODEX_GRAPH_LOCATION)
+    username = "neo4j"
+    password = "imas-codex"
 """
 
 from __future__ import annotations
@@ -91,15 +93,20 @@ def _get_all_hosts() -> dict[str, str]:
     return hosts
 
 
-# ─── GraphProfile ───────────────────────────────────────────────────────────
+# ─── Neo4jProfile ───────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
-class GraphProfile:
-    """Resolved connection parameters for a named graph instance.
+class Neo4jProfile:
+    """Resolved connection parameters for a Neo4j instance.
+
+    Separates two concerns:
+    - **Server access** (location, host, uri, ports) — from pyproject.toml
+    - **Data identity** (name, data_dir) — from CLI / env var
 
     Attributes:
-        name:      Graph identity (e.g. ``"codex"``, ``"tcv-only"``).
+        name:      Graph data identity (e.g. ``"codex"``, ``"dev"``).
+                   Determines the data directory.
         location:  Where Neo4j physically runs — location name from
                    the ``locations`` list, or ``"local"``.
         host:      SSH alias for the location (often same as location).
@@ -108,10 +115,11 @@ class GraphProfile:
         password:  Neo4j password.
         bolt_port: Bolt protocol port *at the host*.
         http_port: HTTP API port (health checks, browser).
-        data_dir:  On-disk data directory for this instance.
+        data_dir:  On-disk data directory (``neo4j-{name}/``).
     """
 
     name: str
+    location: str
     host: str | None
     uri: str
     username: str
@@ -120,10 +128,9 @@ class GraphProfile:
     http_port: int
     data_dir: Path
 
-    @property
-    def location(self) -> str:
-        """Where Neo4j runs — SSH alias or ``"local"``."""
-        return self.host or "local"
+
+# Backward-compat alias (will be removed)
+GraphProfile = Neo4jProfile
 
 
 # ─── Tunnel conflict detection ──────────────────────────────────────────────
@@ -198,16 +205,14 @@ def get_active_graph_name() -> str:
 
     Priority:
         1. ``IMAS_CODEX_GRAPH`` environment variable
-        2. ``[tool.imas-codex.graph].name`` in pyproject.toml
-        3. ``DEFAULT_NAME`` (``"codex"``)
+        2. ``DEFAULT_NAME`` (``"codex"``)
+
+    The graph name is NOT stored in pyproject.toml — it is a runtime
+    concern controlled via CLI flags or environment variables.
     """
     if env := os.getenv("IMAS_CODEX_GRAPH"):
         return env
-
-    from imas_codex.settings import _get_section
-
-    graph_section = _get_section("graph")
-    return graph_section.get("name") or DEFAULT_NAME
+    return DEFAULT_NAME
 
 
 def _resolve_uri(host: str | None, bolt_port: int) -> str:
@@ -272,32 +277,25 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
     return f"bolt://localhost:{bolt_port}"
 
 
-def resolve_graph(
+def resolve_neo4j(
     name: str | None = None,
     *,
     auto_tunnel: bool = True,
-) -> GraphProfile:
-    """Resolve a graph profile by name.
+) -> Neo4jProfile:
+    """Resolve Neo4j connection profile.
 
-    Resolution order for connection parameters:
-        1. ``NEO4J_URI`` / ``NEO4J_USERNAME`` / ``NEO4J_PASSWORD`` env vars
-           (escape-hatch overrides, applied last)
-        2. Explicit ``[tool.imas-codex.graph.profiles.<name>]`` in pyproject.toml
-        3. If name matches a known location → ports from that location slot
-        4. Otherwise → ports from :func:`get_graph_location`
-
-    **Name vs location**: The *name* is the graph identity (what data is
-    inside — ``"codex"`` is all facilities + IMAS).  The *location*
-    determines where Neo4j runs and therefore which ports to use.
+    Server access (location → ports, host, URI) comes from pyproject.toml.
+    Data identity (name → data directory) comes from the CLI or env var.
 
     Args:
-        name: Graph name.  ``None`` resolves via :func:`get_active_graph_name`.
+        name: Graph name for data directory selection.  ``None`` resolves
+            via :func:`get_active_graph_name` (env or ``"codex"``).
         auto_tunnel: When True (default), automatically start an SSH tunnel
             if the location is remote.  Set to False when only port/host
             metadata is needed (e.g. tunnel CLI) to avoid side-effects.
 
     Returns:
-        Fully resolved :class:`GraphProfile`.
+        Fully resolved :class:`Neo4jProfile`.
     """
     if name is None:
         name = get_active_graph_name()
@@ -306,51 +304,14 @@ def resolve_graph(
 
     graph_section = _get_section("graph")
 
-    # Shared defaults (top-level [graph] section)
-    shared_username = graph_section.get("username", DEFAULT_USERNAME)
-    shared_password = graph_section.get("password", DEFAULT_PASSWORD)
+    # Server access — all from pyproject.toml [graph] section
+    username = graph_section.get("username", DEFAULT_USERNAME)
+    password = graph_section.get("password", DEFAULT_PASSWORD)
+    location = get_graph_location()
 
-    # Check for explicit profile override
-    profiles = graph_section.get("profiles", {})
-    explicit = profiles.get(name, {})
-
-    if explicit:
-        # Explicit profile — uses its own location/port settings
-        location = explicit.get("location", get_graph_location())
-        bolt_port = explicit.get("bolt-port", _convention_bolt_port(location))
-        http_port = explicit.get("http-port", _convention_http_port(location))
-        host = _get_all_hosts().get(location)
-        username = explicit.get("username", shared_username)
-        password = explicit.get("password", shared_password)
-        data_dir = Path(explicit.get("data-dir", str(_convention_data_dir(name))))
-    elif name in _get_all_offsets():
-        # Name matches a known location — use that location's port slot
-        location = name
-        bolt_port = _convention_bolt_port(location)
-        http_port = _convention_http_port(location)
-        host = _get_all_hosts().get(location)
-        username = shared_username
-        password = shared_password
-        data_dir = _convention_data_dir(name)
-    else:
-        # Name is not a location (e.g. "codex") — resolve via location config
-        location = get_graph_location()
-        bolt_port = _convention_bolt_port(location)
-        http_port = _convention_http_port(location)
-        host = _get_all_hosts().get(location)
-        username = shared_username
-        password = shared_password
-        data_dir = _convention_data_dir(name)
-
-    # Location override: IMAS_CODEX_GRAPH_LOCATION changes where we connect
-    if loc_override := os.getenv("IMAS_CODEX_GRAPH_LOCATION"):
-        if loc_override == "local":
-            host = None
-        else:
-            location = loc_override
-            host = _get_all_hosts().get(loc_override, loc_override)
-        bolt_port = _convention_bolt_port(location)
-        http_port = _convention_http_port(location)
+    bolt_port = _convention_bolt_port(location)
+    http_port = _convention_http_port(location)
+    host = _get_all_hosts().get(location)
 
     # Location-aware URI resolution (with optional auto-tunneling)
     if auto_tunnel:
@@ -366,16 +327,21 @@ def resolve_graph(
     if env_pass := os.getenv("NEO4J_PASSWORD"):
         password = env_pass
 
-    return GraphProfile(
+    return Neo4jProfile(
         name=name,
+        location=location,
         host=host,
         uri=uri,
         username=username,
         password=password,
         bolt_port=bolt_port,
         http_port=http_port,
-        data_dir=data_dir,
+        data_dir=_convention_data_dir(name),
     )
+
+
+# Backward-compat alias
+resolve_graph = resolve_neo4j
 
 
 # ─── Convention helpers ─────────────────────────────────────────────────────
@@ -394,30 +360,58 @@ def _convention_http_port(location: str) -> int:
 def _convention_data_dir(name: str) -> Path:
     """Data directory for a named graph instance.
 
-    The default graph (``"codex"``) uses ``neo4j/``, others use ``neo4j-{name}/``.
+    Every graph uses ``neo4j-{name}/`` — e.g. ``neo4j-codex/``, ``neo4j-dev/``.
     """
-    if name == DEFAULT_NAME:
-        return DATA_BASE_DIR / "neo4j"
     return DATA_BASE_DIR / f"neo4j-{name}"
 
 
-def list_profiles() -> list[GraphProfile]:
-    """List all available graph profiles (convention + explicit).
+def list_graphs() -> list[str]:
+    """List graph names that have data directories on disk.
 
-    Returns profiles for all known facilities plus any explicit profiles
-    defined in pyproject.toml.  Uses ``auto_tunnel=False`` to avoid
-    side-effects (tunnel starts) when just listing metadata.
+    Scans ``~/.local/share/imas-codex/`` for ``neo4j-*`` directories.
+
+    Returns:
+        Sorted list of graph names (e.g. ``["codex", "dev"]``).
+    """
+    prefix = "neo4j-"
+    graphs = []
+    if DATA_BASE_DIR.exists():
+        for d in sorted(DATA_BASE_DIR.iterdir()):
+            if d.is_dir() and d.name.startswith(prefix):
+                graphs.append(d.name[len(prefix) :])
+    return graphs
+
+
+def list_profiles() -> list[Neo4jProfile]:
+    """List Neo4j profiles for all known locations.
+
+    Returns one profile per location defined in pyproject.toml.
+    Constructs profiles directly (no auto-tunneling, no side-effects).
     """
     from imas_codex.settings import _get_section
 
     graph_section = _get_section("graph")
-    explicit_names = set(graph_section.get("profiles", {}).keys())
-    all_names = set(_get_all_offsets().keys()) | explicit_names
+    username = graph_section.get("username", DEFAULT_USERNAME)
+    password = graph_section.get("password", DEFAULT_PASSWORD)
+    hosts = _get_all_hosts()
+    name = get_active_graph_name()
 
     result = []
-    for name in sorted(all_names):
-        try:
-            result.append(resolve_graph(name, auto_tunnel=False))
-        except ValueError:
-            continue
+    for location in sorted(_get_all_offsets().keys()):
+        bolt_port = _convention_bolt_port(location)
+        http_port = _convention_http_port(location)
+        host = hosts.get(location)
+        result.append(
+            Neo4jProfile(
+                name=name,
+                location=location,
+                host=host,
+                uri=f"bolt://localhost:{bolt_port}",
+                username=username,
+                password=password,
+                bolt_port=bolt_port,
+                http_port=http_port,
+                data_dir=_convention_data_dir(name),
+            )
+        )
     return result

@@ -200,9 +200,9 @@ imas-dd-version = ""
 [tool.imas-codex]
 
 [tool.imas-codex.graph]
-# Graph name = logical identity (what data). Override: IMAS_CODEX_GRAPH=tcv
-# Location  = where Neo4j runs (SSH alias). Override: IMAS_CODEX_GRAPH_LOCATION=local
-name = "codex"
+# Location = where Neo4j runs (SSH alias). Override: IMAS_CODEX_GRAPH_LOCATION=local
+# Graph name (data identity) lives in the (:GraphMeta) node, set via: graph init
+# Override active graph name: IMAS_CODEX_GRAPH=dev
 location = "iter"
 username = "neo4j"
 password = "imas-codex"

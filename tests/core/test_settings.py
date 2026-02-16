@@ -284,7 +284,7 @@ class TestGraphSettings:
         assert name == "codex"
 
     def test_get_graph_name_env_override(self, monkeypatch):
-        """IMAS_CODEX_GRAPH env var switches the active profile."""
+        """IMAS_CODEX_GRAPH env var switches the active graph name."""
         settings._load_pyproject_settings.cache_clear()
         monkeypatch.setenv("IMAS_CODEX_GRAPH", "tcv")
         monkeypatch.delenv("NEO4J_URI", raising=False)
@@ -292,12 +292,9 @@ class TestGraphSettings:
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
         name = settings.get_graph_name()
         assert name == "tcv"
-        # Bolt port should reflect the tcv location offset (7688)
-        profile = settings.get_graph_profile()
-        assert profile.bolt_port == 7688
 
     def test_get_graph_profile_returns_profile(self, monkeypatch):
-        """get_graph_profile returns a GraphProfile object."""
+        """get_graph_profile returns a Neo4jProfile object."""
         settings._load_pyproject_settings.cache_clear()
         monkeypatch.delenv("IMAS_CODEX_GRAPH", raising=False)
         monkeypatch.delenv("NEO4J_URI", raising=False)

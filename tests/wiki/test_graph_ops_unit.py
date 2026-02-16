@@ -22,7 +22,6 @@ from imas_codex.discovery.wiki.graph_ops import (
     retry_on_deadlock,
 )
 
-
 # =============================================================================
 # Type classification constants
 # =============================================================================
