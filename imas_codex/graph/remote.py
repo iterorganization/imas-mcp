@@ -769,7 +769,224 @@ echo "ARCHIVE_PATH=$DEST"
     raise RuntimeError(f"Could not find archive path in output:\n{output}")
 
 
+# ── Streaming script builders ───────────────────────────────────────────────
+#
+# These return the *script text* with embedded ``PROGRESS:`` markers.
+# The CLI layer runs them via ``remote_operation_streaming()`` to
+# display real-time phase updates.
+
+
+def build_remote_fetch_script(
+    artifact_ref: str,
+    output_name: str,
+    *,
+    token: str | None = None,
+) -> str:
+    """Build a bash script for streaming remote ORAS fetch.
+
+    Emits ``PROGRESS:`` markers that
+    :func:`~imas_codex.cli.graph_progress.remote_operation_streaming`
+    can map to Rich spinner updates.
+    """
+    login_cmd = ""
+    if token:
+        login_cmd = f'echo "{token}" | oras login ghcr.io -u token --password-stdin'
+
+    return f"""\
+set -e
+EXPORTS="{REMOTE_EXPORTS}"
+mkdir -p "$EXPORTS"
+chmod 700 "$EXPORTS"
+
+echo "PROGRESS:LOGIN"
+{login_cmd}
+
+echo "PROGRESS:PULLING"
+TMPDIR=$(mktemp -d)
+oras pull "{artifact_ref}" -o "$TMPDIR" 2>&1
+
+echo "PROGRESS:MOVING"
+ARCHIVE=$(find "$TMPDIR" -name '*.tar.gz' | head -1)
+if [ -z "$ARCHIVE" ]; then
+    rm -rf "$TMPDIR"
+    echo "ERROR: No archive found in artifact" >&2
+    exit 1
+fi
+
+DEST="$EXPORTS/{output_name}"
+mv "$ARCHIVE" "$DEST"
+rm -rf "$TMPDIR"
+SIZE=$(du -h "$DEST" | cut -f1)
+echo "PROGRESS:DONE"
+echo "SIZE=$SIZE"
+echo "ARCHIVE_PATH=$DEST"
+"""
+
+
+def build_remote_load_script(
+    archive_remote_path: str,
+    graph_name: str,
+    password: str,
+) -> str:
+    """Build a bash script for streaming remote graph load.
+
+    Emits ``PROGRESS:`` markers for phase tracking.
+    """
+    return f"""\
+set -e
+ARCHIVE="{archive_remote_path}"
+DATA_DIR="{REMOTE_LINK}"
+SERVICE_OLD="imas-codex-neo4j"
+SERVICE_NEW="imas-codex-neo4j-{graph_name}"
+IMAGE="$HOME/apptainer/neo4j_2025.11-community.sif"
+
+echo "PROGRESS:STOPPING"
+systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
+    systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
+for i in $(seq 1 18); do
+    state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
+            systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+    [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
+    sleep 5
+done
+
+echo "PROGRESS:EXTRACTING"
+TMPDIR=$(mktemp -d)
+tar xzf "$ARCHIVE" -C "$TMPDIR"
+ARCHIVE_DIR=$(ls "$TMPDIR" | head -1)
+
+DUMP="$TMPDIR/$ARCHIVE_DIR/graph.dump"
+if [ -f "$DUMP" ]; then
+    echo "PROGRESS:LOADING_DUMP"
+    mkdir -p "$DATA_DIR/dumps"
+    cp "$DUMP" "$DATA_DIR/dumps/neo4j.dump"
+
+    apptainer exec \
+        --bind "$DATA_DIR/data:/data" \
+        --bind "$DATA_DIR/dumps:/dumps" \
+        --writable-tmpfs \
+        "$IMAGE" \
+        neo4j-admin database load neo4j \
+            --from-path=/dumps \
+            --overwrite-destination=true
+
+    echo "DUMP_LOADED"
+else
+    echo "NO_DUMP_IN_ARCHIVE" >&2
+    exit 1
+fi
+
+echo "PROGRESS:PASSWORD"
+rm -f "$DATA_DIR/data/dbms/auth.ini"
+apptainer exec \
+    --bind "$DATA_DIR/data:/data" \
+    --writable-tmpfs \
+    "$IMAGE" \
+    neo4j-admin dbms set-initial-password "{password}" 2>/dev/null || true
+
+echo "PROGRESS:STARTING"
+systemctl --user start "$SERVICE_NEW" 2>/dev/null || \
+    systemctl --user start "$SERVICE_OLD" 2>/dev/null || true
+
+rm -rf "$TMPDIR"
+echo "PROGRESS:COMPLETE"
+echo "LOAD_COMPLETE"
+"""
+
+
+def build_remote_export_script(graph_name: str) -> str:
+    """Build a bash script for streaming remote graph export.
+
+    Emits ``PROGRESS:`` markers for phase tracking.
+    """
+    return f"""\
+set -e
+DATA_DIR="{REMOTE_LINK}"
+EXPORTS="{REMOTE_EXPORTS}"
+SERVICE_OLD="imas-codex-neo4j"
+SERVICE_NEW="imas-codex-neo4j-{graph_name}"
+IMAGE="$HOME/apptainer/neo4j_2025.11-community.sif"
+mkdir -p "$EXPORTS" && chmod 700 "$EXPORTS"
+ARCHIVE="$EXPORTS/imas-codex-graph-export-$$.tar.gz"
+
+stop_neo4j() {{
+    systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
+        systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
+    for i in $(seq 1 18); do
+        state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
+                systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+        [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
+        sleep 5
+    done
+}}
+
+start_neo4j() {{
+    systemctl --user start "$SERVICE_NEW" 2>/dev/null || \
+        systemctl --user start "$SERVICE_OLD" 2>/dev/null || true
+}}
+
+wait_neo4j_ready() {{
+    for i in $(seq 1 12); do
+        if curl -sf http://localhost:7474 >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "Warning: Neo4j did not become ready within 60s" >&2
+}}
+
+do_dump() {{
+    mkdir -p "$DATA_DIR/dumps"
+    apptainer exec \
+        --bind "$DATA_DIR/data:/data" \
+        --bind "$DATA_DIR/dumps:/dumps" \
+        --writable-tmpfs \
+        "$IMAGE" \
+        neo4j-admin database dump neo4j \
+            --to-path=/dumps \
+            --overwrite-destination=true
+}}
+
+echo "PROGRESS:STOPPING"
+stop_neo4j
+
+echo "PROGRESS:DUMPING"
+if ! do_dump; then
+    echo "PROGRESS:RECOVERY"
+    start_neo4j
+    wait_neo4j_ready
+    stop_neo4j
+    do_dump
+fi
+
+echo "PROGRESS:ARCHIVING"
+TMPDIR=$(mktemp -d)
+ARCHIVE_DIR="$TMPDIR/imas-codex-graph-export"
+mkdir -p "$ARCHIVE_DIR"
+cp "$DATA_DIR/dumps/neo4j.dump" "$ARCHIVE_DIR/graph.dump"
+
+DATE=$(date -Iseconds)
+cat > "$ARCHIVE_DIR/manifest.json" << MANIFEST_EOF
+{{"version": "remote-export", "timestamp": "$DATE"}}
+MANIFEST_EOF
+
+tar czf "$ARCHIVE" -C "$TMPDIR" "imas-codex-graph-export"
+rm -rf "$TMPDIR"
+SIZE=$(du -h "$ARCHIVE" | cut -f1)
+
+echo "PROGRESS:STARTING"
+start_neo4j
+
+echo "PROGRESS:COMPLETE"
+echo "SIZE=$SIZE"
+echo "ARCHIVE_PATH=$ARCHIVE"
+"""
+
+
 __all__ = [
+    "build_remote_export_script",
+    "build_remote_fetch_script",
+    "build_remote_load_script",
     "is_remote_location",
     "remote_backup",
     "remote_check_oras",

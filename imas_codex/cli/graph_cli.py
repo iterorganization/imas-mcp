@@ -1605,8 +1605,12 @@ def graph_export(
     from imas_codex.graph.remote import is_remote_location
 
     if is_remote_location(profile.host):
+        from imas_codex.cli.graph_progress import (
+            GraphProgress,
+            remote_operation_streaming,
+        )
         from imas_codex.graph.remote import (
-            remote_export_graph,
+            build_remote_export_script,
             scp_from_remote,
         )
 
@@ -1617,26 +1621,59 @@ def graph_export(
                 err=True,
             )
 
-        click.echo(f"Exporting graph [{profile.name}] from {profile.host}...")
+        _remote_markers_export = {
+            "STOPPING": f"Stopping Neo4j on {profile.host}",
+            "DUMPING": "Dumping graph database",
+            "RECOVERY": "Recovery cycle (clean start/stop)",
+            "ARCHIVING": "Creating archive",
+            "STARTING": f"Starting Neo4j on {profile.host}",
+            "COMPLETE": "Export complete",
+        }
 
-        try:
-            remote_archive = remote_export_graph(profile.name, profile.host)
-        except Exception as e:
-            raise click.ClickException(
-                f"Remote export on {profile.host} failed: {e}"
-            ) from e
-        click.echo(f"✓ Exported on {profile.host}: {remote_archive}")
+        with GraphProgress("export") as gp:
+            gp.set_total_phases(2 if (local or output) else 1)
 
-        if local or output:
-            click.echo(f"  Transferring archive from {profile.host}...")
+            gp.start_phase(f"Exporting graph [{profile.name}] on {profile.host}")
+            script = build_remote_export_script(profile.name)
             try:
-                scp_from_remote(remote_archive, output_path, profile.host)
+                export_output = remote_operation_streaming(
+                    script,
+                    profile.host,
+                    progress=gp,
+                    progress_markers=_remote_markers_export,
+                    timeout=600,
+                )
             except Exception as e:
+                gp.fail_phase(str(e))
                 raise click.ClickException(
-                    f"Transfer from {profile.host} failed: {e}"
+                    f"Remote export on {profile.host} failed: {e}"
                 ) from e
-            size_mb = output_path.stat().st_size / 1024 / 1024
-            click.echo(f"✓ Local copy: {output_path} ({size_mb:.1f} MB)")
+
+            remote_archive = None
+            size_str = None
+            for line in export_output.strip().splitlines():
+                if line.startswith("ARCHIVE_PATH="):
+                    remote_archive = line.split("=", 1)[1].strip()
+                elif line.startswith("SIZE="):
+                    size_str = line.split("=", 1)[1].strip()
+            if not remote_archive:
+                gp.fail_phase("No archive path in output")
+                raise click.ClickException(
+                    f"Could not find archive path:\n{export_output}"
+                )
+            gp.complete_phase(size_str)
+
+            if local or output:
+                gp.start_phase(f"Transferring from {profile.host}")
+                try:
+                    scp_from_remote(remote_archive, output_path, profile.host)
+                except Exception as e:
+                    gp.fail_phase(str(e))
+                    raise click.ClickException(
+                        f"Transfer from {profile.host} failed: {e}"
+                    ) from e
+                size_mb = output_path.stat().st_size / 1024 / 1024
+                gp.complete_phase(f"{size_mb:.1f} MB")
 
         return
     # ── End remote dispatch ──────────────────────────────────────────────
@@ -1935,6 +1972,8 @@ def graph_push(
 
     Use --facility/-f (repeatable) to push a filtered per-facility graph.
     """
+    from imas_codex.cli.graph_progress import GraphProgress, run_oras_with_progress
+
     require_oras()
 
     git_info = get_git_info()
@@ -1958,77 +1997,76 @@ def graph_push(
 
     archive_path = Path(f"{pkg_name}-{version_tag}.tar.gz")
 
-    try:
-        from click.testing import CliRunner
+    with GraphProgress("push") as gp:
+        gp.set_total_phases(3 if not dev else 2)
 
-        runner = CliRunner()
-        dump_args = ["-o", str(archive_path)]
-        for fac in facilities:
-            dump_args.extend(["--facility", fac])
-        if no_imas:
-            dump_args.append("--no-imas")
-        result = runner.invoke(graph_export, dump_args)
-        if result.exit_code != 0:
-            # ClickExceptions produce SystemExit — error is in output.
-            # Unhandled exceptions are stored directly in result.exception.
-            if result.exception and not isinstance(result.exception, SystemExit):
-                detail = f"{type(result.exception).__name__}: {result.exception}"
-            else:
-                detail = result.output.strip()
-            raise click.ClickException(f"Export failed: {detail}")
+        try:
+            gp.start_phase("Exporting graph database")
+            from click.testing import CliRunner
 
-        login_to_ghcr(token)
+            runner = CliRunner()
+            dump_args = ["-o", str(archive_path)]
+            for fac in facilities:
+                dump_args.extend(["--facility", fac])
+            if no_imas:
+                dump_args.append("--no-imas")
+            result = runner.invoke(graph_export, dump_args)
+            if result.exit_code != 0:
+                if result.exception and not isinstance(result.exception, SystemExit):
+                    detail = f"{type(result.exception).__name__}: {result.exception}"
+                else:
+                    detail = result.output.strip()
+                gp.fail_phase(detail)
+                raise click.ClickException(f"Export failed: {detail}")
+            size_mb = archive_path.stat().st_size / 1024 / 1024
+            gp.complete_phase(f"{size_mb:.1f} MB")
 
-        artifact_ref = f"{target_registry}/{pkg_name}:{version_tag}"
-        push_cmd = [
-            "oras",
-            "push",
-            artifact_ref,
-            f"{archive_path}:application/gzip",
-            "--annotation",
-            f"org.opencontainers.image.version={version_tag}",
-            "--annotation",
-            f"io.imas-codex.git-commit={git_info['commit']}",
-        ]
+            login_to_ghcr(token)
 
-        click.echo(f"Pushing to {artifact_ref}...")
-        result = subprocess.run(push_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise click.ClickException(f"Push failed: {result.stderr}")
+            artifact_ref = f"{target_registry}/{pkg_name}:{version_tag}"
+            push_cmd = [
+                "oras",
+                "push",
+                artifact_ref,
+                f"{archive_path}:application/gzip",
+                "--annotation",
+                f"org.opencontainers.image.version={version_tag}",
+                "--annotation",
+                f"io.imas-codex.git-commit={git_info['commit']}",
+            ]
 
-        click.echo(f"✓ Pushed: {artifact_ref}")
+            gp.start_phase(f"Pushing to GHCR ({artifact_ref})")
+            run_oras_with_progress(push_cmd, progress=gp)
+            gp.complete_phase()
 
-        manifest = get_local_graph_manifest() or {}
-        manifest["pushed"] = True
-        manifest["pushed_version"] = version_tag
-        manifest["pushed_to"] = artifact_ref
-        manifest["pushed_at"] = datetime.now(UTC).isoformat()
-        save_local_graph_manifest(manifest)
+            manifest = get_local_graph_manifest() or {}
+            manifest["pushed"] = True
+            manifest["pushed_version"] = version_tag
+            manifest["pushed_to"] = artifact_ref
+            manifest["pushed_at"] = datetime.now(UTC).isoformat()
+            save_local_graph_manifest(manifest)
 
-        # Save dev revision for auto-increment on next push
-        if dev:
-            base = __version__.replace("+", "-")
-            # Extract revision from version_tag (format: base-rN)
-            rev_str = version_tag.rsplit("-r", 1)[-1]
-            _save_dev_revision(base, int(rev_str))
+            # Save dev revision for auto-increment on next push
+            if dev:
+                base = __version__.replace("+", "-")
+                rev_str = version_tag.rsplit("-r", 1)[-1]
+                _save_dev_revision(base, int(rev_str))
 
-        if not dev:
-            result = subprocess.run(
-                ["oras", "tag", artifact_ref, "latest"],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                click.echo("✓ Tagged as latest")
-            else:
-                click.echo(
-                    f"Warning: Failed to tag as latest: {result.stderr.strip()}",
-                    err=True,
+            if not dev:
+                gp.start_phase("Tagging as latest")
+                result = subprocess.run(
+                    ["oras", "tag", artifact_ref, "latest"],
+                    capture_output=True,
+                    text=True,
                 )
+                if result.returncode == 0:
+                    gp.complete_phase()
+                else:
+                    gp.fail_phase(result.stderr.strip())
 
-    finally:
-        if archive_path.exists():
-            archive_path.unlink()
+        finally:
+            if archive_path.exists():
+                archive_path.unlink()
 
     # Dispatch graph quality CI
     _dispatch_graph_quality(git_info, version_tag, target_registry)
@@ -2084,6 +2122,11 @@ def graph_fetch(
     When no --version is specified, fetches 'latest'. If 'latest' doesn't
     exist, falls back to the most recent tag in the registry.
     """
+    from imas_codex.cli.graph_progress import (
+        GraphProgress,
+        remote_operation_streaming,
+        run_oras_with_progress,
+    )
     from imas_codex.graph.profiles import resolve_neo4j
 
     profile = resolve_neo4j()
@@ -2103,73 +2146,109 @@ def graph_fetch(
 
     if is_remote_location(profile.host):
         from imas_codex.graph.remote import (
+            build_remote_fetch_script,
             remote_check_oras,
-            remote_fetch_from_ghcr,
             scp_from_remote,
         )
 
         if remote_check_oras(profile.host):
-            click.echo(f"Fetching on {profile.host}: {artifact_ref}")
-            remote_archive = remote_fetch_from_ghcr(
-                artifact_ref, profile.host, token=token
-            )
-            click.echo(f"✓ Fetched on {profile.host}: {remote_archive}")
+            with GraphProgress("fetch") as gp:
+                gp.set_total_phases(2 if (local or output) else 1)
 
-            if local or output:
-                from imas_codex.graph.dirs import ensure_exports_dir
+                # Build output name for remote file
+                ref_parts = artifact_ref.rsplit("/", 1)[-1]
+                output_name = ref_parts.replace(":", "-") + ".tar.gz"
 
-                if output:
-                    dest = Path(output)
-                else:
-                    exports = ensure_exports_dir()
-                    dest = exports / f"{pkg_name}-{resolved_version}.tar.gz"
+                gp.start_phase(f"Fetching on {profile.host} via ORAS")
+                script = build_remote_fetch_script(
+                    artifact_ref, output_name, token=token
+                )
+                fetch_output = remote_operation_streaming(
+                    script,
+                    profile.host,
+                    progress=gp,
+                    progress_markers={
+                        "LOGIN": f"Authenticating on {profile.host}",
+                        "PULLING": f"Downloading from GHCR on {profile.host}",
+                        "MOVING": "Saving archive",
+                        "DONE": "Fetch complete",
+                    },
+                    timeout=300,
+                )
 
-                click.echo(f"  Transferring from {profile.host}...")
-                scp_from_remote(remote_archive, dest, profile.host)
-                size_mb = dest.stat().st_size / 1024 / 1024
-                click.echo(f"✓ Local copy: {dest} ({size_mb:.1f} MB)")
-                click.echo(f"  Load locally: imas-codex graph load {dest}")
-                return dest
+                # Extract archive path and size from output
+                remote_archive = None
+                size_str = None
+                for line in fetch_output.strip().splitlines():
+                    if line.startswith("ARCHIVE_PATH="):
+                        remote_archive = line.split("=", 1)[1].strip()
+                    elif line.startswith("SIZE="):
+                        size_str = line.split("=", 1)[1].strip()
+                if not remote_archive:
+                    gp.fail_phase("No archive path in output")
+                    raise click.ClickException(
+                        f"Could not find archive path in output:\n{fetch_output}"
+                    )
+                gp.complete_phase(size_str)
 
-            click.echo(f"  Load remotely: imas-codex graph load {remote_archive}")
-            return Path(remote_archive)
+                if local or output:
+                    from imas_codex.graph.dirs import ensure_exports_dir
+
+                    if output:
+                        dest = Path(output)
+                    else:
+                        exports = ensure_exports_dir()
+                        dest = exports / f"{pkg_name}-{resolved_version}.tar.gz"
+
+                    gp.start_phase(f"Transferring from {profile.host}")
+                    scp_from_remote(remote_archive, dest, profile.host)
+                    size_mb = dest.stat().st_size / 1024 / 1024
+                    gp.complete_phase(f"{size_mb:.1f} MB")
+                    gp.print(f"  Load locally: imas-codex graph load {dest}")
+                    return dest
+
+                gp.print(f"  Load remotely: imas-codex graph load {remote_archive}")
+                return Path(remote_archive)
         else:
             click.echo(f"oras not on {profile.host}, fetching locally...")
     # ── End remote dispatch ──────────────────────────────────────────────
 
     require_oras()
-    click.echo(f"Fetching: {artifact_ref}")
-    login_to_ghcr(token)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
+    with GraphProgress("fetch") as gp:
+        gp.set_total_phases(1)
 
-        result = subprocess.run(
-            ["oras", "pull", artifact_ref, "-o", str(tmp)],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise click.ClickException(f"Fetch failed: {result.stderr}")
+        gp.start_phase("Fetching from GHCR")
+        login_to_ghcr(token)
 
-        archives = list(tmp.glob("*.tar.gz"))
-        if not archives:
-            raise click.ClickException("No archive found in fetched artifact")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
 
-        src_archive = archives[0]
-        if output:
-            dest = Path(output)
-        else:
-            from imas_codex.graph.dirs import ensure_exports_dir
+            run_oras_with_progress(
+                ["oras", "pull", artifact_ref, "-o", str(tmp)],
+                progress=gp,
+                phase_description=f"Fetching {artifact_ref}",
+            )
 
-            exports = ensure_exports_dir()
-            dest = exports / f"{pkg_name}-{resolved_version}.tar.gz"
+            archives = list(tmp.glob("*.tar.gz"))
+            if not archives:
+                gp.fail_phase("No archive found")
+                raise click.ClickException("No archive found in fetched artifact")
 
-        shutil.move(str(src_archive), str(dest))
+            src_archive = archives[0]
+            if output:
+                dest = Path(output)
+            else:
+                from imas_codex.graph.dirs import ensure_exports_dir
 
-    size_mb = dest.stat().st_size / 1024 / 1024
-    click.echo(f"✓ Fetched: {dest} ({size_mb:.1f} MB)")
-    click.echo(f"  Load with: imas-codex graph load {dest}")
+                exports = ensure_exports_dir()
+                dest = exports / f"{pkg_name}-{resolved_version}.tar.gz"
+
+            shutil.move(str(src_archive), str(dest))
+
+        size_mb = dest.stat().st_size / 1024 / 1024
+        gp.complete_phase(f"{size_mb:.1f} MB")
+        gp.print(f"  Load with: imas-codex graph load {dest}")
     return dest
 
 
@@ -2215,6 +2294,11 @@ def graph_pull(
 
     Use --facility/-f (repeatable) to pull a per-facility graph.
     """
+    from imas_codex.cli.graph_progress import (
+        GraphProgress,
+        remote_operation_streaming,
+        run_oras_with_progress,
+    )
     from imas_codex.graph.profiles import resolve_neo4j
 
     profile = resolve_neo4j()
@@ -2235,74 +2319,120 @@ def graph_pull(
     if is_remote_location(profile.host):
         from imas_codex.graph.remote import (
             REMOTE_EXPORTS,
+            build_remote_fetch_script,
+            build_remote_load_script,
             remote_check_oras,
             remote_cleanup_archive,
-            remote_fetch_from_ghcr,
-            remote_load_archive,
             scp_to_remote,
         )
         from imas_codex.settings import get_graph_password
 
-        click.echo(f"Pulling: {artifact_ref}")
         password = get_graph_password()
 
-        # Strategy: if oras is on the remote, fetch directly there
-        # (avoids multi-GB SCP transfer via WSL).  Fall back to
-        # local fetch + SCP if oras is unavailable on remote.
-        if remote_check_oras(profile.host):
-            click.echo(f"  Fetching directly on {profile.host} (oras available)...")
-            remote_archive = remote_fetch_from_ghcr(
-                artifact_ref, profile.host, token=token
-            )
-        else:
-            click.echo(f"  oras not on {profile.host}, fetching locally + SCP...")
-            require_oras()
-            login_to_ghcr(token)
-
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmp = Path(tmpdir)
-                result = subprocess.run(
-                    ["oras", "pull", artifact_ref, "-o", str(tmp)],
-                    capture_output=True,
-                    text=True,
-                )
-                if result.returncode != 0:
-                    raise click.ClickException(f"Pull failed: {result.stderr}")
-
-                archives = list(tmp.glob("*.tar.gz"))
-                if not archives:
-                    raise click.ClickException("No archive found")
-
-                local_archive = archives[0]
-                remote_archive = f"{REMOTE_EXPORTS}/{local_archive.name}"
-
-                click.echo(f"  Transferring to {profile.host}...")
-                scp_to_remote(local_archive, remote_archive, profile.host)
-
-        # Load on remote
-        click.echo(f"  Loading on {profile.host}...")
-        load_output = remote_load_archive(
-            remote_archive,
-            profile.name,
-            profile.host,
-            password=password,
-        )
-        remote_cleanup_archive(remote_archive, profile.host)
-
-        if "LOAD_COMPLETE" not in load_output:
-            click.echo(f"Warning: Unexpected output: {load_output}", err=True)
-
-        # Update local manifest
-        manifest = {
-            "version": resolved_version,
-            "pulled_from": artifact_ref,
-            "pulled_version": resolved_version,
-            "pushed": True,
-            "pushed_version": resolved_version,
+        _remote_markers_fetch = {
+            "LOGIN": f"Authenticating on {profile.host}",
+            "PULLING": f"Downloading from GHCR on {profile.host}",
+            "MOVING": "Saving archive",
+            "DONE": "Fetch complete",
         }
-        save_local_graph_manifest(manifest)
+        _remote_markers_load = {
+            "STOPPING": f"Stopping Neo4j on {profile.host}",
+            "EXTRACTING": "Extracting archive",
+            "LOADING_DUMP": "Loading graph dump into Neo4j",
+            "PASSWORD": "Resetting password",
+            "STARTING": f"Starting Neo4j on {profile.host}",
+            "COMPLETE": "Load complete",
+        }
 
-        click.echo("✓ Graph pull complete (remote)")
+        with GraphProgress("pull") as gp:
+            click.echo(f"Pulling: {artifact_ref}")
+
+            if remote_check_oras(profile.host):
+                gp.set_total_phases(3)
+
+                # Build output name
+                ref_parts = artifact_ref.rsplit("/", 1)[-1]
+                output_name = ref_parts.replace(":", "-") + ".tar.gz"
+
+                gp.start_phase(f"Fetching on {profile.host} via ORAS")
+                script = build_remote_fetch_script(
+                    artifact_ref, output_name, token=token
+                )
+                fetch_output = remote_operation_streaming(
+                    script,
+                    profile.host,
+                    progress=gp,
+                    progress_markers=_remote_markers_fetch,
+                    timeout=300,
+                )
+                remote_archive = None
+                for line in fetch_output.strip().splitlines():
+                    if line.startswith("ARCHIVE_PATH="):
+                        remote_archive = line.split("=", 1)[1].strip()
+                if not remote_archive:
+                    gp.fail_phase("No archive path in output")
+                    raise click.ClickException(
+                        f"Could not find archive path:\n{fetch_output}"
+                    )
+                gp.complete_phase()
+            else:
+                gp.set_total_phases(4)
+
+                gp.start_phase("Fetching from GHCR locally")
+                require_oras()
+                login_to_ghcr(token)
+
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp = Path(tmpdir)
+                    run_oras_with_progress(
+                        ["oras", "pull", artifact_ref, "-o", str(tmp)],
+                        progress=gp,
+                    )
+
+                    archives = list(tmp.glob("*.tar.gz"))
+                    if not archives:
+                        gp.fail_phase("No archive found")
+                        raise click.ClickException("No archive found")
+                    gp.complete_phase()
+
+                    local_archive = archives[0]
+                    remote_archive = f"{REMOTE_EXPORTS}/{local_archive.name}"
+
+                    gp.start_phase(f"Transferring to {profile.host}")
+                    scp_to_remote(local_archive, remote_archive, profile.host)
+                    gp.complete_phase()
+
+            # Load on remote (streaming)
+            gp.start_phase(f"Loading on {profile.host}")
+            load_script = build_remote_load_script(
+                remote_archive, profile.name, password
+            )
+            load_output = remote_operation_streaming(
+                load_script,
+                profile.host,
+                progress=gp,
+                progress_markers=_remote_markers_load,
+                timeout=600,
+            )
+            remote_cleanup_archive(remote_archive, profile.host)
+
+            if "LOAD_COMPLETE" not in load_output:
+                gp.fail_phase("Unexpected output")
+                click.echo(f"Warning: Unexpected output: {load_output}", err=True)
+            else:
+                gp.complete_phase()
+
+            # Update local manifest
+            manifest = {
+                "version": resolved_version,
+                "pulled_from": artifact_ref,
+                "pulled_version": resolved_version,
+                "pushed": True,
+                "pushed_version": resolved_version,
+            }
+            save_local_graph_manifest(manifest)
+
+            gp.print("[green]✓[/] Graph pull complete (remote)")
         return
     # ── End remote dispatch ──────────────────────────────────────────────
 
@@ -2334,45 +2464,51 @@ def graph_pull(
     if not no_backup:
         backup_existing_data("pre-pull", data_dir=profile.data_dir)
 
-    login_to_ghcr(token)
+    with GraphProgress("pull") as gp:
+        gp.set_total_phases(2)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
+        gp.start_phase("Fetching from GHCR")
+        login_to_ghcr(token)
 
-        result = subprocess.run(
-            ["oras", "pull", artifact_ref, "-o", str(tmp)],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise click.ClickException(f"Pull failed: {result.stderr}")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
 
-        archives = list(tmp.glob("*.tar.gz"))
-        if not archives:
-            raise click.ClickException("No archive found")
+            run_oras_with_progress(
+                ["oras", "pull", artifact_ref, "-o", str(tmp)],
+                progress=gp,
+            )
 
-        from click.testing import CliRunner
+            archives = list(tmp.glob("*.tar.gz"))
+            if not archives:
+                gp.fail_phase("No archive found")
+                raise click.ClickException("No archive found")
+            gp.complete_phase()
 
-        runner = CliRunner()
-        load_args = [str(archives[0]), "--force"]
-        result = runner.invoke(graph_load, load_args)
-        if result.exit_code != 0:
-            raise click.ClickException(f"Load failed: {result.output}")
+            gp.start_phase("Loading into Neo4j")
+            from click.testing import CliRunner
 
-        with tarfile.open(archives[0], "r:gz") as tar:
-            tar.extractall(tmp / "extracted")
-        extracted_dirs = list((tmp / "extracted").iterdir())
-        if extracted_dirs:
-            manifest_file = extracted_dirs[0] / "manifest.json"
-            if manifest_file.exists():
-                manifest = json.loads(manifest_file.read_text())
-                manifest["pulled_from"] = artifact_ref
-                manifest["pulled_version"] = resolved_version
-                manifest["pushed"] = True
-                manifest["pushed_version"] = resolved_version
-                save_local_graph_manifest(manifest)
+            runner = CliRunner()
+            load_args = [str(archives[0]), "--force"]
+            result = runner.invoke(graph_load, load_args)
+            if result.exit_code != 0:
+                gp.fail_phase(result.output.strip())
+                raise click.ClickException(f"Load failed: {result.output}")
+            gp.complete_phase()
 
-    click.echo("✓ Graph pull complete")
+            with tarfile.open(archives[0], "r:gz") as tar:
+                tar.extractall(tmp / "extracted")
+            extracted_dirs = list((tmp / "extracted").iterdir())
+            if extracted_dirs:
+                manifest_file = extracted_dirs[0] / "manifest.json"
+                if manifest_file.exists():
+                    manifest = json.loads(manifest_file.read_text())
+                    manifest["pulled_from"] = artifact_ref
+                    manifest["pulled_version"] = resolved_version
+                    manifest["pushed"] = True
+                    manifest["pushed_version"] = resolved_version
+                    save_local_graph_manifest(manifest)
+
+        gp.print("[green]✓[/] Graph pull complete")
 
 
 # ============================================================================
