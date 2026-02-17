@@ -70,7 +70,7 @@ class WikiScoreResult(BaseModel):
     )
 
     description: str = Field(
-        description="Concise description of page contents (1-2 sentences, max 150 chars)"
+        description="Concise description of page contents (1-2 sentences)"
     )
 
     # Per-dimension scores (0.0-1.0 each)
@@ -101,7 +101,7 @@ class WikiScoreResult(BaseModel):
 
     reasoning: str = Field(
         default="",
-        description="Brief explanation for the score (max 80 chars)",
+        description="Brief explanation for the score",
     )
 
     keywords: list[str] = Field(
@@ -264,7 +264,7 @@ class ScoredWikiPage:
         return cls(
             id=result.id,
             page_purpose=result.page_purpose,
-            description=result.description[:150],
+            description=result.description,
             score_data_documentation=result.score_data_documentation,
             score_physics_content=result.score_physics_content,
             score_code_documentation=result.score_code_documentation,
@@ -272,7 +272,7 @@ class ScoredWikiPage:
             score_calibration=result.score_calibration,
             score_imas_relevance=result.score_imas_relevance,
             score=combined,
-            reasoning=result.reasoning[:80],
+            reasoning=result.reasoning,
             keywords=result.keywords[:5],
             physics_domain=result.physics_domain,
             should_ingest=result.should_ingest,
@@ -350,7 +350,7 @@ class ArtifactScoreResult(BaseModel):
     )
 
     description: str = Field(
-        description="Concise description of artifact contents (1-2 sentences, max 150 chars)"
+        description="Concise description of artifact contents (1-2 sentences)"
     )
 
     # Per-dimension scores (0.0-1.0 each) - same as WikiScoreResult
@@ -381,7 +381,7 @@ class ArtifactScoreResult(BaseModel):
 
     reasoning: str = Field(
         default="",
-        description="Brief explanation for the score (max 80 chars)",
+        description="Brief explanation for the score",
     )
 
     keywords: list[str] = Field(
@@ -493,7 +493,7 @@ class ScoredArtifact:
         return cls(
             id=result.id,
             artifact_purpose=result.artifact_purpose,
-            description=result.description[:150],
+            description=result.description,
             score_data_documentation=result.score_data_documentation,
             score_physics_content=result.score_physics_content,
             score_code_documentation=result.score_code_documentation,
@@ -501,7 +501,7 @@ class ScoredArtifact:
             score_calibration=result.score_calibration,
             score_imas_relevance=result.score_imas_relevance,
             score=combined,
-            reasoning=result.reasoning[:80],
+            reasoning=result.reasoning,
             keywords=result.keywords[:5],
             physics_domain=result.physics_domain,
             should_ingest=result.should_ingest,
@@ -553,10 +553,11 @@ class ImageScoreResult(BaseModel):
 
     id: str = Field(description="The image ID (echo from input)")
 
-    caption: str = Field(
-        description="Detailed physics-aware description of image content. "
-        "Include specific quantities, diagnostics, tree paths, conventions. "
-        "Describe what the image shows in fusion physics terms, not visual appearance."
+    mermaid_diagram: str = Field(
+        default="",
+        description="Mermaid diagram representing the structure of schematics, "
+        "block diagrams, or data flow images. Use graph LR or graph TD syntax. "
+        "Empty string for non-schematic images (plots, photos, etc.).",
     )
 
     ocr_text: str = Field(
@@ -572,7 +573,11 @@ class ImageScoreResult(BaseModel):
     )
 
     description: str = Field(
-        description="Concise description of image value (1-2 sentences, max 150 chars)"
+        description="Detailed physics-aware description of image content. "
+        "Include specific quantities, diagnostics, tree paths, conventions. "
+        "Describe what the image shows in fusion physics terms, not visual appearance. "
+        "Length scales with content richness: 1-2 sentences for simple images, "
+        "full paragraph for complex schematics or multi-panel plots."
     )
 
     # Per-dimension scores (0.0-1.0 each)
@@ -601,9 +606,7 @@ class ImageScoreResult(BaseModel):
         description="IMAS integration, IDS references, mapping hints (0.0-1.0)",
     )
 
-    reasoning: str = Field(
-        default="", description="Brief explanation for the score (max 80 chars)"
-    )
+    reasoning: str = Field(default="", description="Brief explanation for the score")
 
     keywords: list[str] = Field(
         default_factory=list, description="Searchable keywords (max 5)"
@@ -655,8 +658,8 @@ class ScoredImage:
     id: str
     """Image ID (facility:sha256[:16])."""
 
-    caption: str
-    """Physics-aware image description."""
+    mermaid_diagram: str = ""
+    """Mermaid diagram for schematics/data flow images."""
 
     ocr_text: str = ""
     """Text extracted via OCR from image."""
@@ -665,7 +668,7 @@ class ScoredImage:
     """Content classification."""
 
     description: str = ""
-    """Brief description of image value."""
+    """Physics-aware image description."""
 
     # Per-dimension scores (0.0-1.0 each)
     score_data_documentation: float = 0.0
@@ -716,10 +719,10 @@ class ScoredImage:
 
         return cls(
             id=result.id,
-            caption=result.caption,
+            mermaid_diagram=result.mermaid_diagram,
             ocr_text=result.ocr_text,
             purpose=result.purpose,
-            description=result.description[:150],
+            description=result.description,
             score_data_documentation=result.score_data_documentation,
             score_physics_content=result.score_physics_content,
             score_code_documentation=result.score_code_documentation,
@@ -727,7 +730,7 @@ class ScoredImage:
             score_calibration=result.score_calibration,
             score_imas_relevance=result.score_imas_relevance,
             score=combined,
-            reasoning=result.reasoning[:80],
+            reasoning=result.reasoning,
             keywords=result.keywords[:5],
             physics_domain=result.physics_domain,
             should_ingest=result.should_ingest,
@@ -739,7 +742,7 @@ class ScoredImage:
         """Convert to dictionary for graph persistence."""
         return {
             "id": self.id,
-            "caption": self.caption,
+            "mermaid_diagram": self.mermaid_diagram,
             "ocr_text": self.ocr_text,
             "purpose": self.purpose.value,
             "description": self.description,

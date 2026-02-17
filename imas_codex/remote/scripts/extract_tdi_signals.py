@@ -550,7 +550,7 @@ def extract_all(
             "name": f.name,
             "path": f.path,
             "signature": f.signature,
-            "description": f.description[:200],
+            "description": f.description,
             "parameters": f.parameters,
             "function_type": f.function_type,
             "mdsplus_trees": f.mdsplus_trees,

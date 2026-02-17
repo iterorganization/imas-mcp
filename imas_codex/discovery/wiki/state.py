@@ -90,6 +90,7 @@ class WikiDiscoveryState:
     # Control
     stop_requested: bool = False
     score_only: bool = False  # When True, ingest workers are not started
+    store_images: bool = False  # When True, keep image_data in graph after scoring
 
     # Pipeline phases — replace raw idle counters with event-based tracking
     scan_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("scan"))

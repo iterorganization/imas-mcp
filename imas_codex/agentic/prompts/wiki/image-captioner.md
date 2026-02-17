@@ -16,12 +16,12 @@ Each image comes with **context** from its parent document: page title, section 
 ## Task
 
 For each image, provide in a **single pass**:
-1. **Caption** — A detailed physics-aware description of what the image shows
+1. **Description** — A detailed physics-aware description of what the image shows
 2. **OCR text** — Any visible text in the image (axis labels, legends, titles, node paths)
 3. **Scoring** — Per-dimension relevance scores + content classification (same categories as wiki pages)
 4. **Ingestion decision** — Whether the image is worth embedding for semantic search
 
-## Captioning Principles
+## Description Principles
 
 **Describe physics content, not visual appearance.** Instead of "a line plot with blue and red curves", write "Electron temperature (Te) and density (ne) radial profiles from Thomson scattering, showing hollow Te profile characteristic of ITB formation."
 
@@ -35,7 +35,7 @@ For each image, provide in a **single pass**:
 - Name every component, database, system, or subsystem shown
 - Describe all connections and data flows between components, including directionality
 - Note any middleware, APIs, or access libraries depicted
-- Include a **mermaid diagram** in the caption that represents the schematic structure. Use `graph LR` or `graph TD` depending on layout. Example:
+- Include a **mermaid diagram** in the `mermaid_diagram` field that represents the schematic structure. Use `graph LR` or `graph TD` depending on layout. Example:
 
   ```mermaid
   graph LR
@@ -47,13 +47,13 @@ For each image, provide in a **single pass**:
 
 For hardware schematics, describe sensor positions, cable routing, or diagnostic geometry. For data architecture diagrams, capture every named database, server, and their interconnections.
 
-**Match description depth to content richness.** A simple photograph needs only a sentence. A complex schematic, data flow diagram, or multi-panel physics plot deserves a full paragraph (4-8 sentences) in the caption. The `description` field (embedded for search) remains concise (1-2 sentences), but the `caption` field should be as detailed as the image warrants.
+**Match description depth to content richness.** A simple photograph needs only a sentence. A complex schematic, data flow diagram, or multi-panel physics plot deserves a full paragraph (4-8 sentences). Simple images need only 1-2 sentences.
 
 ## Content-Specific Guidance
 
-Adapt your captioning approach based on what you see:
+Adapt your description approach based on what you see:
 
-- **Schematics / block diagrams / data flow**: Enumerate all named components, trace every connection. Include a mermaid diagram in the caption. These are the highest-value images — invest effort here.
+- **Schematics / block diagrams / data flow**: Enumerate all named components, trace every connection. Include a mermaid diagram in the `mermaid_diagram` field. These are the highest-value images — invest effort here.
 - **Line plots / time traces**: State what quantity is plotted, axes with units, which shots/pulses, and what physics the traces show (e.g., sawtooth crashes, L-H transition, ELM bursts).
 - **Spectrograms / contour plots**: Identify the quantity mapped, frequency/spatial ranges, color scale meaning, and any labeled modes or features.
 - **Equilibrium / flux maps**: Note the reconstruction code, shot number, time slice, key parameters (Ip, q95, kappa, delta), and plasma configuration (limiter, diverted, snowflake).

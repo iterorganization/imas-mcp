@@ -239,7 +239,7 @@ class RescoreResult(BaseModel):
 
     adjustment_reason: str = Field(
         default="",
-        description="Brief explanation of main adjustment (max 80 chars)",
+        description="Brief explanation of main adjustment",
     )
 
 

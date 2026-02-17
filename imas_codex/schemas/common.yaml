@@ -512,7 +512,9 @@ classes:
           and images. Determines ingestion priority multiplier.
         range: ContentPurpose
       description:
-        description: Concise description of content (1-2 sentences, max 150 chars)
+        description: >-
+          Content description. Length scales with content type: 1-2 sentences
+          for paths and signals, full paragraph for images and schematics.
       score:
         description: >-
           Combined relevance score (0.0-1.0). Computed as
@@ -537,7 +539,7 @@ classes:
         description: IMAS integration, IDS references, mapping hints (0.0-1.0)
         range: float
       reasoning:
-        description: Brief explanation for the score (max 80 chars)
+        description: Brief explanation for the score
       keywords:
         description: Searchable keywords (max 5)
         multivalued: true

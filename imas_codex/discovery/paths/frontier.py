@@ -2968,10 +2968,10 @@ def mark_rescore_complete(
                 "cost": result.get("score_cost", 0.0),
             }
 
-            # Store adjustment reason
+            # Store rescore reason
             if result.get("adjustment_reason"):
-                set_parts.append("p.adjustment_reason = $adjustment_reason")
-                params["adjustment_reason"] = result["adjustment_reason"][:200]
+                set_parts.append("p.rescore_reason = $rescore_reason")
+                params["rescore_reason"] = result["adjustment_reason"][:200]
 
             # Add each dimension that has a value
             for dim in dimensions:

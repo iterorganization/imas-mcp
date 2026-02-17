@@ -108,7 +108,6 @@ class ImageItem:
     """Current image VLM activity."""
 
     image_id: str
-    caption: str = ""
     score: float | None = None
     physics_domain: str | None = None
     description: str = ""
@@ -746,7 +745,7 @@ class WikiProgressDisplay:
             images_text = self._clip_title(
                 image.display_name, content_width - LABEL_WIDTH
             )
-            desc = image.caption or image.description
+            desc = image.description
             images_detail = self._score_detail(
                 image.score,
                 image.physics_domain,
@@ -1078,7 +1077,6 @@ class WikiProgressDisplay:
         if item := self.state.image_queue.pop():
             self.state.current_image = ImageItem(
                 image_id=item.get("id", ""),
-                caption=item.get("caption", ""),
                 score=item.get("score"),
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
@@ -1298,7 +1296,6 @@ class WikiProgressDisplay:
             items = [
                 {
                     "id": r.get("id", "unknown"),
-                    "caption": r.get("caption", ""),
                     "score": r.get("score"),
                     "physics_domain": r.get("physics_domain"),
                     "description": r.get("description", ""),

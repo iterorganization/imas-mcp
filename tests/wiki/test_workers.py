@@ -479,7 +479,7 @@ class TestPersistDocumentFigures:
         """Empty image list should return 0."""
         from imas_codex.discovery.wiki.workers import _persist_document_figures
 
-        result = await _persist_document_figures([], artifact_id="tcv:doc.pdf", facility="tcv")
+        result = await _persist_document_figures([], artifact_id="tcv:doc.pdf", artifact_url="https://example.com/doc.pdf", facility="tcv")
         assert result == 0
 
     @pytest.mark.asyncio
@@ -488,7 +488,7 @@ class TestPersistDocumentFigures:
         from imas_codex.discovery.wiki.workers import _persist_document_figures
 
         images = [{"image_bytes": b"\x00" * 100, "page_num": 1}]
-        result = await _persist_document_figures(images, artifact_id="tcv:doc.pdf", facility="tcv")
+        result = await _persist_document_figures(images, artifact_id="tcv:doc.pdf", artifact_url="https://example.com/doc.pdf", facility="tcv")
         assert result == 0
 
     @pytest.mark.asyncio
@@ -519,7 +519,7 @@ class TestPersistDocumentFigures:
             ),
         ):
             result = await _persist_document_figures(
-                images, artifact_id="tcv:report.pdf", facility="tcv"
+                images, artifact_id="tcv:report.pdf", artifact_url="https://example.com/report.pdf", facility="tcv"
             )
             assert result == 1
             mock_gc.query.assert_called_once()

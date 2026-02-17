@@ -6,7 +6,6 @@ import asyncio
 import logging
 import re
 import subprocess
-import sys
 import time
 
 import click
@@ -40,12 +39,6 @@ logger = logging.getLogger(__name__)
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed progress")
 @click.option(
-    "--no-rich",
-    is_flag=True,
-    default=False,
-    help="Use logging output instead of rich progress display",
-)
-@click.option(
     "--rescan",
     is_flag=True,
     default=False,
@@ -76,6 +69,12 @@ logger = logging.getLogger(__name__)
     default=None,
     help="Maximum runtime in minutes (e.g., 5). Discovery halts when time expires.",
 )
+@click.option(
+    "--store-images",
+    is_flag=True,
+    default=False,
+    help="Keep image bytes in graph after VLM scoring (default: clear to save storage)",
+)
 def wiki(
     facility: str,
     source: str | None,
@@ -86,12 +85,12 @@ def wiki(
     scan_only: bool,
     score_only: bool,
     verbose: bool,
-    no_rich: bool,
     rescan: bool,
     score_workers: int,
     ingest_workers: int,
     rescan_artifacts: bool,
     time_limit: int | None,
+    store_images: bool,
 ) -> None:
     """Discover wiki pages and build documentation graph.
 
@@ -114,13 +113,15 @@ def wiki(
       imas-codex discover wiki jet -c 5.0          # $5 budget
     """
     from imas_codex.cli.logging import configure_cli_logging
+
+    # Auto-detect if rich can run
+    from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki import get_wiki_stats
     from imas_codex.discovery.wiki.graph_ops import reset_transient_pages
     from imas_codex.discovery.wiki.parallel import run_parallel_wiki_discovery
 
-    # Auto-detect if rich can run (TTY check) or use no_rich flag
-    use_rich = not no_rich and sys.stdout.isatty()
+    use_rich = should_use_rich()
 
     # Always configure file logging (DEBUG level to disk)
     configure_cli_logging("wiki", facility=facility, verbose=verbose)
@@ -649,6 +650,7 @@ def wiki(
             _num_score_workers: int,
             _num_ingest_workers: int,
             _deadline: float | None = None,
+            _store_images: bool = False,
         ):
             combined: dict = {
                 "scanned": 0,
@@ -712,6 +714,7 @@ def wiki(
                             num_ingest_workers=_num_ingest_workers,
                             scan_only=_scan_only,
                             score_only=_score_only,
+                            store_images=_store_images,
                             bulk_discover=False,
                             skip_reset=_multi,
                             deadline=_deadline,
@@ -907,7 +910,6 @@ def wiki(
                         result_dicts = [
                             {
                                 "id": r.get("id", "unknown"),
-                                "caption": r.get("caption", ""),
                                 "score": r.get("score"),
                                 "physics_domain": r.get("physics_domain"),
                                 "description": r.get("description", ""),
@@ -950,6 +952,7 @@ def wiki(
                                 num_ingest_workers=_num_ingest_workers,
                                 scan_only=_scan_only,
                                 score_only=_score_only,
+                                store_images=_store_images,
                                 bulk_discover=False,
                                 skip_reset=multi_site,
                                 deadline=_deadline,
@@ -1017,6 +1020,7 @@ def wiki(
                 _num_score_workers=score_workers,
                 _num_ingest_workers=ingest_workers,
                 _deadline=deadline,
+                _store_images=store_images,
             )
         )
 

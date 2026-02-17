@@ -226,14 +226,13 @@ def make_image_score_results(image_ids: list[str]) -> list[dict[str, Any]]:
     return [
         {
             "id": iid,
-            "caption": f"Diagram showing {iid.split(':')[-1]}",
             "ocr_text": "",
             "ocr_mdsplus_paths": [],
             "ocr_imas_paths": [],
             "ocr_ppf_paths": [],
             "ocr_tool_mentions": [],
             "purpose": "data_plot",
-            "description": f"Physics plot from {iid}",
+            "description": f"Diagram showing {iid.split(':')[-1]}",
             "score": 0.75,
             "score_data_documentation": 0.7,
             "score_physics_content": 0.8,

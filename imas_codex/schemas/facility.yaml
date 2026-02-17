@@ -965,7 +965,7 @@ classes:
         description: Total count of data-write pattern matches across all categories
         range: integer
       # Rescoring properties (set during LLM rescore with enrichment evidence)
-      adjustment_reason:
+      rescore_reason:
         description: Brief explanation of main score adjustment during rescoring
       primary_evidence:
         description: JSON-encoded list of key pattern categories informing score adjustment
@@ -3147,7 +3147,7 @@ classes:
       - Stores downsampled image bytes in graph (WebP, 768px longest side)
         so captioning works offline without facility access
       - Content-addressed ID for deduplication across pages
-      - VLM caption + score in single pass (same dimensions as wiki pages)
+      - VLM description + score in single pass (same dimensions as wiki pages)
       - Embedding generated separately by embed-update CLI, not workers
       
       Relationships:
@@ -3211,18 +3211,8 @@ classes:
         range: integer
       content_hash:
         description: SHA-256 hash of original image bytes for dedup verification
-      image_data:
-        description: >-
-          Base64-encoded downsampled image bytes (WebP format, 768px max).
-          Stored in graph so VLM captioning works without re-fetching from facility.
       
       # VLM-generated content (populated by captioning worker)
-      caption:
-        description: >-
-          VLM-generated description of image content. Fusion-domain-aware:
-          captures physics meaning, not just visual description.
-          Length scales with content richness: 1-2 sentences for simple
-          images, full paragraph for complex schematics or multi-panel plots.
       mermaid_diagram:
         description: >-
           Mermaid diagram representing the structure of schematics, block
@@ -3252,10 +3242,8 @@ classes:
       # See common.yaml ContentScoring for full list.
       
       # Embedding (populated by embed-update CLI, not by workers)
-      # Embeds the caption field (rich physics description) rather than
-      # the short description field used by other node types.
       embedding:
-        description: Vector embedding of caption for semantic search (256-dim)
+        description: Vector embedding of description for semantic search (256-dim)
         multivalued: true
         range: float
       embedded_at:

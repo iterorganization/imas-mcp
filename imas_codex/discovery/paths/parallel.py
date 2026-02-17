@@ -766,7 +766,7 @@ def mark_rescore_complete(
                 SET p.rescored_at = $now,
                     p.score = $score,
                     p.score_cost = coalesce(p.score_cost, 0) + $score_cost,
-                    p.adjustment_reason = $adjustment_reason,
+                    p.rescore_reason = $adjustment_reason,
                     p.primary_evidence = $primary_evidence,
                     p.evidence_summary = $evidence_summary,
                     p.claimed_at = null

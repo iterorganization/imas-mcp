@@ -590,6 +590,7 @@ async def artifact_worker(
                     await _persist_document_figures(
                         extracted_images,
                         artifact_id=artifact_id,
+                        artifact_url=url,
                         facility=state.facility,
                     )
 
@@ -933,15 +934,12 @@ async def image_score_worker(
 
         for img in images:
             source_url = img.get("source_url")
-            source_type = img.get("source_type", "")
             stored_data = img.get("image_data")
-            if source_type == "document_figure" and stored_data:
-                # Document figures have pre-stored base64 data (no URL to fetch)
-                img["image_data"] = stored_data
+            if stored_data:
+                # Document figures have pre-stored base64 data
                 images_ready.append(img)
                 continue
-            if not source_url or source_type == "document_figure":
-                # document_figure without stored data — can't fetch
+            if not source_url:
                 images_unfetchable.append(img["id"])
                 continue
             try:
@@ -996,7 +994,12 @@ async def image_score_worker(
                 r.setdefault("page_title", src.get("page_title", ""))
 
             # Persist to graph
-            await asyncio.to_thread(mark_images_scored, state.facility, results)
+            await asyncio.to_thread(
+                mark_images_scored,
+                state.facility,
+                results,
+                store_images=state.store_images,
+            )
             state.image_stats.processed += len(results)
             state.image_stats.cost += cost
             consecutive_failures = 0
@@ -1262,6 +1265,7 @@ async def _ingest_image_artifact(
 async def _persist_document_figures(
     extracted_images: list[dict[str, Any]],
     artifact_id: str,
+    artifact_url: str,
     facility: str,
 ) -> int:
     """Persist images extracted from PDF/PPTX as Image nodes.
@@ -1272,6 +1276,7 @@ async def _persist_document_figures(
     Args:
         extracted_images: List from pipeline._extract_pdf_images or _extract_pptx_images
         artifact_id: WikiArtifact node ID
+        artifact_url: Download URL of the parent document (for re-fetching)
         facility: Facility ID
 
     Returns:
@@ -1302,7 +1307,7 @@ async def _persist_document_figures(
         page_num = img_data.get("page_num")
         slide_num = img_data.get("slide_num")
         name = img_data.get("name", "")
-        source_url = f"{artifact_id}#{'page' if page_num else 'slide'}{page_num or slide_num or 0}"
+        source_url = f"{artifact_url}#{'page' if page_num else 'slide'}{page_num or slide_num or 0}"
 
         images_to_persist.append(
             {
@@ -1319,7 +1324,7 @@ async def _persist_document_figures(
                 "original_height": orig_h,
                 "content_hash": content_hash,
                 "artifact_id": artifact_id,
-                "image_data": b64_data,  # Store for VLM scoring (no re-fetch URL)
+                "image_data": b64_data,
             }
         )
 

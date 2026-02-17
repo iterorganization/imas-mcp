@@ -655,7 +655,7 @@ def mark_pages_scored(
             "id": page_id,
             "score": r.get("score", 0.0),
             "purpose": r.get("purpose", r.get("page_purpose", "other")),
-            "description": (r.get("description", "") or "")[:150],
+            "description": r.get("description", "") or "",
             "reasoning": r.get("reasoning", ""),
             "keywords": r.get("keywords", []),
             "physics_domain": r.get("physics_domain"),
@@ -1099,7 +1099,7 @@ def mark_artifacts_scored(
                 "id": artifact_id,
                 "score": r.get("score", 0.0),
                 "artifact_purpose": r.get("artifact_purpose", "other"),
-                "description": (r.get("description", "") or "")[:150],
+                "description": r.get("description", "") or "",
                 "reasoning": r.get("reasoning", ""),
                 "keywords": r.get("keywords", []),
                 "physics_domain": r.get("physics_domain"),
@@ -1241,14 +1241,14 @@ def mark_artifact_deferred(artifact_id: str, reason: str) -> None:
 
 
 def has_pending_image_work(facility: str) -> bool:
-    """Check if there are images pending scoring (status=ingested, no caption)."""
+    """Check if there are images pending scoring (status=ingested, not yet scored)."""
     try:
         with GraphClient() as gc:
             result = gc.query(
                 """
                 MATCH (img:Image {facility_id: $facility})
                 WHERE img.status = 'ingested'
-                  AND img.caption IS NULL
+                  AND img.description IS NULL
                 RETURN count(img) > 0 AS has_work
                 """,
                 facility=facility,
@@ -1266,7 +1266,7 @@ def claim_images_for_scoring(
 ) -> list[dict[str, Any]]:
     """Claim ingested images for VLM scoring.
 
-    Images with status='ingested' and no caption are ready for VLM processing.
+    Images with status='ingested' and no description are ready for VLM processing.
     Uses same claim token pattern as page/artifact claiming.
     """
     import uuid
@@ -1279,7 +1279,7 @@ def claim_images_for_scoring(
             """
             MATCH (img:Image {facility_id: $facility})
             WHERE img.status = 'ingested'
-              AND img.caption IS NULL
+              AND img.description IS NULL
               AND (img.claimed_at IS NULL
                    OR img.claimed_at < datetime() - duration($cutoff))
             WITH img
@@ -1324,22 +1324,27 @@ def claim_images_for_scoring(
 def mark_images_scored(
     facility: str,
     results: list[dict[str, Any]],
+    *,
+    store_images: bool = False,
 ) -> int:
-    """Mark images as captioned with VLM scoring results.
+    """Mark images as scored with VLM results.
 
-    Updates image status to 'captioned' and persists caption + scoring fields.
+    Updates image status to 'captioned' and persists description + scoring fields.
+    When store_images is False (default), clears image_data to free graph storage.
     Uses batched UNWIND for efficient graph updates.
     """
     if not results:
         return 0
 
+    clear_data = "" if store_images else ", img.image_data = null"
+
     with GraphClient() as gc:
         gc.query(
-            """
+            f"""
             UNWIND $batch AS item
-            MATCH (img:Image {id: item.id})
+            MATCH (img:Image {{id: item.id}})
             SET img.status = 'captioned',
-                img.caption = item.caption,
+                img.mermaid_diagram = item.mermaid_diagram,
                 img.ocr_text = item.ocr_text,
                 img.ocr_mdsplus_paths = item.ocr_mdsplus_paths,
                 img.ocr_imas_paths = item.ocr_imas_paths,
@@ -1362,8 +1367,8 @@ def mark_images_scored(
                 img.score_cost = item.score_cost,
                 img.scored_at = datetime(),
                 img.captioned_at = datetime(),
-                img.claimed_at = null,
-                img.image_data = null
+                img.claimed_at = null
+                {clear_data}
             """,
             batch=results,
         )

@@ -288,11 +288,11 @@ class TestDisplayItems:
     def test_image_item(self):
         item = ImageItem(
             image_id="tcv:abc123",
-            caption="Plasma cross-section",
+            description="Plasma cross-section",
             score=0.60,
         )
         assert item.image_id == "tcv:abc123"
-        assert item.caption == "Plasma cross-section"
+        assert item.description == "Plasma cross-section"
 
 
 # =============================================================================

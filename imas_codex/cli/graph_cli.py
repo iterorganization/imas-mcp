@@ -1853,6 +1853,7 @@ def graph_load(
 _DESCRIPTION_EMBEDDABLE_LABELS = [
     "FacilitySignal",
     "FacilityPath",
+    "Image",
     "TreeNode",
     "WikiArtifact",
 ]

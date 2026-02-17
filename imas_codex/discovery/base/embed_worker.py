@@ -57,22 +57,11 @@ IDLE_SLEEP = 3.0
 DESCRIPTION_LABELS = {
     "FacilityPath",
     "FacilitySignal",
+    "Image",
     "TreeNode",
     "WikiArtifact",
     "WikiPage",
 }
-
-# Labels that use 'caption' as the text field for embedding
-CAPTION_LABELS = {
-    "Image",
-}
-
-
-def _text_field_for_label(label: str) -> str:
-    """Return the text field name used for embedding a given label."""
-    if label in CAPTION_LABELS:
-        return "caption"
-    return "description"
 
 
 def _fetch_unembedded(
@@ -92,7 +81,7 @@ def _fetch_unembedded(
     """
     from imas_codex.graph import GraphClient
 
-    text_field = _text_field_for_label(label)
+    text_field = "description"
     facility_filter = ""
     params: dict[str, Any] = {"batch_size": batch_size}
 
@@ -122,7 +111,7 @@ def _count_unembedded(
     """Count nodes with text but no embedding."""
     from imas_codex.graph import GraphClient
 
-    text_field = _text_field_for_label(label)
+    text_field = "description"
     facility_filter = ""
     params: dict[str, Any] = {}
 
@@ -247,7 +236,7 @@ async def embed_description_worker(
 
     worker_id = id(asyncio.current_task())
     facility = facility or getattr(state, "facility", None)
-    labels = labels or list(DESCRIPTION_LABELS | CAPTION_LABELS)
+    labels = labels or list(DESCRIPTION_LABELS)
     stats = WorkerStats()
 
     logger.info(
