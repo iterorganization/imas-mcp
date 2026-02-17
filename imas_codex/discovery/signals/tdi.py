@@ -500,7 +500,7 @@ async def ingest_tdi_signals(
         # Convert to dicts
         signal_dicts = [s.model_dump(exclude_none=True, by_alias=True) for s in batch]
 
-        # Batch merge with AT_FACILITY edge
+        # Batch merge with AT_FACILITY and DATA_ACCESS edges
         gc.query(
             """
             UNWIND $signals AS s
@@ -509,6 +509,10 @@ async def ingest_tdi_signals(
             WITH fs, s
             MATCH (f:Facility {id: s.facility_id})
             MERGE (fs)-[:AT_FACILITY]->(f)
+            WITH fs, s
+            WHERE s.data_access IS NOT NULL
+            MATCH (da:DataAccess {id: s.data_access})
+            MERGE (fs)-[:DATA_ACCESS]->(da)
             """,
             signals=signal_dicts,
         )

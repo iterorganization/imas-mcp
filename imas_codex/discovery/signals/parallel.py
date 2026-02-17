@@ -868,8 +868,8 @@ def ingest_epochs(
                             }
                         )
 
-                    # Create signals and INTRODUCED_IN + AT_FACILITY edges atomically
-                    result = gc.query(
+                    # Create signals with AT_FACILITY edge (always)
+                    gc.query(
                         """
                         UNWIND $signals AS sig
                         MERGE (s:FacilitySignal {id: sig.id})
@@ -877,11 +877,19 @@ def ingest_epochs(
                                       s.discovered_at = datetime()
                         ON MATCH SET s.claimed_at = null
                         WITH s, sig
-                        MATCH (v:TreeModelVersion {id: sig.epoch_id})
-                        MERGE (s)-[:INTRODUCED_IN]->(v)
-                        WITH s, sig
                         MATCH (f:Facility {id: sig.facility_id})
                         MERGE (s)-[:AT_FACILITY]->(f)
+                        """,
+                        signals=signals,
+                    )
+
+                    # Create INTRODUCED_IN edges to epoch (separate query)
+                    result = gc.query(
+                        """
+                        UNWIND $signals AS sig
+                        MATCH (s:FacilitySignal {id: sig.id})
+                        MATCH (v:TreeModelVersion {id: sig.epoch_id})
+                        MERGE (s)-[:INTRODUCED_IN]->(v)
                         RETURN count(s) AS created
                         """,
                         signals=signals,
@@ -1150,14 +1158,16 @@ def discover_tdi_signals(
 def ingest_discovered_signals(signals: list[dict]) -> int:
     """Ingest discovered signals to graph with epoch relationships.
 
-    Creates FacilitySignal nodes and INTRODUCED_IN relationships to
-    their TreeModelVersion epoch (if epoch_id is present).
+    Creates FacilitySignal nodes with AT_FACILITY and DATA_ACCESS edges.
+    Optionally creates INTRODUCED_IN relationships to TreeModelVersion
+    epoch (if epoch_id is present).
     """
     if not signals:
         return 0
 
     try:
         with GraphClient() as gc:
+            # Phase 1: Create/update signal nodes + AT_FACILITY edge (always)
             gc.query(
                 """
                 UNWIND $signals AS sig
@@ -1166,12 +1176,32 @@ def ingest_discovered_signals(signals: list[dict]) -> int:
                               s.discovered_at = datetime()
                 ON MATCH SET s.claimed_at = null
                 WITH s, sig
-                WHERE sig.epoch_id IS NOT NULL
-                MATCH (v:TreeModelVersion {id: sig.epoch_id})
-                MERGE (s)-[:INTRODUCED_IN]->(v)
-                WITH s, sig
                 MATCH (f:Facility {id: sig.facility_id})
                 MERGE (s)-[:AT_FACILITY]->(f)
+                """,
+                signals=signals,
+            )
+
+            # Phase 2: Create DATA_ACCESS edges for signals with data_access
+            gc.query(
+                """
+                UNWIND $signals AS sig
+                WITH sig WHERE sig.data_access IS NOT NULL
+                MATCH (s:FacilitySignal {id: sig.id})
+                MATCH (da:DataAccess {id: sig.data_access})
+                MERGE (s)-[:DATA_ACCESS]->(da)
+                """,
+                signals=signals,
+            )
+
+            # Phase 3: Create INTRODUCED_IN edges for epoch-tracked signals
+            gc.query(
+                """
+                UNWIND $signals AS sig
+                WITH sig WHERE sig.epoch_id IS NOT NULL
+                MATCH (s:FacilitySignal {id: sig.id})
+                MATCH (v:TreeModelVersion {id: sig.epoch_id})
+                MERGE (s)-[:INTRODUCED_IN]->(v)
                 """,
                 signals=signals,
             )
