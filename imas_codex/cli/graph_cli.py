@@ -1246,10 +1246,37 @@ def graph_secure() -> None:
             click.echo("Restarting Neo4j...")
             remote_service_action("start", service, profile.host, timeout=60)
 
+        # Auto-sync .env to remote host
+        click.echo(f"Syncing .env to {profile.host}...")
+        try:
+            remote_env = "~/Code/imas-codex/.env"
+            result = subprocess.run(
+                ["scp", "-q", str(env_file), f"{profile.host}:{remote_env}"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                subprocess.run(
+                    ["ssh", profile.host, f"chmod 600 {remote_env}"],
+                    capture_output=True,
+                    timeout=10,
+                )
+                click.echo("✓ Synced .env to remote host")
+            else:
+                click.echo(
+                    f"Warning: .env sync failed: {result.stderr.strip()}\n"
+                    f"  Run manually: imas-codex config secrets push {profile.host}",
+                    err=True,
+                )
+        except Exception as e:
+            click.echo(
+                f"Warning: .env sync failed: {e}\n"
+                f"  Run manually: imas-codex config secrets push {profile.host}",
+                err=True,
+            )
+
         click.echo(f"\n✓ Password rotated for [{profile.name}] on {profile.host}")
-        click.echo(
-            f"  Sync .env to remote: imas-codex config secrets push {profile.host}"
-        )
         return
     # ── End remote dispatch ──────────────────────────────────────────────
 
