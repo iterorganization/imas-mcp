@@ -6,12 +6,15 @@ from typing import Any
 import pint
 
 
-# register UDUNITS unit format with pint
-@pint.register_unit_format("U")
+# register UDUNITS unit format with pint (guard against re-import)
 def format_unit_simple(
     unit, registry: pint.UnitRegistry, **options: dict[str, Any]
 ) -> str:
     return ".".join(u if p == 1 else f"{u}^{p}" for u, p in unit.items())
+
+
+if "U" not in pint.formatting.REGISTERED_FORMATTERS:
+    pint.register_unit_format("U")(format_unit_simple)
 
 
 # Initialize unit registry
