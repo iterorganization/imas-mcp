@@ -6,7 +6,7 @@ Condensed schema for the imas-codex Neo4j knowledge graph.
 
 | Type | Key Fields | Description |
 |------|-----------|-------------|
-| Facility | id, name, machine | Root node per facility (tcv, jet, iter, jt60sa) |
+| Facility | id, name, machine | Root node per facility (tcv, jet, iter, jt-60sa) |
 | FacilitySignal | id, physics_domain, accessor, status | Signal with access info |
 | DataAccess | id, method_type, data_template, time_template | Code generation template |
 | TreeNode | path, tree_name, node_type, description | MDSplus tree node |

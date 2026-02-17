@@ -692,7 +692,7 @@ def build_servers_section(
         statuses: List of ServiceStatus objects from ServiceMonitor.get_status()
 
     Format:
-      SERVERS  graph:iter-login  embed:iter-login  ssh:jt60sa  auth:vpn
+      SERVERS  graph:iter-login  embed:iter-login  ssh:jt-60sa  auth:vpn
     """
     if not statuses:
         return None

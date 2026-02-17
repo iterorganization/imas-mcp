@@ -328,7 +328,7 @@ def hpc_run(
     Examples:
         imas-codex hpc run -- imas-codex imas build
         imas-codex hpc run -- imas-codex ingest run tcv
-        imas-codex hpc run -- imas-codex discover wiki jt60sa -c 25
+        imas-codex hpc run -- imas-codex discover wiki jt-60sa -c 25
         imas-codex hpc run -c 2 -m 16 -- uv run pytest tests/
     """
     if not _slurm_available():

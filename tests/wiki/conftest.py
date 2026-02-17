@@ -465,7 +465,7 @@ SAMPLE_FACILITY_CONFIG = {
 }
 
 SAMPLE_MULTI_SITE_CONFIG = {
-    "ssh_host": "jt60sa",
+    "ssh_host": "jt-60sa",
     "wiki_sites": [
         {
             "url": "https://wiki.jt60sa.org/twiki",

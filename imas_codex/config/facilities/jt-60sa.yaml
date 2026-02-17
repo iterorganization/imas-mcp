@@ -1,16 +1,16 @@
 # JT-60SA - Japan Torus 60 Super Advanced
 #
 # Public facility configuration for graph and mappings.
-# Infrastructure data is in jt60sa_private.yaml (gitignored).
+# Infrastructure data is in jt-60sa_private.yaml (gitignored).
 
-facility: jt60sa
+facility: jt-60sa
 name: JT-60SA
-machine: JT60SA
+machine: JT-60SA
 description: Japan Torus 60 Super Advanced - Satellite tokamak facility
 location: Naka, Japan
 
 # SSH connection (user configures ~/.ssh/config with this alias)
-ssh_host: jt60sa
+ssh_host: jt-60sa
 
 # Data systems available at this facility
 data_systems:
@@ -20,7 +20,7 @@ data_systems:
   - uda      # UDA available via modules
 
 # Data source configuration for signal discovery
-# Used by: imas-codex discover signals jt60sa
+# Used by: imas-codex discover signals jt-60sa
 data_sources:
   # EDAS is JT-60SA's primary experiment data access system.
   # Wraps proprietary data formats with C/Fortran/Python APIs.
@@ -36,7 +36,7 @@ data_sources:
   imas:
     backends:
       - mdsplus
-    db_name: jt60sa
+    db_name: jt-60sa
 
 # Data access patterns discovered during facility exploration.
 data_access_patterns:
@@ -119,7 +119,7 @@ discovery_roots:
   - /analysis_DB/MBDB              # MB database
 
 # Wiki/documentation sites
-# JT60SA documentation is hosted on nakasvr23 behind IFERC VPN.
+# JT-60SA documentation is hosted on nakasvr23 behind IFERC VPN.
 # Site 0: Live TWiki Main web - EDAS manuals, API docs, shot reports, daily reports (~5500 topics)
 # Site 1: TWiki static export - analysis code documentation (Code web, ~285 topics)
 # Site 2: Server landing page - hardware, software, login, batch jobs, compilers
@@ -198,9 +198,9 @@ user_info:
 # =============================================================================
 # JT-60SA services are behind IFERC VPN. Access from workstation requires:
 # 1. VPN active (OpenVPN to iferc.org)
-# 2. SSH tunnels via autossh systemd service (jt60sa-twiki-forward.service)
+# 2. SSH tunnels via autossh systemd service (jt-60sa-twiki-forward.service)
 #
-# Port convention: base 88xx for jt60sa, last digit = wiki site index
+# Port convention: base 88xx for jt-60sa, last digit = wiki site index
 # wiki_sites[0] -> port 8800, wiki_sites[1] -> port 8801, etc.
 #
 # The reverse tunnel (iter-reverse-tunnel.service) exposes these ports to ITER
@@ -208,7 +208,7 @@ user_info:
 
 port_forwards:
   port_base: 8800
-  ssh_host: jt60sa  # SSH to jt60sa, then LocalForward to wiki servers
+  ssh_host: jt-60sa  # SSH to jt-60sa, then LocalForward to wiki servers
   forwards:
     - name: twiki_main
       local_port: 8800
@@ -234,7 +234,7 @@ port_forwards:
 # =============================================================================
 # Browser URLs - Localhost access with active port forwards
 # =============================================================================
-# These URLs work when the jt60sa-twiki-forward.service is running.
+# These URLs work when the jt-60sa-twiki-forward.service is running.
 # From ITER workers, use the same URLs (iter-reverse-tunnel exposes them).
 
 browser:

@@ -3,7 +3,7 @@
 Modular CLI package with domain commands as direct subcommands:
 
     imas-codex discover paths tcv          # Run paths discovery
-    imas-codex discover wiki jt60sa        # Run wiki discovery
+    imas-codex discover wiki jt-60sa        # Run wiki discovery
     imas-codex discover signals tcv        # Run signals discovery
     imas-codex discover files tcv          # Run files discovery
     imas-codex discover status tcv         # Status (all domains)
@@ -42,7 +42,7 @@ def discover():
     \b
     Examples:
       imas-codex discover paths jet            # Run paths discovery
-      imas-codex discover wiki jt60sa          # Run wiki discovery
+      imas-codex discover wiki jt-60sa          # Run wiki discovery
       imas-codex discover status jet           # All domains status
       imas-codex discover status jet -d wiki   # Wiki status only
       imas-codex discover clear jet -d paths   # Clear paths only

@@ -26,7 +26,7 @@ epfl:
     ip: 128.178.128.220
     comment: TCV compute node
 
-jt60sa:
+jt-60sa:
   - hostname: nakasvr23.iferc.org
     ip: 157.111.10.188
     comment: JT-60SA login node

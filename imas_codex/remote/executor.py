@@ -61,7 +61,7 @@ def check_ssh_connection(ssh_host: str, timeout: int = 10) -> dict:
     Use this to provide clear error messages when network issues occur.
 
     Args:
-        ssh_host: SSH host alias (e.g., 'tcv', 'jt60sa')
+        ssh_host: SSH host alias (e.g., 'tcv', 'jt-60sa')
         timeout: Connection timeout in seconds
 
     Returns:

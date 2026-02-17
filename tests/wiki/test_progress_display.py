@@ -378,7 +378,7 @@ class TestWikiProgressDisplayHeader:
         assert "diagnostics" in header.plain
 
     def test_multi_site_header(self):
-        display = WikiProgressDisplay(facility="jt60sa", cost_limit=1.0)
+        display = WikiProgressDisplay(facility="jt-60sa", cost_limit=1.0)
         display.state.total_sites = 3
         display.state.current_site_name = "https://jt60sa.org/twiki"
         header = display._build_header()

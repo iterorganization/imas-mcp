@@ -181,7 +181,7 @@ classes:
       port_forwards:
         description: >-
           Port forward configuration for accessing facility services from workstation.
-          Each facility uses a base port range (e.g., 88xx for jt60sa). Individual
+          Each facility uses a base port range (e.g., 88xx for jt-60sa). Individual
           services increment the last digit (0=wiki1, 1=wiki2, etc). Workstation
           SSH config establishes LocalForwards; autossh systemd services maintain them.
         range: PortForwardsConfig
@@ -587,14 +587,14 @@ classes:
   PortForwardsConfig:
     description: >-
       Port forward configuration for accessing facility services from workstation.
-      Each facility uses a base port range (e.g., 88xx for jt60sa). Individual services
+      Each facility uses a base port range (e.g., 88xx for jt-60sa). Individual services
       use ports within that range: port_base+0 for first wiki, port_base+1 for second, etc.
       This convention allows internal tracking of which ports belong to which machines.
     class_uri: fc:PortForwardsConfig
     attributes:
       port_base:
         description: >-
-          Base port number for this facility (e.g., 8800 for jt60sa, 8810 for jet).
+          Base port number for this facility (e.g., 8800 for jt-60sa, 8810 for jet).
           All local ports for this facility fall within port_base to port_base+99.
           Different facilities use different hundreds to avoid conflicts.
         range: integer

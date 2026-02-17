@@ -22,7 +22,7 @@ Each profile maps to a specific host, port, and data directory.
 |----------|------|------|----------|
 | iter | 7687 | 7474 | `neo4j/` |
 | tcv | 7688 | 7475 | `neo4j-tcv/` |
-| jt60sa | 7689 | 7476 | `neo4j-jt60sa/` |
+| jt-60sa | 7689 | 7476 | `neo4j-jt-60sa/` |
 
 ### Location-Aware Resolution
 
@@ -174,7 +174,7 @@ imas-codex serve neo4j start
 |---------|---------|
 | `imas-codex-graph` | Full unified graph (all facilities) |
 | `imas-codex-graph-tcv` | TCV-only graph + IMAS DD |
-| `imas-codex-graph-jt60sa` | JT-60SA-only graph + IMAS DD |
+| `imas-codex-graph-jt-60sa` | JT-60SA-only graph + IMAS DD |
 
 ## Schema Management
 

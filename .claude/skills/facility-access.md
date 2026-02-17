@@ -8,7 +8,7 @@ SSH access and data system patterns per facility.
 |----------|-----------|-------------|----------------|
 | TCV | `tcv` | MDSplus + TDI | 84000 |
 | JET | `jet` | MDSplus + PPF | 99000 |
-| JT60SA | `jt60sa` | MDSplus | 30000 |
+| JT-60SA | `jt-60sa` | MDSplus | 30000 |
 | ITER | `iter` | IMAS | N/A |
 
 ## Remote Tools
@@ -69,12 +69,12 @@ conn.openTree('jet', 99000)
 - `HRTS`: High-res Thomson scattering
 - `BOLO`: Bolometry
 
-## JT60SA
+## JT-60SA
 
 ### MDSplus
 ```python
 import MDSplus
-tree = MDSplus.Tree('jt60sa', 30000, 'readonly')
+tree = MDSplus.Tree('jt-60sa', 30000, 'readonly')
 ```
 
 ## Safety Rules

@@ -628,7 +628,7 @@ Named profiles allow switching between Neo4j instances at runtime. Each profile 
 |----------|------|------|
 | iter | 7687 | 7474 |
 | tcv | 7688 | 7475 |
-| jt60sa | 7689 | 7476 |
+| jt-60sa | 7689 | 7476 |
 
 Select the active profile:
 ```bash

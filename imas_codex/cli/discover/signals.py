@@ -105,7 +105,7 @@ def signals(
       imas-codex discover signals tcv
       imas-codex discover signals tcv --scan-only
       imas-codex discover signals jet -s ppf -c 2.0
-      imas-codex discover signals jt60sa -s edas --scan-only
+      imas-codex discover signals jt-60sa -s edas --scan-only
       imas-codex discover signals tcv -s tdi,mdsplus -f equilibrium
     """
     # Auto-detect rich output

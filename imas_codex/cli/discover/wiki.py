@@ -107,8 +107,8 @@ def wiki(
 
     \b
     Examples:
-      imas-codex discover wiki jt60sa              # Full discovery
-      imas-codex discover wiki jt60sa --scan-only  # Scan pages only
+      imas-codex discover wiki jt-60sa              # Full discovery
+      imas-codex discover wiki jt-60sa --scan-only  # Scan pages only
       imas-codex discover wiki tcv -f equilibrium  # Focus scoring
       imas-codex discover wiki jet -c 5.0          # $5 budget
     """

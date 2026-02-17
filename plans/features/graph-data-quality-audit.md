@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-13  
 **Status:** Diagnostic Complete  
-**Scope:** Unified discovery graph (ITER, TCV, JT60SA, JET)
+**Scope:** Unified discovery graph (ITER, TCV, JT-60SA, JET)
 
 ## Executive Summary
 
@@ -61,7 +61,7 @@ Feb 13, 07:23  │ User notices discrepancy between local and ITER results
 | iter | **12,542** | **0** | ITER graph has NO iter paths |
 | tcv | 15,341 | 22,341 | ITER has +7k more |
 | jet | 16,294 | 8,686 | LOCAL has +8k more |
-| jt60sa | 2,378 | 587 | LOCAL has +1.8k more |
+| jt-60sa | 2,378 | 587 | LOCAL has +1.8k more |
 
 ### WikiPage Distribution
 
@@ -69,7 +69,7 @@ Feb 13, 07:23  │ User notices discrepancy between local and ITER results
 |----------|-------|------|-------|
 | tcv | 7,778 | 7,777 | Nearly identical |
 | jet | 10,546 | 12,038 | ITER has +1.5k more |
-| jt60sa | 5,800 | 7,155 | ITER has +1.4k more |
+| jt-60sa | 5,800 | 7,155 | ITER has +1.4k more |
 
 ### FacilitySignal Distribution
 
@@ -116,7 +116,7 @@ The following analysis is based on the LOCAL graph (171,364 nodes, 368,122 relat
 
 ### 3.1 Node Inventory by Facility
 
-| Node Type | ITER | TCV | JT60SA | JET | Total |
+| Node Type | ITER | TCV | JT-60SA | JET | Total |
 |-----------|------|-----|--------|-----|-------|
 | FacilityPath | 12,542 | 15,341 | 2,378 | 16,294 | 46,555 |
 | WikiPage | 0 | 7,778 | 5,800 | 10,546 | 24,124 |
@@ -145,7 +145,7 @@ The following analysis is based on the LOCAL graph (171,364 nodes, 368,122 relat
 |----------|-----------|---------|--------|---------|----------|
 | ITER | 3,293 (26%) | 624 (5%) | 918 (7%) | 7,707 (61%) | — |
 | TCV | 4,298 (28%) | — | 907 (6%) | 10,136 (66%) | — |
-| JT60SA | 15 (1%) | 535 (22%) | 913 (38%) | 915 (38%) | — |
+| JT-60SA | 15 (1%) | 535 (22%) | 913 (38%) | 915 (38%) | — |
 | JET | 6,639 (41%) | — | 947 (6%) | 8,668 (53%) | 40 |
 
 #### Score Distribution (Scored Paths Only)
@@ -154,7 +154,7 @@ The following analysis is based on the LOCAL graph (171,364 nodes, 368,122 relat
 |----------|-------|-----------|--------|-----|-----|-------------|
 | ITER | 918 | 0.744 | 0.850 | 0.570 | 1.000 | 639 (70%) |
 | TCV | 907 | 0.563 | 0.700 | 0.200 | 0.850 | 458 (50%) |
-| JT60SA | 913 | 0.713 | 0.850 | 0.500 | 0.950 | 642 (70%) |
+| JT-60SA | 913 | 0.713 | 0.850 | 0.500 | 0.950 | 642 (70%) |
 | JET | 947 | 0.564 | 0.600 | 0.400 | 0.800 | 343 (36%) |
 
 #### Issues
@@ -171,7 +171,7 @@ The following analysis is based on the LOCAL graph (171,364 nodes, 368,122 relat
 |----------|---------|--------|----------|---------|----------------|
 | ITER | — | — | — | — | N/A (no wiki) |
 | TCV | 7,081 (91%) | 0 | 278 (3.6%) | 419 (5.4%) | 3.6% |
-| JT60SA | 5,370 (93%) | 19 | 99 (1.7%) | 312 (5.4%) | 1.7% |
+| JT-60SA | 5,370 (93%) | 19 | 99 (1.7%) | 312 (5.4%) | 1.7% |
 | JET | 9,630 (91%) | 22 | 601 (5.7%) | 293 (2.8%) | 5.7% |
 
 #### WikiChunk Quality
@@ -179,7 +179,7 @@ The following analysis is based on the LOCAL graph (171,364 nodes, 368,122 relat
 - Content stored in `content` field with rich metadata extraction
 - **TCV chunks are richest**: 12.7% mention MDSplus paths, 65.5% mention units
 - **JET chunks**: 71.9% mention units, 5.0% tool mentions, 0% MDSplus (uses PPF)
-- **JT60SA sparse**: only 212 chunks, 34.4% with units
+- **JT-60SA sparse**: only 212 chunks, 34.4% with units
 
 #### Issues
 - **~92% of wiki pages remain at `scanned`** — never scored/ingested
@@ -192,7 +192,7 @@ The following analysis is based on the LOCAL graph (171,364 nodes, 368,122 relat
 | Facility | Discovered | Scored | Ingested | Total |
 |----------|-----------|--------|----------|-------|
 | TCV | 19,425 (96.5%) | 170 (0.8%) | 532 (2.6%) | 20,127 |
-| JT60SA | 216 (30.5%) | 493 (69.5%) | 0 | 709 |
+| JT-60SA | 216 (30.5%) | 493 (69.5%) | 0 | 709 |
 | JET | 18,531 (96.7%) | 320 (1.7%) | 308 (1.6%) | 19,159 |
 
 #### CRITICAL: Artifact Linking is Broken
@@ -201,11 +201,11 @@ The following analysis is based on the LOCAL graph (171,364 nodes, 368,122 relat
 |----------|----------------|-----------------|-------------|
 | TCV | 20,127 | **0** | **100%** |
 | JET | 19,159 | 1,258 | **93.4%** |
-| JT60SA | 709 | 689 | **2.8%** |
+| JT-60SA | 709 | 689 | **2.8%** |
 
 **TCV has ZERO `WikiPage→HAS_ARTIFACT→WikiArtifact` relationships.** All artifacts are orphaned.
 
-JT60SA (TWiki-based) has excellent linking (97.2%). TCV and JET (MediaWiki-based) have catastrophic orphan rates. This is likely a bug in MediaWiki artifact discovery — filesystem scan finds artifacts but doesn't link them back to referencing pages.
+JT-60SA (TWiki-based) has excellent linking (97.2%). TCV and JET (MediaWiki-based) have catastrophic orphan rates. This is likely a bug in MediaWiki artifact discovery — filesystem scan finds artifacts but doesn't link them back to referencing pages.
 
 #### URL Quality (Refetchability)
 
@@ -213,7 +213,7 @@ JT60SA (TWiki-based) has excellent linking (97.2%). TCV and JET (MediaWiki-based
 |----------|-------|-------------|---------------|
 | TCV | 885 | `https://spcwiki.epfl.ch/wiki/images/...` | Wiki auth |
 | JET | 547 | `https://wiki.jetdata.eu/.../images/...` | VPN + auth |
-| JT60SA | 76 | Mixed: `nakasvr23.iferc.org` + internal IPs | SSH tunnel |
+| JT-60SA | 76 | Mixed: `nakasvr23.iferc.org` + internal IPs | SSH tunnel |
 
 All images have valid `source_url` — **re-retrieval is possible** with appropriate authentication.
 
@@ -223,11 +223,11 @@ All images have valid `source_url` — **re-retrieval is possible** with appropr
 |----------|-------|-----------|-----------|----------|
 | TCV | 885 | 144 (16%) | 26.2 MB | 31 KB |
 | JET | 547 | **0** | 37.0 MB | 71 KB |
-| JT60SA | 76 | **0** | 2.2 MB | 31 KB |
+| JT-60SA | 76 | **0** | 2.2 MB | 31 KB |
 | **Total** | **1,508** | **144 (9.5%)** | **65.4 MB** | — |
 
 #### Issues
-- **JET and JT60SA have ZERO VLM captions**
+- **JET and JT-60SA have ZERO VLM captions**
 - **65.4 MB of base64 image data** stored in Neo4j
 - All images have valid `source_url` — data is redundant
 
@@ -236,7 +236,7 @@ Since all URLs are valid:
 - Drop `image_data` property → saves 65 MB (~17% of database)
 - Keep `caption`, `ocr_text`, `ocr_*_paths` fields
 - Implement on-demand fetch from `source_url`
-- Cache JT60SA images locally (SSH tunnel dependency)
+- Cache JT-60SA images locally (SSH tunnel dependency)
 
 ### 3.6 Signals Discovery (TCV Only)
 
@@ -276,7 +276,7 @@ Since all URLs are valid:
 | JET artifacts 93% orphaned | JET | **High** |
 | FacilityPath `scanned` state inconsistency | ITER (624 stuck) | **Medium** |
 | JET uses `excluded` status not used elsewhere | JET | **Low** |
-| JET/JT60SA have zero VLM captions | JET, JT60SA | **Medium** |
+| JET/JT-60SA have zero VLM captions | JET, JT-60SA | **Medium** |
 | No embeddings on descriptions | All | **High** |
 | WikiPage inter-page LINKS_TO empty | All | **Low** |
 | Person nodes: 0 names, 0 emails | All | **Low** |
@@ -315,7 +315,7 @@ Since all URLs are valid:
 
 7. **Progress wiki ingestion** — score and ingest the ~22k scanned pages
 
-8. **Run VLM captioning for JET/JT60SA** — 623 images need captions
+8. **Run VLM captioning for JET/JT-60SA** — 623 images need captions
 
 9. **Remove `image_data` from graph** — after confirming refetchability
 

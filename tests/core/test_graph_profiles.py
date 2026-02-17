@@ -59,10 +59,10 @@ class TestPortConvention:
         assert _convention_bolt_port("tcv") == 7688
         assert _convention_http_port("tcv") == 7475
 
-    def test_jt60sa_ports(self):
-        """jt60sa (offset 2)."""
-        assert _convention_bolt_port("jt60sa") == 7689
-        assert _convention_http_port("jt60sa") == 7476
+    def test_jt_60sa_ports(self):
+        """jt-60sa (offset 2)."""
+        assert _convention_bolt_port("jt-60sa") == 7689
+        assert _convention_http_port("jt-60sa") == 7476
 
     def test_all_facilities_have_unique_ports(self):
         """Every known facility has a unique bolt and http port."""

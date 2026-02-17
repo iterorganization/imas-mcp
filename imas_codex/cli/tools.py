@@ -225,7 +225,7 @@ def tools_install(
         imas-codex tools install iter --tools-only   # Skip Python/venv
         imas-codex tools install iter --python-only  # Only Python/venv
         imas-codex tools install jet --python 3.13   # Use Python 3.13
-        imas-codex tools install jt60sa --force      # Reinstall everything
+        imas-codex tools install jt-60sa --force      # Reinstall everything
     """
     from imas_codex.remote.python import DEFAULT_VENV_PATH, setup_python_env
     from imas_codex.remote.tools import install_tool, load_remote_tools

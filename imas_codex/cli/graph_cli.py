@@ -2799,7 +2799,7 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
 
     \b
     Examples:
-      imas-codex graph init codex -f iter -f tcv -f jt60sa
+      imas-codex graph init codex -f iter -f tcv -f jt-60sa
       imas-codex graph init dev -f tcv
     """
     from imas_codex.graph.profiles import resolve_neo4j

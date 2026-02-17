@@ -17,7 +17,7 @@ Port convention (both bolt and HTTP offset together)::
 
     iter   → bolt 7687, http 7474  (slot 0, Neo4j defaults)
     tcv    → bolt 7688, http 7475  (slot 1)
-    jt60sa → bolt 7689, http 7476  (slot 2)
+    jt-60sa → bolt 7689, http 7476  (slot 2)
     jet    → bolt 7690, http 7477  (slot 3)
     ...
 
@@ -71,7 +71,7 @@ def _get_all_offsets() -> dict[str, int]:
 
     Locations is a list where position encodes the port slot::
 
-        locations = ["iter", "tcv", "jt60sa", ...]  # iter=0, tcv=1, ...
+        locations = ["iter", "tcv", "jt-60sa", ...]  # iter=0, tcv=1, ...
     """
     from imas_codex.settings import _get_section
 

@@ -51,7 +51,7 @@ _LEGACY_SERVICE_NAMES: dict[str, str] = {
     "tcv": "tcv-wiki",
     "iter": "iter-confluence",
     "jet": "jet-wiki",
-    "jt60sa": "jt60sa-wiki",
+    "jt-60sa": "jt-60sa-wiki",
 }
 
 

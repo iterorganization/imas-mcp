@@ -1,6 +1,6 @@
 # Agent Teams Infrastructure
 
-> **Goal**: Deploy collaborative Claude Code agent teams for IMAS mapping discovery across JET, TCV, and JT60SA. Build reusable infrastructure for future scientific teams.
+> **Goal**: Deploy collaborative Claude Code agent teams for IMAS mapping discovery across JET, TCV, and JT-60SA. Build reusable infrastructure for future scientific teams.
 
 ## Table of Contents
 
@@ -513,7 +513,7 @@ skills:
 You are a facility data expert for fusion research facilities.
 
 Your capabilities:
-- SSH to remote facilities (tcv, jet, jt60sa, iter)
+- SSH to remote facilities (tcv, jet, jt-60sa, iter)
 - Enumerate MDSplus trees and signals
 - Test data access patterns (MDSplus, TDI, PPF)
 - Check signal availability at specific shots
@@ -805,7 +805,7 @@ Wait for all teammates to complete before synthesizing results.
 |-------|----------|-------------|---------------|----------|
 | 1 | TCV | ~300 | $100-150 | 1-2 days |
 | 2 | JET | ~500 | $150-200 | 2-3 days |
-| 3 | JT60SA | ~200 | $80-120 | 1-2 days |
+| 3 | JT-60SA | ~200 | $80-120 | 1-2 days |
 
 Start with TCV — smallest signal set, best SSH access, most wiki documentation. Validate approach, refine prompts, then scale.
 
@@ -819,7 +819,7 @@ Start with TCV — smallest signal set, best SSH access, most wiki documentation
 |------|--------|-------|
 | TCV mapping team | $150 | First run, includes iteration |
 | JET mapping team | $200 | Larger signal set |
-| JT60SA mapping team | $120 | Benefit from refined approach |
+| JT-60SA mapping team | $120 | Benefit from refined approach |
 | Development & debugging | $200 | Infrastructure setup, prompt refinement |
 | Prompt caching overhead | $80 | Cache write costs (1.25x for first calls) |
 | Buffer | $250 | Unexpected costs, retries, edge cases |
@@ -855,7 +855,7 @@ Main cost driver is Opus output tokens ($75/M). If cost pressure builds, shift F
 
 2. **Agent memory** (`.claude/agent-memory/<name>/MEMORY.md`): Subagents accumulate domain knowledge across sessions. The IMAS expert remembers pattern discoveries from previous facilities.
 
-3. **Phased execution**: Don't run all 3 facilities simultaneously. TCV → validate → JET → JT60SA. Each phase is a separate team session with its own `AgentSession` node.
+3. **Phased execution**: Don't run all 3 facilities simultaneously. TCV → validate → JET → JT-60SA. Each phase is a separate team session with its own `AgentSession` node.
 
 4. **Time constraints**: Set `maxTurns: 50` on subagents. Use OpenRouter per-key rate limits (RPM/TPM) to prevent runaway. `TaskCompleted` hook can check elapsed time.
 
@@ -900,7 +900,7 @@ Phase 6: TCV mapping team (first deployment)
   ├─ Validate approach, refine spawn prompts
   └─ Iterate on evidence thresholds
 
-Phase 7: JET, JT60SA mapping teams
+Phase 7: JET, JT-60SA mapping teams
   └─ Scale validated approach
 ```
 

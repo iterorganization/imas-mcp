@@ -108,7 +108,7 @@ class TestTWikiRawAdapterDiscovery:
         )
 
         adapter = TWikiRawAdapter(ssh_host="myhost", data_path="/twiki/data/Main")
-        pages = adapter.bulk_discover_pages("jt60sa", "")
+        pages = adapter.bulk_discover_pages("jt-60sa", "")
 
         # Should find 2 pages (WebHome, Watchlist, TWiki filtered out)
         assert len(pages) == 2
@@ -127,7 +127,7 @@ class TestTWikiRawAdapterDiscovery:
         )
 
         adapter = TWikiRawAdapter(ssh_host="myhost", data_path="/twiki/data/Main")
-        pages = adapter.bulk_discover_pages("jt60sa", "")
+        pages = adapter.bulk_discover_pages("jt-60sa", "")
 
         assert len(pages) == 1
         assert pages[0].url == "ssh://myhost/twiki/data/Main/AnalysisDB.txt"
@@ -139,7 +139,7 @@ class TestTWikiRawAdapterDiscovery:
         mock_run.return_value = MagicMock(returncode=1, stdout=b"")
 
         adapter = TWikiRawAdapter(ssh_host="myhost", data_path="/twiki/data/Main")
-        pages = adapter.bulk_discover_pages("jt60sa", "")
+        pages = adapter.bulk_discover_pages("jt-60sa", "")
 
         assert len(pages) == 0
 
@@ -151,7 +151,7 @@ class TestTWikiRawAdapterDiscovery:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="ssh", timeout=30)
 
         adapter = TWikiRawAdapter(ssh_host="myhost", data_path="/twiki/data/Main")
-        pages = adapter.bulk_discover_pages("jt60sa", "")
+        pages = adapter.bulk_discover_pages("jt-60sa", "")
 
         assert len(pages) == 0
 
@@ -168,7 +168,7 @@ class TestTWikiRawAdapterDiscovery:
             data_path="/d",
             exclude_patterns=["^DailyReport"],
         )
-        pages = adapter.bulk_discover_pages("jt60sa", "")
+        pages = adapter.bulk_discover_pages("jt-60sa", "")
 
         assert len(pages) == 1
         assert pages[0].name == "EGIS"
@@ -179,7 +179,7 @@ class TestTWikiRawAdapterArtifacts:
 
     def test_no_pub_path_returns_empty(self):
         adapter = TWikiRawAdapter(ssh_host="h", data_path="/d")
-        artifacts = adapter.bulk_discover_artifacts("jt60sa", "")
+        artifacts = adapter.bulk_discover_artifacts("jt-60sa", "")
         assert len(artifacts) == 0
 
     @patch("subprocess.run")
@@ -194,7 +194,7 @@ class TestTWikiRawAdapterArtifacts:
             data_path="/d",
             pub_path="/pub/Main",
         )
-        artifacts = adapter.bulk_discover_artifacts("jt60sa", "")
+        artifacts = adapter.bulk_discover_artifacts("jt-60sa", "")
 
         assert len(artifacts) == 2
         types = {a.artifact_type for a in artifacts}

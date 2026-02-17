@@ -15,7 +15,7 @@ Usage:
 Input (JSON on stdin):
     {
         "signals": [
-            {"id": "jt60sa:general/eddb_testime", "category": "EDDB", "data_name": "tesTime"},
+            {"id": "jt-60sa:general/eddb_testime", "category": "EDDB", "data_name": "tesTime"},
             ...
         ],
         "ref_shot": "E012345"
@@ -24,8 +24,8 @@ Input (JSON on stdin):
 Output (JSON on stdout):
     {
         "results": [
-            {"id": "jt60sa:general/eddb_testime", "success": true, "dtype": "ndarray"},
-            {"id": "jt60sa:general/eddb_bad", "success": false, "error": "eddbreadOne returned None"},
+            {"id": "jt-60sa:general/eddb_testime", "success": true, "dtype": "ndarray"},
+            {"id": "jt-60sa:general/eddb_bad", "success": false, "error": "eddbreadOne returned None"},
             ...
         ]
     }

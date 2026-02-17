@@ -240,7 +240,7 @@ data_sources:
     db_name: jet
     reference_pulse: 99999
 
-# jt60sa.yaml (future)
+# jt-60sa.yaml (future)
 data_sources:
   edas:
     api_library: /analysis/src/edas

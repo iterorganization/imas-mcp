@@ -119,7 +119,7 @@ class TestTWikiAdapterDiscovery:
             base_url="http://157.111.10.188/twiki",
         )
         with patch.object(adapter, "_ssh_curl", return_value=SAMPLE_TOPIC_LIST_HTML):
-            pages = adapter.bulk_discover_pages("jt60sa", "http://157.111.10.188/twiki")
+            pages = adapter.bulk_discover_pages("jt-60sa", "http://157.111.10.188/twiki")
 
         names = [p.name for p in pages]
         # Should include content topics

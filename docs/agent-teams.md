@@ -1,6 +1,6 @@
 # Agent Teams Infrastructure
 
-Collaborative Claude Code agent teams for IMAS mapping discovery across fusion facilities (TCV, JET, JT60SA). Reusable infrastructure for future scientific agent teams.
+Collaborative Claude Code agent teams for IMAS mapping discovery across fusion facilities (TCV, JET, JT-60SA). Reusable infrastructure for future scientific agent teams.
 
 ## Architecture Overview
 
@@ -253,7 +253,7 @@ The graph serves as the state machine — all progress is durable.
 |------|--------|-------|
 | TCV mapping team | $150 | First run, includes iteration |
 | JET mapping team | $200 | Larger signal set |
-| JT60SA mapping team | $120 | Benefit from refined approach |
+| JT-60SA mapping team | $120 | Benefit from refined approach |
 | Development & debugging | $200 | Infrastructure setup, prompt refinement |
 | Prompt caching overhead | $80 | Cache write costs (1.25x for first calls) |
 | Buffer | $250 | Unexpected costs, retries, edge cases |
@@ -302,7 +302,7 @@ print(query('''
 |-------|----------|-------------|---------------|----------|
 | 1 | TCV | ~300 | $100-150 | 1-2 days |
 | 2 | JET | ~500 | $150-200 | 2-3 days |
-| 3 | JT60SA | ~200 | $80-120 | 1-2 days |
+| 3 | JT-60SA | ~200 | $80-120 | 1-2 days |
 
 Start with TCV — smallest signal set, best SSH access, most wiki documentation. Validate approach, refine prompts, then scale.
 

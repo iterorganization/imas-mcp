@@ -38,7 +38,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 |----------|------|------|
 | iter | 7687 | 7474 |
 | tcv | 7688 | 7475 |
-| jt60sa | 7689 | 7476 |
+| jt-60sa | 7689 | 7476 |
 
 Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply as escape hatches over any profile. Use `resolve_graph(name)` from `imas_codex.graph.profiles` for direct profile resolution. All CLI `graph` commands accept `--graph/-g` to target a specific graph.
 
@@ -453,7 +453,7 @@ All discovery and DD CLI commands write DEBUG-level rotating logs to disk. The r
 | `discover paths tcv` | `paths_tcv.log` |
 | `discover paths iter` | `paths_iter.log` |
 | `discover wiki jet` | `wiki_jet.log` |
-| `discover signals jt60sa` | `signals_jt60sa.log` |
+| `discover signals jt-60sa` | `signals_jt-60sa.log` |
 | `discover files tcv` | `files_tcv.log` |
 | `imas build` | `imas_dd.log` |
 | `imas clear` | `imas_dd.log` |

@@ -13,7 +13,7 @@ Key capabilities:
 
 Strategy per facility type:
 1. PyPI accessible (TCV, ITER, JET): Install uv, then uv python install
-2. Airgapped (JT60SA): uv already installed, Python pre-cached from GitHub releases
+2. Airgapped (JT-60SA): uv already installed, Python pre-cached from GitHub releases
 
 Usage:
     from imas_codex.remote.python import get_python_status, install_python, create_venv

@@ -17,7 +17,7 @@ Usage::
 
     monitor = ServiceMonitor()
     monitor.add_check("graph", neo4j_health_check)
-    monitor.add_check("ssh", lambda: ssh_health_check("jt60sa"),
+    monitor.add_check("ssh", lambda: ssh_health_check("jt-60sa"),
                        auth_label="vpn")
 
     async with monitor:
@@ -156,7 +156,7 @@ def _kill_ssh_controlmaster(ssh_host: str) -> None:
 def ssh_health_check(ssh_host: str, timeout: int = 10) -> tuple[bool, str]:
     """Check SSH connectivity to a remote host.
 
-    For VPN-gated hosts (like jt60sa), this implicitly validates VPN
+    For VPN-gated hosts (like jt-60sa), this implicitly validates VPN
     status since SSH will fail if the VPN tunnel is down.
 
     On failure after a previous success, kills the ControlMaster socket

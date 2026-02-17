@@ -24,8 +24,8 @@ username = "neo4j"
 password = "imas-codex"
 
 # Port slots — position = port offset
-# iter=0 (7687/7474), tcv=1 (7688/7475), jt60sa=2 (7689/7476), ...
-locations = ["iter", "tcv", "jt60sa", "jet", "west", "mast-u", "asdex-u", "east", "diii-d", "kstar"]
+# iter=0 (7687/7474), tcv=1 (7688/7475), jt-60sa=2 (7689/7476), ...
+locations = ["iter", "tcv", "jt-60sa", "jet", "west", "mast-u", "asdex-u", "east", "diii-d", "kstar"]
 ```
 
 ## Key Concepts
@@ -48,7 +48,7 @@ to an SSH alias and a port slot:
 |----------|-----------|-----------|-----------|
 | iter | 7687 | 7474 | `iter` |
 | tcv | 7688 | 7475 | `tcv` |
-| jt60sa | 7689 | 7476 | `jt60sa` |
+| jt-60sa | 7689 | 7476 | `jt-60sa` |
 | jet | 7690 | 7477 | `jet` |
 
 Port formula: `bolt = 7687 + index`, `http = 7474 + index` (index from the
@@ -170,7 +170,7 @@ Access multiple facility graphs simultaneously from WSL:
 # Each location gets its own tunnel port:
 #   iter:   17687/17474
 #   tcv:    17688/17475
-#   jt60sa: 17689/17476
+#   jt-60sa: 17689/17476
 
 IMAS_CODEX_GRAPH=codex  imas-codex graph status  # iter ports
 IMAS_CODEX_GRAPH=tcv    imas-codex graph status  # tcv ports
