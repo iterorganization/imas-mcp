@@ -1849,70 +1849,6 @@ def graph_load(
 # Embedding Update (pre-push hook)
 # ============================================================================
 
-# Node types with description + embedding fields, updated before push
-_DESCRIPTION_EMBEDDABLE_LABELS = [
-    "FacilitySignal",
-    "FacilityPath",
-    "Image",
-    "TreeNode",
-    "WikiArtifact",
-]
-
-
-def _update_description_embeddings() -> None:
-    """Update description embeddings for all embeddable node types.
-
-    Called before graph dump in `data push` to ensure all description
-    fields have up-to-date embeddings. Uses the same logic as
-    `imas-codex embed update` but runs for all labels in sequence.
-    """
-    from imas_codex.embeddings.description import embed_descriptions_batch
-    from imas_codex.graph.client import GraphClient
-
-    with GraphClient() as gc:
-        for label in _DESCRIPTION_EMBEDDABLE_LABELS:
-            # Count nodes needing update
-            result = gc.query(
-                f"MATCH (n:{label}) "
-                f"WHERE n.description IS NOT NULL "
-                f"  AND n.description <> '' "
-                f"  AND n.embedding IS NULL "
-                f"RETURN count(n) AS total"
-            )
-            total = result[0]["total"] if result else 0
-            if total == 0:
-                click.echo(f"  {label}: all descriptions embedded ✓")
-                continue
-
-            click.echo(f"  {label}: embedding {total} descriptions...")
-            processed = 0
-            batch_size = 100
-
-            while True:
-                rows = gc.query(
-                    f"MATCH (n:{label}) "
-                    f"WHERE n.description IS NOT NULL "
-                    f"  AND n.description <> '' "
-                    f"  AND n.embedding IS NULL "
-                    f"RETURN n.id AS id, n.description AS description "
-                    f"LIMIT $batch_size",
-                    batch_size=batch_size,
-                )
-                if not rows:
-                    break
-
-                items = [{"id": r["id"], "description": r["description"]} for r in rows]
-                items = embed_descriptions_batch(items)
-                gc.query(
-                    f"UNWIND $items AS item "
-                    f"MATCH (n:{label} {{id: item.id}}) "
-                    f"SET n.embedding = item.embedding",
-                    items=items,
-                )
-                processed += len(items)
-
-            click.echo(f"  {label}: embedded {processed} descriptions ✓")
-
 
 def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> None:
     """Fire a repository_dispatch event to trigger graph quality CI.
@@ -1965,7 +1901,6 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 @click.option("--token", envvar="GHCR_TOKEN")
 @click.option("--dry-run", is_flag=True, help="Show what would be pushed")
-@click.option("--skip-embed", is_flag=True, help="Skip description embedding update")
 @click.option(
     "--facility",
     "-f",
@@ -1983,15 +1918,10 @@ def graph_push(
     registry: str | None,
     token: str | None,
     dry_run: bool,
-    skip_embed: bool,
     facilities: tuple[str, ...],
     no_imas: bool,
 ) -> None:
     """Push graph archive to GHCR.
-
-    Before dumping, updates description embeddings for all node types
-    that have description fields (FacilitySignal, FacilityPath, TreeNode,
-    WikiArtifact). Use --skip-embed to skip this step.
 
     Use --facility/-f (repeatable) to push a filtered per-facility graph.
     """
@@ -2012,16 +1942,9 @@ def graph_push(
 
     if dry_run:
         click.echo("\n[DRY RUN] Would:")
-        click.echo("  1. Update description embeddings")
-        click.echo("  2. Dump graph (auto stop/start Neo4j)")
-        click.echo(f"  3. Push to {target_registry}/{pkg_name}:{version_tag}")
+        click.echo("  1. Dump graph (auto stop/start Neo4j)")
+        click.echo(f"  2. Push to {target_registry}/{pkg_name}:{version_tag}")
         return
-
-    # Step 1: Update description embeddings before dump
-    if not skip_embed:
-        _update_description_embeddings()
-    else:
-        click.echo("Skipped embedding update (--skip-embed)")
 
     archive_path = Path(f"{pkg_name}-{version_tag}.tar.gz")
 
