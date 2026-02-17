@@ -15,10 +15,125 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 import subprocess
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# Separator used by batch SSH file reads. Chosen to be
+# extremely unlikely to appear in TWiki markup.
+_BATCH_FILE_SEPARATOR = "===CODEX_FILE_SEP==="
+
+
+def batch_ssh_read_files(
+    ssh_urls: list[str],
+) -> dict[str, str]:
+    """Read multiple raw files in a single SSH call.
+
+    Groups URLs by SSH host, then reads all files for each host
+    in one SSH command with server-side concatenation. Returns a
+    dict mapping ssh:// URL → file content.
+
+    This amortises the ~3-5 second SSH connection overhead over
+    the entire batch instead of paying it per file.
+
+    Args:
+        ssh_urls: List of ssh://host/path URLs
+
+    Returns:
+        Dict mapping URL → raw file content (empty string on failure)
+    """
+    if not ssh_urls:
+        return {}
+
+    # Group by SSH host
+    by_host: dict[str, list[tuple[str, str]]] = {}
+    for url in ssh_urls:
+        parts = url[len("ssh://") :]
+        slash_idx = parts.index("/")
+        host = parts[:slash_idx]
+        filepath = parts[slash_idx:]
+        by_host.setdefault(host, []).append((url, filepath))
+
+    results: dict[str, str] = {}
+
+    for host, url_paths in by_host.items():
+        # Build a single command that reads all files with separators
+        # Use printf for the separator to avoid echo portability issues
+        file_cmds = []
+        for _url, filepath in url_paths:
+            safe_path = shlex.quote(filepath)
+            file_cmds.append(
+                f'printf "%s\\n" "{_BATCH_FILE_SEPARATOR}:{safe_path}"; '
+                f"cat {safe_path} 2>/dev/null"
+            )
+        combined_cmd = "; ".join(file_cmds)
+
+        try:
+            result = subprocess.run(
+                ["ssh", "-o", "ClearAllForwardings=yes", host, combined_cmd],
+                capture_output=True,
+                timeout=max(30, len(url_paths) * 2),
+            )
+            if result.returncode not in (0, 1):
+                logger.warning(
+                    "Batch SSH read failed for %s (%d files): exit %d",
+                    host,
+                    len(url_paths),
+                    result.returncode,
+                )
+                for url, _ in url_paths:
+                    results[url] = ""
+                continue
+
+            output = result.stdout.decode("utf-8", errors="replace")
+
+            # Parse output: split on separator lines
+            # Format: ===CODEX_FILE_SEP===:'/path/to/file'\ncontent...
+            current_url = None
+            current_lines: list[str] = []
+            url_by_path = {path: url for url, path in url_paths}
+
+            for line in output.split("\n"):
+                if line.startswith(_BATCH_FILE_SEPARATOR + ":"):
+                    # Save previous file
+                    if current_url is not None:
+                        results[current_url] = "\n".join(current_lines)
+                    # Parse new file path
+                    raw_path = line[len(_BATCH_FILE_SEPARATOR) + 1 :].strip()
+                    # Remove shell quoting if present
+                    if raw_path.startswith("'") and raw_path.endswith("'"):
+                        raw_path = raw_path[1:-1]
+                    current_url = url_by_path.get(raw_path)
+                    current_lines = []
+                else:
+                    current_lines.append(line)
+
+            # Save last file
+            if current_url is not None:
+                results[current_url] = "\n".join(current_lines)
+
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "Batch SSH read timed out for %s (%d files)",
+                host,
+                len(url_paths),
+            )
+            for url, _ in url_paths:
+                results[url] = ""
+        except Exception as e:
+            logger.warning("Batch SSH read error for %s: %s", host, e)
+            for url, _ in url_paths:
+                results[url] = ""
+
+    # Fill missing URLs with empty string
+    for url in ssh_urls:
+        if url not in results:
+            results[url] = ""
+
+    return results
 
 
 async def _extract_artifact_preview(
@@ -730,6 +845,26 @@ async def _fetch_html(
             logger.warning("SSH fetch failed for %s: %s", url, e)
             return ""
 
+    def _ssh_file_read_and_convert(file_url: str) -> str:
+        """Read a raw TWiki file via SSH and convert markup to HTML.
+
+        Used for ssh:// URLs from the twiki_raw adapter. Reads the file
+        directly from the filesystem (instant) and converts TWiki markup
+        to HTML locally, avoiding the slow CGI path entirely.
+        """
+        from imas_codex.discovery.wiki.adapters import fetch_twiki_raw_content
+        from imas_codex.discovery.wiki.pipeline import twiki_markup_to_html
+
+        parts = file_url[len("ssh://") :]
+        slash_idx = parts.index("/")
+        raw_ssh_host = parts[:slash_idx]
+        filepath = parts[slash_idx:]
+
+        raw_markup = fetch_twiki_raw_content(raw_ssh_host, filepath)
+        if not raw_markup or len(raw_markup) < 20:
+            return ""
+        return twiki_markup_to_html(raw_markup)
+
     async def _async_tequila_fetch() -> str:
         """Fetch with Tequila authentication using async client."""
         import urllib.parse as urlparse
@@ -830,6 +965,10 @@ async def _fetch_html(
         except Exception as e:
             logger.debug("Confluence REST API fetch failed for %s: %s", url, e)
             return ""
+
+    # Handle ssh:// URLs (twiki_raw adapter pages) — read file via SSH
+    if url.startswith("ssh://"):
+        return await asyncio.to_thread(_ssh_file_read_and_convert, url)
 
     # Determine fetch strategy - prefer direct HTTP over SSH when credentials available
     if auth_type == "session" and confluence_client:

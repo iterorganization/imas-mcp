@@ -129,13 +129,17 @@ discovery_roots:
 wiki_sites:
   - name: twiki_main
     url: http://157.111.10.188/twiki
-    site_type: twiki
-    webs:
-      - Main
-    pub_path: /var/www/html/twiki/pub  # Artifact discovery via fd over SSH
+    site_type: twiki_raw
+    data_path: /var/www/html/twiki/data/Main
+    pub_path: /var/www/html/twiki/pub/Main
+    web_name: Main
     access_method: tunnel              # Use port forward (browser.services[twiki_main])
     auth_type: none
     ssh_available: true
+    exclude_patterns:
+      - "^OperationStatusReport"   # Very large reports (>1MB each), low value
+      - "^DailyReport"             # Large daily reports, low signal density
+      - "^ShotE\\d"                # Per-shot reports, repetitive
     description: >-
       JT-60SA Main TWiki web via live Apache/CGI. Contains EDAS tool manuals
       (eGIS, eSLICE, eSURF), Eddb API documentation (C/Fortran/Python wrappers),

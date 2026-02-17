@@ -183,9 +183,43 @@ async def score_worker(
         if on_progress:
             on_progress(f"fetching {len(pages)} pages", state.score_stats)
 
-        # Step 1: Fetch content for all pages in parallel
-        fetch_tasks = [fetch_content_for_page(page) for page in pages]
-        fetched_pages = await asyncio.gather(*fetch_tasks)
+        # Step 1: Fetch content for all pages in parallel.
+        # For ssh:// URLs (twiki_raw), use batch SSH to read all files in
+        # a single SSH call (~3s total) instead of N individual calls (N×3s).
+        ssh_pages = [p for p in pages if p.get("url", "").startswith("ssh://")]
+        non_ssh_pages = [p for p in pages if not p.get("url", "").startswith("ssh://")]
+
+        fetched_pages: list[dict] = []
+
+        if ssh_pages:
+            from imas_codex.discovery.wiki.pipeline import twiki_markup_to_html
+            from imas_codex.discovery.wiki.prefetch import extract_text_from_html
+            from imas_codex.discovery.wiki.scoring import batch_ssh_read_files
+
+            ssh_urls = [p["url"] for p in ssh_pages]
+            content_map = await asyncio.to_thread(batch_ssh_read_files, ssh_urls)
+
+            for page in ssh_pages:
+                url = page.get("url", "")
+                raw_content = content_map.get(url, "")
+                preview = ""
+                if raw_content and len(raw_content) >= 20:
+                    html = twiki_markup_to_html(raw_content)
+                    preview = extract_text_from_html(html, max_chars=1500)
+                fetched_pages.append(
+                    {
+                        "id": page["id"],
+                        "title": page.get("title", ""),
+                        "url": url,
+                        "preview_text": preview,
+                        "fetch_error": None if preview else "SSH batch read failed",
+                    }
+                )
+
+        if non_ssh_pages:
+            fetch_tasks = [fetch_content_for_page(p) for p in non_ssh_pages]
+            fetched_pages.extend(await asyncio.gather(*fetch_tasks))
+
         logger.debug(f"score_worker {worker_id}: fetched {len(fetched_pages)} pages")
 
         # Step 1b: Separate pages with content from those where fetch failed.
@@ -348,6 +382,7 @@ async def ingest_worker(
                     keycloak_client=shared_keycloak_client,
                     basic_auth_client=shared_basic_auth_client,
                     confluence_client=shared_confluence_client,
+                    prefetch_cache=getattr(state, "_prefetch_cache", None),
                 )
                 return {
                     "id": page_id,
@@ -402,6 +437,18 @@ async def ingest_worker(
 
         if on_progress:
             on_progress(f"ingesting {len(pages)} pages", state.ingest_stats)
+
+        # For ssh:// URLs (twiki_raw), batch-prefetch all raw files in a
+        # single SSH call so individual _ingest_page calls hit the cache.
+        ssh_pages = [p for p in pages if p.get("url", "").startswith("ssh://")]
+        if ssh_pages:
+            from imas_codex.discovery.wiki.scoring import batch_ssh_read_files
+
+            ssh_urls = [p["url"] for p in ssh_pages]
+            prefetched = await asyncio.to_thread(batch_ssh_read_files, ssh_urls)
+            state._prefetch_cache = prefetched
+        else:
+            state._prefetch_cache = {}
 
         # Process all pages in parallel with semaphore-limited concurrency
         tasks = [process_single_page(page) for page in pages]
@@ -1040,6 +1087,7 @@ async def _ingest_page(
     keycloak_client: Any = None,
     basic_auth_client: Any = None,
     confluence_client: Any = None,
+    prefetch_cache: dict[str, str] | None = None,
 ) -> int:
     """Ingest a page: fetch content, chunk, and embed.
 
@@ -1074,16 +1122,19 @@ async def _ingest_page(
         from imas_codex.discovery.wiki.adapters import fetch_twiki_raw_content
         from imas_codex.discovery.wiki.pipeline import twiki_markup_to_html
 
-        # Parse ssh://host/path
-        parts = url[len("ssh://") :]
-        slash_idx = parts.index("/")
-        raw_ssh_host = parts[:slash_idx]
-        filepath = parts[slash_idx:]
+        # Check prefetch cache first (populated by batch SSH read)
+        raw_markup = (prefetch_cache or {}).get(url)
 
-        # Read raw TWiki markup via SSH (blocking I/O → thread pool)
-        raw_markup = await asyncio.to_thread(
-            fetch_twiki_raw_content, raw_ssh_host, filepath
-        )
+        if raw_markup is None:
+            # Fallback: individual SSH read
+            parts = url[len("ssh://") :]
+            slash_idx = parts.index("/")
+            raw_ssh_host = parts[:slash_idx]
+            filepath = parts[slash_idx:]
+
+            raw_markup = await asyncio.to_thread(
+                fetch_twiki_raw_content, raw_ssh_host, filepath
+            )
         if not raw_markup or len(raw_markup) < 50:
             logger.warning("Insufficient TWiki content for %s", page_id)
             return 0

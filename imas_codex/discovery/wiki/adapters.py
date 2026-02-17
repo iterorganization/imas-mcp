@@ -2911,11 +2911,14 @@ class TWikiRawAdapter(WikiAdapter):
             on_progress(f"listing {self._data_path}/*.txt via SSH", None)
 
         try:
+            # Use find instead of ls *.txt to avoid ARG_MAX with many files
             result = subprocess.run(
                 [
                     "ssh",
+                    "-o",
+                    "ClearAllForwardings=yes",
                     self._ssh_host,
-                    f"ls {self._data_path}/*.txt 2>/dev/null",
+                    f'find {shlex.quote(self._data_path)} -maxdepth 1 -name "*.txt" -type f 2>/dev/null',
                 ],
                 capture_output=True,
                 timeout=30,
@@ -3072,7 +3075,13 @@ def fetch_twiki_raw_content(ssh_host: str, filepath: str) -> str | None:
     """
     try:
         result = subprocess.run(
-            ["ssh", ssh_host, f"cat {filepath}"],
+            [
+                "ssh",
+                "-o",
+                "ClearAllForwardings=yes",
+                ssh_host,
+                f"cat {shlex.quote(filepath)}",
+            ],
             capture_output=True,
             timeout=30,
         )
