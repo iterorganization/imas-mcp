@@ -206,6 +206,11 @@ def wiki_auth_check(
     this goes through the local port-forward; for SSH sites it curls
     via the remote host.
 
+    Any HTTP response (including 401, 403, 404) is treated as healthy —
+    it means the server is reachable and responding.  Only network-level
+    failures (timeout, connection refused, DNS errors) are unhealthy.
+    Workers handle authentication separately via session cookies / credentials.
+
     Args:
         url: Primary wiki URL to probe
         ssh_host: If set, fetch via ``ssh <host> curl``
@@ -232,18 +237,22 @@ def wiki_auth_check(
             )
             if result.returncode == 0:
                 code = result.stdout.decode().strip()
-                if code.startswith(("2", "3")):
+                # Any HTTP response means the server is reachable
+                if code.isdigit() and int(code) > 0:
                     return True, url
                 return False, f"HTTP {code}"
             return False, "ssh+curl failed"
         else:
+            import urllib.error
             import urllib.request
 
             req = urllib.request.Request(url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                if 200 <= resp.status < 400:
+            try:
+                with urllib.request.urlopen(req, timeout=timeout):
                     return True, url
-                return False, f"HTTP {resp.status}"
+            except urllib.error.HTTPError:
+                # Any HTTP error (401, 403, 404, 500) = server is reachable
+                return True, url
     except subprocess.TimeoutExpired:
         return False, f"timeout ({timeout}s)"
     except Exception as e:
