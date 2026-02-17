@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from imas_codex.discovery.base.progress import WorkerStats
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
+    PipelinePhase,
     SupervisedWorkerGroup,
     make_orphan_recovery_tick,
     run_supervised_loop,
@@ -63,11 +64,64 @@ class DiscoveryState:
 
     # Control
     stop_requested: bool = False
-    scan_idle_count: int = 0
-    expand_idle_count: int = 0
-    score_idle_count: int = 0
-    enrich_idle_count: int = 0
-    rescore_idle_count: int = 0
+
+    # Pipeline phases (initialized in __post_init__)
+    scan_phase: PipelinePhase = field(init=False)
+    expand_phase: PipelinePhase = field(init=False)
+    score_phase: PipelinePhase = field(init=False)
+    enrich_phase: PipelinePhase = field(init=False)
+    rescore_phase: PipelinePhase = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.scan_phase = PipelinePhase("scan")
+        self.expand_phase = PipelinePhase("expand")
+        self.score_phase = PipelinePhase("score")
+        self.enrich_phase = PipelinePhase("enrich")
+        self.rescore_phase = PipelinePhase("rescore")
+
+    # Backwards-compat idle count properties for progress display
+    @property
+    def scan_idle_count(self) -> int:
+        return self.scan_phase.idle_count
+
+    @scan_idle_count.setter
+    def scan_idle_count(self, value: int) -> None:
+        if value >= 3:
+            self.scan_phase._idle_count = value
+        else:
+            self.scan_phase._idle_count = value
+
+    @property
+    def expand_idle_count(self) -> int:
+        return self.expand_phase.idle_count
+
+    @expand_idle_count.setter
+    def expand_idle_count(self, value: int) -> None:
+        self.expand_phase._idle_count = value
+
+    @property
+    def score_idle_count(self) -> int:
+        return self.score_phase.idle_count
+
+    @score_idle_count.setter
+    def score_idle_count(self, value: int) -> None:
+        self.score_phase._idle_count = value
+
+    @property
+    def enrich_idle_count(self) -> int:
+        return self.enrich_phase.idle_count
+
+    @enrich_idle_count.setter
+    def enrich_idle_count(self, value: int) -> None:
+        self.enrich_phase._idle_count = value
+
+    @property
+    def rescore_idle_count(self) -> int:
+        return self.rescore_phase.idle_count
+
+    @rescore_idle_count.setter
+    def rescore_idle_count(self, value: int) -> None:
+        self.rescore_phase._idle_count = value
 
     # SSH retry tracking for exponential backoff
     ssh_retry_count: int = 0
@@ -142,14 +196,10 @@ class DiscoveryState:
     def should_stop(self) -> bool:
         """Check if discovery should terminate.
 
-        Termination requires BOTH conditions:
-        1. All workers idle for 3+ iterations
-        2. No pending or in-progress work in the graph
-
-        has_pending_work() counts BOTH unclaimed paths (waiting for work)
-        AND claimed paths (actively being processed by workers). This
-        prevents premature termination when a worker has claimed paths
-        but hasn't finished processing them yet.
+        Uses PipelinePhase.done for each phase, which combines idle
+        detection with graph-level pending work checks via
+        has_pending_work().  This replaces the old idle-counter
+        approach that was prone to race conditions.
         """
         if self.stop_requested:
             return True
@@ -159,29 +209,26 @@ class DiscoveryState:
             return True
         if self.deadline_expired:
             return True
-        # Stop if all workers idle for 3+ iterations AND no pending work
-        all_idle = (
-            self.scan_idle_count >= 3
-            and self.expand_idle_count >= 3
-            and self.score_idle_count >= 3
-            and self.enrich_idle_count >= 3
-            and self.rescore_idle_count >= 3
+        # All phases must be done (idle + no graph work)
+        all_done = (
+            self.scan_phase.done
+            and self.expand_phase.done
+            and self.score_phase.done
+            and self.enrich_phase.done
+            and self.rescore_phase.done
         )
-        if all_idle:
-            # Check for any pending or in-progress work before terminating.
-            # has_pending_work counts both unclaimed AND claimed paths,
-            # so we won't terminate while a worker is mid-task.
-            pending = has_pending_work(self.facility)
-            if pending:
-                # Reset idle counts to force workers to re-poll for new work
-                self.scan_idle_count = 0
-                self.expand_idle_count = 0
-                self.score_idle_count = 0
-                self.enrich_idle_count = 0
-                self.rescore_idle_count = 0
+        if all_done:
+            # Final confirmation: no pending work at all
+            if has_pending_work(self.facility):
+                # Graph has work — reset all phases so workers re-poll
+                self.scan_phase.reset()
+                self.expand_phase.reset()
+                self.score_phase.reset()
+                self.enrich_phase.reset()
+                self.rescore_phase.reset()
                 return False
             logger.debug(
-                f"Terminating: all idle, no pending work "
+                f"Terminating: all phases done, no pending work "
                 f"(scan={self.scan_stats.processed}, score={self.score_stats.processed})"
             )
             return True
@@ -767,14 +814,14 @@ async def scan_worker(
         )
 
         if not paths:
-            state.scan_idle_count += 1
+            state.scan_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.scan_stats, None, None)
             # Wait before polling again
             await asyncio.sleep(1.0)
             continue
 
-        state.scan_idle_count = 0
+        state.scan_phase.record_activity(len(paths))
         path_strs = [p["path"] for p in paths]
 
         if on_progress:
@@ -810,7 +857,7 @@ async def scan_worker(
                 )
                 # Only stop this scan worker — don't kill all workers.
                 # Enrich, rescore, and embed workers may still have work.
-                state.scan_idle_count = 3  # Mark as idle so should_stop can evaluate
+                state.scan_phase.mark_done()  # Mark as done so should_stop can evaluate
                 if on_progress:
                     on_progress(
                         f"SSH failed: {state.ssh_error_message}",
@@ -928,14 +975,14 @@ async def expand_worker(
         )
 
         if not paths:
-            state.expand_idle_count += 1
+            state.expand_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.expand_stats, None, None)
             # Wait before polling again
             await asyncio.sleep(1.0)
             continue
 
-        state.expand_idle_count = 0
+        state.expand_phase.record_activity(len(paths))
         path_strs = [p["path"] for p in paths]
 
         if on_progress:
@@ -1056,10 +1103,10 @@ async def score_worker(
         )
 
         if not paths:
-            state.score_idle_count += 1
-            if state.score_idle_count <= 3:
+            state.score_phase.record_idle()
+            if state.score_phase.idle_count <= 3:
                 logger.debug(
-                    f"Score worker idle ({state.score_idle_count}), "
+                    f"Score worker idle ({state.score_phase.idle_count}), "
                     f"scan_processed={state.scan_stats.processed}"
                 )
             if on_progress:
@@ -1068,7 +1115,7 @@ async def score_worker(
             await asyncio.sleep(2.0)
             continue
 
-        state.score_idle_count = 0
+        state.score_phase.record_activity(len(paths))
         logger.debug(f"Score worker claimed {len(paths)} paths")
 
         # Split paths into empty (auto-skip) and non-empty (need LLM)
@@ -1267,14 +1314,14 @@ async def enrich_worker(
         )
 
         if not paths:
-            state.enrich_idle_count += 1
+            state.enrich_phase.record_idle()
             if on_progress:
                 on_progress("waiting for enrichable paths", state.enrich_stats, None)
             # Wait before polling again
             await asyncio.sleep(2.0)
             continue
 
-        state.enrich_idle_count = 0
+        state.enrich_phase.record_activity(len(paths))
         path_strs = [p["path"] for p in paths]
         # Build path -> purpose mapping for targeted pattern selection
         path_purposes = {p["path"]: p.get("path_purpose") for p in paths}
@@ -1362,14 +1409,14 @@ async def rescore_worker(
         )
 
         if not paths:
-            state.rescore_idle_count += 1
+            state.rescore_phase.record_idle()
             if on_progress:
                 on_progress("waiting for enriched paths", state.rescore_stats, None)
             # Wait before polling again
             await asyncio.sleep(2.0)
             continue
 
-        state.rescore_idle_count = 0
+        state.rescore_phase.record_activity(len(paths))
 
         if on_progress:
             on_progress(f"rescoring {len(paths)} paths", state.rescore_stats, None)
@@ -1981,18 +2028,18 @@ async def run_parallel_discovery(
         deadline=deadline,
     )
 
-    # Pre-set idle counts for disabled workers so should_stop() works correctly
-    # When num_*_workers=0, those workers never run and never increment idle count
+    # Mark phases as done for disabled workers so should_stop() works correctly
+    # When num_*_workers=0, those workers never run and never produce/consume work
     if num_scan_workers == 0:
-        state.scan_idle_count = 3
+        state.scan_phase.mark_done()
     if num_expand_workers == 0:
-        state.expand_idle_count = 3
+        state.expand_phase.mark_done()
     if num_score_workers == 0:
-        state.score_idle_count = 3
+        state.score_phase.mark_done()
     if num_enrich_workers == 0:
-        state.enrich_idle_count = 3
+        state.enrich_phase.mark_done()
     if num_rescore_workers == 0:
-        state.rescore_idle_count = 3
+        state.rescore_phase.mark_done()
 
     # Capture initial terminal count for session-based --limit tracking
     state.initial_terminal_count = state.terminal_count

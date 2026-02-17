@@ -717,14 +717,14 @@ async def run_parallel_wiki_discovery(
                 )
             )
     else:
-        # In score_only mode, mark I/O workers as idle so should_stop()
+        # In score_only mode, mark I/O worker phases as done so should_stop()
         # doesn't hang waiting for workers that were never started.
-        state.ingest_idle_count = 10
-        state.artifact_idle_count = 10
+        state.ingest_phase.mark_done()
+        state.artifact_phase.mark_done()
 
     # Scan workers were removed (replaced by bulk discovery above).
-    # Set idle count high so should_stop() doesn't block on a non-existent worker.
-    state.scan_idle_count = 10
+    # Mark scan phase as done so should_stop() doesn't block on a non-existent worker.
+    state.scan_phase.mark_done()
 
     logger.info(
         f"Started {worker_group.get_active_count()} workers: "

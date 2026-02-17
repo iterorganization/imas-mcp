@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 from imas_codex.discovery.base.progress import WorkerStats
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
+    PipelinePhase,
     SupervisedWorkerGroup,
     make_orphan_recovery_tick,
     run_supervised_loop,
@@ -100,9 +101,53 @@ class DataDiscoveryState:
     # Control
     stop_requested: bool = False
     enrich_only: bool = False  # When True, discover/check workers not started
-    discover_idle_count: int = 0
-    enrich_idle_count: int = 0
-    check_idle_count: int = 0
+
+    # Pipeline phases (initialized in __post_init__)
+    scan_phase: PipelinePhase = field(init=False)
+    enrich_phase: PipelinePhase = field(init=False)
+    check_phase: PipelinePhase = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.scan_phase = PipelinePhase(
+            "scan"
+        )  # No graph check — scan is deterministic
+        self.enrich_phase = PipelinePhase(
+            "enrich",
+            has_work_fn=lambda: has_pending_enrich_work(self.facility),
+        )
+        self.check_phase = PipelinePhase(
+            "check",
+            has_work_fn=lambda: has_pending_check_work(self.facility),
+        )
+
+    # Backwards-compat idle count properties for progress display
+    @property
+    def discover_idle_count(self) -> int:
+        return self.scan_phase.idle_count
+
+    @discover_idle_count.setter
+    def discover_idle_count(self, value: int) -> None:
+        # Support legacy assignment (e.g., enrich_only mode)
+        if value >= 100:
+            self.scan_phase.mark_done()
+        else:
+            self.scan_phase._idle_count = value
+
+    @property
+    def enrich_idle_count(self) -> int:
+        return self.enrich_phase.idle_count
+
+    @enrich_idle_count.setter
+    def enrich_idle_count(self, value: int) -> None:
+        self.enrich_phase._idle_count = value
+
+    @property
+    def check_idle_count(self) -> int:
+        return self.check_phase.idle_count
+
+    @check_idle_count.setter
+    def check_idle_count(self, value: int) -> None:
+        self.check_phase._idle_count = value
 
     @property
     def total_cost(self) -> float:
@@ -126,37 +171,30 @@ class DataDiscoveryState:
         return self.enrich_stats.processed >= self.signal_limit
 
     def should_stop(self) -> bool:
-        """Check if ALL workers should terminate."""
+        """Check if ALL workers should terminate.
+
+        Uses PipelinePhase.done which combines idle detection with
+        graph-level pending work checks.  This replaces the old
+        idle-counter approach that was prone to race conditions.
+        """
         if self.stop_requested:
             return True
-
         if self.deadline_expired:
             return True
 
         limit_done = self.budget_exhausted or self.signal_limit_reached
 
-        # LLM workers: idle OR limit-stopped counts as "done"
-        enrich_done = self.enrich_idle_count >= 3 or limit_done
+        # LLM workers: phase done OR limit-stopped counts as "done"
+        enrich_done = self.enrich_phase.done or limit_done
 
-        all_idle = (
-            self.discover_idle_count >= 3 and enrich_done and self.check_idle_count >= 3
-        )
-        if all_idle:
-            # In enrich_only mode, skip pending work checks for workers that
-            # don't exist (discover/check).  Only check enrichment work.
+        # Check phase considers upstream phases
+        check_done = self.check_phase.done
+
+        # In enrich_only mode, scan and check phases are pre-marked done
+        all_done = self.scan_phase.done and enrich_done and check_done
+        if all_done:
             if self.enrich_only:
-                if limit_done:
-                    return True
-                if has_pending_enrich_work(self.facility):
-                    self.enrich_idle_count = 0
-                    return False
-                return True
-
-            if not limit_done and has_pending_work(self.facility):
-                self.discover_idle_count = 0
-                self.enrich_idle_count = 0
-                self.check_idle_count = 0
-                return False
+                return limit_done or self.enrich_phase.done
             return True
         return False
 
@@ -164,9 +202,7 @@ class DataDiscoveryState:
         """Check if discover workers should stop."""
         if self.stop_requested:
             return True
-        if self.discover_idle_count >= 3:
-            return True
-        return False
+        return self.scan_phase.done
 
     def should_stop_enriching(self) -> bool:
         """Check if enrich workers should stop."""
@@ -181,24 +217,27 @@ class DataDiscoveryState:
         return False
 
     def should_stop_checking(self) -> bool:
-        """Check if check workers should stop."""
+        """Check if check workers should stop.
+
+        Check workers must wait for both upstream phases (scan + enrich)
+        to finish producing work before exiting.  Uses PipelinePhase.done
+        which checks the graph for remaining unclaimed/claimed items.
+        """
         if self.stop_requested:
             return True
         if self.deadline_expired:
             return True
-        if self.check_idle_count >= 3:
-            # Don't stop while scanning is still in progress — signals
-            # haven't entered the pipeline yet.
-            if self.discover_idle_count < 100:
-                return False
-            # Only stop if enriching is done AND no pending work anywhere
-            enriching_done = self.enrich_idle_count >= 3 or self.budget_exhausted
-            if enriching_done and not has_pending_check_work(self.facility):
-                # Also wait for pending enrichment work — those signals
-                # will become check-ready once enriched.
-                if not has_pending_enrich_work(self.facility):
-                    return True
-        return False
+        if not self.check_phase.idle:
+            return False
+        # Idle — but don't exit if upstream is still producing
+        if not self.scan_phase.done:
+            return False
+        # Scan done — wait for enrichment to drain too
+        enriching_done = self.enrich_phase.done or self.budget_exhausted
+        if not enriching_done:
+            return False
+        # Both upstream phases done — check graph for remaining work
+        return self.check_phase.done
 
 
 # =============================================================================
@@ -1282,7 +1321,7 @@ async def scan_worker(
                 )
 
     # Mark scan as complete
-    state.discover_idle_count = 100
+    state.scan_phase.mark_done()
 
     if on_progress:
         on_progress(
@@ -1409,13 +1448,13 @@ async def enrich_worker(
         )
 
         if not signals:
-            state.enrich_idle_count += 1
+            state.enrich_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.enrich_stats)
             await asyncio.sleep(1.0)
             continue
 
-        state.enrich_idle_count = 0
+        state.enrich_phase.record_activity(len(signals))
 
         if on_progress:
             on_progress("enriching batch", state.enrich_stats)
@@ -1653,13 +1692,13 @@ async def check_worker(
         )
 
         if not signals:
-            state.check_idle_count += 1
+            state.check_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.check_stats)
             await asyncio.sleep(1.0)
             continue
 
-        state.check_idle_count = 0
+        state.check_phase.record_activity(len(signals))
 
         if on_progress:
             on_progress(f"checking {len(signals)} signals", state.check_stats)
@@ -2027,7 +2066,7 @@ async def run_parallel_data_discovery(
         # Run supervision loop — scan worker only
         await run_supervised_loop(
             worker_group,
-            lambda: state.discover_idle_count >= 100,
+            lambda: state.scan_phase.done,
             on_worker_status=on_worker_status,
             on_tick=orphan_tick,
         )
@@ -2078,14 +2117,14 @@ async def run_parallel_data_discovery(
             )
     else:
         # In enrich_only mode, discover and check workers are not started.
-        # Set idle counts high so should_stop() doesn't block on them.
-        state.discover_idle_count = 10
-        state.check_idle_count = 10
+        # Mark their phases as done so should_stop() doesn't block on them.
+        state.scan_phase.mark_done()
+        state.check_phase.mark_done()
 
     # In enrich_only mode, scan worker was already skipped above.
-    # Set discover_idle_count for the general case too.
+    # Mark scan phase done for the general case too.
     if enrich_only:
-        state.discover_idle_count = 10
+        state.scan_phase.mark_done()
 
     # Embed description worker: embeds FacilitySignal descriptions as they are enriched
     from imas_codex.discovery.base.embed_worker import embed_description_worker

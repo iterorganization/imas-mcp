@@ -57,6 +57,23 @@ from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
+# Re-export for backwards compatibility
+__all__ = [
+    "DEFAULT_INITIAL_BACKOFF",
+    "DEFAULT_MAX_BACKOFF",
+    "DEFAULT_MAX_RESTARTS",
+    "OrphanRecoveryResult",
+    "OrphanRecoverySpec",
+    "PipelinePhase",
+    "SupervisedWorkerGroup",
+    "WorkerState",
+    "WorkerStatus",
+    "is_infrastructure_error",
+    "make_orphan_recovery_tick",
+    "run_supervised_loop",
+    "supervised_worker",
+]
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +128,146 @@ def is_infrastructure_error(exc: Exception) -> bool:
         "socket",
     ]
     return any(pattern in error_msg for pattern in infrastructure_patterns)
+
+
+# =============================================================================
+# Pipeline Phase Tracking
+# =============================================================================
+
+
+class PipelinePhase:
+    """Track completion state for a pipeline phase (e.g., scan, score, enrich).
+
+    Replaces ad-hoc idle counters with explicit completion semantics.
+    A phase is considered idle when workers find no work for ``idle_threshold``
+    consecutive polls.  A phase is done when it is idle AND a graph-level
+    ``has_work_fn`` confirms nothing remains (including claimed items).
+
+    Workers call :meth:`record_activity` after processing items and
+    :meth:`record_idle` when a claim attempt returns nothing.
+
+    The ``done`` property combines idle detection with an authoritative
+    graph query, eliminating the race where a worker goes idle before
+    upstream has flushed its output.
+
+    Downstream phases can wait on :meth:`wait_until_done` to avoid
+    exiting before upstream finishes producing work.
+
+    Args:
+        name: Human-readable phase name for logging.
+        has_work_fn: Callable returning True if the graph has pending work
+            for this phase (both unclaimed AND claimed items).  Passed as
+            a zero-argument callable so the caller can bind facility etc.
+            If None, only idle detection is used (no graph check).
+        idle_threshold: Consecutive idle polls before considering idle.
+            Default 3 (~3 seconds at 1s poll interval).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        has_work_fn: Callable[[], bool] | None = None,
+        idle_threshold: int = 3,
+    ) -> None:
+        self.name = name
+        self._has_work_fn = has_work_fn
+        self._idle_threshold = idle_threshold
+        self._idle_count = 0
+        self._done_event = asyncio.Event()
+        self._force_done = False
+        self._total_processed = 0
+
+    def record_activity(self, count: int = 1) -> None:
+        """Record that the worker processed items — resets idle state."""
+        self._idle_count = 0
+        self._total_processed += count
+
+    def record_idle(self) -> None:
+        """Record an idle poll (no work found)."""
+        self._idle_count += 1
+
+    def mark_done(self) -> None:
+        """Explicitly mark this phase as complete.
+
+        Used when a phase knows it has finished deterministically
+        (e.g., scan worker completed all scanner types).
+        """
+        self._force_done = True
+        self._done_event.set()
+
+    @property
+    def idle(self) -> bool:
+        """True if idle for at least ``idle_threshold`` consecutive polls."""
+        return self._force_done or self._idle_count >= self._idle_threshold
+
+    # Alias for readability in should_stop() methods
+    is_idle = idle
+
+    @property
+    def done(self) -> bool:
+        """True if the phase is complete: idle AND no pending graph work.
+
+        When ``has_work_fn`` is provided, idle alone is not sufficient —
+        we also verify that no unclaimed or claimed work remains in the
+        graph.  This prevents premature termination when the upstream
+        phase hasn't yet flushed to the graph.
+        """
+        if self._force_done:
+            return True
+        if self._idle_count < self._idle_threshold:
+            return False
+        # Idle threshold met — check graph for remaining work
+        if self._has_work_fn is not None:
+            try:
+                if self._has_work_fn():
+                    # Graph still has work — reset idle count so workers re-poll
+                    self._idle_count = 0
+                    return False
+            except Exception as e:
+                logger.debug("PipelinePhase %s: has_work_fn error: %s", self.name, e)
+                return False
+        # Genuinely done
+        self._done_event.set()
+        return True
+
+    # Aliases for readability
+    is_done = done
+
+    @property
+    def is_idle_or_done(self) -> bool:
+        """True if idle or explicitly done — used in should_stop() checks."""
+        return self.idle or self.done
+
+    async def wait_until_done(self, timeout: float | None = None) -> bool:
+        """Block until this phase is done (or timeout expires).
+
+        Returns True if done, False on timeout.
+        """
+        try:
+            await asyncio.wait_for(self._done_event.wait(), timeout=timeout)
+            return True
+        except TimeoutError:
+            return False
+
+    def reset(self) -> None:
+        """Reset idle counter (e.g., when graph check finds new work)."""
+        self._idle_count = 0
+
+    @property
+    def idle_count(self) -> int:
+        """Current consecutive idle count (for backwards compat / logging)."""
+        return self._idle_count
+
+    @property
+    def total_processed(self) -> int:
+        """Total items processed through this phase."""
+        return self._total_processed
+
+    def __repr__(self) -> str:
+        return (
+            f"PipelinePhase({self.name!r}, idle={self.idle}, done={self.done}, "
+            f"processed={self._total_processed})"
+        )
 
 
 # =============================================================================

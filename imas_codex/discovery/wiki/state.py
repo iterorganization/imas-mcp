@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from imas_codex.discovery.base.progress import WorkerStats
+from imas_codex.discovery.base.supervision import PipelinePhase
 
 logger = logging.getLogger(__name__)
 
@@ -89,17 +90,67 @@ class WikiDiscoveryState:
     # Control
     stop_requested: bool = False
     score_only: bool = False  # When True, ingest workers are not started
-    scan_idle_count: int = 0
-    score_idle_count: int = 0
-    ingest_idle_count: int = 0
-    artifact_idle_count: int = 0
-    artifact_score_idle_count: int = 0
-    image_idle_count: int = 0
 
-    # Stall detection: tracks consecutive should_stop() calls that detected
-    # pending work but couldn't make progress (workers already exited).
-    _work_stall_count: int = 0
-    _STALL_THRESHOLD: int = 120  # ~30s at 0.25s poll interval
+    # Pipeline phases — replace raw idle counters with event-based tracking
+    scan_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("scan"))
+    score_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("score"))
+    ingest_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("ingest"))
+    artifact_phase: PipelinePhase = field(
+        default_factory=lambda: PipelinePhase("artifact")
+    )
+    artifact_score_phase: PipelinePhase = field(
+        default_factory=lambda: PipelinePhase("artifact_score")
+    )
+    image_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("image"))
+
+    # Backwards-compatible idle_count properties
+    @property
+    def scan_idle_count(self) -> int:
+        return self.scan_phase.idle_count
+
+    @scan_idle_count.setter
+    def scan_idle_count(self, value: int) -> None:
+        self.scan_phase._idle_count = value
+
+    @property
+    def score_idle_count(self) -> int:
+        return self.score_phase.idle_count
+
+    @score_idle_count.setter
+    def score_idle_count(self, value: int) -> None:
+        self.score_phase._idle_count = value
+
+    @property
+    def ingest_idle_count(self) -> int:
+        return self.ingest_phase.idle_count
+
+    @ingest_idle_count.setter
+    def ingest_idle_count(self, value: int) -> None:
+        self.ingest_phase._idle_count = value
+
+    @property
+    def artifact_idle_count(self) -> int:
+        return self.artifact_phase.idle_count
+
+    @artifact_idle_count.setter
+    def artifact_idle_count(self, value: int) -> None:
+        self.artifact_phase._idle_count = value
+
+    @property
+    def artifact_score_idle_count(self) -> int:
+        return self.artifact_score_phase.idle_count
+
+    @artifact_score_idle_count.setter
+    def artifact_score_idle_count(self, value: int) -> None:
+        self.artifact_score_phase._idle_count = value
+
+    @property
+    def image_idle_count(self) -> int:
+        return self.image_phase.idle_count
+
+    @image_idle_count.setter
+    def image_idle_count(self, value: int) -> None:
+        self.image_phase._idle_count = value
 
     # SSH retry tracking
     ssh_retry_count: int = 0
@@ -180,10 +231,9 @@ class WikiDiscoveryState:
 
         When budget is exhausted or page limit reached, LLM-dependent workers
         (score, artifact_score, image) exit their loops immediately — their
-        idle counts may stay at 0.  We treat them as implicitly "done" so
-        the main loop doesn't hang waiting for idle counts that can never
-        increment.  I/O workers (ingest, artifact) continue draining their
-        queues normally.
+        phases may not reach idle.  We treat them as implicitly "done" so
+        the main loop doesn't hang waiting for phases that can never idle.
+        I/O workers (ingest, artifact) continue draining their queues normally.
         """
         if self.stop_requested:
             return True
@@ -195,17 +245,17 @@ class WikiDiscoveryState:
         # Page limit also stops LLM workers (score workers check this too)
         limit_done = budget_done or self.page_limit_reached
 
-        # LLM workers: idle OR limit-stopped counts as "done"
-        score_done = self.score_idle_count >= 3 or limit_done
-        artifact_score_done = self.artifact_score_idle_count >= 3 or limit_done
-        image_done = self.image_idle_count >= 3 or limit_done
+        # LLM workers: idle/done OR limit-stopped counts as "done"
+        score_done = self.score_phase.is_idle_or_done or limit_done
+        artifact_score_done = self.artifact_score_phase.is_idle_or_done or limit_done
+        image_done = self.image_phase.is_idle_or_done or limit_done
 
-        # I/O workers: must be genuinely idle
+        # I/O workers: must be genuinely idle or done
         all_idle = (
-            self.scan_idle_count >= 3
+            self.scan_phase.is_idle_or_done
             and score_done
-            and self.ingest_idle_count >= 3
-            and self.artifact_idle_count >= 3
+            and self.ingest_phase.is_idle_or_done
+            and self.artifact_phase.is_idle_or_done
             and artifact_score_done
             and image_done
         )
@@ -236,36 +286,20 @@ class WikiDiscoveryState:
                 )
 
             if has_work:
-                self._work_stall_count += 1
-                if self._work_stall_count >= self._STALL_THRESHOLD:
-                    # Workers have exited but pending work remains.
-                    # This happens when score workers produce scored pages
-                    # after ingest workers have already exited. Continuing
-                    # would spin forever — force stop and let the next run
-                    # pick up the remaining work.
-                    logger.warning(
-                        "Stall detected: pending work but no worker progress "
-                        "after %d checks (~%.0fs). Forcing stop. "
-                        "Re-run to process remaining items.",
-                        self._work_stall_count,
-                        self._work_stall_count * 0.25,
-                    )
-                    return True
-                # Reset only I/O worker idle counts when limits are hit
+                # Reset only I/O worker phases when limits are hit
                 # (LLM workers are already stopped and won't re-poll).
-                # Reset all idle counts when no limit is hit.
+                # Reset all phases when no limit is hit.
                 if limit_done:
-                    self.ingest_idle_count = 0
-                    self.artifact_idle_count = 0
+                    self.ingest_phase.record_activity()
+                    self.artifact_phase.record_activity()
                 else:
-                    self.scan_idle_count = 0
-                    self.score_idle_count = 0
-                    self.ingest_idle_count = 0
-                    self.artifact_idle_count = 0
-                    self.artifact_score_idle_count = 0
-                    self.image_idle_count = 0
+                    self.scan_phase.record_activity()
+                    self.score_phase.record_activity()
+                    self.ingest_phase.record_activity()
+                    self.artifact_phase.record_activity()
+                    self.artifact_score_phase.record_activity()
+                    self.image_phase.record_activity()
                 return False
-            self._work_stall_count = 0
             return True
         return False
 
@@ -277,9 +311,9 @@ class WikiDiscoveryState:
         """
         if self.stop_requested:
             return True
-        # Only stop scanning when idle with no work
-        if self.scan_idle_count >= 3 and not _get_graph_ops().has_pending_scan_work(
-            self.facility
+        if (
+            self.scan_phase.is_idle_or_done
+            and not _get_graph_ops().has_pending_scan_work(self.facility)
         ):
             return True
         return False
@@ -307,8 +341,8 @@ class WikiDiscoveryState:
         ingest queue. This ensures all scorable content gets ingested
         before termination. They only stop when:
         1. Explicitly requested or deadline expired
-        2. Idle for 3+ iterations with no pending ingest work AND
-           score workers are also idle (no more scoring happening)
+        2. Idle with no pending ingest work AND
+           score workers are also done (no more scoring happening)
         """
         if self.stop_requested:
             return True
@@ -316,10 +350,10 @@ class WikiDiscoveryState:
             return True
         # Continue even when budget exhausted - drain the ingest queue
         # BUT don't exit early if scoring is still running - pages may arrive soon
-        if self.ingest_idle_count >= 3:
-            # Only stop if scoring is also idle AND no pending ingest work
+        if self.ingest_phase.is_idle_or_done:
+            # Only stop if scoring is also done AND no pending ingest work
             scoring_done = (
-                self.score_idle_count >= 3
+                self.score_phase.is_idle_or_done
                 or self.budget_exhausted
                 or self.page_limit_reached
             )
@@ -333,15 +367,15 @@ class WikiDiscoveryState:
         """Check if artifact ingest workers should stop.
 
         Artifact ingest workers continue until no pending scored artifacts remain.
-        They stop when explicitly requested, deadline expired, or idle for
-        3+ iterations.
+        They stop when explicitly requested, deadline expired, or idle with
+        no work remaining.
         """
         if self.stop_requested:
             return True
         if self.deadline_expired:
             return True
         if (
-            self.artifact_idle_count >= 3
+            self.artifact_phase.is_idle_or_done
             and not _get_graph_ops().has_pending_artifact_ingest_work(self.facility)
         ):
             return True
@@ -360,7 +394,7 @@ class WikiDiscoveryState:
         if self.budget_exhausted:
             return True
         if (
-            self.artifact_score_idle_count >= 3
+            self.artifact_score_phase.is_idle_or_done
             and not _get_graph_ops().has_pending_artifact_score_work(self.facility)
         ):
             return True
@@ -377,7 +411,7 @@ class WikiDiscoveryState:
         Stop when:
         1. Explicitly requested or deadline expired
         2. Budget exhausted (VLM must respect budget like LLM workers)
-        3. Idle for 3+ iterations AND ingestion is done AND no pending images
+        3. Idle AND ingestion is done AND no pending images
         """
         if self.stop_requested:
             return True
@@ -388,9 +422,9 @@ class WikiDiscoveryState:
         # Wait for ingestion to finish before declaring no work.
         # Images only appear after pages are ingested, so the worker may
         # see an empty queue early in the run.
-        ingestion_done = self.ingest_idle_count >= 3
+        ingestion_done = self.ingest_phase.is_idle_or_done
         if (
-            self.image_idle_count >= 3
+            self.image_phase.is_idle_or_done
             and ingestion_done
             and not _get_graph_ops().has_pending_image_work(self.facility)
         ):

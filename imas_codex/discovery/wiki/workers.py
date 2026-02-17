@@ -172,13 +172,13 @@ async def score_worker(
         logger.debug(f"score_worker {worker_id}: claimed {len(pages)} pages")
 
         if not pages:
-            state.score_idle_count += 1
+            state.score_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.score_stats)
             await asyncio.sleep(1.0)
             continue
 
-        state.score_idle_count = 0
+        state.score_phase.record_activity()
 
         if on_progress:
             on_progress(f"fetching {len(pages)} pages", state.score_stats)
@@ -386,13 +386,13 @@ async def ingest_worker(
             continue
 
         if not pages:
-            state.ingest_idle_count += 1
+            state.ingest_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.ingest_stats)
             await asyncio.sleep(1.0)
             continue
 
-        state.ingest_idle_count = 0
+        state.ingest_phase.record_activity()
 
         # Ensure embedding server is available before starting embed-heavy work.
         # If the server is down the call blocks, polls, and attempts reconnect.
@@ -485,13 +485,13 @@ async def artifact_worker(
             continue
 
         if not artifacts:
-            state.artifact_idle_count += 1
+            state.artifact_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.artifact_stats)
             await asyncio.sleep(1.0)
             continue
 
-        state.artifact_idle_count = 0
+        state.artifact_phase.record_activity()
 
         if on_progress:
             on_progress(f"ingesting {len(artifacts)} artifacts", state.artifact_stats)
@@ -706,13 +706,13 @@ async def artifact_score_worker(
             continue
 
         if not artifacts:
-            state.artifact_score_idle_count += 1
+            state.artifact_score_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.artifact_score_stats)
             await asyncio.sleep(1.0)
             continue
 
-        state.artifact_score_idle_count = 0
+        state.artifact_score_phase.record_activity()
 
         if on_progress:
             on_progress(
@@ -917,13 +917,13 @@ async def image_score_worker(
             continue
 
         if not images:
-            state.image_idle_count += 1
+            state.image_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.image_stats)
             await asyncio.sleep(2.0)
             continue
 
-        state.image_idle_count = 0
+        state.image_phase.record_activity()
 
         # Fetch image bytes on-demand from source_url (not stored in graph)
         from imas_codex.discovery.wiki.image import downsample_image
