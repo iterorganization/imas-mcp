@@ -1173,14 +1173,11 @@ def graph_service_status() -> None:
 
 @graph.command("secure")
 def graph_secure() -> None:
-    """Rotate Neo4j password.
+    """Rotate the Neo4j server password.
 
-    Stops the server, generates a new secure password, updates .env,
-    and restarts. The password is applied to both the .env file and
-    the running Neo4j instance.
-
-    When the location is remote, the password is set via SSH and the
-    .env on the remote host is updated via 'config secrets push'.
+    Stops the Neo4j server, generates a new secure password, updates
+    ``.env``, resets the server auth store, and restarts.  On remote
+    hosts the ``.env`` is automatically synced via SCP.
     """
     import re
     import secrets
@@ -1213,7 +1210,7 @@ def graph_secure() -> None:
         # Stop Neo4j
         was_running = remote_is_neo4j_running(profile.http_port, profile.host)
         if was_running:
-            click.echo(f"Stopping Neo4j [{profile.name}] on {profile.host}...")
+            click.echo(f"Stopping Neo4j on {profile.host}...")
             remote_service_action("stop", service, profile.host, timeout=60)
             import time
 
@@ -1276,14 +1273,14 @@ def graph_secure() -> None:
                 err=True,
             )
 
-        click.echo(f"\n✓ Password rotated for [{profile.name}] on {profile.host}")
+        click.echo(f"\n✓ Neo4j server password rotated on {profile.host}")
         return
     # ── End remote dispatch ──────────────────────────────────────────────
 
     # Stop Neo4j if running
     was_running = is_neo4j_running(profile.http_port)
     if was_running:
-        click.echo(f"Stopping Neo4j [{profile.name}]...")
+        click.echo("Stopping Neo4j...")
         _stop_neo4j_for_switch(profile)
         import time
 
@@ -1342,8 +1339,7 @@ def graph_secure() -> None:
         new_profile = resolve_neo4j(auto_tunnel=False)
         _start_neo4j_after_switch(new_profile)
 
-    click.echo(f"\n✓ Password rotated for [{profile.name}]")
-    click.echo("  Sync to remote: imas-codex config secrets push iter")
+    click.echo("\n✓ Neo4j server password rotated")
 
 
 # ============================================================================
