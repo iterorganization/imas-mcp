@@ -3043,6 +3043,11 @@ def facility_remove(facility_id: str, force: bool) -> None:
         raise click.ClickException("Graph identity not initialized.")
 
     if not force:
+        click.echo(
+            f"WARNING: This will delete the '{facility_id}' Facility node, "
+            f"detach all its relationships, and remove any orphaned nodes "
+            f"that were exclusively linked to this facility."
+        )
         if not click.confirm(
             f"Remove '{facility_id}' from graph '{meta.get('name', '?')}'?"
         ):

@@ -99,7 +99,8 @@ def gate_ingestion(client: Any, facility_id: str) -> None:
 
 
 def add_facility_to_meta(client: Any, facility_id: str) -> None:
-    """Append a facility to the GraphMeta.facilities list (idempotent).
+    """Append a facility to the GraphMeta.facilities list and ensure the
+    Facility node exists in the graph (idempotent).
 
     Args:
         client: A :class:`GraphClient` instance.
@@ -111,26 +112,36 @@ def add_facility_to_meta(client: Any, facility_id: str) -> None:
         return
 
     facilities = list(meta.get("facilities") or [])
-    if facility_id in facilities:
+    if facility_id not in facilities:
+        facilities.append(facility_id)
+        now = datetime.now(UTC).isoformat()
+        client.query(
+            """
+            MATCH (m:GraphMeta {id: "meta"})
+            SET m.facilities = $facilities,
+                m.updated_at = $now
+            """,
+            facilities=facilities,
+            now=now,
+        )
+        logger.info("Added facility '%s' to GraphMeta", facility_id)
+    else:
         logger.info("Facility '%s' already in GraphMeta", facility_id)
-        return
 
-    facilities.append(facility_id)
-    now = datetime.now(UTC).isoformat()
+    # Ensure the Facility node exists in the graph
     client.query(
         """
-        MATCH (m:GraphMeta {id: "meta"})
-        SET m.facilities = $facilities,
-            m.updated_at = $now
+        MERGE (f:Facility {id: $id})
+        ON CREATE SET f.name = $id, f.created_at = datetime()
         """,
-        facilities=facilities,
-        now=now,
+        id=facility_id,
     )
-    logger.info("Added facility '%s' to GraphMeta", facility_id)
+    logger.info("Ensured Facility node '%s' exists", facility_id)
 
 
 def remove_facility_from_meta(client: Any, facility_id: str) -> None:
-    """Remove a facility from the GraphMeta.facilities list.
+    """Remove a facility from the GraphMeta.facilities list and delete the
+    Facility node from the graph.
 
     Args:
         client: A :class:`GraphClient` instance.
@@ -153,6 +164,30 @@ def remove_facility_from_meta(client: Any, facility_id: str) -> None:
         now=now,
     )
     logger.info("Removed facility '%s' from GraphMeta", facility_id)
+
+    # DETACH DELETE the Facility node and clean up orphans
+    result = client.query(
+        "MATCH (f:Facility {id: $id}) "
+        "DETACH DELETE f "
+        "RETURN count(f) AS deleted",
+        id=facility_id,
+    )
+    deleted = result[0]["deleted"] if result else 0
+    if deleted:
+        logger.info("Deleted Facility node '%s' (detached)", facility_id)
+
+    # Remove nodes that were exclusively linked to this facility
+    orphan_result = client.query(
+        "MATCH (n) "
+        "WHERE n.facility_id = $fid "
+        "AND NOT (n)--() "
+        "DELETE n "
+        "RETURN count(n) AS deleted",
+        fid=facility_id,
+    )
+    orphans = orphan_result[0]["deleted"] if orphan_result else 0
+    if orphans:
+        logger.info("Cleaned up %d orphan nodes for facility '%s'", orphans, facility_id)
 
 
 __all__ = [
