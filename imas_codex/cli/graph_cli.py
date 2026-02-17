@@ -1229,14 +1229,29 @@ def graph_secure() -> None:
             env_content = env_content.rstrip() + f"\nNEO4J_PASSWORD={password}\n"
         env_file.write_text(env_content)
         env_file.chmod(0o600)
-        click.echo("✓ Updated local .env with new password")
+        click.echo("✓ Updated local .env")
 
         # Set password on remote Neo4j (clear existing auth for rotation)
         try:
             remote_set_initial_password(profile.host, password, clear_auth=True)
-            click.echo("✓ Updated Neo4j password on remote host")
+            click.echo("✓ Updated Neo4j auth store")
         except Exception as e:
             click.echo(f"Warning: Remote password set issue: {e}", err=True)
+
+        # Update NEO4J_AUTH in the remote systemd service file
+        try:
+            from imas_codex.remote.executor import run_command
+
+            run_command(
+                f"sed -i 's|NEO4J_AUTH=neo4j/[^ ]*|NEO4J_AUTH=neo4j/{password}|' "
+                f"~/.config/systemd/user/{service}.service "
+                f"&& systemctl --user daemon-reload",
+                ssh_host=profile.host,
+                timeout=15,
+            )
+            click.echo("✓ Updated systemd service")
+        except Exception as e:
+            click.echo(f"Warning: Service file update issue: {e}", err=True)
 
         # Restart
         if was_running:
@@ -1244,7 +1259,6 @@ def graph_secure() -> None:
             remote_service_action("start", service, profile.host, timeout=60)
 
         # Auto-sync .env to remote host
-        click.echo(f"Syncing .env to {profile.host}...")
         try:
             remote_env = "~/Code/imas-codex/.env"
             result = subprocess.run(
@@ -1302,7 +1316,7 @@ def graph_secure() -> None:
         env_content = env_content.rstrip() + f"\nNEO4J_PASSWORD={password}\n"
     env_file.write_text(env_content)
     env_file.chmod(0o600)
-    click.echo("✓ Updated .env with new password")
+    click.echo("✓ Updated .env")
 
     # Reset Neo4j password in the database auth store.
     # Delete the existing auth file first — set-initial-password only works
@@ -1328,6 +1342,26 @@ def graph_secure() -> None:
             click.echo(
                 f"Warning: Password reset issue: {result.stderr.strip()}", err=True
             )
+
+    # Update NEO4J_AUTH in the local systemd service file
+    service_name = f"imas-codex-neo4j-{profile.name}"
+    service_file = (
+        Path.home() / ".config" / "systemd" / "user" / f"{service_name}.service"
+    )
+    if service_file.exists():
+        content = service_file.read_text()
+        updated = re.sub(
+            r"NEO4J_AUTH=neo4j/\S+",
+            f"NEO4J_AUTH=neo4j/{password}",
+            content,
+        )
+        if updated != content:
+            service_file.write_text(updated)
+            subprocess.run(
+                ["systemctl", "--user", "daemon-reload"],
+                capture_output=True,
+            )
+            click.echo("✓ Updated systemd service")
 
     # Restart if was running
     if was_running:
