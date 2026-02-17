@@ -175,7 +175,7 @@ Ingestion is interrupt-safe — rerun to continue. Already-ingested files are sk
 - `python()` REPL for chained processing, Cypher queries, IMAS/COCOS operations
 - Terminal for `rg`, `fd`, `git`, `uv run`; SSH for remote single commands
 
-**CLI in agent sessions:** Always use `--no-rich` to prevent animation loops in non-TTY contexts.
+**CLI in agent sessions:** Rich output is auto-detected. Non-TTY contexts (CI, stdio, pipes) automatically disable rich. Override with `IMAS_CODEX_RICH=0` if needed.
 
 ## LLM Prompts
 
@@ -414,11 +414,15 @@ git push origin main
 
 Multiple agents may be working on this repository simultaneously. Assume another agent could be editing files or committing right now.
 
+**CRITICAL — Do not touch files you didn't modify:**
+
 - **Only stage files you modified** — never `git add -A` or `git add .`
-- **Never `git checkout` or `git restore` files you didn't change** — this silently discards another agent's work
+- **NEVER run `git checkout`, `git restore`, or `git reset` on files you didn't change** — this silently destroys another agent's in-progress work with no way to recover it. Even if a file appears "dirty" or has unexpected changes, leave it alone — another agent put those changes there deliberately.
+- **NEVER run `git checkout -- .` or `git restore .`** — these wipe ALL unstaged changes across the entire repo, including other agents' work
 - **Never rebase** — rebase rewrites history and clobbers parallel agents' work
 - **Pull before push** if push is rejected: `git pull --no-rebase origin main && git push origin main`
 - **Avoid broad formatting runs** (`ruff format .`) unless you are the only agent active — prefer formatting only your changed files
+- **If `git stash` is needed**, only stash your own files: `git stash push -- file1 file2`, never `git stash` (which stashes everything)
 
 ### Session Completion
 
@@ -470,20 +474,20 @@ tail -f ~/.local/share/imas-codex/logs/paths_*.log
 rg "artifact_worker" ~/.local/share/imas-codex/logs/wiki_tcv.log
 ```
 
-Logs rotate at 10 MB with 3 backups (e.g., `paths_tcv.log`, `paths_tcv.log.1`). The file handler captures all `imas_codex.*` loggers at DEBUG level regardless of the `--no-rich` or `--verbose` flags.
+Logs rotate at 10 MB with 3 backups (e.g., `paths_tcv.log`, `paths_tcv.log.1`). The file handler captures all `imas_codex.*` loggers at DEBUG level regardless of the `--verbose` flag.
 
 **NEVER pipe, tee, or redirect CLI output.** This is the #1 cause of stalled agentic workflows. The logging infrastructure already captures everything — piping adds zero value and blocks auto-approval.
 
 ```bash
 # WRONG — blocks auto-approval, requires user interaction
-uv run imas-codex discover wiki tcv --no-rich 2>&1 | tee /tmp/wiki_tcv.txt
-uv run imas-codex discover signals tcv --no-rich > /tmp/signals.log 2>&1
-uv run imas-codex discover paths jet --no-rich 2>&1 | cat
+uv run imas-codex discover wiki tcv 2>&1 | tee /tmp/wiki_tcv.txt
+uv run imas-codex discover signals tcv > /tmp/signals.log 2>&1
+uv run imas-codex discover paths jet 2>&1 | cat
 
 # RIGHT — run directly, logs are written automatically
-uv run imas-codex discover wiki tcv --no-rich
-uv run imas-codex discover signals tcv --no-rich
-uv run imas-codex discover paths jet --no-rich
+uv run imas-codex discover wiki tcv
+uv run imas-codex discover signals tcv
+uv run imas-codex discover paths jet
 
 # MONITOR — read the auto-generated logs
 tail -f ~/.local/share/imas-codex/logs/signals_tcv.log  # Follow live
