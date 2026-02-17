@@ -142,9 +142,13 @@ class Neo4jOperation:
     def _reset_password(self) -> None:
         """Reset Neo4j password after database load.
 
-        After loading a database dump, Neo4j's auth database is replaced and
-        the password must be re-initialized before the first start.
+        After loading a database dump, Neo4j's auth database may be
+        replaced.  Clear the auth file first so ``set-initial-password``
+        always succeeds regardless of prior auth state.
         """
+        auth_file = self.profile.data_dir / "data" / "dbms" / "auth.ini"
+        if auth_file.exists():
+            auth_file.unlink()
         cmd = [
             "apptainer",
             "exec",
@@ -159,8 +163,7 @@ class Neo4jOperation:
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            # May fail if password already set - not an error
-            if "password is already set" not in result.stderr.lower():
+            if "already set" not in result.stderr.lower():
                 click.echo(f"Warning: Password reset issue: {result.stderr.strip()}")
         else:
             click.echo("  Password reset successful")
@@ -1231,9 +1234,9 @@ def graph_secure() -> None:
         env_file.chmod(0o600)
         click.echo("✓ Updated local .env with new password")
 
-        # Set password on remote Neo4j
+        # Set password on remote Neo4j (clear existing auth for rotation)
         try:
-            remote_set_initial_password(profile.host, password)
+            remote_set_initial_password(profile.host, password, clear_auth=True)
             click.echo("✓ Updated Neo4j password on remote host")
         except Exception as e:
             click.echo(f"Warning: Remote password set issue: {e}", err=True)
@@ -1277,8 +1280,13 @@ def graph_secure() -> None:
     env_file.chmod(0o600)
     click.echo("✓ Updated .env with new password")
 
-    # Reset Neo4j password in the database auth store
+    # Reset Neo4j password in the database auth store.
+    # Delete the existing auth file first — set-initial-password only works
+    # when no auth file exists, so rotation requires clearing it.
     if shutil.which("apptainer") and NEO4J_IMAGE.exists():
+        auth_file = profile.data_dir / "data" / "dbms" / "auth.ini"
+        if auth_file.exists():
+            auth_file.unlink()
         cmd = [
             "apptainer",
             "exec",

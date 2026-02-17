@@ -276,6 +276,8 @@ def remote_is_neo4j_running(http_port: int, ssh_host: str) -> bool:
 def remote_set_initial_password(
     ssh_host: str,
     password: str | None = None,
+    *,
+    clear_auth: bool = False,
 ) -> None:
     """Set the Neo4j initial password on a remote host.
 
@@ -289,6 +291,9 @@ def remote_set_initial_password(
     Args:
         ssh_host: SSH host alias.
         password: Password to set.  Defaults to the configured password.
+        clear_auth: If True, delete the existing auth file first so
+            ``set-initial-password`` works on an already-initialized
+            database.  Required for password rotation.
     """
     if password is None:
         from imas_codex.settings import get_graph_password
@@ -296,6 +301,13 @@ def remote_set_initial_password(
         password = get_graph_password()
 
     from imas_codex.remote.executor import run_command
+
+    if clear_auth:
+        run_command(
+            f"rm -f {REMOTE_LINK}/data/dbms/auth.ini",
+            ssh_host=ssh_host,
+            timeout=30,
+        )
 
     cmd = (
         f"apptainer exec --bind {REMOTE_LINK}/data:/data --writable-tmpfs "
@@ -465,7 +477,8 @@ else
     exit 1
 fi
 
-# Reset password
+# Reset password (clear auth file first so set-initial-password works)
+rm -f "$DATA_DIR/data/dbms/auth.ini"
 apptainer exec \
     --bind "$DATA_DIR/data:/data" \
     --writable-tmpfs \
