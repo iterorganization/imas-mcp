@@ -1175,17 +1175,21 @@ def graph_service_status() -> None:
 def graph_secure() -> None:
     """Rotate the Neo4j server password.
 
-    Stops the Neo4j server, generates a new secure password, updates
-    ``.env``, resets the server auth store, and restarts.  On remote
-    hosts the ``.env`` is automatically synced via SCP.
+    Connects to the running Neo4j via Cypher ``ALTER CURRENT USER SET
+    PASSWORD`` — no restart required.  Updates ``.env``, the systemd
+    service file, and (for remote hosts) syncs via SCP.
+
+    Falls back to ``set-initial-password`` only when Neo4j is stopped
+    (first setup or post-dump-load).
     """
     import re
     import secrets
 
     from imas_codex.graph.profiles import resolve_neo4j
+    from imas_codex.settings import get_graph_uri
 
     profile = resolve_neo4j(auto_tunnel=False)
-    password = secrets.token_urlsafe(24)
+    new_password = secrets.token_urlsafe(24)
 
     env_file = Path(".env")
     if not env_file.exists():
@@ -1194,56 +1198,42 @@ def graph_secure() -> None:
             "Copy from env.example: cp env.example .env"
         )
 
+    old_password = profile.password
+
     # ── Remote dispatch ──────────────────────────────────────────────────
     from imas_codex.graph.remote import is_remote_location
 
     if is_remote_location(profile.host):
         from imas_codex.graph.remote import (
             remote_is_neo4j_running,
-            remote_service_action,
             remote_set_initial_password,
             resolve_remote_service_name,
         )
 
         service = resolve_remote_service_name(profile.name, profile.host)
-
-        # Stop Neo4j
         was_running = remote_is_neo4j_running(profile.http_port, profile.host)
+
         if was_running:
-            click.echo(f"Stopping Neo4j on {profile.host}...")
-            remote_service_action("stop", service, profile.host, timeout=60)
-            import time
-
-            time.sleep(5)
-
-        # Update local .env
-        env_content = env_file.read_text()
-        if re.search(r"^NEO4J_PASSWORD=", env_content, re.MULTILINE):
-            env_content = re.sub(
-                r"^NEO4J_PASSWORD=.*$",
-                f"NEO4J_PASSWORD={password}",
-                env_content,
-                flags=re.MULTILINE,
-            )
+            # Rotate via Cypher through the SSH tunnel.  get_graph_uri()
+            # resolves to the tunnelled bolt port (e.g. bolt://localhost:17687).
+            bolt_uri = get_graph_uri()
+            _rotate_password_cypher(bolt_uri, old_password, new_password)
         else:
-            env_content = env_content.rstrip() + f"\nNEO4J_PASSWORD={password}\n"
-        env_file.write_text(env_content)
-        env_file.chmod(0o600)
-        click.echo("✓ Updated local .env")
+            click.echo("Neo4j not running, using set-initial-password...")
+            try:
+                remote_set_initial_password(profile.host, new_password, clear_auth=True)
+                click.echo("✓ Set Neo4j initial password")
+            except Exception as e:
+                click.echo(f"Warning: Password set issue: {e}", err=True)
 
-        # Set password on remote Neo4j (clear existing auth for rotation)
-        try:
-            remote_set_initial_password(profile.host, password, clear_auth=True)
-            click.echo("✓ Updated Neo4j auth store")
-        except Exception as e:
-            click.echo(f"Warning: Remote password set issue: {e}", err=True)
+        _update_env_file(env_file, new_password)
 
         # Update NEO4J_AUTH in the remote systemd service file
         try:
             from imas_codex.remote.executor import run_command
 
             run_command(
-                f"sed -i 's|NEO4J_AUTH=neo4j/[^ ]*|NEO4J_AUTH=neo4j/{password}|' "
+                f"sed -i 's|NEO4J_AUTH=neo4j/[^ ]*|NEO4J_AUTH=neo4j/{new_password}|' "
                 f"~/.config/systemd/user/{service}.service "
                 f"&& systemctl --user daemon-reload",
                 ssh_host=profile.host,
@@ -1253,12 +1243,7 @@ def graph_secure() -> None:
         except Exception as e:
             click.echo(f"Warning: Service file update issue: {e}", err=True)
 
-        # Restart
-        if was_running:
-            click.echo("Restarting Neo4j...")
-            remote_service_action("start", service, profile.host, timeout=60)
-
-        # Auto-sync .env to remote host
+        # Sync .env to remote host
         try:
             remote_env = "~/Code/imas-codex/.env"
             result = subprocess.run(
@@ -1291,57 +1276,37 @@ def graph_secure() -> None:
         return
     # ── End remote dispatch ──────────────────────────────────────────────
 
-    # Stop Neo4j if running
+    # ── Local path ───────────────────────────────────────────────────────
     was_running = is_neo4j_running(profile.http_port)
+
     if was_running:
-        click.echo("Stopping Neo4j...")
-        _stop_neo4j_for_switch(profile)
-        import time
-
-        for _ in range(15):
-            if not is_neo4j_running(profile.http_port):
-                break
-            time.sleep(1)
-
-    # Update .env file
-    env_content = env_file.read_text()
-    if re.search(r"^NEO4J_PASSWORD=", env_content, re.MULTILINE):
-        env_content = re.sub(
-            r"^NEO4J_PASSWORD=.*$",
-            f"NEO4J_PASSWORD={password}",
-            env_content,
-            flags=re.MULTILINE,
-        )
+        bolt_uri = f"bolt://localhost:{profile.bolt_port}"
+        _rotate_password_cypher(bolt_uri, old_password, new_password)
     else:
-        env_content = env_content.rstrip() + f"\nNEO4J_PASSWORD={password}\n"
-    env_file.write_text(env_content)
-    env_file.chmod(0o600)
-    click.echo("✓ Updated .env")
+        if shutil.which("apptainer") and NEO4J_IMAGE.exists():
+            auth_file = profile.data_dir / "data" / "dbms" / "auth.ini"
+            if auth_file.exists():
+                auth_file.unlink()
+            cmd = [
+                "apptainer",
+                "exec",
+                "--bind",
+                f"{profile.data_dir}/data:/data",
+                "--writable-tmpfs",
+                str(NEO4J_IMAGE),
+                "neo4j-admin",
+                "dbms",
+                "set-initial-password",
+                new_password,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0 and "already set" not in result.stderr.lower():
+                click.echo(
+                    f"Warning: Password reset issue: {result.stderr.strip()}",
+                    err=True,
+                )
 
-    # Reset Neo4j password in the database auth store.
-    # Delete the existing auth file first — set-initial-password only works
-    # when no auth file exists, so rotation requires clearing it.
-    if shutil.which("apptainer") and NEO4J_IMAGE.exists():
-        auth_file = profile.data_dir / "data" / "dbms" / "auth.ini"
-        if auth_file.exists():
-            auth_file.unlink()
-        cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{profile.data_dir}/data:/data",
-            "--writable-tmpfs",
-            str(NEO4J_IMAGE),
-            "neo4j-admin",
-            "dbms",
-            "set-initial-password",
-            password,
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0 and "already set" not in result.stderr.lower():
-            click.echo(
-                f"Warning: Password reset issue: {result.stderr.strip()}", err=True
-            )
+    _update_env_file(env_file, new_password)
 
     # Update NEO4J_AUTH in the local systemd service file
     service_name = f"imas-codex-neo4j-{profile.name}"
@@ -1352,7 +1317,7 @@ def graph_secure() -> None:
         content = service_file.read_text()
         updated = re.sub(
             r"NEO4J_AUTH=neo4j/\S+",
-            f"NEO4J_AUTH=neo4j/{password}",
+            f"NEO4J_AUTH=neo4j/{new_password}",
             content,
         )
         if updated != content:
@@ -1363,17 +1328,49 @@ def graph_secure() -> None:
             )
             click.echo("✓ Updated systemd service")
 
-    # Restart if was running
-    if was_running:
-        click.echo("Restarting Neo4j...")
-        # Re-read .env so the new password is picked up
-        from dotenv import load_dotenv
-
-        load_dotenv(override=True)
-        new_profile = resolve_neo4j(auto_tunnel=False)
-        _start_neo4j_after_switch(new_profile)
-
     click.echo("\n✓ Neo4j server password rotated")
+
+
+def _rotate_password_cypher(
+    bolt_uri: str, old_password: str, new_password: str
+) -> None:
+    """Rotate Neo4j password via Cypher ALTER CURRENT USER SET PASSWORD."""
+    try:
+        from neo4j import GraphDatabase
+
+        with GraphDatabase.driver(bolt_uri, auth=("neo4j", old_password)) as driver:
+            driver.verify_connectivity()
+            with driver.session() as session:
+                session.run(
+                    "ALTER CURRENT USER SET PASSWORD FROM $old TO $new",
+                    old=old_password,
+                    new=new_password,
+                )
+        click.echo("✓ Rotated Neo4j server password")
+    except Exception as e:
+        raise click.ClickException(
+            f"Failed to rotate password via Cypher: {e}\n"
+            "Ensure Neo4j is running and the current password in .env is correct."
+        ) from e
+
+
+def _update_env_file(env_file: Path, new_password: str) -> None:
+    """Update NEO4J_PASSWORD in the .env file."""
+    import re
+
+    env_content = env_file.read_text()
+    if re.search(r"^NEO4J_PASSWORD=", env_content, re.MULTILINE):
+        env_content = re.sub(
+            r"^NEO4J_PASSWORD=.*$",
+            f"NEO4J_PASSWORD={new_password}",
+            env_content,
+            flags=re.MULTILINE,
+        )
+    else:
+        env_content = env_content.rstrip() + f"\nNEO4J_PASSWORD={new_password}\n"
+    env_file.write_text(env_content)
+    env_file.chmod(0o600)
+    click.echo("✓ Updated .env")
 
 
 # ============================================================================
