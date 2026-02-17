@@ -1619,12 +1619,22 @@ def graph_export(
 
         click.echo(f"Exporting graph [{profile.name}] from {profile.host}...")
 
-        remote_archive = remote_export_graph(profile.name, profile.host)
+        try:
+            remote_archive = remote_export_graph(profile.name, profile.host)
+        except Exception as e:
+            raise click.ClickException(
+                f"Remote export on {profile.host} failed: {e}"
+            ) from e
         click.echo(f"✓ Exported on {profile.host}: {remote_archive}")
 
         if local or output:
             click.echo(f"  Transferring archive from {profile.host}...")
-            scp_from_remote(remote_archive, output_path, profile.host)
+            try:
+                scp_from_remote(remote_archive, output_path, profile.host)
+            except Exception as e:
+                raise click.ClickException(
+                    f"Transfer from {profile.host} failed: {e}"
+                ) from e
             size_mb = output_path.stat().st_size / 1024 / 1024
             click.echo(f"✓ Local copy: {output_path} ({size_mb:.1f} MB)")
 
@@ -1959,7 +1969,8 @@ def graph_push(
             dump_args.append("--no-imas")
         result = runner.invoke(graph_export, dump_args)
         if result.exit_code != 0:
-            raise click.ClickException(f"Export failed: {result.output}")
+            detail = str(result.exception) if result.exception else result.output
+            raise click.ClickException(f"Export failed: {detail}")
 
         login_to_ghcr(token)
 
