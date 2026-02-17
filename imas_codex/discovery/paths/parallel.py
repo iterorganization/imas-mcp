@@ -455,12 +455,16 @@ def mark_score_complete(
     facility: str,
     score_data: list[dict[str, Any]],
 ) -> int:
-    """Mark scored paths complete.
+    """Apply structural expansion overrides and persist scored paths.
 
     Transition: scoring → scored
     """
-    from imas_codex.discovery.paths.frontier import mark_paths_scored
+    from imas_codex.discovery.paths.frontier import (
+        apply_expansion_overrides,
+        mark_paths_scored,
+    )
 
+    apply_expansion_overrides(facility, score_data)
     return mark_paths_scored(facility, score_data)
 
 

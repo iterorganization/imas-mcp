@@ -1052,6 +1052,74 @@ async def _create_person_link(
     )
 
 
+def apply_expansion_overrides(
+    facility: str,
+    scores: list[dict[str, Any]],
+) -> None:
+    """Apply structural should_expand/should_enrich overrides in place.
+
+    Checks each scored path against:
+    1. VCS accessibility — if the repo's remote is accessible elsewhere
+       (config patterns or scanner probe), block expansion and enrichment.
+    2. Data containers — modeling_data/experimental_data never expand.
+
+    Mutates the score dicts directly before they are persisted.
+
+    Args:
+        facility: Facility ID
+        scores: List of dicts from ScoredDirectory.to_graph_dict()
+    """
+    from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+    from imas_codex.graph import GraphClient
+
+    path_ids = [f"{facility}:{s['path']}" for s in scores]
+
+    with GraphClient() as gc:
+        # Batch-fetch VCS data for all paths in one query
+        vcs_rows = gc.query(
+            """
+            UNWIND $ids AS pid
+            MATCH (p:FacilityPath {id: pid})
+            RETURN p.id AS id, p.vcs_type AS vcs_type, p.has_git AS has_git,
+                   p.vcs_remote_url AS vcs_remote_url,
+                   p.vcs_remote_accessible AS vcs_remote_accessible
+            """,
+            ids=path_ids,
+        )
+
+    vcs_by_id = {r["id"]: r for r in (vcs_rows or [])}
+
+    data_purposes = {"modeling_data", "experimental_data"}
+
+    for score_data in scores:
+        path_id = f"{facility}:{score_data['path']}"
+        vcs_row = vcs_by_id.get(path_id)
+
+        # VCS accessibility override
+        if vcs_row:
+            has_vcs = vcs_row["vcs_type"] is not None or vcs_row.get("has_git") is True
+            if has_vcs and is_repo_accessible_elsewhere(
+                remote_url=vcs_row.get("vcs_remote_url"),
+                scanner_accessible=vcs_row.get("vcs_remote_accessible"),
+                facility=facility,
+            ):
+                score_data["should_expand"] = False
+                score_data["should_enrich"] = False
+                vcs_label = vcs_row["vcs_type"] or "git"
+                score_data.setdefault(
+                    "enrich_skip_reason",
+                    f"{vcs_label} repo accessible elsewhere",
+                )
+
+        # Data container override
+        if score_data.get("path_purpose") in data_purposes:
+            score_data["should_expand"] = False
+            score_data["should_enrich"] = False
+            score_data.setdefault(
+                "enrich_skip_reason", "data container - too many files"
+            )
+
+
 def mark_paths_scored(
     facility: str,
     scores: list[dict[str, Any]],
@@ -1112,45 +1180,6 @@ def mark_paths_scored(
                     physics_indicators=evidence_dict.get("physics_indicators", []),
                     quality_indicators=evidence_dict.get("quality_indicators", []),
                     now=now,
-                )
-
-            # Apply structural expansion overrides using VCS data already
-            # on the node from the scan phase.  The scorer passes through
-            # LLM decisions unchanged; access-based constraints live here.
-            from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
-
-            vcs_result = gc.query(
-                "MATCH (p:FacilityPath {id: $id}) "
-                "RETURN p.vcs_type AS vcs_type, p.has_git AS has_git, "
-                "p.vcs_remote_url AS vcs_remote_url, "
-                "p.vcs_remote_accessible AS vcs_remote_accessible",
-                id=path_id,
-            )
-            if vcs_result:
-                vcs_row = vcs_result[0]
-                has_vcs = (
-                    vcs_row["vcs_type"] is not None or vcs_row.get("has_git") is True
-                )
-                if has_vcs and is_repo_accessible_elsewhere(
-                    remote_url=vcs_row.get("vcs_remote_url"),
-                    scanner_accessible=vcs_row.get("vcs_remote_accessible"),
-                    facility=facility,
-                ):
-                    score_data["should_expand"] = False
-                    score_data["should_enrich"] = False
-                    vcs_label = vcs_row["vcs_type"] or "git"
-                    score_data.setdefault(
-                        "enrich_skip_reason",
-                        f"{vcs_label} repo accessible elsewhere",
-                    )
-
-            path_purpose = score_data.get("path_purpose")
-            data_purposes = {"modeling_data", "experimental_data"}
-            if path_purpose in data_purposes:
-                score_data["should_expand"] = False
-                score_data["should_enrich"] = False
-                score_data.setdefault(
-                    "enrich_skip_reason", "data container - too many files"
                 )
 
             # Update FacilityPath with scores and link to Evidence
