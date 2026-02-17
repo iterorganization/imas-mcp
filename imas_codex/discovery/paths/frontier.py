@@ -1114,6 +1114,45 @@ def mark_paths_scored(
                     now=now,
                 )
 
+            # Apply structural expansion overrides using VCS data already
+            # on the node from the scan phase.  The scorer passes through
+            # LLM decisions unchanged; access-based constraints live here.
+            from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+
+            vcs_result = gc.query(
+                "MATCH (p:FacilityPath {id: $id}) "
+                "RETURN p.vcs_type AS vcs_type, p.has_git AS has_git, "
+                "p.vcs_remote_url AS vcs_remote_url, "
+                "p.vcs_remote_accessible AS vcs_remote_accessible",
+                id=path_id,
+            )
+            if vcs_result:
+                vcs_row = vcs_result[0]
+                has_vcs = (
+                    vcs_row["vcs_type"] is not None or vcs_row.get("has_git") is True
+                )
+                if has_vcs and is_repo_accessible_elsewhere(
+                    remote_url=vcs_row.get("vcs_remote_url"),
+                    scanner_accessible=vcs_row.get("vcs_remote_accessible"),
+                    facility=facility,
+                ):
+                    score_data["should_expand"] = False
+                    score_data["should_enrich"] = False
+                    vcs_label = vcs_row["vcs_type"] or "git"
+                    score_data.setdefault(
+                        "enrich_skip_reason",
+                        f"{vcs_label} repo accessible elsewhere",
+                    )
+
+            path_purpose = score_data.get("path_purpose")
+            data_purposes = {"modeling_data", "experimental_data"}
+            if path_purpose in data_purposes:
+                score_data["should_expand"] = False
+                score_data["should_enrich"] = False
+                score_data.setdefault(
+                    "enrich_skip_reason", "data container - too many files"
+                )
+
             # Update FacilityPath with scores and link to Evidence
             # terminal_reason is only set when provided (e.g., empty directories)
             # For LLM-scored paths it stays NULL - reason is derivable from
@@ -1556,6 +1595,7 @@ async def persist_scan_results(
                 "git_root_commit": stats.get("git_root_commit"),
                 "vcs_type": stats.get("vcs_type"),
                 "vcs_remote_url": stats.get("vcs_remote_url"),
+                "vcs_remote_accessible": stats.get("vcs_remote_accessible"),
             }
             # Store file_type_counts if available
             file_type_counts = stats.get("file_type_counts")
@@ -1695,6 +1735,7 @@ async def persist_scan_results(
                     p.git_root_commit = item.git_root_commit,
                     p.vcs_type = item.vcs_type,
                     p.vcs_remote_url = item.vcs_remote_url,
+                    p.vcs_remote_accessible = item.vcs_remote_accessible,
                     p.child_names = item.child_names,
                     p.file_type_counts = item.file_type_counts,
                     p.tree_context = item.tree_context,
@@ -1738,6 +1779,7 @@ async def persist_scan_results(
                     p.git_root_commit = item.git_root_commit,
                     p.vcs_type = item.vcs_type,
                     p.vcs_remote_url = item.vcs_remote_url,
+                    p.vcs_remote_accessible = item.vcs_remote_accessible,
                     p.child_names = item.child_names,
                     p.file_type_counts = item.file_type_counts,
                     p.tree_context = item.tree_context,

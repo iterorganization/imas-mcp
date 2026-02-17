@@ -255,6 +255,28 @@ archive_extensions:
   - ".dmg"
 
 # =============================================================================
+# VCS ACCESSIBLE REMOTES (repos available elsewhere — skip expansion)
+# =============================================================================
+# URL patterns for VCS remotes that are known to be accessible. When a scanned
+# directory has a VCS remote matching any of these patterns, it is treated as
+# "accessible elsewhere" — expansion is blocked and the code is available via
+# clone/checkout from the remote.
+#
+# This is a fast shortcut that avoids per-repo network checks (git ls-remote,
+# svn info). The on-facility accessibility check is the primary mechanism;
+# these patterns are a fallback when the scanner didn't run the check.
+#
+# Format: substring match against the lowercase VCS remote URL.
+# Use "host/org" to match a specific organization on a hosting service.
+#
+# IMPORTANT: Only list remotes where we have access or can clone the code.
+# If a remote requires credentials we don't have, do NOT list it here —
+# the on-facility check will determine accessibility.
+vcs_accessible_remotes:
+  - "git.iter.org"
+  - "github.com/iterorganization"
+
+# =============================================================================
 # SCANNING LIMITS (prevent runaway recursion)
 # =============================================================================
 

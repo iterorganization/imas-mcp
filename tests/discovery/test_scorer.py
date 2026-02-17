@@ -152,8 +152,12 @@ class TestContainerExpansion:
         assert len(results) == 1
         assert results[0].should_expand is False
 
-    def test_container_with_git_not_expanded(self):
-        """Container with .git should not be expanded (git override wins)."""
+    def test_container_with_git_passes_through_llm_decision(self):
+        """Container with .git passes through LLM's should_expand decision.
+
+        VCS accessibility overrides are applied in mark_paths_scored (frontier),
+        not in the scorer. The scorer only computes scores.
+        """
         scorer = DirectoryScorer(facility="test")
         batch = self._score_batch(
             [
@@ -173,8 +177,8 @@ class TestContainerExpansion:
 
         results = scorer._map_scored_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
-        # Git repos should never be expanded even if container
-        assert results[0].should_expand is False
+        # Scorer passes through LLM decision; VCS override is in frontier
+        assert results[0].should_expand is True
 
     def test_container_no_score_threshold_required(self):
         """Containers bypass score threshold — only LLM should_expand matters.
@@ -284,8 +288,8 @@ class TestContainerExpansion:
         # LLM said expand — trusted directly regardless of score vs threshold
         assert results[0].should_expand is True
 
-    def test_non_container_data_never_expands(self):
-        """Data containers are blocked from expansion regardless."""
+    def test_data_container_passes_through_llm_decision(self):
+        """Data containers pass through LLM decision (override in frontier)."""
         scorer = DirectoryScorer(facility="test")
         batch = self._score_batch(
             [
@@ -309,12 +313,12 @@ class TestContainerExpansion:
 
         results = scorer._map_scored_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
-        # modeling_data directories are explicitly blocked from expansion
-        assert results[0].should_expand is False
+        # Scorer passes through LLM decision; data container override is in frontier
+        assert results[0].should_expand is True
 
     @pytest.mark.parametrize("vcs_type", ["svn", "hg", "bzr"])
-    def test_non_git_vcs_repos_never_expand(self, vcs_type):
-        """SVN/Hg/Bzr repos should not expand (same as git repos)."""
+    def test_non_git_vcs_repos_pass_through_llm_decision(self, vcs_type):
+        """SVN/Hg/Bzr repos pass through LLM decision (override in frontier)."""
         scorer = DirectoryScorer(facility="test")
         batch = self._score_batch(
             [
@@ -340,4 +344,69 @@ class TestContainerExpansion:
 
         results = scorer._map_scored_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
-        assert results[0].should_expand is False
+        # Scorer passes through LLM decision; VCS override is in frontier
+        assert results[0].should_expand is True
+
+
+class TestIsRepoAccessibleElsewhere:
+    """Tests for the standalone is_repo_accessible_elsewhere function."""
+
+    def test_none_url_returns_false(self):
+        from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+
+        assert is_repo_accessible_elsewhere(None) is False
+
+    def test_github_iterorganization_is_accessible(self):
+        from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+
+        assert (
+            is_repo_accessible_elsewhere("git@github.com/iterorganization/repo.git")
+            is True
+        )
+
+    def test_git_iter_org_is_accessible(self):
+        from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+
+        assert (
+            is_repo_accessible_elsewhere("https://git.iter.org/scm/imas/repo.git")
+            is True
+        )
+
+    def test_unknown_host_not_accessible_without_scanner(self):
+        from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+
+        assert (
+            is_repo_accessible_elsewhere("ssh://internal.example.com/repo.git") is False
+        )
+
+    def test_scanner_true_overrides_unknown_host(self):
+        from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+
+        assert (
+            is_repo_accessible_elsewhere(
+                "ssh://internal.example.com/repo.git", scanner_accessible=True
+            )
+            is True
+        )
+
+    def test_scanner_false_does_not_override(self):
+        from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+
+        assert (
+            is_repo_accessible_elsewhere(
+                "ssh://internal.example.com/repo.git", scanner_accessible=False
+            )
+            is False
+        )
+
+    def test_config_pattern_takes_precedence_over_scanner_false(self):
+        """Config match wins even if scanner says False."""
+        from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+
+        assert (
+            is_repo_accessible_elsewhere(
+                "https://github.com/iterorganization/imas-codex.git",
+                scanner_accessible=False,
+            )
+            is True
+        )

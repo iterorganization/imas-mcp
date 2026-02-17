@@ -85,6 +85,7 @@ class DirStats:
     git_root_commit: str | None = None  # First commit in history (for fork detection)
     vcs_type: str | None = None  # VCS type: git, svn, hg, bzr
     vcs_remote_url: str | None = None  # VCS remote URL (generalized)
+    vcs_remote_accessible: bool | None = None  # Whether VCS remote is reachable
     child_names: list[str] | None = None  # First 30 child file/dir names
     tree_context: str | None = None  # 2-level tree output for hierarchy
     numeric_dir_ratio: float = 0.0  # Fraction of numeric subdirs (shot IDs)
@@ -114,6 +115,8 @@ class DirStats:
             result["vcs_type"] = self.vcs_type
         if self.vcs_remote_url:
             result["vcs_remote_url"] = self.vcs_remote_url
+        if self.vcs_remote_accessible is not None:
+            result["vcs_remote_accessible"] = self.vcs_remote_accessible
         if self.child_names:
             result["child_names"] = self.child_names
         if self.tree_context:
@@ -284,6 +287,7 @@ def scan_paths(
             git_root_commit=stats_data.get("git_root_commit"),
             vcs_type=stats_data.get("vcs_type"),
             vcs_remote_url=stats_data.get("vcs_remote_url"),
+            vcs_remote_accessible=stats_data.get("vcs_remote_accessible"),
             child_names=data.get("child_names", []),
             tree_context=data.get("tree_context"),
             numeric_dir_ratio=stats_data.get("numeric_dir_ratio", 0.0),
@@ -439,6 +443,7 @@ def _parse_scan_output(
             git_root_commit=stats_data.get("git_root_commit"),
             vcs_type=stats_data.get("vcs_type"),
             vcs_remote_url=stats_data.get("vcs_remote_url"),
+            vcs_remote_accessible=stats_data.get("vcs_remote_accessible"),
             child_names=data.get("child_names", []),
             tree_context=data.get("tree_context"),
             numeric_dir_ratio=stats_data.get("numeric_dir_ratio", 0.0),

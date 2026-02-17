@@ -901,6 +901,14 @@ classes:
           Remote URL for the version control repository (generalized).
           For git: remote origin URL. For svn: repos-root-url.
           For hg: default path. For bzr: bound location.
+      vcs_remote_accessible:
+        description: >-
+          Whether the VCS remote URL is confirmed reachable from the facility.
+          Checked during scanning via git ls-remote, svn info, or hg identify.
+          True = remote is reachable (code obtainable via clone/checkout).
+          False = remote is unreachable or no remote URL exists.
+          Null = not yet checked.
+        range: boolean
       software_repo_id:
         description: Link to SoftwareRepo node if this is a git clone
         range: SoftwareRepo

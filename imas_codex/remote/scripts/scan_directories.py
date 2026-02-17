@@ -403,6 +403,48 @@ def scan_directory(
         except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
             pass
 
+    # Check VCS remote accessibility (can the code be obtained from the remote?)
+    vcs_remote_accessible: Optional[bool] = None
+    effective_remote = vcs_remote_url or git_remote_url
+    if effective_remote:
+        if has_git:
+            try:
+                proc = subprocess.run(
+                    ["git", "ls-remote", "--exit-code", effective_remote, "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                )
+                vcs_remote_accessible = proc.returncode == 0
+            except (subprocess.TimeoutExpired, Exception):
+                vcs_remote_accessible = False
+        elif vcs_type == "svn":
+            try:
+                proc = subprocess.run(
+                    ["svn", "info", "--non-interactive", effective_remote],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                vcs_remote_accessible = proc.returncode == 0
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                vcs_remote_accessible = False
+        elif vcs_type == "hg":
+            try:
+                proc = subprocess.run(
+                    ["hg", "identify", effective_remote],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                vcs_remote_accessible = proc.returncode == 0
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                vcs_remote_accessible = False
+    elif vcs_type and not effective_remote:
+        # VCS detected but no remote URL → not accessible elsewhere
+        vcs_remote_accessible = False
+
     result["stats"] = {
         "total_files": len(files),
         "total_dirs": len(dirs),
@@ -411,6 +453,7 @@ def scan_directory(
         "has_git": has_git,
         "vcs_type": vcs_type,
         "vcs_remote_url": vcs_remote_url or git_remote_url,
+        "vcs_remote_accessible": vcs_remote_accessible,
         "git_remote_url": git_remote_url,
         "git_head_commit": git_head_commit,
         "git_branch": git_branch,

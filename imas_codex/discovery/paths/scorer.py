@@ -51,13 +51,6 @@ PURPOSE_SCORE_NAMES = [
     "score_imas",
 ]
 
-# Structural expansion blocks — these encode facts the LLM cannot verify,
-# not scoring judgments. Everything else is LLM-driven.
-_DATA_PURPOSES = {
-    ResourcePurpose.modeling_data,
-    ResourcePurpose.experimental_data,
-}
-
 
 def combined_score(
     scores: dict[str, float],
@@ -329,7 +322,13 @@ class DirectoryScorer:
                 quality.append("Makefile")
             vcs = d.get("vcs_type")
             if vcs:
-                quality.append(f".{vcs}")
+                accessible = d.get("vcs_remote_accessible")
+                if accessible is True:
+                    quality.append(f".{vcs} (remote accessible)")
+                elif accessible is False:
+                    quality.append(f".{vcs} (remote inaccessible)")
+                else:
+                    quality.append(f".{vcs}")
             elif d.get("has_git"):
                 quality.append(".git")
             if quality:
@@ -488,80 +487,12 @@ class DirectoryScorer:
             # Compute grounded score from per-purpose scores and input data
             combined = combined_score(scores, directories[i], purpose)
 
-            # Extract VCS metadata for expansion decisions
-            has_git = directories[i].get("has_git", False)
-            vcs_type = directories[i].get("vcs_type")
-            has_vcs = vcs_type is not None or has_git
-            git_remote_url = directories[i].get("git_remote_url")
-            vcs_remote_url = directories[i].get("vcs_remote_url") or git_remote_url
-
-            # Determine if repo is accessible elsewhere (public or on internal servers)
-            # Private repos on public hosts contain unique content we want to scan
-            repo_accessible_elsewhere = False
-            if has_vcs and vcs_remote_url:
-                # Check if on public hosting service
-                is_public_host = any(
-                    host in vcs_remote_url.lower()
-                    for host in ["github.com", "gitlab.com", "bitbucket.org"]
-                )
-                if is_public_host:
-                    # Verify actual visibility via HTTP (confirms not private)
-                    from imas_codex.discovery.paths.frontier import (
-                        _is_repo_publicly_accessible,
-                    )
-
-                    repo_accessible_elsewhere = _is_repo_publicly_accessible(
-                        vcs_remote_url, timeout=2.0
-                    )
-                else:
-                    # Check if on facility's internal git servers
-                    # TODO: Could load from facility config here
-                    internal_servers = ["gitlab.iter.org", "git.iter.org"]
-                    repo_accessible_elsewhere = any(
-                        server in vcs_remote_url.lower() for server in internal_servers
-                    )
-
-            # Note: No score penalty for VCS repos. SoftwareRepo deduplication
-            # handles clones/forks via root_commit or remote_url matching. Repos
-            # are scored on their own merit; expansion is blocked for all VCS repos.
-
-            # Expansion: trust the LLM's should_expand decision directly.
-            # The prompt gives the LLM rich context (depth, parent/sibling
-            # scores, tree structure, file types) to make calibrated decisions.
-            # Only structural constraints override the LLM:
+            # Pass through LLM decisions directly — structural overrides
+            # (VCS accessibility, data containers) are applied in
+            # mark_paths_scored() at persistence time.
             should_expand = result.should_expand
-
-            # STRUCTURAL: Never expand VCS repos (code available via clone/checkout)
-            if has_vcs:
-                should_expand = False
-
-            # STRUCTURAL: Never expand data containers (too many files)
-            if purpose in _DATA_PURPOSES:
-                should_expand = False
-
-            # Enrichment decision - LLM decides, but override for known-large paths
             should_enrich = result.should_enrich
             enrich_skip_reason = result.enrich_skip_reason
-
-            # Override: never enrich VCS repos with accessible remotes
-            # (can get LOC from remote API)
-            if has_vcs and repo_accessible_elsewhere:
-                should_enrich = False
-                enrich_skip_reason = (
-                    enrich_skip_reason
-                    or f"{vcs_type} repo accessible elsewhere - code available via {vcs_type}"
-                )
-            elif has_vcs and vcs_remote_url:
-                # Private repo with remote: still worth enriching
-                # since we can't get metrics from the remote
-                pass
-
-            # Override: never enrich data containers (too many files)
-            if purpose in _DATA_PURPOSES:
-                should_enrich = False
-                enrich_skip_reason = (
-                    enrich_skip_reason or "data container - too many files"
-                )
 
             # terminal_reason is NULL for LLM-scored paths - reason is derivable
             # from has_git, path_purpose, score. Only set for non-derivable cases
@@ -699,33 +630,11 @@ class DirectoryScorer:
             # Compute combined score from input data
             combined = combined_score(scores, directories[i], purpose)
 
-            # VCS metadata for expansion/enrichment decisions (no score penalty)
-            has_git = directories[i].get("has_git", False)
-            vcs_type = directories[i].get("vcs_type")
-            has_vcs = vcs_type is not None or has_git
-            git_remote_url = directories[i].get("git_remote_url")
-            vcs_remote_url = directories[i].get("vcs_remote_url") or git_remote_url
-
-            # Expansion: trust the LLM's should_expand decision directly.
+            # Pass through LLM decisions directly — structural overrides
+            # applied in mark_paths_scored() at persistence time.
             should_expand = result.get("should_expand", False)
-
-            # STRUCTURAL: Never expand VCS repos (code available via clone/checkout)
-            if has_vcs:
-                should_expand = False
-
-            # STRUCTURAL: Never expand data containers (too many files)
-            if purpose in _DATA_PURPOSES:
-                should_expand = False
-
-            # Enrichment override for VCS repos with remotes
             should_enrich = result.get("should_enrich", True)
             enrich_skip_reason = result.get("enrich_skip_reason")
-            if has_vcs and vcs_remote_url:
-                should_enrich = False
-                enrich_skip_reason = (
-                    enrich_skip_reason
-                    or f"{vcs_type} repo with remote - code available elsewhere"
-                )
 
             scored_dir = ScoredDirectory(
                 path=path,

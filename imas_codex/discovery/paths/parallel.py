@@ -416,6 +416,7 @@ def claim_paths_for_scoring(
                    p.has_readme AS has_readme, p.has_makefile AS has_makefile,
                    p.has_git AS has_git, p.git_remote_url AS git_remote_url,
                    p.vcs_type AS vcs_type, p.vcs_remote_url AS vcs_remote_url,
+                   p.vcs_remote_accessible AS vcs_remote_accessible,
                    p.patterns_detected AS patterns_detected,
                    p.child_names AS child_names,
                    p.tree_context AS tree_context,

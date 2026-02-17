@@ -74,6 +74,9 @@ class ExclusionConfig:
     scan_timeout: int = 30
     """Maximum seconds for a single directory scan"""
 
+    vcs_accessible_remotes: list[str] = field(default_factory=list)
+    """URL patterns for VCS remotes known to be accessible (e.g., 'git.iter.org')"""
+
     def merge_facility_excludes(self, facility_excludes: dict) -> ExclusionConfig:
         """Merge facility-specific exclusions from *_private.yaml.
 
@@ -102,6 +105,8 @@ class ExclusionConfig:
             max_depth=self.max_depth,
             large_dir_threshold=self.large_dir_threshold,
             scan_timeout=self.scan_timeout,
+            vcs_accessible_remotes=self.vcs_accessible_remotes
+            + facility_excludes.get("vcs_accessible_remotes", []),
         )
 
     def is_scratch_path(self, path: str) -> bool:
@@ -121,6 +126,20 @@ class ExclusionConfig:
                 return True
 
         return False
+
+    def is_vcs_remote_accessible(self, remote_url: str | None) -> bool:
+        """Check if a VCS remote URL matches a known accessible pattern.
+
+        Args:
+            remote_url: VCS remote URL (git, svn, hg)
+
+        Returns:
+            True if the URL matches a known accessible remote pattern
+        """
+        if not remote_url or not self.vcs_accessible_remotes:
+            return False
+        url_lower = remote_url.lower()
+        return any(pattern in url_lower for pattern in self.vcs_accessible_remotes)
 
     def should_exclude(self, path: str) -> tuple[bool, str | None]:
         """Check if a path should be excluded.
@@ -357,6 +376,7 @@ class DiscoveryConfig:
             max_depth=data.get("max_depth", 15),
             large_dir_threshold=data.get("large_dir_threshold", 10000),
             scan_timeout=data.get("scan_timeout", 30),
+            vcs_accessible_remotes=data.get("vcs_accessible_remotes", []),
         )
 
     @classmethod
@@ -520,3 +540,45 @@ def get_exclusion_config_for_facility(facility: str) -> ExclusionConfig:
 def clear_config_cache() -> None:
     """Clear the configuration cache (for testing/reloading)."""
     get_discovery_config.cache_clear()
+
+
+def is_repo_accessible_elsewhere(
+    remote_url: str | None,
+    scanner_accessible: bool | None = None,
+    facility: str | None = None,
+) -> bool:
+    """Check if a VCS repo's code is obtainable from its remote.
+
+    Two-tier check:
+    1. Config patterns (exclude.yaml vcs_accessible_remotes) — authoritative,
+       no network cost.  If the URL matches a known host/org, return True
+       immediately without consulting the scanner result.
+    2. Scanner's on-facility probe (git ls-remote, svn info, hg identify) —
+       fallback for URLs not covered by config patterns.
+
+    Args:
+        remote_url: VCS remote URL (git, svn, hg).  None → False.
+        scanner_accessible: Result from on-facility accessibility probe.
+            True/False from the scanner, None if not checked.
+        facility: Optional facility ID for facility-specific excludes.
+
+    Returns:
+        True if the code is accessible elsewhere (expansion should be blocked).
+    """
+    if not remote_url:
+        return False
+
+    # 1) Config patterns — authoritative, no network needed
+    if facility:
+        config = get_exclusion_config_for_facility(facility)
+    else:
+        config = get_discovery_config().exclusions
+
+    if config.is_vcs_remote_accessible(remote_url):
+        return True
+
+    # 2) Scanner's on-facility probe — fallback for unknown hosts
+    if scanner_accessible is True:
+        return True
+
+    return False

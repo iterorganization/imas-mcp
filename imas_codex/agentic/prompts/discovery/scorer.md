@@ -109,7 +109,7 @@ Boost scores by ~0.15 for paths matching this focus.
 
 ## Expansion Decision
 
-**Your `should_expand` is the SOLE driver of expansion** (except: git repos and data containers are structurally blocked by the code regardless). Set it carefully — every expansion triggers SSH scanning and LLM scoring of all children.
+**Your `should_expand` is the SOLE driver of expansion** (except: VCS repos with accessible remotes and data containers are structurally blocked by the code regardless). Set it carefully — every expansion triggers SSH scanning and LLM scoring of all children.
 
 ### When to expand (`should_expand=true`):
 - **Top-level containers** (depth 0): `/home`, `/work`, `/common` — navigation roots that must be explored
@@ -117,7 +117,7 @@ Boost scores by ~0.15 for paths matching this focus.
 - **Promising user homes** (depth 1): only when the tree structure shows code (Python/Fortran files, src/, analysis/, scripts/) — NOT empty or configuration-only homes
 
 ### When NOT to expand (`should_expand=false`):
-- **Code repositories** with `.git` — code is available via git clone (also blocked structurally)
+- **VCS repositories with accessible remotes** — if the `.git`/`.svn`/`.hg` repo's remote URL is reachable, code is obtainable via clone/checkout (also blocked structurally)
 - **Data containers** — directories of shot data, run outputs, or numeric-named subdirs (also blocked structurally)
 - **Leaf code directories** — a directory with source files IS the project; its subdirectories (`src/`, `lib/`, `tests/`) are implementation details, not new discoveries
 - **Well-known software installations** — `/opt/imas/`, any public framework clone
@@ -127,10 +127,14 @@ Boost scores by ~0.15 for paths matching this focus.
 - **System, build_artifact, archive directories** — never expand these
 - **Large user-directory containers** with 50+ children and no code in tree structure — expanding creates hundreds of paths to scan
 
+### VCS repos with inaccessible or missing remotes:
+If a directory has `.git`/`.svn`/`.hg` but the remote URL is unreachable (or missing), the local copy may be the **only source of this code**. Use your judgment: expand if the directory contains multiple independent projects (e.g., a large SVN checkout with per-diagnostic subdirectories). Don't expand if it's a single self-contained project.
+
 ### Key insight:
 A directory containing Python/Fortran source files is typically a **leaf** — it IS the project. Set `should_expand=false` for code-containing directories unless they clearly contain multiple independent projects.
 
-**Software repositories (Git/SVN/VCS):** Score on merit, set `should_expand=false`.
+**Software repositories (Git/SVN/VCS) with accessible remotes:** Score on merit, set `should_expand=false`.
+**Software repositories with inaccessible/missing remotes:** Score on merit, use your judgment on expansion.
 
 ## Enrichment Decision
 
