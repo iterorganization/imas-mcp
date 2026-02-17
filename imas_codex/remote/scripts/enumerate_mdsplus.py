@@ -52,16 +52,16 @@ import json
 import re
 import sys
 from collections import defaultdict
-from typing import Any
+from typing import Any, Optional
 
 
 def enumerate_tree(
     tree_name: str,
     shot: int,
-    exclude_names: set[str],
+    exclude_names: set,
     max_nodes: int = 5000,
-    node_usages: set[str] | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    node_usages: Optional[set] = None,
+) -> tuple:
     """Walk an MDSplus tree and extract physics-relevant signal nodes.
 
     Strategy:

@@ -187,10 +187,17 @@ class DataDiscoveryState:
         if self.deadline_expired:
             return True
         if self.check_idle_count >= 3:
-            # Only stop if enriching is done AND no pending validation work
+            # Don't stop while scanning is still in progress — signals
+            # haven't entered the pipeline yet.
+            if self.discover_idle_count < 100:
+                return False
+            # Only stop if enriching is done AND no pending work anywhere
             enriching_done = self.enrich_idle_count >= 3 or self.budget_exhausted
             if enriching_done and not has_pending_check_work(self.facility):
-                return True
+                # Also wait for pending enrichment work — those signals
+                # will become check-ready once enriched.
+                if not has_pending_enrich_work(self.facility):
+                    return True
         return False
 
 
