@@ -3019,7 +3019,7 @@ class TWikiRawAdapter(WikiAdapter):
             ext_args = " -o ".join(f'-name "*{ext}"' for ext in artifact_extensions)
             cmd = f"find {self._pub_path} -type f \\( {ext_args} \\) 2>/dev/null"
             result = subprocess.run(
-                ["ssh", self._ssh_host, cmd],
+                ["ssh", "-o", "ClearAllForwardings=yes", self._ssh_host, cmd],
                 capture_output=True,
                 timeout=60,
             )

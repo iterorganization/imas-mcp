@@ -29,7 +29,10 @@ class TestExtractTextFromBytes:
         nb = {
             "cells": [
                 {"cell_type": "markdown", "source": ["# Title\n", "Description"]},
-                {"cell_type": "code", "source": ["import numpy as np\n", "x = np.array([1, 2, 3])"]},
+                {
+                    "cell_type": "code",
+                    "source": ["import numpy as np\n", "x = np.array([1, 2, 3])"],
+                },
                 {"cell_type": "markdown", "source": ["## Results"]},
             ]
         }
@@ -41,9 +44,7 @@ class TestExtractTextFromBytes:
     def test_notebook_max_cells(self):
         """Only first 20 cells should be extracted."""
         nb = {
-            "cells": [
-                {"cell_type": "code", "source": [f"cell_{i}"]} for i in range(30)
-            ]
+            "cells": [{"cell_type": "code", "source": [f"cell_{i}"]} for i in range(30)]
         }
         result = self._extract(json.dumps(nb).encode(), "notebook")
         assert "cell_0" in result
@@ -104,7 +105,9 @@ class TestScorePagesHeuristic:
 
     def test_default_score(self):
         """Pages without keywords should get 0.5 default."""
-        pages = [{"id": "tcv:SomePage", "title": "Some Page", "summary": "Generic content"}]
+        pages = [
+            {"id": "tcv:SomePage", "title": "Some Page", "summary": "Generic content"}
+        ]
         results = self._score(pages)
         assert len(results) == 1
         assert results[0]["score"] == 0.5
@@ -112,7 +115,11 @@ class TestScorePagesHeuristic:
     def test_physics_keyword_boost(self):
         """Physics keywords in title should boost score."""
         pages = [
-            {"id": "tcv:ThomsonScattering", "title": "Thomson Scattering", "summary": ""},
+            {
+                "id": "tcv:ThomsonScattering",
+                "title": "Thomson Scattering",
+                "summary": "",
+            },
         ]
         results = self._score(pages)
         assert results[0]["score"] > 0.5
@@ -153,7 +160,11 @@ class TestScorePagesHeuristic:
     def test_facility_keywords_boost(self):
         """Facility-specific keywords from data_access_patterns should boost."""
         pages = [
-            {"id": "tcv:MdsValue", "title": "Using MdsValue for data access", "summary": ""},
+            {
+                "id": "tcv:MdsValue",
+                "title": "Using MdsValue for data access",
+                "summary": "",
+            },
         ]
         patterns = {
             "primary_method": "mdsplus",
@@ -390,7 +401,9 @@ class TestFetchAndSummarize:
         """Output should be limited to max_chars."""
         from imas_codex.discovery.wiki.scoring import _fetch_and_summarize
 
-        long_content = "<html><body>" + "<p>A paragraph of text. </p>" * 100 + "</body></html>"
+        long_content = (
+            "<html><body>" + "<p>A paragraph of text. </p>" * 100 + "</body></html>"
+        )
 
         with patch(
             "imas_codex.discovery.wiki.scoring._fetch_html",
@@ -403,3 +416,129 @@ class TestFetchAndSummarize:
                 max_chars=200,
             )
             assert len(result) <= 200
+
+
+# =============================================================================
+# batch_ssh_read_files
+# =============================================================================
+
+
+class TestBatchSshReadFiles:
+    """Tests for batch_ssh_read_files — batched SSH file reading."""
+
+    def test_empty_list(self):
+        from imas_codex.discovery.wiki.scoring import batch_ssh_read_files
+
+        assert batch_ssh_read_files([]) == {}
+
+    def test_single_file(self):
+        from imas_codex.discovery.wiki.scoring import (
+            _BATCH_FILE_SEPARATOR,
+            batch_ssh_read_files,
+        )
+
+        url = "ssh://host1/data/Main/Page.txt"
+        stdout = f"{_BATCH_FILE_SEPARATOR}:'/data/Main/Page.txt'\nline1\nline2\n"
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=stdout.encode(),
+            )
+            result = batch_ssh_read_files([url])
+
+        assert url in result
+        assert "line1" in result[url]
+        assert "line2" in result[url]
+        mock_run.assert_called_once()
+        # Verify ClearAllForwardings is used
+        args = mock_run.call_args[0][0]
+        assert "-o" in args
+        assert "ClearAllForwardings=yes" in args
+
+    def test_multiple_files_same_host(self):
+        from imas_codex.discovery.wiki.scoring import (
+            _BATCH_FILE_SEPARATOR,
+            batch_ssh_read_files,
+        )
+
+        urls = [
+            "ssh://host1/data/Main/PageA.txt",
+            "ssh://host1/data/Main/PageB.txt",
+        ]
+        stdout = (
+            f"{_BATCH_FILE_SEPARATOR}:'/data/Main/PageA.txt'\nContent A\n"
+            f"{_BATCH_FILE_SEPARATOR}:'/data/Main/PageB.txt'\nContent B\n"
+        )
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=stdout.encode(),
+            )
+            result = batch_ssh_read_files(urls)
+
+        assert len(result) == 2
+        assert "Content A" in result[urls[0]]
+        assert "Content B" in result[urls[1]]
+        # Should be a single SSH call for same host
+        mock_run.assert_called_once()
+
+    def test_ssh_timeout_returns_empty(self):
+        import subprocess
+
+        from imas_codex.discovery.wiki.scoring import batch_ssh_read_files
+
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("ssh", 30)):
+            result = batch_ssh_read_files(["ssh://host1/data/Page.txt"])
+
+        assert result == {"ssh://host1/data/Page.txt": ""}
+
+    def test_ssh_failure_returns_empty(self):
+        from imas_codex.discovery.wiki.scoring import batch_ssh_read_files
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=255, stdout=b"")
+            result = batch_ssh_read_files(["ssh://host1/data/Page.txt"])
+
+        assert result == {"ssh://host1/data/Page.txt": ""}
+
+
+class TestFetchHtmlSshUrl:
+    """Tests for _fetch_html with ssh:// URLs."""
+
+    @pytest.mark.asyncio
+    async def test_ssh_url_reads_file_and_converts(self):
+        """ssh:// URL should read file via SSH and convert markup to HTML."""
+        from imas_codex.discovery.wiki.scoring import _fetch_html
+
+        with (
+            patch(
+                "imas_codex.discovery.wiki.adapters.fetch_twiki_raw_content",
+                return_value="---+ Test Page\nSome content",
+            ),
+            patch(
+                "imas_codex.discovery.wiki.pipeline.twiki_markup_to_html",
+                return_value="<h1>Test Page</h1><p>Some content</p>",
+            ),
+        ):
+            result = await _fetch_html(
+                url="ssh://jt-60sa/var/www/html/twiki/data/Main/TestPage.txt",
+                ssh_host=None,
+            )
+            assert "Test Page" in result
+
+    @pytest.mark.asyncio
+    async def test_ssh_url_empty_file_returns_empty(self):
+        """ssh:// URL with empty file should return empty string."""
+        from imas_codex.discovery.wiki.scoring import _fetch_html
+
+        with patch(
+            "imas_codex.discovery.wiki.adapters.fetch_twiki_raw_content",
+            return_value="short",
+        ):
+            result = await _fetch_html(
+                url="ssh://host/data/Main/Page.txt",
+                ssh_host=None,
+            )
+            assert result == ""
