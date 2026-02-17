@@ -699,9 +699,9 @@ def neo4j_start(
         "--env",
         f"NEO4J_AUTH=neo4j/{password}",
         "--env",
-        f"NEO4J_server_bolt_listen__address=:{profile.bolt_port}",
+        f"NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port}",
         "--env",
-        f"NEO4J_server_http_listen__address=:{profile.http_port}",
+        f"NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port}",
         str(image_path),
         "neo4j",
         "console",
@@ -1023,8 +1023,8 @@ ExecStart={apptainer_path} exec \\
     --bind {data_path}/import:/import \\
     --writable-tmpfs \\
     --env NEO4J_AUTH=neo4j/{password} \\
-    --env NEO4J_server_bolt_listen__address=:{profile.bolt_port} \\
-    --env NEO4J_server_http_listen__address=:{profile.http_port} \\
+    --env NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port} \\
+    --env NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port} \\
     {image_path} \\
     neo4j console
 Restart=on-failure
@@ -1164,9 +1164,9 @@ def _create_facility_dump(
             "--env",
             "NEO4J_AUTH=neo4j/temp-password",
             "--env",
-            f"NEO4J_server_bolt_listen__address=:{temp_bolt_port}",
+            f"NEO4J_server_bolt_listen__address=127.0.0.1:{temp_bolt_port}",
             "--env",
-            f"NEO4J_server_http_listen__address=:{temp_http_port}",
+            f"NEO4J_server_http_listen__address=127.0.0.1:{temp_http_port}",
             str(NEO4J_IMAGE),
             "neo4j",
             "console",
@@ -2173,9 +2173,9 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
         "--env",
         f"NEO4J_AUTH=neo4j/{profile.password}",
         "--env",
-        f"NEO4J_server_bolt_listen__address=:{profile.bolt_port}",
+        f"NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port}",
         "--env",
-        f"NEO4J_server_http_listen__address=:{profile.http_port}",
+        f"NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port}",
         str(NEO4J_IMAGE),
         "neo4j",
         "console",

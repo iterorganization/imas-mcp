@@ -616,9 +616,9 @@ def db_start(
         "--env",
         f"NEO4J_AUTH=neo4j/{password}",
         "--env",
-        f"NEO4J_server_bolt_listen__address=:{profile.bolt_port}",
+        f"NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port}",
         "--env",
-        f"NEO4J_server_http_listen__address=:{profile.http_port}",
+        f"NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port}",
         str(image_path),
         "neo4j",
         "console",
@@ -854,8 +854,8 @@ ExecStart={apptainer_path} exec \\
     --bind {data_path}/import:/import \\
     --writable-tmpfs \\
     --env NEO4J_AUTH=neo4j/{password} \\
-    --env NEO4J_server_bolt_listen__address=:{profile.bolt_port} \\
-    --env NEO4J_server_http_listen__address=:{profile.http_port} \\
+    --env NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port} \\
+    --env NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port} \\
     {image_path} \\
     neo4j console
 Restart=on-failure
