@@ -55,7 +55,6 @@ SSH_TUNNEL_OPTS: list[str] = [
     "-o", "TCPKeepAlive=yes",
     "-o", f"ServerAliveInterval={_SSH_ALIVE_INTERVAL}",
     "-o", f"ServerAliveCountMax={_SSH_ALIVE_COUNT_MAX}",
-    "-o", "ExitOnForwardFailure=yes",
     "-o", "ConnectTimeout=10",
 ]  # fmt: skip
 

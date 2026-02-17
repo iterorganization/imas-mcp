@@ -489,6 +489,8 @@ Description=IMAS Codex SSH tunnels to {target}
 Documentation=https://github.com/iterorganization/imas-codex
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -510,7 +512,6 @@ ExecStart={autossh} -M 0 -N \\
     -o "TCPKeepAlive=yes" \\
     -o "ServerAliveInterval=15" \\
     -o "ServerAliveCountMax=3" \\
-    -o "ExitOnForwardFailure=yes" \\
     -o "ConnectTimeout=10" \\
     {ssh_config_opt} \\
     {forwards_str} \\
@@ -519,14 +520,9 @@ ExecStart={autossh} -M 0 -N \\
 # Restart policy: always restart with backoff
 Restart=always
 RestartSec=5
-RestartMaxDelaySec=60
 
 # Watchdog: systemd kills the service if it hangs
 WatchdogSec=300
-
-# Resource limits
-StartLimitIntervalSec=600
-StartLimitBurst=10
 
 [Install]
 WantedBy=default.target
