@@ -185,7 +185,7 @@ def get_embed_server_port() -> int:
 
 # ─── Graph settings (Neo4j) ────────────────────────────────────────────────
 # Resolved via named graph profiles.  See imas_codex.graph.profiles for
-# the full resolution chain (IMAS_CODEX_GRAPH → profiles → convention).
+# the full resolution chain (profiles → convention).
 
 
 def get_graph_profile():  # type: ignore[return]

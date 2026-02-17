@@ -283,16 +283,6 @@ class TestGraphSettings:
         name = settings.get_graph_name()
         assert name == "codex"
 
-    def test_get_graph_name_env_override(self, monkeypatch):
-        """IMAS_CODEX_GRAPH env var switches the active graph name."""
-        settings._load_pyproject_settings.cache_clear()
-        monkeypatch.setenv("IMAS_CODEX_GRAPH", "tcv")
-        monkeypatch.delenv("NEO4J_URI", raising=False)
-        monkeypatch.delenv("NEO4J_USERNAME", raising=False)
-        monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
-        name = settings.get_graph_name()
-        assert name == "tcv"
-
     def test_get_graph_profile_returns_profile(self, monkeypatch):
         """get_graph_profile returns a Neo4jProfile object."""
         settings._load_pyproject_settings.cache_clear()

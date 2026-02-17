@@ -646,6 +646,41 @@ def graph_start(
     profile = resolve_neo4j()
     password = password or profile.password
 
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_is_neo4j_running,
+            remote_service_action,
+            resolve_remote_service_name,
+        )
+
+        if remote_is_neo4j_running(profile.http_port, profile.host):
+            click.echo(
+                f"Neo4j [{profile.name}] is already running "
+                f"on {profile.host}:{profile.http_port}"
+            )
+            return
+
+        service = resolve_remote_service_name(profile.name, profile.host)
+        click.echo(
+            f"Starting Neo4j [{profile.name}] on {profile.host} "
+            f"(bolt:{profile.bolt_port}, http:{profile.http_port})..."
+        )
+        remote_service_action("start", service, profile.host, timeout=60)
+
+        import time
+
+        for _ in range(30):
+            if remote_is_neo4j_running(profile.http_port, profile.host):
+                click.echo(f"✓ Neo4j [{profile.name}] ready on {profile.host}")
+                return
+            time.sleep(1)
+        click.echo("Warning: Neo4j may still be starting")
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
+
     if platform.system() in ("Windows", "Darwin"):
         click.echo("On Windows/Mac, use Docker: docker compose up -d neo4j", err=True)
         raise SystemExit(1)
@@ -751,6 +786,23 @@ def graph_stop(data_dir: str | None) -> None:
     from imas_codex.graph.profiles import resolve_neo4j
 
     profile = resolve_neo4j()
+
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_service_action,
+            resolve_remote_service_name,
+        )
+
+        service = resolve_remote_service_name(profile.name, profile.host)
+        click.echo(f"Stopping Neo4j [{profile.name}] on {profile.host}...")
+        remote_service_action("stop", service, profile.host, timeout=60)
+        click.echo(f"✓ Neo4j [{profile.name}] stopped on {profile.host}")
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
+
     data_path = Path(data_dir) if data_dir else profile.data_dir
     pid_file = data_path / "neo4j.pid"
 
@@ -779,7 +831,10 @@ def graph_status(registry: str | None) -> None:
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
 
+    from imas_codex import __version__
+
     click.echo("Local status:")
+    click.echo(f"  Version: {__version__}")
     click.echo(f"  Git commit: {git_info['commit_short']}")
     click.echo(f"  Git tag: {git_info['tag'] or '(none)'}")
     click.echo(f"  Is fork: {git_info['is_fork']}")
@@ -940,6 +995,18 @@ def graph_service_install(
     profile = resolve_neo4j()
     password = password or profile.password
 
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        raise click.ClickException(
+            f"Service install must be run directly on {profile.host}.\n"
+            f"SSH in and run:\n"
+            f"  ssh {profile.host}\n"
+            f"  cd ~/Code/imas-codex && uv run imas-codex graph service install"
+        )
+    # ── End remote dispatch ──────────────────────────────────────────────
+
     if platform.system() != "Linux":
         raise click.ClickException("systemd services only supported on Linux")
 
@@ -1019,6 +1086,20 @@ def graph_service_start() -> None:
 
     profile = resolve_neo4j(auto_tunnel=False)
     service_name = f"imas-codex-neo4j-{profile.name}"
+
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_service_action,
+            resolve_remote_service_name,
+        )
+
+        service_name = resolve_remote_service_name(profile.name, profile.host)
+        remote_service_action("start", service_name, profile.host)
+        click.echo(f"Started {service_name} on {profile.host}")
+        return
+
     result = subprocess.run(
         ["systemctl", "--user", "start", service_name], capture_output=True, text=True
     )
@@ -1034,6 +1115,20 @@ def graph_service_stop() -> None:
 
     profile = resolve_neo4j(auto_tunnel=False)
     service_name = f"imas-codex-neo4j-{profile.name}"
+
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_service_action,
+            resolve_remote_service_name,
+        )
+
+        service_name = resolve_remote_service_name(profile.name, profile.host)
+        remote_service_action("stop", service_name, profile.host)
+        click.echo(f"Stopped {service_name} on {profile.host}")
+        return
+
     result = subprocess.run(
         ["systemctl", "--user", "stop", service_name], capture_output=True, text=True
     )
@@ -1049,6 +1144,22 @@ def graph_service_status() -> None:
 
     profile = resolve_neo4j(auto_tunnel=False)
     service_name = f"imas-codex-neo4j-{profile.name}"
+
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import resolve_remote_service_name
+        from imas_codex.remote.executor import run_command
+
+        service_name = resolve_remote_service_name(profile.name, profile.host)
+        output = run_command(
+            f"systemctl --user status {service_name}",
+            ssh_host=profile.host,
+            timeout=15,
+        )
+        click.echo(output)
+        return
+
     subprocess.run(["systemctl", "--user", "status", service_name])
 
 
@@ -1064,6 +1175,9 @@ def graph_secure() -> None:
     Stops the server, generates a new secure password, updates .env,
     and restarts. The password is applied to both the .env file and
     the running Neo4j instance.
+
+    When the location is remote, the password is set via SSH and the
+    .env on the remote host is updated via 'config secrets push'.
     """
     import re
     import secrets
@@ -1079,6 +1193,62 @@ def graph_secure() -> None:
             ".env file not found in project root.\n"
             "Copy from env.example: cp env.example .env"
         )
+
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_is_neo4j_running,
+            remote_service_action,
+            remote_set_initial_password,
+            resolve_remote_service_name,
+        )
+
+        service = resolve_remote_service_name(profile.name, profile.host)
+
+        # Stop Neo4j
+        was_running = remote_is_neo4j_running(profile.http_port, profile.host)
+        if was_running:
+            click.echo(f"Stopping Neo4j [{profile.name}] on {profile.host}...")
+            remote_service_action("stop", service, profile.host, timeout=60)
+            import time
+
+            time.sleep(5)
+
+        # Update local .env
+        env_content = env_file.read_text()
+        if re.search(r"^NEO4J_PASSWORD=", env_content, re.MULTILINE):
+            env_content = re.sub(
+                r"^NEO4J_PASSWORD=.*$",
+                f"NEO4J_PASSWORD={password}",
+                env_content,
+                flags=re.MULTILINE,
+            )
+        else:
+            env_content = env_content.rstrip() + f"\nNEO4J_PASSWORD={password}\n"
+        env_file.write_text(env_content)
+        env_file.chmod(0o600)
+        click.echo("✓ Updated local .env with new password")
+
+        # Set password on remote Neo4j
+        try:
+            remote_set_initial_password(profile.host, password)
+            click.echo("✓ Updated Neo4j password on remote host")
+        except Exception as e:
+            click.echo(f"Warning: Remote password set issue: {e}", err=True)
+
+        # Restart
+        if was_running:
+            click.echo("Restarting Neo4j...")
+            remote_service_action("start", service, profile.host, timeout=60)
+
+        click.echo(f"\n✓ Password rotated for [{profile.name}] on {profile.host}")
+        click.echo(
+            f"  Sync .env to remote: imas-codex config secrets push {profile.host}"
+        )
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
 
     # Stop Neo4j if running
     was_running = is_neo4j_running(profile.http_port)
@@ -1372,10 +1542,12 @@ def graph_export(
     facilities: tuple[str, ...],
     no_imas: bool,
 ) -> None:
-    """Export graph database to archive."""
-    from imas_codex.graph.profiles import resolve_neo4j
+    """Export graph database to archive.
 
-    require_apptainer()
+    When the configured location is remote, the dump is performed on
+    the remote host and the archive is transferred back via SCP.
+    """
+    from imas_codex.graph.profiles import resolve_neo4j
 
     profile = resolve_neo4j()
 
@@ -1386,7 +1558,41 @@ def graph_export(
     if output:
         output_path = Path(output)
     else:
-        output_path = Path(f"{pkg_name}-{version_label}.tar.gz")
+        from imas_codex.graph.dirs import ensure_exports_dir
+
+        exports = ensure_exports_dir()
+        output_path = exports / f"{pkg_name}-{version_label}.tar.gz"
+
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_cleanup_archive,
+            remote_export_graph,
+            scp_from_remote,
+        )
+
+        if facilities:
+            click.echo(
+                "Warning: --facility filtering is not supported for remote export. "
+                "The full graph will be exported.",
+                err=True,
+            )
+
+        click.echo(f"Exporting graph [{profile.name}] from {profile.host}...")
+
+        remote_archive = remote_export_graph(profile.name, profile.host)
+        click.echo(f"  Transferring archive from {profile.host}...")
+        scp_from_remote(remote_archive, output_path, profile.host)
+        remote_cleanup_archive(remote_archive, profile.host)
+
+        size_mb = output_path.stat().st_size / 1024 / 1024
+        click.echo(f"✓ Archive created: {output_path} ({size_mb:.1f} MB)")
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
+
+    require_apptainer()
 
     with Neo4jOperation("graph dump", require_stopped=True) as op:
         if no_restart:
@@ -1468,15 +1674,58 @@ def graph_load(
     no_restart: bool,
     password: str | None,
 ) -> None:
-    """Load graph database from archive."""
+    """Load graph database from archive.
+
+    When the configured location is remote, the archive is transferred
+    via SCP and loaded on the remote host.
+    """
     from imas_codex.graph.profiles import resolve_neo4j
     from imas_codex.settings import get_graph_password
 
     profile = resolve_neo4j()
     password = password or get_graph_password()
-    require_apptainer()
 
     archive_path = Path(archive)
+
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_cleanup_archive,
+            remote_load_archive,
+            scp_to_remote,
+        )
+
+        remote_archive = f"/tmp/imas-codex-load-{archive_path.name}"
+        click.echo(
+            f"Loading archive into [{profile.name}] on {profile.host}: {archive_path}"
+        )
+
+        click.echo(f"  Transferring archive to {profile.host}...")
+        scp_to_remote(archive_path, remote_archive, profile.host)
+
+        click.echo("  Loading on remote host...")
+        output = remote_load_archive(
+            remote_archive,
+            profile.name,
+            profile.host,
+            password=password,
+        )
+        if "LOAD_COMPLETE" in output:
+            click.echo("✓ Load complete (remote)")
+        else:
+            click.echo(f"Warning: Unexpected output: {output}", err=True)
+
+        remote_cleanup_archive(remote_archive, profile.host)
+
+        # Update local manifest
+        manifest = {"pushed": False, "loaded_from": str(archive_path)}
+        save_local_graph_manifest(manifest)
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
+
+    require_apptainer()
     click.echo(f"Loading archive into [{profile.name}]: {archive_path}")
 
     with Neo4jOperation(
@@ -1868,7 +2117,10 @@ def graph_fetch(
         if output:
             dest = Path(output)
         else:
-            dest = Path(f"{pkg_name}-{resolved_version}.tar.gz")
+            from imas_codex.graph.dirs import ensure_exports_dir
+
+            exports = ensure_exports_dir()
+            dest = exports / f"{pkg_name}-{resolved_version}.tar.gz"
 
         shutil.move(str(src_archive), str(dest))
 
@@ -1910,14 +2162,17 @@ def graph_pull(
     This is equivalent to running 'graph fetch' followed by 'graph load'.
     Use 'graph fetch' if you only want to download without loading.
 
+    When the configured location is remote:
+    - If ``oras`` is available on the remote host, the archive is fetched
+      directly there (no SCP transfer needed).
+    - Otherwise, the archive is fetched locally and transferred via SCP.
+
     When no --version is specified, pulls 'latest'. If 'latest' doesn't
     exist, falls back to the most recent tag in the registry.
 
     Use --facility/-f (repeatable) to pull a per-facility graph.
     """
     from imas_codex.graph.profiles import resolve_neo4j
-
-    require_oras()
 
     profile = resolve_neo4j()
     git_info = get_git_info()
@@ -1930,6 +2185,84 @@ def graph_pull(
         resolved_version = _resolve_latest_tag(target_registry, token, pkg_name)
 
     artifact_ref = f"{target_registry}/{pkg_name}:{resolved_version}"
+
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            REMOTE_EXPORTS,
+            remote_check_oras,
+            remote_cleanup_archive,
+            remote_fetch_from_ghcr,
+            remote_load_archive,
+            scp_to_remote,
+        )
+        from imas_codex.settings import get_graph_password
+
+        click.echo(f"Pulling: {artifact_ref}")
+        password = get_graph_password()
+
+        # Strategy: if oras is on the remote, fetch directly there
+        # (avoids multi-GB SCP transfer via WSL).  Fall back to
+        # local fetch + SCP if oras is unavailable on remote.
+        if remote_check_oras(profile.host):
+            click.echo(f"  Fetching directly on {profile.host} (oras available)...")
+            remote_archive = remote_fetch_from_ghcr(
+                artifact_ref, profile.host, token=token
+            )
+        else:
+            click.echo(f"  oras not on {profile.host}, fetching locally + SCP...")
+            require_oras()
+            login_to_ghcr(token)
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp = Path(tmpdir)
+                result = subprocess.run(
+                    ["oras", "pull", artifact_ref, "-o", str(tmp)],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    raise click.ClickException(f"Pull failed: {result.stderr}")
+
+                archives = list(tmp.glob("*.tar.gz"))
+                if not archives:
+                    raise click.ClickException("No archive found")
+
+                local_archive = archives[0]
+                remote_archive = f"{REMOTE_EXPORTS}/{local_archive.name}"
+
+                click.echo(f"  Transferring to {profile.host}...")
+                scp_to_remote(local_archive, remote_archive, profile.host)
+
+        # Load on remote
+        click.echo(f"  Loading on {profile.host}...")
+        load_output = remote_load_archive(
+            remote_archive,
+            profile.name,
+            profile.host,
+            password=password,
+        )
+        remote_cleanup_archive(remote_archive, profile.host)
+
+        if "LOAD_COMPLETE" not in load_output:
+            click.echo(f"Warning: Unexpected output: {load_output}", err=True)
+
+        # Update local manifest
+        manifest = {
+            "pulled_from": artifact_ref,
+            "pulled_version": resolved_version,
+            "pushed": True,
+            "pushed_version": resolved_version,
+        }
+        save_local_graph_manifest(manifest)
+
+        click.echo("✓ Graph pull complete (remote)")
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
+
+    require_oras()
 
     if check_graph_exists(data_dir=profile.data_dir) and not force:
         manifest = get_local_graph_manifest()
@@ -1977,7 +2310,7 @@ def graph_pull(
         from click.testing import CliRunner
 
         runner = CliRunner()
-        load_args = [str(archives[0]), "--force", "--graph", profile.name]
+        load_args = [str(archives[0]), "--force"]
         result = runner.invoke(graph_load, load_args)
         if result.exit_code != 0:
             raise click.ClickException(f"Load failed: {result.output}")
@@ -2005,15 +2338,49 @@ def graph_pull(
 
 @graph.command("list")
 def graph_list() -> None:
-    """List local graph instances.
+    """List graph instances.
 
     Scans the .neo4j/ store directory for graph instances and shows
-    their name and whether they are active.
+    their name and whether they are active.  Works on both local and
+    remote (SSH) graph locations.
 
     \b
     Examples:
       imas-codex graph list
     """
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    profile = resolve_neo4j(auto_tunnel=False)
+
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import remote_list_graphs
+
+        output = remote_list_graphs(profile.host)
+
+        if "NO_STORE" in output:
+            click.echo(f"No graph store on {profile.host}.")
+            click.echo("Create one: imas-codex graph init <name> -f <facility>")
+            return
+
+        click.echo(f"Graphs on {profile.host}:\n")
+        count = 0
+        for line in output.strip().splitlines():
+            line = line.strip()
+            if line.startswith("[stderr]"):
+                continue
+            if line.startswith("ACTIVE:"):
+                click.echo(f"→ {line.removeprefix('ACTIVE:')}")
+                count += 1
+            elif line.startswith("GRAPH:"):
+                click.echo(f"  {line.removeprefix('GRAPH:')}")
+                count += 1
+        click.echo(f"\n{count} graph(s)")
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
+
     from imas_codex.graph.dirs import list_local_graphs
 
     graphs = list_local_graphs()
@@ -2045,17 +2412,70 @@ def graph_switch(name: str) -> None:
     Stops Neo4j if running, repoints the neo4j/ symlink to the
     target graph directory, and restarts Neo4j.
 
+    Works on both local and remote graph locations.
+
     \b
     Examples:
       imas-codex graph switch codex
       imas-codex graph switch dev
     """
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    profile = resolve_neo4j(auto_tunnel=False)
+
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_is_neo4j_running,
+            remote_service_action,
+            remote_switch_active_graph,
+            resolve_remote_service_name,
+        )
+
+        service = resolve_remote_service_name(profile.name, profile.host)
+
+        if remote_is_neo4j_running(profile.http_port, profile.host):
+            click.echo(f"Stopping Neo4j [{profile.name}] on {profile.host}...")
+            remote_service_action("stop", service, profile.host, timeout=60)
+
+            import time
+
+            for _ in range(15):
+                if not remote_is_neo4j_running(profile.http_port, profile.host):
+                    break
+                time.sleep(1)
+
+        try:
+            remote_switch_active_graph(name, profile.host)
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
+
+        click.echo(f"✓ Switched to '{name}' on {profile.host}")
+
+        # Restart Neo4j
+        click.echo("Restarting Neo4j...")
+        service = resolve_remote_service_name(name, profile.host)
+        remote_service_action("start", service, profile.host, timeout=60)
+
+        import time
+
+        for _ in range(30):
+            if remote_is_neo4j_running(profile.http_port, profile.host):
+                click.echo(f"✓ Neo4j [{name}] ready on {profile.host}")
+                break
+            time.sleep(1)
+        else:
+            click.echo("Warning: Neo4j may still be starting")
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
+
     from imas_codex.graph.dirs import (
         find_graph,
         get_active_graph,
         switch_active_graph,
     )
-    from imas_codex.graph.profiles import resolve_neo4j
 
     try:
         target = find_graph(name)
@@ -2195,19 +2615,117 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
     Creates a name-based directory in .neo4j/<NAME>/, points the neo4j/
     symlink to it, starts Neo4j, and initializes the (:GraphMeta) node.
 
+    Works on both local and remote graph locations.  When the configured
+    location is remote, directories are created via SSH and the service
+    is started via systemctl.
+
     \b
     Examples:
       imas-codex graph init codex -f iter -f tcv -f jt60sa
       imas-codex graph init dev -f tcv
     """
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    facility_list = sorted(set(facilities))
+
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    profile = resolve_neo4j(auto_tunnel=False)
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_create_graph_dir,
+            remote_is_legacy_data_dir,
+            remote_is_neo4j_running,
+            remote_service_action,
+            remote_set_initial_password,
+            remote_switch_active_graph,
+            resolve_remote_service_name,
+        )
+
+        if remote_is_legacy_data_dir(profile.host):
+            raise click.ClickException(
+                f"neo4j/ on {profile.host} is a real directory (pre-migration).\n"
+                f"Migrate manually via SSH:\n"
+                f"  ssh {profile.host} 'cd ~/.local/share/imas-codex && "
+                f"mkdir -p .neo4j && mv neo4j .neo4j/{name} && "
+                f"ln -s .neo4j/{name} neo4j'"
+            )
+
+        click.echo(f"Initializing graph on {profile.host}...")
+        try:
+            remote_create_graph_dir(
+                name,
+                profile.host,
+                force=force,
+                bolt_port=profile.bolt_port,
+                http_port=profile.http_port,
+            )
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
+
+        # Stop Neo4j before switching (must restart on new data)
+        service = resolve_remote_service_name(name, profile.host)
+        if remote_is_neo4j_running(profile.http_port, profile.host):
+            click.echo("  Stopping Neo4j for graph switch...")
+            remote_service_action("stop", service, profile.host, timeout=60)
+            import time
+
+            time.sleep(3)
+
+        try:
+            remote_switch_active_graph(name, profile.host)
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
+
+        click.echo(f"  Name: {name}")
+        click.echo(f"  Facilities: {', '.join(facility_list)}")
+        click.echo(f"  Host: {profile.host}")
+
+        # Set initial password before first start (reads from .env)
+        try:
+            remote_set_initial_password(profile.host)
+        except Exception:
+            pass  # OK if database already initialized
+
+        # Start Neo4j on the new graph
+        click.echo("\nStarting Neo4j...")
+        remote_service_action("start", service, profile.host, timeout=60)
+
+        import time
+
+        for _ in range(30):
+            if remote_is_neo4j_running(profile.http_port, profile.host):
+                break
+            time.sleep(1)
+
+        # Re-resolve with auto-tunnel to get the bolt URI
+        profile = resolve_neo4j(auto_tunnel=True)
+
+        # Init GraphMeta via Bolt (through tunnel)
+        try:
+            from imas_codex.graph.client import GraphClient
+            from imas_codex.graph.meta import init_graph_meta
+
+            gc = GraphClient.from_profile()
+            init_graph_meta(gc, name, facility_list)
+            gc.close()
+            click.echo("\n✓ GraphMeta node initialized")
+        except Exception as e:
+            click.echo(
+                f"\nWarning: Cannot reach Neo4j via tunnel: {e}\n"
+                "Ensure tunnel is active and run 'graph init' again.",
+                err=True,
+            )
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
+
     from imas_codex.graph.dirs import (
         create_graph_dir,
         is_legacy_data_dir,
         switch_active_graph,
     )
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    facility_list = sorted(set(facilities))
 
     if is_legacy_data_dir():
         raise click.ClickException(
@@ -2220,8 +2738,14 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
         )
 
     # Create new graph directory
+    profile = resolve_neo4j(auto_tunnel=False)
     try:
-        info = create_graph_dir(name, force=force)
+        info = create_graph_dir(
+            name,
+            force=force,
+            bolt_port=profile.bolt_port,
+            http_port=profile.http_port,
+        )
     except FileExistsError as e:
         raise click.ClickException(str(e)) from e
 
@@ -2236,8 +2760,6 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
     click.echo(f"  Path: {info.path}")
 
     # Start Neo4j and create GraphMeta node
-    profile = resolve_neo4j(auto_tunnel=False)
-
     if not is_neo4j_running(profile.http_port):
         click.echo("\nStarting Neo4j...")
         _start_neo4j_after_switch(profile)

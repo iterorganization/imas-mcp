@@ -9,7 +9,6 @@ Greenfield project under active development. No backwards compatibility.
 - Breaking changes are expected - remove deprecated code decisively
 - Avoid "enhanced", "new", "refactored" in names - just use the good name
 - When patterns change, update all usages - don't leave old patterns alongside new
-- **No backward-compatible aliases** — when renaming a function, class, or module, update every caller and delete the old name. Never leave `OldName = NewName` aliases.
 - Prefer explicit over clever - future agents will read this code
 - Exploration notes go in facility YAML, not markdown files
 - `docs/` is for mature infrastructure only
@@ -23,7 +22,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 | Section | Purpose | Accessor |
 |---------|---------|----------|
-| `[graph]` | Neo4j connection, location/ports | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_neo4j()` |
+| `[graph]` | Neo4j connection, graph name/location | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_graph()` |
 | `[embedding]` | Embedding model, dimension, backend | `get_model("embedding")` |
 | `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
 | `[vision]` | Image/document tasks | `get_model("vision")` |
@@ -33,7 +32,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 **Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"agent"`, `"compaction"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.
 
-**Graph access:** Two orthogonal concerns: **location** (pyproject.toml) controls where Neo4j runs, **name** (CLI/env) selects which data directory to use. Graph identity (name + facilities) lives in a `(:GraphMeta)` node inside the graph itself, set via `graph init`. `IMAS_CODEX_GRAPH` env var selects the graph name (default: `"codex"`). `IMAS_CODEX_GRAPH_LOCATION` overrides where Neo4j runs (default: `"iter"`). Each location maps to a unique bolt+HTTP port pair by convention:
+**Graph access:** Graph profiles separate **name** (what data) from **location** (where Neo4j runs). The default graph `"codex"` contains all facilities + IMAS DD and runs at location `"iter"`. `IMAS_CODEX_GRAPH` env var selects the graph name. `IMAS_CODEX_GRAPH_LOCATION` overrides where it runs. Each location maps to a unique bolt+HTTP port pair by convention:
 
 | Location | Bolt | HTTP |
 |----------|------|------|
@@ -41,9 +40,9 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | tcv | 7688 | 7475 |
 | jt60sa | 7689 | 7476 |
 
-Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply as escape hatches over any profile. Use `resolve_neo4j(name)` from `imas_codex.graph.profiles` for direct profile resolution. All CLI `graph` commands accept `--graph/-g` to target a specific graph.
+Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply as escape hatches over any profile. Use `resolve_graph(name)` from `imas_codex.graph.profiles` for direct profile resolution. All CLI `graph` commands accept `--graph/-g` to target a specific graph.
 
-**Location-aware connections:** The `host` field on `Neo4jProfile` records where Neo4j physically runs (SSH alias or hostname). `is_local_host(host)` determines direct vs tunnel access at connection time. For remote hosts, set `IMAS_CODEX_TUNNEL_BOLT_{HOST}` env var to override the tunnel port. Locality detection uses hostname matching, SSH config resolution, and IP bind probes. For edge cases (VIP/load-balancer sites), configure `login_nodes` and `local_hosts` in the facility's private YAML (syncs with `config private push/pull`). Session-level override: `IMAS_CODEX_LOCAL_HOSTS=iter` env var (do NOT put in `.env` — it travels with `config secrets push`).
+**Location-aware connections:** The `host` field on `GraphProfile` records where Neo4j physically runs (SSH alias or hostname). `is_local_host(host)` determines direct vs tunnel access at connection time. For remote hosts, set `IMAS_CODEX_TUNNEL_BOLT_{HOST}` env var to override the tunnel port. Locality detection uses hostname matching, SSH config resolution, and IP bind probes. For edge cases (VIP/load-balancer sites), configure `login_nodes` and `local_hosts` in the facility's private YAML (syncs with `config private push/pull`). Session-level override: `IMAS_CODEX_LOCAL_HOSTS=iter` env var (do NOT put in `.env` — it travels with `config secrets push`).
 
 **Facility locality config:** Add to `<facility>_private.yaml`:
 ```yaml
@@ -57,11 +56,17 @@ When the current machine's FQDN matches a `login_nodes` pattern, that facility's
 **Graph config in pyproject.toml:**
 ```toml
 [tool.imas-codex.graph]
+name = "codex"          # Graph identity (override: IMAS_CODEX_GRAPH=tcv)
 location = "iter"       # Where it runs (override: IMAS_CODEX_GRAPH_LOCATION=local)
 username = "neo4j"
 password = "imas-codex"
-# Graph name (data identity) lives in (:GraphMeta) node, set via: graph init
-# Override active graph name: IMAS_CODEX_GRAPH=dev
+
+# Optional explicit profile overrides
+[tool.imas-codex.graph.profiles.staging]
+location = "staging-server"  # Where Neo4j runs (SSH alias or hostname)
+bolt-port = 7700
+http-port = 7701
+data-dir = "/custom/path/neo4j-staging"
 ```
 
 ## Schema System
@@ -235,11 +240,11 @@ The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, an
 ### Neo4j Management
 
 ```bash
-uv run imas-codex graph status               # Check active graph status
-uv run imas-codex graph start                # Start active graph
-uv run imas-codex graph stop                 # Stop active graph
-uv run imas-codex graph profiles             # List all profiles and ports
-uv run imas-codex graph shell                # Interactive Cypher (active profile)
+uv run imas-codex serve neo4j status         # Check active graph status
+uv run imas-codex serve neo4j status -g tcv  # Check specific profile
+uv run imas-codex serve neo4j start -g tcv   # Start specific profile
+uv run imas-codex serve neo4j profiles       # List all profiles and ports
+uv run imas-codex serve neo4j shell          # Interactive Cypher (active profile)
 uv run imas-codex graph export               # Export graph to archive
 uv run imas-codex graph export -f tcv        # Per-facility export (filtered)
 uv run imas-codex graph load graph.tar.gz    # Load graph archive
@@ -247,16 +252,11 @@ uv run imas-codex graph pull                 # Pull latest from GHCR
 uv run imas-codex graph pull --facility tcv  # Pull per-facility graph
 uv run imas-codex graph push --dev           # Push to GHCR
 uv run imas-codex graph push --facility tcv  # Push per-facility graph
-uv run imas-codex graph init --name codex --facility iter  # Initialize GraphMeta
-uv run imas-codex graph facility list        # List facilities in GraphMeta
-uv run imas-codex graph facility add tcv     # Add facility to GraphMeta
-uv run imas-codex graph facility remove tcv  # Remove facility from GraphMeta
 uv run imas-codex graph backup               # Create neo4j-admin dump backup
 uv run imas-codex graph restore              # Restore from backup
-uv run imas-codex graph clear                # Clear graph (--force required)
-uv run imas-codex graph secure               # Rotate Neo4j password
-uv run imas-codex graph tags                 # List GHCR tags
-uv run imas-codex graph prune                # Prune old GHCR tags
+uv run imas-codex graph clear                # Clear graph (with auto-backup)
+uv run imas-codex graph clean --dev          # Remove all dev GHCR tags
+uv run imas-codex graph clean --backups --older-than 30d  # Clean old backups
 uv run imas-codex tunnel start iter          # Start SSH tunnel to remote host
 uv run imas-codex tunnel status              # Show active tunnels
 uv run imas-codex config private push        # Push private YAML to Gist
@@ -562,8 +562,8 @@ Extended examples and edge cases for each domain: [agents/](agents/)
 ## Fallback: MCP Server Not Running
 
 ```bash
-uv run imas-codex graph status          # Graph operations
-uv run imas-codex graph shell           # Interactive Cypher
+uv run imas-codex serve neo4j status    # Graph operations
+uv run imas-codex serve neo4j shell     # Interactive Cypher
 uv run imas-codex ingest run tcv        # Ingestion
 uv run pytest                           # Testing
 ```

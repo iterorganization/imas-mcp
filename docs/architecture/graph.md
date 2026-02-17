@@ -34,12 +34,12 @@ The `host` field on each profile records where Neo4j physically runs:
 
 **From ITER** (host matches local machine):
 ```
-resolve_neo4j("iter") → bolt://localhost:7687  (direct)
+resolve_graph("iter") → bolt://localhost:7687  (direct)
 ```
 
 **From WSL** (host is remote):
 ```
-resolve_neo4j("iter") → bolt://localhost:7687  (via SSH tunnel)
+resolve_graph("iter") → bolt://localhost:7687  (via SSH tunnel)
 ```
 
 **Dual-instance** (local + tunneled, conflicting ports):
@@ -97,13 +97,14 @@ os.environ["IMAS_CODEX_GRAPH"] = "tcv"
 ### Server Operations
 
 ```bash
-# Start/stop/status
-imas-codex graph start                 # Start active graph
-imas-codex graph stop                  # Stop active graph
-imas-codex graph status                # Show status and identity
-imas-codex graph profiles              # List all profiles
-imas-codex graph shell                 # Interactive Cypher shell
-imas-codex graph service install       # Install systemd service
+# Start/stop/status (under 'serve neo4j')
+imas-codex serve neo4j start           # Start active profile
+imas-codex serve neo4j start -g tcv    # Start specific profile
+imas-codex serve neo4j stop -g tcv
+imas-codex serve neo4j status -g tcv
+imas-codex serve neo4j profiles        # List all profiles
+imas-codex serve neo4j shell           # Interactive Cypher shell
+imas-codex serve neo4j service install # Install systemd service
 ```
 
 ### Graph Lifecycle
@@ -130,9 +131,8 @@ imas-codex graph restore backup.dump   # Restore specific backup
 imas-codex graph clear                 # Clear graph (auto-backup first)
 
 # Cleanup
-imas-codex graph tags                  # List GHCR tags
-imas-codex graph prune                 # Prune old tags
-imas-codex graph prune --dev-only      # Remove only dev tags
+imas-codex graph clean tag1 tag2       # Delete GHCR tags
+imas-codex graph clean --dev           # Remove all dev tags
 imas-codex graph clean --backups --older-than 30d  # Clean old backups
 ```
 
@@ -165,7 +165,7 @@ imas-codex graph push --facility tcv --dev
 # End user pulls only their facility
 export IMAS_CODEX_GRAPH=tcv
 imas-codex graph pull --facility tcv
-imas-codex graph start
+imas-codex serve neo4j start
 ```
 
 ## GHCR Package Naming

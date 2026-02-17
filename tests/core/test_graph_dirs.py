@@ -19,9 +19,10 @@ from imas_codex.graph.dirs import (
 
 @pytest.fixture(autouse=True)
 def _isolated_store(tmp_path, monkeypatch):
-    """Point GRAPH_STORE and ACTIVE_LINK to tmp_path."""
+    """Point GRAPH_STORE, ACTIVE_LINK and EXPORTS_DIR to tmp_path."""
     monkeypatch.setattr("imas_codex.graph.dirs.GRAPH_STORE", tmp_path / ".neo4j")
     monkeypatch.setattr("imas_codex.graph.dirs.ACTIVE_LINK", tmp_path / "neo4j")
+    monkeypatch.setattr("imas_codex.graph.dirs.EXPORTS_DIR", tmp_path / "exports")
 
 
 # ── Create ──────────────────────────────────────────────────────────────────
@@ -35,6 +36,22 @@ class TestCreateGraphDir:
         assert (info.path / "logs").is_dir()
         assert (info.path / "conf").is_dir()
         assert (info.path / "import").is_dir()
+
+    def test_generates_neo4j_conf(self):
+        info = create_graph_dir("codex")
+        conf = info.path / "conf" / "neo4j.conf"
+        assert conf.exists()
+        content = conf.read_text()
+        assert "server.bolt.listen_address=:7687" in content
+        assert "server.http.listen_address=:7474" in content
+        assert "server.default_listen_address=127.0.0.1" in content
+
+    def test_custom_ports_in_neo4j_conf(self):
+        info = create_graph_dir("tcv", bolt_port=7688, http_port=7475)
+        conf = info.path / "conf" / "neo4j.conf"
+        content = conf.read_text()
+        assert "server.bolt.listen_address=:7688" in content
+        assert "server.http.listen_address=:7475" in content
 
     def test_name_is_directory_name(self):
         info = create_graph_dir("codex")
@@ -57,6 +74,26 @@ class TestCreateGraphDir:
         assert isinstance(info, GraphDirInfo)
         assert info.name == "dev"
         assert not info.active
+
+
+# ── Exports ─────────────────────────────────────────────────────────────────
+
+
+class TestEnsureExportsDir:
+    def test_creates_exports_dir(self, tmp_path):
+        from imas_codex.graph.dirs import ensure_exports_dir
+
+        exports = ensure_exports_dir()
+        assert exports == tmp_path / "exports"
+        assert exports.is_dir()
+        assert oct(exports.stat().st_mode & 0o777) == "0o700"
+
+    def test_idempotent(self, tmp_path):
+        from imas_codex.graph.dirs import ensure_exports_dir
+
+        ensure_exports_dir()
+        ensure_exports_dir()
+        assert (tmp_path / "exports").is_dir()
 
 
 # ── List ────────────────────────────────────────────────────────────────────
