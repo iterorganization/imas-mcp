@@ -848,6 +848,12 @@ def graph_status(registry: str | None) -> None:
         click.echo(f"  Pushed: {manifest.get('pushed', False)}")
         if manifest.get("pushed_version"):
             click.echo(f"  Pushed as: {manifest['pushed_version']}")
+        if manifest.get("pulled_from"):
+            click.echo(f"  Pulled from: {manifest['pulled_from']}")
+        if manifest.get("loaded_from"):
+            click.echo(f"  Loaded from: {manifest['loaded_from']}")
+        if manifest.get("git_commit"):
+            click.echo(f"  Git commit: {manifest['git_commit'][:7]}")
         if manifest.get("dev_base_version"):
             click.echo(
                 f"  Dev revision: {manifest['dev_base_version']}"
@@ -1752,8 +1758,21 @@ def graph_load(
 
         remote_cleanup_archive(remote_archive, profile.host)
 
-        # Update local manifest
+        # Update local manifest (extract version info from archive)
         manifest = {"pushed": False, "loaded_from": str(archive_path)}
+        try:
+            with tarfile.open(archive_path, "r:gz") as tar:
+                for member in tar.getmembers():
+                    if member.name.endswith("manifest.json"):
+                        f = tar.extractfile(member)
+                        if f:
+                            archive_manifest = json.loads(f.read())
+                            manifest.update(archive_manifest)
+                            manifest["pushed"] = False
+                            manifest["loaded_from"] = str(archive_path)
+                        break
+        except Exception:
+            pass
         save_local_graph_manifest(manifest)
         return
     # ── End remote dispatch ──────────────────────────────────────────────
@@ -2335,6 +2354,7 @@ def graph_pull(
 
         # Update local manifest
         manifest = {
+            "version": resolved_version,
             "pulled_from": artifact_ref,
             "pulled_version": resolved_version,
             "pushed": True,
