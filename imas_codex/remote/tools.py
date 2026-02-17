@@ -464,7 +464,7 @@ def check_tool(
 
 
 def check_all_tools(facility: str | None = None) -> dict[str, Any]:
-    """Check availability of all fast tools.
+    """Check availability of all remote tools.
 
     Args:
         facility: Facility ID (None = local)
@@ -969,7 +969,7 @@ def install_all_tools(
     force: bool = False,
     on_progress: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Install all fast tools.
+    """Install all remote tools.
 
     Args:
         facility: Facility ID (None = local)

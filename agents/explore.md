@@ -37,9 +37,9 @@ pwd
 3. **Chained processing with logic?** → Use `python()` with `run()` (auto-detects local/remote)
 4. **Graph queries or MCP functions?** → Use `python()` with `query()`, `ingest_nodes()`, etc.
 
-## Setup: Ensure Fast Tools Are Available
+## Setup: Ensure Remote Tools Are Available
 
-Before exploring a new facility, ensure fast CLI tools are installed:
+Before exploring a new facility, ensure remote CLI tools are installed:
 
 ```python
 # Check tool availability

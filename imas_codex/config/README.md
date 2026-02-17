@@ -382,7 +382,7 @@ Check `get_facility(facility)` for available tools:
 - `tools.fd` - fd version (if installed)
 - `paths.user_tools.bin` - where user tools are installed
 
-Use fast tools when available:
+Use remote tools when available:
 ```bash
 # If rg available at ~/bin/rg
 ssh tcv "~/bin/rg -l 'pattern' /path --max-depth 4 -g '*.py'"

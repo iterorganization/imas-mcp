@@ -28,7 +28,7 @@ EOF
 # 2. Verify SSH access
 ssh myfacility "hostname && whoami && pwd"
 
-# 3. Check and install fast tools
+# 3. Check and install remote tools
 uv run imas-codex tools check myfacility
 uv run imas-codex tools install myfacility
 
@@ -111,11 +111,11 @@ chmod 700 ~/.ssh/sockets
 # Test SSH
 ssh myfacility "hostname && pwd"
 
-# Check fast tools status
+# Check remote tools status
 uv run imas-codex tools check myfacility
 ```
 
-## Phase 2: Fast Tools Installation
+## Phase 2: Remote Tools Installation
 
 ### Step 2.1: Install Required Tools
 
@@ -378,7 +378,7 @@ uv run python -c "from imas_codex.discovery.facility import get_facility; print(
 uv run python -c "from imas_codex.remote.tools import run; print(run('ls -la', facility='jet'))"
 ```
 
-### Fast Tools Not Working
+### Remote Tools Not Working
 
 ```bash
 # Check installation
@@ -395,7 +395,7 @@ ssh jet "~/bin/rg --version"
 
 - [ ] Public config created (`<facility>.yaml`)
 - [ ] SSH access verified
-- [ ] Fast tools installed (optional but recommended)
+- [ ] Remote tools installed (optional but recommended)
 - [ ] Infrastructure discovered and persisted
 - [ ] Initial paths seeded
 - [ ] Discovery run with cost limit

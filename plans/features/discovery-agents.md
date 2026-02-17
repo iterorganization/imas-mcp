@@ -229,7 +229,7 @@ exclude_paths:
 # imas_codex/discovery/map_agent.py
 
 class MapAgent:
-    """No-LLM file discovery agent using fast tools."""
+    """No-LLM file discovery agent using remote tools."""
     
     def __init__(self, facility: str, config: DiscoveryConfig):
         self.facility = facility

@@ -45,4 +45,4 @@ You are a **read-only exploration agent** for remote fusion facility discovery. 
 
 ## Full Instructions
 
-See [agents/explore.md](../../agents/explore.md) for complete exploration workflows, SSH patterns, fast tool usage, and persistence checklists.
+See [agents/explore.md](../../agents/explore.md) for complete exploration workflows, SSH patterns, remote tool usage, and persistence checklists.

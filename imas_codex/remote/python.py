@@ -261,6 +261,37 @@ def install_uv(facility: str | None = None, force: bool = False) -> dict:
     return install_tool("uv", facility=facility, force=force)
 
 
+def ensure_python3_symlink(
+    facility: str | None = None,
+    version: str = RECOMMENDED_PYTHON,
+) -> None:
+    """Ensure ``python3`` in ~/.local/bin points to the uv-managed Python.
+
+    uv installs Python to its own managed directory and creates a versioned
+    symlink (e.g. ``~/.local/bin/python3.12``) but NOT an unversioned
+    ``python3`` symlink.  Since ``run_python_script`` and other callers
+    default to ``python3``, we need this symlink to exist.
+
+    Idempotent — only creates/updates if the target is missing or stale.
+    """
+    major_minor = version if "." in version else f"3.{version}"
+    check = f'test -e ~/.local/bin/python{major_minor} && echo yes || echo no'
+    try:
+        result = run(check, facility=facility, timeout=5)
+        if result.strip() != "yes":
+            return  # No versioned python in .local/bin, nothing to link
+    except Exception:
+        return
+
+    # Create python3 → python{major_minor} symlink
+    cmd = f'ln -sf ~/.local/bin/python{major_minor} ~/.local/bin/python3'
+    try:
+        run(cmd, facility=facility, timeout=5)
+        logger.info("Created ~/.local/bin/python3 -> python%s symlink", major_minor)
+    except Exception as e:
+        logger.debug("Could not create python3 symlink: %s", e)
+
+
 def install_python(
     facility: str | None = None,
     version: str = RECOMMENDED_PYTHON,
@@ -270,6 +301,10 @@ def install_python(
     uv downloads Python from python-build-standalone (GitHub releases),
     not PyPI, so this works even on PyPI-airgapped facilities as long
     as GitHub is accessible.
+
+    After installation, creates a ``~/.local/bin/python3`` symlink to the
+    versioned binary so that ``python3`` resolves to the uv-managed
+    interpreter (instead of the system Python).
 
     Args:
         facility: Facility ID (None = local)
@@ -297,6 +332,8 @@ def install_python(
             # Extract exact version
             match = re.search(rf"cpython-({version}\.\d+)", existing)
             exact_version = match.group(1) if match else version
+            # Ensure python3 symlink exists even if Python was already installed
+            ensure_python3_symlink(facility=facility, version=version)
             return {
                 "success": True,
                 "action": "already_installed",
@@ -321,6 +358,8 @@ def install_python(
         if f"cpython-{version}" in verify:
             match = re.search(rf"cpython-({version}\.\d+)", verify)
             exact_version = match.group(1) if match else version
+            # Create python3 symlink for newly installed Python
+            ensure_python3_symlink(facility=facility, version=version)
             return {
                 "success": True,
                 "action": "installed",

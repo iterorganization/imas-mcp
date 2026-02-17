@@ -154,10 +154,10 @@ def _create_tool_installer_tools(facility: str | None = None) -> list[Tool]:
             return install_tool(tool_key, facility=facility, force=force)
 
     class InstallAllTool(Tool):
-        """Install all fast tools."""
+        """Install all remote tools."""
 
         name = "install_all"
-        description = "Install all fast tools. Returns dict with installed, already_present, failed lists."
+        description = "Install all remote tools. Returns dict with installed, already_present, failed lists."
         inputs = {
             "required_only": {
                 "type": "boolean",

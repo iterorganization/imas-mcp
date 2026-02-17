@@ -7,9 +7,9 @@ Facility knowledge is now stored in the graph database, not flat artifacts.
 Key functions:
 - run(cmd, facility): Execute command locally or via SSH
 - run_script(script, facility): Execute script via stdin (faster)
-- check_all_tools(facility): Check fast tool availability
+- check_all_tools(facility): Check remote tool availability
 - install_tool(tool_key, facility): Install a specific tool
-- install_all_tools(facility): Install all fast tools
+- install_all_tools(facility): Install all remote tools
 
 Low-level execution (no facility lookup, for use by discovery modules):
 - run_command(cmd, ssh_host): Execute command directly

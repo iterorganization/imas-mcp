@@ -199,7 +199,7 @@ def scan_directory(
     # Tree context for hierarchical view (eza preferred, tree fallback)
     tree_context: Optional[str] = None
     if len(dirs) > 5:
-        # Prefer eza --tree (fast tool), fall back to tree if unavailable
+        # Prefer eza --tree (remote tool), fall back to tree if unavailable
         if has_command("eza"):
             try:
                 proc = subprocess.run(

@@ -11,7 +11,7 @@ SSH access and data system patterns per facility.
 | JT60SA | `jt60sa` | MDSplus | 30000 |
 | ITER | `iter` | IMAS | N/A |
 
-## Fast Tools
+## Remote Tools
 
 Always prefer these over standard Unix commands:
 - `rg` over `grep -r` (pattern search)

@@ -1,8 +1,8 @@
 ## Tool Usage Guidelines
 
-### Fast CLI Tools (Prefer Over Standard Unix)
+### Remote CLI Tools (Prefer Over Standard Unix)
 
-| Fast Tool | Instead Of | Speed | Example |
+| Tool | Instead Of | Speed | Example |
 |-----------|------------|-------|---------|
 | `rg` | `grep -r` | 10x faster | `rg 'IMAS' /work/projects -g '*.py'` |
 | `fd` | `find` | 5x faster | `fd -e py /work/projects` |

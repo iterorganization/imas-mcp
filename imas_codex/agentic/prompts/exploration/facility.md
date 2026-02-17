@@ -53,7 +53,7 @@ Systematically discover, document, and classify code and data structures at fusi
 ## Exploration Strategy
 
 ### Phase 1: Environment Setup (5 min)
-1. Check fast tools: `rg --version && fd --version`
+1. Check remote tools: `rg --version && fd --version`
 2. Survey storage: `dust -d 2 /work` or equivalent
 3. Find code directories: `fd -d 3 -t d 'codes|scripts|analysis'`
 
@@ -93,7 +93,7 @@ End your exploration with a summary:
 - OS: [version]
 - Python: [version]
 - IMAS: [version if available]
-- Fast tools: [available tools]
+- Remote tools: [available tools]
 
 ### Key Discoveries
 1. [Discovery 1]: [description], [file count], interest_score=[score]

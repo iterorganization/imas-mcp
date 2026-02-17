@@ -112,8 +112,8 @@ def tools_status(target: str, as_json: bool) -> None:
 
     console.print(f"\n[bold]Environment Status: {target}[/bold]\n")
 
-    # === Fast Tools Section ===
-    console.print("[bold]Fast Tools[/bold]")
+    # === Remote Tools Section ===
+    console.print("[bold]Remote Tools[/bold]")
     for name, info in sorted(tool_status.get("tools", {}).items()):
         if info.get("available", False):
             version = info.get("version", "")
@@ -193,7 +193,7 @@ def tools_status(target: str, as_json: bool) -> None:
 )
 @click.option("--tools-only", is_flag=True, help="Skip Python/venv setup")
 @click.option(
-    "--python-only", is_flag=True, help="Skip fast tools, only setup Python/venv"
+    "--python-only", is_flag=True, help="Skip remote tools, only setup Python/venv"
 )
 @click.option(
     "--python", "python_version", default="3.12", help="Python version for venv"
@@ -212,12 +212,12 @@ def tools_install(
     TARGET can be 'local' or a facility name (e.g., 'tcv', 'iter').
 
     By default, installs everything needed for development:
-    1. Required fast tools (rg, fd, git, gh, uv)
+    1. Required remote tools (rg, fd, git, gh, uv)
     2. Python via uv (if system Python < 3.10)
     3. imas-codex venv
 
     Use --tool to install a specific tool, --tools-only to skip Python setup,
-    or --python-only to skip fast tools and only setup Python/venv.
+    or --python-only to skip remote tools and only setup Python/venv.
 
     Examples:
         imas-codex tools install tcv            # Full setup
@@ -300,11 +300,11 @@ def tools_install(
         return
 
     # === Full installation mode ===
-    # Step 1: Install fast tools with live progress (unless --python-only)
+    # Step 1: Install remote tools with live progress (unless --python-only)
     if python_only:
-        console.print("[dim]Skipping fast tools (--python-only)[/dim]\n")
+        console.print("[dim]Skipping remote tools (--python-only)[/dim]\n")
     else:
-        console.print("[bold]Fast Tools[/bold]")
+        console.print("[bold]Remote Tools[/bold]")
 
         # Track completed tools for live display
         completed_tools: list[tuple[str, dict, bool]] = []

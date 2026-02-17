@@ -90,7 +90,7 @@ class DirStats:
     numeric_dir_ratio: float = 0.0  # Fraction of numeric subdirs (shot IDs)
     file_type_counts: dict[str, int] = field(default_factory=dict)
     patterns_detected: list[str] = field(default_factory=list)
-    # Fast tool data for scoring
+    # Remote tool data for scoring
     size_bytes: int | None = None  # Directory size from du
     rg_matches: dict[str, int] = field(default_factory=dict)  # pattern -> match count
 
