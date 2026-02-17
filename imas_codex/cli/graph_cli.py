@@ -1969,7 +1969,12 @@ def graph_push(
             dump_args.append("--no-imas")
         result = runner.invoke(graph_export, dump_args)
         if result.exit_code != 0:
-            detail = str(result.exception) if result.exception else result.output
+            # ClickExceptions produce SystemExit — error is in output.
+            # Unhandled exceptions are stored directly in result.exception.
+            if result.exception and not isinstance(result.exception, SystemExit):
+                detail = f"{type(result.exception).__name__}: {result.exception}"
+            else:
+                detail = result.output.strip()
             raise click.ClickException(f"Export failed: {detail}")
 
         login_to_ghcr(token)
