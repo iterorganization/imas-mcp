@@ -31,7 +31,35 @@ For each image, provide in a **single pass**:
 
 **Note conventions and orientations.** If the image shows a coordinate system, COCOS convention, sign convention, or machine cross-section orientation, describe it explicitly.
 
-**Identify schematics and diagrams.** For hardware schematics, describe the system layout, sensor positions, cable routing, or diagnostic geometry. These are high-value for facility understanding.
+**Identify schematics and diagrams.** Schematics, block diagrams, and data flow diagrams are among the highest-value images for facility understanding. For these images:
+- Name every component, database, system, or subsystem shown
+- Describe all connections and data flows between components, including directionality
+- Note any middleware, APIs, or access libraries depicted
+- Include a **mermaid diagram** in the caption that represents the schematic structure. Use `graph LR` or `graph TD` depending on layout. Example:
+
+  ```mermaid
+  graph LR
+    Diagnostics --> UnprocessedDB --> eDAS
+    eDAS --> AnalysisDB
+    eDAS --> LCDB
+    LCDB --> OtherCodes
+  ```
+
+For hardware schematics, describe sensor positions, cable routing, or diagnostic geometry. For data architecture diagrams, capture every named database, server, and their interconnections.
+
+**Match description depth to content richness.** A simple photograph needs only a sentence. A complex schematic, data flow diagram, or multi-panel physics plot deserves a full paragraph (4-8 sentences) in the caption. The `description` field (embedded for search) remains concise (1-2 sentences), but the `caption` field should be as detailed as the image warrants.
+
+## Content-Specific Guidance
+
+Adapt your captioning approach based on what you see:
+
+- **Schematics / block diagrams / data flow**: Enumerate all named components, trace every connection. Include a mermaid diagram in the caption. These are the highest-value images — invest effort here.
+- **Line plots / time traces**: State what quantity is plotted, axes with units, which shots/pulses, and what physics the traces show (e.g., sawtooth crashes, L-H transition, ELM bursts).
+- **Spectrograms / contour plots**: Identify the quantity mapped, frequency/spatial ranges, color scale meaning, and any labeled modes or features.
+- **Equilibrium / flux maps**: Note the reconstruction code, shot number, time slice, key parameters (Ip, q95, kappa, delta), and plasma configuration (limiter, diverted, snowflake).
+- **Hardware photographs**: Identify the diagnostic or system, note visible labels, and describe spatial context within the machine.
+- **GUI screenshots / code output**: Name the software, transcribe all visible fields, and describe the workflow step shown.
+- **Calibration curves**: State what is being calibrated, the fitted relationship, measurement ranges, and any reference standards.
 
 **Transcribe all visible text.** Axis labels, legend entries, title text, MDSplus paths (like `\RESULTS::PSI`), parameter values — capture everything readable. Put this in `ocr_text`.
 

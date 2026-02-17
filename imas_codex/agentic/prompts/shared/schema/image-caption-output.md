@@ -20,8 +20,10 @@ You MUST return valid JSON matching this EXACT structure. The response MUST be p
 4. Include specific quantities, paths, diagnostics, or conventions shown
 5. If text is visible in the image (axis labels, legends, titles), transcribe it into `ocr_text`
 6. `description` is a brief 1-2 sentence summary (max 150 chars) — this gets embedded for search
-7. All six `score_*` dimensions MUST be between 0.0 and 1.0
-8. `should_ingest` — set true if image has any fusion physics value
-9. `purpose` — classify using same categories as wiki pages
-10. Ensure valid JSON — no trailing commas, proper quoting
-11. Do NOT include any text outside the JSON object
+7. `caption` should be a substantial paragraph (4-8 sentences) for complex images like schematics, multi-panel plots, or data flow diagrams. Simple images need only 1-2 sentences.
+8. For schematics and block diagrams, include a mermaid diagram in the caption
+9. All six `score_*` dimensions MUST be between 0.0 and 1.0
+10. `should_ingest` — set true if image has any fusion physics value
+11. `purpose` — classify using same categories as wiki pages
+12. Ensure valid JSON — no trailing commas, proper quoting
+13. Do NOT include any text outside the JSON object
