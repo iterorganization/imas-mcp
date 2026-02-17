@@ -7,12 +7,11 @@ Two orthogonal concerns, each with its own authority:
   Each location has a fixed port slot.  This is deploy-time config.
 
 - **identity** (on-disk ``.neo4j/`` store) — which graph data directory
-  to use.  Each graph lives in a hash-named directory in
-  ``~/.local/share/imas-codex/.neo4j/<hash>/``.  The ``neo4j/`` symlink
+  to use.  Each graph lives in a named directory in
+  ``~/.local/share/imas-codex/.neo4j/<name>/``.  The ``neo4j/`` symlink
   points to the active graph.  Switching graphs means repointing the
-  symlink and restarting Neo4j.  Graph identity (name + facilities +
-  hash) is stored both on disk (``.meta.json``) and in the database
-  (``(:GraphMeta)`` node).
+  symlink and restarting Neo4j.  Graph identity (name + facilities)
+  is stored in the database (``(:GraphMeta)`` node).
 
 Port convention (both bolt and HTTP offset together)::
 
@@ -204,9 +203,8 @@ def get_location_offset(location: str) -> int:
 def get_active_graph_name() -> str:
     """Return the name of the currently active graph.
 
-    Reads from the ``.meta.json`` file in the active graph directory
-    (the ``neo4j/`` symlink target).  Falls back to ``"uninitialized"``
-    if no active graph is configured.
+    Reads from the active ``.neo4j/`` symlink target directory name.
+    Falls back to ``"uninitialized"`` if no active graph is configured.
 
     Returns:
         Graph name string.

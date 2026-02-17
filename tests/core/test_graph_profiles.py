@@ -6,8 +6,6 @@ connection.  All calls to ``is_local_host`` are mocked so no SSH
 probes occur.
 """
 
-import json
-
 import pytest
 
 from imas_codex.graph.profiles import (
@@ -192,14 +190,13 @@ class TestGetActiveGraphName:
         name = get_active_graph_name()
         assert name == "uninitialized"
 
-    def test_reads_from_meta_json(self, tmp_path, monkeypatch):
-        """Reads graph name from .meta.json in the active symlink target."""
+    def test_reads_from_directory_name(self, tmp_path, monkeypatch):
+        """Reads graph name from the symlink target directory name."""
         store = tmp_path / ".neo4j"
         store.mkdir()
-        graph_dir = store / "a1b2c3d4e5f6"
+        graph_dir = store / "my-graph"
         graph_dir.mkdir()
-        meta = {"name": "my-graph", "facilities": ["iter"], "hash": "a1b2c3d4e5f6"}
-        (graph_dir / ".meta.json").write_text(json.dumps(meta))
+        (graph_dir / "data").mkdir()
         link = tmp_path / "neo4j"
         link.symlink_to(graph_dir)
 

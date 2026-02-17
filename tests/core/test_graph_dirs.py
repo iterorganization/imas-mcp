@@ -3,23 +3,17 @@
 All tests use tmp_path fixtures to avoid touching the real filesystem.
 """
 
-import json
-
 import pytest
 
 from imas_codex.graph.dirs import (
     GraphDirInfo,
-    compute_graph_hash,
     create_graph_dir,
+    delete_graph_dir,
     find_graph,
     get_active_graph,
+    is_legacy_data_dir,
     list_local_graphs,
-    migrate_legacy_dir,
-    read_dir_meta,
-    rename_graph_dir,
     switch_active_graph,
-    validate_graph_dir,
-    write_dir_meta,
 )
 
 
@@ -30,88 +24,39 @@ def _isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr("imas_codex.graph.dirs.ACTIVE_LINK", tmp_path / "neo4j")
 
 
-# ── Hash computation ────────────────────────────────────────────────────────
-
-
-class TestComputeGraphHash:
-    def test_deterministic(self):
-        h1 = compute_graph_hash("codex", ["iter", "tcv"])
-        h2 = compute_graph_hash("codex", ["iter", "tcv"])
-        assert h1 == h2
-
-    def test_twelve_hex_chars(self):
-        h = compute_graph_hash("codex", ["iter"])
-        assert len(h) == 12
-        assert all(c in "0123456789abcdef" for c in h)
-
-    def test_order_insensitive(self):
-        h1 = compute_graph_hash("codex", ["tcv", "iter"])
-        h2 = compute_graph_hash("codex", ["iter", "tcv"])
-        assert h1 == h2
-
-    def test_different_name_different_hash(self):
-        h1 = compute_graph_hash("codex", ["iter"])
-        h2 = compute_graph_hash("dev", ["iter"])
-        assert h1 != h2
-
-    def test_different_facilities_different_hash(self):
-        h1 = compute_graph_hash("codex", ["iter"])
-        h2 = compute_graph_hash("codex", ["tcv"])
-        assert h1 != h2
-
-    def test_empty_facilities(self):
-        h = compute_graph_hash("codex", [])
-        assert len(h) == 12
-
-
-# ── Metadata read/write ────────────────────────────────────────────────────
-
-
-class TestMetadata:
-    def test_write_and_read(self, tmp_path):
-        d = tmp_path / "graph-dir"
-        d.mkdir()
-        write_dir_meta(d, "codex", ["iter", "tcv"], "abc123def456")
-        info = read_dir_meta(d)
-        assert info is not None
-        assert info.name == "codex"
-        assert info.facilities == ["iter", "tcv"]
-        assert info.hash == "abc123def456"
-        assert info.created_at != ""
-
-    def test_read_missing(self, tmp_path):
-        d = tmp_path / "no-meta"
-        d.mkdir()
-        assert read_dir_meta(d) is None
-
-    def test_read_corrupt(self, tmp_path):
-        d = tmp_path / "corrupt"
-        d.mkdir()
-        (d / ".meta.json").write_text("not json{")
-        assert read_dir_meta(d) is None
-
-
 # ── Create ──────────────────────────────────────────────────────────────────
 
 
 class TestCreateGraphDir:
-    def test_creates_directory(self, tmp_path):
-        info = create_graph_dir("codex", ["iter"])
+    def test_creates_directory(self):
+        info = create_graph_dir("codex")
         assert info.path.exists()
         assert (info.path / "data").is_dir()
         assert (info.path / "logs").is_dir()
-        assert (info.path / ".meta.json").exists()
+        assert (info.path / "conf").is_dir()
+        assert (info.path / "import").is_dir()
 
-    def test_hash_matches(self):
-        info = create_graph_dir("codex", ["iter"])
-        expected = compute_graph_hash("codex", ["iter"])
-        assert info.hash == expected
-        assert info.path.name == expected
+    def test_name_is_directory_name(self):
+        info = create_graph_dir("codex")
+        assert info.name == "codex"
+        assert info.path.name == "codex"
 
     def test_duplicate_raises(self):
-        create_graph_dir("codex", ["iter"])
+        create_graph_dir("codex")
         with pytest.raises(FileExistsError):
-            create_graph_dir("codex", ["iter"])
+            create_graph_dir("codex")
+
+    def test_force_allows_existing(self):
+        create_graph_dir("codex")
+        info = create_graph_dir("codex", force=True)
+        assert info.name == "codex"
+        assert info.path.exists()
+
+    def test_returns_graphdirinfo(self):
+        info = create_graph_dir("dev")
+        assert isinstance(info, GraphDirInfo)
+        assert info.name == "dev"
+        assert not info.active
 
 
 # ── List ────────────────────────────────────────────────────────────────────
@@ -122,34 +67,37 @@ class TestListLocalGraphs:
         assert list_local_graphs() == []
 
     def test_lists_created_graphs(self):
-        create_graph_dir("alpha", ["iter"])
-        create_graph_dir("beta", ["tcv"])
+        create_graph_dir("alpha")
+        create_graph_dir("beta")
         graphs = list_local_graphs()
         names = [g.name for g in graphs]
         assert "alpha" in names
         assert "beta" in names
 
-    def test_warns_on_hash_drift(self, tmp_path):
-        """If dir name doesn't match computed hash, produces a warning."""
+    def test_sorted_by_name(self):
+        create_graph_dir("beta")
+        create_graph_dir("alpha")
+        graphs = list_local_graphs()
+        assert graphs[0].name == "alpha"
+        assert graphs[1].name == "beta"
+
+    def test_warns_on_missing_data_dir(self, tmp_path):
+        """Directory without data/ subdirectory produces a warning."""
         store = tmp_path / ".neo4j"
         store.mkdir()
-        wrong_dir = store / "wronghash1234"
-        wrong_dir.mkdir()
-        meta = {"name": "codex", "facilities": ["iter"], "hash": "wronghash1234"}
-        (wrong_dir / ".meta.json").write_text(json.dumps(meta))
-
+        (store / "orphan").mkdir()
         graphs = list_local_graphs()
         assert len(graphs) == 1
-        assert any("Hash drift" in w for w in graphs[0].warnings)
+        assert graphs[0].name == "orphan"
+        assert any("Missing data/" in w for w in graphs[0].warnings)
 
-    def test_warns_on_no_meta(self, tmp_path):
-        """Directory without .meta.json gets <unknown> name."""
-        store = tmp_path / ".neo4j"
-        store.mkdir()
-        (store / "orphandir12ab").mkdir()
+    def test_marks_active(self):
+        create_graph_dir("codex")
+        switch_active_graph("codex")
         graphs = list_local_graphs()
-        assert len(graphs) == 1
-        assert graphs[0].name == "<unknown>"
+        active = [g for g in graphs if g.active]
+        assert len(active) == 1
+        assert active[0].name == "codex"
 
 
 # ── Active graph ────────────────────────────────────────────────────────────
@@ -165,13 +113,13 @@ class TestGetActiveGraph:
         link.mkdir()
         assert get_active_graph() is None
 
-    def test_returns_info_for_symlink(self, tmp_path):
-        info = create_graph_dir("codex", ["iter"])
-        link = tmp_path / "neo4j"
-        link.symlink_to(info.path)
+    def test_returns_info_for_symlink(self):
+        create_graph_dir("codex")
+        switch_active_graph("codex")
         active = get_active_graph()
         assert active is not None
         assert active.name == "codex"
+        assert active.active is True
 
 
 # ── Switch ──────────────────────────────────────────────────────────────────
@@ -179,31 +127,31 @@ class TestGetActiveGraph:
 
 class TestSwitchActiveGraph:
     def test_switch_creates_symlink(self, tmp_path):
-        info = create_graph_dir("codex", ["iter"])
-        result = switch_active_graph(info.hash)
+        create_graph_dir("codex")
+        result = switch_active_graph("codex")
         link = tmp_path / "neo4j"
         assert link.is_symlink()
-        assert link.resolve() == info.path.resolve()
         assert result.name == "codex"
+        assert result.active is True
 
     def test_switch_replaces_symlink(self, tmp_path):
-        g1 = create_graph_dir("g1", ["iter"])
-        g2 = create_graph_dir("g2", ["tcv"])
-        switch_active_graph(g1.hash)
-        switch_active_graph(g2.hash)
+        create_graph_dir("g1")
+        create_graph_dir("g2")
+        switch_active_graph("g1")
+        switch_active_graph("g2")
         link = tmp_path / "neo4j"
-        assert link.resolve() == g2.path.resolve()
+        assert link.resolve().name == "g2"
 
     def test_switch_nonexistent_raises(self):
         with pytest.raises(FileNotFoundError):
-            switch_active_graph("nonexistent12")
+            switch_active_graph("nonexistent")
 
     def test_switch_real_dir_raises(self, tmp_path):
         """Can't switch if neo4j/ is a real directory."""
-        g = create_graph_dir("codex", ["iter"])
+        create_graph_dir("codex")
         (tmp_path / "neo4j").mkdir()
         with pytest.raises(FileExistsError):
-            switch_active_graph(g.hash)
+            switch_active_graph("codex")
 
 
 # ── Find ────────────────────────────────────────────────────────────────────
@@ -211,93 +159,58 @@ class TestSwitchActiveGraph:
 
 class TestFindGraph:
     def test_find_by_name(self):
-        create_graph_dir("codex", ["iter"])
+        create_graph_dir("codex")
         info = find_graph("codex")
         assert info.name == "codex"
-
-    def test_find_by_hash_prefix(self):
-        g = create_graph_dir("codex", ["iter"])
-        info = find_graph(g.hash[:4])
-        assert info.hash == g.hash
 
     def test_not_found_raises(self):
         with pytest.raises(LookupError, match="No graph found"):
             find_graph("nope")
 
+    def test_marks_active_correctly(self):
+        create_graph_dir("codex")
+        create_graph_dir("dev")
+        switch_active_graph("codex")
 
-# ── Rename ──────────────────────────────────────────────────────────────────
+        info_active = find_graph("codex")
+        assert info_active.active is True
 
-
-class TestRenameGraphDir:
-    def test_rename_updates_dir(self, tmp_path):
-        g = create_graph_dir("codex", ["iter"])
-        old_hash = g.hash
-        new = rename_graph_dir(old_hash, "codex", ["iter", "tcv"])
-        assert new.hash == compute_graph_hash("codex", ["iter", "tcv"])
-        assert not (tmp_path / ".neo4j" / old_hash).exists()
-        assert new.path.exists()
-
-    def test_rename_updates_symlink(self, tmp_path):
-        g = create_graph_dir("codex", ["iter"])
-        switch_active_graph(g.hash)
-        new = rename_graph_dir(g.hash, "codex", ["iter", "tcv"])
-        link = tmp_path / "neo4j"
-        assert link.resolve() == new.path.resolve()
-
-    def test_same_hash_noop(self):
-        g = create_graph_dir("codex", ["iter"])
-        new = rename_graph_dir(g.hash, "codex", ["iter"])
-        assert new.hash == g.hash
+        info_inactive = find_graph("dev")
+        assert info_inactive.active is False
 
 
-# ── Validate ────────────────────────────────────────────────────────────────
+# ── Legacy detection ────────────────────────────────────────────────────────
 
 
-class TestValidateGraphDir:
-    def test_valid_dir(self):
-        g = create_graph_dir("codex", ["iter"])
-        assert validate_graph_dir(g.path) == []
+class TestIsLegacyDataDir:
+    def test_no_dir(self):
+        assert is_legacy_data_dir() is False
 
-    def test_missing_meta(self, tmp_path):
-        d = tmp_path / "nometa"
-        d.mkdir()
-        warnings = validate_graph_dir(d)
-        assert len(warnings) == 1
+    def test_real_dir(self, tmp_path):
+        (tmp_path / "neo4j").mkdir()
+        assert is_legacy_data_dir() is True
 
-    def test_hash_drift(self, tmp_path):
-        store = tmp_path / ".neo4j"
-        store.mkdir()
-        wrong = store / "wronghash1234"
-        wrong.mkdir()
-        write_dir_meta(wrong, "codex", ["iter"], "wronghash1234")
-        warnings = validate_graph_dir(wrong)
-        assert any("Hash drift" in w for w in warnings)
+    def test_symlink(self):
+        create_graph_dir("codex")
+        switch_active_graph("codex")
+        assert is_legacy_data_dir() is False
 
 
-# ── Migrate legacy ─────────────────────────────────────────────────────────
+# ── Delete ──────────────────────────────────────────────────────────────────
 
 
-class TestMigrateLegacyDir:
-    def test_migrate(self, tmp_path):
-        # Create a real neo4j/ directory (legacy)
-        legacy = tmp_path / "neo4j"
-        legacy.mkdir()
-        (legacy / "data").mkdir()
-        (legacy / "some-file.txt").write_text("test")
+class TestDeleteGraphDir:
+    def test_delete_existing(self, tmp_path):
+        create_graph_dir("to-delete")
+        delete_graph_dir("to-delete")
+        assert not (tmp_path / ".neo4j" / "to-delete").exists()
 
-        info = migrate_legacy_dir("codex", ["iter"])
-        link = tmp_path / "neo4j"
-        assert link.is_symlink()
-        assert info.name == "codex"
-        assert (info.path / "some-file.txt").read_text() == "test"
-
-    def test_migrate_already_symlink_raises(self, tmp_path):
-        g = create_graph_dir("codex", ["iter"])
-        link = tmp_path / "neo4j"
-        link.symlink_to(g.path)
-        with pytest.raises(ValueError, match="already a symlink"):
-            migrate_legacy_dir("codex", ["iter"])
-
-    def test_migrate_no_dir_raises(self):
+    def test_delete_nonexistent_raises(self):
         with pytest.raises(FileNotFoundError):
-            migrate_legacy_dir("codex", ["iter"])
+            delete_graph_dir("nope")
+
+    def test_delete_active_raises(self):
+        create_graph_dir("codex")
+        switch_active_graph("codex")
+        with pytest.raises(ValueError, match="Cannot delete active"):
+            delete_graph_dir("codex")

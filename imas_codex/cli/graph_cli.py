@@ -208,10 +208,7 @@ class Neo4jOperation:
             click.echo(f"Warning: Neo4j [{self.profile.name}] may still be starting")
             return
 
-        click.echo(
-            f"Note: Restart Neo4j manually: "
-            f"imas-codex serve neo4j start --graph {self.profile.name}"
-        )
+        click.echo("Note: Restart Neo4j manually: imas-codex graph start")
 
     def _release_lock(self) -> None:
         if self._lock_file.exists():
@@ -464,16 +461,26 @@ def secure_data_directory(data_path: Path) -> None:
             pass  # Skip files we can't chmod
 
 
-def get_package_name(facility: str | None = None) -> str:
-    """Get the GHCR package name, optionally scoped to a facility.
+def get_package_name(
+    facilities: list[str] | None = None,
+    *,
+    no_imas: bool = False,
+) -> str:
+    """Get the GHCR package name, optionally scoped to facilities.
 
     Args:
-        facility: If given, returns ``"imas-codex-graph-{facility}"``.
-            Otherwise returns ``"imas-codex-graph"`` (unified package).
+        facilities: If given, appends sorted facility IDs to the name.
+        no_imas: If True, appends ``-no-imas`` suffix.
+
+    Returns:
+        Package name, e.g. ``"imas-codex-graph-iter-tcv-no-imas"``.
     """
-    if facility:
-        return f"imas-codex-graph-{facility}"
-    return "imas-codex-graph"
+    parts = ["imas-codex-graph"]
+    if facilities:
+        parts.extend(sorted(facilities))
+    if no_imas:
+        parts.append("no-imas")
+    return "-".join(parts)
 
 
 def backup_existing_data(reason: str, data_dir: Path | None = None) -> Path | None:
@@ -584,21 +591,32 @@ def graph() -> None:
     """Manage graph database lifecycle.
 
     \b
-    Archive & Registry:
-      imas-codex graph export         Export graph to archive
-      imas-codex graph load <file>    Load graph archive
-      imas-codex graph push           Push archive to GHCR
-      imas-codex graph pull           Fetch + load from GHCR
-      imas-codex graph fetch          Download archive (no load)
-      imas-codex graph list           List GHCR versions
+    Setup:
+      imas-codex graph init NAME           Create a new graph
+      imas-codex graph status              Show graph and server status
+      imas-codex graph list                List local graph instances
+      imas-codex graph switch NAME         Activate a different graph
 
     \b
-    Local Operations:
-      imas-codex graph status         Show graph and registry status
-      imas-codex graph backup         Create local backup (.dump)
-      imas-codex graph restore        Restore from local backup
-      imas-codex graph clear          Clear all graph data
-      imas-codex graph clean          Remove GHCR tags or old backups
+    Server:
+      imas-codex graph start               Start Neo4j
+      imas-codex graph stop                Stop Neo4j
+      imas-codex graph shell               Interactive Cypher REPL
+
+    \b
+    Archive & Registry:
+      imas-codex graph export              Export graph to archive
+      imas-codex graph load <file>         Load graph archive
+      imas-codex graph push                Push archive to GHCR
+      imas-codex graph pull                Fetch + load from GHCR
+      imas-codex graph fetch               Download archive (no load)
+      imas-codex graph tags                List GHCR versions
+      imas-codex graph prune               Remove GHCR tags
+
+    \b
+    Maintenance:
+      imas-codex graph clear               Clear all graph data
+      imas-codex graph auth                Generate new Neo4j password
     """
     pass
 
@@ -610,15 +628,9 @@ def graph() -> None:
 
 @click.group("neo4j")
 def neo4j() -> None:
-    """Manage Neo4j graph database server.
+    """[DEPRECATED] Use 'imas-codex graph start/stop/shell/service'.
 
-    \b
-      imas-codex serve neo4j start     Start Neo4j via Apptainer
-      imas-codex serve neo4j stop      Stop Neo4j
-      imas-codex serve neo4j status    Check status
-      imas-codex serve neo4j profiles  List profiles and ports
-      imas-codex serve neo4j shell     Open Cypher shell
-      imas-codex serve neo4j service   Manage systemd service
+    Server management has moved under the graph command group.
     """
     pass
 
@@ -850,9 +862,7 @@ def neo4j_status() -> None:
                     click.echo(
                         "  This may indicate a hung process. To recover:", err=True
                     )
-                    click.echo(
-                        f"    kill {pid} && imas-codex serve neo4j start", err=True
-                    )
+                    click.echo(f"    kill {pid} && imas-codex graph start", err=True)
                 except (ProcessLookupError, ValueError, OSError):
                     pass
             # Check for stale locks
@@ -892,11 +902,8 @@ def neo4j_profiles() -> None:
     if graphs:
         click.echo("\nLocal graphs:")
         for g in graphs:
-            marker = "→" if g.is_active else " "
-            drift = " ⚠ hash drift" if not g.hash_ok else ""
-            click.echo(
-                f"  {marker} {g.name} [{g.hash}] {','.join(g.facilities)}{drift}"
-            )
+            marker = "→" if g.active else " "
+            click.echo(f"  {marker} {g.name}")
 
 
 @neo4j.command("secure")
@@ -1048,7 +1055,7 @@ WantedBy=default.target
             f"HTTP: localhost:{profile.http_port}"
         )
         click.echo(f"  Start: systemctl --user start {service_name}")
-        click.echo(f"  Or:    imas-codex serve neo4j start --graph {profile.name}")
+        click.echo("  Or:    imas-codex graph start")
 
     elif action == "uninstall":
         if not service_file.exists():
@@ -1276,24 +1283,176 @@ def _create_facility_dump(
         click.echo(f"    Filtered dump: {size_mb:.1f} MB")
 
 
+# ============================================================================
+# Graph Server Commands (canonical — neo4j group is deprecated alias)
+# ============================================================================
+
+
+@graph.command("start")
+@click.option("--image", envvar="NEO4J_IMAGE", default=None)
+@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
+@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
+@click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
+def graph_start(
+    image: str | None,
+    data_dir: str | None,
+    password: str | None,
+    foreground: bool,
+) -> None:
+    """Start Neo4j server via Apptainer."""
+    ctx = click.get_current_context()
+    ctx.invoke(
+        neo4j_start,
+        image=image,
+        data_dir=data_dir,
+        password=password,
+        foreground=foreground,
+    )
+
+
+@graph.command("stop")
+@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
+def graph_stop(data_dir: str | None) -> None:
+    """Stop Neo4j server."""
+    ctx = click.get_current_context()
+    ctx.invoke(neo4j_stop, data_dir=data_dir)
+
+
+@graph.command("shell")
+def graph_shell() -> None:
+    """Open interactive Cypher shell."""
+    ctx = click.get_current_context()
+    ctx.invoke(neo4j_shell)
+
+
+@graph.group("service")
+def graph_service_group() -> None:
+    """Manage Neo4j systemd service.
+
+    \\b
+      imas-codex graph service install   Install systemd unit
+      imas-codex graph service start     Start service
+      imas-codex graph service stop      Stop service
+      imas-codex graph service status    Check service status
+    """
+    pass
+
+
+@graph_service_group.command("install")
+@click.option("--image", envvar="NEO4J_IMAGE", default=None)
+@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
+@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
+def graph_service_install(
+    image: str | None,
+    data_dir: str | None,
+    password: str | None,
+) -> None:
+    """Install Neo4j as a systemd user service."""
+    ctx = click.get_current_context()
+    ctx.invoke(
+        neo4j_service,
+        action="install",
+        image=image,
+        data_dir=data_dir,
+        password=password,
+    )
+
+
+@graph_service_group.command("start")
+def graph_service_start() -> None:
+    """Start Neo4j systemd service."""
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    profile = resolve_neo4j(auto_tunnel=False)
+    service_name = f"imas-codex-neo4j-{profile.name}"
+    result = subprocess.run(
+        ["systemctl", "--user", "start", service_name], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to start service: {result.stderr}")
+    click.echo(f"Started {service_name}")
+
+
+@graph_service_group.command("stop")
+def graph_service_stop() -> None:
+    """Stop Neo4j systemd service."""
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    profile = resolve_neo4j(auto_tunnel=False)
+    service_name = f"imas-codex-neo4j-{profile.name}"
+    result = subprocess.run(
+        ["systemctl", "--user", "stop", service_name], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to stop service: {result.stderr}")
+    click.echo(f"Stopped {service_name}")
+
+
+@graph_service_group.command("status")
+def graph_service_status() -> None:
+    """Check Neo4j systemd service status."""
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    profile = resolve_neo4j(auto_tunnel=False)
+    service_name = f"imas-codex-neo4j-{profile.name}"
+    subprocess.run(["systemctl", "--user", "status", service_name])
+
+
+# ============================================================================
+# Graph Auth Command
+# ============================================================================
+
+
+@graph.command("auth")
+def graph_auth() -> None:
+    """Generate a new Neo4j password and show .env update instructions.
+
+    Creates a secure random password and prints the environment variable
+    that should be added to your .env file.
+    """
+    import secrets
+
+    password = secrets.token_urlsafe(24)
+
+    click.echo("Generated new Neo4j password.\n")
+    click.echo("Add to your .env file:")
+    click.echo(f"  NEO4J_PASSWORD={password}\n")
+    click.echo("Then sync to remote hosts:")
+    click.echo("  imas-codex config secrets push iter")
+    click.echo("\nRestart Neo4j to apply:")
+    click.echo("  imas-codex graph stop && imas-codex graph start")
+
+
+# ============================================================================
+# Archive & Distribution Commands
+# ============================================================================
+
+
 @graph.command("export")
 @click.option(
     "--output",
     "-o",
     type=click.Path(),
-    help="Output archive path (default: imas-codex-graph[-{facility}]-{version}.tar.gz)",
+    help="Output archive path (default: auto-named)",
 )
 @click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after export")
 @click.option(
     "--facility",
     "-f",
-    default=None,
-    help="Export per-facility graph (e.g. tcv)",
+    "facilities",
+    multiple=True,
+    help="Facility to include (repeatable). Filters out other facilities.",
+)
+@click.option(
+    "--no-imas",
+    is_flag=True,
+    help="Exclude IMAS Data Dictionary nodes from export",
 )
 def graph_export(
     output: str | None,
     no_restart: bool,
-    facility: str | None,
+    facilities: tuple[str, ...],
+    no_imas: bool,
 ) -> None:
     """Export graph database to archive."""
     from imas_codex.graph.profiles import resolve_neo4j
@@ -1304,7 +1463,7 @@ def graph_export(
 
     git_info = get_git_info()
     version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
-    pkg_name = get_package_name(facility)
+    pkg_name = get_package_name(facilities=list(facilities), no_imas=no_imas)
 
     if output:
         output_path = Path(output)
@@ -1354,14 +1513,15 @@ def graph_export(
             else:
                 raise click.ClickException("Graph dump file not created")
 
-            # If facility specified, filter the dump to keep only that facility
-            if facility:
-                click.echo(f"  Filtering dump for facility: {facility}")
-                _create_facility_dump(
-                    archive_dir / "graph.dump",
-                    facility,
-                    archive_dir / "graph.dump",
-                )
+            # If facilities specified, filter the dump
+            if facilities:
+                for fac in facilities:
+                    click.echo(f"  Filtering dump for facility: {fac}")
+                    _create_facility_dump(
+                        archive_dir / "graph.dump",
+                        fac,
+                        archive_dir / "graph.dump",
+                    )
 
             manifest = {
                 "version": __version__,
@@ -1589,8 +1749,14 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
 @click.option(
     "--facility",
     "-f",
-    default=None,
-    help="Push per-facility graph (e.g. tcv) to imas-codex-graph-{facility}",
+    "facilities",
+    multiple=True,
+    help="Facility to include (repeatable). Filters the dump.",
+)
+@click.option(
+    "--no-imas",
+    is_flag=True,
+    help="Exclude IMAS Data Dictionary nodes",
 )
 def graph_push(
     dev: bool,
@@ -1598,7 +1764,8 @@ def graph_push(
     token: str | None,
     dry_run: bool,
     skip_embed: bool,
-    facility: str | None,
+    facilities: tuple[str, ...],
+    no_imas: bool,
 ) -> None:
     """Push graph archive to GHCR.
 
@@ -1606,7 +1773,7 @@ def graph_push(
     that have description fields (FacilitySignal, FacilityPath, TreeNode,
     WikiArtifact). Use --skip-embed to skip this step.
 
-    Use --facility to push a per-facility graph to a separate GHCR package.
+    Use --facility/-f (repeatable) to push a filtered per-facility graph.
     """
     require_oras()
 
@@ -1617,7 +1784,7 @@ def graph_push(
 
     target_registry = get_registry(git_info, registry)
     version_tag = get_version_tag(git_info, dev)
-    pkg_name = get_package_name(facility)
+    pkg_name = get_package_name(list(facilities) or None, no_imas=no_imas)
 
     click.echo(f"Push target: {target_registry}/{pkg_name}:{version_tag}")
     if git_info["is_fork"]:
@@ -1643,10 +1810,10 @@ def graph_push(
 
         runner = CliRunner()
         dump_args = ["-o", str(archive_path)]
-        if graph:
-            dump_args.extend(["--graph", graph])
-        if facility:
-            dump_args.extend(["--facility", facility])
+        for fac in facilities:
+            dump_args.extend(["--facility", fac])
+        if no_imas:
+            dump_args.append("--no-imas")
         result = runner.invoke(graph_export, dump_args)
         if result.exit_code != 0:
             raise click.ClickException(f"Export failed: {result.output}")
@@ -1722,15 +1889,22 @@ def graph_push(
 @click.option(
     "--facility",
     "-f",
-    default=None,
-    help="Fetch per-facility graph (e.g. tcv) from imas-codex-graph-{facility}",
+    "facilities",
+    multiple=True,
+    help="Facility to filter (repeatable). Selects GHCR package name.",
+)
+@click.option(
+    "--no-imas",
+    is_flag=True,
+    help="Fetch no-imas variant",
 )
 def graph_fetch(
     version: str,
     registry: str | None,
     token: str | None,
     output: str | None,
-    facility: str | None,
+    facilities: tuple[str, ...],
+    no_imas: bool,
 ) -> Path:
     """Fetch graph archive from GHCR without loading.
 
@@ -1745,7 +1919,7 @@ def graph_fetch(
 
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
-    pkg_name = get_package_name(facility)
+    pkg_name = get_package_name(list(facilities) or None, no_imas=no_imas)
 
     # Resolve version: if "latest" doesn't exist, find most recent tag
     resolved_version = version
@@ -1795,8 +1969,14 @@ def graph_fetch(
 @click.option(
     "--facility",
     "-f",
-    default=None,
-    help="Pull per-facility graph (e.g. tcv) from imas-codex-graph-{facility}",
+    "facilities",
+    multiple=True,
+    help="Facility to filter (repeatable). Selects GHCR package name.",
+)
+@click.option(
+    "--no-imas",
+    is_flag=True,
+    help="Pull no-imas variant",
 )
 def graph_pull(
     version: str,
@@ -1804,7 +1984,8 @@ def graph_pull(
     token: str | None,
     force: bool,
     no_backup: bool,
-    facility: str | None,
+    facilities: tuple[str, ...],
+    no_imas: bool,
 ) -> None:
     """Pull graph from GHCR and load it (convenience for fetch + load).
 
@@ -1814,7 +1995,7 @@ def graph_pull(
     When no --version is specified, pulls 'latest'. If 'latest' doesn't
     exist, falls back to the most recent tag in the registry.
 
-    Use --facility to pull a per-facility graph from a separate GHCR package.
+    Use --facility/-f (repeatable) to pull a per-facility graph.
     """
     from imas_codex.graph.profiles import resolve_neo4j
 
@@ -1823,7 +2004,7 @@ def graph_pull(
     profile = resolve_neo4j()
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
-    pkg_name = get_package_name(facility)
+    pkg_name = get_package_name(list(facilities) or None, no_imas=no_imas)
 
     # Resolve version: if "latest" doesn't exist, find most recent tag
     resolved_version = version
@@ -1899,47 +2080,6 @@ def graph_pull(
     click.echo("✓ Graph pull complete")
 
 
-@graph.command("remote-list")
-@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
-@click.option("--token", envvar="GHCR_TOKEN")
-@click.option(
-    "--facility",
-    "-f",
-    default=None,
-    help="List per-facility graph versions",
-)
-def graph_remote_list(
-    registry: str | None, token: str | None, facility: str | None
-) -> None:
-    """List available graph versions in GHCR."""
-    require_oras()
-
-    git_info = get_git_info()
-    target_registry = get_registry(git_info, registry)
-    pkg_name = get_package_name(facility)
-    repo_ref = f"{target_registry}/{pkg_name}"
-
-    login_to_ghcr(token)
-
-    click.echo(f"Available versions in {repo_ref}:")
-
-    result = subprocess.run(
-        ["oras", "repo", "tags", repo_ref],
-        capture_output=True,
-        text=True,
-    )
-
-    if result.returncode != 0:
-        if "not found" in result.stderr.lower():
-            click.echo("  (no versions published yet)")
-        else:
-            raise click.ClickException(f"Failed: {result.stderr}")
-    else:
-        for tag in sorted(result.stdout.strip().split("\n"), reverse=True):
-            if tag:
-                click.echo(f"  {'→' if tag == 'latest' else ' '} {tag}")
-
-
 @graph.command("status")
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 def graph_status(registry: str | None) -> None:
@@ -2001,13 +2141,12 @@ def graph_status(registry: str | None) -> None:
                 click.echo(
                     f"  Facilities: {', '.join(facilities) if facilities else '(none)'}"
                 )
-                click.echo(f"  Hash: {meta.get('hash', '?')}")
                 if meta.get("updated_at"):
                     click.echo(f"  Updated: {meta['updated_at']}")
             else:
                 click.echo(
                     "\nGraph identity: not initialized"
-                    "\n  Run: imas-codex graph init --name <name> --facility <fac>"
+                    "\n  Run: imas-codex graph init <name> -f <facility>"
                 )
         except Exception:
             pass
@@ -2023,31 +2162,24 @@ def graph_list() -> None:
     """List local graph instances.
 
     Scans the .neo4j/ store directory for graph instances and shows
-    their name, facilities, hash, and whether they are active.
-    Validates hash consistency and warns about drift.
+    their name and whether they are active.
 
     \b
     Examples:
       imas-codex graph list
     """
-    from imas_codex.graph.dirs import get_active_graph, list_local_graphs
+    from imas_codex.graph.dirs import list_local_graphs
 
     graphs = list_local_graphs()
     if not graphs:
         click.echo("No local graphs found.")
-        click.echo("Create one: imas-codex graph init -n <name> -f <facility> ...")
+        click.echo("Create one: imas-codex graph init <name> -f <facility> ...")
         return
-
-    active = get_active_graph()
-    active_hash = active.hash if active else None
 
     click.echo("Local graphs:\n")
     for g in graphs:
-        marker = "→ " if g.hash == active_hash else "  "
-        facs = ", ".join(g.facilities) if g.facilities else "(none)"
-        click.echo(f"{marker}{g.name}  [{facs}]  hash={g.hash}")
-        if g.created_at:
-            click.echo(f"    created: {g.created_at}")
+        marker = "→ " if g.active else "  "
+        click.echo(f"{marker}{g.name}")
         for warn in g.warnings:
             click.echo(f"    ⚠ {warn}")
 
@@ -2060,22 +2192,17 @@ def graph_list() -> None:
 
 
 @graph.command("switch")
-@click.argument("identifier")
-def graph_switch(identifier: str) -> None:
+@click.argument("name")
+def graph_switch(name: str) -> None:
     """Switch the active graph.
 
     Stops Neo4j if running, repoints the neo4j/ symlink to the
     target graph directory, and restarts Neo4j.
 
-    IDENTIFIER can be a graph name (e.g. "codex") or a hash prefix
-    (e.g. "a3f8").  If the name matches multiple graphs, use the
-    hash prefix to disambiguate.
-
     \b
     Examples:
       imas-codex graph switch codex
       imas-codex graph switch dev
-      imas-codex graph switch a3f8
     """
     from imas_codex.graph.dirs import (
         find_graph,
@@ -2085,14 +2212,14 @@ def graph_switch(identifier: str) -> None:
     from imas_codex.graph.profiles import resolve_neo4j
 
     try:
-        target = find_graph(identifier)
+        target = find_graph(name)
     except LookupError as e:
         raise click.ClickException(str(e)) from e
 
     # Check if already active
     active = get_active_graph()
-    if active and active.hash == target.hash:
-        click.echo(f"Graph '{target.name}' (hash={target.hash}) is already active.")
+    if active and active.name == target.name:
+        click.echo(f"Graph '{target.name}' is already active.")
         return
 
     profile = resolve_neo4j(auto_tunnel=False)
@@ -2103,15 +2230,11 @@ def graph_switch(identifier: str) -> None:
         _stop_neo4j_for_switch(profile)
 
     try:
-        switch_active_graph(target.hash)
+        switch_active_graph(name)
     except (FileExistsError, ValueError) as e:
         raise click.ClickException(str(e)) from e
 
-    click.echo(
-        f"✓ Switched to '{target.name}' "
-        f"[{', '.join(target.facilities)}] "
-        f"hash={target.hash}"
-    )
+    click.echo(f"✓ Switched to '{target.name}'")
 
     if was_running:
         click.echo("Restarting Neo4j...")
@@ -2210,12 +2333,7 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
 
 
 @graph.command("init")
-@click.option(
-    "--name",
-    "-n",
-    required=True,
-    help="Graph name (e.g. 'codex', 'dev')",
-)
+@click.argument("name")
 @click.option(
     "--facility",
     "-f",
@@ -2224,77 +2342,52 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
     required=True,
     help="Facility ID to include (repeatable)",
 )
-@click.option(
-    "--migrate",
-    is_flag=True,
-    help="Migrate existing neo4j/ directory into the .neo4j/ store",
-)
-def graph_init(name: str, facilities: tuple[str, ...], migrate: bool) -> None:
+@click.option("--force", is_flag=True, help="Allow using an existing directory")
+def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
     """Initialize a new graph instance.
 
-    Creates a hash-named directory in .neo4j/, writes .meta.json,
-    creates the neo4j/ symlink, starts Neo4j, and initializes the
-    (:GraphMeta) node.
-
-    If neo4j/ is an existing real directory (pre-migration), use
-    --migrate to move it into the .neo4j/ store automatically.
+    Creates a name-based directory in .neo4j/<NAME>/, points the neo4j/
+    symlink to it, starts Neo4j, and initializes the (:GraphMeta) node.
 
     \b
     Examples:
-      imas-codex graph init -n codex -f imas -f iter -f tcv -f jt60sa
-      imas-codex graph init -n dev -f imas -f tcv
-      imas-codex graph init -n codex -f imas -f iter --migrate
+      imas-codex graph init codex -f iter -f tcv -f jt60sa
+      imas-codex graph init dev -f tcv
     """
     from imas_codex.graph.dirs import (
         create_graph_dir,
         is_legacy_data_dir,
-        migrate_legacy_dir,
         switch_active_graph,
     )
     from imas_codex.graph.profiles import resolve_neo4j
 
     facility_list = sorted(set(facilities))
 
-    # Handle legacy migration
     if is_legacy_data_dir():
-        if migrate:
-            click.echo("Migrating existing neo4j/ directory into .neo4j/ store...")
-            profile = resolve_neo4j(auto_tunnel=False)
-            was_running = is_neo4j_running(profile.http_port)
-            if was_running:
-                click.echo("Stopping Neo4j for migration...")
-                _stop_neo4j_for_switch(profile)
+        raise click.ClickException(
+            "neo4j/ exists as a real directory (pre-migration layout).\n"
+            "Move it manually into .neo4j/ first:\n"
+            f"  mkdir -p ~/.local/share/imas-codex/.neo4j\n"
+            f"  mv ~/.local/share/imas-codex/neo4j "
+            f"~/.local/share/imas-codex/.neo4j/{name}\n"
+            f"  ln -s .neo4j/{name} ~/.local/share/imas-codex/neo4j"
+        )
 
-            try:
-                info = migrate_legacy_dir(name, facility_list)
-            except (FileExistsError, ValueError) as e:
-                raise click.ClickException(str(e)) from e
+    # Create new graph directory
+    try:
+        info = create_graph_dir(name, force=force)
+    except FileExistsError as e:
+        raise click.ClickException(str(e)) from e
 
-            click.echo(f"✓ Migrated to .neo4j/{info.hash}/")
-        else:
-            raise click.ClickException(
-                "neo4j/ exists as a real directory (pre-migration layout).\n"
-                "Use --migrate to move it into the .neo4j/ store:\n"
-                f"  imas-codex graph init -n {name} "
-                + " ".join(f"-f {f}" for f in facility_list)
-                + " --migrate"
-            )
-    else:
-        # Create new graph directory
-        try:
-            info = create_graph_dir(name, facility_list)
-        except FileExistsError as e:
-            raise click.ClickException(str(e)) from e
-
-        # Point symlink to the new directory
-        try:
-            switch_active_graph(info.hash)
-        except FileExistsError as e:
-            raise click.ClickException(str(e)) from e
+    # Point symlink to the new directory
+    try:
+        switch_active_graph(name)
+    except FileExistsError as e:
+        raise click.ClickException(str(e)) from e
 
     click.echo(f"  Name: {name}")
     click.echo(f"  Facilities: {', '.join(facility_list)}")
-    click.echo(f"  Hash: {info.hash}")
+    click.echo(f"  Path: {info.path}")
 
     # Start Neo4j and create GraphMeta node
     profile = resolve_neo4j(auto_tunnel=False)
@@ -2308,9 +2401,9 @@ def graph_init(name: str, facilities: tuple[str, ...], migrate: bool) -> None:
         from imas_codex.graph.meta import init_graph_meta
 
         gc = GraphClient.from_profile()
-        result = init_graph_meta(gc, name, facility_list)
+        init_graph_meta(gc, name, facility_list)
         gc.close()
-        click.echo(f"\n✓ GraphMeta node initialized (hash={result['hash']})")
+        click.echo("\n✓ GraphMeta node initialized")
     else:
         click.echo(
             "\nWarning: Neo4j not running — GraphMeta node not created.\n"
@@ -2347,12 +2440,11 @@ def facility_list() -> None:
 
     if meta is None:
         click.echo("Graph identity not initialized.")
-        click.echo("Run: imas-codex graph init --name <name> --facility <fac>")
+        click.echo("Run: imas-codex graph init <name> -f <facility>")
         return
 
     facilities = meta.get("facilities") or []
     click.echo(f"Graph: {meta.get('name', '?')}")
-    click.echo(f"Hash: {meta.get('hash', '?')}")
     if facilities:
         for f in sorted(facilities):
             click.echo(f"  - {f}")
@@ -2374,7 +2466,7 @@ def facility_add(facility_id: str) -> None:
         gc.close()
         raise click.ClickException(
             "Graph identity not initialized.\n"
-            "Run: imas-codex graph init --name <name> --facility <fac>"
+            "Run: imas-codex graph init <name> -f <facility>"
         )
 
     add_facility_to_meta(gc, facility_id)
@@ -2387,7 +2479,6 @@ def facility_add(facility_id: str) -> None:
         f"✓ Added '{facility_id}' to graph '{meta.get('name', '?') if meta else '?'}'"
     )
     click.echo(f"  Facilities: {', '.join(facilities)}")
-    click.echo(f"  Hash: {meta.get('hash', '?') if meta else '?'}")
 
 
 @graph_facility_group.command("remove")
@@ -2421,7 +2512,6 @@ def facility_remove(facility_id: str, force: bool) -> None:
     facilities = meta.get("facilities") or [] if meta else []
     click.echo(f"✓ Removed '{facility_id}'")
     click.echo(f"  Facilities: {', '.join(facilities)}")
-    click.echo(f"  Hash: {meta.get('hash', '?') if meta else '?'}")
 
 
 # ============================================================================
@@ -2681,247 +2771,6 @@ def _delete_tag(
     return True
 
 
-@graph.command("clean")
-@click.argument("tags", nargs=-1)
-@click.option("--dev", "dev_only", is_flag=True, help="Remove all dev tags from GHCR")
-@click.option(
-    "--before",
-    "before_version",
-    default=None,
-    help="Remove tags older than this semver version",
-)
-@click.option("--pattern", default=None, help="Glob pattern to match GHCR tags")
-@click.option(
-    "--backups", is_flag=True, help="Operate on local backup files instead of GHCR"
-)
-@click.option(
-    "--older-than",
-    "older_than",
-    default=None,
-    help="With --backups: remove backups older than N days (e.g. 30d)",
-)
-@click.option(
-    "--keep-latest",
-    type=int,
-    default=0,
-    help="With --backups: retain N most recent backup files",
-)
-@click.option(
-    "--facility",
-    "-f",
-    default=None,
-    help="Target per-facility GHCR package",
-)
-@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
-@click.option("--token", envvar="GHCR_TOKEN")
-@click.option("--force", is_flag=True, help="Skip confirmation prompt")
-@click.option("--dry-run", is_flag=True, help="Show what would be removed")
-def graph_clean(
-    tags: tuple[str, ...],
-    dev_only: bool,
-    before_version: str | None,
-    pattern: str | None,
-    backups: bool,
-    older_than: str | None,
-    keep_latest: int,
-    facility: str | None,
-    registry: str | None,
-    token: str | None,
-    force: bool,
-    dry_run: bool,
-) -> None:
-    """Remove GHCR tags or clean local backups.
-
-    \b
-    GHCR examples:
-      imas-codex graph clean tag1 tag2         # Delete specific tags
-      imas-codex graph clean --dev              # Remove all dev tags
-      imas-codex graph clean --before 0.5.0    # Remove tags older than v0.5.0
-      imas-codex graph clean --pattern "*.dev*" # Glob match on tags
-
-    \b
-    Backup examples:
-      imas-codex graph clean --backups --older-than 30d
-      imas-codex graph clean --backups --keep-latest 5
-    """
-    if backups:
-        _remove_backups(older_than, keep_latest, force, dry_run)
-        return
-
-    # GHCR mode
-    require_oras()
-
-    git_info = get_git_info()
-    target_registry = get_registry(git_info, registry)
-    pkg_name = get_package_name(facility)
-
-    available = _list_registry_tags(target_registry, token, pkg_name)
-    if not available:
-        click.echo("No tags in registry.")
-        return
-
-    to_delete: list[str] = []
-
-    # Explicit tags
-    if tags:
-        missing = [t for t in tags if t not in available]
-        if missing:
-            click.echo(f"Tags not found: {', '.join(missing)}", err=True)
-        to_delete.extend(t for t in tags if t in available)
-
-    # --dev: all dev tags
-    if dev_only:
-        to_delete.extend(
-            t
-            for t in available
-            if t != "latest" and ("dev" in t or "-r" in t) and t not in to_delete
-        )
-
-    # --before VERSION: tags with semver < given version
-    if before_version:
-        from packaging.version import InvalidVersion, Version
-
-        try:
-            threshold = Version(before_version)
-        except InvalidVersion:
-            raise click.ClickException(f"Invalid version: {before_version}") from None
-
-        for t in available:
-            if t == "latest" or t in to_delete:
-                continue
-            # Extract base version from tag (e.g. "0.4.0.dev123-abc-r1" -> "0.4.0")
-            base = t.split(".dev")[0].split("-")[0]
-            try:
-                if Version(base) < threshold:
-                    to_delete.append(t)
-            except InvalidVersion:
-                continue
-
-    # --pattern GLOB
-    if pattern:
-        import fnmatch
-
-        to_delete.extend(
-            t
-            for t in available
-            if t != "latest" and fnmatch.fnmatch(t, pattern) and t not in to_delete
-        )
-
-    if not to_delete:
-        click.echo("No tags matched for removal.")
-        return
-
-    # Deduplicate preserving order
-    seen: set[str] = set()
-    unique_delete: list[str] = []
-    for t in to_delete:
-        if t not in seen:
-            seen.add(t)
-            unique_delete.append(t)
-    to_delete = unique_delete
-
-    click.echo(f"Will remove {len(to_delete)} tag(s) from {target_registry}:")
-    for t in to_delete:
-        click.echo(f"  - {t}")
-
-    if dry_run:
-        click.echo("\n[DRY RUN] No tags were removed.")
-        return
-
-    if not force:
-        if not click.confirm("\nProceed?"):
-            click.echo("Aborted.")
-            return
-
-    deleted = 0
-    for t in to_delete:
-        if _delete_tag(target_registry, t, token, pkg_name):
-            click.echo(f"  Removed: {t}")
-            deleted += 1
-
-    click.echo(f"\n✓ Removed {deleted}/{len(to_delete)} tags")
-
-
-def _remove_backups(
-    older_than: str | None,
-    keep_latest: int,
-    force: bool,
-    dry_run: bool,
-) -> None:
-    """Remove local backup dump files."""
-    from imas_codex.graph.profiles import BACKUPS_DIR
-
-    if not BACKUPS_DIR.exists():
-        click.echo("No backups directory found.")
-        return
-
-    all_backups = sorted(
-        BACKUPS_DIR.glob("*.dump"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if not all_backups:
-        click.echo("No backup files found.")
-        return
-
-    to_remove: list[Path] = []
-
-    if older_than:
-        # Parse "30d" format
-        value = older_than.rstrip("d")
-        try:
-            days = int(value)
-        except ValueError:
-            raise click.ClickException(
-                f"Invalid --older-than format: {older_than} (expected e.g. 30d)"
-            ) from None
-
-        from datetime import timedelta
-
-        cutoff = datetime.now(UTC) - timedelta(days=days)
-        cutoff_ts = cutoff.timestamp()
-
-        to_remove = [b for b in all_backups if b.stat().st_mtime < cutoff_ts]
-
-    elif keep_latest > 0:
-        if len(all_backups) > keep_latest:
-            to_remove = all_backups[keep_latest:]
-        else:
-            click.echo(
-                f"Only {len(all_backups)} backup(s), "
-                f"fewer than --keep-latest={keep_latest}. Nothing to remove."
-            )
-            return
-    else:
-        click.echo("Specify --older-than or --keep-latest for backup cleanup.")
-        return
-
-    if not to_remove:
-        click.echo("No backups matched for removal.")
-        return
-
-    click.echo(f"Will remove {len(to_remove)} backup file(s):")
-    for b in to_remove:
-        mb = b.stat().st_size / 1024 / 1024
-        click.echo(f"  - {b.name} ({mb:.1f} MB)")
-
-    if dry_run:
-        click.echo("\n[DRY RUN] No backups were removed.")
-        return
-
-    if not force:
-        if not click.confirm("\nProceed?"):
-            click.echo("Aborted.")
-            return
-
-    removed = 0
-    for b in to_remove:
-        b.unlink()
-        removed += 1
-
-    click.echo(f"\n✓ Removed {removed} backup file(s)")
-
-
 # ============================================================================
 # Graph Lifecycle Commands
 # ============================================================================
@@ -2942,7 +2791,7 @@ def graph_clear(force: bool) -> None:
     if not is_neo4j_running(profile.http_port):
         raise click.ClickException(
             f"Neo4j [{profile.name}] is not running on port {profile.http_port}.\n"
-            f"Start it: imas-codex serve neo4j start"
+            f"Start it: imas-codex graph start"
         )
 
     # Show current stats
@@ -2971,126 +2820,3 @@ def graph_clear(force: bool) -> None:
         click.echo(f"✓ Cleared {deleted} nodes from [{profile.name}]")
     except Exception as e:
         raise click.ClickException(f"Clear failed: {e}") from e
-
-
-@graph.command("backup")
-@click.option(
-    "--output",
-    "-o",
-    type=click.Path(),
-    help="Output dump file path (default: auto-named in backups dir)",
-)
-def graph_backup(output: str | None) -> None:
-    """Create a neo4j-admin dump backup of the graph.
-
-    Backup files are stored in ~/.local/share/imas-codex/backups/ by default.
-    Use 'graph restore' to reload a backup.
-    """
-    require_apptainer()
-
-    output_path = Path(output) if output else None
-
-    with Neo4jOperation("graph backup", require_stopped=True):
-        dump_path = backup_graph_dump(output=output_path)
-
-    size_mb = dump_path.stat().st_size / 1024 / 1024
-    click.echo(f"✓ Backup created: {dump_path} ({size_mb:.1f} MB)")
-
-    # List recent backups
-    from imas_codex.graph.profiles import BACKUPS_DIR
-
-    if BACKUPS_DIR.exists():
-        backups = sorted(BACKUPS_DIR.glob("*.dump"), reverse=True)[:5]
-        if len(backups) > 1:
-            click.echo(f"\nRecent backups ({len(backups)} shown):")
-            for b in backups:
-                mb = b.stat().st_size / 1024 / 1024
-                click.echo(f"  {b.name} ({mb:.1f} MB)")
-
-
-@graph.command("restore")
-@click.argument("backup_file", type=click.Path(exists=True), required=False)
-@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
-@click.option("--force", is_flag=True, help="Skip confirmation prompt")
-def graph_restore(
-    backup_file: str | None,
-    password: str | None,
-    force: bool,
-) -> None:
-    """Restore graph from a neo4j-admin dump backup.
-
-    If no BACKUP_FILE is provided, lists available backups and prompts
-    for selection.
-    """
-    from imas_codex.graph.profiles import BACKUPS_DIR, resolve_neo4j
-
-    require_apptainer()
-    profile = resolve_neo4j()
-    password = password or profile.password
-
-    if backup_file is None:
-        # List available backups
-        if not BACKUPS_DIR.exists():
-            raise click.ClickException(
-                "No backups directory found.\n"
-                "Create a backup first: imas-codex graph backup"
-            )
-
-        backups = sorted(BACKUPS_DIR.glob("*.dump"), reverse=True)
-        if not backups:
-            raise click.ClickException(
-                "No backup files found.\nCreate a backup first: imas-codex graph backup"
-            )
-
-        click.echo("Available backups:")
-        for i, b in enumerate(backups[:10], 1):
-            mb = b.stat().st_size / 1024 / 1024
-            click.echo(f"  {i}. {b.name} ({mb:.1f} MB)")
-
-        choice = click.prompt("Select backup number", type=int, default=1)
-        if choice < 1 or choice > len(backups[:10]):
-            raise click.ClickException("Invalid selection")
-
-        backup_path = backups[choice - 1]
-    else:
-        backup_path = Path(backup_file)
-
-    click.echo(f"Restore [{profile.name}] from: {backup_path.name}")
-
-    if not force:
-        if not click.confirm("This will REPLACE the current graph. Continue?"):
-            click.echo("Aborted.")
-            return
-
-    with Neo4jOperation(
-        "graph restore",
-        require_stopped=True,
-        reset_password_on_restart=True,
-        password=password,
-    ):
-        # Copy dump to expected location
-        dumps_dir = profile.data_dir / "dumps"
-        dumps_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy(backup_path, dumps_dir / "neo4j.dump")
-
-        cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{profile.data_dir}/data:/data",
-            "--bind",
-            f"{dumps_dir}:/dumps",
-            "--writable-tmpfs",
-            str(NEO4J_IMAGE),
-            "neo4j-admin",
-            "database",
-            "load",
-            "neo4j",
-            "--from-path=/dumps",
-            "--overwrite-destination=true",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise click.ClickException(f"Restore failed: {result.stderr}")
-
-    click.echo(f"✓ Restored [{profile.name}] from {backup_path.name}")

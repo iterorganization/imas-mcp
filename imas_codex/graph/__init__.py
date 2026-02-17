@@ -23,7 +23,6 @@ del _ensure_fresh
 from imas_codex.graph.client import GraphClient  # noqa: E402
 from imas_codex.graph.dirs import (  # noqa: E402
     GraphDirInfo,
-    compute_graph_hash,
     create_graph_dir,
     find_graph,
     get_active_graph,
@@ -72,7 +71,6 @@ __all__ = [
     "GraphClient",
     # Graph directory store
     "GraphDirInfo",
-    "compute_graph_hash",
     "create_graph_dir",
     "find_graph",
     "get_active_graph",
