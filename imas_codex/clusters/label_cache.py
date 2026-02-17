@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -387,6 +388,98 @@ class LabelCache:
 
         logger.info(f"Exported {len(result)} labels to {output_file}")
         return result
+
+    def commit_labels(self, output_file: Path | None = None) -> bool:
+        """Auto-commit labels.json if it has changes.
+
+        Args:
+            output_file: Path to the labels file. If None, uses self.json_file.
+
+        Returns:
+            True if a commit was made, False otherwise.
+        """
+        output_file = output_file or self.json_file
+
+        try:
+            # Find git repo root from the labels file location
+            repo_root = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                cwd=output_file.parent,
+                timeout=10,
+            )
+            if repo_root.returncode != 0:
+                logger.debug("Not in a git repository, skipping auto-commit")
+                return False
+
+            root = Path(repo_root.stdout.strip())
+            rel_path = output_file.relative_to(root)
+
+            # Check if file has changes (staged or unstaged)
+            diff_result = subprocess.run(
+                ["git", "diff", "--name-only", "--", str(rel_path)],
+                capture_output=True,
+                text=True,
+                cwd=root,
+                timeout=10,
+            )
+            # Also check untracked
+            ls_result = subprocess.run(
+                [
+                    "git",
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "--",
+                    str(rel_path),
+                ],
+                capture_output=True,
+                text=True,
+                cwd=root,
+                timeout=10,
+            )
+
+            has_changes = bool(diff_result.stdout.strip() or ls_result.stdout.strip())
+            if not has_changes:
+                logger.debug("labels.json unchanged, skipping commit")
+                return False
+
+            # Count labels for commit message
+            try:
+                with output_file.open() as f:
+                    label_count = len(json.load(f))
+            except (json.JSONDecodeError, OSError):
+                label_count = 0
+
+            # Stage and commit only this file
+            subprocess.run(
+                ["git", "add", str(rel_path)],
+                cwd=root,
+                timeout=10,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "commit",
+                    "-m",
+                    f"chore: update cached cluster labels ({label_count} labels)\n\n"
+                    f"Auto-committed by label export pipeline.\n"
+                    f"These LLM-generated labels are cached to avoid\n"
+                    f"regeneration cost on rebuild.",
+                ],
+                cwd=root,
+                timeout=30,
+                check=True,
+            )
+
+            logger.info(f"Auto-committed {rel_path} ({label_count} labels)")
+            return True
+
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+            logger.warning(f"Auto-commit of labels.json failed: {e}")
+            return False
 
     def _import_slim_labels(self, data: dict) -> int:
         """Import labels from slim or legacy format, additive only.

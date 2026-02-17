@@ -159,6 +159,8 @@ def build_clusters(
             label_cache = LabelCache()
             exported = label_cache.export_labels()
             click.echo(f"Exported {len(exported)} labels to definitions")
+            if label_cache.commit_labels():
+                click.echo("\u2713 Auto-committed labels.json")
 
         else:
             logger.info("Clusters file already exists at %s", output_file)

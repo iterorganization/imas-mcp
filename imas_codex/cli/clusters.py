@@ -216,6 +216,8 @@ def clusters_label(
             if export:
                 exported = label_cache.export_labels()
                 click.echo(f"Exported {len(exported)} labels to definitions")
+                if label_cache.commit_labels():
+                    click.echo("\u2713 Auto-committed labels.json")
             return
 
         # Generate labels with cost tracking
@@ -235,6 +237,8 @@ def clusters_label(
         if export:
             exported = label_cache.export_labels()
             click.echo(f"✓ Exported {len(exported)} labels to definitions")
+            if label_cache.commit_labels():
+                click.echo("✓ Auto-committed labels.json")
 
     except Exception as e:
         click.echo(f"Error labeling clusters: {e}", err=True)
