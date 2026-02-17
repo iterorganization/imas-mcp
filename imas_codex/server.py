@@ -68,7 +68,6 @@ class Server:
 
     # Configuration parameters
     ids_set: set[str] | None = None
-    use_rich: bool = True
 
     # Internal fields
     mcp: FastMCP = field(init=False, repr=False)
@@ -94,7 +93,6 @@ class Server:
         self.embeddings = Embeddings(
             document_store=self.tools.document_store,
             ids_set=self.ids_set,
-            use_rich=self.use_rich,
         )
 
         # Register components with MCP server

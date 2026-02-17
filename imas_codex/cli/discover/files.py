@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 
 import click
 from rich.console import Console
@@ -53,12 +52,6 @@ logger = logging.getLogger(__name__)
     is_flag=True,
     help="Score already discovered files (skip scanning)",
 )
-@click.option(
-    "--no-rich",
-    is_flag=True,
-    default=False,
-    help="Use logging output instead of rich progress display",
-)
 def files(
     facility: str,
     min_score: float,
@@ -68,7 +61,6 @@ def files(
     score_batch_size: int,
     scan_only: bool,
     score_only: bool,
-    no_rich: bool,
 ) -> None:
     """Discover source files in scored facility paths.
 
@@ -83,10 +75,11 @@ def files(
       imas-codex discover files tcv -c 2.0 --score-batch-size 100
       imas-codex discover files tcv -f equilibrium
     """
+    # Auto-detect rich output
+    from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.discovery.base.facility import get_facility
 
-    # Auto-detect rich output
-    use_rich = not no_rich and sys.stdout.isatty()
+    use_rich = should_use_rich()
 
     # Always configure file logging (DEBUG level to disk)
     from imas_codex.cli.logging import configure_cli_logging

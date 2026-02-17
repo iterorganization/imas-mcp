@@ -167,12 +167,11 @@ discover signals <facility> [OPTIONS]
 | `--scan-only` | Only run scan worker | False |
 | `--enrich-only` | Only run enrich worker | False |
 | `--force` | Re-detect epochs | False |
-| `--no-rich` | Disable progress display | False |
 | `--seed` | Run from epoch seeding | False |
 
 ## Expected Run Output
 
-For a fresh TCV run (`discover signals tcv --no-rich --seed`):
+For a fresh TCV run (`discover signals tcv --seed`):
 
 ```
 Phase 1: Epoch Detection

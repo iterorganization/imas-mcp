@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 import time
 
 import click
@@ -70,12 +69,6 @@ logger = logging.getLogger(__name__)
     help="Number of parallel check workers",
 )
 @click.option(
-    "--no-rich",
-    is_flag=True,
-    default=False,
-    help="Use logging output instead of rich progress display",
-)
-@click.option(
     "--time",
     "time_limit",
     type=int,
@@ -98,7 +91,6 @@ def signals(
     enrich_only: bool,
     enrich_workers: int,
     check_workers: int,
-    no_rich: bool,
     time_limit: int | None,
     reference_shot: int | None,
 ) -> None:
@@ -116,14 +108,15 @@ def signals(
       imas-codex discover signals jt60sa -s edas --scan-only
       imas-codex discover signals tcv -s tdi,mdsplus -f equilibrium
     """
+    # Auto-detect rich output
+    from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.signals.scanners.base import (
         get_scanners_for_facility,
         list_scanners,
     )
 
-    # Auto-detect rich output
-    use_rich = not no_rich and sys.stdout.isatty()
+    use_rich = should_use_rich()
 
     # Always configure file logging (DEBUG level to disk)
     from imas_codex.cli.logging import configure_cli_logging

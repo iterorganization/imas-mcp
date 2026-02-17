@@ -95,11 +95,6 @@ load_dotenv(override=True)
     metavar="KEEP_COUNT",
     help="Remove old cache files, keeping only KEEP_COUNT most recent",
 )
-@click.option(
-    "--no-rich",
-    is_flag=True,
-    help="Disable rich progress display and use plain logging",
-)
 def build_embeddings(
     verbose: bool,
     quiet: bool,
@@ -116,7 +111,6 @@ def build_embeddings(
     profile: bool,
     list_caches: bool,
     cleanup_caches: int | None,
-    no_rich: bool,
 ) -> int:
     """Build the document store and embeddings.
 
@@ -134,13 +128,11 @@ def build_embeddings(
         build-embeddings --model-name "all-mpnet-base-v2"  # Use different model
         build-embeddings --half-precision         # Use float16 to reduce memory
         build-embeddings --no-cache               # Don't cache embeddings
-        build-embeddings --no-normalize           # Disable embedding normalization
         build-embeddings --check-only             # Check if embeddings exist
         build-embeddings --profile                # Enable performance profiling
         build-embeddings --device cuda            # Force GPU usage
         build-embeddings --list-caches            # List all cache files
         build-embeddings --cleanup-caches 3       # Keep only 3 most recent caches
-        build-embeddings --no-rich                # Disable rich progress and use plain logging
     """
     # Set up logging level
     if quiet:
@@ -175,7 +167,6 @@ def build_embeddings(
             use_half_precision=half_precision,
             normalize_embeddings=not no_normalize,  # Default True, inverted flag
             ids_set=ids_set,
-            use_rich=not no_rich,  # Use rich display unless disabled
         )
         # Create encoder directly (no global registry)
         encoder = Encoder(config)
@@ -211,7 +202,6 @@ def build_embeddings(
         logger.info(f"  - Caching: {'disabled' if no_cache else 'enabled'}")
         logger.info(f"  - Half precision: {config.use_half_precision}")
         logger.info(f"  - Normalize embeddings: {config.normalize_embeddings}")
-        logger.info(f"  - Rich progress: {'disabled' if no_rich else 'enabled'}")
 
         # Build document store from JSON data
         logger.info("Building document store from JSON data...")

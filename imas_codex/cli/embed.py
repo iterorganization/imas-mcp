@@ -61,13 +61,11 @@ def embed():
     default=False,
     help="Show what would be embedded without making changes",
 )
-@click.option("--no-rich", is_flag=True, help="Disable rich output")
 def update(
     label: str,
     facility: str | None,
     batch_size: int,
     dry_run: bool,
-    no_rich: bool,
 ) -> None:
     """Update description embeddings for nodes.
 
@@ -96,7 +94,9 @@ def update(
             param_hint="'--label'",
         )
 
-    console = Console() if not no_rich else None
+    from imas_codex.cli.rich_output import should_use_rich
+
+    console = Console() if should_use_rich() else None
 
     # Build query based on label
     facility_filter = ""
@@ -157,7 +157,7 @@ def update(
 
         processed = 0
 
-        if console and not no_rich:
+        if console and should_use_rich():
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -208,8 +208,7 @@ def update(
 
 @embed.command("indexes")
 @click.option("--create", is_flag=True, help="Create missing indexes")
-@click.option("--no-rich", is_flag=True, help="Disable rich output")
-def indexes(create: bool, no_rich: bool) -> None:
+def indexes(create: bool) -> None:
     """Show or create vector indexes for description embeddings.
 
     \b
@@ -220,9 +219,10 @@ def indexes(create: bool, no_rich: bool) -> None:
         # Create missing indexes
         imas-codex embed indexes --create
     """
+    from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.graph.client import GraphClient
 
-    console = Console() if not no_rich else None
+    console = Console() if should_use_rich() else None
 
     with GraphClient() as gc:
         # Get existing vector indexes
@@ -265,15 +265,15 @@ def indexes(create: bool, no_rich: bool) -> None:
 
 
 @embed.command("status")
-@click.option("--no-rich", is_flag=True, help="Disable rich output")
-def status(no_rich: bool) -> None:
+def status() -> None:
     """Show embedding coverage across node types.
 
     Shows how many nodes have descriptions and how many have been embedded.
     """
+    from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.graph.client import GraphClient
 
-    console = Console() if not no_rich else None
+    console = Console() if should_use_rich() else None
 
     labels_with_desc_embedding = _get_embeddable_labels()
 

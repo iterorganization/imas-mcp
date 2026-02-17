@@ -299,7 +299,7 @@ class CustomBuildHook(BuildHookInterface):
         if not schemas_exist:
             self._trace("Building schemas...")
             json_transformer = DataDictionaryTransformer(
-                dd_accessor=dd_accessor, ids_set=None, use_rich=True
+                dd_accessor=dd_accessor, ids_set=None
             )
             json_transformer.build()
             self._trace("Schemas built")

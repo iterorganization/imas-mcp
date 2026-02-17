@@ -34,12 +34,9 @@ def _resolve_rich(use_rich: bool | None) -> bool:
     """Determine whether to use Rich display."""
     if use_rich is not None:
         return use_rich and RICH_AVAILABLE
-    try:
-        import sys
+    from imas_codex.cli.rich_output import should_use_rich
 
-        return RICH_AVAILABLE and sys.stdout.isatty() and sys.stderr.isatty()
-    except Exception:
-        return False
+    return RICH_AVAILABLE and should_use_rich()
 
 
 class ProgressMonitor:

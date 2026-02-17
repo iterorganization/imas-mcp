@@ -147,9 +147,13 @@ def format_duration(seconds: float) -> str:
 
 
 class ProgressReporter:
-    """Simple progress reporter that works with --no-rich flag."""
+    """Simple progress reporter with automatic rich detection."""
 
-    def __init__(self, use_rich: bool = True, total: int | None = None):
+    def __init__(self, use_rich: bool | None = None, total: int | None = None):
+        if use_rich is None:
+            from imas_codex.cli.rich_output import should_use_rich
+
+            use_rich = should_use_rich()
         self.use_rich = use_rich
         self.total = total
         self.current = 0

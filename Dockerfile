@@ -115,10 +115,10 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building schema data..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building schema data for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-schemas --ids-filter "${IDS_FILTER}" --no-rich; \
+    uv run --no-dev build-schemas --ids-filter "${IDS_FILTER}"; \
     else \
     echo "Building schema data for all IDS" && \
-    uv run --no-dev build-schemas --no-rich; \
+    uv run --no-dev build-schemas; \
     fi && \
     echo "✓ Schema data ready"
 
@@ -127,10 +127,10 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building path map..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building path map for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-path-map --ids-filter "${IDS_FILTER}" --no-rich; \
+    uv run --no-dev build-path-map --ids-filter "${IDS_FILTER}"; \
     else \
     echo "Building path map for all IDS" && \
-    uv run --no-dev build-path-map --no-rich; \
+    uv run --no-dev build-path-map; \
     fi && \
     echo "✓ Path map ready"
 
@@ -140,10 +140,10 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building embeddings..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building embeddings for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-embeddings --ids-filter "${IDS_FILTER}" --no-rich; \
+    uv run --no-dev build-embeddings --ids-filter "${IDS_FILTER}"; \
     else \
     echo "Building embeddings for all IDS" && \
-    uv run --no-dev build-embeddings --no-rich; \
+    uv run --no-dev build-embeddings; \
     fi && \
     echo "✓ Embeddings ready"
 
@@ -195,4 +195,4 @@ EXPOSE 8000
 
 ## Run the installed CLI directly from venv (avoids uv sync at runtime)
 ENTRYPOINT ["imas-codex"]
-CMD ["--no-rich", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["--host", "0.0.0.0", "--port", "8000"]

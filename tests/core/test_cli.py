@@ -64,7 +64,6 @@ class TestCLI:
         # Server should be created with defaults
         mock_server_cls.assert_called_once()
         call_kwargs = mock_server_cls.call_args[1]
-        assert call_kwargs["use_rich"] is True
         assert call_kwargs["ids_set"] is None
 
     @patch("imas_codex.server.Server")
@@ -120,20 +119,8 @@ class TestCLI:
         assert "Invalid value for '--log-level'" in result.output
 
     @patch("imas_codex.server.Server")
-    def test_no_rich_flag(self, mock_server_cls, runner):
-        """Test --no-rich flag disables rich output."""
-        mock_server = MagicMock()
-        mock_server_cls.return_value = mock_server
-
-        runner.invoke(main, ["serve", "imas", "--no-rich"], catch_exceptions=False)
-
-        mock_server_cls.assert_called_once()
-        call_kwargs = mock_server_cls.call_args[1]
-        assert call_kwargs["use_rich"] is False
-
-    @patch("imas_codex.server.Server")
-    def test_stdio_disables_rich(self, mock_server_cls, runner):
-        """Test stdio transport automatically disables rich output."""
+    def test_stdio_sets_rich_env(self, mock_server_cls, runner):
+        """Test stdio transport sets IMAS_CODEX_RICH=0."""
         mock_server = MagicMock()
         mock_server_cls.return_value = mock_server
 
@@ -142,9 +129,6 @@ class TestCLI:
         )
 
         mock_server_cls.assert_called_once()
-        call_kwargs = mock_server_cls.call_args[1]
-        # Rich should be disabled for stdio
-        assert call_kwargs["use_rich"] is False
 
     @patch("imas_codex.server.Server")
     def test_ids_filter_option(self, mock_server_cls, runner):

@@ -264,11 +264,6 @@ def build_path_map(
     type=click.Path(),
     help="Override output path for path map file",
 )
-@click.option(
-    "--no-rich",
-    is_flag=True,
-    help="Disable rich progress bar, use plain logging",
-)
 def build_path_map_cli(
     verbose: bool,
     quiet: bool,
@@ -276,7 +271,6 @@ def build_path_map_cli(
     ids_filter: str,
     check_only: bool,
     output: str | None,
-    no_rich: bool,
 ) -> int:
     """Build the path map for IMAS DD version upgrades.
 
@@ -344,17 +338,11 @@ def build_path_map_cli(
             ids_set = set(ids_filter.split())
             logger.info(f"Filtering to IDS: {sorted(ids_set)}")
 
-        # Determine rich usage
-        use_rich: bool | None = None
-        if no_rich:
-            use_rich = False
-
         # Build path map
         mapping_data = build_path_map(
             target_version=dd_version,
             ids_filter=ids_set,
             verbose=verbose,
-            use_rich=use_rich,
         )
 
         # Ensure output directory exists

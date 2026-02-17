@@ -29,7 +29,7 @@ atexit.register(_cleanup_threads)
 def run_server(port: int, transport: str = "streamable-http"):
     # Server now always manages asynchronous embedding initialization internally;
     # legacy initialize_embeddings flag removed.
-    server = Server(ids_set=STANDARD_TEST_IDS_SET, use_rich=False)
+    server = Server(ids_set=STANDARD_TEST_IDS_SET)
 
     def _run():  # type: ignore
         try:
@@ -83,7 +83,7 @@ def test_health_basic(transport, monkeypatch):
 
 def test_health_idempotent_wrapping(monkeypatch):
     port = 8902
-    server = Server(ids_set=STANDARD_TEST_IDS_SET, use_rich=False)
+    server = Server(ids_set=STANDARD_TEST_IDS_SET)
 
     # Ensure multiple calls to HealthEndpoint don't duplicate (implicit by running twice)
     def _run():  # mypy: ignore

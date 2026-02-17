@@ -46,7 +46,6 @@ class Embeddings:
 
     document_store: DocumentStore
     ids_set: set[str] | None = None
-    use_rich: bool = True
     model_name: str | None = None
     load_embeddings: bool = True  # if True, build document embeddings in __post_init__ (was defer_build False)
 
@@ -70,7 +69,6 @@ class Embeddings:
         config = EncoderConfig(
             model_name=self.model_name,
             ids_set=self.ids_set,
-            use_rich=self.use_rich,
             normalize_embeddings=self._normalize_embeddings,
             use_half_precision=self._use_half_precision,
         )

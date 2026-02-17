@@ -50,11 +50,6 @@ def serve() -> None:
     help="Set the logging level",
 )
 @click.option(
-    "--no-rich",
-    is_flag=True,
-    help="Disable rich progress output during server initialization",
-)
-@click.option(
     "--ids-filter",
     envvar="IDS_FILTER",
     type=str,
@@ -79,7 +74,6 @@ def serve_imas(
     host: str,
     port: int,
     log_level: str,
-    no_rich: bool,
     ids_filter: str,
     dd_version_opt: str | None,
 ) -> None:
@@ -140,16 +134,16 @@ def serve_imas(
         case _:
             logger.info(f"Using {transport} transport on {host}:{port}")
 
-    # For stdio transport, always disable rich output
-    use_rich = not no_rich and transport != "stdio"
-    if transport == "stdio" and not no_rich:
+    # For stdio transport, disable rich output automatically
+    if transport == "stdio":
+        os.environ["IMAS_CODEX_RICH"] = "0"
         logger.info(
             "Disabled rich output for stdio transport to prevent protocol interference"
         )
 
     from imas_codex.server import Server
 
-    server_instance = Server(use_rich=use_rich, ids_set=ids_set)
+    server_instance = Server(ids_set=ids_set)
 
     server_instance.run(
         transport=cast(Literal["stdio", "sse", "streamable-http"], transport),

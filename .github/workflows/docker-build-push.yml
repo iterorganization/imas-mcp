@@ -75,15 +75,15 @@ jobs:
             echo "✓ Schemas already built by hatch build hook"
           else
             echo "Building schemas explicitly..."
-            uv run build-schemas --no-rich
+            uv run build-schemas
           fi
           
           echo "Building path map..."
-          uv run build-path-map --no-rich
+          uv run build-path-map
           echo "✓ Path map built successfully"
           
           echo "Building embeddings..."
-          uv run build-embeddings --no-rich
+          uv run build-embeddings
           echo "✓ Embeddings built successfully"
           
           echo "Building clusters..."

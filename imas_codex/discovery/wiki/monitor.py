@@ -86,13 +86,19 @@ class WikiProgressMonitor:
     - Link: Creating graph relationships to TreeNodes/IMASPaths
     """
 
-    def __init__(self, use_rich: bool = True, logger: logging.Logger | None = None):
+    def __init__(
+        self, use_rich: bool | None = None, logger: logging.Logger | None = None
+    ):
         """Initialize progress monitor.
 
         Args:
-            use_rich: If True, use Rich console display (requires terminal)
+            use_rich: If True, use Rich console display (requires terminal). Auto-detects if None.
             logger: Optional logger for non-Rich mode
         """
+        if use_rich is None:
+            from imas_codex.cli.rich_output import should_use_rich
+
+            use_rich = should_use_rich()
         self.use_rich = use_rich
         self.logger = logger or logging.getLogger(__name__)
         self.stats = WikiIngestionStats()

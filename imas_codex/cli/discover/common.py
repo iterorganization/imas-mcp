@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import functools
 import logging
-import sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -91,16 +90,9 @@ def output_options[F: Callable[..., Any]](func: F) -> F:
     """Add output control options.
 
     Options:
-        --no-rich: Use logging output instead of rich progress display
         --verbose/-v: Show detailed progress
     """
 
-    @click.option(
-        "--no-rich",
-        is_flag=True,
-        default=False,
-        help="Use logging output instead of rich progress display",
-    )
     @click.option(
         "--verbose",
         "-v",
@@ -255,15 +247,16 @@ def get_facility_or_fail(facility: str) -> dict:
         ) from e
 
 
-def use_rich_output(no_rich: bool) -> bool:
-    """Determine whether to use rich output based on flag and TTY."""
-    return not no_rich and sys.stdout.isatty()
+def use_rich_output() -> bool:
+    """Determine whether to use rich output via auto-detection."""
+    from imas_codex.cli.rich_output import should_use_rich
+
+    return should_use_rich()
 
 
-def log_print(message: str, *, no_rich: bool = False) -> None:
-    """Print message, optionally stripping rich markup."""
-    if no_rich:
-        # Strip rich markup for plain logging
+def log_print(message: str) -> None:
+    """Print message, stripping rich markup when rich is disabled."""
+    if not use_rich_output():
         import re
 
         plain = re.sub(r"\[/?[^\]]+\]", "", message)
@@ -290,11 +283,9 @@ def format_duration(seconds: float) -> str:
 def print_summary_table(
     title: str,
     rows: list[tuple[str, str | int | float]],
-    *,
-    no_rich: bool = False,
 ) -> None:
     """Print a summary table with key-value pairs."""
-    if no_rich:
+    if not use_rich_output():
         click.echo(f"\n{title}")
         click.echo("-" * len(title))
         for key, value in rows:
@@ -314,7 +305,6 @@ def print_cost_summary(
     *,
     cost_limit: float | None = None,
     time_limit: int | None = None,
-    no_rich: bool = False,
 ) -> None:
     """Print cost and time summary with optional limit comparison."""
     rows = [
@@ -330,7 +320,7 @@ def print_cost_summary(
         pct = (time_seconds / (time_limit * 60) * 100) if time_limit > 0 else 0
         rows.append(("Time limit", f"{time_limit}m ({pct:.0f}% used)"))
 
-    print_summary_table("Resource Usage", rows, no_rich=no_rich)
+    print_summary_table("Resource Usage", rows)
 
 
 # =============================================================================
@@ -482,12 +472,11 @@ class CostTimeTracker:
             return f"time limit ({self.time_limit}m)"
         return None
 
-    def print_summary(self, *, no_rich: bool = False) -> None:
+    def print_summary(self) -> None:
         """Print cost and time summary."""
         print_cost_summary(
             self.cost,
             self.elapsed_seconds,
             cost_limit=self.cost_limit,
             time_limit=self.time_limit,
-            no_rich=no_rich,
         )

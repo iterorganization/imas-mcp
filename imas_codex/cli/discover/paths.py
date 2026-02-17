@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import sys
 
 import click
 from rich.console import Console
@@ -77,12 +76,6 @@ logger = logging.getLogger(__name__)
     help="LLM scoring only, no SSH scanning (offline, graph-only)",
 )
 @click.option(
-    "--no-rich",
-    is_flag=True,
-    default=False,
-    help="Use logging output instead of rich progress display",
-)
-@click.option(
     "--add-roots",
     is_flag=True,
     default=False,
@@ -112,7 +105,6 @@ def paths(
     score_workers: int,
     scan_only: bool,
     score_only: bool,
-    no_rich: bool,
     add_roots: bool,
     enrich_threshold: float | None,
     time_limit: int | None,
@@ -154,7 +146,6 @@ def paths(
         num_score_workers=score_workers,
         scan_only=scan_only,
         score_only=score_only,
-        no_rich=no_rich,
         root_filter=root_filter,
         add_roots=add_roots,
         enrich_threshold=enrich_threshold,
@@ -177,7 +168,6 @@ def _run_iterative_discovery(
     num_score_workers: int = 3,
     scan_only: bool = False,
     score_only: bool = False,
-    no_rich: bool = False,
     root_filter: list[str] | None = None,
     add_roots: bool = False,
     enrich_threshold: float | None = None,
@@ -199,8 +189,10 @@ def _run_iterative_discovery(
     if timeout_minutes is not None:
         deadline = start_time + (timeout_minutes * 60)
 
-    # Auto-detect if rich can run (TTY check) or use no_rich flag
-    use_rich = not no_rich and sys.stdout.isatty()
+    # Auto-detect if rich can run
+    from imas_codex.cli.rich_output import should_use_rich
+
+    use_rich = should_use_rich()
 
     # Always configure file logging (DEBUG level to disk)
     from imas_codex.cli.logging import configure_cli_logging

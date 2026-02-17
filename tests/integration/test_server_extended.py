@@ -70,11 +70,11 @@ class TestServerComponents:
         assert server.tools is not None
 
     @patch("imas_codex.server.Embeddings")
-    def test_server_use_rich_config(self, mock_embeddings):
-        """Server respects use_rich config."""
-        server = Server(use_rich=False)
+    def test_server_initializes(self, mock_embeddings):
+        """Server initializes without use_rich parameter."""
+        server = Server()
 
-        assert server.use_rich is False
+        assert server.tools is not None
 
 
 class TestServerBuildSchemas:

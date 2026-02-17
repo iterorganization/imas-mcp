@@ -58,16 +58,8 @@ def discover():
 @discover.command("status")
 @click.argument("facility")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-@click.option(
-    "--no-rich",
-    "no_rich",
-    is_flag=True,
-    help="Disable rich output (for LLM tools in non-TTY)",
-)
 @domain_option()
-def discover_status(
-    facility: str, as_json: bool, no_rich: bool, domain: str | None
-) -> None:
+def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
     """Show discovery statistics for a facility.
 
     By default shows status for all discovery domains.
@@ -88,7 +80,7 @@ def discover_status(
     from imas_codex.discovery.signals.parallel import get_data_discovery_stats
     from imas_codex.discovery.wiki.parallel import get_wiki_discovery_stats
 
-    use_rich = use_rich_output(no_rich)
+    use_rich = use_rich_output()
 
     try:
         if as_json:
@@ -185,7 +177,9 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
                 images = image_result[0]["cnt"] if image_result else 0
             if pages > 0 or artifacts > 0 or images > 0:
                 label = f"wiki pages + {chunks} chunks + {artifacts} artifacts + {images} images"
-                items_to_clear.append((label, pages or artifacts or images, clear_facility_wiki))
+                items_to_clear.append(
+                    (label, pages or artifacts or images, clear_facility_wiki)
+                )
 
         # Signals domain
         if domain is None or domain == "signals":

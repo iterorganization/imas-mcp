@@ -54,11 +54,17 @@ class EncoderConfig:
     # Filtering
     ids_set: set[str] | None = None
 
-    # Progress display
-    use_rich: bool = True
+    # Progress display — auto-detected from terminal when None
+    use_rich: bool | None = None
 
     def __post_init__(self) -> None:
         """Initialize configuration with environment variables if not explicitly set."""
+        # Auto-detect rich if not explicitly set
+        if self.use_rich is None:
+            from imas_codex.cli.rich_output import should_use_rich
+
+            self.use_rich = should_use_rich()
+
         # Load model name: explicit param > env var > fallback
         if self.model_name is None:
             self.model_name = os.getenv(
