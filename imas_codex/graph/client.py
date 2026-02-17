@@ -183,15 +183,54 @@ class GraphClient:
 
     @contextmanager
     def session(self) -> Iterator[Session]:
-        """Get a Neo4j session as a context manager."""
+        """Get a Neo4j session as a context manager.
+
+        On connection failure (dead tunnel), attempts to re-establish the
+        tunnel and recreate the driver before raising.
+        """
         if not self._driver:
             msg = "GraphClient is closed"
             raise RuntimeError(msg)
-        sess = self._driver.session()
+        try:
+            sess = self._driver.session()
+        except Exception:
+            if self._try_reconnect():
+                sess = self._driver.session()  # type: ignore[union-attr]
+            else:
+                raise
         try:
             yield sess
         finally:
             sess.close()
+
+    def _try_reconnect(self) -> bool:
+        """Attempt tunnel reconnection and driver recreation.
+
+        Returns True if the driver was successfully recreated.
+        """
+        from imas_codex.graph.profiles import invalidate_uri_cache, reconnect_tunnel
+
+        logger.warning("Graph connection failed, attempting tunnel reconnection...")
+        if not reconnect_tunnel():
+            logger.error("Tunnel reconnection failed")
+            return False
+
+        # Cache is invalidated by reconnect_tunnel; re-resolve URI
+        invalidate_uri_cache()
+        new_uri = get_graph_uri()
+        logger.info("Recreating Neo4j driver with URI: %s", new_uri)
+
+        if self._driver:
+            try:
+                self._driver.close()
+            except Exception:
+                pass
+
+        self._driver = GraphDatabase.driver(
+            new_uri, auth=(self.username, self.password)
+        )
+        self.uri = new_uri
+        return True
 
     # =========================================================================
     # Schema Management
@@ -712,7 +751,34 @@ class GraphClient:
             return [dict(record) for record in result]
 
     def query(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
-        """Execute a Cypher query and return results as dicts."""
-        with self.session() as sess:
-            result = sess.run(cypher, **params)
-            return [dict(record) for record in result]
+        """Execute a Cypher query and return results as dicts.
+
+        Retries once on connection failure after attempting tunnel
+        re-establishment.
+        """
+        try:
+            with self.session() as sess:
+                result = sess.run(cypher, **params)
+                return [dict(record) for record in result]
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            logger.warning("Query failed with connection error: %s", e)
+            if self._try_reconnect():
+                with self.session() as sess:
+                    result = sess.run(cypher, **params)
+                    return [dict(record) for record in result]
+            raise
+
+    @staticmethod
+    def _is_connection_error(exc: Exception) -> bool:
+        """Check if an exception indicates a dead connection/tunnel."""
+        from neo4j.exceptions import ServiceUnavailable
+
+        if isinstance(exc, ServiceUnavailable | ConnectionError | OSError):
+            return True
+        # Check nested cause
+        cause = getattr(exc, "__cause__", None)
+        if isinstance(cause, ConnectionError | OSError):
+            return True
+        return False

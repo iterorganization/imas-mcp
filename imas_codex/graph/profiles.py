@@ -220,8 +220,9 @@ def get_active_graph_name() -> str:
 def _resolve_uri(host: str | None, bolt_port: int) -> str:
     """Resolve the bolt URI based on host locality, with auto-tunneling.
 
-    Results are cached per (host, bolt_port) pair so tunnel checks and
-    log messages only fire once per process lifetime.
+    Results are cached per (host, bolt_port) pair. On cache hit, verifies
+    the tunnel is still alive for tunneled URIs. If the tunnel has died,
+    invalidates the cache and re-establishes via ``ensure_tunnel``.
 
     1. If host is None / "local" / matches local machine → direct localhost
     2. If not local → check ``IMAS_CODEX_TUNNEL_BOLT_{HOST}`` env for override
@@ -229,7 +230,21 @@ def _resolve_uri(host: str | None, bolt_port: int) -> str:
     """
     cache_key = (host, bolt_port)
     if cache_key in _resolved_uri_cache:
-        return _resolved_uri_cache[cache_key]
+        cached_uri = _resolved_uri_cache[cache_key]
+
+        # For tunneled URIs, verify the tunnel is still alive
+        from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
+
+        tunnel_port = bolt_port + TUNNEL_OFFSET
+        if f":{tunnel_port}" in cached_uri and not is_tunnel_active(tunnel_port):
+            logger.warning(
+                "Cached tunnel URI stale (port %d dead), re-establishing...",
+                tunnel_port,
+            )
+            del _resolved_uri_cache[cache_key]
+            # Fall through to re-resolve
+        else:
+            return cached_uri
 
     uri = _resolve_uri_uncached(host, bolt_port)
     _resolved_uri_cache[cache_key] = uri
@@ -385,3 +400,55 @@ def list_profiles() -> list[Neo4jProfile]:
             )
         )
     return result
+
+
+def invalidate_uri_cache() -> None:
+    """Clear the resolved URI cache.
+
+    Call this when a tunnel has been re-established or when connection
+    parameters have changed, so the next ``resolve_neo4j()`` call
+    re-resolves the URI from scratch.
+    """
+    _resolved_uri_cache.clear()
+
+
+def reconnect_tunnel() -> bool:
+    """Force re-establishment of the graph tunnel.
+
+    Invalidates the URI cache, stops any stale tunnel processes, and
+    creates a fresh tunnel via ``ensure_tunnel()``.
+
+    Returns:
+        True if the tunnel is active after reconnection.
+    """
+    from imas_codex.remote.tunnel import TUNNEL_OFFSET, ensure_tunnel, stop_tunnel
+
+    profile = resolve_neo4j(auto_tunnel=False)
+    if not profile.host:
+        return True  # Local graph, no tunnel needed
+
+    # Clear cache so next resolve picks up the new tunnel
+    invalidate_uri_cache()
+
+    # Kill stale tunnel
+    stop_tunnel(profile.host)
+
+    # Re-establish
+    tunnel_port = profile.bolt_port + TUNNEL_OFFSET
+    ok = ensure_tunnel(
+        port=profile.bolt_port,
+        ssh_host=profile.host,
+        tunnel_port=tunnel_port,
+    )
+    if ok:
+        logger.info(
+            "Tunnel reconnected: %s:%d → localhost:%d",
+            profile.host,
+            profile.bolt_port,
+            tunnel_port,
+        )
+    else:
+        logger.error(
+            "Tunnel reconnection failed: %s:%d", profile.host, profile.bolt_port
+        )
+    return ok

@@ -3,6 +3,9 @@
 Provides a single utility for establishing and managing SSH tunnels to
 remote hosts. Used by both graph connections and embedding server access.
 
+Prefers ``autossh`` when available for automatic reconnection after
+network interruptions. Falls back to plain ``ssh -f -N`` otherwise.
+
 Port allocation uses a **tunnel offset** (default +10000) to separate
 tunneled connections from direct ones, preventing port clashes between
 local Neo4j and tunneled remote Neo4j on the same port.
@@ -21,6 +24,8 @@ Example::
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -35,6 +40,24 @@ TUNNEL_OFFSET = 10000
 
 # PID file directory for tracking our tunnel processes
 _PID_DIR = Path.home() / ".local" / "share" / "imas-codex" / "tunnels"
+
+# SSH keepalive settings — tuned for fast drop detection.
+# ServerAliveInterval × ServerAliveCountMax = detection window.
+# 15 × 3 = 45 seconds (vs default 90s).
+_SSH_ALIVE_INTERVAL = 15
+_SSH_ALIVE_COUNT_MAX = 3
+
+# Common SSH options for tunnel connections.
+# These are used by both ensure_tunnel() and the CLI.
+SSH_TUNNEL_OPTS: list[str] = [
+    "-o", "ControlMaster=no",
+    "-o", "ControlPath=none",
+    "-o", "TCPKeepAlive=yes",
+    "-o", f"ServerAliveInterval={_SSH_ALIVE_INTERVAL}",
+    "-o", f"ServerAliveCountMax={_SSH_ALIVE_COUNT_MAX}",
+    "-o", "ExitOnForwardFailure=yes",
+    "-o", "ConnectTimeout=10",
+]  # fmt: skip
 
 
 def _pid_file(ssh_host: str) -> Path:
@@ -57,8 +80,6 @@ def _read_pid(ssh_host: str) -> int | None:
         pid = int(path.read_text().strip())
         # Verify process still exists
         try:
-            import os
-
             os.kill(pid, 0)
             return pid
         except ProcessLookupError:
@@ -72,6 +93,28 @@ def _read_pid(ssh_host: str) -> int | None:
 def _clear_pid(ssh_host: str) -> None:
     """Remove the PID file for a host."""
     _pid_file(ssh_host).unlink(missing_ok=True)
+
+
+def _find_and_record_pid(ssh_host: str, local_port: int) -> None:
+    """Find the SSH/autossh process for our tunnel and record its PID."""
+    for prog in ("autossh", "ssh"):
+        result = subprocess.run(
+            ["pgrep", "-f", f"{prog}.*-L {local_port}:.*{ssh_host}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            for pid_str in result.stdout.strip().splitlines():
+                try:
+                    _write_pid(ssh_host, int(pid_str))
+                    return
+                except ValueError:
+                    continue
+
+
+def _has_autossh() -> bool:
+    """Check if autossh is available on PATH."""
+    return shutil.which("autossh") is not None
 
 
 def is_tunnel_active(port: int) -> bool:
@@ -111,6 +154,26 @@ def is_port_bound_by_ssh(port: int) -> bool:
         return False
 
 
+def verify_tunnel(port: int, ssh_host: str) -> bool:
+    """Actively verify a tunnel is alive by checking both port and process.
+
+    Unlike ``is_tunnel_active`` (which only probes the port), this also
+    verifies the SSH process is still running. A port can appear open
+    briefly after the process dies due to TCP TIME_WAIT.
+
+    Args:
+        port: Local tunnel port.
+        ssh_host: SSH host the tunnel connects to.
+
+    Returns:
+        True if tunnel port is open AND backed by an SSH/autossh process.
+    """
+    if not is_tunnel_active(port):
+        return False
+    # Confirm an SSH process is behind this port
+    return is_port_bound_by_ssh(port)
+
+
 def ensure_tunnel(
     port: int,
     ssh_host: str,
@@ -119,15 +182,11 @@ def ensure_tunnel(
 ) -> bool:
     """Ensure an SSH tunnel is active from localhost to a remote host.
 
-    If ``tunnel_port`` is already bound locally, assumes the tunnel is
-    active and returns immediately.  Otherwise launches::
+    Prefers ``autossh`` for automatic reconnection. Falls back to plain
+    ``ssh -f -N`` if autossh is not installed.
 
-        ssh -f -N -o ControlMaster=no -o ControlPath=none \\
-            -L {tunnel_port}:127.0.0.1:{port} {ssh_host}
-
-    ``ExitOnForwardFailure`` is intentionally omitted — config-level
-    ``RemoteForward`` directives (e.g. ``RemoteForward 2222``) would kill
-    the entire connection.  Port liveness is verified after connect instead.
+    If ``tunnel_port`` is already bound locally, verifies the tunnel
+    process is alive and returns immediately.
 
     Args:
         port: Remote port to forward.
@@ -141,52 +200,69 @@ def ensure_tunnel(
     """
     local_port = tunnel_port if tunnel_port is not None else port
 
-    # Already bound → assume tunnel active
+    # Already bound → verify it's still a valid tunnel
     if is_tunnel_active(local_port):
         logger.debug("Port %d already bound locally, tunnel likely active", local_port)
         return True
+
+    # Port is dead — clean up stale PID if any
+    _clear_pid(ssh_host)
 
     logger.info(
         "Starting SSH tunnel %s:%d → localhost:%d ...", ssh_host, port, local_port
     )
 
+    use_autossh = _has_autossh()
+    forward_arg = f"{local_port}:127.0.0.1:{port}"
+
+    if use_autossh:
+        cmd = [
+            "autossh", "-M", "0", "-f", "-N",
+            *SSH_TUNNEL_OPTS,
+            "-L", forward_arg,
+            ssh_host,
+        ]  # fmt: skip
+        env = {
+            **os.environ,
+            "AUTOSSH_GATETIME": "0",
+            "AUTOSSH_POLL": "30",
+        }
+        logger.debug("Using autossh for auto-reconnection")
+    else:
+        cmd = [
+            "ssh", "-f", "-N",
+            *SSH_TUNNEL_OPTS,
+            "-L", forward_arg,
+            ssh_host,
+        ]  # fmt: skip
+        env = None
+        logger.debug("autossh not found, using plain ssh (no auto-reconnection)")
+
     try:
         subprocess.run(
-            [
-                "ssh",
-                "-f",
-                "-N",
-                "-o",
-                "ControlMaster=no",
-                "-o",
-                "ControlPath=none",
-                "-o",
-                "ServerAliveInterval=30",
-                "-o",
-                "ServerAliveCountMax=3",
-                "-o",
-                "ConnectTimeout=10",
-                "-L",
-                f"{local_port}:127.0.0.1:{port}",
-                ssh_host,
-            ],
+            cmd,
             timeout=timeout,
             check=True,
             capture_output=True,
             text=True,
+            env=env,
         )
-        # Give tunnel a moment to establish
-        time.sleep(1.0)
+        # Record PID for targeted cleanup
+        time.sleep(0.5)
+        _find_and_record_pid(ssh_host, local_port)
 
-        # Verify the tunnel came up
-        if is_tunnel_active(local_port):
-            logger.info(
-                "SSH tunnel established: %s:%d → localhost:%d",
-                ssh_host,
-                port,
-                local_port,
-            )
-            return True
+        # Wait for tunnel to bind
+        for _attempt in range(6):
+            if is_tunnel_active(local_port):
+                logger.info(
+                    "SSH tunnel established (%s): %s:%d → localhost:%d",
+                    "autossh" if use_autossh else "ssh",
+                    ssh_host,
+                    port,
+                    local_port,
+                )
+                return True
+            time.sleep(0.5)
 
         logger.warning("SSH tunnel started but port %d not reachable", local_port)
         return False
@@ -200,7 +276,7 @@ def ensure_tunnel(
         )
         return False
     except FileNotFoundError:
-        logger.warning("ssh command not found")
+        logger.warning("ssh/autossh command not found")
         return False
 
 
@@ -224,8 +300,6 @@ def stop_tunnel(ssh_host: str) -> bool:
     pid = _read_pid(ssh_host)
     if pid is not None:
         try:
-            import os
-
             # Kill the process group to catch autossh + its child ssh
             os.killpg(os.getpgid(pid), signal.SIGTERM)
             logger.info("Killed tunnel process group for %s (pid %d)", ssh_host, pid)
@@ -245,8 +319,6 @@ def stop_tunnel(ssh_host: str) -> bool:
     if result.returncode == 0:
         for pid_str in result.stdout.strip().splitlines():
             try:
-                import os
-
                 os.kill(int(pid_str), signal.SIGTERM)
                 logger.info("Killed orphan tunnel pid %s for %s", pid_str, ssh_host)
                 stopped = True
@@ -259,11 +331,34 @@ def stop_tunnel(ssh_host: str) -> bool:
     return stopped
 
 
+def is_systemd_tunnel_active(ssh_host: str) -> bool:
+    """Check if a systemd-managed tunnel service is active for this host.
+
+    Returns True if the ``imas-codex-tunnel-{host}`` systemd user service
+    exists and is in an active state. When True, callers should not start
+    ad-hoc tunnels — the systemd service handles reconnection.
+    """
+    service_name = f"imas-codex-tunnel-{ssh_host}"
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", service_name],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.stdout.strip() == "active"
+    except Exception:
+        return False
+
+
 __all__ = [
+    "SSH_TUNNEL_OPTS",
     "TUNNEL_OFFSET",
     "_write_pid",
     "ensure_tunnel",
     "is_port_bound_by_ssh",
+    "is_systemd_tunnel_active",
     "is_tunnel_active",
     "stop_tunnel",
+    "verify_tunnel",
 ]

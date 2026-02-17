@@ -5,10 +5,11 @@ from a single top-level command group.  Uses ``autossh`` when available for
 automatic reconnection, otherwise falls back to plain ``ssh -f -N``.
 
 All requested port forwards are batched into **one SSH connection** per host
-(single ProxyJump, single auth).  ``ExitOnForwardFailure`` is intentionally
-**not** used because config-level ``RemoteForward`` directives (e.g.
-``RemoteForward 2222``) would kill the entire connection on failure.
-Instead, we verify each local port is reachable after SSH connects.
+(single ProxyJump, single auth).
+
+Persistent tunnels are managed via systemd user services with autossh,
+providing automatic reconnection after network interruptions, VPN drops,
+or SSH keepalive timeouts.
 
 Usage::
 
@@ -33,28 +34,10 @@ import click
 
 
 def _record_tunnel_pid(host: str, first_local_port: int) -> None:
-    """Find and record the PID of the autossh/ssh process we just started.
+    """Find and record the PID of the autossh/ssh process we just started."""
+    from imas_codex.remote.tunnel import _find_and_record_pid
 
-    Searches for a process matching our specific local-port forward pattern
-    so that ``stop_tunnel`` can target exactly our process without affecting
-    other SSH sessions.
-    """
-    from imas_codex.remote.tunnel import _write_pid
-
-    # pgrep for autossh (or ssh) forwarding our first tunnel port
-    for prog in ("autossh", "ssh"):
-        result = subprocess.run(
-            ["pgrep", "-f", f"{prog}.*-L {first_local_port}:.*{host}"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            for pid_str in result.stdout.strip().splitlines():
-                try:
-                    _write_pid(host, int(pid_str))
-                    return
-                except ValueError:
-                    continue
+    _find_and_record_pid(host, first_local_port)
 
 
 def _resolve_host(host: str | None) -> str:
@@ -164,29 +147,23 @@ def _start_tunnels(
     for remote_port, local_port, _label in to_start:
         forward_args.extend(["-L", f"{local_port}:127.0.0.1:{remote_port}"])
 
-    # SSH options shared between autossh and plain ssh modes.
-    # We intentionally omit ExitOnForwardFailure — config-level
-    # RemoteForward directives (e.g. RemoteForward 2222) would kill the
-    # entire connection if they fail.  Port liveness is verified after
-    # connect instead.  ClearAllForwardings is also omitted because it
-    # clears our own -L flags (despite what the man page suggests).
-    ssh_opts = [
-        "-o", "ControlMaster=no",
-        "-o", "ControlPath=none",
-        "-o", "ServerAliveInterval=30",
-        "-o", "ServerAliveCountMax=3",
-    ]  # fmt: skip
+    # Use shared SSH options from tunnel module (keepalives, no ControlMaster)
+    from imas_codex.remote.tunnel import SSH_TUNNEL_OPTS
 
     if use_autossh:
-        cmd = ["autossh", "-M", "0", "-f", "-N", *ssh_opts, *forward_args, host]
-        # AUTOSSH_GATETIME=0: don't treat quick ssh exit as "connection failed"
-        # (autossh default 30 s would suppress retries on fast failures)
-        env = {**os.environ, "AUTOSSH_GATETIME": "0"}
+        cmd = [
+            "autossh", "-M", "0", "-f", "-N",
+            *SSH_TUNNEL_OPTS, *forward_args, host,
+        ]  # fmt: skip
+        env = {
+            **os.environ,
+            "AUTOSSH_GATETIME": "0",
+            "AUTOSSH_POLL": "30",
+        }
     else:
         cmd = [
             "ssh", "-f", "-N",
-            *ssh_opts,
-            "-o", "ConnectTimeout=10",
+            *SSH_TUNNEL_OPTS,
             *forward_args,
             host,
         ]  # fmt: skip
@@ -492,35 +469,64 @@ def tunnel_service(
         if not ports:
             raise click.ClickException("No services selected for tunneling.")
 
-        # Build -L flags for all ports
-        forward_args = []
-        for remote_port, local_port, _label in ports:
-            forward_args.extend(["-L", f"{local_port}:127.0.0.1:{remote_port}"])
-
         forwards_str = " ".join(
             f"-L {local}:127.0.0.1:{remote}" for remote, local, _ in ports
         )
 
+        # Log directory for autossh diagnostics
+        log_dir = Path.home() / ".local" / "share" / "imas-codex" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        autossh_log = log_dir / f"autossh-{target}.log"
+
+        # Resolve user SSH config for the service environment.
+        # systemd user services don't inherit shell profile env; SSH
+        # needs to find the user's config for ProxyJump, keys, etc.
+        ssh_config_opt = f'-o "UserKnownHostsFile={Path.home()}/.ssh/known_hosts"'
+
         service_content = f"""\
 [Unit]
 Description=IMAS Codex SSH tunnels to {target}
+Documentation=https://github.com/iterorganization/imas-codex
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
+
+# autossh environment:
+#   GATETIME=0:  don't treat quick ssh exit as failure (retry immediately)
+#   POLL=30:     check tunnel health every 30s
+#   LOGFILE:     write autossh diagnostics to rotating log
+#   PORT=0:      disable autossh's monitoring port (we use ServerAliveInterval)
 Environment="AUTOSSH_GATETIME=0"
-Environment="AUTOSSH_POLL=60"
+Environment="AUTOSSH_POLL=30"
+Environment="AUTOSSH_LOGFILE={autossh_log}"
+Environment="AUTOSSH_PORT=0"
+Environment="HOME={Path.home()}"
+
 ExecStart={autossh} -M 0 -N \\
     -o "ControlMaster=no" \\
     -o "ControlPath=none" \\
-    -o "ServerAliveInterval=30" \\
+    -o "TCPKeepAlive=yes" \\
+    -o "ServerAliveInterval=15" \\
     -o "ServerAliveCountMax=3" \\
+    -o "ExitOnForwardFailure=yes" \\
+    -o "ConnectTimeout=10" \\
+    {ssh_config_opt} \\
     {forwards_str} \\
     {target}
-ExecStop=/bin/kill $MAINPID
+
+# Restart policy: always restart with backoff
 Restart=always
-RestartSec=10
+RestartSec=5
+RestartMaxDelaySec=60
+
+# Watchdog: systemd kills the service if it hangs
+WatchdogSec=300
+
+# Resource limits
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Install]
 WantedBy=default.target
@@ -534,7 +540,24 @@ WantedBy=default.target
         click.echo("  Ports:")
         for remote_port, local_port, label in ports:
             click.echo(f"    {label}: localhost:{local_port} → {target}:{remote_port}")
+        click.echo(f"  Log: {autossh_log}")
         click.echo(f"  Start: imas-codex tunnel service start {target}")
+
+        # Check loginctl linger status
+        try:
+            result = subprocess.run(
+                ["loginctl", "show-user", os.environ.get("USER", ""), "-p", "Linger"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if "Linger=no" in result.stdout:
+                click.echo(
+                    "\n  ⚠ User linger is disabled. The service will stop on logout."
+                )
+                click.echo("  Enable persistence: sudo loginctl enable-linger $USER")
+        except Exception:
+            pass  # Best-effort linger check
 
     elif action == "uninstall":
         if not service_file.exists():

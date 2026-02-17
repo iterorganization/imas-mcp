@@ -46,11 +46,14 @@ from imas_codex.remote.tools import (
 
 # SSH tunnel management
 from imas_codex.remote.tunnel import (
+    SSH_TUNNEL_OPTS,
     TUNNEL_OFFSET,
     ensure_tunnel,
     is_port_bound_by_ssh,
+    is_systemd_tunnel_active,
     is_tunnel_active,
     stop_tunnel,
+    verify_tunnel,
 )
 
 __all__ = [
@@ -61,11 +64,14 @@ __all__ = [
     "run_command",
     "run_script_via_stdin",
     # SSH tunnel management
+    "SSH_TUNNEL_OPTS",
     "TUNNEL_OFFSET",
     "ensure_tunnel",
     "is_port_bound_by_ssh",
+    "is_systemd_tunnel_active",
     "is_tunnel_active",
     "stop_tunnel",
+    "verify_tunnel",
     # High-level tools
     "RemoteTool",
     "RemoteToolsConfig",
