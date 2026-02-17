@@ -141,6 +141,7 @@ class TDIScanner:
                 {"signals": batch_input, "timeout_per_group": 30},
                 ssh_host=ssh_host,
                 timeout=60 + len(batch_input),
+                setup_commands=config.get("setup_commands"),
             )
 
             response = json.loads(output.strip().split("\n")[-1])

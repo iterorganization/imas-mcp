@@ -2,7 +2,7 @@
 Fast CLI tools management for local and remote facilities.
 
 This module provides:
-- Tool configuration loading from fast_tools.yaml
+- Tool configuration loading from remote_tools.yaml
 - Architecture detection (local and remote)
 - Tool availability checking
 - Installation script generation
@@ -196,8 +196,8 @@ class ToolRelease:
 
 
 @dataclass
-class FastTool:
-    """Configuration for a fast CLI tool."""
+class RemoteTool:
+    """Configuration for a remote CLI tool."""
 
     key: str  # e.g., 'rg', 'fd'
     name: str  # e.g., 'ripgrep', 'fd'
@@ -275,40 +275,40 @@ class FastTool:
 
 
 @dataclass
-class FastToolsConfig:
-    """Complete fast tools configuration."""
+class RemoteToolsConfig:
+    """Complete remote tools configuration."""
 
     version: str
     install_dir: str
     architectures: dict[str, str]
-    required: dict[str, FastTool]
-    optional: dict[str, FastTool]
+    required: dict[str, RemoteTool]
+    optional: dict[str, RemoteTool]
 
     @property
-    def all_tools(self) -> dict[str, FastTool]:
+    def all_tools(self) -> dict[str, RemoteTool]:
         """Get all tools (required + optional)."""
         return {**self.required, **self.optional}
 
-    def get_tool(self, key: str) -> FastTool | None:
+    def get_tool(self, key: str) -> RemoteTool | None:
         """Get tool by key."""
         return self.all_tools.get(key)
 
 
 @lru_cache(maxsize=1)
-def load_fast_tools() -> FastToolsConfig:
-    """Load fast tools configuration from YAML.
+def load_remote_tools() -> RemoteToolsConfig:
+    """Load remote tools configuration from YAML.
 
     Returns:
-        FastToolsConfig with all tool definitions
+        RemoteToolsConfig with all tool definitions
     """
-    config_path = Path(__file__).parent.parent / "config" / "fast_tools.yaml"
+    config_path = Path(__file__).parent.parent / "config" / "remote_tools.yaml"
 
     with config_path.open() as f:
         data = yaml.safe_load(f)
 
-    def parse_tool(key: str, tool_data: dict[str, Any], required: bool) -> FastTool:
+    def parse_tool(key: str, tool_data: dict[str, Any], required: bool) -> RemoteTool:
         releases_data = tool_data.get("releases", {})
-        return FastTool(
+        return RemoteTool(
             key=key,
             name=tool_data.get("name", key),
             purpose=tool_data.get("purpose", ""),
@@ -343,7 +343,7 @@ def load_fast_tools() -> FastToolsConfig:
 
     install_config = data.get("install", {})
 
-    return FastToolsConfig(
+    return RemoteToolsConfig(
         version=data.get("version", "1.0"),
         install_dir=install_config.get("directory", "~/bin"),
         architectures=install_config.get("architectures", {}),
@@ -390,7 +390,7 @@ def check_tool(
     """
     import re
 
-    config = load_fast_tools()
+    config = load_remote_tools()
     tool = config.get_tool(tool_key)
 
     if not tool:
@@ -472,7 +472,7 @@ def check_all_tools(facility: str | None = None) -> dict[str, Any]:
     Returns:
         Dict with tool statuses and summary
     """
-    config = load_fast_tools()
+    config = load_remote_tools()
     results: dict[str, Any] = {
         "facility": facility or "local",
         "tools": {},
@@ -507,26 +507,30 @@ def check_all_tools(facility: str | None = None) -> dict[str, Any]:
     return results
 
 
-# Content for the env file that sets PATH for all shells (including non-interactive)
-IMAS_CODEX_ENV_CONTENT = """# IMAS Codex environment - sourced early for non-interactive shells
-# This ensures uv, rg, fd and other tools are available via SSH
+# Marker comment used to detect if PATH block is already in .bashrc/.profile
+_PATH_MARKER = "# imas-codex PATH setup"
+
+# The PATH block inserted into shell rc files
+_PATH_BLOCK = f"""{_PATH_MARKER}
 export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
 """
 
-# Line to add to .bashrc to source the env file
-BASHRC_SOURCE_LINE = "[ -f ~/.imas-codex.env ] && . ~/.imas-codex.env"
-
 
 def ensure_path(facility: str | None = None) -> str:
-    """Ensure ~/bin and ~/.local/bin are in PATH for all shells.
+    """Ensure ~/bin and ~/.local/bin are in PATH for all shell sessions.
 
-    Creates ~/.imas-codex.env with PATH setup and sources it from .bashrc
-    BEFORE the non-interactive shell return. This ensures tools like uv, rg, fd
-    are available for both interactive and non-interactive (SSH command) sessions.
+    Inserts a PATH export block directly into ~/.bashrc (near the top,
+    before any non-interactive guard) and ~/.profile. This ensures tools
+    installed by ``imas-codex tools install`` (uv, rg, fd, Python via uv)
+    are available for:
 
-    The traditional approach of appending to .bashrc doesn't work because most
-    systems have `[[ $- != *i* ]] && return` early in .bashrc which exits
-    before PATH is configured for non-interactive shells.
+    * Interactive login shells  (bash_profile → bashrc)
+    * Interactive non-login     (bashrc)
+    * Non-interactive SSH       (ssh host 'cmd' → bashrc, before guard)
+    * Login shells via sh/dash  (~/.profile)
+
+    Uses a marker comment for idempotency — safe to call repeatedly.
+    Also cleans up the legacy ~/.imas-codex.env approach if present.
 
     Args:
         facility: Facility ID (None = local)
@@ -536,72 +540,90 @@ def ensure_path(facility: str | None = None) -> str:
     """
     messages = []
 
-    # Step 1: Create/update ~/.imas-codex.env
-    check_env = 'cat ~/.imas-codex.env 2>/dev/null || echo "MISSING"'
-    env_content = run(check_env, facility=facility).strip()
+    # --- ~/.bashrc -----------------------------------------------------------
+    messages.append(_ensure_path_in_rc("~/.bashrc", facility))
 
-    if "MISSING" in env_content or "$HOME/bin" not in env_content:
-        # Create the env file
-        create_env = f"cat > ~/.imas-codex.env << 'EOF'\n{IMAS_CODEX_ENV_CONTENT}EOF"
-        run(create_env, facility=facility)
-        messages.append("Created ~/.imas-codex.env")
-    else:
-        messages.append("~/.imas-codex.env already exists")
+    # --- ~/.profile ----------------------------------------------------------
+    # Covers login shells that use sh/dash (and some systems where
+    # .bash_profile doesn't source .bashrc).
+    messages.append(_ensure_path_in_rc("~/.profile", facility))
 
-    # Step 2: Ensure .bashrc sources the env file (before non-interactive return)
-    check_source = f'grep -F "{BASHRC_SOURCE_LINE}" ~/.bashrc >/dev/null 2>&1 && echo "yes" || echo "no"'
-    already_sourced = run(check_source, facility=facility).strip() == "yes"
-
-    if already_sourced:
-        messages.append(".bashrc already sources env file")
-    else:
-        # Find if there's a non-interactive return and insert before it
-        # Otherwise append to the beginning after any initial comments
-        insert_script = """
-# Check for non-interactive return pattern
-if grep -n '\\[\\[ \\$- != \\*i\\*' ~/.bashrc >/dev/null 2>&1; then
-    # Get the line number of the return
-    LINE=$(grep -n '\\[\\[ \\$- != \\*i\\*' ~/.bashrc | head -1 | cut -d: -f1)
-    # Insert our source line before it
-    sed -i "${LINE}i\\\\# Source imas-codex environment (for non-interactive shells too)\\n[ -f ~/.imas-codex.env ] && . ~/.imas-codex.env\\n" ~/.bashrc
-    echo "inserted"
-elif grep -F '[ -f ~/.imas-codex.env ]' ~/.bashrc >/dev/null 2>&1; then
-    echo "exists"
-else
-    # No non-interactive return found, add near top (after shebang/initial comments)
-    # Use a temp file approach for portability
-    {
-        head -5 ~/.bashrc
-        echo ""
-        echo "# Source imas-codex environment (for non-interactive shells too)"
-        echo "[ -f ~/.imas-codex.env ] && . ~/.imas-codex.env"
-        echo ""
-        tail -n +6 ~/.bashrc
-    } > ~/.bashrc.tmp && mv ~/.bashrc.tmp ~/.bashrc
-    echo "prepended"
-fi
-"""
-        result = run(insert_script, facility=facility).strip()
-        if "inserted" in result:
-            messages.append(
-                "Added source line to .bashrc (before non-interactive return)"
-            )
-        elif "prepended" in result:
-            messages.append("Added source line to .bashrc (near top)")
-        elif "exists" in result:
-            messages.append(".bashrc already configured")
-        else:
-            messages.append(f"Modified .bashrc: {result}")
-
-    # Verify PATH is correct by checking in a fresh non-interactive context
-    # (This won't work immediately since we'd need to reconnect, but we can check the file)
-    verify = (
-        'grep -l "$HOME/bin" ~/.imas-codex.env >/dev/null && echo "ok" || echo "fail"'
-    )
-    if run(verify, facility=facility).strip() == "ok":
-        messages.append("PATH configuration verified")
+    # --- Clean up legacy .imas-codex.env approach ----------------------------
+    _cleanup_legacy_env(facility, messages)
 
     return "; ".join(messages)
+
+
+def _ensure_path_in_rc(rc_file: str, facility: str | None) -> str:
+    """Insert the PATH block into a shell rc file if not already present.
+
+    For ~/.bashrc, inserts before the non-interactive guard so that
+    ``ssh host 'command'`` inherits the PATH.
+
+    Args:
+        rc_file: Shell rc file path (e.g. "~/.bashrc")
+        facility: Facility ID (None = local)
+
+    Returns:
+        Human-readable status message
+    """
+    # Check if already present
+    check = f'grep -F "{_PATH_MARKER}" {rc_file} >/dev/null 2>&1 && echo "yes" || echo "no"'
+    if run(check, facility=facility, timeout=10).strip() == "yes":
+        return f"{rc_file} already configured"
+
+    # Check if the file exists at all
+    exists = f'test -f {rc_file} && echo "yes" || echo "no"'
+    if run(exists, facility=facility, timeout=5).strip() != "yes":
+        # Create it with just the PATH block
+        create = f"cat > {rc_file} << 'IMASEOF'\n{_PATH_BLOCK}IMASEOF"
+        run(create, facility=facility)
+        return f"Created {rc_file} with PATH"
+
+    # For .bashrc: insert before the non-interactive guard if present
+    if rc_file == "~/.bashrc":
+        insert_script = f"""
+# Look for the standard non-interactive guard patterns
+for pattern in '\\[\\[ \\$- != \\*i\\*' '\\[ -z "\\$PS1" \\]' 'case \\$-'; do
+    LINE=$(grep -n "$pattern" {rc_file} 2>/dev/null | head -1 | cut -d: -f1)
+    if [ -n "$LINE" ]; then
+        sed -i "${{LINE}}i\\\\{_PATH_MARKER}\\nexport PATH=\\"\\$HOME/bin:\\$HOME/.local/bin:\\$PATH\\"\\n" {rc_file}
+        echo "inserted:$LINE"
+        exit 0
+    fi
+done
+# No guard found — prepend after first comment block
+awk 'NR==1{{print; print ""; print "{_PATH_MARKER}"; print "export PATH=\\"$HOME/bin:$HOME/.local/bin:$PATH\\""; print ""; next}}1' {rc_file} > {rc_file}.tmp && mv {rc_file}.tmp {rc_file}
+echo "prepended"
+"""
+        result = run(insert_script, facility=facility).strip()
+        if result.startswith("inserted"):
+            return f"{rc_file} PATH inserted before guard (line {result.split(':')[1]})"
+        return f"{rc_file} PATH prepended"
+
+    # For .profile and others: just append
+    append = f'echo "" >> {rc_file} && echo "{_PATH_MARKER}" >> {rc_file} && echo \'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"\' >> {rc_file}'
+    run(append, facility=facility)
+    return f"{rc_file} PATH appended"
+
+
+def _cleanup_legacy_env(facility: str | None, messages: list[str]) -> None:
+    """Remove the old ~/.imas-codex.env indirection if present."""
+    # Remove source line from .bashrc
+    check = 'grep -F "imas-codex.env" ~/.bashrc >/dev/null 2>&1 && echo "yes" || echo "no"'
+    if run(check, facility=facility, timeout=5).strip() == "yes":
+        # Remove the source line and its preceding comment
+        run(
+            "sed -i '/# Source imas-codex environment/d; /imas-codex\\.env/d' ~/.bashrc",
+            facility=facility,
+        )
+        messages.append("Removed legacy .imas-codex.env source from .bashrc")
+
+    # Remove the env file itself
+    check_file = 'test -f ~/.imas-codex.env && echo "yes" || echo "no"'
+    if run(check_file, facility=facility, timeout=5).strip() == "yes":
+        run("rm -f ~/.imas-codex.env", facility=facility)
+        messages.append("Removed ~/.imas-codex.env")
 
 
 def check_internet_access(facility: str | None = None, timeout: int = 5) -> bool:
@@ -669,7 +691,7 @@ def _scp_to_remote(local_path: Path, remote_path: str, facility: str) -> None:
 
 
 def install_tool_via_scp(
-    tool: "FastTool",
+    tool: "RemoteTool",
     arch: str,
     facility: str,
 ) -> dict[str, Any]:
@@ -680,7 +702,7 @@ def install_tool_via_scp(
     and cleans up local temp files.
 
     Args:
-        tool: FastTool configuration
+        tool: RemoteTool configuration
         arch: Target architecture (x86_64 or aarch64)
         facility: Remote facility ID
 
@@ -794,7 +816,7 @@ def install_tool(
     Returns:
         Dict with success status and details
     """
-    config = load_fast_tools()
+    config = load_remote_tools()
     tool = config.get_tool(tool_key)
 
     if not tool:
@@ -958,7 +980,7 @@ def install_all_tools(
     Returns:
         Dict mapping tool_key -> installation result dict
     """
-    config = load_fast_tools()
+    config = load_remote_tools()
     results: dict[str, Any] = {}
 
     tools_to_install = config.required if required_only else config.all_tools
@@ -978,7 +1000,7 @@ def check_outdated_tools(
     """Find tools that are installed but older than the configured version.
 
     Compares the installed version of each tool against the version
-    specified in fast_tools.yaml. System-only tools are skipped.
+    specified in remote_tools.yaml. System-only tools are skipped.
 
     Args:
         facility: Facility ID (None = local)
@@ -986,7 +1008,7 @@ def check_outdated_tools(
     Returns:
         List of dicts with tool key, installed version, configured version
     """
-    config = load_fast_tools()
+    config = load_remote_tools()
     outdated = []
 
     for key, tool in config.all_tools.items():

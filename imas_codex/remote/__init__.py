@@ -30,8 +30,8 @@ from imas_codex.remote.executor import (
 
 # High-level facility-aware tools
 from imas_codex.remote.tools import (
-    FastTool,
-    FastToolsConfig,
+    RemoteTool,
+    RemoteToolsConfig,
     check_all_tools,
     check_tool,
     detect_architecture,
@@ -39,7 +39,7 @@ from imas_codex.remote.tools import (
     install_all_tools,
     install_tool,
     is_local_facility,
-    load_fast_tools,
+    load_remote_tools,
     run,
     run_script,
 )
@@ -67,8 +67,8 @@ __all__ = [
     "is_tunnel_active",
     "stop_tunnel",
     # High-level tools
-    "FastTool",
-    "FastToolsConfig",
+    "RemoteTool",
+    "RemoteToolsConfig",
     "check_all_tools",
     "check_tool",
     "detect_architecture",
@@ -76,7 +76,7 @@ __all__ = [
     "install_all_tools",
     "install_tool",
     "is_local_facility",
-    "load_fast_tools",
+    "load_remote_tools",
     "run",
     "run_script",
 ]

@@ -350,7 +350,7 @@ uv run imas-codex release v4.0.0 -m 'Release message'
 
 ## Fast Tools
 
-Prefer these Rust-based CLI tools over standard Unix commands. Defined in `imas_codex/config/fast_tools.yaml`.
+Prefer these Rust-based CLI tools over standard Unix commands. Defined in `imas_codex/config/remote_tools.yaml`.
 
 | Tool | Purpose | Use Instead Of |
 |------|---------|----------------|

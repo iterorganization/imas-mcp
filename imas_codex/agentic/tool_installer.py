@@ -28,7 +28,7 @@ from imas_codex.remote.tools import (
     ensure_path,
     install_all_tools,
     install_tool,
-    load_fast_tools,
+    load_remote_tools,
     run,
 )
 from imas_codex.settings import get_model
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 TOOL_INSTALLER_SYSTEM_PROMPT = """You are a tool installation agent for fusion facility exploration.
 
 Your job is to ensure fast CLI tools (rg, fd, tokei, scc, etc.) are available on target systems.
-These tools are defined in imas_codex/config/fast_tools.yaml.
+These tools are defined in imas_codex/config/remote_tools.yaml.
 
 ## Workflow
 
@@ -191,15 +191,15 @@ def _create_tool_installer_tools(facility: str | None = None) -> list[Tool]:
             return run(cmd, facility=facility)
 
     class ListAvailableToolsTool(Tool):
-        """List all tools defined in fast_tools.yaml."""
+        """List all tools defined in remote_tools.yaml."""
 
         name = "list_available_tools"
-        description = "List all tools defined in fast_tools.yaml. Returns dict with required and optional tool definitions."
+        description = "List all tools defined in remote_tools.yaml. Returns dict with required and optional tool definitions."
         inputs = {}
         output_type = "object"
 
         def forward(self) -> dict:
-            config = load_fast_tools()
+            config = load_remote_tools()
             return {
                 "required": {
                     k: {"name": v.name, "purpose": v.purpose, "binary": v.binary}

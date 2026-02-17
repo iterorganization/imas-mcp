@@ -100,7 +100,6 @@ class DataDiscoveryState:
     # Control
     stop_requested: bool = False
     enrich_only: bool = False  # When True, discover/check workers not started
-    scan_complete: bool = False  # Set True when scan_worker finishes all scanners
     discover_idle_count: int = 0
     enrich_idle_count: int = 0
     check_idle_count: int = 0
@@ -137,9 +136,7 @@ class DataDiscoveryState:
         limit_done = self.budget_exhausted or self.signal_limit_reached
 
         # LLM workers: idle OR limit-stopped counts as "done"
-        # But enrichment can't be "idle-done" until scan is actually complete,
-        # otherwise workers idle during the scan phase and get killed early.
-        enrich_done = limit_done or (self.scan_complete and self.enrich_idle_count >= 3)
+        enrich_done = self.enrich_idle_count >= 3 or limit_done
 
         all_idle = (
             self.discover_idle_count >= 3 and enrich_done and self.check_idle_count >= 3
@@ -190,10 +187,8 @@ class DataDiscoveryState:
         if self.deadline_expired:
             return True
         if self.check_idle_count >= 3:
-            # Only stop if scan is done AND enriching is done AND no pending validation work
-            enriching_done = (
-                self.scan_complete and self.enrich_idle_count >= 3
-            ) or self.budget_exhausted
+            # Only stop if enriching is done AND no pending validation work
+            enriching_done = self.enrich_idle_count >= 3 or self.budget_exhausted
             if enriching_done and not has_pending_check_work(self.facility):
                 return True
         return False
@@ -287,21 +282,11 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
         return {}
 
 
-def reset_transient_signals(
-    facility: str,
-    silent: bool = False,
-    force: bool = False,
-) -> dict[str, int]:
+def reset_transient_signals(facility: str, silent: bool = False) -> dict[str, int]:
     """Reset orphaned signals from previous runs.
 
-    Clears claimed_at for signals that have been claimed too long.
+    Clears claimed_at for any signal that's been claimed too long.
     Delegates to the common claims module for the actual reset.
-
-    Args:
-        facility: Facility ID
-        silent: Suppress logging
-        force: Clear ALL claims regardless of age (use at startup).
-            When False, only clears claims older than CLAIM_TIMEOUT_SECONDS.
     """
     from imas_codex.discovery.base.claims import reset_stale_claims
 
@@ -309,7 +294,7 @@ def reset_transient_signals(
         released = reset_stale_claims(
             "FacilitySignal",
             facility,
-            timeout_seconds=0 if force else CLAIM_TIMEOUT_SECONDS,
+            timeout_seconds=CLAIM_TIMEOUT_SECONDS,
             silent=silent,
         )
         return {"released": released}
@@ -1150,124 +1135,6 @@ def ingest_discovered_signals(signals: list[dict]) -> int:
         return 0
 
 
-def _link_tdi_to_mdsplus(facility: str) -> int:
-    """Link TDI signals to their backing MDSplus tree signals.
-
-    TDI functions are an abstraction layer on top of MDSplus. Each TDI
-    quantity (e.g., tcv_eq("PSI")) resolves to a physical MDSplus path
-    (e.g., \\RESULTS::LIUQE:PSI). This function creates cross-references
-    between the two discovery layers:
-
-    1. Sets ``node_path`` on TDI signals when a matching MDSplus signal exists
-    2. Sets ``tdi_function`` on MDSplus signals when a TDI accessor wraps them
-
-    Matching is by name: TDI ``tdi_quantity`` (e.g., "PSI") ↔ MDSplus node
-    name (extracted from signal id). Case-insensitive.
-
-    Returns:
-        Number of relationships created.
-    """
-    with GraphClient() as gc:
-        # Find TDI signals that have tdi_quantity set
-        tdi_signals = gc.query(
-            """
-            MATCH (s:FacilitySignal {facility_id: $facility})
-            WHERE s.discovery_source = 'tdi_introspection'
-              AND s.tdi_quantity IS NOT NULL
-            RETURN s.id AS id, s.tdi_quantity AS quantity,
-                   s.tdi_function AS tdi_func
-            """,
-            facility=facility,
-        )
-
-        if not tdi_signals:
-            logger.debug("No TDI signals found for %s, skipping linking", facility)
-            return 0
-
-        # Build lookup: uppercase quantity name → list of TDI signal ids
-        tdi_by_quantity: dict[str, list[dict]] = {}
-        for ts in tdi_signals:
-            key = ts["quantity"].upper()
-            tdi_by_quantity.setdefault(key, []).append(ts)
-
-        # Match TDI quantities to MDSplus signals by node path leaf name
-        # MDSplus node_path like \RESULTS::LIUQE:PSI → leaf name PSI
-        # Extract leaf name from node_path using Cypher string functions
-        quantity_list = list(tdi_by_quantity.keys())
-
-        # Use Cypher UNWIND for efficient batch matching
-        # Split node_path on : and . to get leaf name, compare to TDI quantity
-        result = gc.query(
-            """
-            UNWIND $quantities AS qty
-            MATCH (mds:FacilitySignal {facility_id: $facility})
-            WHERE mds.discovery_source = 'tree_traversal'
-              AND mds.node_path IS NOT NULL
-            WITH qty, mds,
-                 split(split(mds.node_path, ':')[-1], '.')[0] AS leaf_name
-            WHERE toUpper(leaf_name) = qty
-            WITH qty, mds
-            ORDER BY size(mds.id) ASC
-            WITH qty, collect(mds)[0] AS best_match
-            WHERE best_match IS NOT NULL
-            RETURN qty, best_match.id AS mds_id, best_match.node_path AS node_path
-            """,
-            facility=facility,
-            quantities=quantity_list,
-        )
-
-        if not result:
-            logger.debug("No TDI→MDSplus matches for %s", facility)
-            return 0
-
-        # Build updates: set node_path on TDI signals, tdi_function on MDSplus signals
-        tdi_updates = []
-        mds_updates = []
-        for match in result:
-            qty = match["qty"]
-            mds_id = match["mds_id"]
-            node_path = match.get("node_path", "")
-
-            for ts in tdi_by_quantity.get(qty, []):
-                if node_path:
-                    tdi_updates.append({"id": ts["id"], "node_path": node_path})
-                if ts.get("tdi_func"):
-                    mds_updates.append({"id": mds_id, "tdi_function": ts["tdi_func"]})
-
-        # Apply TDI signal updates (add node_path from MDSplus)
-        if tdi_updates:
-            gc.query(
-                """
-                UNWIND $updates AS u
-                MATCH (s:FacilitySignal {id: u.id})
-                SET s.node_path = u.node_path
-                """,
-                updates=tdi_updates,
-            )
-
-        # Apply MDSplus signal updates (add tdi_function reference)
-        if mds_updates:
-            gc.query(
-                """
-                UNWIND $updates AS u
-                MATCH (s:FacilitySignal {id: u.id})
-                SET s.tdi_function = u.tdi_function
-                """,
-                updates=mds_updates,
-            )
-
-        linked = len(result)
-        logger.info(
-            "TDI→MDSplus linking for %s: %d matches, "
-            "%d TDI paths set, %d MDSplus TDI refs set",
-            facility,
-            linked,
-            len(tdi_updates),
-            len(mds_updates),
-        )
-        return linked
-
-
 # =============================================================================
 # Async Workers
 # =============================================================================
@@ -1407,23 +1274,7 @@ async def scan_worker(
                     state.discover_stats,
                 )
 
-    # Link TDI signals to MDSplus signals by matching quantity names
-    # TDI is an abstraction layer on top of MDSplus — the graph should reflect this
-    if "tdi" in state.scanner_types and "mdsplus" in state.scanner_types:
-        try:
-            linked = _link_tdi_to_mdsplus(state.facility)
-            if linked > 0:
-                logger.info("Linked %d TDI signals to MDSplus backing nodes", linked)
-                if on_progress:
-                    on_progress(
-                        f"linked {linked} TDI→MDSplus signals",
-                        state.discover_stats,
-                    )
-        except Exception as e:
-            logger.warning("TDI→MDSplus linking failed: %s", e)
-
     # Mark scan as complete
-    state.scan_complete = True
     state.discover_idle_count = 100
 
     if on_progress:
@@ -1838,6 +1689,7 @@ async def check_worker(
                         accessor=s.get("accessor", ""),
                         physics_domain=s.get("physics_domain", "general"),
                         data_access=s.get("data_access", ""),
+                        tree_name=s.get("tree_name"),
                     )
                     for s in group
                 ]
@@ -2106,11 +1958,8 @@ async def run_parallel_data_discovery(
         config = get_facility(facility)
         ssh_host = config.get("ssh_host", facility)
 
-    # Reset ALL orphaned claims from previous runs.
-    # At startup, no other process should have active claims for this facility,
-    # so force-clear everything regardless of claim age.  This prevents stale
-    # claims from a recently-crashed run from blocking the new one.
-    reset_transient_signals(facility, force=True)
+    # Reset orphaned claims
+    reset_transient_signals(facility)
 
     # Ensure Facility node exists so AT_FACILITY relationships don't fail
     from imas_codex.graph import GraphClient
@@ -2225,7 +2074,6 @@ async def run_parallel_data_discovery(
         # Set idle counts high so should_stop() doesn't block on them.
         state.discover_idle_count = 10
         state.check_idle_count = 10
-        state.scan_complete = True
 
     # In enrich_only mode, scan worker was already skipped above.
     # Set discover_idle_count for the general case too.

@@ -1,6 +1,6 @@
-# Fast CLI Tools Configuration
+# Remote Tools Configuration
 #
-# Canonical list of fast Rust-based CLI tools for code exploration.
+# Canonical list of CLI tools for code exploration on remote facilities.
 # Used by both local development (AGENTS.md) and remote facilities (explore.md).
 #
 # Tools are installed to ~/bin/ and accessed via:

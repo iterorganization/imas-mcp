@@ -59,7 +59,7 @@ _DATA_PURPOSES = {
 }
 
 
-def grounded_score(
+def combined_score(
     scores: dict[str, float],
     input_data: dict[str, Any],
     purpose: ResourcePurpose,
@@ -94,7 +94,7 @@ class DirectoryScorer:
     Implements:
     1. Batch prompt construction from DirStats
     2. LLM evidence collection via LiteLLM/OpenRouter
-    3. Deterministic grounded scoring from evidence
+    3. Deterministic combined scoring from LLM dimension scores
     4. Frontier expansion logic
 
     Args:
@@ -401,7 +401,7 @@ class DirectoryScorer:
         """Map parsed ScoreBatch to ScoredDirectory objects.
 
         JSON parsing and sanitization are handled by call_llm_structured().
-        This method applies grounded scoring, expansion logic, and enrichment
+        This method applies combined scoring, expansion logic, and enrichment
         decisions to the already-validated Pydantic model.
 
         Args:
@@ -483,7 +483,7 @@ class DirectoryScorer:
             )
 
             # Compute grounded score from per-purpose scores and input data
-            combined = grounded_score(scores, directories[i], purpose)
+            combined = combined_score(scores, directories[i], purpose)
 
             # Extract git metadata for penalty and expansion decisions
             has_git = directories[i].get("has_git", False)
@@ -691,7 +691,7 @@ class DirectoryScorer:
             )
 
             # Compute grounded score from input data
-            combined = grounded_score(scores, directories[i], purpose)
+            combined = combined_score(scores, directories[i], purpose)
 
             # Git metadata for expansion/enrichment decisions (no score penalty)
             has_git = directories[i].get("has_git", False)

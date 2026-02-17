@@ -52,7 +52,7 @@ python("result = setup_tools('tcv'); print(result.summary)")
 python("print(quick_setup('tcv', required_only=True))")
 ```
 
-Tool definitions are in [`imas_codex/config/fast_tools.yaml`](../imas_codex/config/fast_tools.yaml).
+Tool definitions are in [`imas_codex/config/remote_tools.yaml`](../imas_codex/config/remote_tools.yaml).
 
 ## Execution Patterns
 
@@ -113,7 +113,7 @@ add_to_graph("FacilityPath", [
 
 ## Fast CLI Tools
 
-Tools are defined in [`imas_codex/config/fast_tools.yaml`](../imas_codex/config/fast_tools.yaml).
+Tools are defined in [`imas_codex/config/remote_tools.yaml`](../imas_codex/config/remote_tools.yaml).
 
 | Tool | Purpose | Fallback |
 |------|---------|----------|

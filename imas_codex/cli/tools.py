@@ -32,9 +32,9 @@ def tools() -> None:
 @tools.command("list")
 def tools_list() -> None:
     """List all available development tools."""
-    from imas_codex.remote.tools import load_fast_tools
+    from imas_codex.remote.tools import load_remote_tools
 
-    config = load_fast_tools()
+    config = load_remote_tools()
 
     table = Table(title="Available Development Tools")
     table.add_column("Name", style="cyan")
@@ -228,7 +228,7 @@ def tools_install(
         imas-codex tools install jt60sa --force      # Reinstall everything
     """
     from imas_codex.remote.python import DEFAULT_VENV_PATH, setup_python_env
-    from imas_codex.remote.tools import install_tool, load_fast_tools
+    from imas_codex.remote.tools import install_tool, load_remote_tools
 
     # Validate conflicting options
     if tools_only and python_only:
@@ -245,7 +245,7 @@ def tools_install(
 
     facility = None if target == "local" else target
     has_failures = False
-    config = load_fast_tools()
+    config = load_remote_tools()
 
     console.print(f"\n[bold]Installing on {target}...[/bold]\n")
 
@@ -469,7 +469,7 @@ def tools_update(
     """Update outdated tools on a target.
 
     Compares installed versions against configured versions in
-    fast_tools.yaml and upgrades any that are behind.
+    remote_tools.yaml and upgrades any that are behind.
 
     TARGET can be 'local' or a facility name (e.g., 'tcv', 'iter', 'jet').
 
@@ -485,11 +485,11 @@ def tools_update(
         check_outdated_tools,
         check_tool,
         install_tool,
-        load_fast_tools,
+        load_remote_tools,
     )
 
     facility = None if target == "local" else target
-    config = load_fast_tools()
+    config = load_remote_tools()
 
     console.print(f"\n[bold]Checking tools on {target}...[/bold]\n")
 

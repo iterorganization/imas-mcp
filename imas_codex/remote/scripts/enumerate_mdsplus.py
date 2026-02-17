@@ -12,7 +12,7 @@ Filters:
 - Deduplicates array channels (BPOL_003..BPOL_255 → single BPOL entry)
 
 Requirements:
-- Python 3.8+ (stdlib only except MDSplus)
+- Python 3.12+ (installed via ``imas-codex tools install``)
 - MDSplus Python bindings
 
 Usage:

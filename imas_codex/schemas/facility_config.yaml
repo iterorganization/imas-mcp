@@ -319,6 +319,26 @@ classes:
         description: Whether SSH tunnel is available as fallback
         range: boolean
 
+  DataSourceBase:
+    description: >-
+      Common fields shared by all data source configurations.
+      Provides environment setup for remote script execution.
+    class_uri: fc:DataSourceBase
+    mixin: true
+    attributes:
+      setup_commands:
+        description: >-
+          Shell commands to run before remote operations (e.g., module loads,
+          environment sourcing). Applied to all remote script invocations
+          for this data source. Example: ["source /etc/profile.d/modules.sh",
+          "module load python/3.9"].
+        multivalued: true
+      python_command:
+        description: >-
+          Python interpreter for remote script execution. Can be a bare
+          command name or full path. Default: "python3".
+          Example: "/common/software/micromamba/root/envs/python-3.12/bin/python3"
+
   DataSourcesConfig:
     description: >-
       Data source configuration for signal discovery. Specifies how to
@@ -351,6 +371,8 @@ classes:
       physics-level accessor functions over raw MDSplus tree paths.
       Facility-specific (e.g., TCV tcv_eq, tcv_get, tcv_ip).
     class_uri: fc:TDIConfig
+    mixins:
+      - DataSourceBase
     attributes:
       primary_path:
         description: Primary TDI directory path (e.g., /usr/local/CRPP/tdi/tcv)
@@ -374,6 +396,8 @@ classes:
       Controls which trees are scanned, how nodes are filtered,
       and what constitutes a physics-relevant signal.
     class_uri: fc:MDSplusConfig
+    mixins:
+      - DataSourceBase
     attributes:
       connection_tree:
         description: Default MDSplus tree for TDI context and data access
@@ -409,11 +433,6 @@ classes:
           Default is SIGNAL only. NUMERIC nodes are typically
           configuration parameters, AXIS nodes are time bases.
         multivalued: true
-      setup_commands:
-        description: >-
-          Shell commands to run before MDSplus operations (e.g., module loads).
-          Applied to all remote script invocations for this facility.
-        multivalued: true
 
   PPFConfig:
     description: >-
@@ -421,6 +440,8 @@ classes:
       PPF is organized as Owner/DDA/Dtype entries. Access via SAL REST API,
       MATLAB ppfget, IDL ppfget, or getdat CLI.
     class_uri: fc:PPFConfig
+    mixins:
+      - DataSourceBase
     attributes:
       sal_endpoint:
         description: SAL REST API endpoint URL
@@ -439,6 +460,8 @@ classes:
       EDAS wraps proprietary data formats with C/Fortran/Python APIs.
       Signal definitions are in C header files and Python wrapper code.
     class_uri: fc:EDASConfig
+    mixins:
+      - DataSourceBase
     attributes:
       api_path:
         description: Path to EDAS API source files
@@ -451,6 +474,8 @@ classes:
   HDF5Config:
     description: HDF5 file data source configuration
     class_uri: fc:HDF5Config
+    mixins:
+      - DataSourceBase
     attributes:
       paths:
         description: HDF5 file/directory paths to scan
@@ -461,6 +486,8 @@ classes:
       IMAS native data source configuration. Used at facilities with
       native IMAS backend support (ITER, JET post-migration, JT-60SA).
     class_uri: fc:IMASConfig
+    mixins:
+      - DataSourceBase
     attributes:
       backends:
         description: Available IMAS backends (e.g., mdsplus, hdf5, memory)

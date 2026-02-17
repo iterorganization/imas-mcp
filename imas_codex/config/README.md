@@ -22,12 +22,12 @@ config/
 │       ├── base.yaml           # Dimension weights
 │       ├── data_systems.yaml   # IMAS, MDSplus, etc.
 │       └── physics.yaml        # Physics domain patterns
-└── fast_tools.yaml              # Fast CLI tools configuration
+└── remote_tools.yaml              # Fast CLI tools configuration
 ```
 
 ## Fast CLI Tools
 
-Fast Rust-based tools for code exploration are defined in `fast_tools.yaml`.
+Fast Rust-based tools for code exploration are defined in `remote_tools.yaml`.
 
 ### CLI Commands
 

@@ -37,7 +37,7 @@ from imas_codex.discovery.paths.models import (
 )
 from imas_codex.discovery.paths.parallel import run_parallel_discovery
 from imas_codex.discovery.paths.progress import ParallelProgressDisplay
-from imas_codex.discovery.paths.scorer import DirectoryScorer, grounded_score
+from imas_codex.discovery.paths.scorer import DirectoryScorer, combined_score
 
 __all__ = [
     # Frontier management
@@ -61,7 +61,7 @@ __all__ = [
     "ScoreBatch",
     # Scoring
     "DirectoryScorer",
-    "grounded_score",
+    "combined_score",
     # Parallel discovery
     "run_parallel_discovery",
     # Progress

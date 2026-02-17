@@ -97,12 +97,14 @@ class MDSplusScanner:
 
         try:
             setup_cmds = config.get("setup_commands")
+            python_cmd = config.get("python_command", "python3")
             output = await asyncio.to_thread(
                 run_python_script,
                 "enumerate_mdsplus.py",
                 input_data,
                 ssh_host=ssh_host,
                 timeout=300,  # Trees can be large
+                python_command=python_cmd,
                 setup_commands=setup_cmds,
             )
 
@@ -258,6 +260,7 @@ class MDSplusScanner:
         ]
 
         setup_cmds = config.get("setup_commands")
+        python_cmd = config.get("python_command", "python3")
 
         try:
             output = await asyncio.to_thread(
@@ -266,6 +269,7 @@ class MDSplusScanner:
                 {"signals": batch_input, "timeout_per_group": 30},
                 ssh_host=ssh_host,
                 timeout=60 + len(batch_input),
+                python_command=python_cmd,
                 setup_commands=setup_cmds,
             )
 

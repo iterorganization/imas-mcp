@@ -26,6 +26,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# PATH prefix applied to all remote SSH commands so that tools installed
+# by ``imas-codex tools install`` (uv, rg, fd, python via uv) are found.
+# This is a safety net — the tools CLI also configures ~/.bashrc directly,
+# but explicit PATH ensures correctness even before that setup runs.
+_REMOTE_PATH_PREFIX = 'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"'
+
 
 # ============================================================================
 # SSH Connection Errors
@@ -810,13 +816,13 @@ def run_python_script(
         # Check SSH health once per host per session (prevents stale socket hangs)
         _ensure_ssh_healthy_once(ssh_host)
 
-        # Build remote command with optional setup commands
+        # Build remote command: PATH prefix + optional setup + python
         python_cmd = f"{python_command} -c '{runner}'"
+        parts = [_REMOTE_PATH_PREFIX]
         if setup_commands:
-            setup = " && ".join(setup_commands)
-            remote_cmd = f"{setup} && {python_cmd}"
-        else:
-            remote_cmd = python_cmd
+            parts.extend(setup_commands)
+        parts.append(python_cmd)
+        remote_cmd = " && ".join(parts)
 
         # SSH execution with JSON piped through
         result = subprocess.run(
@@ -911,14 +917,13 @@ async def async_run_python_script(
     else:
         # Check SSH health once per host per session (sync, cached)
         _ensure_ssh_healthy_once(ssh_host)
-        # Build remote command with optional setup commands
+        # Build remote command: PATH prefix + optional setup + python
         python_cmd = f"{python_command} -c '{runner}'"
+        parts = [_REMOTE_PATH_PREFIX]
         if setup_commands:
-            # Prepend setup commands (module loads, env setup) before Python
-            setup = " && ".join(setup_commands)
-            remote_cmd = f"{setup} && {python_cmd}"
-        else:
-            remote_cmd = python_cmd
+            parts.extend(setup_commands)
+        parts.append(python_cmd)
+        remote_cmd = " && ".join(parts)
         cmd = ["ssh", "-T", ssh_host, remote_cmd]
 
     proc = await asyncio.create_subprocess_exec(

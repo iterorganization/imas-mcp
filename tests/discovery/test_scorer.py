@@ -9,12 +9,12 @@ import pytest
 from imas_codex.discovery.paths.models import ResourcePurpose, ScoreBatch, ScoreResult
 from imas_codex.discovery.paths.scorer import (
     DirectoryScorer,
-    grounded_score,
+    combined_score,
 )
 
 
 class TestGroundedScore:
-    """Tests for the grounded_score() function."""
+    """Tests for the combined_score() function."""
 
     def test_max_of_dimensions(self):
         """Score is max of all dimension scores."""
@@ -30,7 +30,7 @@ class TestGroundedScore:
             "score_documentation": 0.0,
             "score_imas": 0.0,
         }
-        result = grounded_score(scores, {}, ResourcePurpose.analysis_code)
+        result = combined_score(scores, {}, ResourcePurpose.analysis_code)
         assert result == pytest.approx(0.8, abs=0.01)
 
     def test_container_with_zero_scores(self):
@@ -50,13 +50,13 @@ class TestGroundedScore:
             ],
             0.0,
         )
-        result = grounded_score(scores, {}, ResourcePurpose.container)
+        result = combined_score(scores, {}, ResourcePurpose.container)
         assert result == 0.0
 
     def test_suppressed_purpose_no_penalty(self):
         """System directories get no penalty — LLM scores them low via prompt."""
         scores = {"score_modeling_code": 0.5}
-        result = grounded_score(scores, {}, ResourcePurpose.system)
+        result = combined_score(scores, {}, ResourcePurpose.system)
         # No multiplier — score is just max(scores)
         assert result == pytest.approx(0.5, abs=0.01)
 
@@ -71,7 +71,7 @@ class TestGroundedScore:
             "has_makefile": True,
             "has_git": True,
         }
-        result = grounded_score(scores, input_data, ResourcePurpose.modeling_code)
+        result = combined_score(scores, input_data, ResourcePurpose.modeling_code)
         # No boosts — score is just max(0.95, 0.5) = 0.95
         assert result == pytest.approx(0.95, abs=0.01)
 
