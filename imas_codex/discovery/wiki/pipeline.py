@@ -943,9 +943,9 @@ class WikiIngestionPipeline:
                 facility_id=self.facility_id,
                 hash=page.content_hash,
                 chunk_count=len(nodes),
-                mdsplus_paths=page.mdsplus_paths,
-                imas_paths=page.imas_paths,
-                conventions=[c.get("name", "") for c in page.conventions],
+                mdsplus_paths=len(page.mdsplus_paths) if page.mdsplus_paths else 0,
+                imas_paths=len(page.imas_paths) if page.imas_paths else 0,
+                conventions=len(page.conventions) if page.conventions else 0,
             )
 
             # Batch persist chunks using UNWIND

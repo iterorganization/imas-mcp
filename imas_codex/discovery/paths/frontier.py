@@ -404,7 +404,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
                    p.has_readme AS has_readme, p.has_makefile AS has_makefile,
-                   p.has_git AS has_git, p.patterns_detected AS patterns_detected,
+                   p.has_git AS has_git, p.patterns_found AS patterns_found,
                    p.description AS description, p.child_names AS child_names
             ORDER BY p.depth ASC, p.path ASC
             LIMIT $limit
@@ -1649,10 +1649,10 @@ async def persist_scan_results(
             numeric_dir_ratio = stats.get("numeric_dir_ratio", 0)
             if numeric_dir_ratio > 0:
                 update_dict["numeric_dir_ratio"] = numeric_dir_ratio
-            # Store patterns detected
+            # Store patterns found
             patterns = stats.get("patterns_detected")
             if patterns:
-                update_dict["patterns_detected"] = patterns
+                update_dict["patterns_found"] = patterns
 
             if is_expanding:
                 # Expansion scan: keep scored status, mark as expanded
@@ -1769,7 +1769,7 @@ async def persist_scan_results(
                     p.file_type_counts = item.file_type_counts,
                     p.tree_context = item.tree_context,
                     p.numeric_dir_ratio = item.numeric_dir_ratio,
-                    p.patterns_detected = item.patterns_detected
+                    p.patterns_found = item.patterns_found
                 RETURN count(p) AS updated
                 """,
                 items=first_scan_updates,
@@ -1813,7 +1813,7 @@ async def persist_scan_results(
                     p.file_type_counts = item.file_type_counts,
                     p.tree_context = item.tree_context,
                     p.numeric_dir_ratio = item.numeric_dir_ratio,
-                    p.patterns_detected = item.patterns_detected
+                    p.patterns_found = item.patterns_found
                 RETURN count(p) AS updated
                 """,
                 items=expansion_updates,
@@ -2968,10 +2968,10 @@ def mark_rescore_complete(
                 "cost": result.get("score_cost", 0.0),
             }
 
-            # Store adjustment reason as rescore_reason
+            # Store adjustment reason
             if result.get("adjustment_reason"):
-                set_parts.append("p.rescore_reason = $rescore_reason")
-                params["rescore_reason"] = result["adjustment_reason"][:200]
+                set_parts.append("p.adjustment_reason = $adjustment_reason")
+                params["adjustment_reason"] = result["adjustment_reason"][:200]
 
             # Add each dimension that has a value
             for dim in dimensions:
