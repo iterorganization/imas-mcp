@@ -3211,6 +3211,11 @@ classes:
         range: integer
       content_hash:
         description: SHA-256 hash of original image bytes for dedup verification
+      image_data:
+        description: >-
+          Base64-encoded downsampled image bytes (WebP, 768px longest side).
+          Transient: stored during ingestion for VLM scoring, then cleared
+          by default after captioning. Retained only when --store-images is set.
       
       # VLM-generated content (populated by captioning worker)
       mermaid_diagram:
