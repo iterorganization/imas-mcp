@@ -21,10 +21,17 @@ _ensure_fresh()
 del _ensure_fresh
 
 from imas_codex.graph.client import GraphClient  # noqa: E402
+from imas_codex.graph.dirs import (  # noqa: E402
+    GraphDirInfo,
+    compute_graph_hash,
+    create_graph_dir,
+    find_graph,
+    get_active_graph,
+    list_local_graphs,
+    switch_active_graph,
+)
 from imas_codex.graph.meta import (  # noqa: E402
     add_facility_to_meta,
-    compute_facilities_hash,
-    ensure_graph_meta,
     gate_ingestion,
     get_graph_meta,
     init_graph_meta,
@@ -63,10 +70,16 @@ from imas_codex.graph.schema import (  # noqa: E402
 __all__ = [
     # Client (fast import)
     "GraphClient",
+    # Graph directory store
+    "GraphDirInfo",
+    "compute_graph_hash",
+    "create_graph_dir",
+    "find_graph",
+    "get_active_graph",
+    "list_local_graphs",
+    "switch_active_graph",
     # Graph identity (meta)
     "add_facility_to_meta",
-    "compute_facilities_hash",
-    "ensure_graph_meta",
     "gate_ingestion",
     "get_graph_meta",
     "init_graph_meta",

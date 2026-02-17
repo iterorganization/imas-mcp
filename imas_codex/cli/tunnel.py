@@ -267,18 +267,10 @@ def tunnel() -> None:
 @click.argument("host", required=False)
 @click.option("--neo4j", "neo4j_only", is_flag=True, help="Tunnel Neo4j ports only")
 @click.option("--embed", "embed_only", is_flag=True, help="Tunnel embedding port only")
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile (for Neo4j port resolution)",
-)
 def tunnel_start(
     host: str | None,
     neo4j_only: bool,
     embed_only: bool,
-    graph: str | None,
 ) -> None:
     """Start SSH tunnels to remote services.
 
@@ -457,19 +449,11 @@ def tunnel_status() -> None:
 @click.argument("host", required=False)
 @click.option("--neo4j", "neo4j_only", is_flag=True, help="Tunnel Neo4j ports only")
 @click.option("--embed", "embed_only", is_flag=True, help="Tunnel embedding port only")
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile (for Neo4j port resolution)",
-)
 def tunnel_service(
     action: str,
     host: str | None,
     neo4j_only: bool,
     embed_only: bool,
-    graph: str | None,
 ) -> None:
     """Manage persistent SSH tunnels via systemd + autossh.
 

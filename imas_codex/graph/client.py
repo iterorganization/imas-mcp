@@ -3,7 +3,7 @@
 This module provides a high-level client for interacting with the Neo4j
 knowledge graph, including schema initialization and CRUD operations.
 
-Connection settings resolve via named graph profiles — see
+Connection settings resolve via the active graph profile — see
 :mod:`imas_codex.graph.profiles` for the full resolution chain.
 
 Example:
@@ -12,8 +12,8 @@ Example:
     ...     client.initialize_schema()
     ...     client.create_node("Facility", "tcv", {"name": "EPFL/TCV"})
 
-    >>> # Connect to a specific graph profile
-    >>> with GraphClient.from_profile("tcv") as client:
+    >>> # Connect via the active graph profile
+    >>> with GraphClient.from_profile() as client:
     ...     print(client.get_stats())
 """
 
@@ -110,17 +110,16 @@ class GraphClient:
     The graph structure is derived from the LinkML schema (schemas/facility.yaml)
     via GraphSchema, which provides node labels, relationship types, and constraints.
 
-    Connection settings are resolved via named graph profiles:
-        1. ``IMAS_CODEX_GRAPH`` env selects the graph name (default: ``"codex"``)
+    Connection settings are resolved via the active graph profile:
+        1. ``neo4j/`` symlink points to the active graph in ``.neo4j/<hash>/``
         2. ``IMAS_CODEX_GRAPH_LOCATION`` env selects where Neo4j runs
         3. Locations map to ports by convention (iter→7687, tcv→7688, …)
         4. ``NEO4J_URI`` / ``NEO4J_PASSWORD`` env vars override any profile
 
-    Construct with no arguments to use the active profile, or pass a
-    graph name explicitly::
+    Construct with no arguments to use the active profile::
 
-        GraphClient()                        # active graph
-        GraphClient.from_profile("dev")      # specific graph name
+        GraphClient()
+        GraphClient.from_profile()  # explicit profile resolution
 
     Attributes:
         uri: Neo4j Bolt URI
@@ -149,16 +148,13 @@ class GraphClient:
         self._schema = get_schema()
 
     @classmethod
-    def from_profile(cls, name: str) -> "GraphClient":
-        """Create a GraphClient connected to a specific named graph.
-
-        Args:
-            name: Graph name (e.g. ``"codex"``, ``"dev"``).
+    def from_profile(cls) -> "GraphClient":
+        """Create a GraphClient connected via the active graph profile.
 
         Returns:
             GraphClient connected to the resolved profile.
         """
-        profile = resolve_neo4j(name)
+        profile = resolve_neo4j()
         return cls(
             uri=profile.uri,
             username=profile.username,

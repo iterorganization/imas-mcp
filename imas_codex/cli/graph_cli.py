@@ -8,6 +8,8 @@ Neo4j server management is under ``imas-codex serve neo4j``.
 SSH tunnel management is under ``imas-codex tunnel``.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import shutil
@@ -16,10 +18,14 @@ import tarfile
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from imas_codex import __version__
+
+if TYPE_CHECKING:
+    from imas_codex.graph.profiles import Neo4jProfile
 
 # ============================================================================
 # Constants and Helpers
@@ -55,11 +61,10 @@ class Neo4jOperation:
         require_stopped: bool = True,
         reset_password_on_restart: bool = False,
         password: str | None = None,
-        graph: str | None = None,
     ):
         from imas_codex.graph.profiles import DEFAULT_PASSWORD, resolve_neo4j
 
-        self.profile = resolve_neo4j(graph)
+        self.profile = resolve_neo4j()
         self.operation_name = operation_name
         self.require_stopped = require_stopped
         self.reset_password_on_restart = reset_password_on_restart
@@ -68,7 +73,7 @@ class Neo4jOperation:
         self.was_running = False
         self._lock_file: Path = NEO4J_LOCK_FILE
 
-    def __enter__(self) -> "Neo4jOperation":
+    def __enter__(self) -> Neo4jOperation:
         # Check for existing lock
         if self._lock_file.exists():
             lock_info = json.loads(self._lock_file.read_text())
@@ -486,13 +491,11 @@ def backup_existing_data(reason: str, data_dir: Path | None = None) -> Path | No
 
 
 def backup_graph_dump(
-    profile_name: str | None = None,
     output: Path | None = None,
 ) -> Path:
     """Create a real neo4j-admin dump backup of the current graph.
 
     Args:
-        profile_name: Graph profile to backup (default: active).
         output: Output path override.  Defaults to
             ``~/.local/share/imas-codex/backups/{profile}-{timestamp}.dump``.
 
@@ -501,7 +504,7 @@ def backup_graph_dump(
     """
     from imas_codex.graph.profiles import BACKUPS_DIR, resolve_neo4j
 
-    profile = resolve_neo4j(profile_name)
+    profile = resolve_neo4j()
     BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
@@ -621,19 +624,11 @@ def neo4j() -> None:
 
 
 @neo4j.command("start")
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
 @click.option("--image", envvar="NEO4J_IMAGE", default=None)
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
 def neo4j_start(
-    graph: str | None,
     image: str | None,
     data_dir: str | None,
     password: str | None,
@@ -644,7 +639,7 @@ def neo4j_start(
 
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     password = password or profile.password
 
     if platform.system() in ("Windows", "Darwin"):
@@ -745,20 +740,13 @@ def neo4j_start(
 
 @neo4j.command("stop")
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
-def neo4j_stop(data_dir: str | None, graph: str | None) -> None:
+def neo4j_stop(data_dir: str | None) -> None:
     """Stop Neo4j server."""
     import signal
 
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     data_path = Path(data_dir) if data_dir else profile.data_dir
     pid_file = data_path / "neo4j.pid"
 
@@ -781,16 +769,13 @@ def neo4j_stop(data_dir: str | None, graph: str | None) -> None:
 
 
 @neo4j.command("status")
-@click.option(
-    "--graph", "-g", envvar="IMAS_CODEX_GRAPH", default=None, help="Graph profile name"
-)
-def neo4j_status(graph: str | None) -> None:
+def neo4j_status() -> None:
     """Check Neo4j server status."""
     from imas_codex.graph.profiles import resolve_neo4j
     from imas_codex.remote.executor import is_local_host
     from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
 
     # Determine connection topology
     is_remote = profile.host is not None and not is_local_host(profile.host)
@@ -880,18 +865,16 @@ def neo4j_status(graph: str | None) -> None:
 def neo4j_profiles() -> None:
     """List Neo4j location profiles and their port assignments.
 
-    Also shows on-disk graph data directories (neo4j-{name}/).
+    Also shows locally stored graph instances from .neo4j/.
     """
+    from imas_codex.graph.dirs import list_local_graphs
     from imas_codex.graph.profiles import (
-        get_active_graph_name,
         get_graph_location,
-        list_graphs,
         list_profiles,
     )
     from imas_codex.remote.executor import is_local_host
 
     active_location = get_graph_location()
-    active_name = get_active_graph_name()
     profiles = list_profiles()
 
     click.echo("Locations:")
@@ -905,23 +888,19 @@ def neo4j_profiles() -> None:
             f"{location_label:<20s}  [{running}]"
         )
 
-    graphs = list_graphs()
+    graphs = list_local_graphs()
     if graphs:
-        click.echo(f"\nData directories (active: {active_name}):")
+        click.echo("\nLocal graphs:")
         for g in graphs:
-            marker = "→" if g == active_name else " "
-            click.echo(f"  {marker} {g}")
+            marker = "→" if g.is_active else " "
+            drift = " ⚠ hash drift" if not g.hash_ok else ""
+            click.echo(
+                f"  {marker} {g.name} [{g.hash}] {','.join(g.facilities)}{drift}"
+            )
 
 
 @neo4j.command("secure")
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
-def neo4j_secure(graph: str | None) -> None:
+def neo4j_secure() -> None:
     """Secure Neo4j data directory permissions.
 
     Sets restrictive permissions (700 for dirs, 600 for files) on the
@@ -930,7 +909,7 @@ def neo4j_secure(graph: str | None) -> None:
     """
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     data_path = profile.data_dir
 
     if not data_path.exists():
@@ -945,18 +924,11 @@ def neo4j_secure(graph: str | None) -> None:
 @neo4j.command("shell")
 @click.option("--image", envvar="NEO4J_IMAGE", default=None)
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
-def neo4j_shell(image: str | None, password: str | None, graph: str | None) -> None:
+def neo4j_shell(image: str | None, password: str | None) -> None:
     """Open Cypher shell to Neo4j."""
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     password = password or profile.password
     image_path = Path(image) if image else NEO4J_IMAGE
 
@@ -987,13 +959,6 @@ def neo4j_shell(image: str | None, password: str | None, graph: str | None) -> N
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None, help="Custom data dir")
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
-@click.option(
     "--minimal", is_flag=True, help="Use minimal service (no resource limits)"
 )
 def neo4j_service(
@@ -1001,7 +966,6 @@ def neo4j_service(
     image: str | None,
     data_dir: str | None,
     password: str | None,
-    graph: str | None,
     minimal: bool,
 ) -> None:
     """Manage Neo4j as a systemd user service."""
@@ -1009,7 +973,7 @@ def neo4j_service(
 
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     password = password or profile.password
 
     if platform.system() != "Linux":
@@ -1326,25 +1290,17 @@ def _create_facility_dump(
     default=None,
     help="Export per-facility graph (e.g. tcv)",
 )
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
 def graph_export(
     output: str | None,
     no_restart: bool,
     facility: str | None,
-    graph: str | None,
 ) -> None:
     """Export graph database to archive."""
     from imas_codex.graph.profiles import resolve_neo4j
 
     require_apptainer()
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
 
     git_info = get_git_info()
     version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
@@ -1355,7 +1311,7 @@ def graph_export(
     else:
         output_path = Path(f"{pkg_name}-{version_label}.tar.gz")
 
-    with Neo4jOperation("graph dump", require_stopped=True, graph=profile.name) as op:
+    with Neo4jOperation("graph dump", require_stopped=True) as op:
         if no_restart:
             op.was_running = False
 
@@ -1428,25 +1384,17 @@ def graph_export(
 @click.option("--force", is_flag=True, help="Overwrite existing data")
 @click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after load")
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
 def graph_load(
     archive: str,
     force: bool,
     no_restart: bool,
     password: str | None,
-    graph: str | None,
 ) -> None:
     """Load graph database from archive."""
     from imas_codex.graph.profiles import resolve_neo4j
     from imas_codex.settings import get_graph_password
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     password = password or get_graph_password()
     require_apptainer()
 
@@ -1458,7 +1406,6 @@ def graph_load(
         require_stopped=True,
         reset_password_on_restart=True,
         password=password,
-        graph=profile.name,
     ) as op:
         if no_restart:
             op.was_running = False
@@ -1645,13 +1592,6 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
     default=None,
     help="Push per-facility graph (e.g. tcv) to imas-codex-graph-{facility}",
 )
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
 def graph_push(
     dev: bool,
     registry: str | None,
@@ -1659,7 +1599,6 @@ def graph_push(
     dry_run: bool,
     skip_embed: bool,
     facility: str | None,
-    graph: str | None,
 ) -> None:
     """Push graph archive to GHCR.
 
@@ -1859,13 +1798,6 @@ def graph_fetch(
     default=None,
     help="Pull per-facility graph (e.g. tcv) from imas-codex-graph-{facility}",
 )
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
 def graph_pull(
     version: str,
     registry: str | None,
@@ -1873,7 +1805,6 @@ def graph_pull(
     force: bool,
     no_backup: bool,
     facility: str | None,
-    graph: str | None,
 ) -> None:
     """Pull graph from GHCR and load it (convenience for fetch + load).
 
@@ -1889,7 +1820,7 @@ def graph_pull(
 
     require_oras()
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
     pkg_name = get_package_name(facility)
@@ -1968,7 +1899,7 @@ def graph_pull(
     click.echo("✓ Graph pull complete")
 
 
-@graph.command("list")
+@graph.command("remote-list")
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 @click.option("--token", envvar="GHCR_TOKEN")
 @click.option(
@@ -1977,7 +1908,9 @@ def graph_pull(
     default=None,
     help="List per-facility graph versions",
 )
-def graph_list(registry: str | None, token: str | None, facility: str | None) -> None:
+def graph_remote_list(
+    registry: str | None, token: str | None, facility: str | None
+) -> None:
     """List available graph versions in GHCR."""
     require_oras()
 
@@ -2058,7 +1991,7 @@ def graph_status(registry: str | None) -> None:
             from imas_codex.graph.client import GraphClient
             from imas_codex.graph.meta import get_graph_meta
 
-            gc = GraphClient.from_profile(profile.name)  # type: ignore[possibly-undefined]
+            gc = GraphClient.from_profile()  # type: ignore[possibly-undefined]
             meta = get_graph_meta(gc)
             gc.close()
             if meta:
@@ -2068,7 +2001,7 @@ def graph_status(registry: str | None) -> None:
                 click.echo(
                     f"  Facilities: {', '.join(facilities) if facilities else '(none)'}"
                 )
-                click.echo(f"  Hash: {meta.get('facilities_hash', '?')}")
+                click.echo(f"  Hash: {meta.get('hash', '?')}")
                 if meta.get("updated_at"):
                     click.echo(f"  Updated: {meta['updated_at']}")
             else:
@@ -2078,6 +2011,197 @@ def graph_status(registry: str | None) -> None:
                 )
         except Exception:
             pass
+
+
+# ============================================================================
+# Graph List Command
+# ============================================================================
+
+
+@graph.command("list")
+def graph_list() -> None:
+    """List local graph instances.
+
+    Scans the .neo4j/ store directory for graph instances and shows
+    their name, facilities, hash, and whether they are active.
+    Validates hash consistency and warns about drift.
+
+    \b
+    Examples:
+      imas-codex graph list
+    """
+    from imas_codex.graph.dirs import get_active_graph, list_local_graphs
+
+    graphs = list_local_graphs()
+    if not graphs:
+        click.echo("No local graphs found.")
+        click.echo("Create one: imas-codex graph init -n <name> -f <facility> ...")
+        return
+
+    active = get_active_graph()
+    active_hash = active.hash if active else None
+
+    click.echo("Local graphs:\n")
+    for g in graphs:
+        marker = "→ " if g.hash == active_hash else "  "
+        facs = ", ".join(g.facilities) if g.facilities else "(none)"
+        click.echo(f"{marker}{g.name}  [{facs}]  hash={g.hash}")
+        if g.created_at:
+            click.echo(f"    created: {g.created_at}")
+        for warn in g.warnings:
+            click.echo(f"    ⚠ {warn}")
+
+    click.echo(f"\n{len(graphs)} graph(s)")
+
+
+# ============================================================================
+# Graph Switch Command
+# ============================================================================
+
+
+@graph.command("switch")
+@click.argument("identifier")
+def graph_switch(identifier: str) -> None:
+    """Switch the active graph.
+
+    Stops Neo4j if running, repoints the neo4j/ symlink to the
+    target graph directory, and restarts Neo4j.
+
+    IDENTIFIER can be a graph name (e.g. "codex") or a hash prefix
+    (e.g. "a3f8").  If the name matches multiple graphs, use the
+    hash prefix to disambiguate.
+
+    \b
+    Examples:
+      imas-codex graph switch codex
+      imas-codex graph switch dev
+      imas-codex graph switch a3f8
+    """
+    from imas_codex.graph.dirs import (
+        find_graph,
+        get_active_graph,
+        switch_active_graph,
+    )
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    try:
+        target = find_graph(identifier)
+    except LookupError as e:
+        raise click.ClickException(str(e)) from e
+
+    # Check if already active
+    active = get_active_graph()
+    if active and active.hash == target.hash:
+        click.echo(f"Graph '{target.name}' (hash={target.hash}) is already active.")
+        return
+
+    profile = resolve_neo4j(auto_tunnel=False)
+    was_running = is_neo4j_running(profile.http_port)
+
+    if was_running:
+        click.echo(f"Stopping Neo4j [{profile.name}]...")
+        _stop_neo4j_for_switch(profile)
+
+    try:
+        switch_active_graph(target.hash)
+    except (FileExistsError, ValueError) as e:
+        raise click.ClickException(str(e)) from e
+
+    click.echo(
+        f"✓ Switched to '{target.name}' "
+        f"[{', '.join(target.facilities)}] "
+        f"hash={target.hash}"
+    )
+
+    if was_running:
+        click.echo("Restarting Neo4j...")
+        # Re-resolve profile after switch (name may have changed)
+        new_profile = resolve_neo4j(auto_tunnel=False)
+        _start_neo4j_after_switch(new_profile)
+
+
+def _stop_neo4j_for_switch(profile: Neo4jProfile) -> None:
+    """Stop Neo4j for a graph switch operation."""
+    import signal
+
+    data_path = profile.data_dir
+    pid_file = data_path / "neo4j.pid"
+
+    if pid_file.exists():
+        pid = int(pid_file.read_text().strip())
+        try:
+            os.kill(pid, signal.SIGTERM)
+            pid_file.unlink()
+        except ProcessLookupError:
+            pid_file.unlink()
+    else:
+        subprocess.run(["pkill", "-f", "neo4j.*console"], capture_output=True)
+
+    # Wait for shutdown
+    import time
+
+    for _ in range(15):
+        if not is_neo4j_running(profile.http_port):
+            return
+        time.sleep(1)
+    click.echo("Warning: Neo4j may still be shutting down", err=True)
+
+
+def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
+    """Start Neo4j after a graph switch operation."""
+    data_path = profile.data_dir
+
+    if not NEO4J_IMAGE.exists():
+        click.echo("Warning: Neo4j image not found, cannot auto-start", err=True)
+        return
+
+    for subdir in ["data", "logs", "conf", "import"]:
+        (data_path / subdir).mkdir(parents=True, exist_ok=True)
+
+    secure_data_directory(data_path)
+
+    cmd = [
+        "apptainer",
+        "exec",
+        "--bind",
+        f"{data_path}/data:/data",
+        "--bind",
+        f"{data_path}/logs:/logs",
+        "--bind",
+        f"{data_path}/import:/import",
+        "--writable-tmpfs",
+        "--env",
+        f"NEO4J_AUTH=neo4j/{profile.password}",
+        "--env",
+        f"NEO4J_server_bolt_listen__address=:{profile.bolt_port}",
+        "--env",
+        f"NEO4J_server_http_listen__address=:{profile.http_port}",
+        str(NEO4J_IMAGE),
+        "neo4j",
+        "console",
+    ]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    pid_file = data_path / "neo4j.pid"
+    pid_file.write_text(str(proc.pid))
+
+    import time
+
+    for _ in range(30):
+        if is_neo4j_running(profile.http_port):
+            click.echo(
+                f"✓ Neo4j [{profile.name}] ready "
+                f"at http://localhost:{profile.http_port}"
+            )
+            return
+        time.sleep(1)
+
+    click.echo("Warning: Neo4j may still be starting", err=True)
 
 
 # ============================================================================
@@ -2101,46 +2225,97 @@ def graph_status(registry: str | None) -> None:
     help="Facility ID to include (repeatable)",
 )
 @click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile for connection (default: active)",
+    "--migrate",
+    is_flag=True,
+    help="Migrate existing neo4j/ directory into the .neo4j/ store",
 )
-def graph_init(name: str, facilities: tuple[str, ...], graph: str | None) -> None:
-    """Initialize graph identity (GraphMeta node).
+def graph_init(name: str, facilities: tuple[str, ...], migrate: bool) -> None:
+    """Initialize a new graph instance.
 
-    Creates or updates the (:GraphMeta) singleton node that records
-    which data this graph contains.  This enables ingestion gating
-    (preventing writes to the wrong graph) and identity display in
-    ``graph status``.
+    Creates a hash-named directory in .neo4j/, writes .meta.json,
+    creates the neo4j/ symlink, starts Neo4j, and initializes the
+    (:GraphMeta) node.
+
+    If neo4j/ is an existing real directory (pre-migration), use
+    --migrate to move it into the .neo4j/ store automatically.
 
     \b
     Examples:
-      imas-codex graph init -n codex -f iter -f tcv -f jt60sa -f jet
-      imas-codex graph init -n dev -f tcv
+      imas-codex graph init -n codex -f imas -f iter -f tcv -f jt60sa
+      imas-codex graph init -n dev -f imas -f tcv
+      imas-codex graph init -n codex -f imas -f iter --migrate
     """
-    from imas_codex.graph.client import GraphClient
-    from imas_codex.graph.meta import init_graph_meta
+    from imas_codex.graph.dirs import (
+        create_graph_dir,
+        is_legacy_data_dir,
+        migrate_legacy_dir,
+        switch_active_graph,
+    )
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    facility_list = sorted(set(facilities))
+
+    # Handle legacy migration
+    if is_legacy_data_dir():
+        if migrate:
+            click.echo("Migrating existing neo4j/ directory into .neo4j/ store...")
+            profile = resolve_neo4j(auto_tunnel=False)
+            was_running = is_neo4j_running(profile.http_port)
+            if was_running:
+                click.echo("Stopping Neo4j for migration...")
+                _stop_neo4j_for_switch(profile)
+
+            try:
+                info = migrate_legacy_dir(name, facility_list)
+            except (FileExistsError, ValueError) as e:
+                raise click.ClickException(str(e)) from e
+
+            click.echo(f"✓ Migrated to .neo4j/{info.hash}/")
+        else:
+            raise click.ClickException(
+                "neo4j/ exists as a real directory (pre-migration layout).\n"
+                "Use --migrate to move it into the .neo4j/ store:\n"
+                f"  imas-codex graph init -n {name} "
+                + " ".join(f"-f {f}" for f in facility_list)
+                + " --migrate"
+            )
+    else:
+        # Create new graph directory
+        try:
+            info = create_graph_dir(name, facility_list)
+        except FileExistsError as e:
+            raise click.ClickException(str(e)) from e
+
+        # Point symlink to the new directory
+        try:
+            switch_active_graph(info.hash)
+        except FileExistsError as e:
+            raise click.ClickException(str(e)) from e
+
+    click.echo(f"  Name: {name}")
+    click.echo(f"  Facilities: {', '.join(facility_list)}")
+    click.echo(f"  Hash: {info.hash}")
+
+    # Start Neo4j and create GraphMeta node
+    profile = resolve_neo4j(auto_tunnel=False)
 
     if not is_neo4j_running(profile.http_port):
-        raise click.ClickException(
-            f"Neo4j [{profile.name}] is not running on port {profile.http_port}.\n"
-            f"Start it: imas-codex serve neo4j start --graph {profile.name}"
+        click.echo("\nStarting Neo4j...")
+        _start_neo4j_after_switch(profile)
+
+    if is_neo4j_running(profile.http_port):
+        from imas_codex.graph.client import GraphClient
+        from imas_codex.graph.meta import init_graph_meta
+
+        gc = GraphClient.from_profile()
+        result = init_graph_meta(gc, name, facility_list)
+        gc.close()
+        click.echo(f"\n✓ GraphMeta node initialized (hash={result['hash']})")
+    else:
+        click.echo(
+            "\nWarning: Neo4j not running — GraphMeta node not created.\n"
+            "Start Neo4j and run 'graph init' again to create the GraphMeta node."
         )
-
-    facility_list = list(facilities)
-    gc = GraphClient.from_profile(profile.name)
-    result = init_graph_meta(gc, name, facility_list)
-    gc.close()
-
-    click.echo("✓ Graph identity initialized:")
-    click.echo(f"  Name: {result['name']}")
-    click.echo(f"  Facilities: {', '.join(result['facilities'])}")
-    click.echo(f"  Hash: {result['facilities_hash']}")
 
 
 # ============================================================================
@@ -2161,21 +2336,12 @@ def graph_facility_group() -> None:
 
 
 @graph_facility_group.command("list")
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile (default: active)",
-)
-def facility_list(graph: str | None) -> None:
+def facility_list() -> None:
     """List facilities in the graph identity."""
     from imas_codex.graph.client import GraphClient
     from imas_codex.graph.meta import get_graph_meta
-    from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
-    gc = GraphClient.from_profile(profile.name)
+    gc = GraphClient.from_profile()
     meta = get_graph_meta(gc)
     gc.close()
 
@@ -2186,7 +2352,7 @@ def facility_list(graph: str | None) -> None:
 
     facilities = meta.get("facilities") or []
     click.echo(f"Graph: {meta.get('name', '?')}")
-    click.echo(f"Hash: {meta.get('facilities_hash', '?')}")
+    click.echo(f"Hash: {meta.get('hash', '?')}")
     if facilities:
         for f in sorted(facilities):
             click.echo(f"  - {f}")
@@ -2196,21 +2362,12 @@ def facility_list(graph: str | None) -> None:
 
 @graph_facility_group.command("add")
 @click.argument("facility_id")
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile (default: active)",
-)
-def facility_add(facility_id: str, graph: str | None) -> None:
+def facility_add(facility_id: str) -> None:
     """Add a facility to the graph identity."""
     from imas_codex.graph.client import GraphClient
     from imas_codex.graph.meta import add_facility_to_meta, get_graph_meta
-    from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
-    gc = GraphClient.from_profile(profile.name)
+    gc = GraphClient.from_profile()
 
     meta = get_graph_meta(gc)
     if meta is None:
@@ -2230,27 +2387,18 @@ def facility_add(facility_id: str, graph: str | None) -> None:
         f"✓ Added '{facility_id}' to graph '{meta.get('name', '?') if meta else '?'}'"
     )
     click.echo(f"  Facilities: {', '.join(facilities)}")
-    click.echo(f"  Hash: {meta.get('facilities_hash', '?') if meta else '?'}")
+    click.echo(f"  Hash: {meta.get('hash', '?') if meta else '?'}")
 
 
 @graph_facility_group.command("remove")
 @click.argument("facility_id")
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile (default: active)",
-)
 @click.option("--force", is_flag=True, help="Skip confirmation")
-def facility_remove(facility_id: str, graph: str | None, force: bool) -> None:
+def facility_remove(facility_id: str, force: bool) -> None:
     """Remove a facility from the graph identity."""
     from imas_codex.graph.client import GraphClient
     from imas_codex.graph.meta import get_graph_meta, remove_facility_from_meta
-    from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
-    gc = GraphClient.from_profile(profile.name)
+    gc = GraphClient.from_profile()
 
     meta = get_graph_meta(gc)
     if meta is None:
@@ -2273,7 +2421,7 @@ def facility_remove(facility_id: str, graph: str | None, force: bool) -> None:
     facilities = meta.get("facilities") or [] if meta else []
     click.echo(f"✓ Removed '{facility_id}'")
     click.echo(f"  Facilities: {', '.join(facilities)}")
-    click.echo(f"  Hash: {meta.get('facilities_hash', '?') if meta else '?'}")
+    click.echo(f"  Hash: {meta.get('hash', '?') if meta else '?'}")
 
 
 # ============================================================================
@@ -2780,15 +2928,8 @@ def _remove_backups(
 
 
 @graph.command("clear")
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
-def graph_clear(graph: str | None, force: bool) -> None:
+def graph_clear(force: bool) -> None:
     """Clear all data from the graph database.
 
     Requires Neo4j to be running.
@@ -2796,17 +2937,17 @@ def graph_clear(graph: str | None, force: bool) -> None:
     from imas_codex.graph.client import GraphClient
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
 
     if not is_neo4j_running(profile.http_port):
         raise click.ClickException(
             f"Neo4j [{profile.name}] is not running on port {profile.http_port}.\n"
-            f"Start it: imas-codex serve neo4j start --graph {profile.name}"
+            f"Start it: imas-codex serve neo4j start"
         )
 
     # Show current stats
     try:
-        gc = GraphClient.from_profile(profile.name)
+        gc = GraphClient.from_profile()
         stats = gc.get_stats()
         gc.close()
         click.echo(
@@ -2824,7 +2965,7 @@ def graph_clear(graph: str | None, force: bool) -> None:
 
     click.echo(f"Clearing graph [{profile.name}]...")
     try:
-        gc = GraphClient.from_profile(profile.name)
+        gc = GraphClient.from_profile()
         deleted = gc.drop_all()
         gc.close()
         click.echo(f"✓ Cleared {deleted} nodes from [{profile.name}]")
@@ -2834,19 +2975,12 @@ def graph_clear(graph: str | None, force: bool) -> None:
 
 @graph.command("backup")
 @click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
-@click.option(
     "--output",
     "-o",
     type=click.Path(),
     help="Output dump file path (default: auto-named in backups dir)",
 )
-def graph_backup(graph: str | None, output: str | None) -> None:
+def graph_backup(output: str | None) -> None:
     """Create a neo4j-admin dump backup of the graph.
 
     Backup files are stored in ~/.local/share/imas-codex/backups/ by default.
@@ -2856,8 +2990,8 @@ def graph_backup(graph: str | None, output: str | None) -> None:
 
     output_path = Path(output) if output else None
 
-    with Neo4jOperation("graph backup", require_stopped=True, graph=graph):
-        dump_path = backup_graph_dump(graph, output=output_path)
+    with Neo4jOperation("graph backup", require_stopped=True):
+        dump_path = backup_graph_dump(output=output_path)
 
     size_mb = dump_path.stat().st_size / 1024 / 1024
     click.echo(f"✓ Backup created: {dump_path} ({size_mb:.1f} MB)")
@@ -2876,18 +3010,10 @@ def graph_backup(graph: str | None, output: str | None) -> None:
 
 @graph.command("restore")
 @click.argument("backup_file", type=click.Path(exists=True), required=False)
-@click.option(
-    "--graph",
-    "-g",
-    envvar="IMAS_CODEX_GRAPH",
-    default=None,
-    help="Graph profile name (default: active profile)",
-)
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option("--force", is_flag=True, help="Skip confirmation prompt")
 def graph_restore(
     backup_file: str | None,
-    graph: str | None,
     password: str | None,
     force: bool,
 ) -> None:
@@ -2899,7 +3025,7 @@ def graph_restore(
     from imas_codex.graph.profiles import BACKUPS_DIR, resolve_neo4j
 
     require_apptainer()
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     password = password or profile.password
 
     if backup_file is None:
@@ -2941,7 +3067,6 @@ def graph_restore(
         require_stopped=True,
         reset_password_on_restart=True,
         password=password,
-        graph=profile.name,
     ):
         # Copy dump to expected location
         dumps_dir = profile.data_dir / "dumps"

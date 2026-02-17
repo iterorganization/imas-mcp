@@ -6,11 +6,13 @@ Two orthogonal concerns, each with its own authority:
   correspond to SSH aliases (``"iter"``, ``"tcv"``) or ``"local"``.
   Each location has a fixed port slot.  This is deploy-time config.
 
-- **name** (CLI / env) — which graph data directory to use.  Each named
-  graph lives in its own Neo4j data dir (``neo4j-codex/``, ``neo4j-dev/``).
-  Switching graphs means stopping Neo4j and starting with a different
-  data dir.  The graph's identity (name + facilities) is stored in a
-  ``(:GraphMeta)`` node inside the graph itself.
+- **identity** (on-disk ``.neo4j/`` store) — which graph data directory
+  to use.  Each graph lives in a hash-named directory in
+  ``~/.local/share/imas-codex/.neo4j/<hash>/``.  The ``neo4j/`` symlink
+  points to the active graph.  Switching graphs means repointing the
+  symlink and restarting Neo4j.  Graph identity (name + facilities +
+  hash) is stored both on disk (``.meta.json``) and in the database
+  (``(:GraphMeta)`` node).
 
 Port convention (both bolt and HTTP offset together)::
 
@@ -54,11 +56,14 @@ _resolved_uri_cache: dict[tuple[str | None, int], str] = {}
 BOLT_BASE_PORT = 7687
 HTTP_BASE_PORT = 7474
 
-DEFAULT_NAME = "codex"
 DEFAULT_LOCATION = "iter"
 DEFAULT_USERNAME = "neo4j"
 DEFAULT_PASSWORD = "imas-codex"
-DATA_BASE_DIR = Path.home() / ".local" / "share" / "imas-codex"
+
+# Re-export from dirs for backward compatibility of import paths.
+# Canonical source is imas_codex.graph.dirs.
+from imas_codex.graph.dirs import ACTIVE_LINK, DATA_BASE_DIR  # noqa: E402, F401
+
 BACKUPS_DIR = DATA_BASE_DIR / "backups"
 
 
@@ -102,11 +107,11 @@ class Neo4jProfile:
 
     Separates two concerns:
     - **Server access** (location, host, uri, ports) — from pyproject.toml
-    - **Data identity** (name, data_dir) — from CLI / env var
+    - **Data identity** (name, data_dir) — from the active ``.neo4j/`` symlink
 
     Attributes:
         name:      Graph data identity (e.g. ``"codex"``, ``"dev"``).
-                   Determines the data directory.
+                   Read from ``.meta.json`` in the active graph directory.
         location:  Where Neo4j physically runs — location name from
                    the ``locations`` list, or ``"local"``.
         host:      SSH alias for the location (often same as location).
@@ -115,7 +120,7 @@ class Neo4jProfile:
         password:  Neo4j password.
         bolt_port: Bolt protocol port *at the host*.
         http_port: HTTP API port (health checks, browser).
-        data_dir:  On-disk data directory (``neo4j-{name}/``).
+        data_dir:  On-disk data directory (``neo4j/`` symlink).
     """
 
     name: str
@@ -199,16 +204,19 @@ def get_location_offset(location: str) -> int:
 def get_active_graph_name() -> str:
     """Return the name of the currently active graph.
 
-    Priority:
-        1. ``IMAS_CODEX_GRAPH`` environment variable
-        2. ``DEFAULT_NAME`` (``"codex"``)
+    Reads from the ``.meta.json`` file in the active graph directory
+    (the ``neo4j/`` symlink target).  Falls back to ``"uninitialized"``
+    if no active graph is configured.
 
-    The graph name is NOT stored in pyproject.toml — it is a runtime
-    concern controlled via CLI flags or environment variables.
+    Returns:
+        Graph name string.
     """
-    if env := os.getenv("IMAS_CODEX_GRAPH"):
-        return env
-    return DEFAULT_NAME
+    from imas_codex.graph.dirs import get_active_graph
+
+    active = get_active_graph()
+    if active is not None:
+        return active.name
+    return "uninitialized"
 
 
 def _resolve_uri(host: str | None, bolt_port: int) -> str:
@@ -274,18 +282,16 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
 
 
 def resolve_neo4j(
-    name: str | None = None,
     *,
     auto_tunnel: bool = True,
 ) -> Neo4jProfile:
-    """Resolve Neo4j connection profile.
+    """Resolve Neo4j connection profile for the active graph.
 
     Server access (location → ports, host, URI) comes from pyproject.toml.
-    Data identity (name → data directory) comes from the CLI or env var.
+    Data identity (name, data_dir) comes from the active ``.neo4j/``
+    symlink and its ``.meta.json``.
 
     Args:
-        name: Graph name for data directory selection.  ``None`` resolves
-            via :func:`get_active_graph_name` (env or ``"codex"``).
         auto_tunnel: When True (default), automatically start an SSH tunnel
             if the location is remote.  Set to False when only port/host
             metadata is needed (e.g. tunnel CLI) to avoid side-effects.
@@ -293,8 +299,7 @@ def resolve_neo4j(
     Returns:
         Fully resolved :class:`Neo4jProfile`.
     """
-    if name is None:
-        name = get_active_graph_name()
+    name = get_active_graph_name()
 
     from imas_codex.settings import _get_section
 
@@ -332,7 +337,7 @@ def resolve_neo4j(
         password=password,
         bolt_port=bolt_port,
         http_port=http_port,
-        data_dir=_convention_data_dir(name),
+        data_dir=ACTIVE_LINK,
     )
 
 
@@ -347,31 +352,6 @@ def _convention_bolt_port(location: str) -> int:
 def _convention_http_port(location: str) -> int:
     """HTTP port for a known location, or base port for unknown."""
     return HTTP_BASE_PORT + _get_all_offsets().get(location, 0)
-
-
-def _convention_data_dir(name: str) -> Path:
-    """Data directory for a named graph instance.
-
-    Every graph uses ``neo4j-{name}/`` — e.g. ``neo4j-codex/``, ``neo4j-dev/``.
-    """
-    return DATA_BASE_DIR / f"neo4j-{name}"
-
-
-def list_graphs() -> list[str]:
-    """List graph names that have data directories on disk.
-
-    Scans ``~/.local/share/imas-codex/`` for ``neo4j-*`` directories.
-
-    Returns:
-        Sorted list of graph names (e.g. ``["codex", "dev"]``).
-    """
-    prefix = "neo4j-"
-    graphs = []
-    if DATA_BASE_DIR.exists():
-        for d in sorted(DATA_BASE_DIR.iterdir()):
-            if d.is_dir() and d.name.startswith(prefix):
-                graphs.append(d.name[len(prefix) :])
-    return graphs
 
 
 def list_profiles() -> list[Neo4jProfile]:
@@ -403,7 +383,7 @@ def list_profiles() -> list[Neo4jProfile]:
                 password=password,
                 bolt_port=bolt_port,
                 http_port=http_port,
-                data_dir=_convention_data_dir(name),
+                data_dir=ACTIVE_LINK,
             )
         )
     return result

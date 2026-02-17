@@ -62,7 +62,7 @@ class Neo4jOperation:
     ):
         from imas_codex.graph.profiles import resolve_neo4j
 
-        self.profile = resolve_neo4j(graph)
+        self.profile = resolve_neo4j()
         self.operation_name = operation_name
         self.require_stopped = require_stopped
         self.reset_password_on_restart = reset_password_on_restart
@@ -571,7 +571,7 @@ def db_start(
 
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     password = password or profile.password
 
     if platform.system() in ("Windows", "Darwin"):
@@ -670,7 +670,7 @@ def db_stop(data_dir: str | None, graph: str | None) -> None:
 
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     data_path = Path(data_dir) if data_dir else profile.data_dir
     pid_file = data_path / "neo4j.pid"
 
@@ -700,7 +700,7 @@ def db_status(graph: str | None) -> None:
     """Check Neo4j server status."""
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     try:
         import urllib.request
 
@@ -753,7 +753,7 @@ def db_shell(image: str | None, password: str | None, graph: str | None) -> None
     """Open Cypher shell to Neo4j."""
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     password = password or profile.password
     image_path = Path(image) if image else NEO4J_IMAGE
 
@@ -806,7 +806,7 @@ def db_service(
 
     from imas_codex.graph.profiles import resolve_neo4j
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     password = password or profile.password
 
     if platform.system() != "Linux":
@@ -1342,7 +1342,7 @@ def data_dump(output: str | None, no_restart: bool, graph: str | None) -> None:
 
     require_apptainer()
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
 
     git_info = get_git_info()
     version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
@@ -1434,7 +1434,7 @@ def data_load(
     from imas_codex.graph.profiles import resolve_neo4j
     from imas_codex.settings import get_graph_password
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     password = password or get_graph_password()
     require_apptainer()
 
@@ -1796,7 +1796,7 @@ def data_pull(
 
     require_oras()
 
-    profile = resolve_neo4j(graph)
+    profile = resolve_neo4j()
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
 
