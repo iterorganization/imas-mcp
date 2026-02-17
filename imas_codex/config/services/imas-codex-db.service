@@ -38,7 +38,6 @@ ExecStart=/usr/bin/apptainer exec \
     --bind %h/.local/share/imas-codex/neo4j/import:/import \
     --bind %h/.local/share/imas-codex/neo4j/conf:/var/lib/neo4j/conf \
     --writable-tmpfs \
-    --env NEO4J_AUTH=neo4j/imas-codex \
     --env "NEO4J_server_jvm_additional=-Dfile.encoding=UTF-8 --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED" \
     %h/apptainer/neo4j_2025.11-community.sif \
     neo4j console

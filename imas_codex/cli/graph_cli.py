@@ -739,8 +739,6 @@ def graph_start(
         f"{data_path}/import:/import",
         "--writable-tmpfs",
         "--env",
-        f"NEO4J_AUTH=neo4j/{password}",
-        "--env",
         f"NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port}",
         "--env",
         f"NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port}",
@@ -1054,7 +1052,6 @@ ExecStart={apptainer_path} exec \\
     --bind {data_path}/logs:/logs \\
     --bind {data_path}/import:/import \\
     --writable-tmpfs \\
-    --env NEO4J_AUTH=neo4j/{password} \\
     --env NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port} \\
     --env NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port} \\
     {image_path} \\
@@ -1176,13 +1173,16 @@ def graph_secure() -> None:
     """Rotate the Neo4j server password.
 
     Connects to the running Neo4j via Cypher ``ALTER CURRENT USER SET
-    PASSWORD`` — no restart required.  Updates ``.env``, the systemd
-    service file, and (for remote hosts) syncs via SCP.
+    PASSWORD`` — no restart required.  Updates ``.env`` and (for remote
+    hosts) syncs via SCP.
+
+    Auth lives in the Neo4j system database, not in service files or
+    env vars.  ``graph init`` sets the initial password via
+    ``set-initial-password`` before first start.
 
     Falls back to ``set-initial-password`` only when Neo4j is stopped
     (first setup or post-dump-load).
     """
-    import re
     import secrets
 
     from imas_codex.graph.profiles import resolve_neo4j
@@ -1207,10 +1207,8 @@ def graph_secure() -> None:
         from imas_codex.graph.remote import (
             remote_is_neo4j_running,
             remote_set_initial_password,
-            resolve_remote_service_name,
         )
 
-        service = resolve_remote_service_name(profile.name, profile.host)
         was_running = remote_is_neo4j_running(profile.http_port, profile.host)
 
         if was_running:
@@ -1227,21 +1225,6 @@ def graph_secure() -> None:
                 click.echo(f"Warning: Password set issue: {e}", err=True)
 
         _update_env_file(env_file, new_password)
-
-        # Update NEO4J_AUTH in the remote systemd service file
-        try:
-            from imas_codex.remote.executor import run_command
-
-            run_command(
-                f"sed -i 's|NEO4J_AUTH=neo4j/[^ ]*|NEO4J_AUTH=neo4j/{new_password}|' "
-                f"~/.config/systemd/user/{service}.service "
-                f"&& systemctl --user daemon-reload",
-                ssh_host=profile.host,
-                timeout=15,
-            )
-            click.echo("✓ Updated systemd service")
-        except Exception as e:
-            click.echo(f"Warning: Service file update issue: {e}", err=True)
 
         # Sync .env to remote host
         try:
@@ -1307,26 +1290,6 @@ def graph_secure() -> None:
                 )
 
     _update_env_file(env_file, new_password)
-
-    # Update NEO4J_AUTH in the local systemd service file
-    service_name = f"imas-codex-neo4j-{profile.name}"
-    service_file = (
-        Path.home() / ".config" / "systemd" / "user" / f"{service_name}.service"
-    )
-    if service_file.exists():
-        content = service_file.read_text()
-        updated = re.sub(
-            r"NEO4J_AUTH=neo4j/\S+",
-            f"NEO4J_AUTH=neo4j/{new_password}",
-            content,
-        )
-        if updated != content:
-            service_file.write_text(updated)
-            subprocess.run(
-                ["systemctl", "--user", "daemon-reload"],
-                capture_output=True,
-            )
-            click.echo("✓ Updated systemd service")
 
     click.echo("\n✓ Neo4j server password rotated")
 
@@ -2680,8 +2643,6 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
         "--bind",
         f"{data_path}/import:/import",
         "--writable-tmpfs",
-        "--env",
-        f"NEO4J_AUTH=neo4j/{profile.password}",
         "--env",
         f"NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port}",
         "--env",
