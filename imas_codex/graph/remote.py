@@ -440,16 +440,17 @@ SERVICE_OLD="imas-codex-neo4j"
 SERVICE_NEW="imas-codex-neo4j-{graph_name}"
 IMAGE="$HOME/apptainer/neo4j_2025.11-community.sif"
 
-# Stop Neo4j (try new service name, then old)
+# Stop Neo4j — let systemd handle the full shutdown lifecycle.
+# Do NOT pkill separately; that races with ExecStop and causes SIGSEGV.
 systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
     systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
-sleep 2
-
-# Verify stopped
-if curl -sf http://localhost:7474/ >/dev/null 2>&1; then
-    pkill -15 -f "neo4j.*console" 2>/dev/null || true
+# Wait until fully inactive (up to 90s for large graphs)
+for i in $(seq 1 18); do
+    state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
+            systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+    [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
     sleep 5
-fi
+done
 
 # Extract archive
 TMPDIR=$(mktemp -d)
@@ -528,17 +529,34 @@ mkdir -p "$EXPORTS" && chmod 700 "$EXPORTS"
 ARCHIVE="$EXPORTS/imas-codex-graph-export-$$.tar.gz"
 
 stop_neo4j() {{
+    # Use systemctl stop and wait for it to fully complete.
+    # Do NOT pkill separately — that races with systemd's ExecStop
+    # and can cause SIGSEGV on large databases that need time to flush.
     systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
         systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
-    sleep 5
-    # Ensure no residual processes
-    pkill -15 -f "neo4j.*console" 2>/dev/null || true
-    sleep 2
+    # Wait until the service is fully inactive (up to 90s for large graphs)
+    for i in $(seq 1 18); do
+        state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
+                systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+        [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
+        sleep 5
+    done
 }}
 
 start_neo4j() {{
     systemctl --user start "$SERVICE_NEW" 2>/dev/null || \
         systemctl --user start "$SERVICE_OLD" 2>/dev/null || true
+}}
+
+wait_neo4j_ready() {{
+    # Wait for Neo4j to be fully started (up to 60s for large graphs)
+    for i in $(seq 1 12); do
+        if curl -sf http://localhost:7474 >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "Warning: Neo4j did not become ready within 60s" >&2
 }}
 
 do_dump() {{
@@ -557,11 +575,11 @@ do_dump() {{
 stop_neo4j
 
 # Attempt dump — may fail if database wasn't cleanly shut down
-if ! do_dump 2>/dev/null; then
+if ! do_dump; then
     echo "Initial dump failed — performing recovery cycle..." >&2
     # Start Neo4j for clean recovery, then stop cleanly
     start_neo4j
-    sleep 15
+    wait_neo4j_ready
     stop_neo4j
     # Retry dump
     do_dump
