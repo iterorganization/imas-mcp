@@ -1536,16 +1536,23 @@ def _create_facility_dump(
     is_flag=True,
     help="Exclude IMAS Data Dictionary nodes from export",
 )
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Also transfer the archive locally (remote graphs only).",
+)
 def graph_export(
     output: str | None,
     no_restart: bool,
     facilities: tuple[str, ...],
     no_imas: bool,
+    local: bool,
 ) -> None:
     """Export graph database to archive.
 
     When the configured location is remote, the dump is performed on
-    the remote host and the archive is transferred back via SCP.
+    the remote host and the archive stays in the remote exports
+    directory.  Use ``--local`` to also transfer it back via SCP.
     """
     from imas_codex.graph.profiles import resolve_neo4j
 
@@ -1568,7 +1575,6 @@ def graph_export(
 
     if is_remote_location(profile.host):
         from imas_codex.graph.remote import (
-            remote_cleanup_archive,
             remote_export_graph,
             scp_from_remote,
         )
@@ -1583,12 +1589,14 @@ def graph_export(
         click.echo(f"Exporting graph [{profile.name}] from {profile.host}...")
 
         remote_archive = remote_export_graph(profile.name, profile.host)
-        click.echo(f"  Transferring archive from {profile.host}...")
-        scp_from_remote(remote_archive, output_path, profile.host)
-        remote_cleanup_archive(remote_archive, profile.host)
+        click.echo(f"✓ Exported on {profile.host}: {remote_archive}")
 
-        size_mb = output_path.stat().st_size / 1024 / 1024
-        click.echo(f"✓ Archive created: {output_path} ({size_mb:.1f} MB)")
+        if local or output:
+            click.echo(f"  Transferring archive from {profile.host}...")
+            scp_from_remote(remote_archive, output_path, profile.host)
+            size_mb = output_path.stat().st_size / 1024 / 1024
+            click.echo(f"✓ Local copy: {output_path} ({size_mb:.1f} MB)")
+
         return
     # ── End remote dispatch ──────────────────────────────────────────────
 
@@ -2065,6 +2073,11 @@ def graph_push(
     is_flag=True,
     help="Fetch no-imas variant",
 )
+@click.option(
+    "--local",
+    is_flag=True,
+    help="Also transfer the archive locally (remote graphs only).",
+)
 def graph_fetch(
     version: str,
     registry: str | None,
@@ -2072,6 +2085,7 @@ def graph_fetch(
     output: str | None,
     facilities: tuple[str, ...],
     no_imas: bool,
+    local: bool,
 ) -> Path:
     """Fetch graph archive from GHCR without loading.
 
@@ -2079,11 +2093,16 @@ def graph_fetch(
     Use 'graph load <archive>' to load it afterwards, or use
     'graph pull' as a convenience for fetch + load.
 
+    When the configured location is remote and ``oras`` is available
+    there, the fetch runs directly on the remote host.  Use
+    ``--local`` to also transfer the archive back via SCP.
+
     When no --version is specified, fetches 'latest'. If 'latest' doesn't
     exist, falls back to the most recent tag in the registry.
     """
-    require_oras()
+    from imas_codex.graph.profiles import resolve_neo4j
 
+    profile = resolve_neo4j()
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
     pkg_name = get_package_name(list(facilities) or None, no_imas=no_imas)
@@ -2094,8 +2113,48 @@ def graph_fetch(
         resolved_version = _resolve_latest_tag(target_registry, token, pkg_name)
 
     artifact_ref = f"{target_registry}/{pkg_name}:{resolved_version}"
-    click.echo(f"Fetching: {artifact_ref}")
 
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.remote import is_remote_location
+
+    if is_remote_location(profile.host):
+        from imas_codex.graph.remote import (
+            remote_check_oras,
+            remote_fetch_from_ghcr,
+            scp_from_remote,
+        )
+
+        if remote_check_oras(profile.host):
+            click.echo(f"Fetching on {profile.host}: {artifact_ref}")
+            remote_archive = remote_fetch_from_ghcr(
+                artifact_ref, profile.host, token=token
+            )
+            click.echo(f"✓ Fetched on {profile.host}: {remote_archive}")
+
+            if local or output:
+                from imas_codex.graph.dirs import ensure_exports_dir
+
+                if output:
+                    dest = Path(output)
+                else:
+                    exports = ensure_exports_dir()
+                    dest = exports / f"{pkg_name}-{resolved_version}.tar.gz"
+
+                click.echo(f"  Transferring from {profile.host}...")
+                scp_from_remote(remote_archive, dest, profile.host)
+                size_mb = dest.stat().st_size / 1024 / 1024
+                click.echo(f"✓ Local copy: {dest} ({size_mb:.1f} MB)")
+                click.echo(f"  Load locally: imas-codex graph load {dest}")
+                return dest
+
+            click.echo(f"  Load remotely: imas-codex graph load {remote_archive}")
+            return Path(remote_archive)
+        else:
+            click.echo(f"oras not on {profile.host}, fetching locally...")
+    # ── End remote dispatch ──────────────────────────────────────────────
+
+    require_oras()
+    click.echo(f"Fetching: {artifact_ref}")
     login_to_ghcr(token)
 
     with tempfile.TemporaryDirectory() as tmpdir:
