@@ -53,35 +53,6 @@ def main(ctx: click.Context, version: bool) -> None:
         click.echo(ctx.get_help())
 
 
-class _DeprecatedDataGroup(click.MultiCommand):
-    """Deprecated 'data' command that forwards to 'graph' and 'config'."""
-
-    def __init__(self, graph_group: click.Group, config_group: click.Group) -> None:
-        super().__init__(
-            name="data",
-            help="[DEPRECATED] Use 'imas-codex graph' or 'imas-codex config' instead.",
-        )
-        self._graph = graph_group
-        self._config = config_group
-
-    def list_commands(self, ctx: click.Context) -> list[str]:
-        graph_cmds = self._graph.list_commands(ctx)
-        config_cmds = self._config.list_commands(ctx)
-        return sorted(set(graph_cmds + config_cmds))
-
-    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
-        click.echo(
-            "Warning: 'imas-codex data' is deprecated. "
-            "Use 'imas-codex graph' or 'imas-codex config' instead.",
-            err=True,
-        )
-        # Try graph first, then config
-        result = self._graph.get_command(ctx, cmd_name)
-        if result is None:
-            result = self._config.get_command(ctx, cmd_name)
-        return result
-
-
 def register_commands() -> None:
     """Register all command groups with the main CLI."""
     from imas_codex.cli.compute import hpc
@@ -91,7 +62,7 @@ def register_commands() -> None:
     from imas_codex.cli.embed import embed
     from imas_codex.cli.enrich import enrich
     from imas_codex.cli.facilities import facilities
-    from imas_codex.cli.graph_cli import graph, neo4j
+    from imas_codex.cli.graph_cli import graph
     from imas_codex.cli.hosts import hosts
     from imas_codex.cli.imas_dd import imas
     from imas_codex.cli.ingest import ingest
@@ -117,12 +88,6 @@ def register_commands() -> None:
     main.add_command(release)
     main.add_command(setup_age)
     main.add_command(credentials)
-
-    # Register neo4j server management under 'serve'
-    serve.add_command(neo4j)
-
-    # Deprecated alias: 'data' forwards to 'graph' and 'config'
-    main.add_command(_DeprecatedDataGroup(graph, config))
 
 
 # Register commands at import time

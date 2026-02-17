@@ -1,11 +1,11 @@
 """Graph lifecycle CLI for Neo4j database management.
 
 This module provides the ``imas-codex graph`` command group for:
+- Neo4j server management (start, stop, shell, service)
 - Graph database export/load/push/pull to GHCR (with per-facility federation)
-- Graph lifecycle: clear, backup, restore, clean
-
-Neo4j server management is under ``imas-codex serve neo4j``.
-SSH tunnel management is under ``imas-codex tunnel``.
+- Graph lifecycle: init, switch, list, clear
+- Security: password rotation (secure)
+- Registry: tags, prune
 """
 
 from __future__ import annotations
@@ -602,6 +602,7 @@ def graph() -> None:
       imas-codex graph start               Start Neo4j
       imas-codex graph stop                Stop Neo4j
       imas-codex graph shell               Interactive Cypher REPL
+      imas-codex graph service install     Install systemd service
 
     \b
     Archive & Registry:
@@ -616,31 +617,22 @@ def graph() -> None:
     \b
     Maintenance:
       imas-codex graph clear               Clear all graph data
-      imas-codex graph auth                Generate new Neo4j password
+      imas-codex graph secure              Rotate Neo4j password
     """
     pass
 
 
 # ============================================================================
-# Neo4j Server Group (registered under 'serve' in CLI __init__)
+# Neo4j Server Commands
 # ============================================================================
 
 
-@click.group("neo4j")
-def neo4j() -> None:
-    """[DEPRECATED] Use 'imas-codex graph start/stop/shell/service'.
-
-    Server management has moved under the graph command group.
-    """
-    pass
-
-
-@neo4j.command("start")
+@graph.command("start")
 @click.option("--image", envvar="NEO4J_IMAGE", default=None)
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
-def neo4j_start(
+def graph_start(
     image: str | None,
     data_dir: str | None,
     password: str | None,
@@ -750,9 +742,9 @@ def neo4j_start(
         click.echo("Warning: Neo4j may still be starting")
 
 
-@neo4j.command("stop")
+@graph.command("stop")
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
-def neo4j_stop(data_dir: str | None) -> None:
+def graph_stop(data_dir: str | None) -> None:
     """Stop Neo4j server."""
     import signal
 
@@ -780,103 +772,111 @@ def neo4j_stop(data_dir: str | None) -> None:
         )
 
 
-@neo4j.command("status")
-def neo4j_status() -> None:
-    """Check Neo4j server status."""
+@graph.command("status")
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+def graph_status(registry: str | None) -> None:
+    """Show local and registry status."""
+    git_info = get_git_info()
+    target_registry = get_registry(git_info, registry)
+
+    click.echo("Local status:")
+    click.echo(f"  Git commit: {git_info['commit_short']}")
+    click.echo(f"  Git tag: {git_info['tag'] or '(none)'}")
+    click.echo(f"  Is fork: {git_info['is_fork']}")
+    click.echo(f"  Target registry: {target_registry}")
+
+    manifest = get_local_graph_manifest()
+    if manifest:
+        click.echo("\nGraph manifest:")
+        click.echo(f"  Version: {manifest.get('version', 'unknown')}")
+        click.echo(f"  Pushed: {manifest.get('pushed', False)}")
+        if manifest.get("pushed_version"):
+            click.echo(f"  Pushed as: {manifest['pushed_version']}")
+        if manifest.get("dev_base_version"):
+            click.echo(
+                f"  Dev revision: {manifest['dev_base_version']}"
+                f"-r{manifest.get('dev_revision', '?')}"
+            )
+
+    click.echo(f"\nNeo4j: {'running' if is_neo4j_running() else 'stopped'}")
+
     from imas_codex.graph.profiles import resolve_neo4j
     from imas_codex.remote.executor import is_local_host
-    from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
-
-    profile = resolve_neo4j()
-
-    # Determine connection topology
-    is_remote = profile.host is not None and not is_local_host(profile.host)
-    tunneled_http = profile.http_port + TUNNEL_OFFSET
-    tunneled_bolt = profile.bolt_port + TUNNEL_OFFSET
-
-    # Choose the HTTP port to probe — prefer tunneled for remote graphs
-    if is_remote and is_tunnel_active(tunneled_http):
-        probe_port = tunneled_http
-        connection_method = "tunnel"
-    elif is_tunnel_active(profile.http_port):
-        probe_port = profile.http_port
-        # Port is active — but is it an SSH tunnel or local server?
-        connection_method = "tunnel" if is_remote else "local"
-    else:
-        probe_port = profile.http_port
-        connection_method = "local"
 
     try:
-        import urllib.request
-
-        with urllib.request.urlopen(
-            f"http://localhost:{probe_port}/", timeout=5
-        ) as resp:
-            resp_data = json.loads(resp.read().decode())
-            click.echo(f"Neo4j [{profile.name}] is running")
-            click.echo(f"  Version: {resp_data.get('neo4j_version', 'unknown')}")
-            click.echo(f"  Edition: {resp_data.get('neo4j_edition', 'unknown')}")
-
-            # Connection info — show actual URI and location
-            if is_remote:
-                click.echo(f"  Location: {profile.location} (remote)")
-                if connection_method == "tunnel":
-                    click.echo(
-                        f"  Bolt: localhost:{tunneled_bolt} → "
-                        f"{profile.host}:{profile.bolt_port}"
-                    )
-                    click.echo(
-                        f"  HTTP: localhost:{tunneled_http} → "
-                        f"{profile.host}:{profile.http_port}"
-                    )
-                else:
-                    click.echo(f"  Bolt: localhost:{profile.bolt_port}")
-                    click.echo(f"  HTTP: localhost:{profile.http_port}")
-            else:
-                click.echo("  Location: local")
-                click.echo(f"  Bolt: localhost:{profile.bolt_port}")
-                click.echo(f"  HTTP: localhost:{profile.http_port}")
-                click.echo(f"  Data: {profile.data_dir}")
-            click.echo(f"  URI: {profile.uri}")
-    except Exception:
-        click.echo(f"Neo4j [{profile.name}] is not responding on port {probe_port}")
+        profile = resolve_neo4j()
+        is_remote = profile.host is not None and not is_local_host(profile.host)
+        click.echo(f"  Graph: {profile.name}")
+        click.echo(f"  Location: {profile.location}{' (remote)' if is_remote else ''}")
         if is_remote:
-            click.echo(f"  Location: {profile.location} (remote)")
-            has_tunnel = is_tunnel_active(tunneled_bolt)
-            if has_tunnel:
-                click.echo(f"  Tunnel: active (localhost:{tunneled_bolt})")
-            else:
-                click.echo("  Tunnel: not active")
-                click.echo(f"  Start tunnel: imas-codex tunnel start {profile.host}")
+            click.echo(f"  URI: {profile.uri}")
         else:
-            # Local graph - check for hung process
-            pid_file = profile.data_dir / "neo4j.pid"
-            if pid_file.exists():
-                try:
-                    pid = int(pid_file.read_text().strip())
-                    os.kill(pid, 0)  # Check if process exists
-                    click.echo(
-                        f"  WARNING: Neo4j process exists (PID {pid}) but is not responding",
-                        err=True,
-                    )
-                    click.echo(
-                        "  This may indicate a hung process. To recover:", err=True
-                    )
-                    click.echo(f"    kill {pid} && imas-codex graph start", err=True)
-                except (ProcessLookupError, ValueError, OSError):
-                    pass
-            # Check for stale locks
-            has_lock, lock_msg = check_database_locks(profile.data_dir)
-            if has_lock and lock_msg:
-                click.echo(f"  {lock_msg}", err=True)
+            click.echo(f"  Data: {profile.data_dir}")
+        click.echo(f"  Bolt: {profile.bolt_port}, HTTP: {profile.http_port}")
+    except Exception:
+        pass
+
+    if is_neo4j_running():
+        try:
+            from imas_codex.graph.client import GraphClient
+            from imas_codex.graph.meta import get_graph_meta
+
+            gc = GraphClient.from_profile()
+            meta = get_graph_meta(gc)
+            gc.close()
+            if meta:
+                click.echo("\nGraph identity (GraphMeta):")
+                click.echo(f"  Name: {meta.get('name', '?')}")
+                facilities = meta.get("facilities") or []
+                click.echo(
+                    f"  Facilities: {', '.join(facilities) if facilities else '(none)'}"
+                )
+                if meta.get("updated_at"):
+                    click.echo(f"  Updated: {meta['updated_at']}")
+            else:
+                click.echo(
+                    "\nGraph identity: not initialized"
+                    "\n  Run: imas-codex graph init <name> -f <facility>"
+                )
+        except Exception:
+            pass
 
 
-@neo4j.command("profiles")
-def neo4j_profiles() -> None:
-    """List Neo4j location profiles and their port assignments.
+@graph.command("shell")
+@click.option("--image", envvar="NEO4J_IMAGE", default=None)
+@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
+def graph_shell(image: str | None, password: str | None) -> None:
+    """Open Cypher shell to Neo4j."""
+    from imas_codex.graph.profiles import resolve_neo4j
 
-    Also shows locally stored graph instances from .neo4j/.
-    """
+    profile = resolve_neo4j()
+    password = password or profile.password
+    image_path = Path(image) if image else NEO4J_IMAGE
+
+    if not image_path.exists():
+        raise click.ClickException(f"Neo4j image not found: {image_path}")
+
+    click.echo(f"Connecting to Neo4j [{profile.name}] at localhost:{profile.bolt_port}")
+    subprocess.run(
+        [
+            "apptainer",
+            "exec",
+            "--writable-tmpfs",
+            str(image_path),
+            "cypher-shell",
+            "-a",
+            f"bolt://localhost:{profile.bolt_port}",
+            "-u",
+            profile.username,
+            "-p",
+            password,
+        ]
+    )
+
+
+@graph.command("profiles")
+def graph_profiles() -> None:
+    """List Neo4j location profiles and their port assignments."""
     from imas_codex.graph.dirs import list_local_graphs
     from imas_codex.graph.profiles import (
         get_graph_location,
@@ -906,76 +906,33 @@ def neo4j_profiles() -> None:
             click.echo(f"  {marker} {g.name}")
 
 
-@neo4j.command("secure")
-def neo4j_secure() -> None:
-    """Secure Neo4j data directory permissions.
+@graph.group("service")
+def graph_service_group() -> None:
+    """Manage Neo4j systemd service.
 
-    Sets restrictive permissions (700 for dirs, 600 for files) on the
-    Neo4j data directory to prevent other users on shared filesystems
-    from accessing your database.
+    \\b
+      imas-codex graph service install   Install systemd unit
+      imas-codex graph service start     Start service
+      imas-codex graph service stop      Stop service
+      imas-codex graph service status    Check service status
     """
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    profile = resolve_neo4j()
-    data_path = profile.data_dir
-
-    if not data_path.exists():
-        click.echo(f"Data directory does not exist: {data_path}")
-        return
-
-    click.echo(f"Securing {data_path} ...")
-    secure_data_directory(data_path)
-    click.echo(f"Permissions set to owner-only (700/600) for [{profile.name}]")
+    pass
 
 
-@neo4j.command("shell")
+@graph_service_group.command("install")
 @click.option("--image", envvar="NEO4J_IMAGE", default=None)
-@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
-def neo4j_shell(image: str | None, password: str | None) -> None:
-    """Open Cypher shell to Neo4j."""
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    profile = resolve_neo4j()
-    password = password or profile.password
-    image_path = Path(image) if image else NEO4J_IMAGE
-
-    if not image_path.exists():
-        raise click.ClickException(f"Neo4j image not found: {image_path}")
-
-    click.echo(f"Connecting to Neo4j [{profile.name}] at localhost:{profile.bolt_port}")
-    subprocess.run(
-        [
-            "apptainer",
-            "exec",
-            "--writable-tmpfs",
-            str(image_path),
-            "cypher-shell",
-            "-a",
-            f"bolt://localhost:{profile.bolt_port}",
-            "-u",
-            profile.username,
-            "-p",
-            password,
-        ]
-    )
-
-
-@neo4j.command("service")
-@click.argument("action", type=click.Choice(["install", "uninstall", "status"]))
-@click.option("--image", envvar="NEO4J_IMAGE", default=None, help="Custom image path")
-@click.option("--data-dir", envvar="NEO4J_DATA", default=None, help="Custom data dir")
+@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
 @click.option("--password", envvar="NEO4J_PASSWORD", default=None)
 @click.option(
     "--minimal", is_flag=True, help="Use minimal service (no resource limits)"
 )
-def neo4j_service(
-    action: str,
+def graph_service_install(
     image: str | None,
     data_dir: str | None,
     password: str | None,
     minimal: bool,
 ) -> None:
-    """Manage Neo4j as a systemd user service."""
+    """Install Neo4j as a systemd user service."""
     import platform
 
     from imas_codex.graph.profiles import resolve_neo4j
@@ -999,26 +956,24 @@ def neo4j_service(
     data_path = Path(data_dir) if data_dir else profile.data_dir
     apptainer_path = shutil.which("apptainer")
 
-    if action == "install":
-        # Check for conflicting tunnel before installing
-        from imas_codex.graph.profiles import check_graph_conflict
+    from imas_codex.graph.profiles import check_graph_conflict
 
-        conflict = check_graph_conflict(profile.bolt_port)
-        if conflict:
-            raise click.ClickException(conflict)
+    conflict = check_graph_conflict(profile.bolt_port)
+    if conflict:
+        raise click.ClickException(conflict)
 
-        if not image_path.exists():
-            raise click.ClickException(
-                f"Neo4j image not found: {image_path}\n"
-                "Pull: apptainer pull docker://neo4j:2025.11-community"
-            )
+    if not image_path.exists():
+        raise click.ClickException(
+            f"Neo4j image not found: {image_path}\n"
+            "Pull: apptainer pull docker://neo4j:2025.11-community"
+        )
 
-        service_dir.mkdir(parents=True, exist_ok=True)
-        for subdir in ["data", "logs", "conf", "import"]:
-            (data_path / subdir).mkdir(parents=True, exist_ok=True)
+    service_dir.mkdir(parents=True, exist_ok=True)
+    for subdir in ["data", "logs", "conf", "import"]:
+        (data_path / subdir).mkdir(parents=True, exist_ok=True)
 
-        if minimal or not template_file.exists():
-            service_content = f"""[Unit]
+    if minimal or not template_file.exists():
+        service_content = f"""[Unit]
 Description=Neo4j Graph Database - {profile.name} (IMAS Codex)
 After=network.target
 
@@ -1040,47 +995,150 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 """
-            service_file.write_text(service_content)
-            click.echo(f"Installed minimal service for [{profile.name}]")
-        else:
-            shutil.copy(template_file, service_file)
-            click.echo(f"Installed from template: {template_file}")
-            click.echo("  Includes: cleanup, graceful shutdown, resource limits")
+        service_file.write_text(service_content)
+        click.echo(f"Installed minimal service for [{profile.name}]")
+    else:
+        shutil.copy(template_file, service_file)
+        click.echo(f"Installed from template: {template_file}")
+        click.echo("  Includes: cleanup, graceful shutdown, resource limits")
 
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        subprocess.run(["systemctl", "--user", "enable", service_name], check=True)
-        click.echo(f"\n✓ Service [{profile.name}] installed and enabled")
-        click.echo(
-            f"  Bolt: localhost:{profile.bolt_port}  "
-            f"HTTP: localhost:{profile.http_port}"
-        )
-        click.echo(f"  Start: systemctl --user start {service_name}")
-        click.echo("  Or:    imas-codex graph start")
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", service_name], check=True)
+    click.echo(f"\n✓ Service [{profile.name}] installed and enabled")
+    click.echo(
+        f"  Bolt: localhost:{profile.bolt_port}  HTTP: localhost:{profile.http_port}"
+    )
+    click.echo(f"  Start: systemctl --user start {service_name}")
+    click.echo("  Or:    imas-codex graph service start")
 
-    elif action == "uninstall":
-        if not service_file.exists():
-            click.echo(f"Service [{profile.name}] not installed")
-            return
-        subprocess.run(
-            ["systemctl", "--user", "stop", service_name], capture_output=True
-        )
-        subprocess.run(
-            ["systemctl", "--user", "disable", service_name], capture_output=True
-        )
-        service_file.unlink()
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        click.echo(f"Service [{profile.name}] uninstalled")
 
-    elif action == "status":
-        if not service_file.exists():
-            click.echo(f"Service [{profile.name}] not installed")
-            return
-        result = subprocess.run(
-            ["systemctl", "--user", "status", service_name],
-            capture_output=True,
-            text=True,
+@graph_service_group.command("start")
+def graph_service_start() -> None:
+    """Start Neo4j systemd service."""
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    profile = resolve_neo4j(auto_tunnel=False)
+    service_name = f"imas-codex-neo4j-{profile.name}"
+    result = subprocess.run(
+        ["systemctl", "--user", "start", service_name], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to start service: {result.stderr}")
+    click.echo(f"Started {service_name}")
+
+
+@graph_service_group.command("stop")
+def graph_service_stop() -> None:
+    """Stop Neo4j systemd service."""
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    profile = resolve_neo4j(auto_tunnel=False)
+    service_name = f"imas-codex-neo4j-{profile.name}"
+    result = subprocess.run(
+        ["systemctl", "--user", "stop", service_name], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to stop service: {result.stderr}")
+    click.echo(f"Stopped {service_name}")
+
+
+@graph_service_group.command("status")
+def graph_service_status() -> None:
+    """Check Neo4j systemd service status."""
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    profile = resolve_neo4j(auto_tunnel=False)
+    service_name = f"imas-codex-neo4j-{profile.name}"
+    subprocess.run(["systemctl", "--user", "status", service_name])
+
+
+# ============================================================================
+# Graph Secure Command
+# ============================================================================
+
+
+@graph.command("secure")
+def graph_secure() -> None:
+    """Rotate Neo4j password.
+
+    Stops the server, generates a new secure password, updates .env,
+    and restarts. The password is applied to both the .env file and
+    the running Neo4j instance.
+    """
+    import re
+    import secrets
+
+    from imas_codex.graph.profiles import resolve_neo4j
+
+    profile = resolve_neo4j(auto_tunnel=False)
+    password = secrets.token_urlsafe(24)
+
+    env_file = Path(".env")
+    if not env_file.exists():
+        raise click.ClickException(
+            ".env file not found in project root.\n"
+            "Copy from env.example: cp env.example .env"
         )
-        click.echo(result.stdout)
+
+    # Stop Neo4j if running
+    was_running = is_neo4j_running(profile.http_port)
+    if was_running:
+        click.echo(f"Stopping Neo4j [{profile.name}]...")
+        _stop_neo4j_for_switch(profile)
+        import time
+
+        for _ in range(15):
+            if not is_neo4j_running(profile.http_port):
+                break
+            time.sleep(1)
+
+    # Update .env file
+    env_content = env_file.read_text()
+    if re.search(r"^NEO4J_PASSWORD=", env_content, re.MULTILINE):
+        env_content = re.sub(
+            r"^NEO4J_PASSWORD=.*$",
+            f"NEO4J_PASSWORD={password}",
+            env_content,
+            flags=re.MULTILINE,
+        )
+    else:
+        env_content = env_content.rstrip() + f"\nNEO4J_PASSWORD={password}\n"
+    env_file.write_text(env_content)
+    env_file.chmod(0o600)
+    click.echo("✓ Updated .env with new password")
+
+    # Reset Neo4j password in the database auth store
+    if shutil.which("apptainer") and NEO4J_IMAGE.exists():
+        cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{profile.data_dir}/data:/data",
+            "--writable-tmpfs",
+            str(NEO4J_IMAGE),
+            "neo4j-admin",
+            "dbms",
+            "set-initial-password",
+            password,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0 and "already set" not in result.stderr.lower():
+            click.echo(
+                f"Warning: Password reset issue: {result.stderr.strip()}", err=True
+            )
+
+    # Restart if was running
+    if was_running:
+        click.echo("Restarting Neo4j...")
+        # Re-read .env so the new password is picked up
+        from dotenv import load_dotenv
+
+        load_dotenv(override=True)
+        new_profile = resolve_neo4j(auto_tunnel=False)
+        _start_neo4j_after_switch(new_profile)
+
+    click.echo(f"\n✓ Password rotated for [{profile.name}]")
+    click.echo("  Sync to remote: imas-codex config secrets push iter")
 
 
 # ============================================================================
@@ -1281,146 +1339,6 @@ def _create_facility_dump(
         shutil.move(str(filtered_dump), str(output_path))
         size_mb = output_path.stat().st_size / 1024 / 1024
         click.echo(f"    Filtered dump: {size_mb:.1f} MB")
-
-
-# ============================================================================
-# Graph Server Commands (canonical — neo4j group is deprecated alias)
-# ============================================================================
-
-
-@graph.command("start")
-@click.option("--image", envvar="NEO4J_IMAGE", default=None)
-@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
-@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
-@click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
-def graph_start(
-    image: str | None,
-    data_dir: str | None,
-    password: str | None,
-    foreground: bool,
-) -> None:
-    """Start Neo4j server via Apptainer."""
-    ctx = click.get_current_context()
-    ctx.invoke(
-        neo4j_start,
-        image=image,
-        data_dir=data_dir,
-        password=password,
-        foreground=foreground,
-    )
-
-
-@graph.command("stop")
-@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
-def graph_stop(data_dir: str | None) -> None:
-    """Stop Neo4j server."""
-    ctx = click.get_current_context()
-    ctx.invoke(neo4j_stop, data_dir=data_dir)
-
-
-@graph.command("shell")
-def graph_shell() -> None:
-    """Open interactive Cypher shell."""
-    ctx = click.get_current_context()
-    ctx.invoke(neo4j_shell)
-
-
-@graph.group("service")
-def graph_service_group() -> None:
-    """Manage Neo4j systemd service.
-
-    \\b
-      imas-codex graph service install   Install systemd unit
-      imas-codex graph service start     Start service
-      imas-codex graph service stop      Stop service
-      imas-codex graph service status    Check service status
-    """
-    pass
-
-
-@graph_service_group.command("install")
-@click.option("--image", envvar="NEO4J_IMAGE", default=None)
-@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
-@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
-def graph_service_install(
-    image: str | None,
-    data_dir: str | None,
-    password: str | None,
-) -> None:
-    """Install Neo4j as a systemd user service."""
-    ctx = click.get_current_context()
-    ctx.invoke(
-        neo4j_service,
-        action="install",
-        image=image,
-        data_dir=data_dir,
-        password=password,
-    )
-
-
-@graph_service_group.command("start")
-def graph_service_start() -> None:
-    """Start Neo4j systemd service."""
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    profile = resolve_neo4j(auto_tunnel=False)
-    service_name = f"imas-codex-neo4j-{profile.name}"
-    result = subprocess.run(
-        ["systemctl", "--user", "start", service_name], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise click.ClickException(f"Failed to start service: {result.stderr}")
-    click.echo(f"Started {service_name}")
-
-
-@graph_service_group.command("stop")
-def graph_service_stop() -> None:
-    """Stop Neo4j systemd service."""
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    profile = resolve_neo4j(auto_tunnel=False)
-    service_name = f"imas-codex-neo4j-{profile.name}"
-    result = subprocess.run(
-        ["systemctl", "--user", "stop", service_name], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise click.ClickException(f"Failed to stop service: {result.stderr}")
-    click.echo(f"Stopped {service_name}")
-
-
-@graph_service_group.command("status")
-def graph_service_status() -> None:
-    """Check Neo4j systemd service status."""
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    profile = resolve_neo4j(auto_tunnel=False)
-    service_name = f"imas-codex-neo4j-{profile.name}"
-    subprocess.run(["systemctl", "--user", "status", service_name])
-
-
-# ============================================================================
-# Graph Auth Command
-# ============================================================================
-
-
-@graph.command("auth")
-def graph_auth() -> None:
-    """Generate a new Neo4j password and show .env update instructions.
-
-    Creates a secure random password and prints the environment variable
-    that should be added to your .env file.
-    """
-    import secrets
-
-    password = secrets.token_urlsafe(24)
-
-    click.echo("Generated new Neo4j password.\n")
-    click.echo("Add to your .env file:")
-    click.echo(f"  NEO4J_PASSWORD={password}\n")
-    click.echo("Then sync to remote hosts:")
-    click.echo("  imas-codex config secrets push iter")
-    click.echo("\nRestart Neo4j to apply:")
-    click.echo("  imas-codex graph stop && imas-codex graph start")
 
 
 # ============================================================================
@@ -2078,78 +1996,6 @@ def graph_pull(
                 save_local_graph_manifest(manifest)
 
     click.echo("✓ Graph pull complete")
-
-
-@graph.command("status")
-@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
-def graph_status(registry: str | None) -> None:
-    """Show local and registry status."""
-    git_info = get_git_info()
-    target_registry = get_registry(git_info, registry)
-
-    click.echo("Local status:")
-    click.echo(f"  Git commit: {git_info['commit_short']}")
-    click.echo(f"  Git tag: {git_info['tag'] or '(none)'}")
-    click.echo(f"  Is fork: {git_info['is_fork']}")
-    click.echo(f"  Target registry: {target_registry}")
-
-    manifest = get_local_graph_manifest()
-    if manifest:
-        click.echo("\nGraph manifest:")
-        click.echo(f"  Version: {manifest.get('version', 'unknown')}")
-        click.echo(f"  Pushed: {manifest.get('pushed', False)}")
-        if manifest.get("pushed_version"):
-            click.echo(f"  Pushed as: {manifest['pushed_version']}")
-        if manifest.get("dev_base_version"):
-            click.echo(
-                f"  Dev revision: {manifest['dev_base_version']}"
-                f"-r{manifest.get('dev_revision', '?')}"
-            )
-
-    click.echo(f"\nNeo4j: {'running' if is_neo4j_running() else 'stopped'}")
-
-    # Show graph profiles with location awareness
-    from imas_codex.graph.profiles import resolve_neo4j
-    from imas_codex.remote.executor import is_local_host
-
-    try:
-        profile = resolve_neo4j()
-        is_remote = profile.host is not None and not is_local_host(profile.host)
-        click.echo(f"  Graph: {profile.name}")
-        click.echo(f"  Location: {profile.location}{' (remote)' if is_remote else ''}")
-        if is_remote:
-            click.echo(f"  URI: {profile.uri}")
-        else:
-            click.echo(f"  Data: {profile.data_dir}")
-        click.echo(f"  Bolt: {profile.bolt_port}, HTTP: {profile.http_port}")
-    except Exception:
-        pass
-
-    # Show in-graph identity (GraphMeta node)
-    if is_neo4j_running():
-        try:
-            from imas_codex.graph.client import GraphClient
-            from imas_codex.graph.meta import get_graph_meta
-
-            gc = GraphClient.from_profile()  # type: ignore[possibly-undefined]
-            meta = get_graph_meta(gc)
-            gc.close()
-            if meta:
-                click.echo("\nGraph identity (GraphMeta):")
-                click.echo(f"  Name: {meta.get('name', '?')}")
-                facilities = meta.get("facilities") or []
-                click.echo(
-                    f"  Facilities: {', '.join(facilities) if facilities else '(none)'}"
-                )
-                if meta.get("updated_at"):
-                    click.echo(f"  Updated: {meta['updated_at']}")
-            else:
-                click.echo(
-                    "\nGraph identity: not initialized"
-                    "\n  Run: imas-codex graph init <name> -f <facility>"
-                )
-        except Exception:
-            pass
 
 
 # ============================================================================
@@ -2820,3 +2666,120 @@ def graph_clear(force: bool) -> None:
         click.echo(f"✓ Cleared {deleted} nodes from [{profile.name}]")
     except Exception as e:
         raise click.ClickException(f"Clear failed: {e}") from e
+
+
+# ============================================================================
+# Registry Tag Commands
+# ============================================================================
+
+
+@graph.command("tags")
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+@click.option(
+    "--facility",
+    "-f",
+    default=None,
+    help="List tags for a facility-specific graph package.",
+)
+def graph_tags(registry: str | None, facility: str | None) -> None:
+    """List available graph versions in GHCR."""
+    git_info = get_git_info()
+    target_registry = get_registry(git_info, registry)
+    pkg_name = f"imas-codex-graph-{facility}" if facility else "imas-codex-graph"
+
+    tags = _list_registry_tags(target_registry, pkg_name=pkg_name)
+    if not tags:
+        click.echo(f"No tags found for {target_registry}/{pkg_name}")
+        return
+
+    click.echo(f"Tags in {target_registry}/{pkg_name}:")
+    for tag in sorted(tags):
+        click.echo(f"  {tag}")
+    click.echo(f"\n{len(tags)} tag(s) total")
+
+
+@graph.command("prune")
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+@click.option(
+    "--facility",
+    "-f",
+    default=None,
+    help="Prune tags for a facility-specific graph package.",
+)
+@click.option("--keep", default=5, help="Number of recent tags to keep.")
+@click.option("--dev-only", is_flag=True, help="Only prune dev tags.")
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted.")
+@click.option("--force", is_flag=True, help="Skip confirmation prompt.")
+def graph_prune(
+    registry: str | None,
+    facility: str | None,
+    keep: int,
+    dev_only: bool,
+    dry_run: bool,
+    force: bool,
+) -> None:
+    """Prune old graph versions from GHCR."""
+    git_info = get_git_info()
+    target_registry = get_registry(git_info, registry)
+    pkg_name = f"imas-codex-graph-{facility}" if facility else "imas-codex-graph"
+
+    tags = _list_registry_tags(target_registry, pkg_name=pkg_name)
+    if not tags:
+        click.echo(f"No tags found for {target_registry}/{pkg_name}")
+        return
+
+    # Separate release and dev tags
+    dev_tags = [t for t in tags if "dev" in t or "-r" in t]
+    release_tags = [t for t in tags if t not in dev_tags and t != "latest"]
+
+    if dev_only:
+        candidates = dev_tags
+    else:
+        candidates = dev_tags + release_tags
+
+    # Sort candidates: dev tags by revision descending, release by semver
+    def _sort_key(tag: str) -> tuple[int, int]:
+        is_dev = 0 if ("dev" in tag or "-r" in tag) else 1
+        rev = 0
+        if "-r" in tag:
+            try:
+                rev = int(tag.rsplit("-r", 1)[-1])
+            except ValueError:
+                pass
+        return (is_dev, -rev)
+
+    candidates.sort(key=_sort_key)
+
+    # Keep the most recent N, delete the rest
+    to_keep = set(candidates[:keep])
+    to_keep.add("latest")  # Never prune 'latest'
+    to_delete = [t for t in candidates if t not in to_keep]
+
+    if not to_delete:
+        click.echo(f"Nothing to prune (keeping {keep} most recent)")
+        return
+
+    click.echo(
+        f"Will delete {len(to_delete)} tag(s) from {target_registry}/{pkg_name}:"
+    )
+    for tag in to_delete:
+        click.echo(f"  {tag}")
+
+    if dry_run:
+        click.echo("\n(dry-run — no changes made)")
+        return
+
+    if not force:
+        if not click.confirm(f"Delete {len(to_delete)} tag(s)?"):
+            click.echo("Aborted.")
+            return
+
+    deleted = 0
+    for tag in to_delete:
+        if _delete_tag(target_registry, tag, pkg_name=pkg_name):
+            click.echo(f"  ✓ Deleted {tag}")
+            deleted += 1
+        else:
+            click.echo(f"  ✗ Failed to delete {tag}")
+
+    click.echo(f"\n✓ Pruned {deleted}/{len(to_delete)} tags")

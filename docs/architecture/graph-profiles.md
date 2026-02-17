@@ -130,7 +130,7 @@ When `name` matches a location, it uses that location's port slot:
 
 ```bash
 # Run a TCV-only graph (port 7688)
-IMAS_CODEX_GRAPH=tcv imas-codex serve neo4j start
+IMAS_CODEX_GRAPH=tcv imas-codex graph start
 ```
 
 ### 3. Local Development
@@ -159,7 +159,7 @@ data-dir = "/custom/path/neo4j-staging"
 ```
 
 ```bash
-IMAS_CODEX_GRAPH=staging imas-codex serve neo4j status
+IMAS_CODEX_GRAPH=staging imas-codex graph status
 ```
 
 ### 5. Multiple Tunnels
@@ -172,17 +172,17 @@ Access multiple facility graphs simultaneously from WSL:
 #   tcv:    17688/17475
 #   jt60sa: 17689/17476
 
-IMAS_CODEX_GRAPH=codex  imas-codex serve neo4j status  # iter ports
-IMAS_CODEX_GRAPH=tcv    imas-codex serve neo4j status  # tcv ports
+IMAS_CODEX_GRAPH=codex  imas-codex graph status  # iter ports
+IMAS_CODEX_GRAPH=tcv    imas-codex graph status  # tcv ports
 ```
 
 ## Data Directory Convention
 
 | Graph name | Directory |
 |-----------|-----------|
-| `codex` (default) | `~/.local/share/imas-codex/neo4j/` |
-| `tcv` | `~/.local/share/imas-codex/neo4j-tcv/` |
-| `sandbox` | `~/.local/share/imas-codex/neo4j-sandbox/` |
+| `codex` (default) | `~/.local/share/imas-codex/.neo4j/codex/` |
+| `tcv` | `~/.local/share/imas-codex/.neo4j/tcv/` |
+| `sandbox` | `~/.local/share/imas-codex/.neo4j/sandbox/` |
 
 ## Quick Reference
 
@@ -195,10 +195,14 @@ IMAS_CODEX_GRAPH=tcv    imas-codex serve neo4j status  # tcv ports
 
 | CLI Command | Purpose |
 |-------------|---------|
-| `serve neo4j profiles` | List all profiles and status |
-| `serve neo4j status` | Check active graph |
-| `serve neo4j status -g tcv` | Check specific graph |
-| `serve neo4j start -g tcv` | Start specific graph |
+| `graph profiles` | List all profiles and status |
+| `graph status` | Check active graph |
+| `graph start` | Start active graph |
+| `graph stop` | Stop active graph |
+| `graph shell` | Interactive Cypher shell |
+| `graph secure` | Rotate Neo4j password |
+| `graph tags` | List GHCR tags |
+| `graph prune` | Prune old GHCR tags |
 | `tunnel start iter` | Manual tunnel to iter |
 | `tunnel status` | Show active tunnels |
 | `graph push` | Push graph to GHCR |

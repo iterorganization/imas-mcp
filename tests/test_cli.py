@@ -42,12 +42,6 @@ class TestCLIImports:
 
         assert hosts is not None
 
-    def test_import_data(self):
-        """Data module imports."""
-        from imas_codex.cli.data import data
-
-        assert data is not None
-
     def test_import_graph_cli(self):
         """Graph CLI module imports."""
         from imas_codex.cli.graph_cli import graph
@@ -196,14 +190,6 @@ class TestCLICommands:
         result = runner.invoke(main, ["ingest", "--help"])
         assert result.exit_code == 0
         assert "Ingest" in result.output
-
-    def test_data_help(self, runner):
-        """data group has help."""
-        from imas_codex.cli import main
-
-        result = runner.invoke(main, ["data", "--help"])
-        assert result.exit_code == 0
-        assert "database" in result.output.lower() or "data" in result.output.lower()
 
     def test_tools_help(self, runner):
         """tools group has help."""

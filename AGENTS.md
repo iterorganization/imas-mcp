@@ -235,11 +235,11 @@ The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, an
 ### Neo4j Management
 
 ```bash
-uv run imas-codex serve neo4j status         # Check active graph status
-uv run imas-codex serve neo4j status -g tcv  # Check specific profile
-uv run imas-codex serve neo4j start -g tcv   # Start specific profile
-uv run imas-codex serve neo4j profiles       # List all profiles and ports
-uv run imas-codex serve neo4j shell          # Interactive Cypher (active profile)
+uv run imas-codex graph status               # Check active graph status
+uv run imas-codex graph start                # Start active graph
+uv run imas-codex graph stop                 # Stop active graph
+uv run imas-codex graph profiles             # List all profiles and ports
+uv run imas-codex graph shell                # Interactive Cypher (active profile)
 uv run imas-codex graph export               # Export graph to archive
 uv run imas-codex graph export -f tcv        # Per-facility export (filtered)
 uv run imas-codex graph load graph.tar.gz    # Load graph archive
@@ -254,8 +254,9 @@ uv run imas-codex graph facility remove tcv  # Remove facility from GraphMeta
 uv run imas-codex graph backup               # Create neo4j-admin dump backup
 uv run imas-codex graph restore              # Restore from backup
 uv run imas-codex graph clear                # Clear graph (--force required)
-uv run imas-codex graph clean --dev          # Remove all dev GHCR tags
-uv run imas-codex graph clean --backups --older-than 30d  # Clean old backups
+uv run imas-codex graph secure               # Rotate Neo4j password
+uv run imas-codex graph tags                 # List GHCR tags
+uv run imas-codex graph prune                # Prune old GHCR tags
 uv run imas-codex tunnel start iter          # Start SSH tunnel to remote host
 uv run imas-codex tunnel status              # Show active tunnels
 uv run imas-codex config private push        # Push private YAML to Gist
@@ -561,8 +562,8 @@ Extended examples and edge cases for each domain: [agents/](agents/)
 ## Fallback: MCP Server Not Running
 
 ```bash
-uv run imas-codex serve neo4j status    # Graph operations
-uv run imas-codex serve neo4j shell     # Interactive Cypher
+uv run imas-codex graph status          # Graph operations
+uv run imas-codex graph shell           # Interactive Cypher
 uv run imas-codex ingest run tcv        # Ingestion
 uv run pytest                           # Testing
 ```

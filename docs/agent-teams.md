@@ -309,7 +309,7 @@ Start with TCV — smallest signal set, best SSH access, most wiki documentation
 ### Per-Phase Checklist
 
 1. Start LiteLLM proxy: `imas-codex serve llm start`
-2. Ensure Neo4j is running: `imas-codex serve neo4j status -g <facility>`
+2. Ensure Neo4j is running: `imas-codex graph status`
 3. Verify checked signals exist:
    ```cypher
    MATCH (s:FacilitySignal {facility_id: $f, status: 'checked'})
