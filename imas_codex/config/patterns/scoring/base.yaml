@@ -2,7 +2,7 @@
 # Defines dimension weights and scoring thresholds
 #
 # Loaded by: imas_codex.discovery.config.DiscoveryConfig.load()
-# Used by: imas_codex.discovery.scorer.grounded_score()
+# Used by: imas_codex.discovery.scorer.combined_score()
 
 version: "1.0"
 

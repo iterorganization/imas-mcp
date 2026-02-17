@@ -1554,6 +1554,8 @@ async def persist_scan_results(
                 "git_head_commit": stats.get("git_head_commit"),
                 "git_branch": stats.get("git_branch"),
                 "git_root_commit": stats.get("git_root_commit"),
+                "vcs_type": stats.get("vcs_type"),
+                "vcs_remote_url": stats.get("vcs_remote_url"),
             }
             # Store file_type_counts if available
             file_type_counts = stats.get("file_type_counts")
@@ -1691,6 +1693,8 @@ async def persist_scan_results(
                     p.git_head_commit = item.git_head_commit,
                     p.git_branch = item.git_branch,
                     p.git_root_commit = item.git_root_commit,
+                    p.vcs_type = item.vcs_type,
+                    p.vcs_remote_url = item.vcs_remote_url,
                     p.child_names = item.child_names,
                     p.file_type_counts = item.file_type_counts,
                     p.tree_context = item.tree_context,
@@ -1732,6 +1736,8 @@ async def persist_scan_results(
                     p.git_head_commit = item.git_head_commit,
                     p.git_branch = item.git_branch,
                     p.git_root_commit = item.git_root_commit,
+                    p.vcs_type = item.vcs_type,
+                    p.vcs_remote_url = item.vcs_remote_url,
                     p.child_names = item.child_names,
                     p.file_type_counts = item.file_type_counts,
                     p.tree_context = item.tree_context,

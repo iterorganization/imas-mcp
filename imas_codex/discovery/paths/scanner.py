@@ -72,7 +72,7 @@ def _get_rg_patterns() -> dict[str, str]:
 
 @dataclass
 class DirStats:
-    """Statistics about a directory's contents for grounded scoring."""
+    """Statistics about a directory's contents for scoring."""
 
     total_files: int = 0
     total_dirs: int = 0
@@ -83,12 +83,14 @@ class DirStats:
     git_head_commit: str | None = None  # Git HEAD commit hash
     git_branch: str | None = None  # Current branch name
     git_root_commit: str | None = None  # First commit in history (for fork detection)
+    vcs_type: str | None = None  # VCS type: git, svn, hg, bzr
+    vcs_remote_url: str | None = None  # VCS remote URL (generalized)
     child_names: list[str] | None = None  # First 30 child file/dir names
     tree_context: str | None = None  # 2-level tree output for hierarchy
     numeric_dir_ratio: float = 0.0  # Fraction of numeric subdirs (shot IDs)
     file_type_counts: dict[str, int] = field(default_factory=dict)
     patterns_detected: list[str] = field(default_factory=list)
-    # Fast tool data for grounded scoring
+    # Fast tool data for scoring
     size_bytes: int | None = None  # Directory size from du
     rg_matches: dict[str, int] = field(default_factory=dict)  # pattern -> match count
 
@@ -108,6 +110,10 @@ class DirStats:
             result["git_branch"] = self.git_branch
         if self.git_root_commit:
             result["git_root_commit"] = self.git_root_commit
+        if self.vcs_type:
+            result["vcs_type"] = self.vcs_type
+        if self.vcs_remote_url:
+            result["vcs_remote_url"] = self.vcs_remote_url
         if self.child_names:
             result["child_names"] = self.child_names
         if self.tree_context:
@@ -276,6 +282,8 @@ def scan_paths(
             git_head_commit=stats_data.get("git_head_commit"),
             git_branch=stats_data.get("git_branch"),
             git_root_commit=stats_data.get("git_root_commit"),
+            vcs_type=stats_data.get("vcs_type"),
+            vcs_remote_url=stats_data.get("vcs_remote_url"),
             child_names=data.get("child_names", []),
             tree_context=data.get("tree_context"),
             numeric_dir_ratio=stats_data.get("numeric_dir_ratio", 0.0),
@@ -429,6 +437,8 @@ def _parse_scan_output(
             git_head_commit=stats_data.get("git_head_commit"),
             git_branch=stats_data.get("git_branch"),
             git_root_commit=stats_data.get("git_root_commit"),
+            vcs_type=stats_data.get("vcs_type"),
+            vcs_remote_url=stats_data.get("vcs_remote_url"),
             child_names=data.get("child_names", []),
             tree_context=data.get("tree_context"),
             numeric_dir_ratio=stats_data.get("numeric_dir_ratio", 0.0),

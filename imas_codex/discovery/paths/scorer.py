@@ -327,7 +327,10 @@ class DirectoryScorer:
                 quality.append("README")
             if d.get("has_makefile"):
                 quality.append("Makefile")
-            if d.get("has_git"):
+            vcs = d.get("vcs_type")
+            if vcs:
+                quality.append(f".{vcs}")
+            elif d.get("has_git"):
                 quality.append(".git")
             if quality:
                 lines.append(f"Quality: {', '.join(quality)}")
@@ -485,17 +488,20 @@ class DirectoryScorer:
             # Compute grounded score from per-purpose scores and input data
             combined = combined_score(scores, directories[i], purpose)
 
-            # Extract git metadata for penalty and expansion decisions
+            # Extract VCS metadata for expansion decisions
             has_git = directories[i].get("has_git", False)
+            vcs_type = directories[i].get("vcs_type")
+            has_vcs = vcs_type is not None or has_git
             git_remote_url = directories[i].get("git_remote_url")
+            vcs_remote_url = directories[i].get("vcs_remote_url") or git_remote_url
 
             # Determine if repo is accessible elsewhere (public or on internal servers)
             # Private repos on public hosts contain unique content we want to scan
             repo_accessible_elsewhere = False
-            if has_git and git_remote_url:
+            if has_vcs and vcs_remote_url:
                 # Check if on public hosting service
                 is_public_host = any(
-                    host in git_remote_url.lower()
+                    host in vcs_remote_url.lower()
                     for host in ["github.com", "gitlab.com", "bitbucket.org"]
                 )
                 if is_public_host:
@@ -505,19 +511,19 @@ class DirectoryScorer:
                     )
 
                     repo_accessible_elsewhere = _is_repo_publicly_accessible(
-                        git_remote_url, timeout=2.0
+                        vcs_remote_url, timeout=2.0
                     )
                 else:
                     # Check if on facility's internal git servers
                     # TODO: Could load from facility config here
                     internal_servers = ["gitlab.iter.org", "git.iter.org"]
                     repo_accessible_elsewhere = any(
-                        server in git_remote_url.lower() for server in internal_servers
+                        server in vcs_remote_url.lower() for server in internal_servers
                     )
 
-            # Note: No score penalty for git repos. SoftwareRepo deduplication
+            # Note: No score penalty for VCS repos. SoftwareRepo deduplication
             # handles clones/forks via root_commit or remote_url matching. Repos
-            # are scored on their own merit; expansion is blocked for all git repos.
+            # are scored on their own merit; expansion is blocked for all VCS repos.
 
             # Expansion: trust the LLM's should_expand decision directly.
             # The prompt gives the LLM rich context (depth, parent/sibling
@@ -525,8 +531,8 @@ class DirectoryScorer:
             # Only structural constraints override the LLM:
             should_expand = result.should_expand
 
-            # STRUCTURAL: Never expand git repos (code available via git clone)
-            if has_git:
+            # STRUCTURAL: Never expand VCS repos (code available via clone/checkout)
+            if has_vcs:
                 should_expand = False
 
             # STRUCTURAL: Never expand data containers (too many files)
@@ -537,15 +543,15 @@ class DirectoryScorer:
             should_enrich = result.should_enrich
             enrich_skip_reason = result.enrich_skip_reason
 
-            # Override: never enrich git repos with accessible remotes
+            # Override: never enrich VCS repos with accessible remotes
             # (can get LOC from remote API)
-            if has_git and repo_accessible_elsewhere:
+            if has_vcs and repo_accessible_elsewhere:
                 should_enrich = False
                 enrich_skip_reason = (
                     enrich_skip_reason
-                    or "git repo accessible elsewhere - code available via git"
+                    or f"{vcs_type} repo accessible elsewhere - code available via {vcs_type}"
                 )
-            elif has_git and git_remote_url:
+            elif has_vcs and vcs_remote_url:
                 # Private repo with remote: still worth enriching
                 # since we can't get metrics from the remote
                 pass
@@ -690,33 +696,35 @@ class DirectoryScorer:
                 ],
             )
 
-            # Compute grounded score from input data
+            # Compute combined score from input data
             combined = combined_score(scores, directories[i], purpose)
 
-            # Git metadata for expansion/enrichment decisions (no score penalty)
+            # VCS metadata for expansion/enrichment decisions (no score penalty)
             has_git = directories[i].get("has_git", False)
+            vcs_type = directories[i].get("vcs_type")
+            has_vcs = vcs_type is not None or has_git
             git_remote_url = directories[i].get("git_remote_url")
-            # Note: No score penalty - SoftwareRepo dedup handles clone/fork detection
+            vcs_remote_url = directories[i].get("vcs_remote_url") or git_remote_url
 
             # Expansion: trust the LLM's should_expand decision directly.
             should_expand = result.get("should_expand", False)
 
-            # STRUCTURAL: Never expand git repos (code available via git clone)
-            if has_git:
+            # STRUCTURAL: Never expand VCS repos (code available via clone/checkout)
+            if has_vcs:
                 should_expand = False
 
             # STRUCTURAL: Never expand data containers (too many files)
             if purpose in _DATA_PURPOSES:
                 should_expand = False
 
-            # Enrichment override for git repos with remotes
+            # Enrichment override for VCS repos with remotes
             should_enrich = result.get("should_enrich", True)
             enrich_skip_reason = result.get("enrich_skip_reason")
-            if has_git and git_remote_url:
+            if has_vcs and vcs_remote_url:
                 should_enrich = False
                 enrich_skip_reason = (
                     enrich_skip_reason
-                    or "git repo with remote - code available elsewhere"
+                    or f"{vcs_type} repo with remote - code available elsewhere"
                 )
 
             scored_dir = ScoredDirectory(

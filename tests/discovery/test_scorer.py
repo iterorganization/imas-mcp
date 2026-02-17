@@ -311,3 +311,33 @@ class TestContainerExpansion:
         assert len(results) == 1
         # modeling_data directories are explicitly blocked from expansion
         assert results[0].should_expand is False
+
+    @pytest.mark.parametrize("vcs_type", ["svn", "hg", "bzr"])
+    def test_non_git_vcs_repos_never_expand(self, vcs_type):
+        """SVN/Hg/Bzr repos should not expand (same as git repos)."""
+        scorer = DirectoryScorer(facility="test")
+        batch = self._score_batch(
+            [
+                self._make_score_result(
+                    "/work/codes/legacy_code",
+                    purpose=ResourcePurpose.modeling_code,
+                    should_expand=True,
+                    score_modeling_code=0.9,
+                ),
+            ]
+        )
+        directories = [
+            {
+                "path": "/work/codes/legacy_code",
+                "total_files": 50,
+                "total_dirs": 10,
+                "has_readme": True,
+                "has_makefile": True,
+                "has_git": False,
+                "vcs_type": vcs_type,
+            }
+        ]
+
+        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        assert len(results) == 1
+        assert results[0].should_expand is False

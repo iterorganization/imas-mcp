@@ -892,6 +892,15 @@ classes:
           First commit hash in repository history (root/birth commit).
           Used to identify forks/clones even without remote URL.
           Computed via: git rev-list --max-parents=0 HEAD
+      vcs_type:
+        description: >-
+          Version control system type detected in directory.
+          One of: git, svn, hg, bzr. Null if no VCS detected.
+      vcs_remote_url:
+        description: >-
+          Remote URL for the version control repository (generalized).
+          For git: remote origin URL. For svn: repos-root-url.
+          For hg: default path. For bzr: bound location.
       software_repo_id:
         description: Link to SoftwareRepo node if this is a git clone
         range: SoftwareRepo

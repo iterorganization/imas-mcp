@@ -250,6 +250,17 @@ def scan_directory(
     has_makefile = "makefile" in names_lower or "cmakelists.txt" in names_lower
     has_git = ".git" in names_lower
 
+    # Detect all VCS types (git, svn, hg, bzr)
+    vcs_type: Optional[str] = None
+    if has_git:
+        vcs_type = "git"
+    elif ".svn" in names_lower:
+        vcs_type = "svn"
+    elif ".hg" in names_lower:
+        vcs_type = "hg"
+    elif ".bzr" in names_lower:
+        vcs_type = "bzr"
+
     # Extension counts (for file type distribution) - sanitize keys for JSON
     ext_counts: Dict[str, int] = {}
     for f in files:
@@ -365,12 +376,41 @@ def scan_directory(
             except (subprocess.TimeoutExpired, Exception):
                 pass
 
+    # SVN remote URL extraction
+    vcs_remote_url: Optional[str] = None
+    if vcs_type == "svn":
+        try:
+            proc = subprocess.run(
+                ["svn", "info", "--show-item", "repos-root-url", path],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                vcs_remote_url = sanitize_str(proc.stdout.strip())
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+            pass
+    elif vcs_type == "hg":
+        try:
+            proc = subprocess.run(
+                ["hg", "paths", "default", "-R", path],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                vcs_remote_url = sanitize_str(proc.stdout.strip())
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+            pass
+
     result["stats"] = {
         "total_files": len(files),
         "total_dirs": len(dirs),
         "has_readme": has_readme,
         "has_makefile": has_makefile,
         "has_git": has_git,
+        "vcs_type": vcs_type,
+        "vcs_remote_url": vcs_remote_url or git_remote_url,
         "git_remote_url": git_remote_url,
         "git_head_commit": git_head_commit,
         "git_branch": git_branch,
