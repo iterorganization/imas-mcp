@@ -82,14 +82,17 @@ Microsoft's recent Nature publication demonstrates that generative world models,
 
 | Facility | Approx. Shots | Avg. Duration | Key Diagnostics | Est. State Transitions |
 |---|---|---|---|---|
-| JET | ~100,000 | ~5 s | ~200 | ~10B |
-| TCV | ~82,000 | ~2 s | ~50 (2,108 signals in graph) | ~800M |
-| JT-60SA | ~2,500 | ~10 s | ~80 | ~200M |
+| JET | ~105,000 | ~5 s | ~200 | ~10B |
+| TCV | ~75,000 | ~2 s | ~50 | ~750M |
+| JT-60U | ~15,000 | ~15 s | ~80 | ~1.8B |
+| JT-60SA† | ~300 | ~10 s | ~80 | ~24M |
 | ASDEX-U | ~42,000 | ~5 s | ~150 | ~3B |
 | DIII-D | ~200,000 | ~5 s | ~100 | ~10B |
-| **Total** | | | | **~24B** |
+| **Total** | | | | **~26B** |
 
-A 1–2B parameter Fusion World Model trained on ~24 billion state transitions is computationally feasible on a 4× H200 server. Estimated training time: 4–8 weeks for initial convergence, with ongoing refinement as data pipelines mature. Such a model could:
+† JT-60SA: first plasma October 2023; data volume growing with each operational campaign. JT-60U data (predecessor machine, 1991–2008) is accessible through the same QST data infrastructure.
+
+A 1–2B parameter Fusion World Model trained on ~26 billion state transitions is computationally feasible on a 4× H200 server. Estimated training time: 4–8 weeks for initial convergence, with ongoing refinement as data pipelines mature. Such a model could:
 
 - Generate in-silico simulations of ITER pulses before first plasma, based solely on numerical simulation and partner tokamak data.
 - Dream up new operating regimes that extend beyond training data, as the model learns underlying physical laws.
