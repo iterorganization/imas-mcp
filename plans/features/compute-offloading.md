@@ -12,8 +12,8 @@ Discovery processes (`discover paths`, `discover wiki`, `discover signals`, `dis
 |----------|-----------|-------|-------------|-----|-------------|--------|
 | ITER | Slurm | 392 (5 partitions) | ~149ms | 2x T4 login, 8x P100 titan | 16 | **High priority** — login saturated |
 | JET | SGE | 52 (heimdall101-152) | untested | none | 16 | Moderate — load 17.57 with 69 users |
-| TCV | none | — | — | none | 24 | Low — login underloaded |
-| JT-60SA | none | — | — | none | 1 vCPU | Not applicable — VM, no cluster |
+| TCV | none (planned) | ~35 desktop PCs + 3 LAC nodes | — | spcgpu01/02 (specs unknown) | 24 (LAC) | Low — no scheduler, LAC process watcher |
+| JT-60SA | PBS Professional | nakasvr23 (64c/896G) + falcon (PBS+Slurm) | — | none known | 1 vCPU | PBS on nakasvr23, Slurm on falcon |
 
 ### ITER Slurm Details
 
@@ -29,6 +29,25 @@ Discovery processes (`discover paths`, `discover wiki`, `discover signals`, `dis
 - **Load**: Many nodes near-idle (0.01-0.12 load) while login at 17.57
 - **Access**: `qsub` for batch, `qrsh` for interactive
 - **Home shared**: Yes, same filesystem on login and compute
+
+### TCV Compute Details
+
+- **No scheduler**: LAC wiki confirms "Currently there is no scheduler (such as Slurm) in lacs. There are plans to implement one."
+- **LAC nodes** (spclac05/06/07+): Shared analysis servers, up to 48 cores, up to 200 GB RAM. Automated process watcher terminates resource-heavy jobs. Users directed to SCITAS for heavy work.
+- **Desktop PC pool** (~35 nodes, spcpc*): Staff desktops configured as compute nodes during idle cycles. Managed by medusa.epfl.ch. SSH access for CRPP members (Gaspar auth). No scheduler — use `nice -20`. 16-128 GB RAM, 4-16 cores (Haswell i7 to Alder Lake). openSUSE Leap.
+- **GPU nodes**: spcgpu01/02 exist (ping OK), SSH access not configured for codex user, specs unknown.
+- **PPB110**: Former Slurm cluster (8x Haswell i7-4770, 32GB each). **Dismantled 2026**. Login node ppb110.epfl.ch still online for old data access.
+- **External HPC**: SCITAS (Fidis/Helvetios) and RCP mentioned as options, but not reachable from TCV login node.
+- **Implication**: No offloading possible at TCV. Commands run directly on LAC nodes with `nice`. Process watcher limits sustained high-CPU work.
+
+### JT-60SA Compute Details
+
+- **PBS Professional on nakasvr23**: Queue `workq`, max 64 cores, 896 GB memory. `qsub` command. Jobs run on the login node itself (no separate compute nodes). Policy: parallel/high-load jobs MUST use batch; frontend jobs may be killed without notice.
+- **falcon**: Secondary compute system with both PBS (queue: `normal`) and Slurm (partition: `single`, compute node falcon02). Used for MUSCLE3, IMPACT, OFMC codes.
+- **imaging**: Older compute server for MPI codes (Intel compiler 15/18).
+- **helios, SGI8600**: JAEA HPC systems, separate infrastructure.
+- **VPN required**: SSH access requires QST VPN, frequently unreachable.
+- **Implication**: PBS offloading theoretically possible but limited — nakasvr23 is a single-node VM running PBS locally. falcon offers Slurm but access/configuration unknown.
 
 ## Design
 
@@ -47,7 +66,7 @@ Behavior:
 3. If scheduler: allocate interactive session, establish tunnels, run CLI on compute node
 4. On completion or timeout: release allocation
 
-The scheduler abstraction reads config from `ComputeConfig` in the private YAML, supporting Slurm (`salloc`/`sbatch`) and SGE (`qrsh`/`qsub`) with the same interface.
+The scheduler abstraction reads config from `ComputeConfig` in the private YAML, supporting Slurm (`salloc`/`sbatch`), SGE (`qrsh`/`qsub`), and PBS (`qsub`) with the same interface.
 
 ### Execution Patterns
 

@@ -73,6 +73,8 @@ exploration_notes:
   from kfs6-1 and kfs6-3.'
 - '2026-02-03: Python 3.13.3 (!), pip 25.1.1, PyPI accessible. No uv available. tree command available (no eza). Fast tools
   in ~/bin: rg, fd, bat, dust, fzf, autossh.'
+- '2026-02-18: Compute infrastructure profiled: SGE with 52 queues (heimdall101-152), 16 slots each, INFINITY time/mem limits.
+  Many nodes idle. Home shared. No GPU. ComputeConfig added to private YAML.'
 hostname: heimdall136
 
 python:
@@ -418,3 +420,31 @@ ppf_structure:
     HRTS: High Resolution Thomson Scattering
     BOLO: Bolometer
     ECM1: Electron Cyclotron Emission
+compute:
+  scheduler:
+    type: sge
+    alloc_command: qrsh
+    batch_command: qsub
+    home_shared: true
+    tunnel_required: false
+    partitions:
+    - name: heimdall101-152
+      nodes: 52
+      cores_per_node: 16
+      memory_gb: 125
+      max_time: UNLIMITED
+      is_debug: false
+      notes: 52 queues (one per node), 16 slots each. load_thresholds np_load_avg=1.75. INFINITY s_rt/h_rt/h_vmem. Many 
+        nodes idle (load 0.01-0.12). Some nodes have 32 CPUs.
+  login_node:
+    hostname: heimdall136.jetdata.eu
+    cores: 16
+    memory_gb: 125
+    shared_users: 69
+  notes:
+  - SGE (Sun Grid Engine) with 52 queues named heimdall101-152, one queue per physical node
+  - 'Each queue: 16 slots, INFINITY time/memory limits, load threshold np_load_avg=1.75'
+  - Submit and exec hosts are all heimdall101-152.jetdata.eu
+  - Many nodes nearly idle (load 0.01-0.12) while login node (heimdall136) at load 17.57
+  - 'JET accessed via ITER reverse SSH tunnel - route: workstation -> ITER -> JET'
+  - qsub can submit jobs, qrsh for interactive. No GPU resources found.
