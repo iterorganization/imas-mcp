@@ -304,7 +304,9 @@ async def score_worker(
         except ProviderBudgetExhausted as e:
             logger.error("API key budget exhausted — halting score workers: %s", e)
             await asyncio.to_thread(_release_claimed_pages, [p["id"] for p in pages])
-            state.stop_requested = True
+            state.provider_budget_exhausted = True
+            if on_progress:
+                on_progress("provider_budget_exhausted", state.score_stats)
             break
         except Exception as e:
             logger.error("Error in scoring batch: %s", e)
@@ -915,7 +917,9 @@ async def artifact_score_worker(
                     )
             except Exception:
                 pass
-            state.stop_requested = True
+            state.provider_budget_exhausted = True
+            if on_progress:
+                on_progress("provider_budget_exhausted", state.artifact_score_stats)
             break
         except Exception as e:
             logger.error("Error in artifact scoring batch: %s", e)
@@ -1105,7 +1109,9 @@ async def image_score_worker(
                 _release_claimed_images,
                 [img["id"] for img in images_ready],
             )
-            state.stop_requested = True
+            state.provider_budget_exhausted = True
+            if on_progress:
+                on_progress("provider_budget_exhausted", state.image_stats)
             break
 
 

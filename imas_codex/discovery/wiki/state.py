@@ -89,6 +89,7 @@ class WikiDiscoveryState:
 
     # Control
     stop_requested: bool = False
+    provider_budget_exhausted: bool = False  # API key credit limit hit (402)
     score_only: bool = False  # When True, ingest workers are not started
     store_images: bool = False  # When True, keep image_data in graph after scoring
 
@@ -242,7 +243,7 @@ class WikiDiscoveryState:
         if self.deadline_expired:
             return True
 
-        budget_done = self.budget_exhausted
+        budget_done = self.budget_exhausted or self.provider_budget_exhausted
         # Page limit also stops LLM workers (score workers check this too)
         limit_done = budget_done or self.page_limit_reached
 
@@ -323,13 +324,13 @@ class WikiDiscoveryState:
         """Check if score workers should stop.
 
         Score workers stop when budget exhausted, page limit reached,
-        or deadline expired.
+        provider budget exhausted, or deadline expired.
         """
         if self.stop_requested:
             return True
         if self.deadline_expired:
             return True
-        if self.budget_exhausted:
+        if self.budget_exhausted or self.provider_budget_exhausted:
             return True
         if self.page_limit_reached:
             return True
@@ -356,6 +357,7 @@ class WikiDiscoveryState:
             scoring_done = (
                 self.score_phase.is_idle_or_done
                 or self.budget_exhausted
+                or self.provider_budget_exhausted
                 or self.page_limit_reached
             )
             if scoring_done and not _get_graph_ops().has_pending_ingest_work(
@@ -385,14 +387,14 @@ class WikiDiscoveryState:
     def should_stop_artifact_scoring(self) -> bool:
         """Check if artifact score workers should stop.
 
-        Artifact score workers stop when budget exhausted, deadline expired,
-        or no more discovered artifacts.
+        Artifact score workers stop when budget exhausted, provider budget
+        exhausted, deadline expired, or no more discovered artifacts.
         """
         if self.stop_requested:
             return True
         if self.deadline_expired:
             return True
-        if self.budget_exhausted:
+        if self.budget_exhausted or self.provider_budget_exhausted:
             return True
         if (
             self.artifact_score_phase.is_idle_or_done
@@ -411,14 +413,14 @@ class WikiDiscoveryState:
 
         Stop when:
         1. Explicitly requested or deadline expired
-        2. Budget exhausted (VLM must respect budget like LLM workers)
+        2. Budget exhausted or provider budget exhausted
         3. Idle AND ingestion is done AND no pending images
         """
         if self.stop_requested:
             return True
         if self.deadline_expired:
             return True
-        if self.budget_exhausted:
+        if self.budget_exhausted or self.provider_budget_exhausted:
             return True
         # Wait for ingestion to finish before declaring no work.
         # Images only appear after pages are ingested, so the worker may

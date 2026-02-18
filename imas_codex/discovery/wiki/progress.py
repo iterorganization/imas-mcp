@@ -148,6 +148,7 @@ class ProgressState:
     # Mode flags
     scan_only: bool = False
     score_only: bool = False
+    provider_budget_exhausted: bool = False  # API key credit limit hit (402)
 
     # Worker group for status tracking
     worker_group: SupervisedWorkerGroup | None = None
@@ -330,6 +331,8 @@ class ProgressState:
     @property
     def limit_reason(self) -> str | None:
         """Return which limit was reached, or None if no limit reached."""
+        if self.provider_budget_exhausted:
+            return "api budget"
         if self.cost_limit_reached:
             return "cost"
         if self.page_limit_reached:
@@ -552,7 +555,9 @@ class WikiProgressDisplay:
             parts.append(f"{failed} failed")
 
         # Budget annotation for triage/docs/images groups
-        if count > 0 and self.state.cost_limit_reached:
+        if count > 0 and (
+            self.state.cost_limit_reached or self.state.provider_budget_exhausted
+        ):
             budget_groups = {"triage", "docs", "images"}
             if group in budget_groups:
                 all_stopped = all(
@@ -561,7 +566,11 @@ class WikiProgressDisplay:
                     if s.group == group
                 )
                 if all_stopped:
-                    parts.append("budget")
+                    parts.append(
+                        "api budget"
+                        if self.state.provider_budget_exhausted
+                        else "budget"
+                    )
 
         return count, f"({', '.join(parts)})" if parts else ""
 
@@ -675,7 +684,9 @@ class WikiProgressDisplay:
         triage_complete_label = "complete"
         if self._worker_complete("triage") and not score:
             triage_complete = True
-            if self.state.cost_limit_reached:
+            if self.state.provider_budget_exhausted:
+                triage_complete_label = "api budget"
+            elif self.state.cost_limit_reached:
                 triage_complete_label = "cost limit"
         if score:
             triage_text = self._clip_title(score.title, content_width - LABEL_WIDTH)
@@ -715,7 +726,9 @@ class WikiProgressDisplay:
         docs_complete_label = "complete"
         if self._worker_complete("docs") and not artifact:
             docs_complete = True
-            if self.state.cost_limit_reached:
+            if self.state.provider_budget_exhausted:
+                docs_complete_label = "api budget"
+            elif self.state.cost_limit_reached:
                 docs_complete_label = "cost limit"
         if artifact:
             display_name = artifact.filename
@@ -739,7 +752,9 @@ class WikiProgressDisplay:
         images_complete_label = "complete"
         if self._worker_complete("images") and not image:
             images_complete = True
-            if self.state.cost_limit_reached:
+            if self.state.provider_budget_exhausted:
+                images_complete_label = "api budget"
+            elif self.state.cost_limit_reached:
                 images_complete_label = "cost limit"
         if image:
             images_text = self._clip_title(
@@ -1497,5 +1512,14 @@ class WikiProgressDisplay:
         if self.state.total_pages > 0:
             coverage = total_scored / self.state.total_pages * 100
             summary.append(f"  coverage={coverage:.1f}%", style="cyan")
+
+        # Show limit reason if applicable
+        if self.state.provider_budget_exhausted:
+            summary.append("\n")
+            summary.append(
+                "  ⚠ API key budget exhausted (HTTP 402) — "
+                "LLM workers stopped, I/O workers drained queues",
+                style="bold yellow",
+            )
 
         return summary

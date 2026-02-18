@@ -669,7 +669,11 @@ def wiki(
                     wiki_logger.info(f"SCAN: {msg}")
 
             def log_on_score(msg, stats, results=None):
-                if msg != "idle":
+                if msg == "provider_budget_exhausted":
+                    wiki_logger.warning(
+                        "API key budget exhausted — LLM workers halting"
+                    )
+                elif msg != "idle":
                     wiki_logger.info(f"SCORE: {msg}")
 
             def log_on_ingest(msg, stats, results=None):
@@ -842,6 +846,9 @@ def wiki(
                     display.update_scan(msg, stats, result_dicts)
 
                 def on_score(msg, stats, results=None):
+                    if msg == "provider_budget_exhausted":
+                        display.state.provider_budget_exhausted = True
+                        return
                     result_dicts = None
                     if results:
                         result_dicts = [
@@ -890,6 +897,9 @@ def wiki(
                     display.update_artifact(msg, stats, result_dicts)
 
                 def on_artifact_score(msg, stats, results=None):
+                    if msg == "provider_budget_exhausted":
+                        display.state.provider_budget_exhausted = True
+                        return
                     result_dicts = None
                     if results:
                         result_dicts = [
@@ -905,6 +915,9 @@ def wiki(
                     display.update_artifact_score(msg, stats, result_dicts)
 
                 def on_image(msg, stats, results=None):
+                    if msg == "provider_budget_exhausted":
+                        display.state.provider_budget_exhausted = True
+                        return
                     result_dicts = None
                     if results:
                         result_dicts = [
