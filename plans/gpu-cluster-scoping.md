@@ -1,7 +1,10 @@
 # Accelerating Scientific Discovery at ITER Through Local GPU Infrastructure
 
-**Science Division — GPU Compute Requirements & Use Cases**
-February 2026
+Science Division — GPU Compute Requirements & Use Cases
+
+Author: Simon McIntosh
+Co-author: Simon Pinches
+Date: 18/02/2026
 
 ## Abstract
 
@@ -32,7 +35,7 @@ The P100 (2016 architecture) lacks tensor cores entirely — the fundamental har
 | Kimi K2 [2] | MoE | 1,000B / 32B | ~500 GB | 4 × H200 |
 | Qwen3 0.6B (current) | Dense | 0.6B | 1.2 GB | 1 × T4 (current) |
 
-**Proposed acquisition — NVIDIA H200:**
+Proposed acquisition — NVIDIA H200:
 
 |  | Per GPU | 4-GPU Server |
 |---|---|---|
@@ -48,7 +51,7 @@ A single 4-GPU H200 server (564 GB VRAM) comfortably serves GLM-5 and Kimi K2 in
 
 ### 3.1 Multilingual Embedding and IMAS Data Mapping
 
-**Need:** Immediate — directly enables Use Case 3.3. **Third-party alternative:** Cloud embedding APIs (OpenAI, Cohere) at ~$0.10/M tokens; limited by upload of sensitive internal documents and inability to run custom models.
+Need: Immediate — directly enables Use Case 3.3. Third-party alternative: Cloud embedding APIs (OpenAI, Cohere) at ~$0.10/M tokens; limited by upload of sensitive internal documents and inability to run custom models.
 
 A demonstration project is currently operational across three partner tokamaks (JET, TCV, JT-60SA) using the Qwen3 0.6B embedding model deployed on the ITER login node's single T4 GPU. The project uses LLM agents to discover and extract data mappings from native facility-specific formats to the standard IMAS data model used at ITER. This is a multilingual challenge: JT-60SA has significant technical content written in a mix of Japanese and English; TCV's documentation is partly in French; and future mapping activities will extend to EAST (China), KSTAR (Korea), and ASDEX Upgrade (Germany), each with documentation in their respective languages. We deploy multilingual embedding models so that the semantic meaning of source documents is preserved without loss in translation — a Japanese equipment specification and its English-language IMAS counterpart are mapped into the same vector space, enabling automated discovery of correspondences that would otherwise require bilingual domain experts. The provision of partner tokamak data in a unified IMAS format is a necessary prerequisite for training the Fusion World Model detailed in Section 3.3. Scaling this service to larger, more capable embedding models (4B, 8B parameters) requires GPU VRAM that exceeds the current T4 capacity.
 
@@ -56,14 +59,14 @@ While not a direct concern of the Science Division, we note that the same embedd
 
 ### 3.2 Local Agentic LLM Deployment
 
-**Need:** Immediate. **Third-party alternative:** OpenRouter, Anthropic API, GitHub Copilot — all subject to rate limits.
+Need: Immediate. Third-party alternative: OpenRouter, Anthropic API, GitHub Copilot — all subject to rate limits.
 
-This is our most impactful near-term use case. We currently rely on third-party providers (GitHub Copilot, Claude Code via Anthropic/OpenRouter) for agentic software development. **The binding constraint is not cost but rate limits.** Third-party providers impose hard caps on concurrent requests that limit parallel agent deployment to 2–3 agents at any time:
+This is our most impactful near-term use case. We currently rely on third-party providers (GitHub Copilot, Claude Code via Anthropic/OpenRouter) for agentic software development. The binding constraint is not cost but rate limits. Third-party providers impose hard caps on concurrent requests that limit parallel agent deployment to 2–3 agents at any time:
 
-- **GitHub Copilot:** Fair-use policy blocks requests when running 3+ agents for any sustained period. Current usage as of 18 February: 1,100% of monthly premium budget consumed.
-- **Claude Code / OpenRouter:** Per-minute request limits cap throughput regardless of willingness to pay. Claude's agent teams capability (released February 2026) enables collaborative multi-agent workflows but is immediately throttled by these limits.
+- GitHub Copilot: Fair-use policy blocks requests when running 3+ agents for any sustained period. Current usage as of 18 February: 1,100% of monthly premium budget consumed.
+- Claude Code / OpenRouter: Per-minute request limits cap throughput regardless of willingness to pay. Claude's agent teams capability (released February 2026) enables collaborative multi-agent workflows but is immediately throttled by these limits.
 
-**Cost comparison for sustained agent team usage (5 agents, 8 hours/day):**
+Cost comparison for sustained agent team usage (5 agents, 8 hours/day):
 
 | Deployment | Monthly Cost | Rate Limited | Concurrent Agents |
 |---|---|---|---|
@@ -74,11 +77,13 @@ The open-weight GLM-5 achieves an intelligence score of 49.5 on standard benchma
 
 ### 3.3 Fusion World Model Development
 
-**Need:** Medium-term (12–24 months), with infrastructure required now. **Third-party alternative:** Cloud GPU rental (Google Cloud, Lambda Labs) at ~€3–5/GPU-hour for H100; viable for prototyping but prohibitively expensive for sustained training campaigns.
+Need: Medium-term (12–24 months), with infrastructure required now. Third-party alternative: Cloud GPU rental (Google Cloud, Lambda Labs) at ~€3–5/GPU-hour for H100; viable for prototyping but prohibitively expensive for sustained training campaigns.
 
-Microsoft's recent Nature publication demonstrates that generative world models, trained on observational data, can learn deep physical laws rather than simple interpolating patterns [3]. Their WHAM model (1.6B parameters) was trained on ~1.4 billion state transitions from gameplay data to generate consistent and diverse future sequences. We propose to develop an analogous Fusion World Model trained on experimental data from ITER's partner tokamaks.
+Microsoft's recent Nature publication demonstrates that generative world models, trained on observational data, can learn deep physical laws rather than simple interpolation patterns [3]. Their WHAM model (World and Human Action Model, 1.6B parameters) was trained to play video games in real time, generating each frame on the fly in response to player actions. The model does not replay pre-recorded sequences; it generates entirely new, physically consistent gameplay as it unfolds. WHAM was trained on approximately 1.4 billion state transitions drawn from 60,986 recorded gameplay matches. In that context, a state transition is a single frame-to-frame step: given the current visual frame (the game state) and a player action (keyboard or controller input), the model predicts the next frame. The training corpus therefore consists of 1.4 billion (state, action, next-state) tuples from which the model learns to generate consistent and diverse future sequences.
 
-**Available training data from partner facilities (estimated):**
+We propose to develop an analogous Fusion World Model trained on experimental data from ITER's partner tokamaks. The concept of a state transition transfers directly to the tokamak case. A tokamak pulse produces a dense time series of diagnostic measurements — magnetic field, plasma current, electron temperature and density profiles, radiated power, and many others — sampled at rates from 1 kHz to 1 MHz depending on the diagnostic. A single state transition in the fusion context is one time step across all diagnostics: given the current plasma state (the vector of all diagnostic measurements at time t) and the control actions applied during that interval (coil currents, gas injection rates, heating power), the model predicts the plasma state at time t+1. A five-second pulse sampled at 1 kHz across 200 diagnostics produces approximately 1 million state transitions, each encoding the full observable state of the plasma and the control inputs that shaped its evolution.
+
+Available training data from partner facilities (estimated):
 
 | Facility | Approx. Shots | Avg. Duration | Key Diagnostics | Est. State Transitions |
 |---|---|---|---|---|
@@ -88,19 +93,24 @@ Microsoft's recent Nature publication demonstrates that generative world models,
 | JT-60SA† | ~300 | ~10 s | ~80 | ~24M |
 | ASDEX-U | ~42,000 | ~5 s | ~150 | ~3B |
 | DIII-D | ~200,000 | ~5 s | ~100 | ~10B |
-| **Total** | | | | **~26B** |
+| Total | | | | ~26B |
 
 † JT-60SA: first plasma October 2023; data volume growing with each operational campaign. JT-60U data (predecessor machine, 1991–2008) is accessible through the same QST data infrastructure.
 
-A 1–2B parameter Fusion World Model trained on ~26 billion state transitions is computationally feasible on a 4× H200 server. Estimated training time: 4–8 weeks for initial convergence, with ongoing refinement as data pipelines mature. Such a model could:
+A 1–2B parameter Fusion World Model trained on ~26 billion state transitions is computationally feasible on a 4× H200 server. Estimated training time: 4–8 weeks for initial convergence, with ongoing refinement as data pipelines mature.
 
-- Generate in-silico simulations of ITER pulses before first plasma, based solely on numerical simulation and partner tokamak data.
-- Dream up new operating regimes that extend beyond training data, as the model learns underlying physical laws.
-- Identify chains of events leading to off-normal scenarios, enabling operations teams to harden plans before these scenarios become reality.
+The practical value of such a model lies in its ability to pre-play planned pulses before they are executed on the real machine. In the same way that WHAM generates real-time gameplay frame by frame, a Fusion World Model would generate a predicted pulse evolution time step by time step, given only the planned control waveforms as input. This enables session leaders and operations teams to:
 
-**Starting this work today is essential.** The competences and infrastructure developed now will be ready for the start of commissioning and SRO. On the very first day that ITER produces a plasma, the continual training pipelines — developed and proven on partner facility data — will be immediately ready to begin learning the new and unique physics that the ITER machine gives us access to. As we progress through our research plan and experimental programme, the AI models will learn alongside the physicists, complementing their activities and providing real-time support. With each successive campaign the models grow more capable, their understanding of ITER's operating space deepening in lockstep with that of the scientific team.
+- Validate physics assumptions underpinning a planned pulse by running it through the world model in silico and comparing the predicted plasma response against expectations.
+- Check machine limit avoidance by observing whether the generated pulse trajectory approaches or exceeds operational boundaries on quantities such as plasma current, stored energy, or heat loads on plasma-facing components.
+- Assess susceptibility to disruptions by examining whether the predicted state trajectory passes through regions of operational space that the model has learned are associated with disruption precursors in the training data.
+- Explore alternative scenarios by modifying control waveforms and immediately re-running the prediction to compare outcomes, all without consuming machine time.
 
-We envisage a control room in which physicists have direct access to LLM agents capable of serving requests across the full spectrum of complexity — from simple plotting tasks such as *"show me the plasma current profiles for the last three disrupted pulses"*, to advanced hypothesis testing backed by our experimental catalogue and coupled to physics simulation codes that agent teams could execute independently, reporting their findings back to the scientists. This is not speculative: the agentic infrastructure described in Sections 3.1 and 3.2 provides exactly this capability, and the Fusion World Model adds a generative layer that enables the agents to reason about what *might* happen as well as what *has* happened. With a suitable pipeline in place, models can be retrained on morning experimental data so that afternoon sessions benefit from updated predictions.
+All of this is possible in silico before the pulse is run on the real machine. Microsoft has already demonstrated real-time generative capability — WHAM produces gameplay frames at 20 frames per second — and there is no fundamental technical barrier to achieving comparable performance for the tokamak case, where the time-step cadence is slower and the state dimensionality is comparable.
+
+Starting this work today is essential. The competences and infrastructure developed now will be ready for the start of commissioning and SRO. On the very first day that ITER produces a plasma, the continual training pipelines — developed and proven on partner facility data — will be immediately ready to begin learning the new and unique physics that the ITER machine gives us access to. As we progress through our research plan and experimental programme, the AI models will learn alongside the physicists, complementing their activities and providing real-time support. With each successive campaign the models grow more capable, their understanding of ITER's operating space deepening in lockstep with that of the scientific team.
+
+We envisage a control room in which physicists have direct access to LLM agents capable of serving requests across the full spectrum of complexity — from simple plotting tasks such as "show me the plasma current profiles for the last three disrupted pulses", to advanced hypothesis testing backed by our experimental catalogue and coupled to physics simulation codes that agent teams could execute independently, reporting their findings back to the scientists. This is not speculative: the agentic infrastructure described in Sections 3.1 and 3.2 provides exactly this capability, and the Fusion World Model adds a generative layer that enables the agents to reason about what might happen as well as what has happened. With a suitable pipeline in place, models can be retrained on morning experimental data so that afternoon sessions benefit from updated predictions.
 
 ## 4. Recommendation
 
