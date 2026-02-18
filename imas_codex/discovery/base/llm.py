@@ -64,6 +64,41 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+
+# ---------------------------------------------------------------------------
+# Fatal error: provider budget/credit exhaustion
+# ---------------------------------------------------------------------------
+
+
+class ProviderBudgetExhausted(Exception):
+    """Raised when the LLM provider rejects requests due to credit/budget limits.
+
+    This is a fatal, non-retryable error. Callers should halt all LLM-dependent
+    work immediately rather than retrying — the key/account needs manual
+    intervention (top-up credits or raise the spending limit).
+    """
+
+
+# Patterns indicating the API key or account has hit a hard spending cap.
+# Matched case-insensitively against the full error message.
+_BUDGET_EXHAUSTED_PATTERNS = (
+    "requires more credits",
+    "insufficient_quota",
+    "billing_hard_limit_reached",
+    "exceeded your current quota",
+    "payment required",
+)
+
+
+def _is_budget_exhausted(error_msg: str) -> bool:
+    """Return True if *error_msg* indicates a hard credit/budget limit."""
+    msg = error_msg.lower()
+    # HTTP 402 Payment Required is the canonical signal from OpenRouter
+    if "402" in msg and ("credit" in msg or "payment" in msg or "afford" in msg):
+        return True
+    return any(p in msg for p in _BUDGET_EXHAUSTED_PATTERNS)
+
+
 # ---------------------------------------------------------------------------
 # Retry configuration
 # ---------------------------------------------------------------------------
@@ -436,6 +471,10 @@ def call_llm_structured(
         except Exception as e:
             last_error = e
             error_msg = str(e)
+            if _is_budget_exhausted(error_msg):
+                raise ProviderBudgetExhausted(
+                    f"LLM provider budget exhausted: {error_msg[:200]}"
+                ) from e
             if _is_retryable(error_msg) and attempt < max_retries - 1:
                 delay = retry_base_delay * (2**attempt)
                 logger.debug(
@@ -533,6 +572,10 @@ async def acall_llm_structured(
         except Exception as e:
             last_error = e
             error_msg = str(e)
+            if _is_budget_exhausted(error_msg):
+                raise ProviderBudgetExhausted(
+                    f"LLM provider budget exhausted: {error_msg[:200]}"
+                ) from e
             if _is_retryable(error_msg) and attempt < max_retries - 1:
                 delay = retry_base_delay * (2**attempt)
                 logger.debug(
@@ -620,6 +663,10 @@ def call_llm(
         except Exception as e:
             last_error = e
             error_msg = str(e)
+            if _is_budget_exhausted(error_msg):
+                raise ProviderBudgetExhausted(
+                    f"LLM provider budget exhausted: {error_msg[:200]}"
+                ) from e
             if _is_retryable(error_msg) and attempt < max_retries - 1:
                 delay = retry_base_delay * (2**attempt)
                 logger.debug(
@@ -700,6 +747,10 @@ async def acall_llm(
         except Exception as e:
             last_error = e
             error_msg = str(e)
+            if _is_budget_exhausted(error_msg):
+                raise ProviderBudgetExhausted(
+                    f"LLM provider budget exhausted: {error_msg[:200]}"
+                ) from e
             if _is_retryable(error_msg) and attempt < max_retries - 1:
                 delay = retry_base_delay * (2**attempt)
                 logger.debug(

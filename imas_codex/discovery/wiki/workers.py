@@ -17,6 +17,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.base.llm import ProviderBudgetExhausted
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import WikiPageStatus
 
@@ -300,6 +301,11 @@ async def score_worker(
             await asyncio.to_thread(_release_claimed_pages, [p["id"] for p in pages])
             # Continue processing - don't stop the whole discovery
             continue
+        except ProviderBudgetExhausted as e:
+            logger.error("API key budget exhausted — halting score workers: %s", e)
+            await asyncio.to_thread(_release_claimed_pages, [p["id"] for p in pages])
+            state.stop_requested = True
+            break
         except Exception as e:
             logger.error("Error in scoring batch: %s", e)
             # Run blocking Neo4j calls in thread pool
@@ -893,6 +899,24 @@ async def artifact_score_worker(
             except Exception:
                 pass
             continue
+        except ProviderBudgetExhausted as e:
+            logger.error(
+                "API key budget exhausted — halting artifact score workers: %s", e
+            )
+            try:
+                with GraphClient() as gc:
+                    gc.query(
+                        """
+                        UNWIND $ids AS id
+                        MATCH (wa:WikiArtifact {id: id})
+                        SET wa.claimed_at = null
+                        """,
+                        ids=[a["id"] for a in artifacts],
+                    )
+            except Exception:
+                pass
+            state.stop_requested = True
+            break
         except Exception as e:
             logger.error("Error in artifact scoring batch: %s", e)
             for artifact in artifacts:
@@ -1073,6 +1097,16 @@ async def image_score_worker(
                 _release_claimed_images,
                 [img["id"] for img in images_ready],
             )
+        except ProviderBudgetExhausted as e:
+            logger.error(
+                "API key budget exhausted — halting image score workers: %s", e
+            )
+            await asyncio.to_thread(
+                _release_claimed_images,
+                [img["id"] for img in images_ready],
+            )
+            state.stop_requested = True
+            break
 
 
 async def _ingest_page(

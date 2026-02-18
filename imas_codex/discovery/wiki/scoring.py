@@ -446,6 +446,16 @@ async def _score_artifacts_batch(
             last_error = e
             error_msg = str(e).lower()
 
+            from imas_codex.discovery.base.llm import (
+                ProviderBudgetExhausted,
+                _is_budget_exhausted,
+            )
+
+            if _is_budget_exhausted(error_msg):
+                raise ProviderBudgetExhausted(
+                    f"LLM provider budget exhausted: {str(e)[:200]}"
+                ) from e
+
             is_retryable = any(
                 x in error_msg
                 for x in [
@@ -689,6 +699,17 @@ async def _score_images_batch(
         except Exception as e:
             last_error = e
             error_msg = str(e).lower()
+
+            from imas_codex.discovery.base.llm import (
+                ProviderBudgetExhausted,
+                _is_budget_exhausted,
+            )
+
+            if _is_budget_exhausted(error_msg):
+                raise ProviderBudgetExhausted(
+                    f"LLM provider budget exhausted: {str(e)[:200]}"
+                ) from e
+
             is_retryable = any(
                 x in error_msg
                 for x in [
