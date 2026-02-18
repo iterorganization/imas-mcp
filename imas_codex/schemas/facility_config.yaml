@@ -102,6 +102,20 @@ enums:
       ssh_proxy:
         description: Access only via SSH tunnel
 
+  SchedulerType:
+    description: Types of job schedulers available at facilities
+    permissible_values:
+      slurm:
+        description: Slurm Workload Manager
+      sge:
+        description: Sun Grid Engine (SGE/UGE)
+      pbs:
+        description: PBS/Torque batch system
+      lsf:
+        description: IBM Spectrum LSF
+      condor:
+        description: HTCondor workload management
+
   NameFormat:
     description: Format of user names in GECOS field
     permissible_values:
@@ -253,6 +267,14 @@ classes:
           Used by is_local_host() for location-aware graph profile resolution.
           Typically just the facility name, e.g. ["iter"] for ITER login nodes.
         multivalued: true
+        annotations:
+          is_private: true
+      compute:
+        description: >-
+          Compute infrastructure available at this facility. Describes job
+          schedulers, partitions/queues, GPU resources, and constraints.
+          Used by --submit flag to route CLI work to compute nodes.
+        range: ComputeConfig
         annotations:
           is_private: true
 
@@ -669,3 +691,139 @@ classes:
         required: true
       description:
         description: Brief description of the service
+
+  # -------------------------------------------------------------------------
+  # Compute Infrastructure
+  # -------------------------------------------------------------------------
+
+  ComputeConfig:
+    description: >-
+      Compute infrastructure available at a facility. Describes job schedulers,
+      partitions/queues, GPU resources, and access constraints. Used by the
+      --submit CLI flag to route CPU-intensive work to compute nodes instead
+      of saturating shared login nodes.
+    class_uri: fc:ComputeConfig
+    attributes:
+      scheduler:
+        description: Job scheduler configuration (Slurm, SGE, etc.)
+        range: SchedulerConfig
+      gpus:
+        description: GPU resources available at the facility
+        multivalued: true
+        range: GPUResource
+      login_node:
+        description: >-
+          Login node hardware summary (cores, memory). Informs load thresholds
+          for deciding when to offload work to compute.
+        range: LoginNodeConfig
+      notes:
+        description: Free-form compute infrastructure notes
+        multivalued: true
+
+  SchedulerConfig:
+    description: >-
+      Job scheduler configuration for a facility. Describes the scheduler type,
+      available partitions/queues, allocation commands, and constraints.
+    class_uri: fc:SchedulerConfig
+    attributes:
+      type:
+        description: Scheduler type
+        range: SchedulerType
+        required: true
+      alloc_command:
+        description: >-
+          Interactive allocation command (e.g., "salloc" for Slurm, "qrsh" for SGE).
+          Used to obtain an interactive session on a compute node.
+      batch_command:
+        description: >-
+          Batch submission command (e.g., "sbatch" for Slurm, "qsub" for SGE).
+      partitions:
+        description: Available partitions or queues
+        multivalued: true
+        range: PartitionConfig
+      alloc_latency_ms:
+        description: >-
+          Measured allocation latency in milliseconds for debug/interactive partitions.
+          Helps decide whether per-task submission is viable vs long-lived allocations.
+        range: integer
+      home_shared:
+        description: >-
+          Whether home directory is shared between login and compute nodes (e.g., via NFS/GPFS).
+          If true, no code deployment needed on compute.
+        range: boolean
+      tunnel_required:
+        description: >-
+          Whether SSH tunnels are needed from compute nodes back to login node services
+          (embed server, Neo4j). True when services bind to 127.0.0.1 on login node.
+        range: boolean
+
+  PartitionConfig:
+    description: A scheduler partition (Slurm) or queue (SGE/PBS)
+    class_uri: fc:PartitionConfig
+    attributes:
+      name:
+        description: Partition or queue name
+        required: true
+      max_time:
+        description: >-
+          Maximum wall time (e.g., "1:00:00" for debug, "UNLIMITED" for main).
+        ifabsent: "UNLIMITED"
+      nodes:
+        description: Number of nodes in this partition/queue
+        range: integer
+      cores_per_node:
+        description: CPU cores per node
+        range: integer
+      memory_gb:
+        description: Memory per node in GiB
+        range: integer
+      is_debug:
+        description: Whether this is a debug/preemption partition with fast allocation
+        range: boolean
+      gpu_type:
+        description: GPU type if GPU partition (e.g., "Tesla P100-PCIE-16GB")
+      gpus_per_node:
+        description: Number of GPUs per node
+        range: integer
+      notes:
+        description: Free-form notes about this partition
+
+  GPUResource:
+    description: GPU resource available at the facility
+    class_uri: fc:GPUResource
+    attributes:
+      location:
+        description: Where the GPU is (e.g., "login_node", "titan", "compute")
+        required: true
+      model:
+        description: GPU model name (e.g., "Tesla T4", "Tesla P100-PCIE-16GB")
+        required: true
+      count:
+        description: Number of GPUs at this location
+        range: integer
+      memory_gb:
+        description: Per-GPU memory in GiB
+        range: integer
+      current_use:
+        description: What the GPU is currently used for (e.g., "embed_server")
+
+  LoginNodeConfig:
+    description: >-
+      Login node hardware summary. Used to set load thresholds for offloading
+      decisions. When login node load exceeds a fraction of available cores,
+      work should be routed to compute.
+    class_uri: fc:LoginNodeConfig
+    attributes:
+      hostname:
+        description: Login node hostname
+      cores:
+        description: Total CPU cores
+        range: integer
+      memory_gb:
+        description: Total memory in GiB
+        range: integer
+      shared_users:
+        description: >-
+          Approximate number of active users sharing the login node.
+          Informs load budget calculations.
+        range: integer
