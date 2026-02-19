@@ -12,6 +12,14 @@ from imas_codex.discovery.base.embed_worker import (
     embed_batch_sync,
     embed_description_worker,
 )
+from imas_codex.discovery.base.imas_patterns import (
+    build_imas_pattern,
+    build_imas_rg_pattern,
+    extract_ids_names,
+    extract_imas_paths,
+    get_all_ids_names,
+    normalize_imas_path,
+)
 from imas_codex.discovery.base.executor import CommandResult, ParallelExecutor
 from imas_codex.discovery.base.facility import (
     add_exploration_note,
@@ -100,6 +108,13 @@ __all__ = [
     # Embed worker
     "embed_description_worker",
     "embed_batch_sync",
+    # IMAS patterns
+    "get_all_ids_names",
+    "build_imas_pattern",
+    "build_imas_rg_pattern",
+    "extract_imas_paths",
+    "extract_ids_names",
+    "normalize_imas_path",
     # Executor
     "ParallelExecutor",
     "CommandResult",

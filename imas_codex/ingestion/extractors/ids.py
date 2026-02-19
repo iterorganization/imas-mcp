@@ -6,12 +6,12 @@ using regex patterns. Works on code, documents, and wiki pages.
 Can be used standalone or as a LlamaIndex TransformComponent.
 """
 
-import functools
-import json
-import re
-from pathlib import Path
-
 from llama_index.core.schema import BaseNode, TransformComponent
+
+from imas_codex.discovery.base.imas_patterns import (
+    extract_ids_names,
+    get_all_ids_names,
+)
 
 # Regex patterns for IMAS IDS detection
 IDS_PATTERNS = [
@@ -24,55 +24,23 @@ IDS_PATTERNS = [
 ]
 
 
-@functools.cache
 def get_known_ids() -> frozenset[str]:
-    """Get the set of valid IDS names from the bundled catalog.
+    """Get the set of valid IDS names from the data dictionary.
 
-    Uses the ids_catalog.json bundled with imas-codex to avoid
-    importing imas-python (which triggers DD parsing logs).
+    Delegates to the shared ``imas_codex.discovery.base.imas_patterns``
+    module for the canonical IDS name list.
 
     Returns:
         Frozen set of lowercase IDS names
     """
-    resources_dir = (
-        Path(__file__).parent.parent.parent / "resources" / "imas_data_dictionary"
-    )
-
-    dd_versions = sorted(
-        [d.name for d in resources_dir.iterdir() if d.is_dir()],
-        reverse=True,
-    )
-
-    if not dd_versions:
-        return frozenset(
-            [
-                "equilibrium",
-                "core_profiles",
-                "magnetics",
-                "wall",
-                "pf_active",
-                "core_sources",
-                "core_transport",
-                "summary",
-                "controllers",
-            ]
-        )
-
-    catalog_path = resources_dir / dd_versions[0] / "schemas" / "ids_catalog.json"
-
-    if not catalog_path.exists():
-        return frozenset()
-
-    catalog = json.loads(catalog_path.read_text())
-    ids_catalog = catalog.get("ids_catalog", {})
-
-    return frozenset(name.lower() for name in ids_catalog.keys())
+    return frozenset(get_all_ids_names())
 
 
 def extract_ids_references(text: str) -> set[str]:
     """Extract IMAS IDS references from text.
 
-    Standalone function usable without LlamaIndex dependency.
+    Delegates to the shared ``imas_codex.discovery.base.imas_patterns``
+    module which uses the same IDS name list across the entire pipeline.
 
     Args:
         text: Text to scan for IDS references
@@ -80,14 +48,7 @@ def extract_ids_references(text: str) -> set[str]:
     Returns:
         Set of IDS names found
     """
-    known_ids = get_known_ids()
-    found: set[str] = set()
-    for pattern in IDS_PATTERNS:
-        for match in re.finditer(pattern, text, re.IGNORECASE):
-            candidate = match.group(1).lower()
-            if candidate in known_ids:
-                found.add(candidate)
-    return found
+    return extract_ids_names(text)
 
 
 class IDSExtractor(TransformComponent):

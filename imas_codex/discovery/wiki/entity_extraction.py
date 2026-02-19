@@ -18,11 +18,14 @@ Usage:
 
 from __future__ import annotations
 
-import functools
 import logging
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+
+from imas_codex.discovery.base.imas_patterns import (
+    build_imas_pattern as _build_imas_pattern,
+    extract_imas_paths as _extract_imas_paths_shared,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,144 +52,8 @@ class ExtractionResult:
     conventions: list[dict[str, str]] = field(default_factory=list)
 
 
-# =============================================================================
-# IDS Name Discovery
-# =============================================================================
-
-
-@functools.cache
-def get_all_ids_names() -> tuple[str, ...]:
-    """Get all IDS names from the data dictionary.
-
-    Reads the detailed schema directory to discover all available IDS names.
-    Cached after first call. Falls back to a comprehensive hardcoded list
-    if the DD resources are not available.
-
-    Returns:
-        Tuple of all IDS names (sorted, lowercase)
-    """
-    try:
-        from imas_codex.settings import get_dd_version
-
-        dd_version = get_dd_version()
-        resources_dir = (
-            Path(__file__).parents[2]
-            / "resources"
-            / "imas_data_dictionary"
-            / dd_version
-            / "schemas"
-            / "detailed"
-        )
-        if resources_dir.is_dir():
-            names = sorted(p.stem for p in resources_dir.glob("*.json"))
-            if names:
-                return tuple(names)
-    except Exception:
-        pass
-
-    # Comprehensive fallback list (DD 4.1.0, 82 IDS)
-    return (
-        "amns_data",
-        "b_field_non_axisymmetric",
-        "balance_of_plant",
-        "barometry",
-        "bolometer",
-        "breeding_blanket",
-        "bremsstrahlung_visible",
-        "calorimetry",
-        "camera_ir",
-        "camera_visible",
-        "camera_x_rays",
-        "charge_exchange",
-        "coils_non_axisymmetric",
-        "controllers",
-        "core_instant_changes",
-        "core_profiles",
-        "core_sources",
-        "core_transport",
-        "cryostat",
-        "dataset_fair",
-        "disruption",
-        "distribution_sources",
-        "distributions",
-        "divertors",
-        "ec_launchers",
-        "ece",
-        "edge_profiles",
-        "edge_sources",
-        "edge_transport",
-        "em_coupling",
-        "equilibrium",
-        "ferritic",
-        "focs",
-        "gas_injection",
-        "gas_pumping",
-        "gyrokinetics_local",
-        "hard_x_rays",
-        "ic_antennas",
-        "interferometer",
-        "iron_core",
-        "langmuir_probes",
-        "lh_antennas",
-        "magnetics",
-        "mhd",
-        "mhd_linear",
-        "mse",
-        "nbi",
-        "neutron_diagnostic",
-        "ntms",
-        "operational_instrumentation",
-        "pellets",
-        "pf_active",
-        "pf_passive",
-        "pf_plasma",
-        "plasma_initiation",
-        "plasma_profiles",
-        "plasma_sources",
-        "plasma_transport",
-        "polarimeter",
-        "pulse_schedule",
-        "radiation",
-        "real_time_data",
-        "reflectometer_fluctuation",
-        "reflectometer_profile",
-        "refractometer",
-        "runaway_electrons",
-        "sawteeth",
-        "soft_x_rays",
-        "spectrometer_mass",
-        "spectrometer_uv",
-        "spectrometer_visible",
-        "spectrometer_x_ray_crystal",
-        "spi",
-        "summary",
-        "temporary",
-        "tf",
-        "thomson_scattering",
-        "transport_solver_numerics",
-        "turbulence",
-        "vacuum",
-        "wall",
-        "waves",
-    )
-
-
-@functools.cache
-def _build_imas_pattern() -> re.Pattern:
-    """Build IMAS path regex from all known IDS names.
-
-    Matches patterns like:
-      - equilibrium.time_slice[0].profiles_1d.psi
-      - core_profiles/profiles_1d/electrons/temperature
-      - ids.equilibrium.global_quantities.ip
-
-    Uses non-capturing group so findall() returns the full match.
-    """
-    ids_names = get_all_ids_names()
-    ids_alternation = "|".join(re.escape(name) for name in ids_names)
-    # Non-capturing group: findall returns full match, not just the group
-    pattern = rf"\b(?:ids\.)?(?:{ids_alternation})[./][a-z_0-9\[\]./]+"
-    return re.compile(pattern, re.IGNORECASE)
+# get_all_ids_names is re-exported from shared module for backwards compat
+# _build_imas_pattern is imported from shared module above
 
 
 # =============================================================================
@@ -418,8 +285,9 @@ def extract_mdsplus_paths(text: str) -> list[str]:
 def extract_imas_paths(text: str, pattern: re.Pattern | None = None) -> list[str]:
     """Extract IMAS data dictionary paths from text.
 
-    Uses the full DD IDS name list (82+ IDS) rather than the previous
-    hardcoded subset of 12. Pattern is built once and cached globally.
+    Delegates to the shared ``imas_codex.discovery.base.imas_patterns``
+    module which handles index variable notation (``[:]``, ``[0]``, etc.)
+    and normalizes paths consistently across the entire pipeline.
 
     Args:
         text: Raw text content
@@ -428,19 +296,7 @@ def extract_imas_paths(text: str, pattern: re.Pattern | None = None) -> list[str
     Returns:
         Deduplicated list of IMAS paths found (normalized to lowercase with / separators)
     """
-    if pattern is None:
-        pattern = _build_imas_pattern()
-
-    matches = pattern.findall(text)
-    # Normalize: lowercase, use / separator
-    normalized = set()
-    for m in matches:
-        path = m.lower().replace(".", "/")
-        # Strip leading 'ids/' prefix if present
-        if path.startswith("ids/"):
-            path = path[4:]
-        normalized.add(path)
-    return sorted(normalized)
+    return _extract_imas_paths_shared(text, pattern=pattern)
 
 
 def extract_ppf_paths(text: str) -> list[str]:

@@ -60,6 +60,7 @@ IMAS_PATTERNS = {
     "imas_write": r"(put_slice|ids\.put|imas\.create|ids_put|partial_get)",
     "ids_struct": r"(ids_properties|homogeneous_time|ids\.[a-z_]+\.[a-z_]+)",
     "al_core": r"(imas_core|imas\.imasdef|uda_imas|al_|acces_layer)",
+    "ids_path": r"(equilibrium[./]|core_profiles[./]|magnetics[./]|summary[./]|pf_active[./]|wall[./]|nbi[./]|ece[./]|thomson_scattering[./]|interferometer[./]|bolometer[./])",
 }
 
 # -- Modeling Code Patterns (score_modeling_code) --
