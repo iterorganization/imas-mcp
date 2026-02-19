@@ -851,6 +851,8 @@ classes:
         range: datetime
       enrich_warnings:
         description: Comma-separated warnings from enrichment (e.g., du timeout, tokei missing)
+      enrich_error:
+        description: Error message from enrichment failure
       total_bytes:
         description: Total size in bytes (from du -sb)
         range: integer

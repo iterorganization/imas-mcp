@@ -60,25 +60,28 @@ SKIP_PATTERNS_PURPOSES = {"container", "system", "build_artifact", "archive"}
 # Goal: Discover how data is accessed NATIVELY at each facility.
 # We intentionally weight all data systems equally - IMAS is just one option.
 # Understanding native patterns helps design better integration strategies.
+#
+# IMPORTANT: These are FALLBACK patterns used only when the caller does not
+# pass pattern_categories in the input config. The canonical patterns are
+# defined in imas_codex/config/patterns/scoring/data_systems.yaml and
+# imas_codex/discovery/paths/enrichment.py PATTERN_REGISTRY. The enrichment
+# caller (enrichment.py) builds the combined pattern dict from those sources
+# and passes it via stdin, so these fallbacks are only used for standalone
+# script execution.
 
-# Pattern categories for data access detection
-# Each category is searched independently to provide a breakdown
-PATTERN_CATEGORIES = {
-    # Native/facility-specific data access (highest priority - this is what we want to discover)
-    "mdsplus": r"mdsconnect|mdsopen|mdsvalue|MDSplus|TdiExecute|connection\.openTree",
-    "ppf": r"ppf\.read|ppfget|jet\.ppf|ppfgo|ppfuid",  # JET PPF system
-    "ufile": r"ufile\.read|read_ufile|ufiles|rdufile",  # UFILE format
+# Fallback pattern categories (used when caller doesn't provide patterns)
+DEFAULT_PATTERN_CATEGORIES = {
+    # Native/facility-specific data access
+    "mdsplus": r"MDSplus|mdsplus|from\s+MDSplus|Tree\(|openTree|TdiCompile|TdiExecute|tdi\(|MdsValue|Connection\(|makeConnection|MdsConnect",
+    "ppf": r"ppf\.|ppfgo|ppfget|ppfuid|pulse_file|JETPPF",
+    "ufile": r"ufile\.read|read_ufile|ufiles|rdufile|UFILE",
     # Standard scientific formats
-    "hdf5": r"h5py\.File|hdf5|create_dataset|to_hdf|\.h5",
-    "netcdf": r"netCDF4|xr\.open|xarray\.open|to_netcdf|\.nc",
+    "hdf5": r"h5py|import\s+h5py|from\s+h5py|HDFStore|to_hdf|read_hdf|\.h5|\.hdf5|\.hdf",
+    "netcdf": r"netCDF4|import\s+netCDF4|from\s+netCDF4|xarray.*open_dataset|\.nc|\.nc4",
     # Equilibrium formats
     "eqdsk": r"read_eqdsk|load_eqdsk|from_eqdsk|write_eqdsk|to_eqdsk|geqdsk",
-    # Standard formats
-    "pickle": r"pickle\.load|pickle\.dump|\.pkl",
-    "csv": r"\.csv|read_csv|to_csv|csv\.reader|csv\.writer",
-    "mat": r"scipy\.io\.loadmat|savemat|sio\.loadmat|\.mat",
-    # IMAS (one of many options, not privileged)
-    "imas": r"imas\.database|get_ids|put_slice|ids\.put|imas\.create|get_slice",
+    # IMAS
+    "imas": r"imas\.imasdef|imas\.DBEntry|from\s+imas\s+import|ids_properties|homogeneous_time|put_slice|get_slice|write_ids|read_ids|DDEntry|IMASpy",
     # Convention / coordinate / sign patterns
     "cocos": r"COCOS|cocos_[0-9]+|cocos_transform|cocos_identify|cocosify|set_cocos|get_cocos",
     "sign_convention": r"sign_convention|ip_sign|bt_sign|sign_bp|sign_b0|sigma_ip|sigma_b0|sigma_rphiz|sign_q",
@@ -142,6 +145,7 @@ def enrich_directory(
     has_rg: bool,
     has_tokei: bool,
     purpose: Optional[str] = None,
+    pattern_categories: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Enrich a single directory and return results dict.
 
@@ -163,6 +167,8 @@ def enrich_directory(
         has_rg: Whether rg command is available
         has_tokei: Whether tokei command is available
         purpose: Path purpose category (e.g., "modeling_code", "documentation")
+        pattern_categories: Optional mapping of category name to rg regex pattern.
+            Falls back to DEFAULT_PATTERN_CATEGORIES if not provided.
 
     Returns:
         Dict with path, pattern_categories, size, and lines of code
@@ -211,18 +217,19 @@ def enrich_directory(
         return 0, False
 
     def _run_rg() -> tuple:
-        """Run rg pattern matching and return (pattern_categories, read_matches, write_matches)."""
-        pattern_categories: Dict[str, int] = {}
+        """Run rg pattern matching and return (matched_categories, read_matches, write_matches)."""
+        matched_categories: Dict[str, int] = {}
         read_matches = 0
         write_matches = 0
 
         if not has_rg or skip_patterns or skip_code_patterns:
-            return pattern_categories, read_matches, write_matches
+            return matched_categories, read_matches, write_matches
 
-        for category, pattern in PATTERN_CATEGORIES.items():
+        cats = pattern_categories or DEFAULT_PATTERN_CATEGORIES
+        for category, pattern in cats.items():
             matches = count_pattern_matches(path, pattern)
             if matches > 0:
-                pattern_categories[category] = matches
+                matched_categories[category] = matches
                 if any(
                     r in pattern.lower()
                     for r in ["read", "load", "open", "get", "from"]
@@ -234,7 +241,7 @@ def enrich_directory(
                 ):
                     write_matches += matches
 
-        return pattern_categories, read_matches, write_matches
+        return matched_categories, read_matches, write_matches
 
     # Run du and rg in parallel
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -242,12 +249,12 @@ def enrich_directory(
         rg_future: Future = executor.submit(_run_rg)
 
         total_bytes, du_timed_out = du_future.result()
-        pattern_categories, read_matches, write_matches = rg_future.result()
+        matched_categories, read_matches, write_matches = rg_future.result()
 
     if du_timed_out:
         warnings.append("du_timeout")
 
-    result["pattern_categories"] = pattern_categories
+    result["pattern_categories"] = matched_categories
     result["read_matches"] = read_matches
     result["write_matches"] = write_matches
     result["total_bytes"] = total_bytes
@@ -306,6 +313,10 @@ def main() -> None:
 
     paths: List[str] = config.get("paths", [])
     path_purposes: Dict[str, str] = config.get("path_purposes", {})
+    # Accept patterns from caller; fall back to built-in defaults
+    pattern_categories: Dict[str, str] = config.get(
+        "pattern_categories", DEFAULT_PATTERN_CATEGORIES
+    )
 
     # Check for tools once
     has_rg = has_command("rg")
@@ -318,6 +329,7 @@ def main() -> None:
             has_rg,
             has_tokei,
             purpose=path_purposes.get(p),
+            pattern_categories=pattern_categories,
         )
         for p in paths
     ]

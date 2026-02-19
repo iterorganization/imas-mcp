@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from imas_codex.config.discovery_config import get_discovery_config
 from imas_codex.discovery.base.facility import get_facility
 from imas_codex.remote.executor import async_run_python_script, run_python_script
 
@@ -242,6 +243,7 @@ def enrich_paths(
     input_data = {
         "paths": paths,
         "path_purposes": path_purposes or {},
+        "pattern_categories": _build_enrich_patterns(),
     }
 
     try:
@@ -318,6 +320,34 @@ def enrich_paths(
     return results
 
 
+def _build_enrich_patterns() -> dict[str, str]:
+    """Build pattern categories for remote enrichment.
+
+    Merges YAML-config patterns (data systems + physics domains) with
+    enrichment-specific patterns not covered by config YAML.
+    Returns category -> rg regex pattern string.
+    """
+    patterns: dict[str, str] = {}
+
+    # Load canonical patterns from YAML config (same source as scanner)
+    config = get_discovery_config()
+    for name, ds in config.scoring.data_systems.items():
+        if ds.patterns:
+            patterns[name] = "|".join(p.pattern for p in ds.patterns)
+    for name, pd in config.scoring.physics_domains.items():
+        if pd.patterns:
+            patterns[name] = "|".join(p.pattern for p in pd.patterns)
+
+    # Add enrichment-specific patterns not in YAML config
+    for category, (cat_patterns, _score_dim) in PATTERN_REGISTRY.items():
+        for subcat, pattern in cat_patterns.items():
+            key = f"{category}_{subcat}" if subcat != category else subcat
+            if key not in patterns:
+                patterns[key] = pattern
+
+    return patterns
+
+
 def _build_enrich_input(
     facility: str,
     paths: list[str],
@@ -337,6 +367,7 @@ def _build_enrich_input(
     input_data = {
         "paths": paths,
         "path_purposes": path_purposes or {},
+        "pattern_categories": _build_enrich_patterns(),
     }
     return ssh_host, input_data
 
