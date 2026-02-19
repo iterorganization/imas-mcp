@@ -2306,6 +2306,260 @@ def _tail_log(log_file: str, follow: bool, lines: int) -> None:
 
 
 # ============================================================================
+# Unified Deploy
+# ============================================================================
+
+
+@serve.command("deploy")
+@click.option(
+    "--gpus",
+    "-g",
+    default=_DEFAULT_GPUS,
+    type=int,
+    help=f"Number of GPUs for SLURM allocation (default: {_DEFAULT_GPUS})",
+)
+@click.option(
+    "--workers",
+    "-w",
+    default=None,
+    type=int,
+    help="Embed worker processes (default: same as gpus)",
+)
+@click.option(
+    "--skip-tunnels",
+    is_flag=True,
+    help="Skip SSH tunnel setup after deploying services",
+)
+def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
+    """Deploy all services (Neo4j, embedding, LLM proxy) and start tunnels.
+
+    Ensures a SLURM allocation exists (when configured), then deploys
+    each service that is not already running.  After all services are up,
+    starts SSH tunnels so services are accessible from the local machine.
+
+    Idempotent: services already running are skipped.
+
+    \b
+    Examples:
+        imas-codex serve deploy              # Deploy everything
+        imas-codex serve deploy -g 2         # With 2-GPU allocation
+        imas-codex serve deploy --skip-tunnels  # Services only
+    """
+    import shutil
+
+    from imas_codex.cli.tunnel import (
+        _get_tunnel_ports,
+        _resolve_host,
+        _start_tunnels,
+    )
+
+    if workers is None:
+        workers = gpus
+
+    any_compute = (
+        _is_graph_compute_target() or _is_compute_target() or _is_llm_compute_target()
+    )
+
+    # ── Step 1: SLURM allocation ─────────────────────────────────────
+    node: str | None = None
+    if any_compute:
+        click.echo("── Allocation ──")
+        alloc = _ensure_allocation(gpus)
+        node = alloc["node"]
+        click.echo(f"  Ready: job {alloc['job_id']} on {node} ({alloc['gres']})")
+        click.echo()
+
+    # ── Step 2: Neo4j ────────────────────────────────────────────────
+    click.echo("── Neo4j ──")
+    if _is_graph_compute_target():
+        assert node is not None
+        if _service_running(node, "neo4j"):
+            click.echo(f"  Already running on {node}")
+        else:
+            _kill_neo4j_on_node(node)
+            _clean_neo4j_locks(node)
+            click.echo(f"  Starting Neo4j on {node}...")
+            _start_service(node, "neo4j", _neo4j_service_command())
+            _wait_for_health(
+                "Neo4j",
+                f"curl -sf http://{node}:{_graph_http_port()}/",
+            )
+        click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
+        click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
+    else:
+        _deploy_login_neo4j()
+        click.echo(f"  Bolt: bolt://localhost:{_graph_port()}")
+        click.echo(f"  HTTP: http://localhost:{_graph_http_port()}")
+    click.echo()
+
+    # ── Step 3: Embedding server ─────────────────────────────────────
+    click.echo("── Embedding ──")
+    if _is_compute_target():
+        assert node is not None
+        if _service_running(node, "embed"):
+            click.echo(f"  Already running on {node}")
+        else:
+            click.echo(f"  Starting embed on {node}...")
+            cmd = _embed_service_command(gpus, workers)
+            _start_service(node, "embed", cmd)
+            _wait_for_health(
+                "embed",
+                f"curl -sf http://{node}:{_embed_port()}/health",
+                success_test='"status"',
+            )
+        click.echo(f"  URL: http://{node}:{_embed_port()}")
+    else:
+        _deploy_login_embed()
+        click.echo(f"  URL: http://localhost:{_embed_port()}")
+    click.echo()
+
+    # ── Step 4: LLM proxy ────────────────────────────────────────────
+    click.echo("── LLM Proxy ──")
+    if _is_llm_compute_target():
+        assert node is not None
+        if _service_running(node, "llm"):
+            click.echo(f"  Already running on {node}")
+        else:
+            click.echo(f"  Starting LLM proxy on {node}...")
+            _start_service(node, "llm", _llm_service_command())
+            _wait_for_health(
+                "LLM proxy",
+                f"curl -sf http://{node}:{_llm_port()}/",
+                timeout_s=60,
+            )
+        click.echo(f"  URL: http://{node}:{_llm_port()}")
+    else:
+        _deploy_login_llm()
+        click.echo(f"  URL: http://localhost:{_llm_port()}")
+    click.echo()
+
+    # ── Step 5: SSH tunnels ──────────────────────────────────────────
+    if skip_tunnels:
+        click.echo("── Tunnels (skipped) ──")
+        return
+
+    click.echo("── Tunnels ──")
+    try:
+        host = _resolve_host(None)
+    except click.ClickException:
+        click.echo("  No remote host configured — tunnels not needed")
+        return
+
+    use_autossh = bool(shutil.which("autossh"))
+    ports = _get_tunnel_ports(host, neo4j=False, embed=False, llm=False)
+    if not ports:
+        click.echo("  No tunnel ports configured")
+        return
+
+    ok = _start_tunnels(host, ports, use_autossh)
+    if ok == len(ports):
+        click.echo(f"  ✓ All {ok} tunnel(s) active")
+    elif ok > 0:
+        click.echo(f"  ⚠ {ok}/{len(ports)} tunnel(s) active")
+    else:
+        click.echo("  ✗ No tunnels could be established")
+
+
+# ============================================================================
+# Tunnel Subgroup (delegates to tunnel.py)
+# ============================================================================
+
+
+@serve.group("tunnel")
+def serve_tunnel_group() -> None:
+    """Manage SSH tunnels to remote services.
+
+    Convenience alias for ``imas-codex tunnel`` commands, grouped
+    under ``serve`` for workflow consistency.
+
+    \b
+      imas-codex serve tunnel start       Start tunnels (all services)
+      imas-codex serve tunnel stop        Stop tunnels
+      imas-codex serve tunnel status      Show active tunnels
+    """
+    pass
+
+
+@serve_tunnel_group.command("start")
+@click.argument("host", required=False)
+@click.option("--neo4j", "neo4j_only", is_flag=True, help="Tunnel Neo4j ports only")
+@click.option("--embed", "embed_only", is_flag=True, help="Tunnel embedding port only")
+@click.option("--llm", "llm_only", is_flag=True, help="Tunnel LLM proxy port only")
+def serve_tunnel_start(
+    host: str | None,
+    neo4j_only: bool,
+    embed_only: bool,
+    llm_only: bool,
+) -> None:
+    """Start SSH tunnels to remote services.
+
+    Uses autossh when available for automatic reconnection.
+    HOST defaults to the active graph profile's configured host.
+
+    \b
+    Examples:
+      imas-codex serve tunnel start iter           # All services
+      imas-codex serve tunnel start iter --neo4j   # Just graph
+    """
+    import shutil
+
+    from imas_codex.cli.tunnel import (
+        _get_tunnel_ports,
+        _resolve_host,
+        _start_tunnels,
+    )
+
+    target = _resolve_host(host)
+    use_autossh = bool(shutil.which("autossh"))
+
+    if use_autossh:
+        click.echo(f"Starting tunnels to {target} (autossh):")
+    else:
+        click.echo(
+            f"Starting tunnels to {target} (ssh — install autossh for auto-reconnect):"
+        )
+
+    ports = _get_tunnel_ports(target, neo4j_only, embed_only, llm_only)
+    ok = _start_tunnels(target, ports, use_autossh)
+
+    if ok == len(ports):
+        click.echo(f"✓ All {ok} tunnel(s) active")
+    elif ok > 0:
+        click.echo(f"⚠ {ok}/{len(ports)} tunnel(s) active")
+    else:
+        raise click.ClickException("No tunnels could be established.")
+
+
+@serve_tunnel_group.command("stop")
+@click.argument("host", required=False)
+@click.option("--all", "stop_all", is_flag=True, help="Stop tunnels to all hosts")
+def serve_tunnel_stop(host: str | None, stop_all: bool) -> None:
+    """Stop SSH tunnels.
+
+    Without HOST, stops tunnels to all configured remote hosts.
+
+    \b
+    Examples:
+      imas-codex serve tunnel stop           # Stop all tunnels
+      imas-codex serve tunnel stop iter      # Stop only iter tunnels
+    """
+    from imas_codex.cli.tunnel import tunnel_stop
+
+    # Invoke the real tunnel stop command logic
+    ctx = click.get_current_context()
+    ctx.invoke(tunnel_stop, host=host, stop_all=stop_all)
+
+
+@serve_tunnel_group.command("status")
+def serve_tunnel_status() -> None:
+    """Show active SSH tunnels across all services."""
+    from imas_codex.cli.tunnel import tunnel_status
+
+    ctx = click.get_current_context()
+    ctx.invoke(tunnel_status)
+
+
+# ============================================================================
 # Unified Serve Status
 # ============================================================================
 
