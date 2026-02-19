@@ -255,8 +255,8 @@ def serve_llm() -> None:
 @click.option(
     "--host",
     envvar="LITELLM_HOST",
-    default="127.0.0.1",
-    help="Host to bind (default: localhost only)",
+    default="0.0.0.0",
+    help="Host to bind (default: all interfaces for compute node access)",
 )
 @click.option(
     "--port",
@@ -499,7 +499,7 @@ EnvironmentFile=-{env_file}
 Environment="PATH={Path.home()}/.local/bin:/usr/local/bin:/usr/bin"
 Environment="LITELLM_CALLBACKS=langfuse"
 ExecStartPre=/bin/mkdir -p {log_dir}
-ExecStart={uv_path} tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' -- litellm --config {config_path} --host 127.0.0.1 --port {port} --drop_params
+ExecStart={uv_path} tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' -- litellm --config {config_path} --host 0.0.0.0 --port {port} --drop_params
 ExecStop=/bin/kill -15 $MAINPID
 StandardOutput=append:{log_file}
 StandardError=append:{log_file}
@@ -740,7 +740,7 @@ EnvironmentFile=-{_project_h}/.env
 Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin"
 Environment="LITELLM_CALLBACKS=langfuse"
 ExecStartPre=/bin/mkdir -p {_services_h}
-ExecStart=%h/.local/bin/uv tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' -- litellm --config {_project_h}/imas_codex/config/litellm_config.yaml --host 127.0.0.1 --port {port} --drop_params
+ExecStart=%h/.local/bin/uv tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' -- litellm --config {_project_h}/imas_codex/config/litellm_config.yaml --host 0.0.0.0 --port {port} --drop_params
 ExecStop=/bin/kill -15 $MAINPID
 StandardOutput=append:{_services_h}/llm.log
 StandardError=append:{_services_h}/llm.log
