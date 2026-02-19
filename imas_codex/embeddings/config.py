@@ -12,6 +12,7 @@ from imas_codex.settings import (
     get_embed_remote_url,
     get_embedding_backend,
     get_embedding_model,
+    is_embedding_remote,
 )
 
 load_dotenv(override=True)  # Load .env file values, overriding existing env vars
@@ -73,11 +74,9 @@ class EncoderConfig:
 
         # Load backend from settings if not explicitly set
         if self.backend is None:
-            backend_str = get_embedding_backend()
-            try:
-                self.backend = EmbeddingBackend(backend_str)
-            except ValueError:
-                # Default to local if invalid backend specified
+            if is_embedding_remote():
+                self.backend = EmbeddingBackend.REMOTE
+            else:
                 self.backend = EmbeddingBackend.LOCAL
 
         # Load remote URL for remote backend

@@ -27,7 +27,8 @@ a +10 000 offset to prevent port clashes::
     Direct (on the host):    bolt = 7687 + offset
     Tunneled (remote):       bolt = 17687 + offset
 
-Server configuration lives in ``[tool.imas-codex.graph]`` in pyproject.toml::
+Port offsets derive from ``[tool.imas-codex].locations`` (shared with embed
+server).  Neo4j-specific settings live in ``[tool.imas-codex.graph]``::
 
     location = "iter"     # where Neo4j runs  (override: IMAS_CODEX_GRAPH_LOCATION)
     username = "neo4j"
@@ -48,9 +49,9 @@ logger = logging.getLogger(__name__)
 _resolved_uri_cache: dict[tuple[str | None, int], str] = {}
 
 # ─── Port convention ────────────────────────────────────────────────────────
-# Port offsets and host defaults are managed exclusively in pyproject.toml:
-#   [tool.imas-codex.graph].locations  — list of locations (index = port offset)
-#   [tool.imas-codex.graph.hosts]      — SSH alias overrides (optional)
+# Port offsets and host defaults are managed at the top level of pyproject.toml:
+#   [tool.imas-codex].locations  — list of locations (index = port offset)
+#   [tool.imas-codex.hosts]      — SSH alias overrides (optional)
 
 BOLT_BASE_PORT = 7687
 HTTP_BASE_PORT = 7474
@@ -67,15 +68,15 @@ BACKUPS_DIR = DATA_BASE_DIR / "backups"
 
 
 def _get_all_offsets() -> dict[str, int]:
-    """Return location→port-offset map from pyproject.toml ``[graph].locations``.
+    """Return location→port-offset map from pyproject.toml ``[tool.imas-codex].locations``.
 
     Locations is a list where position encodes the port slot::
 
         locations = ["iter", "tcv", "jt-60sa", ...]  # iter=0, tcv=1, ...
     """
-    from imas_codex.settings import _get_section
+    from imas_codex.settings import _load_pyproject_settings
 
-    configured = _get_section("graph").get("locations", [])
+    configured = _load_pyproject_settings().get("locations", [])
     if isinstance(configured, list):
         return {name: i for i, name in enumerate(configured)}
     # Backward compat: dict form (name = offset)
@@ -85,12 +86,17 @@ def _get_all_offsets() -> dict[str, int]:
 def _get_all_hosts() -> dict[str, str]:
     """Return location→SSH-alias map.
 
-    Explicit entries from ``[graph.hosts]`` override, but any location
-    in ``[graph.locations]`` implicitly uses its own name as SSH alias.
+    Explicit entries from ``[tool.imas-codex.hosts]`` override, but any
+    location in ``[tool.imas-codex].locations`` implicitly uses its own
+    name as SSH alias.
     """
-    from imas_codex.settings import _get_section
+    from imas_codex.settings import _get_section, _load_pyproject_settings
 
-    explicit = _get_section("graph").get("hosts", {})
+    # Primary: shared top-level hosts section
+    explicit = _load_pyproject_settings().get("hosts", {})
+    # Backward compat: check [graph.hosts] as fallback
+    if not explicit:
+        explicit = _get_section("graph").get("hosts", {})
     # Every location implicitly has host == name; explicit entries override
     hosts = {name: name for name in _get_all_offsets()}
     hosts.update(explicit)

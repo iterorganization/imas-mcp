@@ -122,6 +122,22 @@ def get_model(section: str) -> str:
 
 # ─── Embedding settings ────────────────────────────────────────────────────
 
+EMBED_BASE_PORT = 18765
+
+
+def _get_location_offset(location: str) -> int:
+    """Get the port offset for a location from the ``locations`` list.
+
+    Reads ``[tool.imas-codex].locations`` — the same list used by graph
+    profiles.  Position in the list is the offset.
+    """
+    locations = _load_pyproject_settings().get("locations", [])
+    if isinstance(locations, list):
+        offsets = {name: i for i, name in enumerate(locations)}
+    else:
+        offsets = {k: int(v) for k, v in locations.items()}
+    return offsets.get(location, 0)
+
 
 def get_embedding_model() -> str:
     """Get the embedding model name.
@@ -144,32 +160,25 @@ def get_embedding_dimension() -> int:
     return int(dim) if dim is not None else 256
 
 
-def _get_embed_service_config() -> dict:
-    """Load embedding_service config from the active facility's YAML.
-
-    Returns the ``embedding_service`` dict (backend, deploy, server_port)
-    from the facility identified by the current graph location.
-    Reads from the merged public + private config.
-    """
-    try:
-        from imas_codex.discovery.base.facility import get_facility
-
-        facility_id = get_graph_location()
-        config = get_facility(facility_id)
-        return config.get("embedding_service", {})
-    except Exception:
-        return {}
-
-
 def get_embedding_backend() -> str:
-    """Get the embedding backend ('local' or 'remote').
+    """Get the embedding backend — a facility name or ``"local"``.
 
-    Priority: IMAS_CODEX_EMBEDDING_BACKEND env → facility YAML → 'local'.
+    When set to a facility name (e.g. ``"iter"``), embeddings are served
+    via an HTTP server running at that facility (reached via SSH tunnel
+    from a workstation, or directly when on-site).  ``"local"`` loads
+    the model in-process.
+
+    Priority: IMAS_CODEX_EMBEDDING_BACKEND env → [embedding].backend → 'local'.
     """
     if env := os.getenv("IMAS_CODEX_EMBEDDING_BACKEND"):
         return env.lower()
-    backend = _get_embed_service_config().get("backend")
+    backend = _get_section("embedding").get("backend")
     return str(backend).lower() if backend else "local"
+
+
+def is_embedding_remote() -> bool:
+    """True when embedding backend targets a remote facility (not in-process)."""
+    return get_embedding_backend() != "local"
 
 
 def get_embed_remote_url() -> str | None:
@@ -187,55 +196,67 @@ def get_embed_remote_url() -> str | None:
 def get_embed_server_port() -> int:
     """Get the embedding server port.
 
-    Priority: IMAS_CODEX_EMBED_PORT env → facility YAML → 18765.
+    Derived from the backend location's offset in the ``locations`` list,
+    mirroring the graph port convention:
+    ``embed_port = 18765 + location_offset``.
+
+    Priority: IMAS_CODEX_EMBED_PORT env → convention offset → 18765.
     """
     if env := os.getenv("IMAS_CODEX_EMBED_PORT"):
         return int(env)
-    port = _get_embed_service_config().get("server_port")
-    return int(port) if port is not None else 18765
+    backend = get_embedding_backend()
+    if backend == "local":
+        return EMBED_BASE_PORT
+    return EMBED_BASE_PORT + _get_location_offset(backend)
 
 
-def get_embed_location() -> str:
-    """Get the embed server deployment mode.
+def get_embed_scheduler() -> str:
+    """Get the embed server job scheduler.
 
-    Returns ``"local"`` (systemd on login node) or ``"slurm"`` (batch job
-    on a compute node).  When ``"slurm"``, the partition, GPU node hostname,
-    and SSH host are read from the facility's compute config.
+    Returns ``"slurm"`` when the server should be submitted as a SLURM
+    batch job on a compute node.  When omitted or ``"none"``, the server
+    runs directly on the login node via systemd.
 
-    Priority: IMAS_CODEX_EMBED_LOCATION env → facility YAML → "local".
+    Priority: IMAS_CODEX_EMBED_SCHEDULER env → [embedding].scheduler → "none".
     """
-    if env := os.getenv("IMAS_CODEX_EMBED_LOCATION"):
+    if env := os.getenv("IMAS_CODEX_EMBED_SCHEDULER"):
         return env.lower()
-    deploy = _get_embed_service_config().get("deploy")
-    return str(deploy).lower() if deploy else "local"
+    # Legacy env var
+    if env := os.getenv("IMAS_CODEX_EMBED_LOCATION"):
+        return "slurm" if env.lower() == "slurm" else "none"
+    scheduler = _get_section("embedding").get("scheduler")
+    return str(scheduler).lower() if scheduler else "none"
 
 
 def get_embed_host() -> str | None:
     """Get the hostname where the embedding server runs.
 
     When ``deploy = "slurm"``, reads the GPU node hostname from the
-    facility compute config (``gpus[current_use=embed_server].location``).
+    backend facility's compute config (``gpus[current_use=embed_server].location``).
     Otherwise returns ``None`` (server on login node / localhost).
 
     Override: IMAS_CODEX_EMBED_HOST env var (escape hatch).
     """
     if env := os.getenv("IMAS_CODEX_EMBED_HOST"):
         return env or None
-    if get_embed_location() != "slurm":
+    if get_embed_scheduler() != "slurm":
         return None
     return _embed_host_from_facility()
 
 
 def _embed_host_from_facility() -> str | None:
-    """Read GPU node hostname from the active facility's compute config.
+    """Read GPU node hostname from the backend facility's compute config.
 
-    Looks for a ``GPUResource`` with ``current_use == "embed_server"``
-    and returns its ``location`` (the hostname).
+    Uses ``get_embedding_backend()`` to identify the facility, then looks
+    for a ``GPUResource`` with ``current_use == "embed_server"`` and
+    returns its ``location`` (the hostname).
     """
     try:
         from imas_codex.discovery.base.facility import get_facility_infrastructure
 
-        facility_id = get_graph_location()
+        facility_id = get_embedding_backend()
+        if facility_id == "local":
+            return None
         infra = get_facility_infrastructure(facility_id)
         for gpu in infra.get("compute", {}).get("gpus", []):
             if gpu.get("current_use") == "embed_server":

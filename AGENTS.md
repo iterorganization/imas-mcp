@@ -23,7 +23,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | Section | Purpose | Accessor |
 |---------|---------|----------|
 | `[graph]` | Neo4j connection, graph name/location | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_graph()` |
-| `[embedding]` | Embedding model, dimension | `get_model("embedding")` |
+| `[embedding]` | Embedding model, dimension, backend, deploy | `get_model("embedding")`, `get_embedding_backend()` |
 | `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
 | `[vision]` | Image/document tasks | `get_model("vision")` |
 | `[agent]` | Planning, exploration, autonomous tasks | `get_model("agent")` |
@@ -55,8 +55,18 @@ When the current machine's FQDN matches a `login_nodes` pattern, that facility's
 
 **Graph config in pyproject.toml:**
 ```toml
+[tool.imas-codex]
+# Shared location list — position determines port offsets for all services.
+# Neo4j: bolt = 7687 + index, http = 7474 + index.
+# Embed: server = 18765 + index.
+locations = ["iter", "tcv", "jt-60sa", ...]
+
+# SSH host aliases (shared by graph and embedding).
+# When omitted, the location name is used as the SSH alias.
+[tool.imas-codex.hosts]
+# iter, tcv use location name as SSH alias (implicit)
+
 [tool.imas-codex.graph]
-name = "codex"          # Graph identity (override: IMAS_CODEX_GRAPH=tcv)
 location = "iter"       # Where it runs (override: IMAS_CODEX_GRAPH_LOCATION=local)
 username = "neo4j"
 password = "imas-codex"
@@ -533,17 +543,31 @@ python("print(reload())")  # After editing imas_codex/ source files
 
 ## Embedding Server
 
-GPU embedding server (Qwen3-Embedding-0.6B, 256-dim). Deployment config is
-facility-specific — lives in the facility's public YAML (`embedding_service`
-section, e.g. `iter.yaml`). Only model/dimension are project-global (pyproject.toml).
+GPU embedding server (Qwen3-Embedding-0.6B, 256-dim). All config lives in
+`pyproject.toml` under `[tool.imas-codex.embedding]`:
+
+```toml
+[tool.imas-codex.embedding]
+model = "Qwen/Qwen3-Embedding-0.6B"
+dimension = 256
+backend = "iter"        # facility hosting embed server (or "local" for in-process)
+scheduler = "slurm"     # job scheduler: "slurm" or omit for login-node systemd
+```
+
+`backend` specifies *where* the server runs — a facility name (e.g. `"iter"`) or
+`"local"` for in-process. The code auto-detects connectivity (direct if on-site,
+SSH tunnel if remote).
+
+The server port is derived from the backend's position in the shared `locations`
+list: `embed_port = 18765 + offset` (same convention as graph ports).
 
 All settings support env var overrides for on-the-fly switching:
 
 | Setting | Env Var | Values |
 |---------|---------|--------|
-| Backend | `IMAS_CODEX_EMBEDDING_BACKEND` | `remote` (HTTP server) / `local` (in-process) |
-| Deploy mode | `IMAS_CODEX_EMBED_LOCATION` | `slurm` (compute node) / `local` (login systemd) |
-| Server port | `IMAS_CODEX_EMBED_PORT` | Port number (default: 18765) |
+| Backend | `IMAS_CODEX_EMBEDDING_BACKEND` | facility name (e.g. `iter`) / `local` (in-process) |
+| Scheduler | `IMAS_CODEX_EMBED_SCHEDULER` | `slurm` (compute node) / `none` (login systemd) |
+| Server port | `IMAS_CODEX_EMBED_PORT` | Port override (default: 18765 + location offset) |
 | GPU host | `IMAS_CODEX_EMBED_HOST` | Hostname override (escape hatch) |
 
 Architecture: `workstation → SSH tunnel → facility:18765` or on facility: direct `localhost:18765`
@@ -551,7 +575,7 @@ Architecture: `workstation → SSH tunnel → facility:18765` or on facility: di
 Establish tunnel (from workstation): `ssh -f -N -L 18765:127.0.0.1:18765 iter`
 
 ```bash
-imas-codex serve embed deploy    # Deploy per facility config (slurm or systemd)
+imas-codex serve embed deploy    # Deploy per config (slurm or systemd)
 imas-codex serve embed status    # Check server health + SLURM jobs
 imas-codex serve embed restart   # Stop + redeploy
 imas-codex serve embed stop      # Stop all embed processes
@@ -559,11 +583,11 @@ imas-codex serve embed logs      # View SLURM logs
 imas-codex serve embed start     # Start server locally (foreground)
 imas-codex serve embed service install  # Install systemd service
 
-# Switch to login node deployment without editing YAML
-IMAS_CODEX_EMBED_LOCATION=local imas-codex serve embed deploy
+# Switch to login node deployment without editing config
+IMAS_CODEX_EMBED_SCHEDULER=none imas-codex serve embed deploy
 
-# Use a different port
-IMAS_CODEX_EMBED_PORT=18766 imas-codex serve embed deploy
+# Use in-process embedding (no server)
+IMAS_CODEX_EMBEDDING_BACKEND=local imas-codex discover signals iter
 ```
 
 If embedding fails, check in order:

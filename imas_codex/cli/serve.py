@@ -541,12 +541,14 @@ WantedBy=default.target
 def serve_embed() -> None:
     """Manage GPU embedding server.
 
-    Deploy mode is determined by ``embedding_service.deploy`` in the facility
-    YAML (e.g. iter.yaml):
-      slurm → SLURM batch job on GPU compute node (partition/node from facility YAML)
-      local → systemd service on login node
+    Deploy mode is determined by ``[embedding].scheduler`` in pyproject.toml:
+      slurm → SLURM batch job on GPU compute node
+      (omit) → systemd service on login node
 
-    Override with env vars: IMAS_CODEX_EMBED_LOCATION, IMAS_CODEX_EMBEDDING_BACKEND
+    The backend facility (``[embedding].backend``) determines where
+    commands are sent (e.g. ``iter``).
+
+    Override with env vars: IMAS_CODEX_EMBED_SCHEDULER, IMAS_CODEX_EMBEDDING_BACKEND
 
     \b
       imas-codex serve embed deploy     Deploy per config
@@ -951,21 +953,25 @@ def _embed_port() -> int:
 
 
 def _is_compute_target() -> bool:
-    """True when embed-location is 'slurm' (deploy via SLURM)."""
-    from imas_codex.settings import get_embed_location
+    """True when scheduler is 'slurm' (deploy via SLURM)."""
+    from imas_codex.settings import get_embed_scheduler
 
-    return get_embed_location() == "slurm"
+    return get_embed_scheduler() == "slurm"
 
 
 def _embed_compute_config() -> dict:
-    """Load compute config from the active graph location's facility YAML.
+    """Load compute config from the backend facility's private YAML.
 
-    The facility is determined by graph location (e.g. "iter").
+    The facility is determined by ``[embedding].backend`` (e.g. ``"iter"``).
     """
     from imas_codex.discovery.base.facility import get_facility_infrastructure
-    from imas_codex.settings import get_graph_location
+    from imas_codex.settings import get_embedding_backend
 
-    facility_id = get_graph_location()
+    facility_id = get_embedding_backend()
+    if facility_id == "local":
+        raise click.ClickException(
+            "Embedding backend is 'local' — no compute config available."
+        )
     infra = get_facility_infrastructure(facility_id)
     compute = infra.get("compute", {})
     if not compute:
@@ -1000,9 +1006,11 @@ def _embed_ssh() -> str | None:
     """SSH host for reaching the embed server, or None if local."""
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.remote.executor import is_local_host
-    from imas_codex.settings import get_graph_location
+    from imas_codex.settings import get_embedding_backend
 
-    facility_id = get_graph_location()
+    facility_id = get_embedding_backend()
+    if facility_id == "local":
+        return None
     config = get_facility(facility_id)
     ssh_host = config.get("ssh_host", facility_id)
     if is_local_host(ssh_host):
@@ -1218,14 +1226,14 @@ def embed_deploy(
 ) -> None:
     """Deploy embedding server.
 
-    Mode is determined by ``embedding_service.deploy`` in the facility YAML:
+    Mode is determined by ``[embedding].scheduler`` in pyproject.toml:
       - slurm → SLURM batch job (partition/node from facility compute config)
-      - local → systemd service on login node
+      - (omit) → systemd service on login node
 
     Idempotent: no-op if the server is already running.
     Use 'restart' to cancel and redeploy.
 
-    Override: IMAS_CODEX_EMBED_LOCATION=local env var.
+    Override: IMAS_CODEX_EMBED_SCHEDULER=none env var.
 
     \b
     Examples:

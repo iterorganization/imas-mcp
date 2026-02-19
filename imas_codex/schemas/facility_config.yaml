@@ -288,16 +288,6 @@ classes:
         range: ComputeConfig
         annotations:
           is_private: true
-      embedding_service:
-        description: >-
-          Embedding server configuration for this facility. Defines how
-          embeddings are served (backend, deploy method, port). The embedding
-          model and dimension are project-global (pyproject.toml); everything
-          else about how/where the server runs is facility infrastructure.
-          Public so other users can see how the facility is configured.
-          Override with env vars: IMAS_CODEX_EMBEDDING_BACKEND,
-          IMAS_CODEX_EMBED_LOCATION, IMAS_CODEX_EMBED_PORT.
-        range: EmbeddingServiceConfig
 
   # -------------------------------------------------------------------------
   # Nested Config Types
@@ -848,33 +838,3 @@ classes:
           Approximate number of active users sharing the login node.
           Informs load budget calculations.
         range: integer
-
-  # -------------------------------------------------------------------------
-  # Embedding Service
-  # -------------------------------------------------------------------------
-
-  EmbeddingServiceConfig:
-    description: >-
-      Facility-specific embedding server configuration. Defines how embeddings
-      are served at this facility — deployment method, network config, and
-      client access mode. The embedding *model* and *dimension* are project-global
-      and live in pyproject.toml [tool.imas-codex.embedding]; everything else
-      (how/where the server runs) is facility infrastructure.
-    class_uri: fc:EmbeddingServiceConfig
-    attributes:
-      backend:
-        description: >-
-          How embedding clients access the model. "remote" calls an HTTP server
-          (the default for facilities with GPU nodes). "local" loads the model
-          in-process (for machines with a local GPU or CPU-only fallback).
-        ifabsent: "local"
-      deploy:
-        description: >-
-          How the embedding server is deployed. "slurm" submits a SLURM batch
-          job to a GPU partition. "local" runs via systemd on the login node.
-          Only relevant when backend=remote.
-        ifabsent: "local"
-      server_port:
-        description: Port the embedding server listens on
-        range: integer
-        ifabsent: int(18765)
