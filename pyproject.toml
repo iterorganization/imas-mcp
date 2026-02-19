@@ -236,10 +236,16 @@ dimension = 256
 backend = "remote"
 remote-url = "http://localhost:18765"
 server-port = 18765
-# Hostname where the embed server runs (for tunnel routing).
-# When set, tunnel commands forward to this host instead of 127.0.0.1.
+# Hostname where the embed server runs (compute node for SLURM, empty for login).
+# When set, deploy uses SLURM and tunnels forward to this host.
 # Override: IMAS_CODEX_EMBED_HOST
 embed-host = "98dci4-gpu-0002"
+# SSH alias for reaching the embed host (used by deploy/stop/restart/logs).
+# Override: IMAS_CODEX_EMBED_SSH_HOST
+embed-ssh-host = "iter"
+# SLURM partition for the compute node (only used when embed-host is set).
+# Override: IMAS_CODEX_EMBED_PARTITION
+embed-partition = "titan"
 
 [tool.imas-codex.language]
 model = "google/gemini-3-flash-preview"

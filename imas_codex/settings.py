@@ -191,6 +191,33 @@ def get_embed_host() -> str | None:
     return host or None
 
 
+def get_embed_ssh_host() -> str | None:
+    """Get the SSH alias for reaching the embed server host.
+
+    Used by deploy/stop/restart/logs to run commands on the machine
+    where the embed server runs (or its login node).
+
+    Priority: IMAS_CODEX_EMBED_SSH_HOST env → [embedding].embed-ssh-host → None.
+    """
+    if env := os.getenv("IMAS_CODEX_EMBED_SSH_HOST"):
+        return env or None
+    host = _get_section("embedding").get("embed-ssh-host")
+    return host or None
+
+
+def get_embed_partition() -> str | None:
+    """Get the SLURM partition for embed server deployment.
+
+    Only used when embed-host is set (SLURM deployment).
+
+    Priority: IMAS_CODEX_EMBED_PARTITION env → [embedding].embed-partition → None.
+    """
+    if env := os.getenv("IMAS_CODEX_EMBED_PARTITION"):
+        return env or None
+    partition = _get_section("embedding").get("embed-partition")
+    return partition or None
+
+
 # ─── Model accessors ───────────────────────────────────────────────────────
 # All callers should use get_model("language"), get_model("vision"), etc.
 # The embedding model is accessed via get_embedding_model() for consistency

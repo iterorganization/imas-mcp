@@ -936,7 +936,6 @@ WantedBy=default.target
 # ============================================================================
 
 _EMBED_JOB = "codex-embed"
-_TITAN_PARTITION = "titan"
 _DEFAULT_GPUS = 4
 _PROJECT = "~/Code/imas-codex"
 
@@ -955,27 +954,40 @@ def _embed_port() -> int:
     return get_embed_server_port()
 
 
+def _embed_partition() -> str | None:
+    """Return the configured SLURM partition."""
+    from imas_codex.settings import get_embed_partition
+
+    return get_embed_partition()
+
+
 def _is_compute_target() -> bool:
     """True when embed-host is configured (deploy via SLURM)."""
     return _embed_host() is not None
 
 
-def _iter_ssh() -> str | None:
-    """SSH host for ITER, or None if already on ITER."""
-    return None if os.uname().nodename.startswith("98dci4-") else "iter"
+def _embed_ssh() -> str | None:
+    """SSH host for reaching the embed server, or None if local."""
+    from imas_codex.remote.executor import is_local_host
+    from imas_codex.settings import get_embed_ssh_host
+
+    ssh_host = get_embed_ssh_host()
+    if ssh_host is None or is_local_host(ssh_host):
+        return None
+    return ssh_host
 
 
-def _run_iter(cmd: str, timeout: int = 30, check: bool = False) -> str:
-    """Run a command on ITER (locally if on ITER, via SSH otherwise)."""
+def _run_remote(cmd: str, timeout: int = 30, check: bool = False) -> str:
+    """Run a command on the embed SSH host (locally if already there)."""
     from imas_codex.remote.executor import run_command
 
-    return run_command(cmd, ssh_host=_iter_ssh(), timeout=timeout, check=check)
+    return run_command(cmd, ssh_host=_embed_ssh(), timeout=timeout, check=check)
 
 
 def _embed_slurm_jobs() -> list[dict]:
     """List active codex-embed SLURM jobs."""
     try:
-        out = _run_iter(
+        out = _run_remote(
             f'squeue -n {_EMBED_JOB} -u "$USER" --format="%A|%T|%M|%N|%b" --noheader'
         )
     except subprocess.CalledProcessError:
@@ -1005,7 +1017,7 @@ def _cancel_embed_jobs() -> list[str]:
     cancelled = []
     for job in jobs:
         try:
-            _run_iter(f"scancel {job['job_id']}", check=True)
+            _run_remote(f"scancel {job['job_id']}", check=True)
             cancelled.append(job["job_id"])
         except subprocess.CalledProcessError:
             pass
@@ -1019,17 +1031,17 @@ def _stop_login_service() -> None:
     running simultaneously.
     """
     try:
-        result = _run_iter(
+        result = _run_remote(
             "systemctl --user is-active imas-codex-embed 2>/dev/null || true",
             timeout=10,
         )
         if "active" in result:
-            _run_iter(
+            _run_remote(
                 "systemctl --user stop imas-codex-embed && "
                 "systemctl --user disable imas-codex-embed 2>/dev/null",
                 timeout=15,
             )
-            click.echo("Stopped login node embed service (conflicts with Titan)")
+            click.echo("Stopped login node embed service (conflicts with compute)")
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pass
 
@@ -1040,13 +1052,19 @@ def _submit_slurm(gpus: int, workers: int) -> None:
 
     host = _embed_host()
     port = _embed_port()
+    partition = _embed_partition()
+    if not partition:
+        raise click.ClickException(
+            "No SLURM partition configured. "
+            "Set [embedding].embed-partition in pyproject.toml."
+        )
 
     # Generate SLURM script
     gpu_ids = ",".join(str(i) for i in range(gpus))
     cpus = gpus * 4
     script = (
         "#!/bin/bash\n"
-        f"#SBATCH --partition={_TITAN_PARTITION}\n"
+        f"#SBATCH --partition={partition}\n"
         f"#SBATCH --gres=gpu:{gpus}\n"
         f"#SBATCH --cpus-per-task={cpus}\n"
         "#SBATCH --mem=64G\n"
@@ -1074,7 +1092,7 @@ def _submit_slurm(gpus: int, workers: int) -> None:
         "sbatch /tmp/codex-embed-deploy.sh && "
         "rm -f /tmp/codex-embed-deploy.sh"
     )
-    output = _run_iter(submit_cmd, timeout=30, check=True)
+    output = _run_remote(submit_cmd, timeout=30, check=True)
     click.echo(output.split("\n")[0])
 
     # Ensure login service isn't competing
@@ -1086,7 +1104,7 @@ def _submit_slurm(gpus: int, workers: int) -> None:
     while time.time() < deadline:
         time.sleep(5)
         try:
-            result = _run_iter(
+            result = _run_remote(
                 f"curl -sf http://{host}:{port}/health",
                 timeout=10,
             )
@@ -1113,7 +1131,7 @@ def _deploy_login() -> None:
 
     click.echo("Deploying to login node via systemd...")
     try:
-        _run_iter(
+        _run_remote(
             "systemctl --user restart imas-codex-embed 2>/dev/null || "
             "systemctl --user start imas-codex-embed",
             timeout=15,
@@ -1133,7 +1151,7 @@ def _show_server_info() -> None:
     host = _embed_host() or "localhost"
     port = _embed_port()
     try:
-        result = _run_iter(
+        result = _run_remote(
             f"curl -sf http://{host}:{port}/info",
             timeout=10,
         )
@@ -1219,7 +1237,7 @@ def embed_stop() -> None:
 
     # Stop systemd service
     try:
-        _run_iter(
+        _run_remote(
             "systemctl --user stop imas-codex-embed",
             timeout=15,
             check=True,
@@ -1272,7 +1290,7 @@ def embed_restart(
     if cancelled:
         time.sleep(2)
     try:
-        _run_iter("systemctl --user stop imas-codex-embed", timeout=15)
+        _run_remote("systemctl --user stop imas-codex-embed", timeout=15)
     except subprocess.CalledProcessError:
         pass
 
@@ -1302,18 +1320,20 @@ def embed_logs(follow: bool, lines: int) -> None:
     if jobs:
         log_file = f"{_PROJECT}/slurm-embed-{jobs[0]['job_id']}.log"
     else:
-        result = _run_iter(f"ls -t {_PROJECT}/slurm-embed-*.log 2>/dev/null | head -1")
+        result = _run_remote(
+            f"ls -t {_PROJECT}/slurm-embed-*.log 2>/dev/null | head -1"
+        )
         result = result.strip()
         if not result or result == "(no output)":
             raise click.ClickException("No SLURM log files found")
         log_file = result.split("\n")[0]
 
     if follow:
-        ssh = _iter_ssh()
+        ssh = _embed_ssh()
         if ssh:
             os.execvp("ssh", ["ssh", ssh, f"tail -f {log_file}"])
         else:
             os.execvp("tail", ["tail", "-f", log_file])
     else:
-        output = _run_iter(f"tail -n {lines} {log_file}", timeout=10)
+        output = _run_remote(f"tail -n {lines} {log_file}", timeout=10)
         click.echo(output)
