@@ -69,5 +69,6 @@
   "markdown-preview-enhanced.enableScriptExecution": true,
   "markdown-preview-enhanced.chromePath": "/usr/bin/google-chrome",
   "chat.mcp.autostart": "never",
-  "github.copilot.chat.cli.mcp.enabled": true
+  "github.copilot.chat.cli.mcp.enabled": true,
+  "chat.useClaudeMdFile": false
 }
