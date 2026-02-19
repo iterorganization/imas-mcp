@@ -1203,6 +1203,7 @@ def mark_paths_scored(
                     p.score_visualization = $score_visualization,
                     p.score_documentation = $score_documentation,
                     p.score_imas = $score_imas,
+                    p.score_convention = $score_convention,
                     p.description = $description,
                     p.path_purpose = $path_purpose,
                     p.evidence_id = $evidence_id,
@@ -1234,6 +1235,7 @@ def mark_paths_scored(
                 score_visualization=score_data.get("score_visualization"),
                 score_documentation=score_data.get("score_documentation"),
                 score_imas=score_data.get("score_imas"),
+                score_convention=score_data.get("score_convention"),
                 description=score_data.get("description"),
                 path_purpose=score_data.get("path_purpose"),
                 evidence_id=evidence_id,
@@ -2331,6 +2333,7 @@ SCORE_DIMENSIONS = [
     "score_visualization",
     "score_documentation",
     "score_imas",
+    "score_convention",
 ]
 
 

@@ -812,6 +812,9 @@ classes:
       score_imas:
         description: Score for IMAS relevance (IDS patterns, put_slice, etc.)
         range: float
+      score_convention:
+        description: Score for sign/coordinate/COCOS convention handling (convention transforms, unit conversion)
+        range: float
       is_multiformat:
         description: True if code loads one format and writes another (indicates mapping utility)
         range: boolean

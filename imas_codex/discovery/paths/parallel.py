@@ -624,6 +624,7 @@ def claim_paths_for_rescoring(
                    p.score_visualization AS score_visualization,
                    p.score_documentation AS score_documentation,
                    p.score_imas AS score_imas,
+                   p.score_convention AS score_convention,
                    p.total_bytes AS total_bytes, p.total_lines AS total_lines,
                    p.language_breakdown AS language_breakdown,
                    p.is_multiformat AS is_multiformat,
@@ -760,16 +761,32 @@ def mark_rescore_complete(
             if isinstance(primary_evidence, list):
                 primary_evidence = json.dumps(primary_evidence)
 
+            # Build per-dimension SET clauses for scores that were adjusted
+            dim_params: dict[str, float] = {}
+            dim_set_clauses: list[str] = []
+            from imas_codex.discovery.paths.frontier import SCORE_DIMENSIONS
+
+            for dim in SCORE_DIMENSIONS:
+                if dim in result:
+                    dim_params[dim] = result[dim]
+                    dim_set_clauses.append(f"p.{dim} = ${dim}")
+
+            extra_set = ""
+            if dim_set_clauses:
+                extra_set = ",\n                    " + ",\n                    ".join(
+                    dim_set_clauses
+                )
+
             gc.query(
-                """
-                MATCH (p:FacilityPath {id: $id})
+                f"""
+                MATCH (p:FacilityPath {{id: $id}})
                 SET p.rescored_at = $now,
                     p.score = $score,
                     p.score_cost = coalesce(p.score_cost, 0) + $score_cost,
                     p.rescore_reason = $adjustment_reason,
                     p.primary_evidence = $primary_evidence,
                     p.evidence_summary = $evidence_summary,
-                    p.claimed_at = null
+                    p.claimed_at = null{extra_set}
                 """,
                 id=path_id,
                 now=now,
@@ -778,6 +795,7 @@ def mark_rescore_complete(
                 adjustment_reason=result.get("adjustment_reason", ""),
                 primary_evidence=primary_evidence,
                 evidence_summary=result.get("evidence_summary", ""),
+                **dim_params,
             )
             updated += 1
 
@@ -1148,6 +1166,7 @@ async def score_worker(
                     "score_visualization": 0.0,
                     "score_documentation": 0.0,
                     "score_imas": 0.0,
+                    "score_convention": 0.0,
                     "should_expand": False,
                     "skip_reason": "empty",
                     "terminal_reason": TerminalReason.empty.value,
@@ -1167,6 +1186,7 @@ async def score_worker(
                     "path_purpose": "empty_directory",
                     "description": "Empty directory - no files or subdirectories",
                     "score_imas": 0.0,
+                    "score_convention": 0.0,
                     "skip_reason": "empty",
                     "should_expand": False,
                     "total_files": 0,
@@ -1455,6 +1475,7 @@ async def rescore_worker(
                     "score_visualization",
                     "score_documentation",
                     "score_imas",
+                    "score_convention",
                 ]:
                     if dim in llm_r:
                         result[dim] = llm_r[dim]
@@ -1612,6 +1633,7 @@ def _rescore_with_llm(
             f"  score_documentation: {p.get('score_documentation') or 0.0:.2f}"
         )
         lines.append(f"  score_imas: {p.get('score_imas') or 0.0:.2f}")
+        lines.append(f"  score_convention: {p.get('score_convention') or 0.0:.2f}")
         lines.append(f"  combined_score: {p.get('score') or 0.0:.2f}")
 
     user_prompt = "\n".join(lines)
@@ -1670,6 +1692,7 @@ def _rescore_with_llm(
                 "score_visualization",
                 "score_documentation",
                 "score_imas",
+                "score_convention",
             ]:
                 llm_value = getattr(r, dim, None)
                 if llm_value is not None:
@@ -1825,6 +1848,9 @@ async def _async_rescore_with_llm(
             f"  score_documentation: {p.get('score_documentation') or 0.0:.2f}"
         )
         lines_prompt.append(f"  score_imas: {p.get('score_imas') or 0.0:.2f}")
+        lines_prompt.append(
+            f"  score_convention: {p.get('score_convention') or 0.0:.2f}"
+        )
         lines_prompt.append(f"  combined_score: {p.get('score') or 0.0:.2f}")
 
     user_prompt = "\n".join(lines_prompt)
@@ -1883,6 +1909,7 @@ async def _async_rescore_with_llm(
                 "score_visualization",
                 "score_documentation",
                 "score_imas",
+                "score_convention",
             ]:
                 llm_value = getattr(r, dim, None)
                 if llm_value is not None:

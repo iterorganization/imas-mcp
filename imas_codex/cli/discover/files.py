@@ -1,8 +1,11 @@
-"""Files discovery command: Remote file scanning and LLM scoring."""
+"""Files discovery command: Parallel file scanning, scoring, and ingestion."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
+import time
 
 import click
 from rich.console import Console
@@ -21,8 +24,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--max-paths",
     type=int,
-    default=None,
-    help="Maximum FacilityPaths to scan for files",
+    default=100,
+    help="Maximum FacilityPaths to scan for files (default: 100)",
 )
 @click.option(
     "--focus",
@@ -37,54 +40,78 @@ logger = logging.getLogger(__name__)
     help="Maximum LLM spend in USD",
 )
 @click.option(
-    "--score-batch-size",
+    "--scan-workers",
     type=int,
-    default=50,
-    help="Batch size for LLM scoring (default: 50)",
+    default=2,
+    help="Number of parallel scan workers (default: 2)",
+)
+@click.option(
+    "--score-workers",
+    type=int,
+    default=2,
+    help="Number of parallel score workers (default: 2)",
+)
+@click.option(
+    "--code-workers",
+    type=int,
+    default=2,
+    help="Number of parallel code ingest workers (default: 2)",
 )
 @click.option(
     "--scan-only",
     is_flag=True,
-    help="Only scan for files, skip scoring",
+    help="Only scan for files, skip scoring and ingestion",
 )
 @click.option(
     "--score-only",
     is_flag=True,
-    help="Score already discovered files (skip scanning)",
+    help="Score already discovered files (skip scanning and ingestion)",
 )
+@click.option(
+    "--time",
+    "time_limit",
+    type=int,
+    default=None,
+    help="Maximum runtime in minutes",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed progress")
 def files(
     facility: str,
     min_score: float,
-    max_paths: int | None,
+    max_paths: int,
     focus: str | None,
     cost_limit: float,
-    score_batch_size: int,
+    scan_workers: int,
+    score_workers: int,
+    code_workers: int,
     scan_only: bool,
     score_only: bool,
+    time_limit: int | None,
+    verbose: bool,
 ) -> None:
-    """Discover source files in scored facility paths.
+    """Discover and ingest source files from scored facility paths.
 
-    Two-stage pipeline:
-    1. SCAN: SSH to facility, list files in high-scoring FacilityPaths
-    2. SCORE: LLM batch-scores discovered files for IMAS relevance
+    Runs parallel workers through a multi-stage pipeline:
+
+    \b
+    - SCAN: SSH to facility, enumerate files in scored FacilityPaths
+    - SCORE: LLM batch-scores discovered files for relevance
+    - CODE: Fetch, chunk, embed high-scoring code files
+    - ARTIFACT: Ingest documents, notebooks, configs
 
     \b
     Examples:
       imas-codex discover files tcv
       imas-codex discover files tcv --min-score 0.7 --scan-only
-      imas-codex discover files tcv -c 2.0 --score-batch-size 100
-      imas-codex discover files tcv -f equilibrium
+      imas-codex discover files tcv -c 2.0 --code-workers 4
+      imas-codex discover files tcv -f equilibrium --time 10
     """
-    # Auto-detect rich output
+    from imas_codex.cli.logging import configure_cli_logging
     from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.discovery.base.facility import get_facility
 
     use_rich = should_use_rich()
-
-    # Always configure file logging (DEBUG level to disk)
-    from imas_codex.cli.logging import configure_cli_logging
-
-    configure_cli_logging("files", facility=facility)
+    configure_cli_logging("files", facility=facility, verbose=verbose)
 
     if use_rich:
         console = Console()
@@ -99,8 +126,6 @@ def files(
     file_logger = logging.getLogger("imas_codex.discovery.files")
 
     def log_print(msg: str) -> None:
-        import re
-
         clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
         if console:
             console.print(msg)
@@ -122,155 +147,86 @@ def files(
     log_print(f"  SSH host: {ssh_host}")
     log_print(f"  Min score: {min_score}")
     log_print(f"  Cost limit: ${cost_limit:.2f}")
-    if max_paths:
-        log_print(f"  Max paths: {max_paths}")
     if focus:
         log_print(f"  Focus: {focus}")
+
+    # Worker summary
+    worker_parts = [f"{scan_workers} scan"]
+    if not scan_only:
+        worker_parts.append(f"{score_workers} score")
+    if not scan_only and not score_only:
+        worker_parts.append(f"{code_workers} code")
+        worker_parts.append("1 artifact")
+    log_print(f"  Workers: {', '.join(worker_parts)}")
+    if time_limit is not None:
+        log_print(f"  Time limit: {time_limit} min")
     log_print("")
 
-    # Release stale claims from crashed processes (timeout-based, parallel-safe)
-    from imas_codex.discovery.files.graph_ops import reset_orphaned_file_claims
+    deadline: float | None = None
+    if time_limit is not None:
+        deadline = time.time() + (time_limit * 60)
 
-    reset_counts = reset_orphaned_file_claims(facility, silent=True)
-    total_reset = sum(reset_counts.values())
-    if total_reset:
-        log_print(f"[dim]Reset {total_reset} orphaned claims from previous run[/dim]")
+    # Run parallel discovery
+    try:
+        from imas_codex.discovery.files.parallel import run_parallel_file_discovery
 
-    # Stage 1: Scan files via SSH
-    total_scanned = 0
-    total_scored = 0
-    total_cost = 0.0
+        async def _run():
+            # Logging callbacks for non-rich mode
+            def log_scan(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("SCAN: %s", msg)
 
-    if not score_only:
-        log_print("[bold]Stage 1: Scanning files via SSH[/bold]")
+            def log_score(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("SCORE: %s", msg)
 
-        try:
-            from imas_codex.discovery.files import scan_facility_files
+            def log_code(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("CODE: %s", msg)
 
-            if use_rich:
-                from rich.status import Status
+            def log_artifact(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("ARTIFACT: %s", msg)
 
-                with Status(
-                    "[cyan]Scanning files...[/cyan]",
-                    console=console,
-                    spinner="dots",
-                ) as status:
-
-                    def scan_progress(current, total, msg):
-                        status.update(f"[cyan]{msg}[/cyan]")
-
-                    scan_kwargs = {
-                        "facility": facility,
-                        "ssh_host": ssh_host,
-                        "min_score": min_score,
-                        "progress_callback": scan_progress,
-                    }
-                    if max_paths is not None:
-                        scan_kwargs["max_paths"] = max_paths
-                    scan_result = scan_facility_files(**scan_kwargs)
-            else:
-
-                def scan_log(current, total, msg):
-                    file_logger.info(f"SCAN: [{current}/{total}] {msg}")
-
-                scan_kwargs = {
-                    "facility": facility,
-                    "ssh_host": ssh_host,
-                    "min_score": min_score,
-                    "progress_callback": scan_log,
-                }
-                if max_paths is not None:
-                    scan_kwargs["max_paths"] = max_paths
-                scan_result = scan_facility_files(**scan_kwargs)
-
-            total_scanned = scan_result.get("new_files", 0)
-            paths_scanned = scan_result.get("total_paths", 0)
-            log_print(
-                f"  [green]{total_scanned} files discovered "
-                f"in {paths_scanned} paths[/green]"
+            return await run_parallel_file_discovery(
+                facility=facility,
+                ssh_host=ssh_host,
+                cost_limit=cost_limit,
+                min_score=min_score,
+                max_paths=max_paths,
+                focus=focus,
+                num_scan_workers=scan_workers,
+                num_score_workers=score_workers,
+                num_code_workers=code_workers,
+                num_artifact_workers=1,
+                scan_only=scan_only,
+                score_only=score_only,
+                deadline=deadline,
+                on_scan_progress=log_scan,
+                on_score_progress=log_score,
+                on_code_progress=log_code,
+                on_artifact_progress=log_artifact,
             )
 
-        except Exception as e:
-            log_print(f"[red]Scan failed: {e}[/red]")
+        result = asyncio.run(_run())
+
+        # Summary
+        log_print(
+            f"\n  [green]{result.get('scanned', 0)} scanned, "
+            f"{result.get('scored', 0)} scored, "
+            f"{result.get('code_ingested', 0)} code ingested, "
+            f"{result.get('artifacts_ingested', 0)} artifacts ingested[/green]"
+        )
+        log_print(
+            f"  [dim]Cost: ${result.get('cost', 0):.2f}, "
+            f"Time: {result.get('elapsed_seconds', 0):.1f}s[/dim]"
+        )
+
+    except Exception as e:
+        log_print(f"[red]Error: {e}[/red]")
+        if verbose:
             import traceback
 
             traceback.print_exc()
-            if scan_only:
-                raise SystemExit(1) from e
 
-    if scan_only:
-        log_print("\n[green]File scanning complete.[/green]")
-        return
-
-    # Stage 2: Score files via LLM
-    log_print("\n[bold]Stage 2: Scoring files via LLM[/bold]")
-
-    try:
-        from imas_codex.discovery.files import score_facility_files
-
-        if use_rich:
-            from rich.progress import (
-                BarColumn,
-                MofNCompleteColumn,
-                Progress,
-                SpinnerColumn,
-                TextColumn,
-            )
-
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                MofNCompleteColumn(),
-                console=console,
-            ) as progress:
-                task_id = progress.add_task("[cyan]Scoring files...", total=None)
-
-                def score_progress(current, total, msg):
-                    if total > 0:
-                        progress.update(task_id, total=total, completed=current)
-                    progress.update(
-                        task_id,
-                        description=f"[cyan]Scoring: {msg}",
-                    )
-
-                score_result = score_facility_files(
-                    facility=facility,
-                    cost_limit=cost_limit,
-                    batch_size=score_batch_size,
-                    focus=focus,
-                    progress_callback=score_progress,
-                )
-        else:
-
-            def score_log(current, total, msg):
-                file_logger.info(f"SCORE: [{current}/{total}] {msg}")
-
-            score_result = score_facility_files(
-                facility=facility,
-                cost_limit=cost_limit,
-                batch_size=score_batch_size,
-                focus=focus,
-                progress_callback=score_log,
-            )
-
-        total_scored = score_result.get("total_scored", 0)
-        total_cost = score_result.get("cost", 0.0)
-        total_skipped = score_result.get("total_skipped", 0)
-
-        log_print(
-            f"  [green]{total_scored} files scored, {total_skipped} skipped[/green]"
-        )
-        log_print(f"  [dim]Cost: ${total_cost:.2f}[/dim]")
-
-    except Exception as e:
-        log_print(f"[red]Scoring failed: {e}[/red]")
-        import traceback
-
-        traceback.print_exc()
-        raise SystemExit(1) from e
-
-    # Summary
-    log_print(f"\n  [green]{total_scanned} scanned, {total_scored} scored[/green]")
-    log_print(f"  [dim]Total cost: ${total_cost:.2f}[/dim]")
     log_print("\n[green]File discovery complete.[/green]")

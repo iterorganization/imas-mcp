@@ -113,6 +113,17 @@ DOCUMENTATION_PATTERNS = {
     "tutorial": r"(tutorial|example|demo|notebook|getting_started)",
 }
 
+# -- Convention Patterns (score_convention) --
+# Sign conventions, coordinate conventions, COCOS, unit systems
+CONVENTION_PATTERNS = {
+    "cocos": r"(COCOS|cocos_[0-9]+|cocos_transform|cocos_identify|cocosify|set_cocos|get_cocos)",
+    "sign_convention": r"(sign_convention|ip_sign|bt_sign|sign_bp|sign_b0|sigma_ip|sigma_b0|sigma_rphiz|sign_q)",
+    "coord_convention": r"(coordinate_convention|coord_system|cylindrical|toroidal_angle|poloidal_angle|phi_convention|theta_convention)",
+    "handedness": r"(right_hand|left_hand|clockwise|counter_clockwise|countercockwise|ccw_|cw_|rhs_|lhs_)",
+    "flux_convention": r"(psi_norm|psi_boundary|psi_axis|rho_tor|rho_pol|flux_convention|psi_sign)",
+    "unit_conversion": r"(unit_convert|units_to|to_si|from_si|pint\.Unit|ureg\.|astropy\.units|convert_units)",
+}
+
 # Combined read/write patterns for legacy compatibility
 FORMAT_READ_PATTERNS = {
     **DATA_ACCESS_PATTERNS,
@@ -145,6 +156,7 @@ PATTERN_REGISTRY = {
     "workflow": (WORKFLOW_PATTERNS, "score_workflow"),
     "visualization": (VISUALIZATION_PATTERNS, "score_visualization"),
     "documentation": (DOCUMENTATION_PATTERNS, "score_documentation"),
+    "convention": (CONVENTION_PATTERNS, "score_convention"),
 }
 
 

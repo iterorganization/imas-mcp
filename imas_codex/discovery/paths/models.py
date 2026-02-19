@@ -128,6 +128,10 @@ class ScoreResult(BaseModel):
         default=0.0,
         description="IMAS relevance (0.0-1.0)",
     )
+    score_convention: float = Field(
+        default=0.0,
+        description="Convention handling value — COCOS, sign/coordinate conventions, unit conversion (0.0-1.0)",
+    )
 
     should_expand: bool = Field(description="Whether to explore child directories")
 
@@ -220,6 +224,9 @@ class RescoreResult(BaseModel):
     )
     score_imas: float | None = Field(
         default=None, description="Adjusted IMAS relevance score"
+    )
+    score_convention: float | None = Field(
+        default=None, description="Adjusted convention handling score"
     )
 
     # Combined score (computed from dimension scores)
@@ -365,6 +372,9 @@ class ScoredDirectory:
     score_imas: float = 0.0
     """IMAS relevance dimension (cross-cutting)."""
 
+    score_convention: float = 0.0
+    """Convention handling dimension (COCOS, sign/coordinate conventions, unit conversion)."""
+
     score: float = 0.0
     """Combined score computed by grounded scoring function."""
 
@@ -416,6 +426,7 @@ class ScoredDirectory:
             "score_visualization": self.score_visualization,
             "score_documentation": self.score_documentation,
             "score_imas": self.score_imas,
+            "score_convention": self.score_convention,
             "score": self.score,
             "should_expand": self.should_expand,
             "should_enrich": self.should_enrich,

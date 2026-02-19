@@ -79,6 +79,11 @@ PATTERN_CATEGORIES = {
     "mat": r"scipy\.io\.loadmat|savemat|sio\.loadmat|\.mat",
     # IMAS (one of many options, not privileged)
     "imas": r"imas\.database|get_ids|put_slice|ids\.put|imas\.create|get_slice",
+    # Convention / coordinate / sign patterns
+    "cocos": r"COCOS|cocos_[0-9]+|cocos_transform|cocos_identify|cocosify|set_cocos|get_cocos",
+    "sign_convention": r"sign_convention|ip_sign|bt_sign|sign_bp|sign_b0|sigma_ip|sigma_b0|sigma_rphiz|sign_q",
+    "coord_convention": r"coordinate_convention|coord_system|phi_convention|theta_convention|rho_tor|rho_pol|psi_norm|psi_sign",
+    "unit_conversion": r"unit_convert|units_to|to_si|from_si|pint\.Unit|ureg\.|convert_units",
 }
 
 # Read vs Write pattern suffixes (for determining data flow direction)
