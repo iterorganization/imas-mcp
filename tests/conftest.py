@@ -51,12 +51,15 @@ def configure_embedding_model(embedding_model_name):
 
     Forces local backend with all-MiniLM-L6-v2 for all tests unless
     explicitly overridden via --embedding-model CLI option.
+
+    Uses direct assignment (not setdefault) to ensure test values
+    override any values loaded from .env by load_dotenv(override=True).
     """
-    os.environ.setdefault("IMAS_CODEX_EMBEDDING_BACKEND", "local")
+    os.environ["IMAS_CODEX_EMBEDDING_BACKEND"] = "local"
     if embedding_model_name:
         os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = embedding_model_name
     else:
-        os.environ.setdefault("IMAS_CODEX_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+        os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
 
 
 # Standard test IDS set for consistency across all tests
@@ -188,55 +191,77 @@ def disable_caching():
 
 @pytest.fixture(scope="session", autouse=True)
 def mock_heavy_operations():
-    """Mock all heavy operations that slow down tests."""
+    """Mock all heavy operations that slow down tests.
+
+    Includes mocking Encoder._load_model to prevent HuggingFace model
+    downloads during non-slow tests. Tests that need real model loading
+    (marked @pytest.mark.slow) load models explicitly.
+    """
     mock_documents = create_mock_documents()
 
-    with patch.multiple(
-        DocumentStore,
-        # Mock document loading
-        _ensure_loaded=MagicMock(),
-        _ensure_ids_loaded=MagicMock(),
-        _load_ids_documents=MagicMock(),
-        _load_identifier_catalog_documents=MagicMock(),
-        load_all_documents=MagicMock(),
-        # Mock index building
-        _build_sqlite_fts_index=MagicMock(),
-        _should_rebuild_fts_index=MagicMock(return_value=False),
-        # Mock data access with test data
-        get_all_documents=MagicMock(return_value=mock_documents),
-        get_document=MagicMock(
-            side_effect=lambda path_id: next(
-                (doc for doc in mock_documents if doc.metadata.path_id == path_id), None
-            )
+    # Mock _import_sentence_transformers so _load_model never downloads a real
+    # model from HuggingFace. The mock SentenceTransformer class returns a mock
+    # model that responds to encode() with zero vectors. Tests that need to
+    # verify _load_model internals (e.g. truncate_dim) override this mock in
+    # their own patch context.
+    mock_st_cls = MagicMock()
+    mock_st_model = MagicMock()
+    mock_st_model.device = "cpu"
+    mock_st_model.encode.return_value = np.zeros((len(mock_documents), 384))
+    mock_st_cls.return_value = mock_st_model
+
+    with (
+        patch.object(
+            Encoder, "_import_sentence_transformers", return_value=mock_st_cls
         ),
-        get_documents_by_ids=MagicMock(
-            side_effect=lambda ids_name: [
-                doc for doc in mock_documents if doc.metadata.ids_name == ids_name
-            ]
+        patch.multiple(
+            DocumentStore,
+            # Mock document loading
+            _ensure_loaded=MagicMock(),
+            _ensure_ids_loaded=MagicMock(),
+            _load_ids_documents=MagicMock(),
+            _load_identifier_catalog_documents=MagicMock(),
+            load_all_documents=MagicMock(),
+            # Mock index building
+            _build_sqlite_fts_index=MagicMock(),
+            _should_rebuild_fts_index=MagicMock(return_value=False),
+            # Mock data access with test data
+            get_all_documents=MagicMock(return_value=mock_documents),
+            get_document=MagicMock(
+                side_effect=lambda path_id: next(
+                    (doc for doc in mock_documents if doc.metadata.path_id == path_id),
+                    None,
+                )
+            ),
+            get_documents_by_ids=MagicMock(
+                side_effect=lambda ids_name: [
+                    doc for doc in mock_documents if doc.metadata.ids_name == ids_name
+                ]
+            ),
+            get_available_ids=MagicMock(return_value=list(STANDARD_TEST_IDS_SET)),
+            __len__=MagicMock(return_value=len(mock_documents)),
+            # Mock search methods
+            search_full_text=MagicMock(return_value=mock_documents[:2]),
+            search_by_keywords=MagicMock(return_value=mock_documents[:2]),
+            search_by_physics_domain=MagicMock(return_value=mock_documents[:2]),
+            search_by_units=MagicMock(return_value=mock_documents[:2]),
+            # Mock statistics
+            get_statistics=MagicMock(
+                return_value={
+                    "total_documents": len(mock_documents),
+                    "total_ids": len(STANDARD_TEST_IDS_SET),
+                    "physics_domains": 2,
+                    "unique_units": 1,
+                    "coordinate_systems": 1,
+                    "documentation_terms": 100,
+                    "path_segments": 50,
+                }
+            ),
+            # Mock identifier methods
+            get_identifier_schemas=MagicMock(return_value=[]),
+            get_identifier_paths=MagicMock(return_value=[]),
+            get_identifier_schema_by_name=MagicMock(return_value=None),
         ),
-        get_available_ids=MagicMock(return_value=list(STANDARD_TEST_IDS_SET)),
-        __len__=MagicMock(return_value=len(mock_documents)),
-        # Mock search methods
-        search_full_text=MagicMock(return_value=mock_documents[:2]),
-        search_by_keywords=MagicMock(return_value=mock_documents[:2]),
-        search_by_physics_domain=MagicMock(return_value=mock_documents[:2]),
-        search_by_units=MagicMock(return_value=mock_documents[:2]),
-        # Mock statistics
-        get_statistics=MagicMock(
-            return_value={
-                "total_documents": len(mock_documents),
-                "total_ids": len(STANDARD_TEST_IDS_SET),
-                "physics_domains": 2,
-                "unique_units": 1,
-                "coordinate_systems": 1,
-                "documentation_terms": 100,
-                "path_segments": 50,
-            }
-        ),
-        # Mock identifier methods
-        get_identifier_schemas=MagicMock(return_value=[]),
-        get_identifier_paths=MagicMock(return_value=[]),
-        get_identifier_schema_by_name=MagicMock(return_value=None),
     ):
         # Mock semantic search initialization to prevent embedding generation
         with patch("imas_codex.server.SemanticSearch") as mock_semantic:
