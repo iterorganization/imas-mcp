@@ -338,6 +338,14 @@ def llm_start(
     # Check Langfuse config
     if os.environ.get("LANGFUSE_PUBLIC_KEY"):
         click.echo("Langfuse: configured (cost tracking enabled)")
+        # Enable langfuse callbacks via env var (not hardcoded in config YAML)
+        # so the proxy works without langfuse installed.
+        try:
+            import langfuse  # noqa: F401
+
+            os.environ.setdefault("LITELLM_CALLBACKS", "langfuse")
+        except ImportError:
+            click.echo("  Warning: langfuse keys set but package not installed")
     else:
         click.echo(
             "Langfuse: not configured (set LANGFUSE_PUBLIC_KEY for cost tracking)"

@@ -89,6 +89,7 @@ serve = [
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
     "litellm>=1.81.0",
+    "langfuse>=2.0.0",
 ]
 # PyTorch backend selection - choose one:
 #   uv sync --extra cpu  (default, ~2GB, no CUDA)

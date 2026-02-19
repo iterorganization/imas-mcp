@@ -50,8 +50,10 @@ litellm_settings:
   drop_params: true
   num_retries: 3
   request_timeout: 120
-  success_callback: ["langfuse"]
-  failure_callback: ["langfuse"]
+  # Langfuse cost tracking — requires: pip install langfuse
+  # and LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY env vars.
+  # Callbacks are set dynamically by the llm start command when
+  # langfuse is available, so they are not hardcoded here.
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
