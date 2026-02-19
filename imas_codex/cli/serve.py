@@ -541,7 +541,8 @@ WantedBy=default.target
 def serve_embed() -> None:
     """Manage GPU embedding server.
 
-    Deploy mode is determined by [embedding].embed-location in pyproject.toml:
+    Deploy mode is determined by ``embedding_service.deploy`` in the facility's
+    private YAML (e.g. iter_private.yaml):
       slurm → SLURM batch job on GPU compute node (partition/node from facility YAML)
       local → systemd service on login node
 
@@ -773,7 +774,7 @@ def embed_status(url: str | None, local: bool) -> None:
     if not url:
         click.echo("No remote embedding server configured.")
         click.echo(
-            "Set embed-remote-url in pyproject.toml or IMAS_CODEX_EMBED_REMOTE_URL env var."
+            "Set embedding_service.backend=remote in facility YAML or IMAS_CODEX_EMBED_REMOTE_URL env var."
         )
         return
 
@@ -1215,7 +1216,8 @@ def embed_deploy(
 ) -> None:
     """Deploy embedding server.
 
-    Mode is determined by [embedding].embed-location in pyproject.toml:
+    Mode is determined by ``embedding_service.deploy`` in the facility's
+    private YAML:
       - slurm → SLURM batch job (partition/node from facility compute config)
       - local → systemd service on login node
 

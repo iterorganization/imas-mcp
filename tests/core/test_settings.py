@@ -200,7 +200,6 @@ class TestModuleLevelConstants:
         assert hasattr(settings, "LABELING_BATCH_SIZE")
         assert hasattr(settings, "INCLUDE_GGD")
         assert hasattr(settings, "INCLUDE_ERROR_FIELDS")
-        assert hasattr(settings, "EMBEDDING_BACKEND")
         assert hasattr(settings, "EMBEDDING_DIMENSION")
 
     def test_module_constants_have_correct_types(self):
@@ -208,7 +207,6 @@ class TestModuleLevelConstants:
         assert isinstance(settings.LABELING_BATCH_SIZE, int)
         assert isinstance(settings.INCLUDE_GGD, bool)
         assert isinstance(settings.INCLUDE_ERROR_FIELDS, bool)
-        assert isinstance(settings.EMBEDDING_BACKEND, str)
         assert isinstance(settings.EMBEDDING_DIMENSION, int)
 
 

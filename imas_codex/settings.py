@@ -144,36 +144,53 @@ def get_embedding_dimension() -> int:
     return int(dim) if dim is not None else 256
 
 
+def _get_embed_service_config() -> dict:
+    """Load embedding_service config from the active facility's private YAML.
+
+    Returns the ``embedding_service`` dict (backend, deploy, server_port)
+    from the facility identified by the current graph location.
+    """
+    try:
+        from imas_codex.discovery.base.facility import get_facility_infrastructure
+
+        facility_id = get_graph_location()
+        infra = get_facility_infrastructure(facility_id)
+        return infra.get("embedding_service", {})
+    except Exception:
+        return {}
+
+
 def get_embedding_backend() -> str:
     """Get the embedding backend ('local' or 'remote').
 
-    Priority: IMAS_CODEX_EMBEDDING_BACKEND env → [embedding].backend → 'remote'.
+    Priority: IMAS_CODEX_EMBEDDING_BACKEND env → facility YAML → 'local'.
     """
     if env := os.getenv("IMAS_CODEX_EMBEDDING_BACKEND"):
         return env.lower()
-    backend = _get_section("embedding").get("backend")
-    return str(backend).lower() if backend else "remote"
+    backend = _get_embed_service_config().get("backend")
+    return str(backend).lower() if backend else "local"
 
 
 def get_embed_remote_url() -> str | None:
     """Get the remote embedding server URL.
 
-    Priority: IMAS_CODEX_EMBED_REMOTE_URL env → [embedding].remote-url → None.
+    Derived from server_port: ``http://localhost:{port}``.
+    Override: IMAS_CODEX_EMBED_REMOTE_URL env var.
     """
     if env := os.getenv("IMAS_CODEX_EMBED_REMOTE_URL"):
         return env or None
-    url = _get_section("embedding").get("remote-url")
-    return url or None
+    port = get_embed_server_port()
+    return f"http://localhost:{port}"
 
 
 def get_embed_server_port() -> int:
     """Get the embedding server port.
 
-    Priority: IMAS_CODEX_EMBED_PORT env → [embedding].server-port → 18765.
+    Priority: IMAS_CODEX_EMBED_PORT env → facility YAML → 18765.
     """
     if env := os.getenv("IMAS_CODEX_EMBED_PORT"):
         return int(env)
-    port = _get_section("embedding").get("server-port")
+    port = _get_embed_service_config().get("server_port")
     return int(port) if port is not None else 18765
 
 
@@ -185,18 +202,18 @@ def get_embed_location() -> str:
     and SSH host are read from the facility's compute config in its private
     YAML (e.g. ``iter_private.yaml``).
 
-    Priority: IMAS_CODEX_EMBED_LOCATION env → [embedding].embed-location → "local".
+    Priority: IMAS_CODEX_EMBED_LOCATION env → facility YAML → "local".
     """
     if env := os.getenv("IMAS_CODEX_EMBED_LOCATION"):
         return env.lower()
-    loc = _get_section("embedding").get("embed-location")
-    return str(loc).lower() if loc else "local"
+    deploy = _get_embed_service_config().get("deploy")
+    return str(deploy).lower() if deploy else "local"
 
 
 def get_embed_host() -> str | None:
     """Get the hostname where the embedding server runs.
 
-    When ``embed-location = "slurm"``, reads the GPU node hostname from the
+    When ``deploy = "slurm"``, reads the GPU node hostname from the
     facility compute config (``gpus[current_use=embed_server].location``).
     Otherwise returns ``None`` (server on login node / localhost).
 
@@ -355,7 +372,4 @@ MODEL_DIMENSIONS = MODEL_NATIVE_DIMENSIONS
 LABELING_BATCH_SIZE = get_labeling_batch_size()
 INCLUDE_GGD = get_include_ggd()
 INCLUDE_ERROR_FIELDS = get_include_error_fields()
-EMBEDDING_BACKEND = get_embedding_backend()
-EMBED_REMOTE_URL = get_embed_remote_url()
-EMBED_SERVER_PORT = get_embed_server_port()
 EMBEDDING_DIMENSION = get_embedding_dimension()

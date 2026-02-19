@@ -23,7 +23,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | Section | Purpose | Accessor |
 |---------|---------|----------|
 | `[graph]` | Neo4j connection, graph name/location | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_graph()` |
-| `[embedding]` | Embedding model, dimension, backend | `get_model("embedding")` |
+| `[embedding]` | Embedding model, dimension | `get_model("embedding")` |
 | `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
 | `[vision]` | Image/document tasks | `get_model("vision")` |
 | `[agent]` | Planning, exploration, autonomous tasks | `get_model("agent")` |
@@ -533,20 +533,22 @@ python("print(reload())")  # After editing imas_codex/ source files
 
 ## Embedding Server
 
-Login-node GPU server on ITER (T4 GPU 1, Qwen3-Embedding-0.6B, 256-dim).
+GPU embedding server (Qwen3-Embedding-0.6B, 256-dim). Deployment config is
+facility-specific — lives in the facility's private YAML (`embedding_service`
+section), not pyproject.toml. Only model/dimension are project-global.
 
-Architecture: `workstation → SSH tunnel → login:18765` or on ITER: direct `localhost:18765`
+Architecture: `workstation → SSH tunnel → facility:18765` or on facility: direct `localhost:18765`
 
 Establish tunnel (from workstation): `ssh -f -N -L 18765:127.0.0.1:18765 iter`
 
-The server runs as a systemd user service on the login node. Management:
-
 ```bash
+imas-codex serve embed deploy    # Deploy per facility config (slurm or systemd)
+imas-codex serve embed status    # Check server health + SLURM jobs
+imas-codex serve embed restart   # Stop + redeploy
+imas-codex serve embed stop      # Stop all embed processes
+imas-codex serve embed logs      # View SLURM logs
 imas-codex serve embed start     # Start server locally (foreground)
-imas-codex serve embed status    # Check server health
 imas-codex serve embed service install  # Install systemd service
-imas-codex serve embed service start    # Start via systemd
-imas-codex serve embed service status   # Check systemd service
 ```
 
 If embedding fails, check in order:

@@ -233,13 +233,6 @@ include-error-fields = false
 [tool.imas-codex.embedding]
 model = "Qwen/Qwen3-Embedding-0.6B"
 dimension = 256
-backend = "remote"
-remote-url = "http://localhost:18765"
-server-port = 18765
-# Deployment mode: "local" (systemd on current host) or "slurm" (batch job).
-# When "slurm", partition/node/ssh-host are read from facility compute config.
-# Override: IMAS_CODEX_EMBED_LOCATION
-embed-location = "slurm"
 
 [tool.imas-codex.language]
 model = "google/gemini-3-flash-preview"
