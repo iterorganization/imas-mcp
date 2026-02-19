@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 
 from imas_codex.settings import (
     get_embed_remote_url,
-    get_embedding_backend,
     get_embedding_model,
     is_embedding_remote,
 )

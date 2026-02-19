@@ -4,7 +4,7 @@ Configuration is organized into subsections:
   [tool.imas-codex]                — general settings
   [tool.imas-codex.graph]          — Neo4j graph URI, username, password
   [tool.imas-codex.data-dictionary] — DD version, include-ggd, include-error-fields
-  [tool.imas-codex.embedding]      — embedding model, dimension, backend
+  [tool.imas-codex.embedding]      — embedding model, dimension, location
   [tool.imas-codex.language]       — language models, batch-size for structured output
   [tool.imas-codex.vision]         — vision models for image/document tasks
   [tool.imas-codex.agent]          — agent models for planning/exploration tasks
@@ -160,25 +160,34 @@ def get_embedding_dimension() -> int:
     return int(dim) if dim is not None else 256
 
 
-def get_embedding_backend() -> str:
-    """Get the embedding backend — a facility name or ``"local"``.
+def get_embedding_location() -> str:
+    """Get the embedding location — a facility name or ``"local"``.
 
     When set to a facility name (e.g. ``"iter"``), embeddings are served
     via an HTTP server running at that facility (reached via SSH tunnel
     from a workstation, or directly when on-site).  ``"local"`` loads
     the model in-process.
 
-    Priority: IMAS_CODEX_EMBEDDING_BACKEND env → [embedding].backend → 'local'.
+    Priority: IMAS_CODEX_EMBEDDING_LOCATION env → IMAS_CODEX_EMBEDDING_BACKEND env
+              → [embedding].location → [embedding].backend → 'local'.
     """
+    if env := os.getenv("IMAS_CODEX_EMBEDDING_LOCATION"):
+        return env.lower()
+    # Legacy env var
     if env := os.getenv("IMAS_CODEX_EMBEDDING_BACKEND"):
         return env.lower()
-    backend = _get_section("embedding").get("backend")
-    return str(backend).lower() if backend else "local"
+    section = _get_section("embedding")
+    location = section.get("location") or section.get("backend")
+    return str(location).lower() if location else "local"
+
+
+# Backward-compatible alias
+get_embedding_backend = get_embedding_location
 
 
 def is_embedding_remote() -> bool:
-    """True when embedding backend targets a remote facility (not in-process)."""
-    return get_embedding_backend() != "local"
+    """True when embedding location targets a remote facility (not in-process)."""
+    return get_embedding_location() != "local"
 
 
 def get_embed_remote_url() -> str | None:
@@ -196,7 +205,7 @@ def get_embed_remote_url() -> str | None:
 def get_embed_server_port() -> int:
     """Get the embedding server port.
 
-    Derived from the backend location's offset in the ``locations`` list,
+    Derived from the embedding location's offset in the ``locations`` list,
     mirroring the graph port convention:
     ``embed_port = 18765 + location_offset``.
 
@@ -204,10 +213,10 @@ def get_embed_server_port() -> int:
     """
     if env := os.getenv("IMAS_CODEX_EMBED_PORT"):
         return int(env)
-    backend = get_embedding_backend()
-    if backend == "local":
+    location = get_embedding_location()
+    if location == "local":
         return EMBED_BASE_PORT
-    return EMBED_BASE_PORT + _get_location_offset(backend)
+    return EMBED_BASE_PORT + _get_location_offset(location)
 
 
 def get_embed_scheduler() -> str:
@@ -231,8 +240,8 @@ def get_embed_scheduler() -> str:
 def get_embed_host() -> str | None:
     """Get the hostname where the embedding server runs.
 
-    When ``deploy = "slurm"``, reads the GPU node hostname from the
-    backend facility's compute config (``gpus[current_use=embed_server].location``).
+    When ``scheduler = "slurm"``, reads the GPU node hostname from the
+    embedding facility's compute config (``gpus[current_use=embed_server].location``).
     Otherwise returns ``None`` (server on login node / localhost).
 
     Override: IMAS_CODEX_EMBED_HOST env var (escape hatch).
@@ -245,16 +254,16 @@ def get_embed_host() -> str | None:
 
 
 def _embed_host_from_facility() -> str | None:
-    """Read GPU node hostname from the backend facility's compute config.
+    """Read GPU node hostname from the embedding facility's compute config.
 
-    Uses ``get_embedding_backend()`` to identify the facility, then looks
+    Uses ``get_embedding_location()`` to identify the facility, then looks
     for a ``GPUResource`` with ``current_use == "embed_server"`` and
     returns its ``location`` (the hostname).
     """
     try:
         from imas_codex.discovery.base.facility import get_facility_infrastructure
 
-        facility_id = get_embedding_backend()
+        facility_id = get_embedding_location()
         if facility_id == "local":
             return None
         infra = get_facility_infrastructure(facility_id)
@@ -264,6 +273,24 @@ def _embed_host_from_facility() -> str | None:
     except Exception:
         pass
     return None
+
+
+# ─── Graph scheduler settings ──────────────────────────────────────────────
+
+
+def get_graph_scheduler() -> str:
+    """Get the graph server job scheduler.
+
+    Returns ``"slurm"`` when the graph (Neo4j) should be submitted as a
+    SLURM batch job on a compute node.  When omitted or ``"none"``, the
+    server runs directly on the login node via systemd.
+
+    Priority: IMAS_CODEX_GRAPH_SCHEDULER env → [graph].scheduler → "none".
+    """
+    if env := os.getenv("IMAS_CODEX_GRAPH_SCHEDULER"):
+        return env.lower()
+    scheduler = _get_section("graph").get("scheduler")
+    return str(scheduler).lower() if scheduler else "none"
 
 
 # ─── Model accessors ───────────────────────────────────────────────────────

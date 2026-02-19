@@ -22,8 +22,8 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 | Section | Purpose | Accessor |
 |---------|---------|----------|
-| `[graph]` | Neo4j connection, graph name/location | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_graph()` |
-| `[embedding]` | Embedding model, dimension, backend, deploy | `get_model("embedding")`, `get_embedding_backend()` |
+| `[graph]` | Neo4j connection, graph name/location, scheduler | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_graph()` |
+| `[embedding]` | Embedding model, dimension, location, scheduler | `get_model("embedding")`, `get_embedding_location()` |
 | `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
 | `[vision]` | Image/document tasks | `get_model("vision")` |
 | `[agent]` | Planning, exploration, autonomous tasks | `get_model("agent")` |
@@ -42,42 +42,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 Env var overrides (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`) still apply as escape hatches over any profile. Use `resolve_graph(name)` from `imas_codex.graph.profiles` for direct profile resolution. All CLI `graph` commands accept `--graph/-g` to target a specific graph.
 
-**Location-aware connections:** The `host` field on `GraphProfile` records where Neo4j physically runs (SSH alias or hostname). `is_local_host(host)` determines direct vs tunnel access at connection time. For remote hosts, set `IMAS_CODEX_TUNNEL_BOLT_{HOST}` env var to override the tunnel port. Locality detection uses hostname matching, SSH config resolution, and IP bind probes. For edge cases (VIP/load-balancer sites), configure `login_nodes` and `local_hosts` in the facility's private YAML (syncs with `config private push/pull`). Session-level override: `IMAS_CODEX_LOCAL_HOSTS=iter` env var (do NOT put in `.env` — it travels with `config secrets push`).
-
-**Facility locality config:** Add to `<facility>_private.yaml`:
-```yaml
-login_nodes:
-  - "hostname-pattern-*.example.org"  # Glob patterns for login node FQDNs
-local_hosts:
-  - facility_alias                    # SSH aliases treated as local
-```
-When the current machine's FQDN matches a `login_nodes` pattern, that facility's `local_hosts` are treated as local by `is_local_host()`. Check with: `imas-codex config local-hosts`.
-
-**Graph config in pyproject.toml:**
-```toml
-[tool.imas-codex]
-# Shared location list — position determines port offsets for all services.
-# Neo4j: bolt = 7687 + index, http = 7474 + index.
-# Embed: server = 18765 + index.
-locations = ["iter", "tcv", "jt-60sa", ...]
-
-# SSH host aliases (shared by graph and embedding).
-# When omitted, the location name is used as the SSH alias.
-[tool.imas-codex.hosts]
-# iter, tcv use location name as SSH alias (implicit)
-
-[tool.imas-codex.graph]
-location = "iter"       # Where it runs (override: IMAS_CODEX_GRAPH_LOCATION=local)
-username = "neo4j"
-password = "imas-codex"
-
-# Optional explicit profile overrides
-[tool.imas-codex.graph.profiles.staging]
-location = "staging-server"  # Where Neo4j runs (SSH alias or hostname)
-bolt-port = 7700
-http-port = 7701
-data-dir = "/custom/path/neo4j-staging"
-```
+**Location-aware connections:** `is_local_host(host)` determines direct vs tunnel access at connection time. For edge cases, configure `login_nodes` and `local_hosts` in the facility's private YAML. Check with: `imas-codex config local-hosts`.
 
 ## Schema System
 
@@ -458,56 +423,14 @@ All discovery and DD CLI commands write DEBUG-level rotating logs to disk. The r
 
 **Log directory:** `~/.local/share/imas-codex/logs/`
 
-**Log naming:** `{command}_{facility}.log` — each facility gets its own log file, enabling parallel runs without interleaved output. Commands without a facility parameter use `{command}.log`.
-
-| CLI Command | Log File |
-|-------------|----------|
-| `discover paths tcv` | `paths_tcv.log` |
-| `discover paths iter` | `paths_iter.log` |
-| `discover wiki jet` | `wiki_jet.log` |
-| `discover signals jt-60sa` | `signals_jt-60sa.log` |
-| `discover files tcv` | `files_tcv.log` |
-| `imas build` | `imas_dd.log` |
-| `imas clear` | `imas_dd.log` |
+**Log naming:** `{command}_{facility}.log` (e.g. `paths_tcv.log`, `wiki_jet.log`, `imas_dd.log`). Logs rotate at 10 MB with 3 backups.
 
 ```bash
-# View logs during or after a run
 tail -f ~/.local/share/imas-codex/logs/paths_tcv.log  # Follow live
-cat ~/.local/share/imas-codex/logs/wiki_iter.log       # Full log
-ls -la ~/.local/share/imas-codex/logs/                 # List all logs
-
-# Search for errors across all CLI logs
-rg "ERROR|WARNING" ~/.local/share/imas-codex/logs/
-
-# Compare facilities side-by-side
-tail -f ~/.local/share/imas-codex/logs/paths_*.log
-
-# Diagnose a specific worker (e.g., artifact worker hang)
-rg "artifact_worker" ~/.local/share/imas-codex/logs/wiki_tcv.log
+rg "ERROR|WARNING" ~/.local/share/imas-codex/logs/     # Find errors
 ```
 
-Logs rotate at 10 MB with 3 backups (e.g., `paths_tcv.log`, `paths_tcv.log.1`). The file handler captures all `imas_codex.*` loggers at DEBUG level regardless of the `--verbose` flag.
-
-**NEVER pipe, tee, or redirect CLI output.** This is the #1 cause of stalled agentic workflows. The logging infrastructure already captures everything — piping adds zero value and blocks auto-approval.
-
-```bash
-# WRONG — blocks auto-approval, requires user interaction
-uv run imas-codex discover wiki tcv 2>&1 | tee /tmp/wiki_tcv.txt
-uv run imas-codex discover signals tcv > /tmp/signals.log 2>&1
-uv run imas-codex discover paths jet 2>&1 | cat
-
-# RIGHT — run directly, logs are written automatically
-uv run imas-codex discover wiki tcv
-uv run imas-codex discover signals tcv
-uv run imas-codex discover paths jet
-
-# MONITOR — read the auto-generated logs
-tail -f ~/.local/share/imas-codex/logs/signals_tcv.log  # Follow live
-rg "ERROR|WARNING" ~/.local/share/imas-codex/logs/      # Find errors
-cat ~/.local/share/imas-codex/logs/wiki_tcv.log          # Full output
-```
-
-**Why this matters:** Terminal commands with pipes (`|`), redirects (`>`), or subshells require explicit user approval in agentic contexts. A single piped command can block an entire parallel workflow for minutes. The built-in `RotatingFileHandler` writes DEBUG-level logs to disk automatically — the same data you would capture via piping is already there.
+**NEVER pipe, tee, or redirect CLI output.** Piping blocks auto-approval in agentic contexts. The logging infrastructure already captures everything to disk — run commands directly and read the log file afterwards.
 
 ## Testing
 
@@ -543,36 +466,7 @@ python("print(reload())")  # After editing imas_codex/ source files
 
 ## Embedding Server
 
-GPU embedding server (Qwen3-Embedding-0.6B, 256-dim). All config lives in
-`pyproject.toml` under `[tool.imas-codex.embedding]`:
-
-```toml
-[tool.imas-codex.embedding]
-model = "Qwen/Qwen3-Embedding-0.6B"
-dimension = 256
-backend = "iter"        # facility hosting embed server (or "local" for in-process)
-scheduler = "slurm"     # job scheduler: "slurm" or omit for login-node systemd
-```
-
-`backend` specifies *where* the server runs — a facility name (e.g. `"iter"`) or
-`"local"` for in-process. The code auto-detects connectivity (direct if on-site,
-SSH tunnel if remote).
-
-The server port is derived from the backend's position in the shared `locations`
-list: `embed_port = 18765 + offset` (same convention as graph ports).
-
-All settings support env var overrides for on-the-fly switching:
-
-| Setting | Env Var | Values |
-|---------|---------|--------|
-| Backend | `IMAS_CODEX_EMBEDDING_BACKEND` | facility name (e.g. `iter`) / `local` (in-process) |
-| Scheduler | `IMAS_CODEX_EMBED_SCHEDULER` | `slurm` (compute node) / `none` (login systemd) |
-| Server port | `IMAS_CODEX_EMBED_PORT` | Port override (default: 18765 + location offset) |
-| GPU host | `IMAS_CODEX_EMBED_HOST` | Hostname override (escape hatch) |
-
-Architecture: `workstation → SSH tunnel → facility:18765` or on facility: direct `localhost:18765`
-
-Establish tunnel (from workstation): `ssh -f -N -L 18765:127.0.0.1:18765 iter`
+Config lives in `pyproject.toml` under `[tool.imas-codex.embedding]`. Key accessor: `get_embedding_location()` returns the facility name or `"local"`. Port derived from position in shared `locations` list: `18765 + offset`.
 
 ```bash
 imas-codex serve embed deploy    # Deploy per config (slurm or systemd)
@@ -582,12 +476,6 @@ imas-codex serve embed stop      # Stop all embed processes
 imas-codex serve embed logs      # View SLURM logs
 imas-codex serve embed start     # Start server locally (foreground)
 imas-codex serve embed service install  # Install systemd service
-
-# Switch to login node deployment without editing config
-IMAS_CODEX_EMBED_SCHEDULER=none imas-codex serve embed deploy
-
-# Use in-process embedding (no server)
-IMAS_CODEX_EMBEDDING_BACKEND=local imas-codex discover signals iter
 ```
 
 If embedding fails, check in order:

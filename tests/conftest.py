@@ -55,7 +55,7 @@ def configure_embedding_model(embedding_model_name):
     Uses direct assignment (not setdefault) to ensure test values
     override any values loaded from .env by load_dotenv(override=True).
     """
-    os.environ["IMAS_CODEX_EMBEDDING_BACKEND"] = "local"
+    os.environ["IMAS_CODEX_EMBEDDING_LOCATION"] = "local"
     if embedding_model_name:
         os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = embedding_model_name
     else:

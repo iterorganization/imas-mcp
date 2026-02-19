@@ -545,10 +545,10 @@ def serve_embed() -> None:
       slurm → SLURM batch job on GPU compute node
       (omit) → systemd service on login node
 
-    The backend facility (``[embedding].backend``) determines where
+    The embedding location (``[embedding].location``) determines where
     commands are sent (e.g. ``iter``).
 
-    Override with env vars: IMAS_CODEX_EMBED_SCHEDULER, IMAS_CODEX_EMBEDDING_BACKEND
+    Override with env vars: IMAS_CODEX_EMBED_SCHEDULER, IMAS_CODEX_EMBEDDING_LOCATION
 
     \b
       imas-codex serve embed deploy     Deploy per config
@@ -960,17 +960,17 @@ def _is_compute_target() -> bool:
 
 
 def _embed_compute_config() -> dict:
-    """Load compute config from the backend facility's private YAML.
+    """Load compute config from the embedding facility's private YAML.
 
-    The facility is determined by ``[embedding].backend`` (e.g. ``"iter"``).
+    The facility is determined by ``[embedding].location`` (e.g. ``"iter"``).
     """
     from imas_codex.discovery.base.facility import get_facility_infrastructure
-    from imas_codex.settings import get_embedding_backend
+    from imas_codex.settings import get_embedding_location
 
-    facility_id = get_embedding_backend()
+    facility_id = get_embedding_location()
     if facility_id == "local":
         raise click.ClickException(
-            "Embedding backend is 'local' — no compute config available."
+            "Embedding location is 'local' — no compute config available."
         )
     infra = get_facility_infrastructure(facility_id)
     compute = infra.get("compute", {})
@@ -1006,9 +1006,9 @@ def _embed_ssh() -> str | None:
     """SSH host for reaching the embed server, or None if local."""
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.remote.executor import is_local_host
-    from imas_codex.settings import get_embedding_backend
+    from imas_codex.settings import get_embedding_location
 
-    facility_id = get_embedding_backend()
+    facility_id = get_embedding_location()
     if facility_id == "local":
         return None
     config = get_facility(facility_id)
@@ -1251,10 +1251,12 @@ def embed_deploy(
                 f"Already running: job {job['job_id']} ({job['state']} "
                 f"on {job['node']}, {job['gres']}, {job['time']})"
             )
+            click.echo(f"  URL: http://{job['node']}:{_embed_port()}")
             return
         _submit_slurm(gpus, workers)
     else:
         _deploy_login()
+    click.echo(f"  Embed URL: http://localhost:{_embed_port()}")
 
 
 @serve_embed.command("stop")
@@ -1377,3 +1379,123 @@ def embed_logs(follow: bool, lines: int) -> None:
     else:
         output = _run_remote(f"tail -n {lines} {log_file}", timeout=10)
         click.echo(output)
+
+
+# ============================================================================
+# Unified Serve Status
+# ============================================================================
+
+
+@serve.command("status")
+def serve_status() -> None:
+    """Show status of all servers (graph, embedding, LLM proxy).
+
+    Checks health, location, deployment mode, and URLs for each service.
+
+    \\b
+    Examples:
+        imas-codex serve status
+    """
+    from imas_codex.settings import (
+        get_embed_remote_url,
+        get_embed_scheduler,
+        get_embedding_location,
+        get_graph_scheduler,
+    )
+
+    # ── Graph (Neo4j) ────────────────────────────────────────────────────
+    click.echo("Neo4j Graph:")
+    try:
+        from imas_codex.graph.health import check_graph_health
+
+        gh = check_graph_health()
+        status_icon = "✓" if gh.status == "ok" else "✗"
+        click.echo(f"  {status_icon} Status: {gh.status}")
+        click.echo(f"  Name: {gh.name}")
+        click.echo(f"  Location: {gh.location}")
+        if gh.host:
+            click.echo(f"  Host: {gh.host}")
+        click.echo(f"  Bolt URL: {gh.bolt_url}")
+        click.echo(f"  HTTP URL: {gh.http_url}")
+        scheduler = get_graph_scheduler()
+        click.echo(f"  Scheduler: {scheduler}")
+        if gh.status == "ok":
+            if gh.neo4j_version:
+                click.echo(f"  Version: {gh.neo4j_version}")
+            if gh.node_count is not None:
+                click.echo(
+                    f"  Nodes: {gh.node_count}, Relationships: {gh.relationship_count}"
+                )
+            if gh.facilities:
+                click.echo(f"  Facilities: {', '.join(gh.facilities)}")
+        if gh.error:
+            click.echo(f"  Error: {gh.error}")
+    except Exception as e:
+        click.echo(f"  ✗ Error: {e}")
+
+    click.echo()
+
+    # ── Embedding Server ─────────────────────────────────────────────────
+    click.echo("Embedding Server:")
+    embed_location = get_embedding_location()
+    embed_scheduler = get_embed_scheduler()
+    embed_url = get_embed_remote_url()
+
+    click.echo(f"  Location: {embed_location}")
+    click.echo(f"  Scheduler: {embed_scheduler}")
+    if embed_url:
+        click.echo(f"  URL: {embed_url}")
+
+    if embed_location != "local" and embed_url:
+        try:
+            from imas_codex.embeddings.client import RemoteEmbeddingClient
+
+            client = RemoteEmbeddingClient(embed_url)
+            if client.is_available(timeout=3.0):
+                info = client.get_detailed_info()
+                click.echo("  ✓ Status: ok")
+                if info:
+                    click.echo(f"  Model: {info['model']['name']}")
+                    click.echo(f"  Device: {info['model']['device']}")
+                    if info["gpu"]["name"]:
+                        click.echo(f"  GPU: {info['gpu']['name']}")
+                    location_label = info["server"].get("location")
+                    if location_label:
+                        click.echo(f"  Deploy: {location_label}")
+                    uptime_h = info["server"]["uptime_seconds"] / 3600
+                    click.echo(f"  Uptime: {uptime_h:.1f}h")
+            else:
+                click.echo("  ✗ Status: not available")
+        except Exception as e:
+            click.echo(f"  ✗ Status: error ({e})")
+
+        # SLURM job info
+        try:
+            jobs = _embed_slurm_jobs()
+            if jobs:
+                job = jobs[0]
+                click.echo(
+                    f"  SLURM: {job['job_id']} {job['state']} on "
+                    f"{job['node']} ({job['gres']}, {job['time']})"
+                )
+        except Exception:
+            pass
+    elif embed_location == "local":
+        click.echo("  ✓ Mode: in-process (no server)")
+
+    click.echo()
+
+    # ── LLM Proxy ────────────────────────────────────────────────────────
+    click.echo("LLM Proxy:")
+    llm_url = os.environ.get("LITELLM_PROXY_URL", "http://localhost:4000")
+    click.echo(f"  URL: {llm_url}")
+    try:
+        import httpx
+
+        resp = httpx.get(f"{llm_url}/health", timeout=3.0)
+        if resp.status_code == 200:
+            click.echo("  ✓ Status: ok")
+        else:
+            click.echo(f"  ✗ Status: unhealthy (HTTP {resp.status_code})")
+    except Exception:
+        click.echo("  ✗ Status: not running")

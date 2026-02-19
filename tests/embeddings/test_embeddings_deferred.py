@@ -23,7 +23,7 @@ def _mock_encoder(model_name: str = "all-MiniLM-L6-v2"):
 
 
 def test_embeddings_encoder_config_exposed(monkeypatch):
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_LOCATION", "local")
     ds = DocumentStore()
     with patch(
         "imas_codex.embeddings.embeddings.Encoder", return_value=_mock_encoder()
@@ -34,7 +34,7 @@ def test_embeddings_encoder_config_exposed(monkeypatch):
 
 
 def test_embeddings_lazy_build(monkeypatch):
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_LOCATION", "local")
 
     ds = DocumentStore()
     with patch(
@@ -51,7 +51,7 @@ def test_embeddings_lazy_build(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_health_endpoint_deferred(monkeypatch):
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_LOCATION", "local")
 
     with patch(
         "imas_codex.embeddings.embeddings.Encoder",

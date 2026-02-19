@@ -769,9 +769,9 @@ def graph_start(
 
         for _ in range(30):
             if is_neo4j_running(profile.http_port):
-                click.echo(
-                    f"Neo4j [{profile.name}] ready at http://localhost:{profile.http_port}"
-                )
+                click.echo(f"Neo4j [{profile.name}] ready")
+                click.echo(f"  Bolt URL: bolt://localhost:{profile.bolt_port}")
+                click.echo(f"  HTTP URL: http://localhost:{profile.http_port}")
                 return
             time.sleep(1)
 

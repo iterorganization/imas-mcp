@@ -152,14 +152,14 @@ def _init_repl() -> dict[str, Any]:
     from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
     from imas_codex.graph import GraphClient
     from imas_codex.ingestion.search import ChunkSearch
-    from imas_codex.settings import get_embedding_backend
+    from imas_codex.settings import get_embedding_location
 
     gc = GraphClient()
 
     # Create encoder with lazy initialization - respects embedding-backend config
     # This will NOT load the model until actually used
-    backend = get_embedding_backend()
-    logger.info(f"Embedding backend: {backend}")
+    backend = get_embedding_location()
+    logger.info(f"Embedding location: {backend}")
 
     # Track embedding availability
     _embedding_error: Exception | None = None

@@ -122,7 +122,7 @@ def _build_env_exports(login_hostname: str) -> str:
         f'export NEO4J_URI="bolt://{login_hostname}:{profile.bolt_port}"\n'
         f'export NEO4J_PASSWORD="{profile.password}"\n'
         f'export IMAS_CODEX_GRAPH="{profile.name}"\n'
-        'export IMAS_CODEX_EMBEDDING_BACKEND="remote"\n'
+        'export IMAS_CODEX_EMBEDDING_LOCATION="remote"\n'
     )
 
 

@@ -166,9 +166,9 @@ def wiki(
     # Check embedding server availability upfront for ingestion mode.
     if not scan_only and not score_only:
         from imas_codex.embeddings.config import EmbeddingBackend
-        from imas_codex.settings import get_embedding_backend
+        from imas_codex.settings import get_embedding_location
 
-        backend_str = get_embedding_backend()
+        backend_str = get_embedding_location()
         try:
             backend = EmbeddingBackend(backend_str)
         except ValueError:

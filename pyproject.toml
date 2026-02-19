@@ -234,7 +234,7 @@ include-error-fields = false
 [tool.imas-codex.embedding]
 model = "Qwen/Qwen3-Embedding-0.6B"
 dimension = 256
-backend = "iter"        # facility hosting embed server (or "local" for in-process)
+location = "iter"       # facility hosting embed server (or "local" for in-process)
 scheduler = "slurm"     # job scheduler: "slurm" or omit for login-node systemd
 
 [tool.imas-codex.language]

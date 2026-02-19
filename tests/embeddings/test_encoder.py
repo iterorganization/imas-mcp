@@ -434,7 +434,7 @@ class TestEncoder:
 )
 def test_encoder_embed_texts_basic(monkeypatch):
     """Integration test: embed texts with local backend."""
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_LOCATION", "local")
     config = EncoderConfig(batch_size=8, use_rich=False)
     encoder = Encoder(config)
     texts = ["alpha", "beta", "gamma"]
@@ -452,7 +452,7 @@ def test_encoder_embed_texts_basic(monkeypatch):
 def test_encoder_build_document_embeddings_cache_integration(tmp_path, monkeypatch):
     """Integration test: build and cache embeddings with local backend."""
     monkeypatch.setattr(EncoderConfig, "cache_dir", "embeddings_test")
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_LOCATION", "local")
     config = EncoderConfig(batch_size=16, use_rich=False, enable_cache=True)
     encoder = Encoder(config)
     texts = [f"text {i}" for i in range(10)]
