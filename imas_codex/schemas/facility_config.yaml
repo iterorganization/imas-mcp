@@ -269,6 +269,17 @@ classes:
         multivalued: true
         annotations:
           is_private: true
+      nice_level:
+        description: >-
+          Unix nice level (0-19) applied to all remote SSH commands targeting
+          this facility. Higher values = lower scheduling priority. Set to 19
+          on shared analysis servers where codex scanning should yield CPU to
+          facility users. When set, all run_command(), run_python_script(), and
+          run_script_via_stdin() calls to this host are wrapped with nice.
+          Applied automatically via the per-host nice registry in executor.py.
+        range: integer
+        annotations:
+          is_private: true
       compute:
         description: >-
           Compute infrastructure available at this facility. Describes job

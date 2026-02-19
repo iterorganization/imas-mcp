@@ -19,6 +19,7 @@ Functions:
 import logging
 import os
 import re
+import shlex
 import socket
 import subprocess
 from functools import lru_cache
@@ -31,6 +32,41 @@ logger = logging.getLogger(__name__)
 # This is a safety net — the tools CLI also configures ~/.bashrc directly,
 # but explicit PATH ensures correctness even before that setup runs.
 _REMOTE_PATH_PREFIX = 'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"'
+
+
+# ============================================================================
+# Per-host Nice Level Registry
+# ============================================================================
+
+# Maps ssh_host (lowercase) → nice level (0-19). Registered by facility-aware
+# code in tools.py when resolving facility → ssh_host. All execution functions
+# check this registry and apply `nice -n {level}` for remote commands.
+_host_nice_levels: dict[str, int] = {}
+
+
+def configure_host_nice(ssh_host: str, level: int) -> None:
+    """Register a nice level for all remote commands to an SSH host.
+
+    Once registered, all ``run_command()``, ``run_python_script()``,
+    ``run_script_via_stdin()``, and ``async_run_python_script()`` calls
+    targeting this host will run at the specified nice level.
+
+    Args:
+        ssh_host: SSH host alias (e.g., "jt-60sa", "iter")
+        level: Unix nice level (0-19). 19 = lowest priority.
+    """
+    if not 0 <= level <= 19:
+        logger.warning("nice_level %d out of range [0, 19], clamping", level)
+        level = max(0, min(19, level))
+    _host_nice_levels[ssh_host.lower()] = level
+    logger.debug("Registered nice level %d for host %s", level, ssh_host)
+
+
+def _get_host_nice_level(ssh_host: str | None) -> int | None:
+    """Look up registered nice level for an SSH host."""
+    if ssh_host is None:
+        return None
+    return _host_nice_levels.get(ssh_host.lower())
 
 
 # ============================================================================
@@ -640,6 +676,11 @@ def run_command(
         # Check SSH health once per host per session (prevents stale socket hangs)
         _ensure_ssh_healthy_once(ssh_host)
 
+        # Wrap command with nice if configured for this host
+        nice_level = _get_host_nice_level(ssh_host)
+        if nice_level is not None and nice_level > 0:
+            cmd = f"nice -n {nice_level} bash -c {shlex.quote(cmd)}"
+
         # Prepend PATH setup for non-interactive SSH shells
         remote_cmd = _prepend_path_setup(cmd)
 
@@ -722,6 +763,11 @@ def run_script_via_stdin(
     else:
         # Check SSH health once per host per session (prevents stale socket hangs)
         _ensure_ssh_healthy_once(ssh_host)
+
+        # Wrap interpreter with nice if configured for this host
+        nice_level = _get_host_nice_level(ssh_host)
+        if nice_level is not None and nice_level > 0:
+            interp_cmd = ["nice", "-n", str(nice_level)] + interp_cmd
 
         # SSH execution via stdin - avoids bash -c overhead
         # Use 'interpreter [args]' to read script from stdin
@@ -818,6 +864,12 @@ def run_python_script(
 
         # Build remote command: PATH prefix + optional setup + python
         python_cmd = f"{python_command} -c '{runner}'"
+
+        # Wrap Python command with nice if configured for this host
+        nice_level = _get_host_nice_level(ssh_host)
+        if nice_level is not None and nice_level > 0:
+            python_cmd = f"nice -n {nice_level} {python_cmd}"
+
         parts = [_REMOTE_PATH_PREFIX]
         if setup_commands:
             parts.extend(setup_commands)
@@ -919,6 +971,12 @@ async def async_run_python_script(
         _ensure_ssh_healthy_once(ssh_host)
         # Build remote command: PATH prefix + optional setup + python
         python_cmd = f"{python_command} -c '{runner}'"
+
+        # Wrap Python command with nice if configured for this host
+        nice_level = _get_host_nice_level(ssh_host)
+        if nice_level is not None and nice_level > 0:
+            python_cmd = f"nice -n {nice_level} {python_cmd}"
+
         parts = [_REMOTE_PATH_PREFIX]
         if setup_commands:
             parts.extend(setup_commands)

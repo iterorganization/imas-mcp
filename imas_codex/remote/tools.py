@@ -35,6 +35,7 @@ import yaml
 
 # Import low-level executor (no circular import risk)
 from imas_codex.remote.executor import (
+    configure_host_nice,
     is_local_host,
     run_command,
     run_script_via_stdin,
@@ -103,7 +104,14 @@ def _resolve_ssh_host(facility: str | None) -> str | None:
 
     try:
         config = get_facility(facility)
-        return config.get("ssh_host", facility)
+        ssh_host = config.get("ssh_host", facility)
+
+        # Auto-register nice level for this host from facility config
+        nice_level = config.get("nice_level")
+        if nice_level is not None:
+            configure_host_nice(ssh_host, nice_level)
+
+        return ssh_host
     except ValueError:
         return facility
 
@@ -568,7 +576,9 @@ def _ensure_path_in_rc(rc_file: str, facility: str | None) -> str:
         Human-readable status message
     """
     # Check if already present
-    check = f'grep -F "{_PATH_MARKER}" {rc_file} >/dev/null 2>&1 && echo "yes" || echo "no"'
+    check = (
+        f'grep -F "{_PATH_MARKER}" {rc_file} >/dev/null 2>&1 && echo "yes" || echo "no"'
+    )
     if run(check, facility=facility, timeout=10).strip() == "yes":
         return f"{rc_file} already configured"
 
@@ -610,7 +620,9 @@ echo "prepended"
 def _cleanup_legacy_env(facility: str | None, messages: list[str]) -> None:
     """Remove the old ~/.imas-codex.env indirection if present."""
     # Remove source line from .bashrc
-    check = 'grep -F "imas-codex.env" ~/.bashrc >/dev/null 2>&1 && echo "yes" || echo "no"'
+    check = (
+        'grep -F "imas-codex.env" ~/.bashrc >/dev/null 2>&1 && echo "yes" || echo "no"'
+    )
     if run(check, facility=facility, timeout=5).strip() == "yes":
         # Remove the source line and its preceding comment
         run(

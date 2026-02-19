@@ -76,10 +76,24 @@ Discovery processes (`discover paths`, `discover wiki`, `discover signals`, `dis
 
 **Implication for codex:**
 - **PBS offloading has no physical offloading benefit** — jobs still run on nakasvr23. The value is: (1) escaping the 1-CPU cgroup limit, (2) complying with site policy for CPU-intensive work, and (3) proper resource accounting.
-- For I/O-bound scanning (rg, fd, SSH, file reads): run directly in interactive session. 1 CPU is sufficient since these are I/O-throttled by NFS, not CPU-bound. Use `nice -19` to minimize impact.
+- For I/O-bound scanning (rg, fd, SSH, file reads): run directly in interactive session. 1 CPU is sufficient since these are I/O-throttled by NFS, not CPU-bound. `nice` is applied automatically via common infrastructure (see below).
 - For CPU-intensive work (if ever needed here — LLM scoring runs on ITER, not JT-60SA): submit via `qsub` for policy compliance and to get more than 1 CPU.
 - No tunnel infrastructure needed — services (Neo4j, embed) run on ITER, not on nakasvr23.
 - **Recommended scanning policy:** Run lightweight commands directly. Be conservative with concurrency. This is a shared analysis server for plasma physicists — we are guests.
+
+### Nice Level Infrastructure (Implemented)
+
+Process priority is handled by **common infrastructure** — not per-facility ad-hoc policy. The `nice_level` attribute in `SchedulerConfig` (LinkML schema `facility_config.yaml`) configures a Unix nice level for each facility. When set, all remote SSH commands to that facility automatically run at the specified priority.
+
+**How it works:**
+1. Facility config declares `nice_level: 19` (private YAML, `is_private` attribute)
+2. `tools.py::_resolve_ssh_host()` reads config and calls `configure_host_nice(ssh_host, level)` in `executor.py`
+3. All 4 execution functions (`run_command`, `run_script_via_stdin`, `run_python_script`, `async_run_python_script`) check the per-host registry and wrap commands with `nice -n {level}`
+
+**Currently configured:**
+- JT-60SA: `nice_level: 19` (lowest priority — yields to all facility user processes)
+
+No per-facility scanning policy sections are needed. Just set `nice_level` in private YAML and all SSH commands to that host inherit the priority.
 
 ## Design
 
