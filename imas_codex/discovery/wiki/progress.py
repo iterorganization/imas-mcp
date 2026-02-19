@@ -705,7 +705,8 @@ class WikiProgressDisplay:
         triage_desc_fallback = ""
         triage_complete = False
         triage_complete_label = "complete"
-        if self._worker_complete("triage") and not score:
+        triage_at_100 = scored_pages >= score_total > 1
+        if (self._worker_complete("triage") or triage_at_100) and not score:
             triage_complete = True
             if self.state.provider_budget_exhausted:
                 triage_complete_label = "api budget"
@@ -730,7 +731,8 @@ class WikiProgressDisplay:
         pages_domain = ""
         pages_desc = ""
         pages_complete = False
-        if self._worker_complete("pages") and not ingest:
+        pages_at_100 = self.state.pages_ingested >= ingest_total > 1
+        if (self._worker_complete("pages") or pages_at_100) and not ingest:
             pages_complete = True
         if ingest:
             pages_text = self._clip_title(ingest.title, content_width - LABEL_WIDTH)
@@ -747,7 +749,8 @@ class WikiProgressDisplay:
         docs_desc_fallback = ""
         docs_complete = False
         docs_complete_label = "complete"
-        if self._worker_complete("docs") and not artifact:
+        docs_at_100 = art_completed >= art_total > 1
+        if (self._worker_complete("docs") or docs_at_100) and not artifact:
             docs_complete = True
             if self.state.provider_budget_exhausted:
                 docs_complete_label = "api budget"
@@ -782,7 +785,8 @@ class WikiProgressDisplay:
         images_desc_fallback = ""
         images_complete = False
         images_complete_label = "complete"
-        if self._worker_complete("images") and not image:
+        images_at_100 = img_scored >= img_total > 1
+        if (self._worker_complete("images") or images_at_100) and not image:
             images_complete = True
             if self.state.provider_budget_exhausted:
                 images_complete_label = "api budget"
@@ -804,7 +808,7 @@ class WikiProgressDisplay:
 
         rows = [
             PipelineRowConfig(
-                name="TRIAGE",
+                name="triage",
                 style="bold blue",
                 completed=scored_pages,
                 total=score_total,
@@ -835,7 +839,7 @@ class WikiProgressDisplay:
                 ),
             ),
             PipelineRowConfig(
-                name="PAGES",
+                name="page",
                 style="bold magenta",
                 completed=self.state.pages_ingested,
                 total=ingest_total,
@@ -859,7 +863,7 @@ class WikiProgressDisplay:
                 ),
             ),
             PipelineRowConfig(
-                name="DOCS",
+                name="artifact",
                 style="bold yellow",
                 completed=art_completed,
                 total=max(art_total, 1),
@@ -892,7 +896,7 @@ class WikiProgressDisplay:
                 ),
             ),
             PipelineRowConfig(
-                name="IMAGES",
+                name="image",
                 style="bold green",
                 completed=img_scored,
                 total=max(img_total, 1),
@@ -1540,7 +1544,7 @@ class WikiProgressDisplay:
         # TRIAGE stats (pages + artifacts combined)
         total_scored = self.state.pages_scored + self.state.pages_ingested
         total_score_cost = self.state.total_score_cost
-        summary.append("  TRIAGE", style="bold blue")
+        summary.append("  triage ", style="bold blue")
         summary.append(f"  scored={total_scored:,}", style="blue")
         artifacts_scored = self.state.total_run_artifacts_scored
         if artifacts_scored > 0:
@@ -1553,7 +1557,7 @@ class WikiProgressDisplay:
 
         # PAGES stats
         total_ingested = self.state.pages_ingested
-        summary.append("  PAGES ", style="bold magenta")
+        summary.append("  page   ", style="bold magenta")
         summary.append(f"  ingested={total_ingested:,}", style="magenta")
         artifacts_ingested = self.state.total_run_artifacts
         if artifacts_ingested > 0:
@@ -1565,14 +1569,14 @@ class WikiProgressDisplay:
         # IMAGES stats
         images_scored = self.state.total_run_images_scored
         if images_scored > 0:
-            summary.append("  IMAGES", style="bold green")
+            summary.append("  image  ", style="bold green")
             summary.append(f"  scored={images_scored:,}", style="green")
             if self.state.image_score_rate:
                 summary.append(f"  {self.state.image_score_rate:.1f}/s", style="dim")
             summary.append("\n")
 
         # USAGE stats
-        summary.append("  USAGE ", style="bold white")
+        summary.append("  usage  ", style="bold white")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
         summary.append(f"  total_cost=${self.state.run_cost:.2f}", style="yellow")
         if self.state.total_sites > 1:

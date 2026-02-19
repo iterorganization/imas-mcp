@@ -280,6 +280,13 @@ def embed_health_check() -> tuple[bool, str]:
         try:
             if client.is_available(timeout=5.0):
                 source = get_embedding_source()
+                if source == "unknown":
+                    # Server healthy but no embeddings performed yet —
+                    # derive label from URL hostname
+                    from urllib.parse import urlparse
+
+                    hostname = urlparse(url).hostname or "remote"
+                    source = hostname
                 return True, source
             return False, "server unavailable"
         finally:
@@ -341,7 +348,7 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=1,
             temperature=0,
-            timeout=10,
+            timeout=30,
         )
         if response and response.choices:
             return True, label

@@ -386,9 +386,9 @@ class WorkerStats:
 # The difference prevents resource-gauge rows (TIME, COST, TOTAL) from
 # wrapping by reserving extra space for their longer trailing text.
 
-LABEL_WIDTH = 10
-METRICS_WIDTH = 32
-GAUGE_METRICS_WIDTH = 32
+LABEL_WIDTH = 20
+METRICS_WIDTH = 22
+GAUGE_METRICS_WIDTH = 22
 MIN_WIDTH = 80
 
 
@@ -454,13 +454,13 @@ class PipelineRowConfig:
     Unified pipeline row combining progress bar and current activity
     into a single block.  Each pipeline stage renders as:
 
-        TRIAGE x2 ━━━━━━━━━━━━━━━━━━━━━━    2,238  29%  0.23/s  $8.30
-          0.85  electromagnetic_wave_diagnostics  Thomson Scattering
-                General documentation for Thomson Scattering diagnostics...
+        triagex4 $8.30      ━━━━━━━━━━━━━━━━━━━━━  7,782 100% 0.23/s
+        Thomson Scattering  electromagnetic_wave_diagnostics  0.85
+        General documentation for Thomson Scattering diagnostics...
 
-    Line 1: worker name + multiplier + progress bar + count + pct + rate + cost
-    Line 2: score (left-aligned with name) + physics domain (at bar start) + resource name
-    Line 3: LLM/VLM description (at bar start), or fallback note if absent
+    Line 1: name + xN (gray, no space) + cost + bar + count/pct/rate
+    Line 2: resource name + physics domain + score (all at indent 2)
+    Line 3: LLM/VLM description (at indent 2), or fallback note
 
     This is the standard layout for discovery CLI tools that want
     integrated per-stage progress and activity display.
@@ -521,9 +521,9 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     """Build a unified pipeline row (progress bar + activity).
 
     Renders 3 lines:
-      Line 1: NAME xN + progress bar + count + pct + rate + cost
-      Line 2: score (at label col) + physics_domain (at bar col) + resource name
-      Line 3: LLM description (at bar col), or fallback note
+      Line 1: namexN $cost (padded to LABEL_WIDTH) + bar + count/pct/rate
+      Line 2: resource name + domain + score (at indent 2)
+      Line 3: description (at indent 2), or fallback note
 
     Args:
         config: Pipeline row configuration.
@@ -532,51 +532,52 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     row = Text()
 
     if config.disabled:
-        row.append(f"  {config.name:<6} ", style="dim")
+        row.append(f"  {config.name}".ljust(LABEL_WIDTH), style="dim")
         row.append("─" * bar_width, style="dim")
         row.append(f"    {config.disabled_msg}", style="dim italic")
         return row
 
-    # Compute label column: "  NAME" + optional " xN"
-    label = f"  {config.name}"
+    # ── Line 1: label + progress bar + right-aligned metrics ──
+    # Label: "  {name}x{count} ${cost}" with multiplier in gray
+    label = Text()
+    label.append(f"  {config.name}", style=config.style)
     if config.worker_count > 0:
-        label += f" x{config.worker_count}"
-    if config.worker_annotation:
-        label += f" {config.worker_annotation}"
-    # Pad to LABEL_WIDTH (minimum), expand if label is longer
-    label_len = max(LABEL_WIDTH, len(label) + 1)
-    label = label.ljust(label_len)
-
-    # Adjust bar width so total line width stays consistent
-    effective_bar = bar_width - max(0, label_len - LABEL_WIDTH)
-    effective_bar = max(effective_bar, 10)  # minimum bar width
-
-    # Line 1: Label + progress bar + metrics
-    row.append(label, style=config.style)
+        label.append(f"x{config.worker_count}", style="dim")
+    if config.cost is not None and config.cost > 0:
+        label.append(f" ${config.cost:.2f}", style="dim")
+    # Pad to LABEL_WIDTH for aligned bar start
+    label_pad = LABEL_WIDTH - len(label.plain)
+    if label_pad > 0:
+        label.append(" " * label_pad)
+    row.append_text(label)
 
     total = max(config.total, 1)
     ratio = min(config.completed / total, 1.0)
     pct = ratio * 100
-    row.append(make_bar(ratio, effective_bar), style=config.style.split()[-1])
+    row.append(make_bar(ratio, bar_width), style=config.style.split()[-1])
 
-    row.append(f" {config.completed:>6,}", style="bold")
-    if config.show_pct:
-        row.append(f" {pct:>3.0f}%", style="cyan")
-    else:
-        row.append("     ", style="dim")
+    # Right metrics — pad to right-align within METRICS_WIDTH
+    count_s = f" {config.completed:>6,}"
+    pct_s = f" {pct:>3.0f}%" if config.show_pct else "     "
+    rate_s = f" {config.rate:>5.2f}/s" if config.rate and config.rate > 0 else ""
+    pad = max(0, METRICS_WIDTH - len(count_s) - len(pct_s) - len(rate_s))
+    if pad > 0:
+        row.append(" " * pad)
+    row.append(count_s, style="bold")
+    row.append(pct_s, style="cyan" if config.show_pct else "dim")
+    if rate_s:
+        row.append(rate_s, style="dim")
+    if config.worker_annotation:
+        row.append(f" {config.worker_annotation}", style="dim")
 
-    if config.rate and config.rate > 0:
-        row.append(f" {config.rate:>4.2f}/s", style="dim")
-
-    if config.cost is not None and config.cost > 0:
-        row.append(f"  ${config.cost:.2f}", style="yellow dim")
-
-    # Line 2: Score + physics domain + resource name  (or status text)
+    # ── Line 2: resource name + domain + score (left-aligned at indent 2) ──
     row.append("\n")
 
     if config.has_content and config.has_structured_detail:
-        # Structured layout: score at label col, domain+name at bar col
-        score_text = ""
+        row.append("  ", style="dim")
+        row.append(config.primary_text, style="white")
+        if config.physics_domain:
+            row.append(f"  {config.physics_domain}", style="cyan")
         if config.score_value is not None:
             score_style = (
                 "bold green"
@@ -585,27 +586,13 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
                 if config.score_value >= 0.4
                 else "red"
             )
-            score_text = f"{config.score_value:.2f}"
-            row.append(f"    {score_text}  ", style=score_style)
-            # Pad to bar column start
-            pad = max(0, label_len - 4 - len(score_text) - 2)
-            if pad > 0:
-                row.append(" " * pad)
-        else:
-            row.append(" " * label_len)
-
-        # Physics domain + resource name at bar column
-        if config.physics_domain:
-            row.append(config.physics_domain, style="cyan")
-            row.append("  ", style="dim")
-        row.append(config.primary_text, style="white")
+            row.append(f"  {config.score_value:.2f}", style=score_style)
     elif config.has_content:
-        # Legacy layout: just resource name indented
-        row.append(" " * label_len)
+        row.append("  ", style="dim")
         row.append(config.primary_text, style="white")
     else:
         # No content: show status text
-        row.append(" " * label_len)
+        row.append("  ", style="dim")
         if config.is_processing:
             lbl = "paused" if config.is_paused else config.processing_label
             sty = "dim italic" if config.is_paused else "cyan italic"
@@ -619,17 +606,18 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         else:
             row.append("idle", style="dim italic")
 
-    # Line 3: Description (at bar col) or fallback, or legacy detail_parts
+    # ── Line 3: description (left-aligned at indent 2) ──
     row.append("\n")
     if config.has_structured_detail:
-        row.append(" " * label_len)  # indent to bar column
+        row.append("  ", style="dim")
         if config.description:
             desc = clean_text(config.description)
-            row.append(clip_text(desc, max(10, bar_width + 20)), style="italic dim")
+            max_desc = max(10, LABEL_WIDTH + bar_width)
+            row.append(clip_text(desc, max_desc), style="italic dim")
         elif config.description_fallback:
             row.append(config.description_fallback, style="cyan dim italic")
     elif config.detail_parts:
-        row.append("    ", style="dim")  # legacy indent
+        row.append("  ", style="dim")
         for text, style in config.detail_parts:
             row.append(text, style=style)
 
@@ -965,7 +953,7 @@ def build_resource_section(
     section = Text()
 
     # TIME row — elapsed ticker, no limit gauge
-    section.append("  TIME    ", style="bold cyan")
+    section.append(f"{'  TIME':<{LABEL_WIDTH}}", style="bold cyan")
 
     eta = None if config.scan_only else config.eta
     if eta is not None and eta > 0:
@@ -991,7 +979,7 @@ def build_resource_section(
 
     # COST row — informational spend display, no limit gauge
     if not config.scan_only and config.run_cost is not None:
-        section.append("  COST    ", style="bold yellow")
+        section.append(f"{'  COST':<{LABEL_WIDTH}}", style="bold yellow")
 
         # Show spend-to-projection gauge when ETC is available
         total_cost = config.accumulated_cost + config.run_cost
@@ -1010,7 +998,7 @@ def build_resource_section(
 
     # STATS row
     if config.stats:
-        section.append("  STATS   ", style="bold magenta")
+        section.append(f"{'  STATS':<{LABEL_WIDTH}}", style="bold magenta")
         for i, (label, value, style) in enumerate(config.stats):
             if i > 0:
                 section.append("  ", style="dim")
