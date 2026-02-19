@@ -85,6 +85,7 @@ serve = [
     "backoff",
     "fastapi-sso>=0.16.0,<0.17.0",
     "orjson>=3.9.7",
+    "uvloop>=0.21.0",
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
     "litellm>=1.81.0",
