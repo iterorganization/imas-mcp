@@ -541,9 +541,9 @@ WantedBy=default.target
 def serve_embed() -> None:
     """Manage GPU embedding server.
 
-    Deploy target is determined by [embedding].embed-host in pyproject.toml:
-      embed-host set   → SLURM job on that compute node
-      embed-host unset → systemd service on login node
+    Deploy mode is determined by [embedding].embed-location in pyproject.toml:
+      slurm → SLURM batch job on GPU compute node (partition/node from facility YAML)
+      local → systemd service on login node
 
     \b
       imas-codex serve embed deploy     Deploy per config
@@ -940,13 +940,6 @@ _DEFAULT_GPUS = 4
 _PROJECT = "~/Code/imas-codex"
 
 
-def _embed_host() -> str | None:
-    """Return the configured embed host, or None for login node."""
-    from imas_codex.settings import get_embed_host
-
-    return get_embed_host()
-
-
 def _embed_port() -> int:
     """Return the configured embed server port."""
     from imas_codex.settings import get_embed_server_port
@@ -954,25 +947,62 @@ def _embed_port() -> int:
     return get_embed_server_port()
 
 
-def _embed_partition() -> str | None:
-    """Return the configured SLURM partition."""
-    from imas_codex.settings import get_embed_partition
-
-    return get_embed_partition()
-
-
 def _is_compute_target() -> bool:
-    """True when embed-host is configured (deploy via SLURM)."""
-    return _embed_host() is not None
+    """True when embed-location is 'slurm' (deploy via SLURM)."""
+    from imas_codex.settings import get_embed_location
+
+    return get_embed_location() == "slurm"
+
+
+def _embed_compute_config() -> dict:
+    """Load compute config from the active graph location's facility YAML.
+
+    The facility is determined by graph location (e.g. "iter").
+    """
+    from imas_codex.discovery.base.facility import get_facility_infrastructure
+    from imas_codex.settings import get_graph_location
+
+    facility_id = get_graph_location()
+    infra = get_facility_infrastructure(facility_id)
+    compute = infra.get("compute", {})
+    if not compute:
+        raise click.ClickException(
+            f"No compute config in {facility_id}_private.yaml.\n"
+            "Add via: update_facility_infrastructure()"
+        )
+    return compute
+
+
+def _embed_gpu_entry() -> dict:
+    """Get the GPU resource entry marked for embed_server."""
+    compute = _embed_compute_config()
+    for gpu in compute.get("gpus", []):
+        if gpu.get("current_use") == "embed_server":
+            return gpu
+    raise click.ClickException(
+        "No GPU with current_use=embed_server in facility compute config."
+    )
+
+
+def _embed_gpu_partition() -> dict:
+    """Get the first scheduler partition with GPUs."""
+    compute = _embed_compute_config()
+    for p in compute.get("scheduler", {}).get("partitions", []):
+        if p.get("gpus_per_node") or p.get("gpu_type"):
+            return p
+    raise click.ClickException("No GPU partition found in facility compute config.")
 
 
 def _embed_ssh() -> str | None:
     """SSH host for reaching the embed server, or None if local."""
+    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.remote.executor import is_local_host
-    from imas_codex.settings import get_embed_ssh_host
+    from imas_codex.settings import get_graph_location
 
-    ssh_host = get_embed_ssh_host()
-    if ssh_host is None or is_local_host(ssh_host):
+    facility_id = get_graph_location()
+    config = get_facility(facility_id)
+    ssh_host = config.get("ssh_host", facility_id)
+    if is_local_host(ssh_host):
         return None
     return ssh_host
 
@@ -1047,24 +1077,21 @@ def _stop_login_service() -> None:
 
 
 def _submit_slurm(gpus: int, workers: int) -> None:
-    """Submit embed server SLURM job to the configured compute node."""
+    """Submit embed server SLURM job using facility compute config."""
     import base64
 
-    host = _embed_host()
+    gpu_entry = _embed_gpu_entry()
+    partition = _embed_gpu_partition()
+    host = gpu_entry["location"]
     port = _embed_port()
-    partition = _embed_partition()
-    if not partition:
-        raise click.ClickException(
-            "No SLURM partition configured. "
-            "Set [embedding].embed-partition in pyproject.toml."
-        )
+    partition_name = partition["name"]
 
     # Generate SLURM script
     gpu_ids = ",".join(str(i) for i in range(gpus))
     cpus = gpus * 4
     script = (
         "#!/bin/bash\n"
-        f"#SBATCH --partition={partition}\n"
+        f"#SBATCH --partition={partition_name}\n"
         f"#SBATCH --gres=gpu:{gpus}\n"
         f"#SBATCH --cpus-per-task={cpus}\n"
         "#SBATCH --mem=64G\n"
@@ -1148,7 +1175,9 @@ def _show_server_info() -> None:
     """Print embed server info from /info endpoint."""
     import json
 
-    host = _embed_host() or "localhost"
+    from imas_codex.settings import get_embed_host
+
+    host = get_embed_host() or "localhost"
     port = _embed_port()
     try:
         result = _run_remote(
@@ -1186,14 +1215,14 @@ def embed_deploy(
 ) -> None:
     """Deploy embedding server.
 
-    Target is determined by [embedding].embed-host in pyproject.toml:
-      - embed-host set   → SLURM job on that compute node
-      - embed-host unset → systemd service on login node
+    Mode is determined by [embedding].embed-location in pyproject.toml:
+      - slurm → SLURM batch job (partition/node from facility compute config)
+      - local → systemd service on login node
 
     Idempotent: no-op if the server is already running.
     Use 'restart' to cancel and redeploy.
 
-    Override: IMAS_CODEX_EMBED_HOST env var.
+    Override: IMAS_CODEX_EMBED_LOCATION env var.
 
     \b
     Examples:

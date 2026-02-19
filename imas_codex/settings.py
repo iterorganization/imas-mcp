@@ -177,45 +177,55 @@ def get_embed_server_port() -> int:
     return int(port) if port is not None else 18765
 
 
+def get_embed_location() -> str:
+    """Get the embed server deployment mode.
+
+    Returns ``"local"`` (systemd on login node) or ``"slurm"`` (batch job
+    on a compute node).  When ``"slurm"``, the partition, GPU node hostname,
+    and SSH host are read from the facility's compute config in its private
+    YAML (e.g. ``iter_private.yaml``).
+
+    Priority: IMAS_CODEX_EMBED_LOCATION env → [embedding].embed-location → "local".
+    """
+    if env := os.getenv("IMAS_CODEX_EMBED_LOCATION"):
+        return env.lower()
+    loc = _get_section("embedding").get("embed-location")
+    return str(loc).lower() if loc else "local"
+
+
 def get_embed_host() -> str | None:
     """Get the hostname where the embedding server runs.
 
-    When set, tunnel commands forward to this host instead of 127.0.0.1.
-    Used for routing when the embed server runs on a compute node (e.g. Titan).
+    When ``embed-location = "slurm"``, reads the GPU node hostname from the
+    facility compute config (``gpus[current_use=embed_server].location``).
+    Otherwise returns ``None`` (server on login node / localhost).
 
-    Priority: IMAS_CODEX_EMBED_HOST env → [embedding].embed-host → None.
+    Override: IMAS_CODEX_EMBED_HOST env var (escape hatch).
     """
     if env := os.getenv("IMAS_CODEX_EMBED_HOST"):
         return env or None
-    host = _get_section("embedding").get("embed-host")
-    return host or None
+    if get_embed_location() != "slurm":
+        return None
+    return _embed_host_from_facility()
 
 
-def get_embed_ssh_host() -> str | None:
-    """Get the SSH alias for reaching the embed server host.
+def _embed_host_from_facility() -> str | None:
+    """Read GPU node hostname from the active facility's compute config.
 
-    Used by deploy/stop/restart/logs to run commands on the machine
-    where the embed server runs (or its login node).
-
-    Priority: IMAS_CODEX_EMBED_SSH_HOST env → [embedding].embed-ssh-host → None.
+    Looks for a ``GPUResource`` with ``current_use == "embed_server"``
+    and returns its ``location`` (the hostname).
     """
-    if env := os.getenv("IMAS_CODEX_EMBED_SSH_HOST"):
-        return env or None
-    host = _get_section("embedding").get("embed-ssh-host")
-    return host or None
+    try:
+        from imas_codex.discovery.base.facility import get_facility_infrastructure
 
-
-def get_embed_partition() -> str | None:
-    """Get the SLURM partition for embed server deployment.
-
-    Only used when embed-host is set (SLURM deployment).
-
-    Priority: IMAS_CODEX_EMBED_PARTITION env → [embedding].embed-partition → None.
-    """
-    if env := os.getenv("IMAS_CODEX_EMBED_PARTITION"):
-        return env or None
-    partition = _get_section("embedding").get("embed-partition")
-    return partition or None
+        facility_id = get_graph_location()
+        infra = get_facility_infrastructure(facility_id)
+        for gpu in infra.get("compute", {}).get("gpus", []):
+            if gpu.get("current_use") == "embed_server":
+                return gpu.get("location")
+    except Exception:
+        pass
+    return None
 
 
 # ─── Model accessors ───────────────────────────────────────────────────────
@@ -348,5 +358,4 @@ INCLUDE_ERROR_FIELDS = get_include_error_fields()
 EMBEDDING_BACKEND = get_embedding_backend()
 EMBED_REMOTE_URL = get_embed_remote_url()
 EMBED_SERVER_PORT = get_embed_server_port()
-EMBED_HOST = get_embed_host()
 EMBEDDING_DIMENSION = get_embedding_dimension()
