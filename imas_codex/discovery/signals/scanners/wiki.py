@@ -35,6 +35,7 @@ from imas_codex.discovery.signals.scanners.base import (
     ScanResult,
     register_scanner,
 )
+from imas_codex.discovery.wiki.entity_extraction import UNIT_PATTERN
 from imas_codex.graph.models import (
     FacilitySignal,
     FacilitySignalStatus,
@@ -42,15 +43,11 @@ from imas_codex.graph.models import (
 
 logger = logging.getLogger(__name__)
 
-# Patterns for extracting signal info from wiki table content
+# MDSplus path pattern with capturing groups for table parsing.
+# Captures (tree, node_path) — distinct from entity_extraction.MDSPLUS_PATH_PATTERN
+# which matches the full path without groups.
 _MDS_PATH_PATTERN = re.compile(
     r"\\\\?(\w+)::(\w+(?:[:.]\w+)*)",  # \TREE::SUBTREE:NODE or \TREE::SUB.NODE
-)
-
-# Common wiki table patterns for signal metadata
-_UNIT_PATTERNS = re.compile(
-    r"\b(A|V|T|eV|keV|m|cm|mm|m\^-3|m\^-2|W|MW|kW|Pa|"
-    r"rad|deg|s|ms|us|Hz|kHz|MHz|K|Ohm|Tesla|Weber|dimensionless)\b"
 )
 
 
@@ -99,7 +96,7 @@ def _extract_signals_from_chunk(
                 if len(part) < 3:
                     continue
                 # Check if it looks like a unit
-                if _UNIT_PATTERNS.match(part.strip()):
+                if UNIT_PATTERN.match(part.strip()):
                     units = part.strip()
                 elif not description and len(part) > 5:
                     description = part
