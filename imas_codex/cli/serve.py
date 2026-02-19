@@ -410,16 +410,17 @@ def llm_status(url: str | None) -> None:
     click.echo(f"LiteLLM Proxy ({url}):")
 
     try:
-        headers = {
-            "Authorization": f"Bearer {os.environ.get('LITELLM_MASTER_KEY', 'sk-litellm-imas-codex')}"
-        }
-        resp = httpx.get(f"{url}/health", timeout=5.0, headers=headers)
+        # Use root endpoint for quick alive check (no auth required)
+        resp = httpx.get(f"{url}/", timeout=5.0)
         if resp.status_code == 200:
             click.echo("  ✓ Healthy")
-            # Show model availability
+            # Show model availability (requires auth)
+            headers = {
+                "Authorization": f"Bearer {os.environ.get('LITELLM_MASTER_KEY', 'sk-litellm-imas-codex')}"
+            }
             models_resp = httpx.get(
                 f"{url}/v1/models",
-                timeout=5.0,
+                timeout=10.0,
                 headers=headers,
             )
             if models_resp.status_code == 200:
@@ -629,9 +630,8 @@ def llm_deploy() -> None:
         port = _llm_port()
         _wait_for_health(
             "LLM proxy",
-            f"curl -so /dev/null -w '%{{http_code}}' http://{node}:{port}/health",
+            f"curl -sf http://{node}:{port}/",
             timeout_s=60,
-            success_test="401",
         )
 
         click.echo(f"  URL: http://{node}:{port}")
@@ -704,9 +704,8 @@ def llm_restart() -> None:
         port = _llm_port()
         _wait_for_health(
             "LLM proxy",
-            f"curl -so /dev/null -w '%{{http_code}}' http://{node}:{port}/health",
+            f"curl -sf http://{node}:{port}/",
             timeout_s=60,
-            success_test="401",
         )
     else:
         _deploy_login_llm()
