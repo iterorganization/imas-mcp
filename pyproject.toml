@@ -236,6 +236,10 @@ dimension = 256
 backend = "remote"
 remote-url = "http://localhost:18765"
 server-port = 18765
+# Hostname where the embed server runs (for tunnel routing).
+# When set, tunnel commands forward to this host instead of 127.0.0.1.
+# Override: IMAS_CODEX_EMBED_HOST
+embed-host = "98dci4-gpu-0002"
 
 [tool.imas-codex.language]
 model = "google/gemini-3-flash-preview"

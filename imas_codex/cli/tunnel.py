@@ -64,14 +64,18 @@ def _get_tunnel_ports(
     host: str,
     neo4j: bool,
     embed: bool,
-) -> list[tuple[int, int, str]]:
-    """Return list of (remote_port, local_port, label) for requested services.
+) -> list[tuple[int, int, str, str]]:
+    """Return list of (remote_port, local_port, label, remote_bind) for requested services.
 
     When neither --neo4j nor --embed is given, returns all known ports.
+    ``remote_bind`` is the hostname to bind on the remote side of the tunnel
+    (default ``"127.0.0.1"``).  When the embed server runs on a different host
+    (e.g. Titan), ``remote_bind`` is set to that host so the tunnel forwards
+    ``local_port → embed_host:remote_port`` through the SSH jump host.
     """
     from imas_codex.remote.tunnel import TUNNEL_OFFSET
 
-    ports: list[tuple[int, int, str]] = []
+    ports: list[tuple[int, int, str, str]] = []
     all_services = not neo4j and not embed
 
     if neo4j or all_services:
@@ -84,6 +88,7 @@ def _get_tunnel_ports(
                     profile.bolt_port,
                     profile.bolt_port + TUNNEL_OFFSET,
                     f"neo4j-bolt ({profile.name})",
+                    "127.0.0.1",
                 )
             )
             ports.append(
@@ -91,28 +96,34 @@ def _get_tunnel_ports(
                     profile.http_port,
                     profile.http_port + TUNNEL_OFFSET,
                     f"neo4j-http ({profile.name})",
+                    "127.0.0.1",
                 )
             )
         except Exception:
             # Fallback: use base ports from convention constants
             from imas_codex.graph.profiles import BOLT_BASE_PORT, HTTP_BASE_PORT
 
-            ports.append((BOLT_BASE_PORT, BOLT_BASE_PORT + TUNNEL_OFFSET, "neo4j-bolt"))
-            ports.append((HTTP_BASE_PORT, HTTP_BASE_PORT + TUNNEL_OFFSET, "neo4j-http"))
+            ports.append((BOLT_BASE_PORT, BOLT_BASE_PORT + TUNNEL_OFFSET, "neo4j-bolt", "127.0.0.1"))
+            ports.append((HTTP_BASE_PORT, HTTP_BASE_PORT + TUNNEL_OFFSET, "neo4j-http", "127.0.0.1"))
 
     if embed or all_services:
-        from imas_codex.settings import get_embed_server_port
+        from imas_codex.settings import get_embed_host, get_embed_server_port
 
         embed_port = get_embed_server_port()
+        embed_host = get_embed_host()
+        # When embed-host is set, the tunnel forwards through the SSH jump
+        # host to the embed server's actual host (e.g. Titan node).
+        # When not set, forwards to 127.0.0.1 on the SSH host (login node).
+        remote_bind = embed_host if embed_host else "127.0.0.1"
         # Embed uses same-port forwarding (no offset)
-        ports.append((embed_port, embed_port, "embed"))
+        ports.append((embed_port, embed_port, "embed", remote_bind))
 
     return ports
 
 
 def _start_tunnels(
     host: str,
-    ports: list[tuple[int, int, str]],
+    ports: list[tuple[int, int, str, str]],
     use_autossh: bool,
 ) -> int:
     """Start port-forward tunnels in a single SSH connection.
@@ -128,13 +139,13 @@ def _start_tunnels(
     from imas_codex.remote.tunnel import is_tunnel_active
 
     already_active: list[tuple[int, str]] = []
-    to_start: list[tuple[int, int, str]] = []
+    to_start: list[tuple[int, int, str, str]] = []
 
-    for remote_port, local_port, label in ports:
+    for remote_port, local_port, label, remote_bind in ports:
         if is_tunnel_active(local_port):
             already_active.append((local_port, label))
         else:
-            to_start.append((remote_port, local_port, label))
+            to_start.append((remote_port, local_port, label, remote_bind))
 
     for local_port, label in already_active:
         click.echo(f"  {label}: already active (localhost:{local_port})")
@@ -144,8 +155,8 @@ def _start_tunnels(
 
     # Build -L flags for all ports that need tunneling
     forward_args: list[str] = []
-    for remote_port, local_port, _label in to_start:
-        forward_args.extend(["-L", f"{local_port}:127.0.0.1:{remote_port}"])
+    for remote_port, local_port, _label, remote_bind in to_start:
+        forward_args.extend(["-L", f"{local_port}:{remote_bind}:{remote_port}"])
 
     # Use shared SSH options from tunnel module (keepalives, no ControlMaster)
     from imas_codex.remote.tunnel import SSH_TUNNEL_OPTS
@@ -199,7 +210,7 @@ def _start_tunnels(
     for _attempt in range(5):
         new_ok = 0
         all_up = True
-        for _remote_port, local_port, _label in to_start:
+        for _remote_port, local_port, _label, _remote_bind in to_start:
             if is_tunnel_active(local_port):
                 new_ok += 1
             else:
@@ -208,9 +219,9 @@ def _start_tunnels(
             break
         time.sleep(1.0)
 
-    for remote_port, local_port, label in to_start:
+    for remote_port, local_port, label, remote_bind in to_start:
         if is_tunnel_active(local_port):
-            click.echo(f"  {label}: localhost:{local_port} → {host}:{remote_port}")
+            click.echo(f"  {label}: localhost:{local_port} → {host}→{remote_bind}:{remote_port}")
         else:
             click.echo(f"  {label}: FAILED (port {local_port} not reachable)")
 

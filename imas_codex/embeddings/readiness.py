@@ -32,9 +32,18 @@ from imas_codex.remote.tunnel import ensure_tunnel
 
 logger = logging.getLogger(__name__)
 
-# ITER login node hostname — embedding server and Neo4j run here.
-# Compute nodes redirect localhost URLs to this host.
+# ITER login node hostname — fallback when embed-host is not configured.
 ITER_LOGIN_HOST = "98dci4-srv-1001"
+
+
+def _get_embed_host() -> str:
+    """Get the hostname where the embed server runs.
+
+    Priority: settings embed-host → ITER login node fallback.
+    """
+    from imas_codex.settings import get_embed_host
+
+    return get_embed_host() or ITER_LOGIN_HOST
 
 
 def _is_on_iter() -> bool:
@@ -57,14 +66,15 @@ def _is_on_iter_compute() -> bool:
 
 
 def _resolve_url_for_compute(url: str) -> str:
-    """On compute nodes, redirect localhost URLs to the login node.
+    """On compute nodes, redirect localhost URLs to the embed server host.
 
-    The embedding server runs on the login node.  When pyproject.toml
-    or env vars specify localhost, compute nodes need to reach the
-    login node instead.
+    The embedding server may run on a compute node (e.g. Titan) or on
+    the login node.  When pyproject.toml or env vars specify localhost,
+    compute nodes need to reach the actual embed host instead.
     """
     if _is_on_iter_compute() and url:
-        resolved = re.sub(r"localhost|127\.0\.0\.1", ITER_LOGIN_HOST, url)
+        embed_host = _get_embed_host()
+        resolved = re.sub(r"localhost|127\.0\.0\.1", embed_host, url)
         if resolved != url:
             logger.info("Compute node: redirecting %s → %s", url, resolved)
         return resolved
@@ -175,12 +185,15 @@ def ensure_embedding_ready(
 
     # Step 3: On ITER login node, try starting the systemd service.
     # Skip on compute nodes — no D-Bus/systemd user session there.
-    if on_iter and _is_on_iter_login():
+    # Also skip if embed server is on a separate host (e.g. Titan).
+    embed_host = _get_embed_host()
+    embed_on_login = embed_host == ITER_LOGIN_HOST or embed_host.startswith("98dci4-srv")
+    if on_iter and _is_on_iter_login() and embed_on_login:
         log("Trying to start embedding service...", "dim")
         _try_start_service()
     elif on_iter and _is_on_iter_compute():
         log(
-            f"On compute node — embedding server expected on {ITER_LOGIN_HOST}",
+            f"On compute node — embedding server expected on {embed_host}",
             "dim",
         )
 

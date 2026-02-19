@@ -466,9 +466,12 @@ def clear_facility_files(facility: str, batch_size: int = 1000) -> dict[str, int
         if images_deleted > 0:
             results["images_deleted"] = images_deleted
 
-        logger.info("Deleted %d SourceFile + %d CodeChunk nodes for %s",
-                    results["source_files_deleted"], results["code_chunks_deleted"],
-                    facility)
+        logger.info(
+            "Deleted %d SourceFile + %d CodeChunk nodes for %s",
+            results["source_files_deleted"],
+            results["code_chunks_deleted"],
+            facility,
+        )
 
     return results
 

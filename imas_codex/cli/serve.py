@@ -579,12 +579,19 @@ def serve_embed() -> None:
     type=int,
     help="Auto-shutdown after N seconds of inactivity (0=disabled, 1800=30min)",
 )
+@click.option(
+    "--location",
+    default=None,
+    type=str,
+    help="Deployment location label (e.g., 'titan', 'login'). Exposed in /health.",
+)
 def embed_start(
     host: str,
     port: int | None,
     log_level: str,
     gpu: str | None,
     idle_timeout: int,
+    location: str | None,
 ) -> None:
     """Start the embedding server.
 
@@ -627,6 +634,13 @@ def embed_start(
 
         embed_server._idle_timeout = idle_timeout
         logger.info(f"Idle timeout: {idle_timeout}s")
+
+    # Set deployment location label
+    if location:
+        import imas_codex.embeddings.server as embed_server
+
+        embed_server._location = location
+        logger.info(f"Location: {location}")
 
     logger.info(f"Starting embedding server on {host}:{port}")
 
@@ -724,6 +738,9 @@ def embed_status(url: str | None, local: bool) -> None:
             uptime_h = info["server"]["uptime_seconds"] / 3600
             idle_s = info["server"].get("idle_seconds", 0)
             timeout_s = info["server"].get("idle_timeout", 0)
+            location = info["server"].get("location")
+            if location:
+                click.echo(f"  Location: {location}")
             click.echo(f"  Uptime: {uptime_h:.1f}h")
             if timeout_s > 0:
                 click.echo(f"  Idle: {idle_s:.0f}s / {timeout_s}s timeout")
@@ -740,7 +757,8 @@ def embed_status(url: str | None, local: bool) -> None:
     "action", type=click.Choice(["install", "uninstall", "status", "start", "stop"])
 )
 @click.option("--gpu", default="1", help="CUDA device to use (default: 1)")
-def embed_service(action: str, gpu: str) -> None:
+@click.option("--location", default="login", help="Deployment location label (default: login)")
+def embed_service(action: str, gpu: str, location: str) -> None:
     """Manage embedding server as systemd user service.
 
     Examples:
@@ -794,7 +812,7 @@ WorkingDirectory={project_dir}
 EnvironmentFile=-{env_file}
 Environment="PATH={Path.home()}/.local/bin:/usr/local/bin:/usr/bin"
 Environment="CUDA_VISIBLE_DEVICES={gpu}"
-ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex serve embed start --host 0.0.0.0 --port {port}
+ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex serve embed start --host 0.0.0.0 --port {port} --location {location}
 ExecStop=/bin/kill -15 $MAINPID
 TimeoutStopSec=30
 Restart=on-failure

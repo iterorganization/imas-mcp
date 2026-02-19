@@ -1,0 +1,38 @@
+# IMAS Codex Embed Tunnel Service
+# Forwards localhost:18765 on the login node to the Titan embedding server
+#
+# Install on login node:
+#   imas-codex tunnel service install iter --embed
+#
+# This service makes the embed server appear local to any process
+# on the login node, maintaining the uniform access pattern
+# (all clients use http://localhost:18765).
+#
+# Requires autossh for automatic reconnection.
+# The embed server must be running on the target node (via SLURM batch job).
+
+[Unit]
+Description=SSH tunnel to Titan embedding server (IMAS Codex)
+After=network.target
+
+[Service]
+Type=simple
+Environment="AUTOSSH_GATETIME=0"
+Environment="AUTOSSH_POLL=30"
+
+ExecStart=/usr/bin/autossh -M 0 -N \
+    -o "ControlMaster=no" \
+    -o "ControlPath=none" \
+    -o "TCPKeepAlive=yes" \
+    -o "ServerAliveInterval=15" \
+    -o "ServerAliveCountMax=3" \
+    -o "ExitOnForwardFailure=yes" \
+    -o "ConnectTimeout=10" \
+    -L 18765:localhost:18765 \
+    98dci4-gpu-0002
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

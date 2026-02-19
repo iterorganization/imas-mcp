@@ -5,11 +5,12 @@ Provides interactive and batch job management to offload heavy work
 SLURM compute nodes.
 
 Architecture:
-    Login node: embedding server (GPU), Neo4j (Apptainer), zellij sessions
+    Titan node (98dci4-gpu-0002): embedding server (P100 GPU)
+    Login node: Neo4j (Apptainer), zellij sessions
     Compute nodes: imas build, ingest, discover, wiki scraping
 
-Compute nodes access the login node's services over the network:
-    - Embedding server: http://<login-hostname>:18765
+Compute nodes access services over the network:
+    - Embedding server: http://<embed-host>:18765 (Titan or login)
     - Neo4j: bolt://<login-hostname>:7687
     - Home directory: shared GPFS mount
 """
@@ -106,14 +107,18 @@ def _build_env_exports(login_hostname: str) -> str:
     """Build environment variable exports for SLURM jobs.
 
     Sets up the compute node environment so imas-codex commands can
-    reach the login node's embedding server and Neo4j instance.
+    reach the embedding server and Neo4j instance.
     Uses the active graph profile for port and password resolution.
+    The embed server may run on a different host (e.g. Titan).
     """
     from imas_codex.graph.profiles import resolve_neo4j
+    from imas_codex.settings import get_embed_host
 
     profile = resolve_neo4j()
+    # Embed server may be on a dedicated GPU node (e.g. Titan)
+    embed_host = get_embed_host() or login_hostname
     return (
-        f'export IMAS_CODEX_EMBED_REMOTE_URL="http://{login_hostname}:18765"\n'
+        f'export IMAS_CODEX_EMBED_REMOTE_URL="http://{embed_host}:18765"\n'
         f'export NEO4J_URI="bolt://{login_hostname}:{profile.bolt_port}"\n'
         f'export NEO4J_PASSWORD="{profile.password}"\n'
         f'export IMAS_CODEX_GRAPH="{profile.name}"\n'
@@ -273,11 +278,12 @@ def hpc_shell(
         f"{' (exclusive)' if exclusive else ''}..."
     )
     from imas_codex.graph.profiles import BOLT_BASE_PORT
-    from imas_codex.settings import get_embed_server_port
+    from imas_codex.settings import get_embed_host, get_embed_server_port
 
     embed_port = get_embed_server_port()
+    embed_host = get_embed_host() or login_hostname
     click.echo(
-        f"Services: embed={login_hostname}:{embed_port}, neo4j={login_hostname}:{BOLT_BASE_PORT}"
+        f"Services: embed={embed_host}:{embed_port}, neo4j={login_hostname}:{BOLT_BASE_PORT}"
     )
 
     os.execvp("srun", cmd)
@@ -581,12 +587,14 @@ def hpc_info() -> None:
         )
 
     from imas_codex.graph.profiles import BOLT_BASE_PORT
-    from imas_codex.settings import get_embed_server_port
+    from imas_codex.settings import get_embed_host, get_embed_server_port
 
     embed_port = get_embed_server_port()
+    embed_host = get_embed_host()
     login_hn = _get_login_hostname()
     click.echo(f"\nLogin node: {login_hn}")
-    click.echo(f"Embed server: http://{login_hn}:{embed_port}")
+    embed_display = embed_host or login_hn
+    click.echo(f"Embed server: http://{embed_display}:{embed_port}")
     click.echo(f"Neo4j: bolt://{login_hn}:{BOLT_BASE_PORT}")
 
     click.echo("\nRecommended configurations:")

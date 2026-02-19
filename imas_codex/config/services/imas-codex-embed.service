@@ -4,9 +4,14 @@
 # Install: imas-codex serve embed service install
 # Uses systemd specifiers: %h = home directory
 #
-# Access via SSH tunnel:
-#   ssh -L 18765:127.0.0.1:18765 iter
-#   curl http://localhost:18765/health
+# Deployment locations:
+#   Login node: binds 127.0.0.1, access via SSH tunnel
+#   Titan node: binds 0.0.0.0, access via network or tunnel
+#
+# For Titan deployment, submit via SLURM instead of systemd:
+#   sbatch ~/Code/imas-codex/slurm/codex-embed.sh
+# Then install the tunnel service on the login node:
+#   see imas-codex-embed-tunnel.service
 
 [Unit]
 Description=IMAS Codex Embedding Service (GPU)
@@ -21,8 +26,8 @@ Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin"
 Environment="CUDA_VISIBLE_DEVICES=1"
 
 # Use uv to run the embedding server with GPU extra
-# Binds only to localhost for security (access via SSH tunnel)
-ExecStart=%h/.local/bin/uv run --extra gpu --project %h/Code/imas-codex imas-codex serve embed --host 127.0.0.1 --port 18765
+# Binds to all interfaces for access from other nodes
+ExecStart=%h/.local/bin/uv run --extra gpu --project %h/Code/imas-codex imas-codex serve embed start --host 0.0.0.0 --port 18765 --location login
 
 # Graceful shutdown
 ExecStop=/bin/kill -15 $MAINPID

@@ -47,6 +47,7 @@ _gpu_memory_mb: int | None = None  # Cached at startup
 _cached_device_info: str = "not loaded"  # Cached at startup
 _cached_embedding_dim: int = 0  # Cached at startup
 _encode_timeout: float = 300.0  # 5 minutes max per embed request
+_location: str | None = None  # Deployment location label (e.g. "titan")
 
 
 class EmbedRequest(BaseModel):
@@ -78,6 +79,7 @@ class HealthResponse(BaseModel):
     idle_seconds: float = Field(0, description="Seconds since last request")
     idle_timeout: int = Field(0, description="Auto-shutdown timeout (0=disabled)")
     hostname: str | None = Field(None, description="Server hostname")
+    location: str | None = Field(None, description="Deployment location (e.g. titan)")
 
 
 def _get_gpu_info() -> tuple[str | None, int | None]:
@@ -325,6 +327,7 @@ def create_app() -> FastAPI:
             idle_seconds=time.time() - _last_request_time,
             idle_timeout=_idle_timeout,
             hostname=os.uname().nodename,
+            location=_location,
         )
 
     @app.post("/embed", response_model=EmbedResponse)
@@ -403,6 +406,7 @@ def create_app() -> FastAPI:
                 "idle_seconds": time.time() - _last_request_time,
                 "idle_timeout": _idle_timeout,
                 "hostname": os.uname().nodename,
+                "location": _location,
                 "version": "2.0.0",
             },
         }

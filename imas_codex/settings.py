@@ -177,6 +177,20 @@ def get_embed_server_port() -> int:
     return int(port) if port is not None else 18765
 
 
+def get_embed_host() -> str | None:
+    """Get the hostname where the embedding server runs.
+
+    When set, tunnel commands forward to this host instead of 127.0.0.1.
+    Used for routing when the embed server runs on a compute node (e.g. Titan).
+
+    Priority: IMAS_CODEX_EMBED_HOST env → [embedding].embed-host → None.
+    """
+    if env := os.getenv("IMAS_CODEX_EMBED_HOST"):
+        return env or None
+    host = _get_section("embedding").get("embed-host")
+    return host or None
+
+
 # ─── Model accessors ───────────────────────────────────────────────────────
 # All callers should use get_model("language"), get_model("vision"), etc.
 # The embedding model is accessed via get_embedding_model() for consistency
@@ -307,4 +321,5 @@ INCLUDE_ERROR_FIELDS = get_include_error_fields()
 EMBEDDING_BACKEND = get_embedding_backend()
 EMBED_REMOTE_URL = get_embed_remote_url()
 EMBED_SERVER_PORT = get_embed_server_port()
+EMBED_HOST = get_embed_host()
 EMBEDDING_DIMENSION = get_embedding_dimension()
