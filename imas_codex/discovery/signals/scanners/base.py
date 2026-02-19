@@ -175,12 +175,15 @@ def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
     Returns scanners for each configured data source type, plus the wiki
     scanner if the facility has wiki_sites configured.
 
+    Wiki scanner runs first so that wiki_context is available when the
+    enrich_worker starts processing signals from other scanners.
+
     Args:
         facility: Facility ID (e.g., "tcv", "jet")
 
     Returns:
-        List of scanner instances, ordered by config key order.
-        Wiki scanner is appended last as a complementary source.
+        List of scanner instances. Wiki scanner first (if configured),
+        then data_source scanners in config key order.
     """
     from imas_codex.discovery.base.facility import get_facility
 
@@ -191,6 +194,13 @@ def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
     data_sources = config.get("data_sources", {})
 
     scanners = []
+
+    # Wiki scanner runs first so wiki_context is populated before
+    # enrich_worker starts processing signals from other scanners
+    wiki_sites = config.get("wiki_sites", [])
+    if wiki_sites and "wiki" in _registry:
+        scanners.append(_registry["wiki"])
+
     for source_type in data_sources:
         if source_type in _registry:
             scanners.append(_registry[source_type])
@@ -200,11 +210,6 @@ def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
                 source_type,
                 facility,
             )
-
-    # Always include wiki scanner if facility has wiki_sites
-    wiki_sites = config.get("wiki_sites", [])
-    if wiki_sites and "wiki" in _registry and _registry["wiki"] not in scanners:
-        scanners.append(_registry["wiki"])
 
     return scanners
 

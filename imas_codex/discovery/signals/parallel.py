@@ -1421,13 +1421,30 @@ async def enrich_worker(
         return ""
 
     def _find_wiki_context(signal: dict) -> dict[str, str] | None:
-        """Find wiki context matching a signal's path or accessor."""
+        """Find wiki context matching a signal's path or accessor.
+
+        Tries multiple matching strategies to maximize cross-reference hits:
+        1. Exact node_path match (uppercase-normalized)
+        2. Accessor path extraction (data(...) pattern)
+        3. Normalized path (strip leading backslashes, collapse separators)
+        4. PPF-style DDA/DTYPE matching for JET signals
+        """
         if not state.wiki_context:
             return None
 
         # Try node_path (uppercase for matching)
         node_path = signal.get("node_path")
         if node_path:
+            normalized = node_path.upper().lstrip("\\")
+            # Try with single backslash prefix (wiki format)
+            ctx = state.wiki_context.get(f"\\{normalized}")
+            if ctx:
+                return ctx
+            # Try with double backslash prefix
+            ctx = state.wiki_context.get(f"\\\\{normalized}")
+            if ctx:
+                return ctx
+            # Try raw
             ctx = state.wiki_context.get(node_path.upper())
             if ctx:
                 return ctx
@@ -1436,7 +1453,19 @@ async def enrich_worker(
         accessor = signal.get("accessor", "")
         if accessor.startswith("data(") and accessor.endswith(")"):
             path = accessor[5:-1].strip("'\"")
+            normalized = path.upper().lstrip("\\")
+            ctx = state.wiki_context.get(f"\\{normalized}")
+            if ctx:
+                return ctx
             ctx = state.wiki_context.get(path.upper())
+            if ctx:
+                return ctx
+
+        # Try PPF-style matching (JET: DDA/DTYPE)
+        name = signal.get("name", "")
+        source = signal.get("discovery_source", "")
+        if source == "ppf_enumeration" and "/" in name:
+            ctx = state.wiki_context.get(name.upper())
             if ctx:
                 return ctx
 

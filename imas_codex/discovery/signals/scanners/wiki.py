@@ -123,10 +123,16 @@ def _build_wiki_context(
 ) -> dict[str, dict[str, str]]:
     """Query graph for wiki content relevant to signal discovery.
 
-    Returns a dict keyed by MDSplus path or signal accessor, with values
-    containing description, units, and source page for each documented signal.
-    This context is injected into the LLM enrichment prompt to reduce
-    hallucination and improve quality.
+    Two-phase extraction:
+    1. Pre-extracted paths: Use mdsplus_paths_mentioned, ppf_paths_mentioned,
+       and imas_paths_mentioned fields (populated during wiki ingestion) for
+       fast, structured path lookup.
+    2. Content parsing: For chunks with path mentions, parse the surrounding
+       content to extract descriptions and units.
+
+    Returns a dict keyed by signal path (uppercase), with values containing
+    description, units, and source page. This context is injected into the
+    LLM enrichment prompt to reduce hallucination and improve quality.
     """
     from imas_codex.graph import GraphClient
 
@@ -134,29 +140,93 @@ def _build_wiki_context(
 
     try:
         with GraphClient() as gc:
-            # Query wiki chunks that mention MDSplus paths for this facility
+            # Phase 1: Use pre-extracted path fields for structured lookup.
+            # These fields were populated during wiki ingestion and contain
+            # parsed MDSplus/PPF/IMAS paths per chunk.
             results = gc.query(
                 """
                 MATCH (c:WikiChunk)-[:HAS_CHUNK]-(p:WikiPage)-[:AT_FACILITY]->(f:Facility {id: $facility})
-                WHERE c.mdsplus_paths_mentioned IS NOT NULL
-                   OR c.text CONTAINS '\\\\' OR c.text CONTAINS '::'
-                RETURN c.text AS text, p.title AS page_title
-                LIMIT 500
+                WHERE size(c.mdsplus_paths_mentioned) > 0
+                   OR size(c.ppf_paths_mentioned) > 0
+                   OR size(c.imas_paths_mentioned) > 0
+                RETURN c.content AS content,
+                       c.mdsplus_paths_mentioned AS mdsplus_paths,
+                       c.ppf_paths_mentioned AS ppf_paths,
+                       c.imas_paths_mentioned AS imas_paths,
+                       c.units_mentioned AS units_mentioned,
+                       p.title AS page_title
                 """,
                 facility=facility,
             )
 
             for row in results:
-                text = row.get("text", "")
+                content = row.get("content", "")
                 page_title = row.get("page_title", "")
-                if not text:
+                if not content:
                     continue
 
-                extracted = _extract_signals_from_chunk(text, facility, page_title)
+                # Process pre-extracted MDSplus paths
+                mdsplus_paths = row.get("mdsplus_paths") or []
+                for path in mdsplus_paths:
+                    path_key = path.upper()
+                    if path_key in context:
+                        continue
+                    # Extract name from path: \TREE::NODE:LEAF -> LEAF
+                    name = ""
+                    if "::" in path:
+                        after_tree = path.split("::", 1)[1]
+                        segments = re.split(r"[.:]", after_tree)
+                        name = segments[-1] if segments else ""
+                    tree = (
+                        path.split("::")[0].lstrip("\\").upper() if "::" in path else ""
+                    )
+                    context[path_key] = {
+                        "description": "",
+                        "units": "",
+                        "page": page_title,
+                        "tree": tree,
+                        "name": name,
+                    }
+
+                # Process pre-extracted PPF paths (JET: DDA/DTYPE format)
+                ppf_paths = row.get("ppf_paths") or []
+                for path in ppf_paths:
+                    path_key = path.upper()
+                    if path_key in context:
+                        continue
+                    parts = path.split("/")
+                    name = parts[-1] if parts else path
+                    context[path_key] = {
+                        "description": "",
+                        "units": "",
+                        "page": page_title,
+                        "tree": parts[0] if len(parts) > 1 else "",
+                        "name": name,
+                    }
+
+                # Process pre-extracted IMAS paths
+                imas_paths = row.get("imas_paths") or []
+                for path in imas_paths:
+                    path_key = path.upper()
+                    if path_key in context:
+                        continue
+                    segments = path.split("/")
+                    name = segments[-1] if segments else path
+                    context[path_key] = {
+                        "description": "",
+                        "units": "",
+                        "page": page_title,
+                        "tree": "",
+                        "name": name,
+                    }
+
+                # Phase 2: Parse content to extract descriptions/units
+                # for paths that appear in this chunk's text
+                extracted = _extract_signals_from_chunk(content, facility, page_title)
                 for sig in extracted:
                     path_key = sig["path"].upper()
-                    # Prefer entries with more metadata
                     existing = context.get(path_key, {})
+                    # Prefer entries with more metadata
                     if (
                         not existing
                         or (sig["description"] and not existing.get("description"))

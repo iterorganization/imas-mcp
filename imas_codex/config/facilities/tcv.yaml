@@ -65,19 +65,33 @@ data_sources:
 
   # MDSplus configuration for signal discovery and data validation.
   # The tcv_shot tree contains 13 subtrees (83k+ nodes total).
-  # Only physics-relevant subtrees are scanned for signal discovery;
-  # hardware/control trees (ATLAS=35k, PCS=15k, HYBRID=16k) are skipped.
+  # Physics-relevant subtrees are scanned for signal discovery;
+  # hardware/acquisition trees (ATLAS=35k nodes) and real-time control
+  # trees (PCS=15k, APCS) are skipped due to size and low physics signal
+  # density. HYBRID (16k nodes, mostly internal heating parameters) is
+  # scanned despite size since it contains relevant heating scenarios.
   mdsplus:
     connection_tree: tcv_shot  # Default tree for TDI context
     reference_shot: 85000
-    # Physics-relevant subtrees to scan for signal discovery.
+    # Subtrees to scan for signal discovery.
     # Each is opened as a separate MDSplus tree.
     trees:
       - results      # Equilibrium, analysis outputs (~1500 signals w/ data)
-      - magnetics     # Magnetic field measurements (~215 signals)
-      - diagz         # Diagnostic measurements (~220 signals)
-      - base          # Core plasma parameters (~287 signals)
-      - ecrh          # Electron cyclotron heating (~416 signals)
+      - magnetics    # Magnetic field measurements (~215 signals)
+      - diagz        # Diagnostic measurements (~220 signals)
+      - base         # Core plasma parameters (~287 signals)
+      - ecrh         # Electron cyclotron heating (~416 signals)
+      - power        # Power supply data
+      - diag_act     # Diagnostic actions
+      - manual       # Manually-populated signals
+      - vsystem      # Vista control parameters
+      - hybrid       # Hybrid heating scenarios (16k nodes but physics-relevant)
+    # Node usage types to include. SIGNAL is physics measurements,
+    # NUMERIC includes computed/processed values and calibration data.
+    # Many diagnostic trees store real data under NUMERIC usage.
+    node_usages:
+      - SIGNAL
+      - NUMERIC
     # All subtrees (including hardware/control, not scanned)
     subtrees:
       - ATLAS         # Raw acquisition hardware (35k nodes - skip)
