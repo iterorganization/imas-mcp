@@ -13,7 +13,7 @@ Discovery processes (`discover paths`, `discover wiki`, `discover signals`, `dis
 | ITER | Slurm | 392 (5 partitions) | ~149ms | 2x T4 login, 8x P100 titan | 16 | **High priority** — login saturated |
 | JET | SGE | 52 (heimdall101-152) | untested | none | 16 | Moderate — load 17.57 with 69 users |
 | TCV | none (planned) | ~35 desktop PCs + 3 LAC nodes | — | spcgpu01/02 (specs unknown) | 24 (LAC) | Low — no scheduler, LAC process watcher |
-| JT-60SA | PBS Professional | nakasvr23 (64c/896G) + falcon (PBS+Slurm) | — | none known | 1 vCPU | PBS on nakasvr23, Slurm on falcon |
+| JT-60SA | PBS Professional | nakasvr23 (80c/160t/896G, single-node) | — | none known | 160t (1 via cgroup) | PBS on nakasvr23, falcon unreachable |
 
 ### ITER Slurm Details
 
@@ -40,14 +40,46 @@ Discovery processes (`discover paths`, `discover wiki`, `discover signals`, `dis
 - **External HPC**: SCITAS (Fidis/Helvetios) and RCP mentioned as options, but not reachable from TCV login node.
 - **Implication**: No offloading possible at TCV. Commands run directly on LAC nodes with `nice`. Process watcher limits sustained high-CPU work.
 
-### JT-60SA Compute Details
+### JT-60SA Compute Details (verified 2026-02-19)
 
-- **PBS Professional on nakasvr23**: Queue `workq`, max 64 cores, 896 GB memory. `qsub` command. Jobs run on the login node itself (no separate compute nodes). Policy: parallel/high-load jobs MUST use batch; frontend jobs may be killed without notice.
-- **falcon**: Secondary compute system with both PBS (queue: `normal`) and Slurm (partition: `single`, compute node falcon02). Used for MUSCLE3, IMPACT, OFMC codes.
-- **imaging**: Older compute server for MPI codes (Intel compiler 15/18).
-- **helios, SGI8600**: JAEA HPC systems, separate infrastructure.
-- **VPN required**: SSH access requires QST VPN, frequently unreachable.
-- **Implication**: PBS offloading theoretically possible but limited — nakasvr23 is a single-node VM running PBS locally. falcon offers Slurm but access/configuration unknown.
+**Hardware (nakasvr23, HPE ProLiant DL360 Gen10 Plus, launched June 2023):**
+- 2× Intel Xeon Platinum 8380 @ 2.30 GHz (40 physical cores each, 80 total, 160 HT threads)
+- 1024 GB RAM (896 GB available to PBS), 2 NUMA nodes
+- NAS: 90 TB (NFS4 via nakanas23_1). /home 72 TB (68% used), /analysis 186 GB, /analysis_DB 186 GB
+
+**PBS Professional 2022.1.2 — single-node architecture:**
+- Server name `licsvr23_1`. Single execution host = nakasvr23 itself.
+- **All PBS jobs run on the login node.** There are no separate compute nodes. PBS provides resource isolation (cgroups) and scheduling, not physical offloading.
+- Queue `workq`: max 64 ncpus (of 160 threads), max 1024 GB mem. PBS intentionally constrains to 64 CPUs to reserve 96 threads for interactive / system.
+- Default allocation: 1 ncpu, 4 GB per job. No walltime limit (`resources_max.walltime` unset — jobs can run indefinitely; docs show example of 1536+ hours = 64 days).
+- Total historical jobs: 39,732. License count: 2 available global, 2 in use.
+
+**Interactive session cgroup limits:**
+- `nproc` returns 1 for SSH sessions (cgroup `/user.slice/user-24056.slice/session-*.scope`).
+- All 160 threads visible in `/proc/cpuinfo` and `/sys/fs/cgroup/cpuset/cpuset.cpus = 0-159`, but process launch is capped at 1 by `max user processes = 1024` and cgroup memory slice.
+- **PBS jobs escape the 1-CPU cgroup** — confirmed by submitting a test job (allocated, ran, and deleted successfully).
+
+**Current utilization (2026-02-19 18:19 JST):**
+- 7 PBS jobs running from 2 users (MECS transport simulations), each 1 ncpu / 4 GB
+- 7/64 PBS CPUs in use (11%), 28 GB / 896 GB RAM assigned (3%)
+- System load average: 8.21 (5% of 160 threads)
+- 15 users logged in, 819 GB RAM free (91%)
+- **System is ~89% idle by CPU, ~97% idle by RAM**
+
+**Policy (from server landing page):**
+- "Use the batch queueing system and do not use the frontend for processing the parallel or high-load computation."
+- "If the frontend proceeding is identified, it may be an unexpected cancellation."
+- "The administrator will not control individual system load, so use it carefully."
+- "Use JT-60SA Data Analysis Server only for developing advanced plasma research in JT-60SA."
+
+**falcon:** DNS does not resolve from nakasvr23 (`ssh falcon` fails with "Name or service not known"). Previously documented as having PBS+Slurm, but not reachable from the primary analysis server. Likely on a different network segment or VPN.
+
+**Implication for codex:**
+- **PBS offloading has no physical offloading benefit** — jobs still run on nakasvr23. The value is: (1) escaping the 1-CPU cgroup limit, (2) complying with site policy for CPU-intensive work, and (3) proper resource accounting.
+- For I/O-bound scanning (rg, fd, SSH, file reads): run directly in interactive session. 1 CPU is sufficient since these are I/O-throttled by NFS, not CPU-bound. Use `nice -19` to minimize impact.
+- For CPU-intensive work (if ever needed here — LLM scoring runs on ITER, not JT-60SA): submit via `qsub` for policy compliance and to get more than 1 CPU.
+- No tunnel infrastructure needed — services (Neo4j, embed) run on ITER, not on nakasvr23.
+- **Recommended scanning policy:** Run lightweight commands directly. Be conservative with concurrency. This is a shared analysis server for plasma physicists — we are guests.
 
 ## Design
 
