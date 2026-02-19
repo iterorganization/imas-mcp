@@ -73,7 +73,7 @@ OPENROUTER_API_KEY=your_openrouter_api_key
 
 # LiteLLM Proxy
 LITELLM_MASTER_KEY=sk-litellm-imas-codex
-LITELLM_PROXY_URL=http://localhost:4000
+LITELLM_PROXY_URL=http://localhost:18400
 
 # Langfuse (optional but recommended for cost tracking)
 LANGFUSE_PUBLIC_KEY=pk-lf-xxx

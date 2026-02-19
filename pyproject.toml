@@ -202,6 +202,7 @@ imas-dd-version = ""
 # Facility locations — list position determines port offsets for all services.
 # Neo4j: bolt = 7687 + index, http = 7474 + index.
 # Embed: server = 18765 + index.
+# LLM proxy: port = 18400 + index.
 # Tunneled connections add +10000 (e.g. iter tunnel → bolt 17687).
 locations = ["iter", "tcv", "jt-60sa", "jet", "west", "mast-u", "asdex-u", "east", "diii-d", "kstar"]
 
@@ -216,6 +217,7 @@ locations = ["iter", "tcv", "jt-60sa", "jet", "west", "mast-u", "asdex-u", "east
 # Graph name (data identity) lives in the (:GraphMeta) node, set via: graph init
 # Override active graph name: IMAS_CODEX_GRAPH=dev
 location = "iter"
+scheduler = "slurm"     # job scheduler: "slurm" or omit for login-node systemd
 username = "neo4j"
 password = "imas-codex"
 
@@ -249,6 +251,10 @@ model = "anthropic/claude-opus-4.6"
 
 [tool.imas-codex.compaction]
 model = "anthropic/claude-sonnet-4.5"
+
+[tool.imas-codex.llm]
+# LiteLLM proxy settings. Port base = 18400, offset by location index.
+port = 18400            # Override: IMAS_CODEX_LLM_PORT or LITELLM_PORT
 
 [tool.hatch.envs.test]
 dependencies = [

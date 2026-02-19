@@ -275,6 +275,39 @@ def _embed_host_from_facility() -> str | None:
     return None
 
 
+# ─── LLM proxy settings ────────────────────────────────────────────────────
+
+LLM_BASE_PORT = 18400
+
+
+def get_llm_proxy_port() -> int:
+    """Get the LLM proxy (LiteLLM) port.
+
+    Follows the same convention as embed/graph ports:
+    ``llm_port = 18400 + location_offset``.
+
+    Priority: IMAS_CODEX_LLM_PORT env → LITELLM_PORT env → [llm].port → 18400.
+    """
+    if env := os.getenv("IMAS_CODEX_LLM_PORT"):
+        return int(env)
+    if env := os.getenv("LITELLM_PORT"):
+        return int(env)
+    port = _get_section("llm").get("port")
+    return int(port) if port is not None else LLM_BASE_PORT
+
+
+def get_llm_proxy_url() -> str:
+    """Get the LLM proxy URL.
+
+    Derived from proxy port: ``http://127.0.0.1:{port}``.
+    Override: LITELLM_PROXY_URL env var.
+    """
+    if env := os.getenv("LITELLM_PROXY_URL"):
+        return env
+    port = get_llm_proxy_port()
+    return f"http://127.0.0.1:{port}"
+
+
 # ─── Graph scheduler settings ──────────────────────────────────────────────
 
 
