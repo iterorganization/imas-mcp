@@ -615,10 +615,22 @@ async def _async_discovery_loop(
     scored_this_run: set[str] = set()
 
     if use_rich:
+        from imas_codex.cli.discover.common import create_discovery_monitor
+        from imas_codex.discovery.base.facility import get_facility
         from imas_codex.discovery.paths.progress import ParallelProgressDisplay
         from imas_codex.settings import get_model
 
         model_name = get_model("language")
+        config = get_facility(facility)
+
+        service_monitor = create_discovery_monitor(
+            config,
+            check_graph=True,
+            check_embed=not scan_only,
+            check_model=not scan_only,
+            check_ssh=not score_only,
+            check_auth=False,
+        )
 
         with ParallelProgressDisplay(
             facility=facility,
@@ -630,6 +642,8 @@ async def _async_discovery_loop(
             scan_only=scan_only,
             score_only=score_only,
         ) as display:
+            display.state.service_monitor = service_monitor
+            await service_monitor.__aenter__()
 
             async def refresh_graph_state():
                 while True:
@@ -694,6 +708,7 @@ async def _async_discovery_loop(
                     await ticker_task
                 except asyncio.CancelledError:
                     pass
+                await service_monitor.__aexit__(None, None, None)
 
             display.refresh_from_graph(facility)
             scored_this_run = display.get_paths_scored_this_run()

@@ -33,6 +33,7 @@ from imas_codex.discovery.base.progress import (
     StreamQueue,
     build_pipeline_section,
     build_resource_section,
+    build_servers_section,
     clean_text,
     clip_path,
     clip_text,
@@ -171,6 +172,9 @@ class ProgressState:
 
     # Worker group for supervision display
     worker_group: SupervisedWorkerGroup | None = None
+
+    # Service monitor (graph, embed, model, SSH health)
+    service_monitor: Any = None
 
     # Enrichment aggregates for summary display
     total_bytes_enriched: int = 0
@@ -427,6 +431,18 @@ class ParallelProgressDisplay:
         annotation = f"({', '.join(ann_parts)})" if ann_parts else ""
         return count, annotation
 
+    def _worker_complete(self, group: str) -> bool:
+        """Check if all workers in a group have stopped."""
+        wg = self.state.worker_group
+        if not wg:
+            return False
+        workers = [
+            s
+            for _n, s in wg.workers.items()
+            if (s.group or _n.split("_worker")[0]) == group
+        ]
+        return len(workers) > 0 and all(s.state == WorkerState.stopped for s in workers)
+
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
         header = Text()
@@ -503,6 +519,11 @@ class ParallelProgressDisplay:
         scan = self.state.current_scan
         score = self.state.current_score
         enrich = self.state.current_enrich
+
+        # Worker completion detection
+        scan_complete = self._worker_complete("scan") and not scan
+        score_complete = self._worker_complete("score") and not score
+        enrich_complete = self._worker_complete("enrich") and not enrich
 
         # SCAN activity
         scan_text = ""
@@ -618,6 +639,7 @@ class ParallelProgressDisplay:
                 primary_text=scan_text,
                 detail_parts=scan_detail,
                 is_processing=self.state.scan_processing,
+                is_complete=scan_complete,
                 worker_count=scan_count,
                 worker_annotation=scan_ann,
                 queue_size=(
@@ -639,6 +661,7 @@ class ParallelProgressDisplay:
                 primary_text=score_text,
                 detail_parts=score_detail,
                 is_processing=self.state.score_processing,
+                is_complete=score_complete,
                 worker_count=score_count,
                 worker_annotation=score_ann,
                 queue_size=(
@@ -659,6 +682,7 @@ class ParallelProgressDisplay:
                 primary_text=enrich_text,
                 detail_parts=enrich_detail,
                 is_processing=self.state.enrich_processing,
+                is_complete=enrich_complete,
                 worker_count=enrich_count,
                 worker_annotation=enrich_ann,
             ),
@@ -709,15 +733,39 @@ class ParallelProgressDisplay:
         )
         return build_resource_section(config, self.gauge_width)
 
+    def _build_servers_section(self) -> Text | None:
+        """Build SERVERS status row from service monitor."""
+        monitor = self.state.service_monitor
+        if monitor is None:
+            return None
+        statuses = monitor.get_status()
+        if not statuses:
+            section = Text()
+            section.append("  SERVERS", style="bold white")
+            section.append("  checking...", style="dim italic")
+            return section
+        return build_servers_section(statuses)
+
     def _build_display(self) -> Panel:
         """Build the complete display."""
         sections = [
             self._build_header(),
-            Text("─" * (self.width - 4), style="dim"),
-            self._build_pipeline_section(),
-            Text("─" * (self.width - 4), style="dim"),
-            self._build_resources_section(),
         ]
+
+        # SERVERS section (optional)
+        servers = self._build_servers_section()
+        if servers is not None:
+            sections.append(Text("─" * (self.width - 4), style="dim"))
+            sections.append(servers)
+
+        sections.extend(
+            [
+                Text("─" * (self.width - 4), style="dim"),
+                self._build_pipeline_section(),
+                Text("─" * (self.width - 4), style="dim"),
+                self._build_resources_section(),
+            ]
+        )
 
         content = Text()
         for i, section in enumerate(sections):
@@ -1047,22 +1095,37 @@ class ParallelProgressDisplay:
         self._refresh()
 
     def tick(self) -> None:
-        """Drain streaming queues for smooth display."""
+        """Drain streaming queues for smooth display.
+
+        Clears stale current items when queues have drained and no new
+        items have been added for the stale timeout.
+        """
         updated = False
 
         next_scan = self.state.scan_queue.pop()
         if next_scan:
             self.state.current_scan = next_scan
             updated = True
+        elif self.state.scan_queue.is_stale() and self.state.current_scan is not None:
+            self.state.current_scan = None
+            updated = True
 
         next_score = self.state.score_queue.pop()
         if next_score:
             self.state.current_score = next_score
             updated = True
+        elif self.state.score_queue.is_stale() and self.state.current_score is not None:
+            self.state.current_score = None
+            updated = True
 
         next_enrich = self.state.enrich_queue.pop()
         if next_enrich:
             self.state.current_enrich = next_enrich
+            updated = True
+        elif (
+            self.state.enrich_queue.is_stale() and self.state.current_enrich is not None
+        ):
+            self.state.current_enrich = None
             updated = True
 
         if updated:

@@ -335,6 +335,8 @@ def create_discovery_monitor(
     check_embed: bool = True,
     check_ssh: bool = True,
     check_auth: bool = True,
+    check_model: bool = False,
+    model_section: str = "language",
     poll_interval: float = 15.0,
 ) -> ServiceMonitor:
     """Create a service monitor from a facility config dict.
@@ -405,6 +407,8 @@ def create_discovery_monitor(
         check_embed=check_embed,
         check_ssh=check_ssh,
         check_auth=check_auth,
+        check_model=check_model,
+        model_section=model_section,
         poll_interval=poll_interval,
     )
 

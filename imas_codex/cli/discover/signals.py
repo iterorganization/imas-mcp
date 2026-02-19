@@ -254,6 +254,7 @@ def signals(
                 config,
                 check_graph=True,
                 check_embed=not scan_only,
+                check_model=not scan_only,
                 check_auth=False,
             )
 
@@ -279,6 +280,34 @@ def signals(
                     await service_monitor.__aenter__()
 
                     async def refresh_graph_state():
+                        from imas_codex.discovery.signals.parallel import (
+                            get_data_discovery_stats,
+                        )
+
+                        while True:
+                            try:
+                                stats = get_data_discovery_stats(facility)
+                                if stats:
+                                    display.update_from_graph(
+                                        total_signals=stats.get("total", 0),
+                                        signals_discovered=stats.get("discovered", 0),
+                                        signals_enriched=stats.get("enriched", 0),
+                                        signals_checked=stats.get("checked", 0),
+                                        signals_skipped=stats.get("skipped", 0),
+                                        signals_failed=stats.get("failed", 0),
+                                        pending_enrich=stats.get("pending_enrich", 0),
+                                        pending_check=stats.get("pending_check", 0),
+                                        accumulated_cost=stats.get(
+                                            "accumulated_cost", 0.0
+                                        ),
+                                    )
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                pass
+                            await asyncio.sleep(0.5)
+
+                    async def queue_ticker():
                         while True:
                             try:
                                 display.tick()
@@ -288,7 +317,8 @@ def signals(
                                 pass
                             await asyncio.sleep(0.15)
 
-                    ticker_task = asyncio.create_task(refresh_graph_state())
+                    refresh_task = asyncio.create_task(refresh_graph_state())
+                    ticker_task = asyncio.create_task(queue_ticker())
 
                     def on_scan(msg, stats, results=None):
                         display.update_scan(msg, stats, results)
@@ -322,7 +352,12 @@ def signals(
                             on_worker_status=on_worker_status,
                         )
                     finally:
+                        refresh_task.cancel()
                         ticker_task.cancel()
+                        try:
+                            await refresh_task
+                        except asyncio.CancelledError:
+                            pass
                         try:
                             await ticker_task
                         except asyncio.CancelledError:
@@ -330,6 +365,29 @@ def signals(
                         await service_monitor.__aexit__(None, None, None)
 
                 result = asyncio.run(run_with_display())
+
+                # Final graph refresh for accurate summary
+                try:
+                    from imas_codex.discovery.signals.parallel import (
+                        get_data_discovery_stats,
+                    )
+
+                    final_stats = get_data_discovery_stats(facility)
+                    if final_stats:
+                        display.update_from_graph(
+                            total_signals=final_stats.get("total", 0),
+                            signals_discovered=final_stats.get("discovered", 0),
+                            signals_enriched=final_stats.get("enriched", 0),
+                            signals_checked=final_stats.get("checked", 0),
+                            signals_skipped=final_stats.get("skipped", 0),
+                            signals_failed=final_stats.get("failed", 0),
+                            pending_enrich=final_stats.get("pending_enrich", 0),
+                            pending_check=final_stats.get("pending_check", 0),
+                            accumulated_cost=final_stats.get("accumulated_cost", 0.0),
+                        )
+                except Exception:
+                    pass
+
                 display.print_summary()
 
         # Final output

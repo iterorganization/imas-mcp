@@ -288,6 +288,73 @@ def embed_health_check() -> tuple[bool, str]:
         return False, str(e)[:100]
 
 
+def llm_health_check(section: str = "language") -> tuple[bool, str]:
+    """Check LLM provider health via a lightweight API call.
+
+    Uses LiteLLM's model list or a minimal completion to verify
+    the configured model is reachable. Returns model short name
+    and provider as detail.
+
+    Args:
+        section: Model section to check (language, vision, etc.)
+
+    Returns:
+        (healthy, detail) tuple where detail is like "gemini-flash (openrouter)"
+    """
+    try:
+        from imas_codex.settings import get_model
+
+        model = get_model(section)
+
+        # Extract short model name and provider
+        parts = model.rsplit("/", 1)
+        short_name = parts[-1] if parts else model
+        # Truncate long model names
+        if len(short_name) > 25:
+            short_name = short_name[:22] + "..."
+
+        # Detect provider from base URL or model prefix
+        import os
+
+        base_url = os.getenv("OPENAI_BASE_URL", "")
+        if "openrouter" in base_url.lower():
+            provider = "openrouter"
+        elif model.startswith("openrouter/"):
+            provider = "openrouter"
+        elif model.startswith("google/"):
+            provider = "google"
+        elif model.startswith("anthropic/"):
+            provider = "anthropic"
+        elif model.startswith("openai/"):
+            provider = "openai"
+        else:
+            provider = parts[0] if len(parts) > 1 else "api"
+
+        label = f"{short_name} ({provider})"
+
+        # Try a lightweight LiteLLM call to verify connectivity
+        import litellm
+
+        litellm.drop_params = True
+        response = litellm.completion(
+            model=model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+            temperature=0,
+            timeout=10,
+        )
+        if response and response.choices:
+            return True, label
+        return False, f"{label} no response"
+    except Exception as e:
+        err = str(e)[:60]
+        if "model" in locals():
+            parts = model.rsplit("/", 1)  # type: ignore[possibly-undefined]
+            short_name = parts[-1] if parts else model  # type: ignore[possibly-undefined]
+            return False, f"{short_name}: {err}"
+        return False, err
+
+
 # =============================================================================
 # Service Check Configuration
 # =============================================================================
@@ -605,6 +672,8 @@ def create_service_monitor(
     check_embed: bool = True,
     check_ssh: bool = True,
     check_auth: bool = True,
+    check_model: bool = False,
+    model_section: str = "language",
     poll_interval: float = 15.0,
 ) -> ServiceMonitor:
     """Create a ServiceMonitor with standard checks for discovery CLIs.
@@ -613,6 +682,7 @@ def create_service_monitor(
 
     - ``graph``: Neo4j connectivity
     - ``embed``: Embedding server health
+    - ``model``: LLM provider health (OpenRouter, Google, Anthropic, etc.)
     - ``ssh``: SSH connectivity to remote host (critical — workers pause)
     - ``auth``: Wiki page reachability via HTTP (critical — workers pause)
 
@@ -626,6 +696,8 @@ def create_service_monitor(
         check_embed: Include embedding server health check
         check_ssh: Include SSH connectivity check
         check_auth: Include wiki auth/reachability check
+        check_model: Include LLM provider health check
+        model_section: Model section to monitor (default: "language")
         poll_interval: Default polling interval in seconds
 
     Returns:
@@ -647,6 +719,14 @@ def create_service_monitor(
             embed_health_check,
             poll_interval=20.0,
             critical=False,  # Ingest workers handle this via EmbeddingResilience
+        )
+
+    if check_model:
+        monitor.add_check(
+            "model",
+            lambda sec=model_section: llm_health_check(sec),
+            poll_interval=60.0,  # LLM APIs are generally stable
+            critical=False,  # Workers have their own retry logic
         )
 
     if check_ssh and ssh_host:
@@ -754,6 +834,7 @@ __all__ = [
     "create_service_monitor",
     "embed_health_check",
     "get_graph_location",
+    "llm_health_check",
     "neo4j_health_check",
     "ssh_health_check",
 ]

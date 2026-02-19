@@ -159,6 +159,7 @@ class ProgressState:
     pages_scored: int = 0  # Status = scored (awaiting ingest or skipped)
     pages_ingested: int = 0  # Status = ingested (final state)
     pages_skipped: int = 0  # Skipped (low score or skip_reason)
+    pages_failed: int = 0  # Status = failed
 
     # Pending work counts (for queue display)
     pending_score: int = 0  # scanned pages awaiting scoring
@@ -636,9 +637,14 @@ class WikiProgressDisplay:
 
         # --- Compute progress data ---
 
-        # TRIAGE: LLM page scoring
+        # TRIAGE: LLM page scoring (all pages that have been triaged)
         score_total = self.state.total_pages or 1
-        scored_pages = self.state.pages_scored + self.state.pages_ingested
+        scored_pages = (
+            self.state.pages_scored
+            + self.state.pages_ingested
+            + self.state.pages_skipped
+            + self.state.pages_failed
+        )
         triage_count, triage_ann = self._count_group_workers("triage")
 
         # PAGES: chunk + embed high-value pages
@@ -1043,7 +1049,13 @@ class WikiProgressDisplay:
             self._live.update(self._build_display())
 
     def tick(self) -> None:
-        """Drain streaming queues for smooth display."""
+        """Drain streaming queues for smooth display.
+
+        Pops items from each queue and updates the corresponding current
+        display item. When a queue has drained and no new items have been
+        added for the stale timeout, clears the current item so the
+        pipeline row can show its completion/idle state.
+        """
         # Pop from score queue
         if item := self.state.score_queue.pop():
             self.state.current_score = ScoreItem(
@@ -1055,6 +1067,8 @@ class WikiProgressDisplay:
                 skipped=item.get("skipped", False),
                 skip_reason=item.get("skip_reason", ""),
             )
+        elif self.state.score_queue.is_stale():
+            self.state.current_score = None
 
         # Pop from ingest queue
         if item := self.state.ingest_queue.pop():
@@ -1065,6 +1079,8 @@ class WikiProgressDisplay:
                 physics_domain=item.get("physics_domain"),
                 chunk_count=item.get("chunk_count", 0),
             )
+        elif self.state.ingest_queue.is_stale():
+            self.state.current_ingest = None
 
         # Pop from artifact score queue (priority over ingest queue)
         if item := self.state.artifact_score_queue.pop():
@@ -1087,6 +1103,11 @@ class WikiProgressDisplay:
                 chunk_count=item.get("chunk_count", 0),
                 is_score=False,
             )
+        elif (
+            self.state.artifact_score_queue.is_stale()
+            and self.state.artifact_queue.is_stale()
+        ):
+            self.state.current_artifact = None
 
         # Pop from image queue
         if item := self.state.image_queue.pop():
@@ -1099,6 +1120,8 @@ class WikiProgressDisplay:
                 source_url=item.get("source_url", ""),
                 page_title=item.get("page_title", ""),
             )
+        elif self.state.image_queue.is_stale():
+            self.state.current_image = None
 
         self._refresh()
 
@@ -1333,6 +1356,7 @@ class WikiProgressDisplay:
         pages_scored: int = 0,
         pages_ingested: int = 0,
         pages_skipped: int = 0,
+        pages_failed: int = 0,
         pending_score: int = 0,
         pending_ingest: int = 0,
         pending_artifact_score: int = 0,
@@ -1346,6 +1370,7 @@ class WikiProgressDisplay:
         self.state.pages_scored = pages_scored
         self.state.pages_ingested = pages_ingested
         self.state.pages_skipped = pages_skipped
+        self.state.pages_failed = pages_failed
         self.state.pending_score = pending_score
         self.state.pending_ingest = pending_ingest
         self.state.pending_artifact_score = pending_artifact_score

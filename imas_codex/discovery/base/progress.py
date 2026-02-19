@@ -212,14 +212,20 @@ class StreamQueue:
 
     The min_display_time ensures items stay visible long enough to read,
     even when processing is fast. This prevents the jarring path/idle flicker.
+
+    Stale detection: tracks when items were last added. When the queue is
+    empty and no items have been added for ``stale_timeout`` seconds, the
+    queue is considered stale — meaning the displayed item should be cleared.
     """
 
     items: deque = field(default_factory=deque)
     last_pop: float = field(default_factory=time.time)
+    last_add: float = 0.0  # timestamp of last add() call
     rate: float = 2.0  # items per second (capped max rate)
     max_rate: float = 2.5  # never exceed this rate even if worker is faster
     min_display_time: float = 0.4  # minimum seconds each item stays visible
     max_size: int = 500  # larger buffer to absorb batch bursts
+    stale_timeout: float = 3.0  # seconds without adds before queue is stale
 
     def add(self, items: list, rate: float | None = None) -> None:
         """Add items to queue.
@@ -227,6 +233,7 @@ class StreamQueue:
         The rate is capped at max_rate to ensure smooth display.
         """
         self.items.extend(items)
+        self.last_add = time.time()
         if rate and rate > 0:
             # Cap at max_rate to prevent too-fast streaming
             self.rate = min(rate, self.max_rate)
@@ -253,6 +260,19 @@ class StreamQueue:
     def is_empty(self) -> bool:
         """Check if queue has no pending items."""
         return len(self.items) == 0
+
+    def is_stale(self) -> bool:
+        """Check if queue is empty and no items added recently.
+
+        Returns True when the queue has drained AND no new items have
+        been added for ``stale_timeout`` seconds, indicating the worker
+        has stopped producing and the current displayed item is outdated.
+        """
+        if not self.is_empty():
+            return False
+        if self.last_add == 0.0:
+            return False  # never received items
+        return (time.time() - self.last_add) >= self.stale_timeout
 
     def clear(self) -> None:
         """Clear the queue. Use on termination to prevent hanging."""

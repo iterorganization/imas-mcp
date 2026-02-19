@@ -359,6 +359,18 @@ class DataProgressDisplay:
         annotation = f"({', '.join(ann_parts)})" if ann_parts else ""
         return count, annotation
 
+    def _worker_complete(self, group: str) -> bool:
+        """Check if all workers in a group have stopped."""
+        wg = self.state.worker_group
+        if not wg:
+            return False
+        workers = [
+            s
+            for _n, s in wg.workers.items()
+            if (s.group or _n.split("_worker")[0]) == group
+        ]
+        return len(workers) > 0 and all(s.state == WorkerState.stopped for s in workers)
+
     def _build_pipeline_section(self) -> Text:
         """Build the unified pipeline section (progress + activity merged).
 
@@ -385,12 +397,17 @@ class DataProgressDisplay:
 
         # Enrich cost
         enrich_cost = (
-            self.state._run_enrich_cost
-            if self.state._run_enrich_cost > 0
-            else None
+            self.state._run_enrich_cost if self.state._run_enrich_cost > 0 else None
         )
 
         # --- Build activity data ---
+
+        # Worker completion detection
+        scan_complete = self._worker_complete("scan") and not self.state.current_scan
+        enrich_complete = (
+            self._worker_complete("enrich") and not self.state.current_enrich
+        )
+        check_complete = self._worker_complete("check") and not self.state.current_check
 
         # SCAN activity
         scan = self.state.current_scan
@@ -463,9 +480,7 @@ class DataProgressDisplay:
                 check_text = f"{shot_str} {err}"
             else:
                 check_text = f"{shot_str} testing..."
-            check_detail = [
-                (clip_text(validate.signal_id, content_width - 10), "dim")
-            ]
+            check_detail = [(clip_text(validate.signal_id, content_width - 10), "dim")]
 
         # --- Build pipeline rows ---
 
@@ -482,6 +497,7 @@ class DataProgressDisplay:
                 primary_text=scan_text,
                 detail_parts=scan_detail,
                 is_processing=self.state.scan_processing,
+                is_complete=scan_complete,
                 processing_label="scanning...",
             ),
             PipelineRowConfig(
@@ -497,6 +513,7 @@ class DataProgressDisplay:
                 primary_text=enrich_text,
                 detail_parts=enrich_detail,
                 is_processing=self.state.enrich_processing,
+                is_complete=enrich_complete,
                 processing_label="classifying...",
             ),
             PipelineRowConfig(
@@ -511,6 +528,7 @@ class DataProgressDisplay:
                 primary_text=check_text,
                 detail_parts=check_detail,
                 is_processing=self.state.check_processing,
+                is_complete=check_complete,
                 processing_label="testing...",
             ),
         ]
@@ -607,7 +625,11 @@ class DataProgressDisplay:
             self._live.update(self._build_display())
 
     def tick(self) -> None:
-        """Drain streaming queues for smooth display."""
+        """Drain streaming queues for smooth display.
+
+        Clears stale current items when queues have drained and no new
+        items have been added for the stale timeout.
+        """
         if item := self.state.scan_queue.pop():
             # Extract epoch progress if present
             epoch_progress = item.get("epoch_progress", {})
@@ -626,6 +648,8 @@ class DataProgressDisplay:
             # Track current tree for idle display
             if item.get("tree_name"):
                 self.state.current_tree = item.get("tree_name")
+        elif self.state.scan_queue.is_stale():
+            self.state.current_scan = None
 
         if item := self.state.enrich_queue.pop():
             self.state.current_enrich = EnrichItem(
@@ -633,6 +657,8 @@ class DataProgressDisplay:
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
             )
+        elif self.state.enrich_queue.is_stale():
+            self.state.current_enrich = None
 
         if item := self.state.check_queue.pop():
             self.state.current_check = CheckItem(
@@ -642,6 +668,8 @@ class DataProgressDisplay:
                 error=item.get("error"),
                 physics_domain=item.get("physics_domain"),
             )
+        elif self.state.check_queue.is_stale():
+            self.state.current_check = None
 
         self._refresh()
 

@@ -751,6 +751,7 @@ def wiki(
                 config,
                 check_graph=True,
                 check_embed=not (_scan_only or _score_only),
+                check_model=not _scan_only,
             )
 
             # Suppress noisy INFO logs during rich display
@@ -796,6 +797,7 @@ def wiki(
                                 pages_scored=stats.get("scored", 0),
                                 pages_ingested=stats.get("ingested", 0),
                                 pages_skipped=stats.get("skipped", 0),
+                                pages_failed=stats.get("failed", 0),
                                 pending_score=stats.get(
                                     "pending_score",
                                     stats.get("scanned", 0),
