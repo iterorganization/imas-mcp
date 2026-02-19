@@ -726,21 +726,26 @@ def _install_llm_service_remote() -> None:
     import base64
 
     port = _llm_port()
+    # Use %h (systemd specifier for $HOME) in directives that don't expand
+    # env vars: WorkingDirectory, EnvironmentFile, StandardOutput, etc.
+    # Use $HOME in ExecStart/Environment which DO expand env vars.
+    _project_h = _PROJECT.replace("$HOME", "%h")
+    _services_h = _SERVICES_DIR.replace("$HOME", "%h")
     service_content = f"""[Unit]
 Description=IMAS Codex LiteLLM Proxy
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory={_PROJECT}
-EnvironmentFile=-{_PROJECT}/.env
+WorkingDirectory={_project_h}
+EnvironmentFile=-{_project_h}/.env
 Environment="PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin"
 Environment="LITELLM_CALLBACKS=langfuse"
 ExecStartPre=/bin/mkdir -p {_SERVICES_DIR}
 ExecStart=$HOME/.local/bin/uv tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' -- litellm --config {_PROJECT}/imas_codex/config/litellm_config.yaml --host 127.0.0.1 --port {port} --drop_params
 ExecStop=/bin/kill -15 $MAINPID
-StandardOutput=append:{_SERVICES_DIR}/llm.log
-StandardError=append:{_SERVICES_DIR}/llm.log
+StandardOutput=append:{_services_h}/llm.log
+StandardError=append:{_services_h}/llm.log
 TimeoutStopSec=30
 Restart=on-failure
 RestartSec=10
