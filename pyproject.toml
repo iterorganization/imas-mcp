@@ -254,7 +254,8 @@ model = "anthropic/claude-sonnet-4.5"
 
 [tool.imas-codex.llm]
 # LiteLLM proxy settings. Port base = 18400, offset by location index.
-port = 18400            # Override: IMAS_CODEX_LLM_PORT or LITELLM_PORT
+location = "iter"       # facility hosting LLM proxy (or "local" for in-process)
+scheduler = "slurm"     # job scheduler: "slurm" or omit for login-node systemd
 
 [tool.hatch.envs.test]
 dependencies = [

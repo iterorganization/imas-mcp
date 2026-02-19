@@ -16,6 +16,7 @@ Usage::
     imas-codex tunnel start [HOST]           # All services
     imas-codex tunnel start [HOST] --neo4j   # Just graph ports
     imas-codex tunnel start [HOST] --embed   # Just embed port
+    imas-codex tunnel start [HOST] --llm     # Just LLM proxy port
     imas-codex tunnel stop [HOST]
     imas-codex tunnel status
     imas-codex tunnel service install [HOST]  # Persistent autossh via systemd
@@ -64,10 +65,11 @@ def _get_tunnel_ports(
     host: str,
     neo4j: bool,
     embed: bool,
+    llm: bool = False,
 ) -> list[tuple[int, int, str, str]]:
     """Return list of (remote_port, local_port, label, remote_bind) for requested services.
 
-    When neither --neo4j nor --embed is given, returns all known ports.
+    When no service flag is given, returns all known ports.
     ``remote_bind`` is the hostname to bind on the remote side of the tunnel
     (default ``"127.0.0.1"``).  When the embed server runs on a different host
     (e.g. Titan), ``remote_bind`` is set to that host so the tunnel forwards
@@ -76,7 +78,7 @@ def _get_tunnel_ports(
     from imas_codex.remote.tunnel import TUNNEL_OFFSET
 
     ports: list[tuple[int, int, str, str]] = []
-    all_services = not neo4j and not embed
+    all_services = not neo4j and not embed and not llm
 
     if neo4j or all_services:
         try:
@@ -131,6 +133,13 @@ def _get_tunnel_ports(
         remote_bind = embed_host if embed_host else "127.0.0.1"
         # Embed uses same-port forwarding (no offset)
         ports.append((embed_port, embed_port, "embed", remote_bind))
+
+    if llm or all_services:
+        from imas_codex.settings import get_llm_proxy_port
+
+        llm_port = get_llm_proxy_port()
+        # LLM proxy uses same-port forwarding (no offset), binds to localhost
+        ports.append((llm_port, llm_port, "llm", "127.0.0.1"))
 
     return ports
 
@@ -260,6 +269,7 @@ def tunnel() -> None:
       imas-codex tunnel start [HOST]         Start tunnels (all services)
       imas-codex tunnel start HOST --neo4j   Just graph ports
       imas-codex tunnel start HOST --embed   Just embedding port
+      imas-codex tunnel start HOST --llm     Just LLM proxy port
       imas-codex tunnel stop [HOST]          Stop tunnels
       imas-codex tunnel status               Show active tunnels
       imas-codex tunnel service install      Persistent autossh via systemd
@@ -271,10 +281,12 @@ def tunnel() -> None:
 @click.argument("host", required=False)
 @click.option("--neo4j", "neo4j_only", is_flag=True, help="Tunnel Neo4j ports only")
 @click.option("--embed", "embed_only", is_flag=True, help="Tunnel embedding port only")
+@click.option("--llm", "llm_only", is_flag=True, help="Tunnel LLM proxy port only")
 def tunnel_start(
     host: str | None,
     neo4j_only: bool,
     embed_only: bool,
+    llm_only: bool = False,
 ) -> None:
     """Start SSH tunnels to remote services.
 
@@ -287,6 +299,7 @@ def tunnel_start(
       imas-codex tunnel start iter           # All services
       imas-codex tunnel start iter --neo4j   # Just graph
       imas-codex tunnel start iter --embed   # Just embedding
+      imas-codex tunnel start iter --llm     # Just LLM proxy
     """
     target = _resolve_host(host)
     use_autossh = bool(shutil.which("autossh"))
@@ -298,7 +311,7 @@ def tunnel_start(
             f"Starting tunnels to {target} (ssh — install autossh for auto-reconnect):"
         )
 
-    ports = _get_tunnel_ports(target, neo4j_only, embed_only)
+    ports = _get_tunnel_ports(target, neo4j_only, embed_only, llm_only)
     ok = _start_tunnels(target, ports, use_autossh)
 
     if ok == len(ports):
@@ -360,9 +373,10 @@ def tunnel_status() -> None:
     are labeled accordingly.
     """
     from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
-    from imas_codex.settings import get_embed_server_port
+    from imas_codex.settings import get_embed_server_port, get_llm_proxy_port
 
     embed_port = get_embed_server_port()
+    llm_port = get_llm_proxy_port()
 
     # Build port→label map using the same resolution as tunnel_start
     # so that labels match (graph name "codex", not location "iter").
@@ -388,6 +402,7 @@ def tunnel_status() -> None:
         known_ports[HTTP_BASE_PORT] = "neo4j-http"
         known_ports[HTTP_BASE_PORT + TUNNEL_OFFSET] = "neo4j-http (tunneled)"
     known_ports[embed_port] = "embed"
+    known_ports[llm_port] = "llm"
 
     # Build port→location map for SSH-forwarded ports so we can show
     # "iter" (or whichever host) instead of a generic "(ssh)" marker.
@@ -453,22 +468,25 @@ def tunnel_status() -> None:
 @click.argument("host", required=False)
 @click.option("--neo4j", "neo4j_only", is_flag=True, help="Tunnel Neo4j ports only")
 @click.option("--embed", "embed_only", is_flag=True, help="Tunnel embedding port only")
+@click.option("--llm", "llm_only", is_flag=True, help="Tunnel LLM proxy port only")
 def tunnel_service(
     action: str,
     host: str | None,
     neo4j_only: bool,
     embed_only: bool,
+    llm_only: bool = False,
 ) -> None:
     """Manage persistent SSH tunnels via systemd + autossh.
 
     Installs a systemd user service that maintains reconnecting SSH
-    tunnels to the specified HOST for Neo4j and/or embedding services.
+    tunnels to the specified HOST for Neo4j, embedding, and/or LLM services.
 
     \b
     Examples:
       imas-codex tunnel service install iter         # All services
       imas-codex tunnel service install iter --neo4j # Just graph
       imas-codex tunnel service install iter --embed # Just embedding
+      imas-codex tunnel service install iter --llm   # Just LLM proxy
       imas-codex tunnel service start iter
       imas-codex tunnel service status iter
       imas-codex tunnel service logs iter
@@ -492,7 +510,7 @@ def tunnel_service(
                 "autossh not found. Install with: sudo apt install autossh"
             )
 
-        ports = _get_tunnel_ports(target, neo4j_only, embed_only)
+        ports = _get_tunnel_ports(target, neo4j_only, embed_only, llm_only)
         if not ports:
             raise click.ClickException("No services selected for tunneling.")
 

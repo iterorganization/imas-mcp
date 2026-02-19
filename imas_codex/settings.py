@@ -286,14 +286,16 @@ def get_llm_proxy_port() -> int:
     Follows the same convention as embed/graph ports:
     ``llm_port = 18400 + location_offset``.
 
-    Priority: IMAS_CODEX_LLM_PORT env → LITELLM_PORT env → [llm].port → 18400.
+    Priority: IMAS_CODEX_LLM_PORT env → LITELLM_PORT env → convention offset → 18400.
     """
     if env := os.getenv("IMAS_CODEX_LLM_PORT"):
         return int(env)
     if env := os.getenv("LITELLM_PORT"):
         return int(env)
-    port = _get_section("llm").get("port")
-    return int(port) if port is not None else LLM_BASE_PORT
+    location = get_llm_location()
+    if location == "local":
+        return LLM_BASE_PORT
+    return LLM_BASE_PORT + _get_location_offset(location)
 
 
 def get_llm_proxy_url() -> str:
@@ -306,6 +308,35 @@ def get_llm_proxy_url() -> str:
         return env
     port = get_llm_proxy_port()
     return f"http://127.0.0.1:{port}"
+
+
+def get_llm_location() -> str:
+    """Get the LLM proxy location — a facility name or ``"local"``.
+
+    When set to a facility name (e.g. ``"iter"``), the proxy runs on that
+    facility's compute node (reached via SSH tunnel).  ``"local"`` runs
+    the proxy on the current machine.
+
+    Priority: IMAS_CODEX_LLM_LOCATION env → [llm].location → 'local'.
+    """
+    if env := os.getenv("IMAS_CODEX_LLM_LOCATION"):
+        return env.lower()
+    location = _get_section("llm").get("location")
+    return str(location).lower() if location else "local"
+
+
+def get_llm_scheduler() -> str:
+    """Get the LLM proxy job scheduler.
+
+    Returns ``"slurm"`` when the proxy should run on a SLURM compute node.
+    When omitted or ``"none"``, the proxy runs directly (login node / local).
+
+    Priority: IMAS_CODEX_LLM_SCHEDULER env → [llm].scheduler → "none".
+    """
+    if env := os.getenv("IMAS_CODEX_LLM_SCHEDULER"):
+        return env.lower()
+    scheduler = _get_section("llm").get("scheduler")
+    return str(scheduler).lower() if scheduler else "none"
 
 
 # ─── Graph scheduler settings ──────────────────────────────────────────────

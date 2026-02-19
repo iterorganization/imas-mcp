@@ -235,9 +235,17 @@ def serve_llm() -> None:
     Routes all LLM calls through a single proxy with cost tracking via Langfuse.
     Provides OpenAI-compatible endpoint for agent teams and discovery workers.
 
+    Deploy mode is determined by ``[llm].scheduler`` in pyproject.toml:
+      slurm → SLURM compute node (shared allocation with embed/neo4j)
+      (omit) → systemd service on login node or local start
+
     \b
+      imas-codex serve llm deploy     Deploy per config
+      imas-codex serve llm stop       Stop the proxy
+      imas-codex serve llm restart    Restart (stop + deploy)
       imas-codex serve llm start      Start LiteLLM proxy (foreground)
       imas-codex serve llm status     Check proxy health
+      imas-codex serve llm logs       View service logs
       imas-codex serve llm service    Manage systemd service
     """
     pass
@@ -557,6 +565,168 @@ WantedBy=default.target
     elif action == "stop":
         subprocess.run(["systemctl", "--user", "stop", "imas-codex-llm"], check=True)
         click.echo("LLM proxy service stopped")
+
+
+# ── LLM deploy/stop/restart/logs commands ────────────────────────────────
+
+
+@serve_llm.command("deploy")
+def llm_deploy() -> None:
+    """Deploy LLM proxy server.
+
+    When ``[llm].scheduler = "slurm"``, ensures a SLURM allocation
+    exists on the compute node and starts the LLM proxy on it.
+    The allocation is shared with embed and Neo4j — each service has an
+    independent lifecycle.
+
+    When scheduler is not set, deploys via systemd on the login node.
+
+    CPU-only service (~50 MB RAM), no GPU required.
+
+    Idempotent: no-op if already running.
+
+    \\b
+    Examples:
+        imas-codex serve llm deploy
+    """
+    if _is_llm_compute_target():
+        alloc = _ensure_allocation()
+        node = alloc["node"]
+        if _service_running(node, "llm"):
+            click.echo(
+                f"Already running: llm on {node} "
+                f"(alloc {alloc['job_id']}, {alloc['gres']}, {alloc['time']})"
+            )
+            _setup_login_tunnel(node)
+            click.echo(f"  URL: http://localhost:{_llm_port()}")
+            return
+
+        click.echo(f"Starting LLM proxy on {node}...")
+        cmd = _llm_service_command()
+        _start_service(node, "llm", cmd)
+
+        port = _llm_port()
+        _wait_for_health(
+            "LLM proxy",
+            f"curl -sf http://localhost:{port}/health",
+            timeout_s=60,
+            node=node,
+        )
+
+        _setup_login_tunnel(node)
+        click.echo(f"  URL: http://localhost:{port}")
+    else:
+        _deploy_login_llm()
+        click.echo(f"  URL: http://localhost:{_llm_port()}")
+
+
+@serve_llm.command("stop")
+def llm_stop() -> None:
+    """Stop the LLM proxy server.
+
+    Stops the LLM service on the compute node (allocation stays alive)
+    or stops the systemd service on the login node.
+
+    \\b
+    Examples:
+        imas-codex serve llm stop
+    """
+    stopped = False
+
+    alloc = _get_allocation()
+    if alloc and alloc["state"] == "RUNNING":
+        if _stop_service(alloc["node"], "llm"):
+            stopped = True
+        _teardown_login_tunnel()
+
+    try:
+        _run_remote(
+            "systemctl --user stop imas-codex-llm 2>/dev/null",
+            timeout=15,
+            check=True,
+        )
+        click.echo("Stopped login LLM proxy service")
+        stopped = True
+    except subprocess.CalledProcessError:
+        pass
+
+    if not stopped:
+        click.echo("No active LLM proxy found")
+
+
+@serve_llm.command("restart")
+def llm_restart() -> None:
+    """Restart the LLM proxy server (stop + deploy).
+
+    Stops the LLM service and redeploys.  The SLURM allocation and
+    other services (e.g. embed, Neo4j) are not affected.
+
+    \\b
+    Examples:
+        imas-codex serve llm restart
+    """
+    # Stop
+    alloc = _get_allocation()
+    if alloc and alloc["state"] == "RUNNING":
+        _stop_service(alloc["node"], "llm")
+        time.sleep(2)
+    try:
+        _run_remote("systemctl --user stop imas-codex-llm 2>/dev/null", timeout=15)
+    except subprocess.CalledProcessError:
+        pass
+
+    # Deploy
+    if _is_llm_compute_target():
+        alloc = _ensure_allocation()
+        node = alloc["node"]
+        click.echo(f"Starting LLM proxy on {node}...")
+        cmd = _llm_service_command()
+        _start_service(node, "llm", cmd)
+        port = _llm_port()
+        _wait_for_health(
+            "LLM proxy",
+            f"curl -sf http://localhost:{port}/health",
+            timeout_s=60,
+            node=node,
+        )
+        _setup_login_tunnel(node)
+    else:
+        _deploy_login_llm()
+
+
+@serve_llm.command("logs")
+@click.option("--follow", "-f", is_flag=True, help="Follow log output (tail -f)")
+@click.option(
+    "--lines", "-n", default=50, type=int, help="Number of lines (default: 50)"
+)
+def llm_logs(follow: bool, lines: int) -> None:
+    """View LLM proxy service logs.
+
+    \\b
+    Examples:
+        imas-codex serve llm logs            # Last 50 lines
+        imas-codex serve llm logs -f         # Follow live
+        imas-codex serve llm logs -n 100     # Last 100 lines
+    """
+    log_file = f"{_SERVICES_DIR}/llm.log"
+    _tail_log(log_file, follow, lines)
+
+
+def _deploy_login_llm() -> None:
+    """Deploy LLM proxy to login node via systemd."""
+    click.echo("Deploying LLM proxy to login node via systemd...")
+    try:
+        _run_remote(
+            "systemctl --user restart imas-codex-llm 2>/dev/null || "
+            "systemctl --user start imas-codex-llm",
+            timeout=15,
+            check=True,
+        )
+        click.echo("  Service started")
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(
+            "Service not installed. Run: imas-codex serve llm service install"
+        ) from exc
 
 
 # ============================================================================
@@ -1011,6 +1181,13 @@ def _graph_http_port() -> int:
     return resolve_neo4j(auto_tunnel=False).http_port
 
 
+def _llm_port() -> int:
+    """Return the configured LLM proxy port."""
+    from imas_codex.settings import get_llm_proxy_port
+
+    return get_llm_proxy_port()
+
+
 # ── Scheduler detection ─────────────────────────────────────────────────
 
 
@@ -1026,6 +1203,13 @@ def _is_graph_compute_target() -> bool:
     from imas_codex.settings import get_graph_scheduler
 
     return get_graph_scheduler() == "slurm"
+
+
+def _is_llm_compute_target() -> bool:
+    """True when LLM scheduler is 'slurm' (deploy via SLURM)."""
+    from imas_codex.settings import get_llm_scheduler
+
+    return get_llm_scheduler() == "slurm"
 
 
 # ── Facility compute config ─────────────────────────────────────────────
@@ -1264,9 +1448,11 @@ def _cancel_allocation() -> list[str]:
     # since nohup'd processes survive SLURM job termination.
     if alloc["state"] == "RUNNING":
         node = alloc["node"]
-        for svc in ("neo4j", "embed"):
+        for svc in ("neo4j", "embed", "llm"):
             if _service_running(node, svc):
                 _stop_service(node, svc)
+        # Tear down login → compute tunnel for Neo4j
+        _teardown_login_tunnel()
 
     try:
         _run_remote(f"scancel {alloc['job_id']}", check=True)
@@ -1332,6 +1518,21 @@ def _stop_login_services() -> None:
         if pid and pid != "(no output)" and pid.isdigit():
             _run_remote(f"kill {pid} 2>/dev/null || true", timeout=10)
             click.echo(f"Killed login Neo4j process (PID {pid})")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+
+    # LLM proxy systemd service
+    try:
+        result = _run_remote(
+            "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
+            timeout=10,
+        )
+        if "active" in result:
+            _run_remote(
+                "systemctl --user stop imas-codex-llm 2>/dev/null || true",
+                timeout=15,
+            )
+            click.echo("Stopped login LLM proxy service")
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pass
 
@@ -1457,8 +1658,138 @@ def _kill_neo4j_on_node(node: str) -> None:
         pass
 
 
+# ── Login→Compute tunnels ────────────────────────────────────────────────
+#
+# Services on the compute node bind to **localhost only**.  The login
+# node needs SSH port-forwards to reach them.  These two helpers manage
+# that forwarding.  The workstation→login chain is handled separately by
+# ``imas-codex tunnel start``.
+
+_LOGIN_TUNNEL_PID = "login-tunnel"  # PID-file tag in services dir
+
+
+def _setup_login_tunnel(node: str) -> None:
+    """Create SSH port-forwards on the login node to the compute node.
+
+    Forwards Neo4j (bolt + http) and embed ports from
+    ``localhost:{port}`` on the login node to ``localhost:{port}`` on
+    the compute node.  Already-bound ports are skipped.
+
+    The tunnels use ``ssh -f -N`` (background, no command) with keepalive
+    options matching the shared tunnel infrastructure.
+    """
+    from imas_codex.graph.profiles import resolve_neo4j
+    from imas_codex.settings import get_embed_server_port, get_llm_proxy_port
+
+    ports: list[tuple[int, str]] = []
+
+    # Neo4j ports
+    try:
+        profile = resolve_neo4j(auto_tunnel=False)
+        ports.append((profile.bolt_port, "neo4j-bolt"))
+        ports.append((profile.http_port, "neo4j-http"))
+    except Exception:
+        pass
+
+    # Embed port
+    try:
+        ports.append((get_embed_server_port(), "embed"))
+    except Exception:
+        pass
+
+    # LLM proxy port
+    try:
+        ports.append((get_llm_proxy_port(), "llm"))
+    except Exception:
+        pass
+
+    if not ports:
+        return
+
+    # Build -L flags, skipping ports already bound on the login node
+    forward_args: list[str] = []
+    for port, label in ports:
+        # Check if already forwarded
+        try:
+            check = _run_remote(
+                f"ss -tln | grep -q ':{port} ' && echo bound || echo free",
+                timeout=5,
+            )
+            if "bound" in check:
+                click.echo(f"  {label}: already forwarded (:{port})")
+                continue
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+        # Bind both IPv4 and IPv6 loopback so callers using either
+        # protocol family can reach the forwarded port.
+        forward_args.extend(
+            [
+                "-L",
+                f"127.0.0.1:{port}:127.0.0.1:{port}",
+                "-L",
+                f"[::1]:{port}:127.0.0.1:{port}",
+            ]
+        )
+
+    if not forward_args:
+        return
+
+    forwards_str = " ".join(forward_args)
+    # Start SSH tunnel from login node → compute node.
+    # MUST disable ControlMaster to prevent the tunnel from being
+    # multiplexed into an existing SSH session (which gets closed
+    # immediately after forking, killing the forwarding).
+    tunnel_cmd = (
+        f"ssh -f -N "
+        f"-o StrictHostKeyChecking=no "
+        f"-o ControlMaster=no "
+        f"-o ControlPath=none "
+        f"-o ServerAliveInterval=15 "
+        f"-o ServerAliveCountMax=3 "
+        f"{forwards_str} {node} && "
+        # Record the PID so we can tear it down later
+        f"pgrep -f 'ssh.*-L.*{node}' | tail -1 > "
+        f"{_SERVICES_DIR}/{_LOGIN_TUNNEL_PID}.pid"
+    )
+    try:
+        _run_remote(tunnel_cmd, timeout=15, check=True)
+        click.echo(f"  Login→{node} tunnel active")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        click.echo(f"  Warning: login→{node} tunnel failed: {exc}")
+
+
+def _teardown_login_tunnel() -> None:
+    """Tear down the SSH login→compute port-forward."""
+    try:
+        # Kill by PID file
+        _run_remote(
+            f"pid=$(cat {_SERVICES_DIR}/{_LOGIN_TUNNEL_PID}.pid 2>/dev/null) && "
+            f'[ -n "$pid" ] && kill $pid 2>/dev/null; '
+            f"rm -f {_SERVICES_DIR}/{_LOGIN_TUNNEL_PID}.pid",
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+    # Fallback: kill any SSH tunnels to compute nodes with our port pattern
+    try:
+        alloc = _get_allocation()
+        if alloc and alloc.get("node"):
+            node = alloc["node"]
+            _run_remote(
+                f"pkill -f 'ssh.*-L.*{node}' 2>/dev/null || true",
+                timeout=10,
+            )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+
+
 def _neo4j_service_command() -> str:
     """Build the shell command to start Neo4j on a compute node.
+
+    Neo4j binds to **localhost only** for security — it is not exposed on
+    the cluster network.  Access from the login node is provided by an
+    SSH port-forward set up after the health check passes (see
+    ``_setup_login_tunnel``).
 
     Uses the Docker entrypoint script (``/startup/docker-entrypoint.sh``)
     which translates ``NEO4J_*`` env vars into ``neo4j.conf`` settings.
@@ -1472,6 +1803,10 @@ def _neo4j_service_command() -> str:
     http_port = profile.http_port
     password = get_graph_password()
 
+    # Bind to localhost:{port} (default) — no 0.0.0.0 exposure.
+    # The entrypoint script applies NEO4J_server_bolt_listen__address
+    # etc. to neo4j.conf.  Omitting these env vars keeps the default
+    # localhost binding.
     return (
         f"NEO4J_PASSWORD=$(grep -oP '^NEO4J_PASSWORD=\\K.*' "
         f"{_PROJECT}/.env 2>/dev/null || echo '{password}') && "
@@ -1484,16 +1819,19 @@ def _neo4j_service_command() -> str:
         '--bind "$HOME/.local/share/imas-codex/neo4j/import:/import" '
         "--writable-tmpfs "
         f'--env "NEO4J_AUTH=neo4j/$NEO4J_PASSWORD" '
-        f'--env "NEO4J_server_bolt_listen__address=0.0.0.0:{bolt_port}" '
-        f'--env "NEO4J_server_http_listen__address=0.0.0.0:{http_port}" '
-        '--env "NEO4J_server_default__listen__address=0.0.0.0" '
+        f'--env "NEO4J_server_bolt_listen__address=localhost:{bolt_port}" '
+        f'--env "NEO4J_server_http_listen__address=localhost:{http_port}" '
         '"$HOME/apptainer/neo4j_2025.11-community.sif" '
         "/startup/docker-entrypoint.sh neo4j"
     )
 
 
 def _embed_service_command(gpus: int, workers: int) -> str:
-    """Build the shell command to start the embed server on a compute node."""
+    """Build the shell command to start the embed server on a compute node.
+
+    Binds to **localhost only** — access from the login node is via
+    the SSH port-forward set up by ``_setup_login_tunnel``.
+    """
     port = _embed_port()
     gpu_ids = ",".join(str(i) for i in range(gpus))
     partition = _gpu_partition()
@@ -1502,8 +1840,24 @@ def _embed_service_command(gpus: int, workers: int) -> str:
     return (
         f"CUDA_VISIBLE_DEVICES={gpu_ids} "
         "uv run --offline --extra gpu imas-codex serve embed start "
-        f"--host 0.0.0.0 --port {port} "
+        f"--host 127.0.0.1 --port {port} "
         f"--gpus {gpu_ids} --workers {workers} --location {partition_name}"
+    )
+
+
+def _llm_service_command() -> str:
+    """Build the shell command to start the LLM proxy on a compute node.
+
+    Binds to **localhost only** — access from the login node is via
+    the SSH port-forward set up by ``_setup_login_tunnel``.
+
+    CPU-only service (~50 MB RAM), no GPU required.
+    """
+    port = _llm_port()
+    return (
+        f"source {_PROJECT}/.env 2>/dev/null || true && "
+        "uv run --offline imas-codex serve llm start "
+        f"--host 127.0.0.1 --port {port}"
     )
 
 
@@ -1512,14 +1866,26 @@ def _wait_for_health(
     check_cmd: str,
     timeout_s: int = 120,
     success_test: str | None = None,
+    *,
+    node: str | None = None,
 ) -> bool:
-    """Wait for a service health check to pass. Returns True on success."""
+    """Wait for a service health check to pass. Returns True on success.
+
+    Args:
+        label: Human-readable service name for status messages.
+        check_cmd: Shell command whose output indicates health.
+        timeout_s: Maximum seconds to wait.
+        success_test: If set, output must contain this string.
+        node: If set, run the health check on this compute node
+            (via ``_run_on_node``) instead of the login node.
+    """
     click.echo(f"  Waiting for {label}...")
+    run = (lambda cmd, **kw: _run_on_node(node, cmd, **kw)) if node else _run_remote
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         time.sleep(5)
         try:
-            result = _run_remote(check_cmd, timeout=10)
+            result = run(check_cmd, timeout=10)
             if result and result != "(no output)":
                 if success_test is None or success_test in result:
                     click.echo(f"  {label} healthy")
@@ -1640,7 +2006,9 @@ def embed_deploy(gpus: int, workers: int | None) -> None:
                 f"Already running: embed on {node} "
                 f"(alloc {alloc['job_id']}, {alloc['gres']}, {alloc['time']})"
             )
-            click.echo(f"  URL: http://{node}:{_embed_port()}")
+            # Ensure login tunnel is still alive
+            _setup_login_tunnel(node)
+            click.echo(f"  URL: http://localhost:{_embed_port()}")
             return
 
         click.echo(f"Starting embed server on {node}...")
@@ -1648,12 +2016,17 @@ def embed_deploy(gpus: int, workers: int | None) -> None:
         _start_service(node, "embed", cmd)
 
         port = _embed_port()
+        # Health check runs ON the compute node (embed binds to localhost)
         _wait_for_health(
             "embed",
-            f"curl -sf http://{node}:{port}/health",
+            f"curl -sf http://localhost:{port}/health",
             success_test='"status"',
+            node=node,
         )
-        click.echo(f"  URL: http://{node}:{port}")
+
+        # Set up SSH tunnel from login node → compute node
+        _setup_login_tunnel(node)
+        click.echo(f"  URL: http://localhost:{port}")
     else:
         _deploy_login_embed()
         click.echo(f"  URL: http://localhost:{_embed_port()}")
@@ -1677,6 +2050,8 @@ def embed_stop() -> None:
     if alloc and alloc["state"] == "RUNNING":
         if _stop_service(alloc["node"], "embed"):
             stopped = True
+        # Tear down login → compute tunnel (covers both services)
+        _teardown_login_tunnel()
 
     # Stop systemd service
     try:
@@ -1819,8 +2194,10 @@ def neo4j_deploy(gpus: int) -> None:
                 f"Already running: neo4j on {node} "
                 f"(alloc {alloc['job_id']}, {alloc['gres']}, {alloc['time']})"
             )
-            click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
-            click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
+            # Ensure login tunnel is still alive
+            _setup_login_tunnel(node)
+            click.echo(f"  Bolt: bolt://localhost:{_graph_port()}")
+            click.echo(f"  HTTP: http://localhost:{_graph_http_port()}")
             return
 
         # Pre-deploy cleanup: kill orphaned processes, clear lock files
@@ -1831,10 +2208,21 @@ def neo4j_deploy(gpus: int) -> None:
         cmd = _neo4j_service_command()
         _start_service(node, "neo4j", cmd)
 
+        # Health check runs ON the compute node (Neo4j binds to localhost)
         http_port = _graph_http_port()
-        _wait_for_health("Neo4j", f"curl -sf http://{node}:{http_port}/")
-        click.echo(f"  HTTP: http://{node}:{http_port}")
-        click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
+        _wait_for_health(
+            "Neo4j",
+            f"curl -sf http://localhost:{http_port}/",
+            node=node,
+        )
+
+        # Set up SSH tunnel from login node → compute node so that
+        # Neo4j appears on localhost:{port} on the login node.
+        # Workstation tunnels (imas-codex tunnel start iter) then
+        # chain through transparently.
+        _setup_login_tunnel(node)
+        click.echo(f"  Bolt: bolt://localhost:{_graph_port()}")
+        click.echo(f"  HTTP: http://localhost:{_graph_http_port()}")
     else:
         _deploy_login_neo4j()
         click.echo(f"  Bolt: bolt://localhost:{_graph_port()}")
@@ -1858,6 +2246,8 @@ def neo4j_stop() -> None:
     if alloc and alloc["state"] == "RUNNING":
         if _stop_service(alloc["node"], "neo4j"):
             stopped = True
+        # Tear down login → compute tunnel
+        _teardown_login_tunnel()
 
     # Stop systemd service
     try:
@@ -1996,7 +2386,11 @@ def alloc_status() -> None:
     if alloc["state"] == "RUNNING":
         node = alloc["node"]
         click.echo("Services:")
-        for svc, port_fn in [("neo4j", _graph_http_port), ("embed", _embed_port)]:
+        for svc, port_fn in [
+            ("neo4j", _graph_http_port),
+            ("embed", _embed_port),
+            ("llm", _llm_port),
+        ]:
             running = _service_running(node, svc)
             status = "running" if running else "stopped"
             port = port_fn()
@@ -2072,7 +2466,7 @@ def serve_status() -> None:
             f"  Node: {alloc['node']}, GPUs: {alloc['gres']}, Time: {alloc['time']}"
         )
         if alloc["state"] == "RUNNING":
-            for svc in ("neo4j", "embed"):
+            for svc in ("neo4j", "embed", "llm"):
                 running = _service_running(alloc["node"], svc)
                 click.echo(f"  {svc}: {'running' if running else 'stopped'}")
         click.echo()
@@ -2149,9 +2543,17 @@ def serve_status() -> None:
 
     # ── LLM Proxy ────────────────────────────────────────────────────────
     click.echo("LLM Proxy:")
-    from imas_codex.settings import get_llm_proxy_url
+    from imas_codex.settings import (
+        get_llm_location,
+        get_llm_proxy_url,
+        get_llm_scheduler,
+    )
 
     llm_url = get_llm_proxy_url()
+    llm_location = get_llm_location()
+    llm_scheduler = get_llm_scheduler()
+    click.echo(f"  Location: {llm_location}")
+    click.echo(f"  Scheduler: {llm_scheduler}")
     click.echo(f"  URL: {llm_url}")
     try:
         import httpx
