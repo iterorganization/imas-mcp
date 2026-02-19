@@ -328,8 +328,11 @@ def llm_start(
             "OPENROUTER_API_KEY not set. Add to .env or export in shell."
         )
 
-    master_key = os.environ.get("LITELLM_MASTER_KEY", "sk-litellm-imas-codex")
-    os.environ.setdefault("LITELLM_MASTER_KEY", master_key)
+    master_key = os.environ.get("LITELLM_MASTER_KEY")
+    if not master_key:
+        raise click.ClickException(
+            "LITELLM_MASTER_KEY not set. Add to .env or export in shell."
+        )
 
     click.echo(f"Starting LiteLLM proxy on {host}:{port}")
     click.echo(f"Config: {config_path}")
@@ -398,7 +401,7 @@ def llm_status(url: str | None) -> None:
             click.echo("  ✓ Healthy")
             # Show model availability (requires auth)
             headers = {
-                "Authorization": f"Bearer {os.environ.get('LITELLM_MASTER_KEY', 'sk-litellm-imas-codex')}"
+                "Authorization": f"Bearer {os.environ.get('LITELLM_MASTER_KEY', '')}"
             }
             models_resp = httpx.get(
                 f"{url}/v1/models",
