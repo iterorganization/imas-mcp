@@ -1570,11 +1570,17 @@ def _start_service(node: str, name: str, command: str) -> None:
         click.echo(f"  {name} already running on {node}")
         return
 
-    # Write service command as a script on shared filesystem (via login node)
-    # Use 'exec' so the script's PID becomes the actual process PID,
-    # ensuring the .pid file tracks the real process (not a dead wrapper).
+    # Write service command as a launcher script on shared GPFS.
+    # Source .env first for API keys, then exec the service command
+    # so the script's PID becomes the actual process PID (not a
+    # dead bash wrapper).
     svc_script = f"{_SERVICES_DIR}/{name}.sh"
-    script_content = f"#!/bin/bash\ncd {_PROJECT}\nexec {command}\n"
+    script_content = (
+        f"#!/bin/bash\n"
+        f"cd {_PROJECT}\n"
+        f"source {_PROJECT}/.env 2>/dev/null || true\n"
+        f"exec {command}\n"
+    )
     script_b64 = b64.b64encode(script_content.encode()).decode()
     _run_remote(
         f"mkdir -p {_SERVICES_DIR} && "
@@ -1622,8 +1628,20 @@ def _stop_service(node: str, name: str) -> bool:
     return "Stopped" in result
 
 
+_SERVICE_PORTS: dict[str, str] = {
+    "neo4j": "_graph_port",
+    "embed": "_embed_port",
+    "llm": "_llm_port",
+}
+
+
 def _service_running(node: str, name: str) -> bool:
-    """Check if a named service is running on the compute node."""
+    """Check if a named service is running on the compute node.
+
+    First checks the PID file.  If the tracked PID is dead, falls back
+    to a port-liveness check — this catches orphaned services that were
+    started outside the deploy workflow (or whose PID file is stale).
+    """
     check = (
         f"pid=$(cat {_SERVICES_DIR}/{name}.pid 2>/dev/null) || exit 1\n"
         f'kill -0 "$pid" 2>/dev/null || exit 1\n'
@@ -1631,9 +1649,43 @@ def _service_running(node: str, name: str) -> bool:
     )
     try:
         result = _run_on_node(node, check, timeout=10)
-        return "running" in result
+        if "running" in result:
+            return True
     except subprocess.CalledProcessError:
-        return False
+        pass
+
+    # Fallback: check if the service port is responding
+    port_fn_name = _SERVICE_PORTS.get(name)
+    if port_fn_name:
+        port = globals()[port_fn_name]()
+        try:
+            result = _run_on_node(
+                node,
+                f"ss -tlnp sport = :{port} 2>/dev/null | grep -q LISTEN && echo listening",
+                timeout=10,
+            )
+            if "listening" in result:
+                # Port is bound — adopt the process into the PID file
+                try:
+                    pid_result = _run_on_node(
+                        node,
+                        f"ss -tlnp sport = :{port} 2>/dev/null"
+                        f" | grep -oP 'pid=\\K[0-9]+' | head -1",
+                        timeout=10,
+                    )
+                    pid = pid_result.strip()
+                    if pid:
+                        _run_remote(
+                            f"echo {pid} > {_SERVICES_DIR}/{name}.pid",
+                            timeout=5,
+                        )
+                except (subprocess.CalledProcessError, ValueError):
+                    pass
+                return True
+        except subprocess.CalledProcessError:
+            pass
+
+    return False
 
 
 def _clean_neo4j_locks(node: str) -> None:
@@ -1751,10 +1803,12 @@ def _llm_service_command() -> str:
     Uses ``litellm`` from the project venv (installed via ``uv sync
     --extra serve``) rather than ``uv tool run`` which needs PyPI access
     that compute nodes typically lack.
+
+    Note: ``.env`` sourcing is handled by ``_start_service()``'s launcher
+    script, not here. This command is wrapped with ``exec`` by the launcher.
     """
     port = _llm_port()
     return (
-        f"source {_PROJECT}/.env 2>/dev/null || true && "
         "uv run --offline --extra serve imas-codex serve llm start "
         f"--host 0.0.0.0 --port {port}"
     )
