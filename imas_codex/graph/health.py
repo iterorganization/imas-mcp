@@ -66,7 +66,15 @@ def check_graph_health(*, timeout: float = 5.0) -> GraphHealth:
         )
 
     bolt_url = profile.uri
-    http_url = f"http://localhost:{profile.http_port}"
+
+    # Derive HTTP URL consistent with bolt resolution.  When bolt uses
+    # a tunneled port (base + TUNNEL_OFFSET), offset HTTP similarly.
+    from imas_codex.remote.tunnel import TUNNEL_OFFSET
+
+    effective_http = profile.http_port
+    if f":{profile.bolt_port + TUNNEL_OFFSET}" in bolt_url:
+        effective_http = profile.http_port + TUNNEL_OFFSET
+    http_url = f"http://localhost:{effective_http}"
 
     health = GraphHealth(
         status="stopped",

@@ -1847,6 +1847,24 @@ def _show_embed_info() -> None:
         pass
 
 
+def _show_embed_info_on_node(node: str, port: int) -> None:
+    """Print embed server info by curling /info on the compute node."""
+    import json
+
+    try:
+        result = _run_on_node(
+            node, f"curl -sf http://localhost:{port}/info", timeout=10
+        )
+        if result and result != "(no output)":
+            info = json.loads(result)
+            model = info.get("model", {}).get("name", "unknown")
+            device = info.get("model", {}).get("device", "unknown")
+            click.echo(f"  Model: {model}")
+            click.echo(f"  Device: {device}")
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError):
+        pass
+
+
 # ── Embed deploy/stop/restart/logs commands ──────────────────────────────
 
 
@@ -2583,46 +2601,117 @@ def serve_status() -> None:
 
     # ── SLURM Allocation ─────────────────────────────────────────────────
     alloc = _get_allocation()
+    compute_node: str | None = None
+    compute_services: dict[str, bool] = {}
+
     if alloc:
         click.echo(f"Allocation: {alloc['job_id']} ({alloc['state']})")
         click.echo(
             f"  Node: {alloc['node']}, GPUs: {alloc['gres']}, Time: {alloc['time']}"
         )
         if alloc["state"] == "RUNNING":
+            compute_node = alloc["node"]
             for svc in ("neo4j", "embed", "llm"):
-                running = _service_running(alloc["node"], svc)
+                running = _service_running(compute_node, svc)
+                compute_services[svc] = running
                 click.echo(f"  {svc}: {'running' if running else 'stopped'}")
         click.echo()
 
     # ── Graph (Neo4j) ────────────────────────────────────────────────────
     click.echo("Neo4j Graph:")
-    try:
-        from imas_codex.graph.health import check_graph_health
+    scheduler = get_graph_scheduler()
 
-        gh = check_graph_health()
-        status_icon = "✓" if gh.status == "ok" else "✗"
-        click.echo(f"  {status_icon} Status: {gh.status}")
-        click.echo(f"  Name: {gh.name}")
-        click.echo(f"  Location: {gh.location}")
-        if gh.host:
-            click.echo(f"  Host: {gh.host}")
-        click.echo(f"  Bolt URL: {gh.bolt_url}")
-        click.echo(f"  HTTP URL: {gh.http_url}")
-        scheduler = get_graph_scheduler()
+    if compute_node and compute_services.get("neo4j"):
+        # SLURM: check health directly on the compute node
+        bolt_port = _graph_port()
+        http_port = _graph_http_port()
+        click.echo(f"  Bolt: bolt://{compute_node}:{bolt_port}")
+        click.echo(f"  HTTP: http://{compute_node}:{http_port}")
         click.echo(f"  Scheduler: {scheduler}")
-        if gh.status == "ok":
-            if gh.neo4j_version:
-                click.echo(f"  Version: {gh.neo4j_version}")
-            if gh.node_count is not None:
-                click.echo(
-                    f"  Nodes: {gh.node_count}, Relationships: {gh.relationship_count}"
-                )
-            if gh.facilities:
-                click.echo(f"  Facilities: {', '.join(gh.facilities)}")
-        if gh.error:
-            click.echo(f"  Error: {gh.error}")
-    except Exception as e:
-        click.echo(f"  ✗ Error: {e}")
+        try:
+            result = _run_on_node(
+                compute_node,
+                f"curl -sf http://localhost:{http_port}/",
+                timeout=10,
+            )
+            if result and result != "(no output)":
+                click.echo("  ✓ Status: running")
+                # Get detailed stats via curl on compute
+                try:
+                    stats = _run_on_node(
+                        compute_node,
+                        f"curl -sf http://localhost:{http_port}/db/neo4j/tx/commit "
+                        '-H "Content-Type: application/json" '
+                        '-d \'{"statements":[{"statement":"MATCH (n) RETURN count(n) AS nodes"},{"statement":"MATCH ()-[r]->() RETURN count(r) AS rels"}]}\' '
+                        f"-u neo4j:imas-codex",
+                        timeout=10,
+                    )
+                    if stats:
+                        import json
+
+                        data = json.loads(stats)
+                        results = data.get("results", [])
+                        if len(results) >= 2:
+                            nodes = results[0]["data"][0]["row"][0]
+                            rels = results[1]["data"][0]["row"][0]
+                            click.echo(f"  Nodes: {nodes}, Relationships: {rels}")
+                except Exception:
+                    pass
+            else:
+                click.echo("  ✗ Status: not responding")
+        except subprocess.CalledProcessError:
+            click.echo("  ✗ Status: not responding on compute node")
+
+        # Check tunnel accessibility
+        from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
+
+        tunnel_bolt = bolt_port + TUNNEL_OFFSET
+        tunnel_http = http_port + TUNNEL_OFFSET
+        bolt_ok = is_tunnel_active(tunnel_bolt)
+        http_ok = is_tunnel_active(tunnel_http)
+        if bolt_ok and http_ok:
+            click.echo(
+                f"  Tunnel: ✓ bolt://localhost:{tunnel_bolt}, "
+                f"http://localhost:{tunnel_http}"
+            )
+        else:
+            click.echo(
+                f"  Tunnel: ✗ bolt:{tunnel_bolt} "
+                f"{'✓' if bolt_ok else '✗'}, "
+                f"http:{tunnel_http} {'✓' if http_ok else '✗'}"
+            )
+    elif compute_node and not compute_services.get("neo4j"):
+        click.echo(f"  ✗ Status: stopped (not running on {compute_node})")
+        click.echo(f"  Scheduler: {scheduler}")
+    else:
+        # Non-SLURM or no allocation: use profile-based health check
+        try:
+            from imas_codex.graph.health import check_graph_health
+
+            gh = check_graph_health()
+            status_icon = "✓" if gh.status == "ok" else "✗"
+            click.echo(f"  {status_icon} Status: {gh.status}")
+            click.echo(f"  Name: {gh.name}")
+            click.echo(f"  Location: {gh.location}")
+            if gh.host:
+                click.echo(f"  Host: {gh.host}")
+            click.echo(f"  Bolt URL: {gh.bolt_url}")
+            click.echo(f"  HTTP URL: {gh.http_url}")
+            click.echo(f"  Scheduler: {scheduler}")
+            if gh.status == "ok":
+                if gh.neo4j_version:
+                    click.echo(f"  Version: {gh.neo4j_version}")
+                if gh.node_count is not None:
+                    click.echo(
+                        f"  Nodes: {gh.node_count}, "
+                        f"Relationships: {gh.relationship_count}"
+                    )
+                if gh.facilities:
+                    click.echo(f"  Facilities: {', '.join(gh.facilities)}")
+            if gh.error:
+                click.echo(f"  Error: {gh.error}")
+        except Exception as e:
+            click.echo(f"  ✗ Error: {e}")
 
     click.echo()
 
@@ -2630,37 +2719,66 @@ def serve_status() -> None:
     click.echo("Embedding Server:")
     embed_location = get_embedding_location()
     embed_scheduler = get_embed_scheduler()
-    embed_url = get_embed_remote_url()
-
     click.echo(f"  Location: {embed_location}")
     click.echo(f"  Scheduler: {embed_scheduler}")
-    if embed_url:
-        click.echo(f"  URL: {embed_url}")
 
-    if embed_location != "local" and embed_url:
+    if compute_node and compute_services.get("embed"):
+        # SLURM: check health directly on the compute node
+        port = _embed_port()
+        click.echo(f"  Compute: http://{compute_node}:{port}")
         try:
-            from imas_codex.embeddings.client import RemoteEmbeddingClient
-
-            client = RemoteEmbeddingClient(embed_url)
-            if client.is_available(timeout=3.0):
-                info = client.get_detailed_info()
-                click.echo("  ✓ Status: ok")
-                if info:
-                    click.echo(f"  Model: {info['model']['name']}")
-                    click.echo(f"  Device: {info['model']['device']}")
-                    if info["gpu"]["name"]:
-                        click.echo(f"  GPU: {info['gpu']['name']}")
-                    location_label = info["server"].get("location")
-                    if location_label:
-                        click.echo(f"  Deploy: {location_label}")
-                    uptime_h = info["server"]["uptime_seconds"] / 3600
-                    click.echo(f"  Uptime: {uptime_h:.1f}h")
+            result = _run_on_node(
+                compute_node,
+                f"curl -sf http://localhost:{port}/health",
+                timeout=10,
+            )
+            if result and '"status"' in result:
+                click.echo("  ✓ Status: running")
+                _show_embed_info_on_node(compute_node, port)
             else:
-                click.echo("  ✗ Status: not available")
-        except Exception as e:
-            click.echo(f"  ✗ Status: error ({e})")
-    elif embed_location == "local":
-        click.echo("  ✓ Mode: in-process (no server)")
+                click.echo("  ✗ Status: not responding")
+        except subprocess.CalledProcessError:
+            click.echo("  ✗ Status: not responding on compute node")
+
+        # Check tunnel / local port accessibility
+        from imas_codex.remote.tunnel import is_tunnel_active
+
+        if is_tunnel_active(port):
+            click.echo(f"  Tunnel: ✓ localhost:{port}")
+        else:
+            click.echo(f"  Tunnel: ✗ localhost:{port} not reachable")
+    elif compute_node and not compute_services.get("embed"):
+        click.echo(f"  ✗ Status: stopped (not running on {compute_node})")
+    else:
+        # Non-SLURM: check via URL
+        embed_url = get_embed_remote_url()
+        if embed_url:
+            click.echo(f"  URL: {embed_url}")
+
+        if embed_location != "local" and embed_url:
+            try:
+                from imas_codex.embeddings.client import RemoteEmbeddingClient
+
+                client = RemoteEmbeddingClient(embed_url)
+                if client.is_available(timeout=3.0):
+                    info = client.get_detailed_info()
+                    click.echo("  ✓ Status: ok")
+                    if info:
+                        click.echo(f"  Model: {info['model']['name']}")
+                        click.echo(f"  Device: {info['model']['device']}")
+                        if info["gpu"]["name"]:
+                            click.echo(f"  GPU: {info['gpu']['name']}")
+                        location_label = info["server"].get("location")
+                        if location_label:
+                            click.echo(f"  Deploy: {location_label}")
+                        uptime_h = info["server"]["uptime_seconds"] / 3600
+                        click.echo(f"  Uptime: {uptime_h:.1f}h")
+                else:
+                    click.echo("  ✗ Status: not available")
+            except Exception as e:
+                click.echo(f"  ✗ Status: error ({e})")
+        elif embed_location == "local":
+            click.echo("  ✓ Mode: in-process (no server)")
 
     click.echo()
 
@@ -2668,28 +2786,59 @@ def serve_status() -> None:
     click.echo("LLM Proxy:")
     from imas_codex.settings import (
         get_llm_location,
-        get_llm_proxy_url,
+        get_llm_proxy_port,
         get_llm_scheduler,
     )
 
-    llm_url = get_llm_proxy_url()
     llm_location = get_llm_location()
     llm_scheduler = get_llm_scheduler()
     click.echo(f"  Location: {llm_location}")
     click.echo(f"  Scheduler: {llm_scheduler}")
-    click.echo(f"  URL: {llm_url}")
-    try:
-        import httpx
 
-        # Use root endpoint for alive check (no auth required)
-        resp = httpx.get(f"{llm_url}/", timeout=3.0)
-        if resp.status_code == 200:
-            click.echo("  ✓ Status: ok")
+    if compute_node and compute_services.get("llm"):
+        # SLURM: check health directly on the compute node
+        port = _llm_port()
+        click.echo(f"  Compute: http://{compute_node}:{port}")
+        try:
+            result = _run_on_node(
+                compute_node,
+                f"curl -sf http://localhost:{port}/",
+                timeout=10,
+            )
+            if result and result != "(no output)":
+                click.echo("  ✓ Status: running")
+            else:
+                click.echo("  ✗ Status: not responding")
+        except subprocess.CalledProcessError:
+            click.echo("  ✗ Status: not responding on compute node")
+
+        # Check tunnel / local port accessibility
+        from imas_codex.remote.tunnel import is_tunnel_active
+
+        llm_port = get_llm_proxy_port()
+        if is_tunnel_active(llm_port):
+            click.echo(f"  Tunnel: ✓ localhost:{llm_port}")
         else:
-            click.echo(f"  ✗ Status: unhealthy (HTTP {resp.status_code})")
-    except httpx.ConnectError:
-        click.echo("  ✗ Status: not running")
-    except httpx.RemoteProtocolError:
-        click.echo("  ✗ Status: not responding (port in use by non-HTTP process)")
-    except Exception:
-        click.echo("  ✗ Status: not running")
+            click.echo(f"  Tunnel: ✗ localhost:{llm_port} not reachable")
+    elif compute_node and not compute_services.get("llm"):
+        click.echo(f"  ✗ Status: stopped (not running on {compute_node})")
+    else:
+        # Non-SLURM: check via URL
+        from imas_codex.settings import get_llm_proxy_url
+
+        llm_url = get_llm_proxy_url()
+        click.echo(f"  URL: {llm_url}")
+        try:
+            import httpx
+
+            resp = httpx.get(f"{llm_url}/", timeout=3.0)
+            if resp.status_code == 200:
+                click.echo("  ✓ Status: ok")
+            else:
+                click.echo(f"  ✗ Status: unhealthy (HTTP {resp.status_code})")
+        except httpx.ConnectError:
+            click.echo("  ✗ Status: not running")
+        except httpx.RemoteProtocolError:
+            click.echo("  ✗ Status: not responding (port in use by non-HTTP process)")
+        except Exception:
+            click.echo("  ✗ Status: not running")
