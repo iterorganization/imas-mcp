@@ -1,13 +1,10 @@
 """
-Benchmark comparison between embedding models.
+Embedding model retrieval quality tests.
 
-Compares MiniLM (current) vs Qwen3-Embedding-0.6B (proposed) across:
-1. IMAS DD retrieval accuracy
-2. Multilingual query handling (Japanese, French, German)
-3. Latency and memory usage
+Tests MiniLM (all-MiniLM-L6-v2) embedding quality for IMAS DD retrieval.
 
 Run with:
-    uv run pytest tests/embeddings/test_model_comparison.py -v -s
+    uv run pytest tests/embeddings/test_model_comparison.py -v -s -m slow
 
 Or standalone:
     uv run python tests/embeddings/test_model_comparison.py
@@ -25,7 +22,7 @@ sentence_transformers = pytest.importorskip(
 )
 SentenceTransformer = sentence_transformers.SentenceTransformer
 
-# Exclude from default test runs — these download large models
+# Exclude from default test runs — these load real models
 pytestmark = pytest.mark.slow
 
 # Test cases: (query, expected_top_paths, language)
@@ -56,42 +53,6 @@ DD_RETRIEVAL_CASES = [
         "Thomson scattering density",
         ["thomson_scattering/channel/n_e"],
         "en",
-    ),
-]
-
-MULTILINGUAL_CASES = [
-    # Japanese
-    (
-        "電子温度プロファイル",  # "electron temperature profile"
-        ["core_profiles/profiles_1d/electrons/temperature"],
-        "ja",
-    ),
-    (
-        "プラズマ電流測定",  # "plasma current measurement"
-        ["magnetics/ip"],
-        "ja",
-    ),
-    # French
-    (
-        "profil de température électronique",  # "electron temperature profile"
-        ["core_profiles/profiles_1d/electrons/temperature"],
-        "fr",
-    ),
-    (
-        "mesure du courant plasma",  # "plasma current measurement"
-        ["magnetics/ip"],
-        "fr",
-    ),
-    # German
-    (
-        "Elektronentemperaturprofil",  # "electron temperature profile"
-        ["core_profiles/profiles_1d/electrons/temperature"],
-        "de",
-    ),
-    (
-        "Plasmastrom Messung",  # "plasma current measurement"
-        ["magnetics/ip"],
-        "de",
     ),
 ]
 
@@ -130,7 +91,6 @@ class BenchmarkResult:
     memory_mb: float
     embedding_dim: int
     retrieval_accuracy: float  # fraction of cases where expected path in top-5
-    multilingual_accuracy: float  # same for multilingual queries
 
 
 def load_model_with_timing(model_name: str) -> tuple[SentenceTransformer, float, float]:
@@ -150,7 +110,7 @@ def load_model_with_timing(model_name: str) -> tuple[SentenceTransformer, float,
         baseline_mem = 0
 
     start = time.time()
-    model = SentenceTransformer(model_name, trust_remote_code=True)
+    model = SentenceTransformer(model_name)
     load_time = time.time() - start
 
     try:
@@ -214,13 +174,9 @@ def benchmark_model(model_name: str) -> BenchmarkResult:
     encode_time = time.time() - start
     print(f"  Encode time ({len(test_texts)} texts): {encode_time:.3f}s")
 
-    # Retrieval accuracy - English
-    en_accuracy = compute_retrieval_accuracy(model, DD_RETRIEVAL_CASES, SAMPLE_DD_PATHS)
-    print(f"  English retrieval accuracy: {en_accuracy:.0%}")
-
-    # Retrieval accuracy - Multilingual
-    ml_accuracy = compute_retrieval_accuracy(model, MULTILINGUAL_CASES, SAMPLE_DD_PATHS)
-    print(f"  Multilingual retrieval accuracy: {ml_accuracy:.0%}")
+    # Retrieval accuracy
+    accuracy = compute_retrieval_accuracy(model, DD_RETRIEVAL_CASES, SAMPLE_DD_PATHS)
+    print(f"  Retrieval accuracy: {accuracy:.0%}")
 
     # Cleanup model to free memory
     del model
@@ -232,8 +188,7 @@ def benchmark_model(model_name: str) -> BenchmarkResult:
         encode_time_s=encode_time,
         memory_mb=memory_mb,
         embedding_dim=embedding_dim,
-        retrieval_accuracy=en_accuracy,
-        multilingual_accuracy=ml_accuracy,
+        retrieval_accuracy=accuracy,
     )
 
 
@@ -243,40 +198,19 @@ def print_comparison(results: list[BenchmarkResult]) -> None:
     print("COMPARISON SUMMARY")
     print("=" * 80)
 
-    headers = [
-        "Model",
-        "Dim",
-        "Load(s)",
-        "Enc(s)",
-        "Mem(MB)",
-        "EN Acc",
-        "ML Acc",
-    ]
+    headers = ["Model", "Dim", "Load(s)", "Enc(s)", "Mem(MB)", "Acc"]
     print(
         f"{headers[0]:<35} {headers[1]:>5} {headers[2]:>8} {headers[3]:>7} "
-        f"{headers[4]:>8} {headers[5]:>7} {headers[6]:>7}"
+        f"{headers[4]:>8} {headers[5]:>7}"
     )
-    print("-" * 80)
+    print("-" * 70)
 
     for r in results:
         print(
             f"{r.model_name:<35} {r.embedding_dim:>5} {r.load_time_s:>8.2f} "
             f"{r.encode_time_s:>7.3f} {r.memory_mb:>8.0f} "
-            f"{r.retrieval_accuracy:>6.0%} {r.multilingual_accuracy:>6.0%}"
+            f"{r.retrieval_accuracy:>6.0%}"
         )
-
-    print("-" * 80)
-
-    # Find winner
-    best_en = max(results, key=lambda r: r.retrieval_accuracy)
-    best_ml = max(results, key=lambda r: r.multilingual_accuracy)
-
-    print(
-        f"\nBest English retrieval: {best_en.model_name} ({best_en.retrieval_accuracy:.0%})"
-    )
-    print(
-        f"Best Multilingual:      {best_ml.model_name} ({best_ml.multilingual_accuracy:.0%})"
-    )
 
 
 # =============================================================================
@@ -290,83 +224,15 @@ def minilm_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 
-@pytest.fixture(scope="module")
-def qwen_model():
-    """Load Qwen3 model once for all tests."""
-    return SentenceTransformer("Qwen/Qwen3-Embedding-0.6B", trust_remote_code=True)
+class TestMiniLMRetrieval:
+    """Test MiniLM retrieval accuracy for IMAS DD paths."""
 
-
-class TestQwen3Loading:
-    """Test Qwen3 model loading and basic functionality."""
-
-    def test_model_loads(self, qwen_model):
-        """Qwen3 model loads successfully."""
-        assert qwen_model is not None
-
-    def test_embedding_dimension(self, qwen_model):
-        """Qwen3 produces 1024-dim embeddings."""
-        assert qwen_model.get_sentence_embedding_dimension() == 1024
-
-    def test_encode_english(self, qwen_model):
-        """Qwen3 encodes English text."""
-        embeddings = qwen_model.encode(["electron temperature profile"])
-        assert embeddings.shape == (1, 1024)
-
-    def test_encode_japanese(self, qwen_model):
-        """Qwen3 encodes Japanese text."""
-        embeddings = qwen_model.encode(["電子温度プロファイル"])
-        assert embeddings.shape == (1, 1024)
-
-    def test_encode_batch(self, qwen_model):
-        """Qwen3 encodes batches correctly."""
-        texts = ["hello", "world", "こんにちは"]
-        embeddings = qwen_model.encode(texts)
-        assert embeddings.shape == (3, 1024)
-
-
-class TestRetrievalComparison:
-    """Compare retrieval accuracy between models."""
-
-    def test_minilm_english_retrieval(self, minilm_model):
+    def test_english_retrieval(self, minilm_model):
         """MiniLM handles English retrieval."""
         accuracy = compute_retrieval_accuracy(
             minilm_model, DD_RETRIEVAL_CASES, SAMPLE_DD_PATHS
         )
         assert accuracy >= 0.4, f"MiniLM English accuracy too low: {accuracy:.0%}"
-
-    def test_qwen_english_retrieval(self, qwen_model):
-        """Qwen3 handles English retrieval."""
-        accuracy = compute_retrieval_accuracy(
-            qwen_model, DD_RETRIEVAL_CASES, SAMPLE_DD_PATHS
-        )
-        assert accuracy >= 0.4, f"Qwen3 English accuracy too low: {accuracy:.0%}"
-
-    def test_qwen_multilingual_retrieval(self, qwen_model):
-        """Qwen3 handles multilingual queries better than MiniLM."""
-        accuracy = compute_retrieval_accuracy(
-            qwen_model, MULTILINGUAL_CASES, SAMPLE_DD_PATHS
-        )
-        # Qwen3 should handle multilingual well
-        assert accuracy >= 0.3, f"Qwen3 multilingual accuracy too low: {accuracy:.0%}"
-
-    @pytest.mark.parametrize(
-        "query,expected,lang",
-        [
-            (
-                "電子温度プロファイル",
-                "core_profiles/profiles_1d/electrons/temperature",
-                "ja",
-            ),
-            ("プラズマ電流測定", "magnetics/ip", "ja"),
-        ],
-    )
-    def test_qwen_japanese_specific(self, qwen_model, query, expected, lang):
-        """Qwen3 retrieves correct path for Japanese queries."""
-        accuracy = compute_retrieval_accuracy(
-            qwen_model, [(query, [expected], lang)], SAMPLE_DD_PATHS, top_k=10
-        )
-        # At least find in top-10 for Japanese
-        assert accuracy >= 0.5, f"Failed to retrieve '{expected}' for '{query}'"
 
 
 # =============================================================================
@@ -375,26 +241,9 @@ class TestRetrievalComparison:
 
 
 def main():
-    """Run full benchmark comparison."""
-    import gc
-
-    models = [
-        "all-MiniLM-L6-v2",  # Current model
-        "Qwen/Qwen3-Embedding-0.6B",  # Proposed model
-    ]
-
-    results = []
-    for model_name in models:
-        try:
-            result = benchmark_model(model_name)
-            results.append(result)
-            # Free memory between models to avoid OOM on low-RAM systems
-            gc.collect()
-        except Exception as e:
-            print(f"  ✗ Error: {e}")
-
-    if len(results) > 1:
-        print_comparison(results)
+    """Run MiniLM benchmark."""
+    result = benchmark_model("all-MiniLM-L6-v2")
+    print_comparison([result])
 
 
 if __name__ == "__main__":
