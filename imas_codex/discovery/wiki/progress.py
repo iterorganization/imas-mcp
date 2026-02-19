@@ -117,7 +117,7 @@ class ImageItem:
 
     @property
     def display_name(self) -> str:
-        """Human-readable name: filename from source_url, page title, or ID."""
+        """Human-readable name: filename from source_url, page title, or short ID."""
         if self.source_url:
             # Extract filename from URL
             from urllib.parse import unquote, urlparse
@@ -128,6 +128,10 @@ class ImageItem:
                 return filename
         if self.page_title:
             return self.page_title
+        # Strip facility prefix from graph key (e.g., "jet:54dbfb4a" → "image 54dbfb4a")
+        if ":" in self.image_id:
+            short_hash = self.image_id.split(":", 1)[1][:12]
+            return f"image {short_hash}"
         return self.image_id
 
 
@@ -685,7 +689,10 @@ class WikiProgressDisplay:
         # TRIAGE activity
         score = self.state.current_score
         triage_text = ""
-        triage_detail: list[tuple[str, str]] | None = None
+        triage_score: float | None = None
+        triage_domain = ""
+        triage_desc = ""
+        triage_desc_fallback = ""
         triage_complete = False
         triage_complete_label = "complete"
         if self._worker_complete("triage") and not score:
@@ -698,36 +705,36 @@ class WikiProgressDisplay:
             triage_text = self._clip_title(score.title, content_width - LABEL_WIDTH)
             if score.skipped:
                 reason = score.skip_reason[:40] if score.skip_reason else ""
-                triage_detail = [(f"skipped: {reason}", "yellow dim")]
+                triage_desc_fallback = f"skipped: {reason}"
             else:
-                triage_detail = self._score_detail(
-                    score.score,
-                    score.physics_domain,
-                    score.description,
-                    is_physics=score.is_physics,
-                    content_width=content_width,
+                triage_score = score.score
+                triage_domain = score.physics_domain or (
+                    "physics" if score.is_physics else ""
                 )
+                triage_desc = score.description
 
         # PAGES activity
         ingest = self.state.current_ingest
         pages_text = ""
-        pages_detail: list[tuple[str, str]] | None = None
+        pages_score: float | None = None
+        pages_domain = ""
+        pages_desc = ""
         pages_complete = False
         if self._worker_complete("pages") and not ingest:
             pages_complete = True
         if ingest:
             pages_text = self._clip_title(ingest.title, content_width - LABEL_WIDTH)
-            pages_detail = self._score_detail(
-                ingest.score,
-                ingest.physics_domain,
-                ingest.description,
-                content_width=content_width,
-            )
+            pages_score = ingest.score
+            pages_domain = ingest.physics_domain or ""
+            pages_desc = ingest.description
 
         # DOCS activity
         artifact = self.state.current_artifact
         docs_text = ""
-        docs_detail: list[tuple[str, str]] | None = None
+        docs_score: float | None = None
+        docs_domain = ""
+        docs_desc = ""
+        docs_desc_fallback = ""
         docs_complete = False
         docs_complete_label = "complete"
         if self._worker_complete("docs") and not artifact:
@@ -743,17 +750,26 @@ class WikiProgressDisplay:
             elif artifact.score is not None and artifact.score < 0.5:
                 display_name += " (skipped)"
             docs_text = self._clip_title(display_name, content_width - LABEL_WIDTH)
-            docs_detail = self._score_detail(
-                artifact.score,
-                artifact.physics_domain,
-                artifact.description,
-                content_width=content_width,
-            )
+            docs_score = artifact.score
+            docs_domain = artifact.physics_domain or ""
+            docs_desc = artifact.description
+            # Fallback for image-type artifacts with no description
+            if not docs_desc and artifact.artifact_type:
+                atype = artifact.artifact_type.lower()
+                if atype in ("png", "jpg", "jpeg", "gif", "svg", "bmp", "tiff"):
+                    docs_desc_fallback = f"scoring {atype.upper()} image with VLM"
+                elif atype in ("pdf",):
+                    docs_desc_fallback = "extracting text from PDF"
+                else:
+                    docs_desc_fallback = f"processing {atype} artifact"
 
         # IMAGES activity
         image = self.state.current_image
         images_text = ""
-        images_detail: list[tuple[str, str]] | None = None
+        images_score: float | None = None
+        images_domain = ""
+        images_desc = ""
+        images_desc_fallback = ""
         images_complete = False
         images_complete_label = "complete"
         if self._worker_complete("images") and not image:
@@ -766,13 +782,11 @@ class WikiProgressDisplay:
             images_text = self._clip_title(
                 image.display_name, content_width - LABEL_WIDTH
             )
-            desc = image.description
-            images_detail = self._score_detail(
-                image.score,
-                image.physics_domain,
-                desc,
-                content_width=content_width,
-            )
+            images_score = image.score
+            images_domain = image.physics_domain or ""
+            images_desc = image.description
+            if not images_desc:
+                images_desc_fallback = "scoring image with VLM"
 
         # --- Build pipeline rows ---
 
@@ -794,7 +808,10 @@ class WikiProgressDisplay:
                 worker_count=triage_count,
                 worker_annotation=triage_ann,
                 primary_text=triage_text,
-                detail_parts=triage_detail,
+                score_value=triage_score,
+                physics_domain=triage_domain,
+                description=triage_desc,
+                description_fallback=triage_desc_fallback,
                 is_processing=self.state.score_processing,
                 is_complete=triage_complete,
                 complete_label=triage_complete_label,
@@ -817,7 +834,9 @@ class WikiProgressDisplay:
                 worker_count=pages_count,
                 worker_annotation=pages_ann,
                 primary_text=pages_text,
-                detail_parts=pages_detail,
+                score_value=pages_score,
+                physics_domain=pages_domain,
+                description=pages_desc,
                 is_processing=self.state.ingest_processing,
                 is_complete=pages_complete,
                 is_paused=is_paused,
@@ -840,7 +859,10 @@ class WikiProgressDisplay:
                 worker_count=docs_count,
                 worker_annotation=docs_ann,
                 primary_text=docs_text,
-                detail_parts=docs_detail,
+                score_value=docs_score,
+                physics_domain=docs_domain,
+                description=docs_desc,
+                description_fallback=docs_desc_fallback,
                 is_processing=self.state.artifact_processing,
                 is_complete=docs_complete,
                 complete_label=docs_complete_label,
@@ -870,7 +892,10 @@ class WikiProgressDisplay:
                 worker_count=images_count,
                 worker_annotation=images_ann,
                 primary_text=images_text,
-                detail_parts=images_detail,
+                score_value=images_score,
+                physics_domain=images_domain,
+                description=images_desc,
+                description_fallback=images_desc_fallback,
                 is_processing=self.state.image_processing,
                 is_complete=images_complete,
                 complete_label=images_complete_label,

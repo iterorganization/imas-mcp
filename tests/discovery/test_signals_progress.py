@@ -594,13 +594,13 @@ class TestDataProgressDisplay:
         assert "$1.50" in text
 
     def test_pipeline_shows_rate(self):
-        """Pipeline shows discover rate."""
+        """Pipeline shows discover rate with 2dp."""
         display = self._display()
         display.state.total_signals = 100
         display.state.discover_rate = 83.4
         section = display._build_pipeline_section()
         text = section.plain
-        assert "83.4/s" in text
+        assert "83.40/s" in text
 
     def test_pipeline_worker_count_annotations(self):
         """Pipeline shows worker count from SupervisedWorkerGroup."""
@@ -624,8 +624,8 @@ class TestDataProgressDisplay:
 
         section = display._build_pipeline_section()
         text = section.plain
-        assert "×1" in text  # scan workers
-        assert "×2" in text  # enrich workers
+        assert "x1" in text  # scan workers
+        assert "x2" in text  # enrich workers
 
     def test_resources_section_has_time(self):
         """Resources section shows TIME."""

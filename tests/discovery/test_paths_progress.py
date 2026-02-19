@@ -423,13 +423,13 @@ class TestParallelProgressDisplay:
         assert "$2.50" in text
 
     def test_pipeline_shows_rate(self):
-        """Pipeline shows processing rate."""
+        """Pipeline shows processing rate with 2dp."""
         display = self._display()
         display.state.total = 100
         display.state.scan_rate = 77.1
         section = display._build_pipeline_section()
         text = section.plain
-        assert "77.1/s" in text
+        assert "77.10/s" in text
 
     def test_resources_section_has_time(self):
         """Resources section shows TIME row."""
@@ -718,5 +718,5 @@ class TestWorkerStatusUpdate:
         text = section.plain
 
         # Worker counts should appear as "×N" in the output
-        assert "×2" in text  # scan group (scan + expand)
-        assert "×1" in text  # score or enrich group
+        assert "x2" in text  # scan group (scan + expand)
+        assert "x1" in text  # score or enrich group

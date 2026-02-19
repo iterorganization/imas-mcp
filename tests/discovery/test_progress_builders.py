@@ -205,7 +205,7 @@ class TestBuildPipelineSection:
         assert "$" not in result.plain
 
     def test_worker_count_annotation(self):
-        """Worker count shows ×N suffix."""
+        """Worker count shows xN in label."""
         rows = [
             PipelineRowConfig(
                 name="TRIAGE",
@@ -217,10 +217,10 @@ class TestBuildPipelineSection:
             ),
         ]
         result = build_pipeline_section(rows, bar_width=20)
-        assert "×4" in result.plain
+        assert "x4" in result.plain
 
     def test_worker_annotation_with_backoff(self):
-        """Worker annotation adds extra info after ×N."""
+        """Worker annotation adds extra info after xN."""
         rows = [
             PipelineRowConfig(
                 name="DOCS",
@@ -233,7 +233,7 @@ class TestBuildPipelineSection:
             ),
         ]
         result = build_pipeline_section(rows, bar_width=20)
-        assert "×2" in result.plain
+        assert "x2" in result.plain
         assert "1 backoff" in result.plain
 
     def test_idle_state(self):
@@ -357,7 +357,7 @@ class TestBuildPipelineSection:
         assert row_empty.has_content is False
 
     def test_rate_displayed(self):
-        """Rate appears as N/s."""
+        """Rate appears as N.NN/s (2 decimal places)."""
         rows = [
             PipelineRowConfig(
                 name="TRIAGE",
@@ -368,7 +368,7 @@ class TestBuildPipelineSection:
             ),
         ]
         result = build_pipeline_section(rows, bar_width=20)
-        assert "3.7/s" in result.plain
+        assert "3.70/s" in result.plain
 
     def test_percentage_displayed(self):
         """Percentage is shown when show_pct=True (default)."""

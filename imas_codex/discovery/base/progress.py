@@ -387,7 +387,7 @@ class WorkerStats:
 # wrapping by reserving extra space for their longer trailing text.
 
 LABEL_WIDTH = 10
-METRICS_WIDTH = 22
+METRICS_WIDTH = 30
 GAUGE_METRICS_WIDTH = 32
 MIN_WIDTH = 80
 
@@ -454,9 +454,13 @@ class PipelineRowConfig:
     Unified pipeline row combining progress bar and current activity
     into a single block.  Each pipeline stage renders as:
 
-        TRIAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━    2,238  29%  0.2/s  $8.30
-               Mailinglists                                            ×4
-               0.00  general  Information regarding SPC mailing lists...
+        TRIAGE x2 ━━━━━━━━━━━━━━━━━━━━━━    2,238  29%  0.23/s  $8.30
+          0.85  electromagnetic_wave_diagnostics  Thomson Scattering
+                General documentation for Thomson Scattering diagnostics...
+
+    Line 1: worker name + multiplier + progress bar + count + pct + rate + cost
+    Line 2: score (left-aligned with name) + physics domain (at bar start) + resource name
+    Line 3: LLM/VLM description (at bar start), or fallback note if absent
 
     This is the standard layout for discovery CLI tools that want
     integrated per-stage progress and activity display.
@@ -479,9 +483,15 @@ class PipelineRowConfig:
     worker_count: int = 0  # Number of workers in this group
     worker_annotation: str = ""  # e.g., "(1 backoff)" or "(budget)"
 
-    # Activity (current item)
-    primary_text: str = ""  # Line 2: current item title/path
-    detail_parts: list[tuple[str, str]] | None = None  # Line 3: score+domain+desc
+    # Activity (current item) — structured fields (preferred)
+    primary_text: str = ""  # Resource name (shown on line 2)
+    score_value: float | None = None  # Score (shown on line 2, left-aligned with name)
+    physics_domain: str = ""  # Physics domain (shown on line 2, at bar start)
+    description: str = ""  # LLM/VLM description (shown on line 3, at bar start)
+    description_fallback: str = ""  # Shown on line 3 when description is empty
+
+    # Legacy: detail_parts as (text, style) tuples — used when structured fields are not set
+    detail_parts: list[tuple[str, str]] | None = None
 
     # Activity state (used when no primary_text)
     is_processing: bool = False
@@ -496,14 +506,24 @@ class PipelineRowConfig:
         """True when an item is available to display."""
         return bool(self.primary_text)
 
+    @property
+    def has_structured_detail(self) -> bool:
+        """True when structured fields are populated (preferred over detail_parts)."""
+        return bool(
+            self.score_value is not None
+            or self.physics_domain
+            or self.description
+            or self.description_fallback
+        )
+
 
 def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     """Build a unified pipeline row (progress bar + activity).
 
     Renders 3 lines:
-      Line 1: label + progress bar + count + pct + rate + cost
-      Line 2: current item title + worker count annotation
-      Line 3: detail (score, domain, description)
+      Line 1: NAME xN + progress bar + count + pct + rate + cost
+      Line 2: score (at label col) + physics_domain (at bar col) + resource name
+      Line 3: LLM description (at bar col), or fallback note
 
     Args:
         config: Pipeline row configuration.
@@ -517,13 +537,27 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         row.append(f"    {config.disabled_msg}", style="dim italic")
         return row
 
+    # Compute label column: "  NAME" + optional " xN"
+    label = f"  {config.name}"
+    if config.worker_count > 0:
+        label += f" x{config.worker_count}"
+    if config.worker_annotation:
+        label += f" {config.worker_annotation}"
+    # Pad to LABEL_WIDTH (minimum), expand if label is longer
+    label_len = max(LABEL_WIDTH, len(label) + 1)
+    label = label.ljust(label_len)
+
+    # Adjust bar width so total line width stays consistent
+    effective_bar = bar_width - max(0, label_len - LABEL_WIDTH)
+    effective_bar = max(effective_bar, 10)  # minimum bar width
+
     # Line 1: Label + progress bar + metrics
-    row.append(f"  {config.name:<6} ", style=config.style)
+    row.append(label, style=config.style)
 
     total = max(config.total, 1)
     ratio = min(config.completed / total, 1.0)
     pct = ratio * 100
-    row.append(make_bar(ratio, bar_width), style=config.style.split()[-1])
+    row.append(make_bar(ratio, effective_bar), style=config.style.split()[-1])
 
     row.append(f" {config.completed:>6,}", style="bold")
     if config.show_pct:
@@ -532,41 +566,70 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         row.append("     ", style="dim")
 
     if config.rate and config.rate > 0:
-        row.append(f" {config.rate:>5.1f}/s", style="dim")
+        row.append(f" {config.rate:>4.2f}/s", style="dim")
 
     if config.cost is not None and config.cost > 0:
         row.append(f"  ${config.cost:.2f}", style="yellow dim")
 
-    # Line 2: Current item + worker count
+    # Line 2: Score + physics domain + resource name  (or status text)
     row.append("\n")
-    row.append("         ", style="dim")  # indent to align with bar
 
-    if config.has_content:
+    if config.has_content and config.has_structured_detail:
+        # Structured layout: score at label col, domain+name at bar col
+        score_text = ""
+        if config.score_value is not None:
+            score_style = (
+                "bold green"
+                if config.score_value >= 0.7
+                else "yellow"
+                if config.score_value >= 0.4
+                else "red"
+            )
+            score_text = f"{config.score_value:.2f}"
+            row.append(f"    {score_text}  ", style=score_style)
+            # Pad to bar column start
+            pad = max(0, label_len - 4 - len(score_text) - 2)
+            if pad > 0:
+                row.append(" " * pad)
+        else:
+            row.append(" " * label_len)
+
+        # Physics domain + resource name at bar column
+        if config.physics_domain:
+            row.append(config.physics_domain, style="cyan")
+            row.append("  ", style="dim")
         row.append(config.primary_text, style="white")
-    elif config.is_processing:
-        label = "paused" if config.is_paused else config.processing_label
-        style = "dim italic" if config.is_paused else "cyan italic"
-        row.append(label, style=style)
-    elif config.queue_size > 0:
-        row.append(f"streaming {config.queue_size} items...", style="cyan italic")
-    elif config.is_complete:
-        row.append(config.complete_label, style="green")
-    elif config.is_paused:
-        row.append("paused", style="dim italic")
+    elif config.has_content:
+        # Legacy layout: just resource name indented
+        row.append(" " * label_len)
+        row.append(config.primary_text, style="white")
     else:
-        row.append("idle", style="dim italic")
+        # No content: show status text
+        row.append(" " * label_len)
+        if config.is_processing:
+            lbl = "paused" if config.is_paused else config.processing_label
+            sty = "dim italic" if config.is_paused else "cyan italic"
+            row.append(lbl, style=sty)
+        elif config.queue_size > 0:
+            row.append(f"streaming {config.queue_size} items...", style="cyan italic")
+        elif config.is_complete:
+            row.append(config.complete_label, style="green")
+        elif config.is_paused:
+            row.append("paused", style="dim italic")
+        else:
+            row.append("idle", style="dim italic")
 
-    # Worker count annotation (right-aligned conceptually, appended after text)
-    if config.worker_count > 0:
-        annotation = f"  ×{config.worker_count}"
-        if config.worker_annotation:
-            annotation += f" {config.worker_annotation}"
-        row.append(annotation, style="dim")
-
-    # Line 3: Detail parts (score + domain + description)
+    # Line 3: Description (at bar col) or fallback, or legacy detail_parts
     row.append("\n")
-    row.append("    ", style="dim")  # indent
-    if config.detail_parts:
+    if config.has_structured_detail:
+        row.append(" " * label_len)  # indent to bar column
+        if config.description:
+            desc = clean_text(config.description)
+            row.append(clip_text(desc, max(10, bar_width + 20)), style="italic dim")
+        elif config.description_fallback:
+            row.append(config.description_fallback, style="cyan dim italic")
+    elif config.detail_parts:
+        row.append("    ", style="dim")  # legacy indent
         for text, style in config.detail_parts:
             row.append(text, style=style)
 
