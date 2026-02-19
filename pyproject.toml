@@ -224,6 +224,7 @@ locations = ["iter", "tcv", "jt-60sa", "jet", "west", "mast-u", "asdex-u", "east
 # Override active graph name: IMAS_CODEX_GRAPH=dev
 location = "iter"
 scheduler = "slurm"     # job scheduler: "slurm" or omit for login-node systemd
+neo4j-version = "2026.01.4-community"  # Docker tag for Apptainer image
 username = "neo4j"
 password = "imas-codex"
 

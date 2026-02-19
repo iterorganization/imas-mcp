@@ -2,7 +2,7 @@ services:
   # Neo4j knowledge graph database
   # Alternative for systems without Docker: use Apptainer (see AGENTS.md)
   neo4j:
-    image: neo4j:2025.11-community
+    image: neo4j:2026.01.4-community
     ports:
       - "${BOLT_PORT:-7687}:${BOLT_PORT:-7687}"
       - "${HTTP_PORT:-7474}:${HTTP_PORT:-7474}"

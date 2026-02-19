@@ -47,4 +47,4 @@ exec uv run --offline --extra gpu imas-codex serve embed start \
     --port 18765 \
     --gpus 0,1,2,3 \
     --workers 4 \
-    --location titan
+    --deploy-label titan

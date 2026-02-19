@@ -30,6 +30,13 @@ REMOTE_LINK = f"{REMOTE_BASE}/neo4j"
 REMOTE_EXPORTS = f"{REMOTE_BASE}/exports"
 
 
+def _neo4j_image_shell() -> str:
+    """Shell-expandable Neo4j SIF path (uses ``$HOME``)."""
+    from imas_codex.settings import get_neo4j_version
+
+    return f"$HOME/apptainer/neo4j_{get_neo4j_version()}.sif"
+
+
 # ── Directory operations ────────────────────────────────────────────────────
 
 
@@ -311,7 +318,7 @@ def remote_set_initial_password(
 
     cmd = (
         f"apptainer exec --bind {REMOTE_LINK}/data:/data --writable-tmpfs "
-        f'"$HOME/apptainer/neo4j_2025.11-community.sif" '
+        f"{_neo4j_image_shell()} "
         f"neo4j-admin dbms set-initial-password {password}"
     )
     run_command(cmd, ssh_host=ssh_host, timeout=60)
@@ -438,7 +445,7 @@ ARCHIVE="{archive_remote_path}"
 DATA_DIR="{REMOTE_LINK}"
 SERVICE_OLD="imas-codex-neo4j"
 SERVICE_NEW="imas-codex-neo4j-{graph_name}"
-IMAGE="$HOME/apptainer/neo4j_2025.11-community.sif"
+IMAGE="{_neo4j_image_shell()}"
 
 # Stop Neo4j — let systemd handle the full shutdown lifecycle.
 # Do NOT pkill separately; that races with ExecStop and causes SIGSEGV.
@@ -524,7 +531,7 @@ DATA_DIR="{REMOTE_LINK}"
 EXPORTS="{REMOTE_EXPORTS}"
 SERVICE_OLD="imas-codex-neo4j"
 SERVICE_NEW="imas-codex-neo4j-{graph_name}"
-IMAGE="$HOME/apptainer/neo4j_2025.11-community.sif"
+IMAGE="{_neo4j_image_shell()}"
 mkdir -p "$EXPORTS" && chmod 700 "$EXPORTS"
 ARCHIVE="$EXPORTS/imas-codex-graph-export-$$.tar.gz"
 
@@ -838,7 +845,7 @@ ARCHIVE="{archive_remote_path}"
 DATA_DIR="{REMOTE_LINK}"
 SERVICE_OLD="imas-codex-neo4j"
 SERVICE_NEW="imas-codex-neo4j-{graph_name}"
-IMAGE="$HOME/apptainer/neo4j_2025.11-community.sif"
+IMAGE="{_neo4j_image_shell()}"
 
 echo "PROGRESS:STOPPING"
 systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
@@ -905,7 +912,7 @@ DATA_DIR="{REMOTE_LINK}"
 EXPORTS="{REMOTE_EXPORTS}"
 SERVICE_OLD="imas-codex-neo4j"
 SERVICE_NEW="imas-codex-neo4j-{graph_name}"
-IMAGE="$HOME/apptainer/neo4j_2025.11-community.sif"
+IMAGE="{_neo4j_image_shell()}"
 mkdir -p "$EXPORTS" && chmod 700 "$EXPORTS"
 ARCHIVE="$EXPORTS/imas-codex-graph-export-$$.tar.gz"
 

@@ -809,10 +809,10 @@ def serve_embed() -> None:
     help="Auto-shutdown after N seconds of inactivity (0=disabled, 1800=30min)",
 )
 @click.option(
-    "--location",
+    "--deploy-label",
     default=None,
     type=str,
-    help="Deployment location label (e.g., 'titan', 'login'). Exposed in /health.",
+    help="Deployment label (e.g., 'titan', 'login'). Exposed in /health.",
 )
 @click.option(
     "--workers",
@@ -832,7 +832,7 @@ def embed_start(
     log_level: str,
     gpu: str | None,
     idle_timeout: int,
-    location: str | None,
+    deploy_label: str | None,
     workers: int,
     gpus: str | None,
 ) -> None:
@@ -889,12 +889,12 @@ def embed_start(
         embed_server._idle_timeout = idle_timeout
         logger.info(f"Idle timeout: {idle_timeout}s")
 
-    # Set deployment location label
-    if location:
+    # Set deployment label (exposed in /health)
+    if deploy_label:
         import imas_codex.embeddings.server as embed_server
 
-        embed_server._location = location
-        logger.info(f"Location: {location}")
+        embed_server._location = deploy_label
+        logger.info(f"Deploy label: {deploy_label}")
 
     logger.info(f"Starting embedding server on {host}:{port}")
 
@@ -1035,9 +1035,9 @@ def embed_status(url: str | None, local: bool) -> None:
 )
 @click.option("--gpu", default="1", help="CUDA device to use (default: 1)")
 @click.option(
-    "--location", default="login", help="Deployment location label (default: login)"
+    "--deploy-label", default="login", help="Deployment label (default: login)"
 )
-def embed_service(action: str, gpu: str, location: str) -> None:
+def embed_service(action: str, gpu: str, deploy_label: str) -> None:
     """Manage embedding server as systemd user service.
 
     Examples:
@@ -1091,7 +1091,7 @@ WorkingDirectory={project_dir}
 EnvironmentFile=-{env_file}
 Environment="PATH={Path.home()}/.local/bin:/usr/local/bin:/usr/bin"
 Environment="CUDA_VISIBLE_DEVICES={gpu}"
-ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex serve embed start --host 0.0.0.0 --port {port} --location {location}
+ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex serve embed start --host 0.0.0.0 --port {port} --deploy-label {deploy_label}
 ExecStop=/bin/kill -15 $MAINPID
 TimeoutStopSec=30
 Restart=on-failure
@@ -1571,8 +1571,10 @@ def _start_service(node: str, name: str, command: str) -> None:
         return
 
     # Write service command as a script on shared filesystem (via login node)
+    # Use 'exec' so the script's PID becomes the actual process PID,
+    # ensuring the .pid file tracks the real process (not a dead wrapper).
     svc_script = f"{_SERVICES_DIR}/{name}.sh"
-    script_content = f"#!/bin/bash\ncd {_PROJECT}\n{command}\n"
+    script_content = f"#!/bin/bash\ncd {_PROJECT}\nexec {command}\n"
     script_b64 = b64.b64encode(script_content.encode()).decode()
     _run_remote(
         f"mkdir -p {_SERVICES_DIR} && "
@@ -1635,15 +1637,20 @@ def _service_running(node: str, name: str) -> bool:
 
 
 def _clean_neo4j_locks(node: str) -> None:
-    """Remove Neo4j lock files on the compute node before starting.
+    """Remove Neo4j coordination lock files on the compute node.
 
-    GPFS can retain lock files after process death. Clear them
-    proactively to prevent startup failures.
+    GPFS can retain stale ``store_lock`` and ``database_lock`` files
+    after process death, preventing startup.
+
+    **CRITICAL**: Only remove these two coordination locks.  Never
+    delete Lucene ``write.lock`` files (inside ``schema/index/``
+    directories) — doing so corrupts vector indexes and can cause
+    total data loss via checkpoint failure.
     """
     clean = (
-        "find $HOME/.local/share/imas-codex/neo4j/data "
-        '-name "*.lock" -o -name store_lock 2>/dev/null | '
-        "xargs rm -f 2>/dev/null; echo locks_cleaned\n"
+        "DATA=$HOME/.local/share/imas-codex/neo4j/data && "
+        'rm -f "$DATA"/databases/store_lock "$DATA"/databases/*/database_lock '
+        "2>/dev/null; echo locks_cleaned\n"
     )
     try:
         _run_on_node(node, clean, timeout=15)
@@ -1680,35 +1687,35 @@ def _neo4j_service_command() -> str:
     node.  Port collisions between users are impossible because each
     user's allocation runs on a different node.
 
-    Uses the Docker entrypoint script (``/startup/docker-entrypoint.sh``)
-    which translates ``NEO4J_*`` env vars into ``neo4j.conf`` settings.
-    Running ``neo4j console`` directly skips this translation.
+    Uses ``neo4j console`` directly with a host-side ``conf/`` bind
+    mount for configuration.  **Never** use the Docker entrypoint —
+    it calls ``set-initial-password`` and ``rm -rf conf/*`` on every
+    start, which can reinitialize an existing database.
     """
     from imas_codex.graph.profiles import resolve_neo4j
-    from imas_codex.settings import get_graph_password
+    from imas_codex.settings import get_neo4j_image_shell
 
     profile = resolve_neo4j(auto_tunnel=False)
     bolt_port = profile.bolt_port
     http_port = profile.http_port
-    password = get_graph_password()
+    image = get_neo4j_image_shell()
 
     return (
-        f"NEO4J_PASSWORD=$(grep -oP '^NEO4J_PASSWORD=\\K.*' "
-        f"{_PROJECT}/.env 2>/dev/null || echo '{password}') && "
-        "mkdir -p $HOME/.local/share/imas-codex/neo4j/data "
-        "$HOME/.local/share/imas-codex/neo4j/logs "
-        "$HOME/.local/share/imas-codex/neo4j/import && "
+        "NEO4J_BASE=$HOME/.local/share/imas-codex/neo4j && "
+        'mkdir -p "$NEO4J_BASE"/{data,logs,import,conf} && '
+        # Write a minimal conf file for listen addresses
+        f'printf "server.bolt.listen_address=0.0.0.0:{bolt_port}\\n'
+        f"server.http.listen_address=0.0.0.0:{http_port}\\n"
+        f'server.default_listen_address=0.0.0.0\\n"'
+        f' > "$NEO4J_BASE/conf/neo4j.conf" && '
         "apptainer exec "
-        '--bind "$HOME/.local/share/imas-codex/neo4j/data:/data" '
-        '--bind "$HOME/.local/share/imas-codex/neo4j/logs:/logs" '
-        '--bind "$HOME/.local/share/imas-codex/neo4j/import:/import" '
+        '--bind "$NEO4J_BASE/data:/data" '
+        '--bind "$NEO4J_BASE/logs:/logs" '
+        '--bind "$NEO4J_BASE/import:/import" '
+        '--bind "$NEO4J_BASE/conf:/var/lib/neo4j/conf" '
         "--writable-tmpfs "
-        f'--env "NEO4J_AUTH=neo4j/$NEO4J_PASSWORD" '
-        f'--env "NEO4J_server_bolt_listen__address=0.0.0.0:{bolt_port}" '
-        f'--env "NEO4J_server_http_listen__address=0.0.0.0:{http_port}" '
-        '--env "NEO4J_server_default__listen__address=0.0.0.0" '
-        '"$HOME/apptainer/neo4j_2025.11-community.sif" '
-        "/startup/docker-entrypoint.sh neo4j"
+        f"{image} "
+        "neo4j console"
     )
 
 
@@ -1728,7 +1735,7 @@ def _embed_service_command(gpus: int, workers: int) -> str:
         f"CUDA_VISIBLE_DEVICES={gpu_ids} "
         "uv run --offline --extra gpu imas-codex serve embed start "
         f"--host 0.0.0.0 --port {port} "
-        f"--gpus {gpu_ids} --workers {workers} --location {partition_name}"
+        f"--gpus {gpu_ids} --workers {workers} --deploy-label {partition_name}"
     )
 
 
@@ -2420,7 +2427,8 @@ def serve_status() -> None:
     try:
         import httpx
 
-        resp = httpx.get(f"{llm_url}/health", timeout=3.0)
+        # Use root endpoint for alive check (no auth required)
+        resp = httpx.get(f"{llm_url}/", timeout=3.0)
         if resp.status_code == 200:
             click.echo("  ✓ Status: ok")
         else:

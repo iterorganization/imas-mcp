@@ -39,7 +39,7 @@ jobs:
 
     services:
       neo4j:
-        image: neo4j:2025.11-community
+        image: neo4j:2026.01.4-community
         ports:
           - 7474:7474
           - 7687:7687
@@ -110,7 +110,7 @@ jobs:
       - name: Stop Neo4j for dump load
         run: |
           # Stop Neo4j service container to load dump
-          docker stop $(docker ps -q --filter "ancestor=neo4j:2025.11-community") || true
+          docker stop $(docker ps -q --filter "ancestor=neo4j:2026.01.4-community") || true
           sleep 3
 
       - name: Load graph dump into Neo4j
@@ -133,21 +133,21 @@ jobs:
           echo "Found dump: ${DUMP_FILE}"
 
           # Get the Neo4j container ID for data volume
-          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2025.11-community" | head -1)
+          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
           NEO4J_DATA_VOLUME=$(docker inspect "${NEO4J_CONTAINER}" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
 
           # Load into Neo4j using a fresh container
           docker run --rm \
             -v "${NEO4J_DATA_VOLUME}:/data" \
             -v "$(dirname ${DUMP_FILE}):/dump" \
-            neo4j:2025.11-community \
+            neo4j:2026.01.4-community \
             neo4j-admin database load neo4j \
               --from-path=/dump \
               --overwrite-destination=true
 
       - name: Start Neo4j with loaded data
         run: |
-          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2025.11-community" | head -1)
+          NEO4J_CONTAINER=$(docker ps -aq --filter "ancestor=neo4j:2026.01.4-community" | head -1)
           docker start "${NEO4J_CONTAINER}"
 
           # Wait for Neo4j to come back up
@@ -168,13 +168,13 @@ jobs:
       - name: Reset Neo4j password
         run: |
           # After dump load, auth is reset. Set the password.
-          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2025.11-community" | head -1)
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
           docker exec "${NEO4J_CONTAINER}" neo4j-admin dbms set-initial-password imas-codex 2>/dev/null || true
 
       - name: Verify graph is loaded
         run: |
           # Quick sanity check with cypher-shell
-          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2025.11-community" | head -1)
+          NEO4J_CONTAINER=$(docker ps -q --filter "ancestor=neo4j:2026.01.4-community" | head -1)
           docker exec "${NEO4J_CONTAINER}" cypher-shell \
             -u neo4j -p imas-codex \
             "MATCH (n) RETURN count(n) AS nodes, labels(n)[0] AS label ORDER BY nodes DESC LIMIT 10"

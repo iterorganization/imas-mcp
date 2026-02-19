@@ -16,6 +16,7 @@ All settings support environment variable overrides (IMAS_CODEX_* prefix / NEO4J
 import importlib.resources
 import os
 from functools import cache
+from pathlib import Path
 
 try:
     import tomllib
@@ -402,6 +403,29 @@ def get_graph_name() -> str:
 def get_graph_location() -> str:
     """Get the active graph location (e.g. ``"iter"``, ``"local"``)."""
     return get_graph_profile().location
+
+
+def get_neo4j_version() -> str:
+    """Get the Neo4j Docker image tag (e.g. ``"2026.01.4-community"``).
+
+    Priority: NEO4J_VERSION env → [graph].neo4j-version → default.
+    """
+    if env := os.getenv("NEO4J_VERSION"):
+        return env
+    return _get_section("graph").get("neo4j-version", "2026.01.4-community")
+
+
+def get_neo4j_image_path() -> Path:
+    """Get the local Apptainer SIF image path for Neo4j."""
+    return Path.home() / "apptainer" / f"neo4j_{get_neo4j_version()}.sif"
+
+
+def get_neo4j_image_shell() -> str:
+    """Get the shell-expandable Apptainer SIF image path for Neo4j.
+
+    Uses ``$HOME`` so the path resolves correctly on remote nodes.
+    """
+    return f'"$HOME/apptainer/neo4j_{get_neo4j_version()}.sif"'
 
 
 # ─── Data dictionary settings ──────────────────────────────────────────────

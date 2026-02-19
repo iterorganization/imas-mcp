@@ -16,11 +16,11 @@ StartLimitBurst=5
 Type=simple
 
 # 1. Kill orphaned Apptainer/Neo4j processes
-ExecStartPre=-/bin/bash -c 'pkill -9 -f "neo4j_2025.*community.sif" 2>/dev/null || true'
+ExecStartPre=-/bin/bash -c 'pkill -9 -f "neo4j_.*community.sif" 2>/dev/null || true'
 ExecStartPre=-/bin/bash -c 'sleep 3'
-# 2. Break GPFS/NFS stale file locks via copy-replace on neostore files
-#    On networked filesystems, POSIX locks can survive process death.
-#    Replacing the inode releases the stale lock.
+# 2. Break GPFS/NFS stale POSIX locks via inode replacement on neostore files,
+#    then remove coordination locks (store_lock, database_lock) only.
+#    NEVER delete Lucene write.lock files — doing so corrupts vector indexes.
 ExecStartPre=-/bin/bash -c '\
   DATA=%h/.local/share/imas-codex/neo4j/data/databases; \
   for db in system neo4j; do \
@@ -39,11 +39,11 @@ ExecStart=/usr/bin/apptainer exec \
     --bind %h/.local/share/imas-codex/neo4j/conf:/var/lib/neo4j/conf \
     --writable-tmpfs \
     --env "NEO4J_server_jvm_additional=-Dfile.encoding=UTF-8 --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED" \
-    %h/apptainer/neo4j_2025.11-community.sif \
+    %h/apptainer/neo4j_2026.01.4-community.sif \
     neo4j console
 
 # Graceful shutdown with timeout
-ExecStop=-/bin/bash -c 'pkill -15 -f "neo4j_2025.*community.sif"; sleep 10; pkill -9 -f "neo4j_2025.*community.sif" || true'
+ExecStop=-/bin/bash -c 'pkill -15 -f "neo4j_.*community.sif"; sleep 10; pkill -9 -f "neo4j_.*community.sif" || true'
 TimeoutStopSec=60
 
 Restart=on-failure

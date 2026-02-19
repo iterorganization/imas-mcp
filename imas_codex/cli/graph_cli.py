@@ -34,9 +34,19 @@ if TYPE_CHECKING:
 SERVICES_DIR = Path("imas_codex/config/services")
 RECOVERY_DIR = Path.home() / ".local" / "share" / "imas-codex" / "recovery"
 DATA_DIR = Path.home() / ".local" / "share" / "imas-codex" / "neo4j"
-NEO4J_IMAGE = Path.home() / "apptainer" / "neo4j_2025.11-community.sif"
 LOCAL_GRAPH_MANIFEST = Path.home() / ".config" / "imas-codex" / "graph-manifest.json"
 NEO4J_LOCK_FILE = Path.home() / ".config" / "imas-codex" / "neo4j-operation.lock"
+
+
+def _neo4j_image() -> Path:
+    """Resolve the Neo4j Apptainer SIF image path."""
+    from imas_codex.settings import get_neo4j_image_path
+
+    return get_neo4j_image_path()
+
+
+# Keep module-level name for backward compat with CLI --image defaults
+NEO4J_IMAGE = _neo4j_image()
 
 
 # ============================================================================
@@ -185,7 +195,7 @@ class Neo4jOperation:
             return
 
         subprocess.run(
-            ["pkill", "-15", "-f", "neo4j_2025.*community.sif"],
+            ["pkill", "-15", "-f", "neo4j_.*community.sif"],
             capture_output=True,
         )
         subprocess.run(
@@ -701,9 +711,11 @@ def graph_start(
     data_path = Path(data_dir) if data_dir else profile.data_dir
 
     if not image_path.exists():
+        from imas_codex.settings import get_neo4j_version
+
         raise click.ClickException(
             f"Neo4j image not found: {image_path}\n"
-            "Pull: apptainer pull docker://neo4j:2025.11-community"
+            f"Pull: apptainer pull docker://neo4j:{get_neo4j_version()}"
         )
 
     if is_neo4j_running(profile.http_port):
@@ -1037,9 +1049,11 @@ def graph_service_install(
         raise click.ClickException(conflict)
 
     if not image_path.exists():
+        from imas_codex.settings import get_neo4j_version
+
         raise click.ClickException(
             f"Neo4j image not found: {image_path}\n"
-            "Pull: apptainer pull docker://neo4j:2025.11-community"
+            f"Pull: apptainer pull docker://neo4j:{get_neo4j_version()}"
         )
 
     service_dir.mkdir(parents=True, exist_ok=True)

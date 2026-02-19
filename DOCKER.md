@@ -38,7 +38,7 @@ curl -s http://localhost:7474
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEO4J_VERSION` | `2025.11-community` | Neo4j Docker image tag |
+| `NEO4J_VERSION` | `2026.01.4-community` | Neo4j Docker image tag |
 | `NEO4J_PASSWORD` | `imas-codex` | Neo4j password |
 | `NEO4J_DATA_DIR` | `~/.local/share/imas-codex/neo4j` | Data directory |
 | `NEO4J_SIF_DIR` | `~/apptainer` | Container image location |

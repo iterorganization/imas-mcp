@@ -8,7 +8,7 @@
 #   --user    Install as user service (requires working systemd user session)
 #
 # Environment variables:
-#   NEO4J_VERSION   - Neo4j version (default: 2025.11-community)
+#   NEO4J_VERSION   - Neo4j version (default: 2026.01.4-community)
 #   NEO4J_PASSWORD  - Neo4j password (default: imas-codex)
 #   NEO4J_DATA_DIR  - Data directory (default: ~/.local/share/imas-codex/neo4j)
 #   NEO4J_SIF_DIR   - Container image directory (default: ~/apptainer)
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 # Configuration
-NEO4J_VERSION="${NEO4J_VERSION:-2025.11-community}"
+NEO4J_VERSION="${NEO4J_VERSION:-2026.01.4-community}"
 NEO4J_PASSWORD="${NEO4J_PASSWORD:-imas-codex}"
 NEO4J_DATA_DIR="${NEO4J_DATA_DIR:-$HOME/.local/share/imas-codex/neo4j}"
 NEO4J_SIF_DIR="${NEO4J_SIF_DIR:-$HOME/apptainer}"
