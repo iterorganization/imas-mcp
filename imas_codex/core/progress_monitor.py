@@ -11,6 +11,7 @@ from typing import Any
 
 try:
     from rich.console import Console
+    from rich.markup import escape as _rich_escape
     from rich.progress import (
         BarColumn,
         Progress,
@@ -28,6 +29,9 @@ except ImportError:
     BarColumn = Progress = SpinnerColumn = TaskID = TextColumn = TimeRemainingColumn = (
         TimeElapsedColumn
     ) = Console = Table = Any
+
+    def _rich_escape(text: str) -> str:  # type: ignore[misc]
+        return text
 
 
 def _resolve_rich(use_rich: bool | None) -> bool:
@@ -114,7 +118,10 @@ class ProgressMonitor:
         if self._use_rich and self._progress and self._task_id is not None:
             self._progress.update(self._task_id, advance=1)
             if error and self._console:
-                self._console.print(f"  [red]Error: {item_name}: {error}[/red]")
+                self._console.print(
+                    f"  [red]Error: {_rich_escape(item_name)}: "
+                    f"{_rich_escape(error)}[/red]"
+                )
         else:
             if error:
                 self.logger.error(f"{self._current_description}: {item_name}: {error}")
@@ -141,21 +148,21 @@ class ProgressMonitor:
     def log_info(self, message: str) -> None:
         """Log an info message compatible with Rich display."""
         if self._use_rich and self._progress:
-            self._progress.console.print(f"  [dim]{message}[/dim]")
+            self._progress.console.print(f"  [dim]{_rich_escape(message)}[/dim]")
         else:
             self.logger.info(message)
 
     def log_error(self, message: str) -> None:
         """Log an error message."""
         if self._use_rich and self._progress:
-            self._progress.console.print(f"  [red]{message}[/red]")
+            self._progress.console.print(f"  [red]{_rich_escape(message)}[/red]")
         else:
             self.logger.error(message)
 
     def log_warning(self, message: str) -> None:
         """Log a warning message."""
         if self._use_rich and self._progress:
-            self._progress.console.print(f"  [yellow]{message}[/yellow]")
+            self._progress.console.print(f"  [yellow]{_rich_escape(message)}[/yellow]")
         else:
             self.logger.warning(message)
 
@@ -350,7 +357,9 @@ class PhaseTracker:
             desc = self._template.format(item=(item or "").ljust(self._max_width))
             self._progress.update(self._task_id, advance=1, description=desc)
             if error:
-                self._progress.console.print(f"  [red]{item}: {error}[/red]")
+                self._progress.console.print(
+                    f"  [red]{_rich_escape(item or '')}: {_rich_escape(error)}[/red]"
+                )
         elif not self._parent._use_rich and item:
             if error:
                 self._parent.logger.error(f"  {self._phase['name']}: {item}: {error}")
@@ -367,7 +376,7 @@ class PhaseTracker:
     def log(self, message: str) -> None:
         """Print a message within this phase (compatible with progress bar)."""
         if self._progress:
-            self._progress.console.print(f"  [dim]{message}[/dim]")
+            self._progress.console.print(f"  [dim]{_rich_escape(message)}[/dim]")
         else:
             self._parent.logger.info(f"  {message}")
 

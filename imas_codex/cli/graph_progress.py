@@ -19,6 +19,16 @@ from contextlib import contextmanager
 from imas_codex.cli.rich_output import should_use_rich
 
 
+def _escape(text: str) -> str:
+    """Escape Rich markup in text (brackets, etc.)."""
+    try:
+        from rich.markup import escape
+
+        return escape(text)
+    except ImportError:
+        return text
+
+
 class GraphProgress:
     """Multi-phase progress display for graph operations.
 
@@ -70,9 +80,12 @@ class GraphProgress:
         """Begin a new operation phase with a spinner."""
         self._phase_count += 1
         if self._total_phases:
-            label = f"[{self._phase_count}/{self._total_phases}] {description}"
+            step = f"[{self._phase_count}/{self._total_phases}]"
+            label = f"{_escape(step)} {_escape(description)}"
+            plain_label = f"{step} {description}"
         else:
-            label = description
+            label = _escape(description)
+            plain_label = description
         self._current_phase = description
 
         if self._use_rich and self._console:
@@ -85,21 +98,24 @@ class GraphProgress:
         else:
             import click
 
-            click.echo(f"  {label}...")
+            click.echo(f"  {plain_label}...")
 
     def update_phase(self, description: str) -> None:
         """Update the current phase description."""
         if self._total_phases:
-            label = f"[{self._phase_count}/{self._total_phases}] {description}"
+            step = f"[{self._phase_count}/{self._total_phases}]"
+            label = f"{_escape(step)} {_escape(description)}"
+            plain_label = f"{step} {description}"
         else:
-            label = description
+            label = _escape(description)
+            plain_label = description
 
         if self._use_rich and self._status:
             self._status.update(f"[bold blue]{label}[/]")
         else:
             import click
 
-            click.echo(f"  {label}...")
+            click.echo(f"  {plain_label}...")
 
     def complete_phase(self, detail: str | None = None) -> None:
         """Mark the current phase as complete."""
@@ -112,7 +128,7 @@ class GraphProgress:
             msg = f"{msg} ({detail})"
 
         if self._use_rich and self._console:
-            self._console.print(f"  [green]✓[/] {msg}")
+            self._console.print(f"  [green]✓[/] {_escape(msg)}")
         else:
             import click
 
@@ -129,7 +145,7 @@ class GraphProgress:
             msg = f"{msg}: {detail}"
 
         if self._use_rich and self._console:
-            self._console.print(f"  [red]✗[/] {msg}")
+            self._console.print(f"  [red]✗[/] {_escape(msg)}")
         else:
             import click
 

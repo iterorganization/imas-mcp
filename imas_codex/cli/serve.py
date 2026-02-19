@@ -585,6 +585,18 @@ def serve_embed() -> None:
     type=str,
     help="Deployment location label (e.g., 'titan', 'login'). Exposed in /health.",
 )
+@click.option(
+    "--workers",
+    default=1,
+    type=int,
+    help="Number of uvicorn worker processes (default: 1). Use with --gpus for multi-GPU.",
+)
+@click.option(
+    "--gpus",
+    default=None,
+    type=str,
+    help="Comma-separated GPU IDs for multi-worker mode (e.g., '0,1,2,3').",
+)
 def embed_start(
     host: str,
     port: int | None,
@@ -592,6 +604,8 @@ def embed_start(
     gpu: str | None,
     idle_timeout: int,
     location: str | None,
+    workers: int,
+    gpus: str | None,
 ) -> None:
     """Start the embedding server.
 
@@ -605,6 +619,9 @@ def embed_start(
         # Use specific GPU
         imas-codex serve embed start --gpu 1
 
+        # Multi-worker on 4 GPUs (Titan)
+        imas-codex serve embed start --gpus 0,1,2,3 --workers 4
+
         # Custom port
         imas-codex serve embed start --port 18766
 
@@ -617,10 +634,18 @@ def embed_start(
     for handler in root_logger.handlers:
         handler.setLevel(getattr(logging, log_level))
 
-    # Set GPU if specified
-    if gpu is not None:
+    # Set GPU if specified (single-GPU mode, mutually exclusive with --gpus)
+    if gpu is not None and gpus is None:
         os.environ["CUDA_VISIBLE_DEVICES"] = gpu
         logger.info(f"Using CUDA device: {gpu}")
+
+    # Multi-GPU mode: set GPU pool env var for worker processes to claim
+    if gpus is not None:
+        os.environ["IMAS_CODEX_GPU_POOL"] = gpus
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpus
+        if workers <= 1:
+            workers = len(gpus.split(","))
+        logger.info(f"Multi-GPU mode: pool={gpus}, workers={workers}")
 
     # Get port from settings if not specified
     if port is None:
@@ -647,9 +672,19 @@ def embed_start(
     try:
         import uvicorn
 
-        from imas_codex.embeddings.server import app
+        if workers > 1:
+            # Multi-worker requires import string (uvicorn forks new processes)
+            uvicorn.run(
+                "imas_codex.embeddings.server:app",
+                host=host,
+                port=port,
+                workers=workers,
+                log_level=log_level.lower(),
+            )
+        else:
+            from imas_codex.embeddings.server import app
 
-        uvicorn.run(app, host=host, port=port, log_level=log_level.lower())
+            uvicorn.run(app, host=host, port=port, log_level=log_level.lower())
     except ImportError as e:
         raise click.ClickException(
             f"Missing dependency: {e}. Install with: uv pip install uvicorn"
@@ -757,7 +792,9 @@ def embed_status(url: str | None, local: bool) -> None:
     "action", type=click.Choice(["install", "uninstall", "status", "start", "stop"])
 )
 @click.option("--gpu", default="1", help="CUDA device to use (default: 1)")
-@click.option("--location", default="login", help="Deployment location label (default: login)")
+@click.option(
+    "--location", default="login", help="Deployment location label (default: login)"
+)
 def embed_service(action: str, gpu: str, location: str) -> None:
     """Manage embedding server as systemd user service.
 

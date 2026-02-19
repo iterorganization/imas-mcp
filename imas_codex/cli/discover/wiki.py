@@ -10,6 +10,7 @@ import time
 
 import click
 from rich.console import Console
+from rich.markup import escape as rich_escape
 
 logger = logging.getLogger(__name__)
 
@@ -174,29 +175,41 @@ def wiki(
             backend = EmbeddingBackend.LOCAL
 
         if backend == EmbeddingBackend.REMOTE:
-            from rich.markup import escape as rich_escape
-
             from imas_codex.embeddings.readiness import ensure_embedding_ready
 
-            _style_map = {
-                "info": ("", ""),
-                "dim": ("[dim]", "[/dim]"),
-                "warning": ("[yellow]", "[/yellow]"),
-                "success": ("[green]", "[/green]"),
-                "error": ("[red]", "[/red]"),
-            }
+            if use_rich and console:
+                from rich.status import Status
 
-            def _readiness_log(msg: str, style: str = "info") -> None:
-                prefix, suffix = _style_map.get(style, ("", ""))
-                log_print(f"{prefix}{rich_escape(msg)}{suffix}")
+                with Status(
+                    "[cyan]Checking embedding server...[/cyan]",
+                    console=console,
+                    spinner="dots",
+                ) as status:
 
-            ok, msg = ensure_embedding_ready(log_fn=_readiness_log, timeout=60.0)
-            if not ok:
-                log_print(f"[red]{rich_escape(msg)}[/red]")
-                log_print(
-                    "[dim]Or use --scan-only / --score-only to skip embedding[/dim]"
-                )
-                raise SystemExit(1)
+                    def _readiness_status(msg: str) -> None:
+                        status.update(f"[cyan]{rich_escape(msg)}[/cyan]")
+
+                    ok, msg = ensure_embedding_ready(
+                        status_fn=_readiness_status, timeout=60.0
+                    )
+
+                if ok:
+                    log_print(f"[green]✓ {rich_escape(msg)}[/green]")
+                else:
+                    log_print(f"[red]{rich_escape(msg)}[/red]")
+                    log_print(
+                        "[dim]Or use --scan-only / --score-only to skip embedding[/dim]"
+                    )
+                    raise SystemExit(1)
+            else:
+
+                def _readiness_log(msg: str, style: str = "info") -> None:
+                    log_print(rich_escape(msg))
+
+                ok, msg = ensure_embedding_ready(log_fn=_readiness_log, timeout=60.0)
+                if not ok:
+                    log_print(msg)
+                    raise SystemExit(1)
 
     # Display wiki sites
     log_print(f"[bold]Documentation sources for {facility}:[/bold]")
@@ -476,18 +489,20 @@ def wiki(
                 from rich.status import Status
 
                 with Status(
-                    f"[cyan]Bulk discovery: {base_url}...[/cyan]",
+                    f"[cyan]Bulk discovery: {rich_escape(base_url)}...[/cyan]",
                     console=console,
                     spinner="dots",
                 ) as status:
 
                     def bulk_progress_rich(msg, _, _url=base_url):
+                        safe_url = rich_escape(_url)
+                        safe_msg = rich_escape(msg)
                         if "pages" in msg:
-                            status.update(f"[cyan]{_url}: {msg}[/cyan]")
+                            status.update(f"[cyan]{safe_url}: {safe_msg}[/cyan]")
                         elif "creating" in msg:
-                            status.update(f"[cyan]{_url}: {msg}[/cyan]")
+                            status.update(f"[cyan]{safe_url}: {safe_msg}[/cyan]")
                         elif "created" in msg:
-                            status.update(f"[green]{_url}: {msg}[/green]")
+                            status.update(f"[green]{safe_url}: {safe_msg}[/green]")
 
                     bulk_discovered = bulk_discover_pages(
                         **discover_kwargs, on_progress=bulk_progress_rich
@@ -551,18 +566,22 @@ def wiki(
                 from rich.status import Status
 
                 with Status(
-                    f"[cyan]Artifact discovery: {base_url}...[/cyan]",
+                    f"[cyan]Artifact discovery: {rich_escape(base_url)}...[/cyan]",
                     console=console,
                     spinner="dots",
                 ) as status:
 
                     def artifact_progress_rich(msg, _, _url=base_url):
+                        safe_url = rich_escape(_url)
+                        safe_msg = rich_escape(msg)
                         if "scanned" in msg or "scanning" in msg:
-                            status.update(f"[cyan]{_url}: {msg}[/cyan]")
+                            status.update(f"[cyan]{safe_url}: {safe_msg}[/cyan]")
                         elif "batch" in msg:
-                            status.update(f"[cyan]{_url} artifacts: {msg}[/cyan]")
+                            status.update(
+                                f"[cyan]{safe_url} artifacts: {safe_msg}[/cyan]"
+                            )
                         elif "created" in msg or "discovered" in msg:
-                            status.update(f"[green]{_url}: {msg}[/green]")
+                            status.update(f"[green]{safe_url}: {safe_msg}[/green]")
 
                     artifacts_discovered, page_artifacts = bulk_discover_artifacts(
                         facility=facility,

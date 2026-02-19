@@ -128,6 +128,7 @@ def _ensure_ssh_tunnel(port: int, ssh_host: str | None = None) -> bool:
 
 def ensure_embedding_ready(
     log_fn: callable | None = None,
+    status_fn: callable | None = None,
     timeout: float = 30.0,
 ) -> tuple[bool, str]:
     """Ensure the remote embedding server is available and ready.
@@ -138,7 +139,12 @@ def ensure_embedding_ready(
 
     Args:
         log_fn: Optional callback for status messages: log_fn(message, style)
-                style is "info", "warning", "success", or "dim"
+                style is "info", "warning", "success", or "dim".
+                Each call prints a new line.
+        status_fn: Optional callback for single-line status updates:
+                   status_fn(message). Updates the same line in-place
+                   (e.g. a Rich Status spinner). Preferred over log_fn
+                   for clean progress display.
         timeout: Maximum time to wait for server readiness (seconds)
 
     Returns:
@@ -148,7 +154,9 @@ def ensure_embedding_ready(
     from imas_codex.settings import get_embed_remote_url, get_embed_server_port
 
     def log(msg: str, style: str = "info") -> None:
-        if log_fn:
+        if status_fn:
+            status_fn(msg)
+        elif log_fn:
             log_fn(msg, style)
         logger.info(msg)
 
@@ -187,7 +195,9 @@ def ensure_embedding_ready(
     # Skip on compute nodes — no D-Bus/systemd user session there.
     # Also skip if embed server is on a separate host (e.g. Titan).
     embed_host = _get_embed_host()
-    embed_on_login = embed_host == ITER_LOGIN_HOST or embed_host.startswith("98dci4-srv")
+    embed_on_login = embed_host == ITER_LOGIN_HOST or embed_host.startswith(
+        "98dci4-srv"
+    )
     if on_iter and _is_on_iter_login() and embed_on_login:
         log("Trying to start embedding service...", "dim")
         _try_start_service()

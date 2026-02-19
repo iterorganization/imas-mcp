@@ -1,32 +1,31 @@
 """FastAPI embedding server for GPU-accelerated remote embedding.
 
-Runs on the ITER login node using a T4 GPU and provides an HTTP API
-for embedding text.  Clients connect via localhost (on ITER) or the
-network (from SLURM compute nodes or workstation SSH tunnel).
+Provides an HTTP API for embedding text using GPU acceleration.
+Clients connect via localhost, direct network, or SSH tunnel.
 
-GPU Memory Protection:
-    The login node T4 GPUs are shared with NoMachine desktop sessions
-    (gnome-shell, firefox, paraview, etc.) which consume unpredictable
-    amounts of VRAM.  The server caps its memory fraction to 0.6 of
-    total VRAM, uses small batch sizes, and clears CUDA cache after
-    each batch to coexist safely with other GPU consumers.
+Multi-worker mode::
 
-Start server::
+    # 4 workers on GPUs 0-3 (Titan: 8x P100, use half)
+    imas-codex serve embed start --gpu 0,1,2,3 --workers 4
+
+    Each uvicorn worker process claims a unique GPU from the pool
+    via an atomic file-based counter during startup.
+
+Single-worker mode::
 
     imas-codex serve embed start --gpu 1
 
-Client access (compute nodes or workstation)::
-
-    # From SLURM compute node (server bound to 0.0.0.0)
-    curl http://98dci4-srv-1001:18765/health
-    # From workstation via SSH tunnel
-    ssh -L 18765:127.0.0.1:18765 iter
-    curl http://localhost:18765/health
+GPU Memory Protection:
+    On shared nodes (login T4), the server caps its memory fraction
+    to 0.6 of total VRAM, uses small batch sizes, and clears CUDA
+    cache after each batch to coexist with other GPU consumers.
 """
 
 import asyncio
+import fcntl
 import logging
 import os
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -48,6 +47,8 @@ _cached_device_info: str = "not loaded"  # Cached at startup
 _cached_embedding_dim: int = 0  # Cached at startup
 _encode_timeout: float = 300.0  # 5 minutes max per embed request
 _location: str | None = None  # Deployment location label (e.g. "titan")
+_worker_gpu: int | None = None  # GPU index claimed by this worker
+_gpu_pool: list[int] = []  # Available GPU indices for multi-worker
 
 
 class EmbedRequest(BaseModel):
@@ -80,6 +81,47 @@ class HealthResponse(BaseModel):
     idle_timeout: int = Field(0, description="Auto-shutdown timeout (0=disabled)")
     hostname: str | None = Field(None, description="Server hostname")
     location: str | None = Field(None, description="Deployment location (e.g. titan)")
+    worker_gpu: int | None = Field(None, description="GPU index used by this worker")
+
+
+def _claim_gpu() -> int | None:
+    """Claim a unique GPU index from the pool for this worker process.
+
+    Uses an atomic file-based counter so that multiple uvicorn worker
+    processes each get a different GPU.  The counter file lives in the
+    system temp directory and is keyed by the parent PID (the uvicorn
+    master process) so independent server instances don't collide.
+
+    Returns the claimed GPU index, or None if no pool is configured.
+    """
+    if not _gpu_pool:
+        return None
+
+    # Counter file keyed by master PID so independent servers don't collide
+    master_pid = os.getppid()
+    counter_path = os.path.join(tempfile.gettempdir(), f"codex-embed-gpu-{master_pid}")
+
+    try:
+        fd = os.open(counter_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            data = os.read(fd, 16)
+            idx = int(data) if data.strip() else 0
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, str(idx + 1).encode())
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+    except Exception as e:
+        logger.warning("GPU claim failed, defaulting to pool[0]: %s", e)
+        idx = 0
+
+    gpu_id = _gpu_pool[idx % len(_gpu_pool)]
+    logger.info(
+        "Worker PID %d claimed GPU %d (pool index %d)", os.getpid(), gpu_id, idx
+    )
+    return gpu_id
 
 
 def _get_gpu_info() -> tuple[str | None, int | None]:
@@ -115,6 +157,20 @@ async def lifespan(app: FastAPI):
     global _encoder
     global _startup_time, _last_request_time, _shutdown_event
     global _gpu_name, _gpu_memory_mb, _cached_device_info, _cached_embedding_dim
+
+    global _worker_gpu
+
+    # Multi-worker GPU claim: each worker process picks a unique GPU
+    # from the pool configured via IMAS_CODEX_GPU_POOL env var.
+    pool_env = os.environ.get("IMAS_CODEX_GPU_POOL", "")
+    if pool_env and not _gpu_pool:
+        _gpu_pool.extend(int(g) for g in pool_env.split(",") if g.strip())
+
+    if _gpu_pool:
+        gpu_id = _claim_gpu()
+        if gpu_id is not None:
+            _worker_gpu = gpu_id
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
     logger.info("Loading embedding model...")
     start = time.time()
@@ -328,6 +384,7 @@ def create_app() -> FastAPI:
             idle_timeout=_idle_timeout,
             hostname=os.uname().nodename,
             location=_location,
+            worker_gpu=_worker_gpu,
         )
 
     @app.post("/embed", response_model=EmbedResponse)
@@ -407,6 +464,8 @@ def create_app() -> FastAPI:
                 "idle_timeout": _idle_timeout,
                 "hostname": os.uname().nodename,
                 "location": _location,
+                "worker_gpu": _worker_gpu,
+                "worker_pid": os.getpid(),
                 "version": "2.0.0",
             },
         }
