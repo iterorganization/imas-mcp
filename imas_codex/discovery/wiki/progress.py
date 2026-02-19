@@ -704,7 +704,7 @@ class WikiProgressDisplay:
         triage_desc = ""
         triage_desc_fallback = ""
         triage_complete = False
-        triage_complete_label = "complete"
+        triage_complete_label = "done"
         triage_at_100 = scored_pages >= score_total > 1
         if (self._worker_complete("triage") or triage_at_100) and not score:
             triage_complete = True
@@ -748,7 +748,7 @@ class WikiProgressDisplay:
         docs_desc = ""
         docs_desc_fallback = ""
         docs_complete = False
-        docs_complete_label = "complete"
+        docs_complete_label = "done"
         docs_at_100 = art_completed >= art_total > 1
         if (self._worker_complete("docs") or docs_at_100) and not artifact:
             docs_complete = True
@@ -784,7 +784,7 @@ class WikiProgressDisplay:
         images_desc = ""
         images_desc_fallback = ""
         images_complete = False
-        images_complete_label = "complete"
+        images_complete_label = "done"
         images_at_100 = img_scored >= img_total > 1
         if (self._worker_complete("images") or images_at_100) and not image:
             images_complete = True
@@ -808,7 +808,7 @@ class WikiProgressDisplay:
 
         rows = [
             PipelineRowConfig(
-                name="triage",
+                name="TRIAGE",
                 style="bold blue",
                 completed=scored_pages,
                 total=score_total,
@@ -839,7 +839,7 @@ class WikiProgressDisplay:
                 ),
             ),
             PipelineRowConfig(
-                name="page",
+                name="PAGE",
                 style="bold magenta",
                 completed=self.state.pages_ingested,
                 total=ingest_total,
@@ -863,7 +863,7 @@ class WikiProgressDisplay:
                 ),
             ),
             PipelineRowConfig(
-                name="artifact",
+                name="ARTIFACT",
                 style="bold yellow",
                 completed=art_completed,
                 total=max(art_total, 1),
@@ -896,7 +896,7 @@ class WikiProgressDisplay:
                 ),
             ),
             PipelineRowConfig(
-                name="image",
+                name="IMAGE",
                 style="bold green",
                 completed=img_scored,
                 total=max(img_total, 1),
@@ -1544,7 +1544,7 @@ class WikiProgressDisplay:
         # TRIAGE stats (pages + artifacts combined)
         total_scored = self.state.pages_scored + self.state.pages_ingested
         total_score_cost = self.state.total_score_cost
-        summary.append("  triage ", style="bold blue")
+        summary.append(f"{'  TRIAGE':<{LABEL_WIDTH}}", style="bold blue")
         summary.append(f"  scored={total_scored:,}", style="blue")
         artifacts_scored = self.state.total_run_artifacts_scored
         if artifacts_scored > 0:
@@ -1557,7 +1557,7 @@ class WikiProgressDisplay:
 
         # PAGES stats
         total_ingested = self.state.pages_ingested
-        summary.append("  page   ", style="bold magenta")
+        summary.append(f"{'  PAGE':<{LABEL_WIDTH}}", style="bold magenta")
         summary.append(f"  ingested={total_ingested:,}", style="magenta")
         artifacts_ingested = self.state.total_run_artifacts
         if artifacts_ingested > 0:
@@ -1569,14 +1569,14 @@ class WikiProgressDisplay:
         # IMAGES stats
         images_scored = self.state.total_run_images_scored
         if images_scored > 0:
-            summary.append("  image  ", style="bold green")
+            summary.append(f"{'  IMAGE':<{LABEL_WIDTH}}", style="bold green")
             summary.append(f"  scored={images_scored:,}", style="green")
             if self.state.image_score_rate:
                 summary.append(f"  {self.state.image_score_rate:.1f}/s", style="dim")
             summary.append("\n")
 
         # USAGE stats
-        summary.append("  usage  ", style="bold white")
+        summary.append(f"{'  USAGE':<{LABEL_WIDTH}}", style="bold white")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
         summary.append(f"  total_cost=${self.state.run_cost:.2f}", style="yellow")
         if self.state.total_sites > 1:
