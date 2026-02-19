@@ -112,6 +112,11 @@ def imas_build(
         imas-codex imas build --dry-run -v     # Preview without writing
         imas-codex imas build --ids-filter "core_profiles equilibrium"  # Test subset
     """
+    # Suppress LiteLLM remote model cost map fetch before any LiteLLM import
+    import os
+
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
     from imas_codex import dd_version as current_dd_version
     from imas_codex.cli.logging import configure_cli_logging
     from imas_codex.graph.build_dd import build_dd_graph, get_all_dd_versions
@@ -677,9 +682,7 @@ def imas_clear(force: bool, dump_first: bool) -> None:
         console.print(f"  {c['clusters']:,} IMASSemanticCluster nodes")
         console.print(f"  {c['changes']:,} IMASPathChange nodes")
         console.print("  + IMASCoordinateSpec, IdentifierSchema, orphaned Units")
-        console.print(
-            "  + DD vector indexes (imas_path_embedding, cluster_embedding)"
-        )
+        console.print("  + DD vector indexes (imas_path_embedding, cluster_embedding)")
 
         if not force:
             click.confirm(

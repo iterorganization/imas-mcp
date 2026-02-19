@@ -1195,6 +1195,7 @@ def build_dd_graph(
             "Extract paths",
             items=versions,
             description_template="Extracting {item}",
+            item_label="versions",
         ) as phase:
             for version in versions:
                 try:
@@ -1232,6 +1233,7 @@ def build_dd_graph(
             "Build graph",
             items=versions,
             description_template="Building {item}",
+            item_label="versions",
         ) as phase:
             for i, version in enumerate(versions):
                 if version not in version_data:
@@ -1940,16 +1942,18 @@ def _import_clusters(
                 ids_names = cluster.get("ids_names", cluster.get("ids", []))
                 scope = cluster.get("scope", "global")
 
-                cluster_batch.append({
-                    "cluster_id": str(cluster_id),
-                    "label": label,
-                    "physics_domain": physics_domain,
-                    "path_count": len(paths),
-                    "cross_ids": cross_ids,
-                    "similarity_score": similarity_score,
-                    "scope": scope,
-                    "ids_names": ids_names if ids_names else [],
-                })
+                cluster_batch.append(
+                    {
+                        "cluster_id": str(cluster_id),
+                        "label": label,
+                        "physics_domain": physics_domain,
+                        "path_count": len(paths),
+                        "cross_ids": cross_ids,
+                        "similarity_score": similarity_score,
+                        "scope": scope,
+                        "ids_names": ids_names if ids_names else [],
+                    }
+                )
 
                 for path_info in paths:
                     if isinstance(path_info, dict):
@@ -1959,11 +1963,13 @@ def _import_clusters(
                         path = str(path_info)
                         distance = 0.0
                     if path:
-                        membership_batch.append({
-                            "cluster_id": str(cluster_id),
-                            "path": path,
-                            "distance": distance,
-                        })
+                        membership_batch.append(
+                            {
+                                "cluster_id": str(cluster_id),
+                                "path": path,
+                                "distance": distance,
+                            }
+                        )
 
                 cluster_count += 1
 
@@ -2036,7 +2042,9 @@ def _import_clusters(
                     )
 
                 # --- Export cluster embeddings to .npz as CI fallback ---
-                _export_cluster_embeddings_npz(client, clusters_manager.file_path.parent)
+                _export_cluster_embeddings_npz(
+                    client, clusters_manager.file_path.parent
+                )
 
                 # Update DDVersion with cluster metadata
                 client.query(

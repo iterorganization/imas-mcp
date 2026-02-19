@@ -253,6 +253,7 @@ class BuildProgressMonitor:
         items: list[str] | None = None,
         total: int | None = None,
         description_template: str = "{item}",
+        item_label: str = "items",
     ) -> "PhaseTracker":
         """Create a tracked phase of the build.
 
@@ -261,6 +262,7 @@ class BuildProgressMonitor:
             items: List of item names if known
             total: Total count if items are not enumerated
             description_template: Template with {item} placeholder
+            item_label: Label for the count display (e.g., "versions")
 
         Returns:
             PhaseTracker context manager
@@ -273,6 +275,7 @@ class BuildProgressMonitor:
             items=items,
             total=total,
             description_template=description_template,
+            item_label=item_label,
         )
 
 
@@ -286,12 +289,14 @@ class PhaseTracker:
         items: list[str] | None = None,
         total: int | None = None,
         description_template: str = "{item}",
+        item_label: str = "items",
     ):
         self._parent = parent
         self._phase = phase_info
         self._items = items
         self._total = total or (len(items) if items else 0)
         self._template = description_template
+        self._item_label = item_label
         self._progress: Progress | None = None
         self._task_id: TaskID | None = None
         self._completed = 0
@@ -301,7 +306,7 @@ class PhaseTracker:
         self._phase["count"] = self._total
         if self._parent._use_rich and self._parent._console and self._total > 0:
             self._parent._console.print(
-                f"  [bold]{self._phase['name']}[/bold] [dim]({self._total} items)[/dim]"
+                f"  [bold]{self._phase['name']}[/bold] [dim]({self._total} {self._item_label})[/dim]"
             )
             self._progress = Progress(
                 SpinnerColumn(),
@@ -323,7 +328,9 @@ class PhaseTracker:
                 f"  [bold]{self._phase['name']}[/bold] [dim]...[/dim]"
             )
         elif not self._parent._use_rich:
-            self._parent.logger.info(f"{self._phase['name']}: {self._total} items")
+            self._parent.logger.info(
+                f"{self._phase['name']}: {self._total} {self._item_label}"
+            )
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:

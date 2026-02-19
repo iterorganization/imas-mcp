@@ -240,10 +240,18 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
 
         logger.info(f"Labeling {total_clusters} clusters using {self.model}")
 
+        network_failed = False
+
         for i in range(0, total_clusters, batch_size):
             batch = clusters[i : i + batch_size]
             batch_num = i // batch_size + 1
             total_batches = (total_clusters + batch_size - 1) // batch_size
+
+            # If a previous batch failed due to network, skip remaining batches
+            if network_failed:
+                for cluster in batch:
+                    all_labels.append(self._generate_fallback_label(cluster))
+                continue
 
             logger.info(
                 f"Processing batch {batch_num}/{total_batches} ({len(batch)} clusters)"
@@ -263,6 +271,19 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
                 )
             except Exception as e:
                 logger.error(f"Batch {batch_num} failed: {e}")
+                # Detect network errors and abort remaining batches
+                err_msg = str(e).lower()
+                if (
+                    "unreachable" in err_msg
+                    or "connectionerror" in err_msg
+                    or "newconnectionerror" in err_msg
+                    or "name or service not known" in err_msg
+                ):
+                    logger.warning(
+                        "Network unreachable — skipping remaining %d batches, using fallback labels",
+                        total_batches - batch_num,
+                    )
+                    network_failed = True
                 # Generate fallback labels for failed batch
                 for cluster in batch:
                     all_labels.append(self._generate_fallback_label(cluster))
