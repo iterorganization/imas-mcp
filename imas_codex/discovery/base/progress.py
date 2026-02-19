@@ -309,6 +309,10 @@ class WorkerStats:
     _prev_processed: int = 0  # Items at last batch
     _prev_batch_time: float = 0.0  # Time at last batch
 
+    # Idle time tracking (excluded from active_rate)
+    _idle_total: float = 0.0  # Cumulative idle seconds
+    _idle_start: float | None = None  # When current idle period began
+
     @property
     def elapsed(self) -> float:
         return time.time() - self.start_time
@@ -321,14 +325,41 @@ class WorkerStats:
         return self.processed / self.elapsed
 
     @property
+    def active_rate(self) -> float | None:
+        """Average rate excluding idle time (items/second).
+
+        If no idle time was tracked, falls back to overall rate.
+        """
+        if self.processed == 0:
+            return None
+        idle = self._idle_total
+        if self._idle_start is not None:
+            idle += time.time() - self._idle_start
+        active = self.elapsed - idle
+        if active <= 0:
+            return self.rate
+        return self.processed / active
+
+    @property
     def ema_rate(self) -> float | None:
         """Exponential moving average rate over recent batches.
 
-        Falls back to overall rate if no batch data available.
+        Falls back to active_rate if no batch data available.
         """
         if self._ema_rate > 0:
             return self._ema_rate
-        return self.rate
+        return self.active_rate
+
+    def mark_idle(self) -> None:
+        """Mark the start of an idle period."""
+        if self._idle_start is None:
+            self._idle_start = time.time()
+
+    def mark_active(self) -> None:
+        """Mark the end of an idle period, accumulating idle time."""
+        if self._idle_start is not None:
+            self._idle_total += time.time() - self._idle_start
+            self._idle_start = None
 
     def record_batch(self, batch_size: int | None = None) -> None:
         """Record a batch completion for EMA rate calculation.
@@ -384,10 +415,10 @@ class WorkerStats:
 #   gauge_width = term_width - 4 - LABEL_WIDTH - GAUGE_METRICS_WIDTH
 #
 # Pipeline line 1 has just count+pct on the right (METRICS_WIDTH).
-# Rate and cost are right-aligned on lines 2/3 to the same edge.
+# Rate and cost are right-aligned on line 2 to the same edge.
 # Resource gauges (TIME, COST) keep GAUGE_METRICS_WIDTH for trailing text.
 
-LABEL_WIDTH = 14
+LABEL_WIDTH = 10
 METRICS_WIDTH = 12
 GAUGE_METRICS_WIDTH = 22
 MIN_WIDTH = 80
@@ -456,12 +487,12 @@ class PipelineRowConfig:
     into a single block.  Each pipeline stage renders as:
 
         TRIAGEx4  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  7,782 100%
-        Thomson Scattering  electromagnetic  0.85       0.23/s
-        General documentation for Thomson Scattering  $12.54
+        0.85  electromagnetic  Thomson Scattering    0.23/s    $12.54
+        General documentation for Thomson Scattering
 
     Line 1: NAMExN + bar + count + pct
-    Line 2: resource name + domain + score … rate (right-aligned)
-    Line 3: description … cost (right-aligned)
+    Line 2: score + domain + name … rate + cost (right-aligned)
+    Line 3: description
 
     This is the standard layout for discovery CLI tools that want
     integrated per-stage progress and activity display.
@@ -523,8 +554,8 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
 
     Renders 3 lines:
       Line 1: NAMExN + bar + count + pct
-      Line 2: resource name + domain + score … rate (right-aligned)
-      Line 3: description … cost (right-aligned)
+      Line 2: score + domain + name … rate + cost (right-aligned)
+      Line 3: description
 
     Args:
         config: Pipeline row configuration.
@@ -573,9 +604,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
 
     if config.has_content and config.has_structured_detail:
         line2.append("  ", style="dim")
-        line2.append(config.primary_text, style="white")
-        if config.physics_domain:
-            line2.append(f"  {config.physics_domain}", style="cyan")
+        # Order: score → domain → name
         if config.score_value is not None:
             score_style = (
                 "bold green"
@@ -584,7 +613,12 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
                 if config.score_value >= 0.4
                 else "red"
             )
-            line2.append(f"  {config.score_value:.2f}", style=score_style)
+            line2.append(f"{config.score_value:.2f}", style=score_style)
+            line2.append("  ", style="dim")
+        if config.physics_domain:
+            line2.append(config.physics_domain, style="cyan")
+            line2.append("  ", style="dim")
+        line2.append(config.primary_text, style="white")
     elif config.has_content:
         line2.append("  ", style="dim")
         line2.append(config.primary_text, style="white")
@@ -604,22 +638,27 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         else:
             line2.append("idle", style="dim italic")
 
-    # Right-align rate on line 2
-    rate_s = f"{config.rate:.2f}/s" if config.rate and config.rate > 0 else ""
-    if rate_s:
-        gap = max(1, row_width - len(line2.plain) - len(rate_s))
+    # Right-align rate + cost on line 2
+    right_parts: list[str] = []
+    if config.rate and config.rate > 0:
+        right_parts.append(f"{config.rate:.2f}/s")
+    if config.cost is not None and config.cost > 0:
+        right_parts.append(f"${config.cost:.2f}")
+    if right_parts:
+        right_s = "    ".join(right_parts)
+        gap = max(1, row_width - len(line2.plain) - len(right_s))
         line2.append(" " * gap)
-        line2.append(rate_s, style="dim")
+        line2.append(right_s, style="dim")
     row.append_text(line2)
 
-    # ── Line 3: description (left) + cost (right-aligned) ──
+    # ── Line 3: description ──
     row.append("\n")
     line3 = Text()
     if config.has_structured_detail:
         line3.append("  ", style="dim")
         if config.description:
             desc = clean_text(config.description)
-            max_desc = max(10, row_width - 12)  # leave room for cost
+            max_desc = max(10, row_width - 4)
             line3.append(clip_text(desc, max_desc), style="italic dim")
         elif config.description_fallback:
             line3.append(config.description_fallback, style="cyan dim italic")
@@ -627,15 +666,6 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         line3.append("  ", style="dim")
         for text, style in config.detail_parts:
             line3.append(text, style=style)
-
-    # Right-align cost on line 3
-    cost_s = ""
-    if config.cost is not None and config.cost > 0:
-        cost_s = f"${config.cost:.2f}"
-    if cost_s:
-        gap = max(1, row_width - len(line3.plain) - len(cost_s))
-        line3.append(" " * gap)
-        line3.append(cost_s, style="dim")
     row.append_text(line3)
 
     return row

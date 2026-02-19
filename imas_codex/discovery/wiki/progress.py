@@ -11,9 +11,9 @@ Design principles (matching paths parallel_progress.py):
 - Live embedding source indicator (shows remote/openrouter/local)
 
 Display layout: SERVERS → PIPELINE → RESOURCES
-  TRIAGE: Content-aware LLM scoring (fetches content, scores with LLM)
+  SCAN:   Content-aware LLM scoring (fetches content, scores with LLM)
   PAGES:  Chunk and embed high-value pages (score >= 0.5)
-  DOCS:   Artifact scoring and ingestion pipeline
+  DOC:    Artifact scoring and ingestion pipeline
   IMAGES: VLM captioning and scoring of wiki images
 
 Progress is tracked against total pages in graph, not just this session.
@@ -460,15 +460,15 @@ class WikiProgressDisplay:
     Layout: HEADER → SERVERS → PIPELINE → RESOURCES
 
     Pipeline stages (unified progress + activity per stage):
-    - TRIAGE: Content-aware LLM scoring (scanned → scored)
+    - SCAN: Content-aware LLM scoring (scanned → scored)
     - PAGES: Chunk and embed high-value pages (scored → ingested)
-    - DOCS: Score and ingest wiki artifacts (PDFs, CSVs, etc.)
+    - DOC: Score and ingest wiki artifacts (PDFs, CSVs, etc.)
     - IMAGES: VLM captioning + scoring (ingested → captioned)
 
     Each stage shows a 3-line block:
-      Line 1: progress bar + count + pct + rate + cost
-      Line 2: current item title + ×N worker count
-      Line 3: score + physics domain + description
+      Line 1: progress bar + count + pct
+      Line 2: score + domain + name … rate + cost (right-aligned)
+      Line 3: description
 
     Progress is tracked against total pages in graph, not just this session.
     Uses common pipeline infrastructure from base.progress.
@@ -639,11 +639,11 @@ class WikiProgressDisplay:
         """Build the unified pipeline section (progress + activity merged).
 
         Each pipeline stage gets a 3-line block:
-          Line 1: TRIAGE ━━━━━━━━━━━━━━━━━━    2,238  29%  0.2/s  $8.30
-          Line 2:        Mailinglists                                 ×4
-          Line 3:        0.00  general  Information regarding SPC...
+          Line 1: SCANx4  ━━━━━━━━━━━━━━━━━━    2,238  29%
+          Line 2:         0.00  general  Mailinglists    0.23/s    $8.30
+          Line 3:         Information regarding SPC...
 
-        Stages: TRIAGE → PAGES → DOCS → IMAGES
+        Stages: SCAN → PAGES → DOC → IMAGES
         """
         content_width = self.width - 6
         monitor = self.state.service_monitor
@@ -808,7 +808,7 @@ class WikiProgressDisplay:
 
         rows = [
             PipelineRowConfig(
-                name="TRIAGE",
+                name="SCAN",
                 style="bold blue",
                 completed=scored_pages,
                 total=score_total,
@@ -863,7 +863,7 @@ class WikiProgressDisplay:
                 ),
             ),
             PipelineRowConfig(
-                name="ARTIFACT",
+                name="DOC",
                 style="bold yellow",
                 completed=art_completed,
                 total=max(art_total, 1),
@@ -1194,26 +1194,29 @@ class WikiProgressDisplay:
     ) -> None:
         """Update scorer state."""
         self.state.run_scored = stats.processed
-        self.state.score_rate = stats.rate
         self.state._run_score_cost = stats.cost
 
-        # Track processing state - keep processing=True if queue has items pending
+        # Track processing state and idle/active transitions
         if "waiting" in message.lower() or message == "idle":
             self.state.score_processing = False
+            stats.mark_idle()
         elif "scoring" in message.lower() or "fetching" in message.lower():
             self.state.score_processing = True
+            stats.mark_active()
         elif "scored" in message.lower() and results:
-            # Results arriving - keep processing True until queue drains
-            # This prevents the "..." flicker between batch completion and display
             self.state.score_processing = not self.state.score_queue.is_empty()
+            stats.mark_active()
+            stats.record_batch(len(results))
         else:
             self.state.score_processing = False
+
+        # Use EMA rate for live display (falls back to active_rate)
+        self.state.score_rate = stats.ema_rate
 
         # Queue results for streaming with adaptive rate
         if results:
             items = []
             for r in results:
-                # Use title if already extracted, otherwise extract from id
                 title = r.get("title") or r.get("id", "?").split(":")[-1]
                 items.append(
                     {
@@ -1226,7 +1229,6 @@ class WikiProgressDisplay:
                         "skip_reason": r.get("skip_reason", ""),
                     }
                 )
-            # Use actual worker rate, capped for readability
             max_display_rate = 2.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
             self.state.score_queue.add(items, display_rate)
@@ -1241,19 +1243,23 @@ class WikiProgressDisplay:
     ) -> None:
         """Update ingester state."""
         self.state.run_ingested = stats.processed
-        self.state.ingest_rate = stats.rate
         self.state._run_ingest_cost = stats.cost
 
-        # Track processing state - keep processing=True if queue has items pending
+        # Track processing state and idle/active transitions
         if "waiting" in message.lower() or message == "idle":
             self.state.ingest_processing = False
+            stats.mark_idle()
         elif "ingesting" in message.lower():
             self.state.ingest_processing = True
+            stats.mark_active()
         elif "ingested" in message.lower() and results:
-            # Results arriving - keep processing True until queue drains
             self.state.ingest_processing = not self.state.ingest_queue.is_empty()
+            stats.mark_active()
+            stats.record_batch(len(results))
         else:
             self.state.ingest_processing = False
+
+        self.state.ingest_rate = stats.ema_rate
 
         # Queue results for streaming with adaptive rate
         if results:
@@ -1284,18 +1290,22 @@ class WikiProgressDisplay:
     ) -> None:
         """Update artifact worker state."""
         self.state.run_artifacts = stats.processed
-        self.state.artifact_rate = stats.rate
 
-        # Track processing state - keep processing=True if queue has items pending
+        # Track processing state and idle/active transitions
         if "waiting" in message.lower() or message == "idle":
             self.state.artifact_processing = False
+            stats.mark_idle()
         elif "ingesting" in message.lower():
             self.state.artifact_processing = True
+            stats.mark_active()
         elif "ingested" in message.lower() and results:
-            # Results arriving - keep processing True until queue drains
             self.state.artifact_processing = not self.state.artifact_queue.is_empty()
+            stats.mark_active()
+            stats.record_batch(len(results))
         else:
             self.state.artifact_processing = False
+
+        self.state.artifact_rate = stats.ema_rate
 
         # Queue results for streaming
         if results:
@@ -1325,20 +1335,25 @@ class WikiProgressDisplay:
     ) -> None:
         """Update artifact score worker state."""
         self.state.run_artifacts_scored = stats.processed
-        self.state.artifact_score_rate = stats.rate
         self.state._run_artifact_score_cost = stats.cost
 
-        # Track processing state
+        # Track processing state and idle/active transitions
         if "waiting" in message.lower() or message == "idle":
             self.state.artifact_processing = False
+            stats.mark_idle()
         elif "scoring" in message.lower() or "extracting" in message.lower():
             self.state.artifact_processing = True
+            stats.mark_active()
         elif "scored" in message.lower() and results:
             self.state.artifact_processing = (
                 not self.state.artifact_score_queue.is_empty()
             )
+            stats.mark_active()
+            stats.record_batch(len(results))
         else:
             self.state.artifact_processing = False
+
+        self.state.artifact_score_rate = stats.ema_rate
 
         # Queue results for streaming
         if results:
@@ -1366,18 +1381,23 @@ class WikiProgressDisplay:
     ) -> None:
         """Update image VLM worker state."""
         self.state.run_images_scored = stats.processed
-        self.state.image_score_rate = stats.rate
         self.state._run_image_score_cost = stats.cost
 
-        # Track processing state
+        # Track processing state and idle/active transitions
         if "waiting" in message.lower() or message == "idle":
             self.state.image_processing = False
+            stats.mark_idle()
         elif "scoring" in message.lower():
             self.state.image_processing = True
+            stats.mark_active()
         elif "scored" in message.lower() and results:
             self.state.image_processing = not self.state.image_queue.is_empty()
+            stats.mark_active()
+            stats.record_batch(len(results))
         else:
             self.state.image_processing = False
+
+        self.state.image_score_rate = stats.ema_rate
 
         # Queue results for streaming
         if results:
@@ -1541,10 +1561,10 @@ class WikiProgressDisplay:
         """Build final summary text."""
         summary = Text()
 
-        # TRIAGE stats (pages + artifacts combined)
+        # SCAN stats (pages + artifacts combined)
         total_scored = self.state.pages_scored + self.state.pages_ingested
         total_score_cost = self.state.total_score_cost
-        summary.append(f"{'  TRIAGE':<{LABEL_WIDTH}}", style="bold blue")
+        summary.append(f"{'  SCAN':<{LABEL_WIDTH}}", style="bold blue")
         summary.append(f"  scored={total_scored:,}", style="blue")
         artifacts_scored = self.state.total_run_artifacts_scored
         if artifacts_scored > 0:
