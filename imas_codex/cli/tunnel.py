@@ -41,6 +41,35 @@ def _record_tunnel_pid(host: str, first_local_port: int) -> None:
     _find_and_record_pid(host, first_local_port)
 
 
+def _discover_compute_node(host: str) -> str | None:
+    """SSH to host and discover the SLURM compute node for imas-codex services.
+
+    Returns the compute node hostname if a running allocation exists,
+    otherwise ``None``.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                host,
+                "-o",
+                "ConnectTimeout=10",
+                'squeue -n imas-codex-services -u "$USER" '
+                '--format="%N" --noheader 2>/dev/null',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            node = result.stdout.strip()
+            if node:
+                return node
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
 def _resolve_host(host: str | None) -> str:
     """Resolve HOST from argument, graph profile, or fail."""
     if host:
@@ -71,26 +100,47 @@ def _get_tunnel_ports(
 
     When no service flag is given, returns all known ports.
     ``remote_bind`` is the hostname to bind on the remote side of the tunnel
-    (default ``"127.0.0.1"``).  When the embed server runs on a different host
-    (e.g. Titan), ``remote_bind`` is set to that host so the tunnel forwards
-    ``local_port → embed_host:remote_port`` through the SSH jump host.
+    (default ``"127.0.0.1"``).  When services run on a SLURM compute node,
+    ``remote_bind`` is set to that node's hostname so the tunnel forwards
+    ``local_port → compute_node:remote_port`` through the SSH jump host.
     """
     from imas_codex.remote.tunnel import TUNNEL_OFFSET
 
     ports: list[tuple[int, int, str, str]] = []
     all_services = not neo4j and not embed and not llm
 
+    # Discover SLURM compute node if any service uses slurm scheduler.
+    # All services share the same allocation, so one lookup suffices.
+    compute_node: str | None = None
+    try:
+        from imas_codex.settings import (
+            get_embed_scheduler,
+            get_graph_scheduler,
+            get_llm_scheduler,
+        )
+
+        if any(
+            s() == "slurm"
+            for s in [get_embed_scheduler, get_graph_scheduler, get_llm_scheduler]
+        ):
+            compute_node = _discover_compute_node(host)
+            if compute_node:
+                click.echo(f"  SLURM compute node: {compute_node}")
+    except Exception:
+        pass
+
     if neo4j or all_services:
         try:
             from imas_codex.graph.profiles import resolve_neo4j
 
             profile = resolve_neo4j(auto_tunnel=False)
+            bind = compute_node or "127.0.0.1"
             ports.append(
                 (
                     profile.bolt_port,
                     profile.bolt_port + TUNNEL_OFFSET,
                     f"neo4j-bolt ({profile.name})",
-                    "127.0.0.1",
+                    bind,
                 )
             )
             ports.append(
@@ -98,19 +148,20 @@ def _get_tunnel_ports(
                     profile.http_port,
                     profile.http_port + TUNNEL_OFFSET,
                     f"neo4j-http ({profile.name})",
-                    "127.0.0.1",
+                    bind,
                 )
             )
         except Exception:
             # Fallback: use base ports from convention constants
             from imas_codex.graph.profiles import BOLT_BASE_PORT, HTTP_BASE_PORT
 
+            bind = compute_node or "127.0.0.1"
             ports.append(
                 (
                     BOLT_BASE_PORT,
                     BOLT_BASE_PORT + TUNNEL_OFFSET,
                     "neo4j-bolt",
-                    "127.0.0.1",
+                    bind,
                 )
             )
             ports.append(
@@ -118,19 +169,23 @@ def _get_tunnel_ports(
                     HTTP_BASE_PORT,
                     HTTP_BASE_PORT + TUNNEL_OFFSET,
                     "neo4j-http",
-                    "127.0.0.1",
+                    bind,
                 )
             )
 
     if embed or all_services:
-        from imas_codex.settings import get_embed_host, get_embed_server_port
+        from imas_codex.settings import get_embed_server_port
 
         embed_port = get_embed_server_port()
-        embed_host = get_embed_host()
-        # When embed-host is set, the tunnel forwards through the SSH jump
-        # host to the embed server's actual host (e.g. Titan node).
-        # When not set, forwards to 127.0.0.1 on the SSH host (login node).
-        remote_bind = embed_host if embed_host else "127.0.0.1"
+        # When a SLURM compute node is active, forward through it.
+        # Otherwise fall back to embed_host (legacy) or localhost.
+        if compute_node:
+            remote_bind = compute_node
+        else:
+            from imas_codex.settings import get_embed_host
+
+            embed_host = get_embed_host()
+            remote_bind = embed_host if embed_host else "127.0.0.1"
         # Embed uses same-port forwarding (no offset)
         ports.append((embed_port, embed_port, "embed", remote_bind))
 
@@ -138,8 +193,9 @@ def _get_tunnel_ports(
         from imas_codex.settings import get_llm_proxy_port
 
         llm_port = get_llm_proxy_port()
-        # LLM proxy uses same-port forwarding (no offset), binds to localhost
-        ports.append((llm_port, llm_port, "llm", "127.0.0.1"))
+        # LLM proxy: forward to compute node when SLURM is active
+        bind = compute_node or "127.0.0.1"
+        ports.append((llm_port, llm_port, "llm", bind))
 
     return ports
 
