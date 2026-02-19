@@ -541,9 +541,13 @@ WantedBy=default.target
 def serve_embed() -> None:
     """Manage GPU embedding server.
 
+    Deploy target is determined by [embedding].embed-host in pyproject.toml:
+      embed-host set   → SLURM job on that compute node
+      embed-host unset → systemd service on login node
+
     \b
-      imas-codex serve embed deploy     Deploy to Titan (4 GPUs) or login node
-      imas-codex serve embed stop       Stop the server (SLURM or systemd)
+      imas-codex serve embed deploy     Deploy per config
+      imas-codex serve embed stop       Stop the server
       imas-codex serve embed restart    Restart (stop + deploy)
       imas-codex serve embed status     Check server and SLURM job status
       imas-codex serve embed logs       View SLURM job logs
@@ -801,10 +805,8 @@ def embed_status(url: str | None, local: bool) -> None:
                 click.echo(f"  Idle: {idle_s:.0f}s / {timeout_s}s timeout")
     else:
         click.echo("  ✗ Not available")
-        click.echo(
-            "  Deploy with: imas-codex serve embed deploy\n"
-            "  Or check tunnel: ssh -L 18765:98dci4-gpu-0002:18765 iter"
-        )
+        click.echo("  Deploy with: imas-codex serve embed deploy")
+        click.echo("  Check tunnel: imas-codex tunnel status")
 
 
 @serve_embed.command("service")
@@ -930,15 +932,32 @@ WantedBy=default.target
 
 
 # ============================================================================
-# Embed Server Deployment (SLURM on Titan, systemd on login)
+# Embed Server Deployment (SLURM on compute node, systemd on login)
 # ============================================================================
 
 _EMBED_JOB = "codex-embed"
-_TITAN_NODE = "98dci4-gpu-0002"
 _TITAN_PARTITION = "titan"
 _DEFAULT_GPUS = 4
-_EMBED_PORT = 18765
 _PROJECT = "~/Code/imas-codex"
+
+
+def _embed_host() -> str | None:
+    """Return the configured embed host, or None for login node."""
+    from imas_codex.settings import get_embed_host
+
+    return get_embed_host()
+
+
+def _embed_port() -> int:
+    """Return the configured embed server port."""
+    from imas_codex.settings import get_embed_server_port
+
+    return get_embed_server_port()
+
+
+def _is_compute_target() -> bool:
+    """True when embed-host is configured (deploy via SLURM)."""
+    return _embed_host() is not None
 
 
 def _iter_ssh() -> str | None:
@@ -1015,9 +1034,12 @@ def _stop_login_service() -> None:
         pass
 
 
-def _submit_titan(gpus: int, workers: int) -> None:
-    """Submit embed server SLURM job to Titan."""
+def _submit_slurm(gpus: int, workers: int) -> None:
+    """Submit embed server SLURM job to the configured compute node."""
     import base64
+
+    host = _embed_host()
+    port = _embed_port()
 
     # Generate SLURM script
     gpu_ids = ",".join(str(i) for i in range(gpus))
@@ -1030,7 +1052,7 @@ def _submit_titan(gpus: int, workers: int) -> None:
         "#SBATCH --mem=64G\n"
         "#SBATCH --time=UNLIMITED\n"
         f"#SBATCH --job-name={_EMBED_JOB}\n"
-        f"#SBATCH --nodelist={_TITAN_NODE}\n"
+        f"#SBATCH --nodelist={host}\n"
         "#SBATCH --output=slurm-embed-%j.log\n"
         "\n"
         "set -euo pipefail\n"
@@ -1041,8 +1063,8 @@ def _submit_titan(gpus: int, workers: int) -> None:
         f'echo "GPUs: {gpus}, Workers: {workers}, '
         f'CUDA_VISIBLE_DEVICES={gpu_ids}"\n'
         "exec uv run --offline --extra gpu imas-codex serve embed start "
-        f"--host 0.0.0.0 --port {_EMBED_PORT} "
-        f"--gpus {gpu_ids} --workers {workers} --location titan\n"
+        f"--host 0.0.0.0 --port {port} "
+        f"--gpus {gpu_ids} --workers {workers} --location slurm\n"
     )
 
     # Submit via base64 to avoid shell quoting issues over SSH
@@ -1059,17 +1081,17 @@ def _submit_titan(gpus: int, workers: int) -> None:
     _stop_login_service()
 
     # Wait for health
-    click.echo(f"Waiting for server on {_TITAN_NODE}:{_EMBED_PORT}...")
+    click.echo(f"Waiting for server on {host}:{port}...")
     deadline = time.time() + 120
     while time.time() < deadline:
         time.sleep(5)
         try:
             result = _run_iter(
-                f"curl -sf http://{_TITAN_NODE}:{_EMBED_PORT}/health",
+                f"curl -sf http://{host}:{port}/health",
                 timeout=10,
             )
             if '"status"' in result and "ok" in result.lower():
-                click.echo(f"  Server healthy on {_TITAN_NODE}")
+                click.echo(f"  Server healthy on {host}")
                 _show_server_info()
                 return
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -1084,14 +1106,10 @@ def _submit_titan(gpus: int, workers: int) -> None:
 
 def _deploy_login() -> None:
     """Deploy embed server to login node via systemd."""
-    # Stop Titan SLURM job if running (prevent both competing)
-    jobs = _embed_slurm_jobs()
-    if jobs:
-        for job in jobs:
-            click.echo(
-                f"Cancelling Titan job {job['job_id']} (conflicts with login deploy)"
-            )
-            _run_iter(f"scancel {job['job_id']}")
+    # Stop SLURM job if running (prevent both competing)
+    cancelled = _cancel_embed_jobs()
+    for jid in cancelled:
+        click.echo(f"Cancelled SLURM job {jid} (conflicts with login deploy)")
 
     click.echo("Deploying to login node via systemd...")
     try:
@@ -1112,9 +1130,11 @@ def _show_server_info() -> None:
     """Print embed server info from /info endpoint."""
     import json
 
+    host = _embed_host() or "localhost"
+    port = _embed_port()
     try:
         result = _run_iter(
-            f"curl -sf http://{_TITAN_NODE}:{_EMBED_PORT}/info",
+            f"curl -sf http://{host}:{port}/info",
             timeout=10,
         )
         if result and result != "(no output)":
@@ -1129,18 +1149,11 @@ def _show_server_info() -> None:
 
 @serve_embed.command("deploy")
 @click.option(
-    "--target",
-    "-t",
-    type=click.Choice(["titan", "login"]),
-    default="titan",
-    help="Deploy target (default: titan)",
-)
-@click.option(
     "--gpus",
     "-g",
     default=_DEFAULT_GPUS,
     type=int,
-    help=f"Number of GPUs for Titan (default: {_DEFAULT_GPUS})",
+    help=f"Number of GPUs (default: {_DEFAULT_GPUS}, ignored for login)",
 )
 @click.option(
     "--workers",
@@ -1150,30 +1163,29 @@ def _show_server_info() -> None:
     help="Worker processes (default: same as gpus)",
 )
 def embed_deploy(
-    target: str,
     gpus: int,
     workers: int | None,
 ) -> None:
-    """Deploy embedding server to Titan GPU node or login node.
+    """Deploy embedding server.
 
-    Idempotent: no-op if the server is already running on the target.
+    Target is determined by [embedding].embed-host in pyproject.toml:
+      - embed-host set   → SLURM job on that compute node
+      - embed-host unset → systemd service on login node
+
+    Idempotent: no-op if the server is already running.
     Use 'restart' to cancel and redeploy.
 
-    For Titan (default): sbatch job, stop login systemd service.
-    For login: start systemd service, cancel Titan SLURM job.
-
-    Works from ITER login node or WSL/workstation (via SSH).
+    Override: IMAS_CODEX_EMBED_HOST env var.
 
     \b
     Examples:
-        imas-codex serve embed deploy              # 4 GPUs on Titan
-        imas-codex serve embed deploy -g 2         # 2 GPUs on Titan
-        imas-codex serve embed deploy -t login     # systemd on login
+        imas-codex serve embed deploy          # Deploy per config
+        imas-codex serve embed deploy -g 2     # 2 GPUs on compute node
     """
     if workers is None:
         workers = gpus
 
-    if target == "titan":
+    if _is_compute_target():
         jobs = _embed_slurm_jobs()
         if jobs:
             job = jobs[0]
@@ -1182,72 +1194,52 @@ def embed_deploy(
                 f"on {job['node']}, {job['gres']}, {job['time']})"
             )
             return
-        _submit_titan(gpus, workers)
+        _submit_slurm(gpus, workers)
     else:
         _deploy_login()
 
 
 @serve_embed.command("stop")
-@click.option(
-    "--target",
-    "-t",
-    type=click.Choice(["titan", "login"]),
-    default=None,
-    help="Stop target (auto-detected if not specified)",
-)
-def embed_stop(target: str | None) -> None:
+def embed_stop() -> None:
     """Stop the embedding server.
 
-    For Titan: cancel SLURM job.
-    For login: stop systemd service.
-    Auto-detects target if not specified.
+    Stops both SLURM jobs and systemd service to ensure a clean state.
 
     \b
     Examples:
-        imas-codex serve embed stop              # Auto-detect
-        imas-codex serve embed stop -t titan     # Cancel SLURM job
-        imas-codex serve embed stop -t login     # Stop systemd
+        imas-codex serve embed stop
     """
-    if target is None:
-        jobs = _embed_slurm_jobs()
-        target = "titan" if jobs else "login"
+    stopped = False
 
-    if target == "titan":
-        jobs = _embed_slurm_jobs()
-        if not jobs:
-            click.echo("No active embed SLURM jobs found.")
-            return
-        for job in jobs:
-            _run_iter(f"scancel {job['job_id']}")
-            click.echo(
-                f"Cancelled job {job['job_id']} ({job['state']} on {job['node']})"
-            )
-    else:
-        try:
-            _run_iter(
-                "systemctl --user stop imas-codex-embed",
-                timeout=15,
-                check=True,
-            )
-            click.echo("Service stopped")
-        except subprocess.CalledProcessError:
-            click.echo("Service not running or not installed")
+    # Cancel any SLURM jobs
+    cancelled = _cancel_embed_jobs()
+    for jid in cancelled:
+        click.echo(f"Cancelled SLURM job {jid}")
+        stopped = True
+
+    # Stop systemd service
+    try:
+        _run_iter(
+            "systemctl --user stop imas-codex-embed",
+            timeout=15,
+            check=True,
+        )
+        click.echo("Stopped login service")
+        stopped = True
+    except subprocess.CalledProcessError:
+        pass
+
+    if not stopped:
+        click.echo("No active embed server found")
 
 
 @serve_embed.command("restart")
-@click.option(
-    "--target",
-    "-t",
-    type=click.Choice(["titan", "login"]),
-    default="titan",
-    help="Deploy target (default: titan)",
-)
 @click.option(
     "--gpus",
     "-g",
     default=_DEFAULT_GPUS,
     type=int,
-    help=f"Number of GPUs for Titan (default: {_DEFAULT_GPUS})",
+    help=f"Number of GPUs (default: {_DEFAULT_GPUS}, ignored for login)",
 )
 @click.option(
     "--workers",
@@ -1256,62 +1248,37 @@ def embed_stop(target: str | None) -> None:
     type=int,
     help="Worker processes (default: same as gpus)",
 )
-@click.option(
-    "--pull/--no-pull",
-    default=True,
-    help="Git pull before redeploying (default: pull)",
-)
 def embed_restart(
-    target: str,
     gpus: int,
     workers: int | None,
-    pull: bool,
 ) -> None:
-    """Restart the embedding server (cancel, pull, redeploy).
+    """Restart the embedding server (stop + deploy).
 
-    Unlike 'deploy' (idempotent), this always cancels the existing
-    server and resubmits with a fresh git pull.
+    Unlike 'deploy' (idempotent), this always stops the existing
+    server and redeploys.
 
     \b
     Examples:
-        imas-codex serve embed restart             # 4 GPUs on Titan
-        imas-codex serve embed restart -g 2        # 2 GPUs
-        imas-codex serve embed restart -t login    # Restart login service
-        imas-codex serve embed restart --no-pull   # Skip git pull
+        imas-codex serve embed restart         # Restart per config
+        imas-codex serve embed restart -g 2    # 2 GPUs on compute node
     """
     if workers is None:
         workers = gpus
 
-    # Stop
-    if target == "titan":
-        cancelled = _cancel_embed_jobs()
-        for jid in cancelled:
-            click.echo(f"Cancelled job {jid}")
-        if cancelled:
-            time.sleep(2)
-    else:
-        try:
-            _run_iter(
-                "systemctl --user stop imas-codex-embed",
-                timeout=15,
-            )
-        except subprocess.CalledProcessError:
-            pass
-
-    # Git pull
-    if pull:
-        click.echo("Pulling latest code...")
-        output = _run_iter(
-            f"cd {_PROJECT} && git pull --no-rebase origin main", timeout=60
-        )
-        for line in output.strip().split("\n"):
-            line = line.strip()
-            if line and not line.startswith("[stderr]"):
-                click.echo(f"  {line}")
+    # Stop everything
+    cancelled = _cancel_embed_jobs()
+    for jid in cancelled:
+        click.echo(f"Cancelled job {jid}")
+    if cancelled:
+        time.sleep(2)
+    try:
+        _run_iter("systemctl --user stop imas-codex-embed", timeout=15)
+    except subprocess.CalledProcessError:
+        pass
 
     # Redeploy
-    if target == "titan":
-        _submit_titan(gpus, workers)
+    if _is_compute_target():
+        _submit_slurm(gpus, workers)
     else:
         _deploy_login()
 

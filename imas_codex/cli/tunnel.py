@@ -103,8 +103,22 @@ def _get_tunnel_ports(
             # Fallback: use base ports from convention constants
             from imas_codex.graph.profiles import BOLT_BASE_PORT, HTTP_BASE_PORT
 
-            ports.append((BOLT_BASE_PORT, BOLT_BASE_PORT + TUNNEL_OFFSET, "neo4j-bolt", "127.0.0.1"))
-            ports.append((HTTP_BASE_PORT, HTTP_BASE_PORT + TUNNEL_OFFSET, "neo4j-http", "127.0.0.1"))
+            ports.append(
+                (
+                    BOLT_BASE_PORT,
+                    BOLT_BASE_PORT + TUNNEL_OFFSET,
+                    "neo4j-bolt",
+                    "127.0.0.1",
+                )
+            )
+            ports.append(
+                (
+                    HTTP_BASE_PORT,
+                    HTTP_BASE_PORT + TUNNEL_OFFSET,
+                    "neo4j-http",
+                    "127.0.0.1",
+                )
+            )
 
     if embed or all_services:
         from imas_codex.settings import get_embed_host, get_embed_server_port
@@ -221,7 +235,9 @@ def _start_tunnels(
 
     for remote_port, local_port, label, remote_bind in to_start:
         if is_tunnel_active(local_port):
-            click.echo(f"  {label}: localhost:{local_port} → {host}→{remote_bind}:{remote_port}")
+            click.echo(
+                f"  {label}: localhost:{local_port} → {host}→{remote_bind}:{remote_port}"
+            )
         else:
             click.echo(f"  {label}: FAILED (port {local_port} not reachable)")
 
@@ -481,7 +497,8 @@ def tunnel_service(
             raise click.ClickException("No services selected for tunneling.")
 
         forwards_str = " ".join(
-            f"-L {local}:127.0.0.1:{remote}" for remote, local, _ in ports
+            f"-L {local}:{remote_bind}:{remote}"
+            for remote, local, _label, remote_bind in ports
         )
 
         # Log directory for autossh diagnostics
@@ -545,8 +562,10 @@ WantedBy=default.target
         click.echo(f"✓ Tunnel service installed: {service_name}")
         click.echo(f"  Host: {target}")
         click.echo("  Ports:")
-        for remote_port, local_port, label in ports:
-            click.echo(f"    {label}: localhost:{local_port} → {target}:{remote_port}")
+        for remote_port, local_port, label, remote_bind in ports:
+            click.echo(
+                f"    {label}: localhost:{local_port} → {remote_bind}:{remote_port}"
+            )
         click.echo(f"  Log: {autossh_log}")
         click.echo(f"  Start: imas-codex tunnel service start {target}")
 
