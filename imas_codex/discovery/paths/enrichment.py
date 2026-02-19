@@ -183,9 +183,11 @@ class EnrichmentResult:
             "conversion_pairs": self.conversion_pairs,
             "total_bytes": self.total_bytes,
             "total_lines": self.total_lines,
-            "language_breakdown": json.dumps(self.language_breakdown)
-            if self.language_breakdown
-            else None,
+            "language_breakdown": self.language_breakdown or None,
+            "pattern_categories": self.pattern_categories or None,
+            "read_matches": self.read_matches,
+            "write_matches": self.write_matches,
+            "warnings": self.warnings,
         }
 
 
@@ -439,6 +441,21 @@ def persist_enrichment(facility: str, results: list[EnrichmentResult]) -> int:
     if not updates:
         return 0
 
+    # Serialize dicts/lists for Neo4j storage
+    for u in updates:
+        if isinstance(u.get("language_breakdown"), dict):
+            u["language_breakdown"] = (
+                json.dumps(u["language_breakdown"]) if u["language_breakdown"] else None
+            )
+        if isinstance(u.get("pattern_categories"), dict):
+            u["pattern_categories"] = (
+                json.dumps(u["pattern_categories"]) if u["pattern_categories"] else None
+            )
+        if isinstance(u.get("warnings"), list):
+            u["enrich_warnings"] = (
+                ", ".join(u.pop("warnings")) if u["warnings"] else None
+            )
+
     with GraphClient() as gc:
         gc.query(
             """
@@ -449,7 +466,12 @@ def persist_enrichment(facility: str, results: list[EnrichmentResult]) -> int:
                 p.is_multiformat = u.is_multiformat,
                 p.total_bytes = u.total_bytes,
                 p.total_lines = u.total_lines,
-                p.language_breakdown = u.language_breakdown
+                p.language_breakdown = u.language_breakdown,
+                p.pattern_categories = u.pattern_categories,
+                p.read_matches = u.read_matches,
+                p.write_matches = u.write_matches,
+                p.enrich_warnings = u.enrich_warnings,
+                p.claimed_at = null
             """,
             updates=updates,
         )

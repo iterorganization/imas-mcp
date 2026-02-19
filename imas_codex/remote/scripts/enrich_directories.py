@@ -140,6 +140,10 @@ def enrich_directory(
 ) -> Dict[str, Any]:
     """Enrich a single directory and return results dict.
 
+    Runs du and rg concurrently for speed, then tokei (which needs du result
+    for timeout calculation). Each command has independent timeout handling —
+    a du timeout doesn't block rg results and vice versa.
+
     Uses purpose to target pattern matching:
     - Documentation: Skip code pattern matching (wastes time)
     - Data: Skip LOC analysis (not code)
@@ -158,6 +162,8 @@ def enrich_directory(
     Returns:
         Dict with path, pattern_categories, size, and lines of code
     """
+    from concurrent.futures import Future, ThreadPoolExecutor
+
     result: Dict[str, Any] = {"path": sanitize_str(path)}
 
     if not os.path.isdir(path):
@@ -173,19 +179,45 @@ def enrich_directory(
     skip_code_patterns = purpose in DOC_PURPOSES
     skip_loc = purpose in DATA_PURPOSES
 
-    # Categorized pattern matching with rg (skip for docs/containers)
-    pattern_categories: Dict[str, int] = {}
-    read_matches = 0
-    write_matches = 0
+    warnings: List[str] = []
 
-    if has_rg and not skip_patterns and not skip_code_patterns:
-        # Search each pattern category independently
+    # --- Run du and rg concurrently ---
+    # These are independent I/O operations that benefit from parallelism.
+    # tokei runs after du because its timeout scales by total_bytes.
+
+    def _run_du() -> tuple:
+        """Run du -sb and return (total_bytes, timed_out)."""
+        try:
+            proc = subprocess.run(
+                ["du", "-sb", path],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                try:
+                    return int(proc.stdout.split()[0]), False
+                except (ValueError, IndexError):
+                    pass
+        except subprocess.TimeoutExpired:
+            return 0, True
+        except Exception:
+            pass
+        return 0, False
+
+    def _run_rg() -> tuple:
+        """Run rg pattern matching and return (pattern_categories, read_matches, write_matches)."""
+        pattern_categories: Dict[str, int] = {}
+        read_matches = 0
+        write_matches = 0
+
+        if not has_rg or skip_patterns or skip_code_patterns:
+            return pattern_categories, read_matches, write_matches
+
         for category, pattern in PATTERN_CATEGORIES.items():
             matches = count_pattern_matches(path, pattern)
             if matches > 0:
                 pattern_categories[category] = matches
-                # Classify as read or write based on pattern content
-                # This is approximate but helps understand data flow
                 if any(
                     r in pattern.lower()
                     for r in ["read", "load", "open", "get", "from"]
@@ -197,45 +229,33 @@ def enrich_directory(
                 ):
                     write_matches += matches
 
+        return pattern_categories, read_matches, write_matches
+
+    # Run du and rg in parallel
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        du_future: Future = executor.submit(_run_du)
+        rg_future: Future = executor.submit(_run_rg)
+
+        total_bytes, du_timed_out = du_future.result()
+        pattern_categories, read_matches, write_matches = rg_future.result()
+
+    if du_timed_out:
+        warnings.append("du_timeout")
+
     result["pattern_categories"] = pattern_categories
     result["read_matches"] = read_matches
     result["write_matches"] = write_matches
-
-    # Storage size analysis using du -sb (reliable byte output)
-    # Note: dust is a TUI visualization tool without machine-parseable output,
-    # so we use du -sb which outputs "BYTES\tPATH" format
-    total_bytes = 0
-    du_timed_out = False
-    try:
-        proc = subprocess.run(
-            ["du", "-sb", path],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            try:
-                total_bytes = int(proc.stdout.split()[0])
-            except (ValueError, IndexError):
-                pass
-    except subprocess.TimeoutExpired:
-        du_timed_out = True
-    except Exception:
-        pass
-
     result["total_bytes"] = total_bytes
 
-    # Lines of code analysis with tokei (skip for data paths - not code)
+    # --- Run tokei sequentially (needs total_bytes for timeout scaling) ---
     total_lines = 0
     language_breakdown: Dict[str, int] = {}
-    tokei_timed_out = False
 
     if has_tokei and not skip_loc and not skip_patterns:
-        # Scale timeout by directory size: 30s base + 15s per GB
         tokei_timeout = (
             30 + int(total_bytes / 1_000_000_000) * 15 if total_bytes > 0 else 60
         )
-        tokei_timeout = min(tokei_timeout, 120)  # Cap at 2 minutes
+        tokei_timeout = min(tokei_timeout, 120)
         try:
             proc = subprocess.run(
                 ["tokei", path, "-o", "json"],
@@ -246,7 +266,6 @@ def enrich_directory(
             if proc.returncode == 0 and proc.stdout.strip():
                 try:
                     tokei_data = json.loads(proc.stdout)
-                    # tokei JSON format: {"Python": {"code": 1000, ...}, ...}
                     for lang, stats in tokei_data.items():
                         if lang == "Total":
                             continue
@@ -258,19 +277,13 @@ def enrich_directory(
                 except json.JSONDecodeError:
                     pass
         except subprocess.TimeoutExpired:
-            tokei_timed_out = True
+            warnings.append(f"tokei_timeout({total_bytes}B)")
         except Exception:
             pass
 
     result["total_lines"] = total_lines
     result["language_breakdown"] = language_breakdown
 
-    # Report partial failures so downstream can see what happened
-    warnings: List[str] = []
-    if du_timed_out:
-        warnings.append("du_timeout")
-    if tokei_timed_out:
-        warnings.append(f"tokei_timeout({total_bytes}B)")
     if warnings:
         result["warnings"] = warnings
 

@@ -1564,6 +1564,27 @@ def _rescore_with_llm(
         lines.append(f"  Language breakdown: {lang or {}}")
         lines.append(f"  Is multiformat: {p.get('is_multiformat', False)}")
 
+        # Pattern match evidence (key data for rescoring)
+        pattern_cats = p.get("pattern_categories")
+        if isinstance(pattern_cats, str):
+            try:
+                pattern_cats = json.loads(pattern_cats)
+            except json.JSONDecodeError:
+                pattern_cats = {}
+        if pattern_cats:
+            lines.append(f"  Pattern categories: {pattern_cats}")
+        lines.append(f"  Read matches: {p.get('read_matches') or 0}")
+        lines.append(f"  Write matches: {p.get('write_matches') or 0}")
+
+        # Enrichment warnings (tokei timeout, du timeout, etc.)
+        enrich_warnings = p.get("enrich_warnings")
+        if enrich_warnings:
+            if isinstance(enrich_warnings, str):
+                lines.append(f"  Enrichment warnings: {enrich_warnings}")
+                lines.append(
+                    "  Note: Some metrics may be incomplete due to timeouts on large directories."
+                )
+
         # Initial per-dimension scores (what we're potentially adjusting)
         # Use `or 0.0` since .get() returns None if key exists with None value
         lines.append("\nInitial scores:")
@@ -1753,6 +1774,18 @@ async def _async_rescore_with_llm(
         lines_prompt.append(f"  Total bytes: {p.get('total_bytes') or 0}")
         lines_prompt.append(f"  Language breakdown: {lang or {}}")
         lines_prompt.append(f"  Is multiformat: {p.get('is_multiformat', False)}")
+
+        # Pattern match evidence (key data for rescoring)
+        pattern_cats = p.get("pattern_categories")
+        if isinstance(pattern_cats, str):
+            try:
+                pattern_cats = json.loads(pattern_cats)
+            except json.JSONDecodeError:
+                pattern_cats = {}
+        if pattern_cats:
+            lines_prompt.append(f"  Pattern categories: {pattern_cats}")
+        lines_prompt.append(f"  Read matches: {p.get('read_matches') or 0}")
+        lines_prompt.append(f"  Write matches: {p.get('write_matches') or 0}")
 
         # Enrichment warnings (tokei timeout, etc.)
         enrich_warnings = p.get("enrich_warnings")
