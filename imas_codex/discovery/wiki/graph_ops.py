@@ -1297,6 +1297,10 @@ def claim_images_for_scoring(
         result = gc.query(
             """
             MATCH (img:Image {facility_id: $facility, claim_token: $token})
+            OPTIONAL MATCH (sibling:Image {facility_id: $facility,
+                                           page_title: img.page_title})
+              WHERE img.page_title IS NOT NULL
+            WITH img, count(sibling) AS page_image_count
             RETURN img.id AS id,
                    img.source_url AS source_url,
                    img.source_type AS source_type,
@@ -1305,7 +1309,8 @@ def claim_images_for_scoring(
                    img.section AS section,
                    img.surrounding_text AS surrounding_text,
                    img.alt_text AS alt_text,
-                   img.image_data AS image_data
+                   img.image_data AS image_data,
+                   page_image_count
             """,
             facility=facility,
             token=claim_token,

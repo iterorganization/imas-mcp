@@ -1067,6 +1067,7 @@ async def image_score_worker(
                 src = img_lookup.get(r["id"], {})
                 r.setdefault("source_url", src.get("source_url", ""))
                 r.setdefault("page_title", src.get("page_title", ""))
+                r.setdefault("page_image_count", src.get("page_image_count", 0))
 
             # Persist to graph
             await asyncio.to_thread(

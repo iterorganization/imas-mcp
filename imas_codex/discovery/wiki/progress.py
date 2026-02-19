@@ -114,20 +114,27 @@ class ImageItem:
     purpose: str = ""
     source_url: str = ""
     page_title: str = ""
+    page_image_count: int = 0  # Total images on this page
+    page_image_index: int = 0  # Display index (Nth image shown from this page)
 
     @property
     def display_name(self) -> str:
-        """Human-readable name: filename from source_url, page title, or short ID."""
+        """Human-readable name: page_title:image N/M or fallback."""
+        if self.page_title:
+            label = self.page_title
+            if self.page_image_count > 0 and self.page_image_index > 0:
+                label += f":image {self.page_image_index}/{self.page_image_count}"
+            else:
+                label += ":image"
+            return label
+        # No page title — extract filename from URL
         if self.source_url:
-            # Extract filename from URL
             from urllib.parse import unquote, urlparse
 
             path = urlparse(self.source_url).path
             filename = unquote(path.rsplit("/", 1)[-1]) if path else ""
             if filename:
                 return filename
-        if self.page_title:
-            return self.page_title
         # Strip facility prefix from graph key (e.g., "jet:54dbfb4a" → "image 54dbfb4a")
         if ":" in self.image_id:
             short_hash = self.image_id.split(":", 1)[1][:12]
@@ -251,6 +258,9 @@ class ProgressState:
 
     # Service monitor reference (for SERVERS display row)
     service_monitor: Any = None
+
+    # Per-page image display counters (tracks Nth image shown per page)
+    _page_image_seen: dict[str, int] = field(default_factory=dict)
 
     # Tracking
     start_time: float = field(default_factory=time.time)
@@ -1136,6 +1146,15 @@ class WikiProgressDisplay:
 
         # Pop from image queue
         if item := self.state.image_queue.pop():
+            page_title = item.get("page_title", "")
+            page_image_count = item.get("page_image_count", 0)
+            # Track display index: Nth image shown from this page
+            page_image_index = 0
+            if page_title:
+                self.state._page_image_seen[page_title] = (
+                    self.state._page_image_seen.get(page_title, 0) + 1
+                )
+                page_image_index = self.state._page_image_seen[page_title]
             self.state.current_image = ImageItem(
                 image_id=item.get("id", ""),
                 score=item.get("score"),
@@ -1143,7 +1162,9 @@ class WikiProgressDisplay:
                 description=item.get("description", ""),
                 purpose=item.get("purpose", ""),
                 source_url=item.get("source_url", ""),
-                page_title=item.get("page_title", ""),
+                page_title=page_title,
+                page_image_count=page_image_count,
+                page_image_index=page_image_index,
             )
         elif self.state.image_queue.is_stale():
             self.state.current_image = None
@@ -1365,6 +1386,7 @@ class WikiProgressDisplay:
                     "purpose": r.get("purpose", ""),
                     "source_url": r.get("source_url", ""),
                     "page_title": r.get("page_title", ""),
+                    "page_image_count": r.get("page_image_count", 0),
                 }
                 for r in results
             ]
@@ -1488,6 +1510,7 @@ class WikiProgressDisplay:
         self.state.image_queue = StreamQueue(
             rate=0.3, max_rate=1.0, min_display_time=0.5
         )
+        self.state._page_image_seen = {}
 
         # Update site info
         self.state.current_site_name = site_name

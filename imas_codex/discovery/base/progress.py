@@ -387,7 +387,7 @@ class WorkerStats:
 # wrapping by reserving extra space for their longer trailing text.
 
 LABEL_WIDTH = 10
-METRICS_WIDTH = 30
+METRICS_WIDTH = 32
 GAUGE_METRICS_WIDTH = 32
 MIN_WIDTH = 80
 
