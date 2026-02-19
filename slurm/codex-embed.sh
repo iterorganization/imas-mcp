@@ -15,6 +15,9 @@
 # Monitor:  squeue -n codex-embed
 # Cancel:   scancel -n codex-embed
 #
+# Pre-requisite: sync GPU deps on login node (shared GPFS cache):
+#   cd ~/Code/imas-codex && uv sync --extra gpu
+#
 # The server binds 0.0.0.0:18765 — reachable from:
 #   - Titan (localhost):  curl http://localhost:18765/health
 #   - Login node:         curl http://98dci4-gpu-0002:18765/health
@@ -37,7 +40,8 @@ echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || ec
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 
 # Start embed server — exec replaces shell for clean signal handling
-exec uv run --extra gpu imas-codex serve embed start \
+# --offline: compute nodes cannot reach PyPI; deps pre-synced on login node
+exec uv run --offline --extra gpu imas-codex serve embed start \
     --host 0.0.0.0 \
     --port 18765 \
     --gpu 0 \
