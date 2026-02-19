@@ -80,6 +80,11 @@ test = [
 ]
 bench = ["asv>=0.6.0,<1.0.0"]
 serve = [
+    # litellm proxy deps (can't use litellm[proxy] due to uvicorn<0.32 pin)
+    "apscheduler>=3.10.4,<4",
+    "backoff",
+    "fastapi-sso>=0.16.0,<0.17.0",
+    "orjson>=3.9.7",
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
     "litellm>=1.81.0",
@@ -156,7 +161,7 @@ dev = [
 
     # --- Serve (embedding + LLM proxy) ---
     "fastapi>=0.115.0",
-    "uvicorn>=0.34.0",
+    "uvicorn>=0.31.1",
 ]
 
 [project.urls]
