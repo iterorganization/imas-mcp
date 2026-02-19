@@ -193,9 +193,8 @@ def _get_tunnel_ports(
         from imas_codex.settings import get_llm_proxy_port
 
         llm_port = get_llm_proxy_port()
-        # LLM proxy: forward to compute node when SLURM is active
-        bind = compute_node or "127.0.0.1"
-        ports.append((llm_port, llm_port, "llm", bind))
+        # LLM proxy runs on login node (needs outbound internet)
+        ports.append((llm_port, llm_port, "llm", "127.0.0.1"))
 
     return ports
 

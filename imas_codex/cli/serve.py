@@ -645,7 +645,13 @@ def llm_deploy() -> None:
         click.echo(f"  URL: http://{node}:{port}")
     else:
         _deploy_login_llm()
-        click.echo(f"  URL: http://localhost:{_llm_port()}")
+        port = _llm_port()
+        _wait_for_health(
+            "LLM proxy",
+            f"curl -sf http://localhost:{port}/",
+            timeout_s=60,
+        )
+        click.echo(f"  URL: http://localhost:{port}")
 
 
 @serve_llm.command("stop")
@@ -653,7 +659,7 @@ def llm_stop() -> None:
     """Stop the LLM proxy server.
 
     Stops the LLM service on the compute node (allocation stays alive)
-    or stops the systemd service on the login node.
+    or the nohup service on the login node.
 
     \\b
     Examples:
@@ -666,16 +672,9 @@ def llm_stop() -> None:
         if _stop_service(alloc["node"], "llm"):
             stopped = True
 
-    try:
-        _run_remote(
-            "systemctl --user stop imas-codex-llm 2>/dev/null",
-            timeout=15,
-            check=True,
-        )
-        click.echo("Stopped login LLM proxy service")
-        stopped = True
-    except subprocess.CalledProcessError:
-        pass
+    if not stopped and _login_service_running("llm"):
+        if _stop_login_service("llm"):
+            stopped = True
 
     if not stopped:
         click.echo("No active LLM proxy found")
@@ -697,10 +696,9 @@ def llm_restart() -> None:
     if alloc and alloc["state"] == "RUNNING":
         _stop_service(alloc["node"], "llm")
         time.sleep(2)
-    try:
-        _run_remote("systemctl --user stop imas-codex-llm 2>/dev/null", timeout=15)
-    except subprocess.CalledProcessError:
-        pass
+    if _login_service_running("llm"):
+        _stop_login_service("llm")
+        time.sleep(2)
 
     # Deploy
     if _is_llm_compute_target():
@@ -717,6 +715,12 @@ def llm_restart() -> None:
         )
     else:
         _deploy_login_llm()
+        port = _llm_port()
+        _wait_for_health(
+            "LLM proxy",
+            f"curl -sf http://localhost:{port}/",
+            timeout_s=60,
+        )
 
 
 @serve_llm.command("logs")
@@ -737,21 +741,111 @@ def llm_logs(follow: bool, lines: int) -> None:
     _tail_log(log_file, follow, lines)
 
 
-def _deploy_login_llm() -> None:
-    """Deploy LLM proxy to login node via systemd."""
-    click.echo("Deploying LLM proxy to login node via systemd...")
+def _login_service_running(name: str) -> bool:
+    """Check if a named service is running on the login node (PID + port fallback)."""
+    check = (
+        f"pid=$(cat {_SERVICES_DIR}/{name}.pid 2>/dev/null) || exit 1\n"
+        f'kill -0 "$pid" 2>/dev/null || exit 1\n'
+        f'echo "running"\n'
+    )
     try:
-        _run_remote(
-            "systemctl --user restart imas-codex-llm 2>/dev/null || "
-            "systemctl --user start imas-codex-llm",
-            timeout=15,
-            check=True,
-        )
-        click.echo("  Service started")
-    except subprocess.CalledProcessError as exc:
-        raise click.ClickException(
-            "Service not installed. Run: imas-codex serve llm service install"
-        ) from exc
+        result = _run_remote(check, timeout=10)
+        if "running" in result:
+            return True
+    except subprocess.CalledProcessError:
+        pass
+
+    # Fallback: check if the service port is responding
+    port_fn_name = _SERVICE_PORTS.get(name)
+    if port_fn_name:
+        port = globals()[port_fn_name]()
+        try:
+            result = _run_remote(
+                f"ss -tlnp sport = :{port} 2>/dev/null | grep -q LISTEN && echo listening",
+                timeout=10,
+            )
+            if "listening" in result:
+                return True
+        except subprocess.CalledProcessError:
+            pass
+
+    return False
+
+
+def _start_login_service(name: str, command: str) -> None:
+    """Start a named service on the login node via nohup.
+
+    Uses the same PID/log file convention as compute-node services.
+    Idempotent: no-op if already running.
+    """
+    import base64 as b64
+
+    if _login_service_running(name):
+        click.echo(f"  {name} already running on login node")
+        return
+
+    svc_script = f"{_SERVICES_DIR}/{name}.sh"
+    script_content = (
+        f"#!/bin/bash\n"
+        f"cd {_PROJECT}\n"
+        f"source {_PROJECT}/.env 2>/dev/null || true\n"
+        f"exec {command}\n"
+    )
+    script_b64 = b64.b64encode(script_content.encode()).decode()
+    _run_remote(
+        f"mkdir -p {_SERVICES_DIR} && "
+        f'echo "{script_b64}" | base64 -d > {svc_script} && '
+        f"chmod +x {svc_script}",
+        timeout=10,
+    )
+
+    launch = (
+        f"nohup {svc_script} > {_SERVICES_DIR}/{name}.log 2>&1 &\n"
+        f"echo $! > {_SERVICES_DIR}/{name}.pid\n"
+        f'echo "Started {name} (PID $!)"\n'
+    )
+    result = _run_remote(launch, timeout=30)
+    click.echo(f"  {result.strip()}")
+
+
+def _stop_login_service(name: str) -> bool:
+    """Stop a named service on the login node. Returns True if stopped."""
+    stop = (
+        f"pid=$(cat {_SERVICES_DIR}/{name}.pid 2>/dev/null) || exit 0\n"
+        f'if kill -0 "$pid" 2>/dev/null; then\n'
+        f'    pkill -TERM -P "$pid" 2>/dev/null || true\n'
+        f'    kill -TERM "$pid" 2>/dev/null || true\n'
+        f"    sleep 3\n"
+        f'    if kill -0 "$pid" 2>/dev/null; then\n'
+        f'        pkill -KILL -P "$pid" 2>/dev/null || true\n'
+        f'        kill -KILL "$pid" 2>/dev/null || true\n'
+        f"        sleep 1\n"
+        f"    fi\n"
+        f'    echo "Stopped {name} (PID $pid)"\n'
+        f"else\n"
+        f'    echo "{name} not running"\n'
+        f"fi\n"
+        f"rm -f {_SERVICES_DIR}/{name}.pid {_SERVICES_DIR}/{name}.sh\n"
+    )
+    result = _run_remote(stop, timeout=30)
+    click.echo(f"  {result.strip()}")
+    return "Stopped" in result
+
+
+def _deploy_login_llm() -> None:
+    """Deploy LLM proxy to login node via nohup.
+
+    The LLM proxy needs outbound HTTPS to reach API providers
+    (OpenRouter, Anthropic, Google), so it must run on the login
+    node which has internet access, not on a compute node.
+    """
+    port = _llm_port()
+    command = (
+        "uv run --offline --extra serve "
+        f"litellm --config {_PROJECT}/imas_codex/config/litellm_config.yaml "
+        f"--host 0.0.0.0 --port {port} --drop_params"
+    )
+    _start_login_service("llm", command)
 
 
 # ============================================================================
@@ -2493,7 +2587,7 @@ def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
         click.echo(f"  URL: http://localhost:{_embed_port()}")
     click.echo()
 
-    # ── Step 4: LLM proxy ────────────────────────────────────────────
+    # ── Step 4: LLM proxy (login node — needs outbound HTTPS) ──────
     click.echo("── LLM Proxy ──")
     if _is_llm_compute_target():
         assert node is not None
@@ -2509,8 +2603,17 @@ def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
             )
         click.echo(f"  URL: http://{node}:{_llm_port()}")
     else:
-        _deploy_login_llm()
-        click.echo(f"  URL: http://localhost:{_llm_port()}")
+        port = _llm_port()
+        if _login_service_running("llm"):
+            click.echo("  Already running on login node")
+        else:
+            _deploy_login_llm()
+            _wait_for_health(
+                "LLM proxy",
+                f"curl -sf http://localhost:{port}/",
+                timeout_s=60,
+            )
+        click.echo(f"  URL: http://localhost:{port}")
     click.echo()
 
     # ── Step 5: SSH tunnels ──────────────────────────────────────────
@@ -2661,6 +2764,37 @@ def serve_status() -> None:
         get_graph_scheduler,
     )
 
+    # ── Venv Check ────────────────────────────────────────────────────────
+    click.echo("Environment:")
+    _missing: list[str] = []
+    try:
+        import litellm  # noqa: F401
+    except ImportError:
+        _missing.append("litellm (serve extra)")
+    try:
+        import torch
+
+        _torch_cuda = torch.cuda.is_available()
+        _torch_label = f"torch={torch.__version__}"
+        if _torch_cuda:
+            _torch_label += " (CUDA)"
+        else:
+            _torch_label += " (CPU-only)"
+        click.echo(f"  {_torch_label}")
+    except ImportError:
+        _missing.append("torch (cpu/gpu extra)")
+        _torch_cuda = False
+    try:
+        import langfuse  # noqa: F401
+    except ImportError:
+        _missing.append("langfuse (serve extra)")
+    if _missing:
+        click.echo(f"  ✗ Missing: {', '.join(_missing)}")
+        click.echo("  Hint: uv sync --extra gpu  (or --extra cpu)")
+    else:
+        click.echo("  ✓ All serve dependencies available")
+    click.echo()
+
     # ── SLURM Allocation ─────────────────────────────────────────────────
     alloc = _get_allocation()
     compute_node: str | None = None
@@ -2673,7 +2807,7 @@ def serve_status() -> None:
         )
         if alloc["state"] == "RUNNING":
             compute_node = alloc["node"]
-            for svc in ("neo4j", "embed", "llm"):
+            for svc in ("neo4j", "embed"):
                 running = _service_running(compute_node, svc)
                 compute_services[svc] = running
                 click.echo(f"  {svc}: {'running' if running else 'stopped'}")
@@ -2848,7 +2982,6 @@ def serve_status() -> None:
     click.echo("LLM Proxy:")
     from imas_codex.settings import (
         get_llm_location,
-        get_llm_proxy_port,
         get_llm_scheduler,
     )
 
@@ -2857,50 +2990,28 @@ def serve_status() -> None:
     click.echo(f"  Location: {llm_location}")
     click.echo(f"  Scheduler: {llm_scheduler}")
 
-    if compute_node and compute_services.get("llm"):
-        # SLURM: check health directly on the compute node
-        port = _llm_port()
-        click.echo(f"  Compute: http://{compute_node}:{port}")
-        try:
-            result = _run_on_node(
-                compute_node,
-                f"curl -sf http://localhost:{port}/",
-                timeout=10,
-            )
-            if result and result != "(no output)":
-                click.echo("  ✓ Status: running")
-            else:
-                click.echo("  ✗ Status: not responding")
-        except subprocess.CalledProcessError:
-            click.echo("  ✗ Status: not responding on compute node")
-
-        # Check tunnel / local port accessibility
-        from imas_codex.remote.tunnel import is_tunnel_active
-
-        llm_port = get_llm_proxy_port()
-        if is_tunnel_active(llm_port):
-            click.echo(f"  Tunnel: ✓ localhost:{llm_port}")
-        else:
-            click.echo(f"  Tunnel: ✗ localhost:{llm_port} not reachable")
-    elif compute_node and not compute_services.get("llm"):
-        click.echo(f"  ✗ Status: stopped (not running on {compute_node})")
+    # LLM proxy runs on the login node (needs outbound internet for OpenRouter)
+    if _login_service_running("llm"):
+        click.echo("  ✓ Status: running (login node)")
     else:
-        # Non-SLURM: check via URL
-        from imas_codex.settings import get_llm_proxy_url
+        click.echo("  ✗ Status: not running on login node")
 
-        llm_url = get_llm_proxy_url()
-        click.echo(f"  URL: {llm_url}")
-        try:
-            import httpx
+    # Check local accessibility (direct or via tunnel)
+    from imas_codex.settings import get_llm_proxy_url
 
-            resp = httpx.get(f"{llm_url}/", timeout=3.0)
-            if resp.status_code == 200:
-                click.echo("  ✓ Status: ok")
-            else:
-                click.echo(f"  ✗ Status: unhealthy (HTTP {resp.status_code})")
-        except httpx.ConnectError:
-            click.echo("  ✗ Status: not running")
-        except httpx.RemoteProtocolError:
-            click.echo("  ✗ Status: not responding (port in use by non-HTTP process)")
-        except Exception:
-            click.echo("  ✗ Status: not running")
+    llm_url = get_llm_proxy_url()
+    click.echo(f"  URL: {llm_url}")
+    try:
+        import httpx
+
+        resp = httpx.get(f"{llm_url}/", timeout=3.0)
+        if resp.status_code == 200:
+            click.echo("  ✓ Reachable: ok")
+        else:
+            click.echo(f"  ✗ Reachable: unhealthy (HTTP {resp.status_code})")
+    except httpx.ConnectError:
+        click.echo("  ✗ Reachable: no (tunnel needed?)")
+    except httpx.RemoteProtocolError:
+        click.echo("  ✗ Reachable: port in use by non-HTTP process")
+    except Exception:
+        click.echo("  ✗ Reachable: no")

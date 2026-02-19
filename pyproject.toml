@@ -94,14 +94,17 @@ serve = [
 # PyTorch backend selection - choose one:
 #   uv sync --extra cpu  (default, ~2GB, no CUDA)
 #   uv sync --extra gpu  (CUDA 12.1, ~6GB, torch 2.5.1 max due to iter driver)
+# Both include serve deps (litellm, langfuse, etc.) for single-extra deploys.
 cpu = [
     "torch",
     "sentence-transformers>=5.0.0",
+    "imas-codex[serve]",
 ]
 gpu = [
     "torch==2.5.1",
     "accelerate>=1.0.0",
     "sentence-transformers>=5.0.0",
+    "imas-codex[serve]",
 ]
 
 [dependency-groups]
@@ -262,8 +265,8 @@ model = "anthropic/claude-sonnet-4.5"
 
 [tool.imas-codex.llm]
 # LiteLLM proxy settings. Port base = 18400, offset by location index.
+# Runs on login node (needs outbound HTTPS for OpenRouter/Anthropic).
 location = "iter"       # facility hosting LLM proxy (or "local" for in-process)
-scheduler = "slurm"     # job scheduler: "slurm" or omit for login-node systemd
 
 [tool.hatch.envs.test]
 dependencies = [
