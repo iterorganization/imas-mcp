@@ -294,9 +294,10 @@ classes:
           embeddings are served (backend, deploy method, port). The embedding
           model and dimension are project-global (pyproject.toml); everything
           else about how/where the server runs is facility infrastructure.
+          Public so other users can see how the facility is configured.
+          Override with env vars: IMAS_CODEX_EMBEDDING_BACKEND,
+          IMAS_CODEX_EMBED_LOCATION, IMAS_CODEX_EMBED_PORT.
         range: EmbeddingServiceConfig
-        annotations:
-          is_private: true
 
   # -------------------------------------------------------------------------
   # Nested Config Types

@@ -541,10 +541,12 @@ WantedBy=default.target
 def serve_embed() -> None:
     """Manage GPU embedding server.
 
-    Deploy mode is determined by ``embedding_service.deploy`` in the facility's
-    private YAML (e.g. iter_private.yaml):
+    Deploy mode is determined by ``embedding_service.deploy`` in the facility
+    YAML (e.g. iter.yaml):
       slurm → SLURM batch job on GPU compute node (partition/node from facility YAML)
       local → systemd service on login node
+
+    Override with env vars: IMAS_CODEX_EMBED_LOCATION, IMAS_CODEX_EMBEDDING_BACKEND
 
     \b
       imas-codex serve embed deploy     Deploy per config
@@ -1216,15 +1218,14 @@ def embed_deploy(
 ) -> None:
     """Deploy embedding server.
 
-    Mode is determined by ``embedding_service.deploy`` in the facility's
-    private YAML:
+    Mode is determined by ``embedding_service.deploy`` in the facility YAML:
       - slurm → SLURM batch job (partition/node from facility compute config)
       - local → systemd service on login node
 
     Idempotent: no-op if the server is already running.
     Use 'restart' to cancel and redeploy.
 
-    Override: IMAS_CODEX_EMBED_LOCATION env var.
+    Override: IMAS_CODEX_EMBED_LOCATION=local env var.
 
     \b
     Examples:

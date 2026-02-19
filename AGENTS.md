@@ -534,8 +534,17 @@ python("print(reload())")  # After editing imas_codex/ source files
 ## Embedding Server
 
 GPU embedding server (Qwen3-Embedding-0.6B, 256-dim). Deployment config is
-facility-specific — lives in the facility's private YAML (`embedding_service`
-section), not pyproject.toml. Only model/dimension are project-global.
+facility-specific — lives in the facility's public YAML (`embedding_service`
+section, e.g. `iter.yaml`). Only model/dimension are project-global (pyproject.toml).
+
+All settings support env var overrides for on-the-fly switching:
+
+| Setting | Env Var | Values |
+|---------|---------|--------|
+| Backend | `IMAS_CODEX_EMBEDDING_BACKEND` | `remote` (HTTP server) / `local` (in-process) |
+| Deploy mode | `IMAS_CODEX_EMBED_LOCATION` | `slurm` (compute node) / `local` (login systemd) |
+| Server port | `IMAS_CODEX_EMBED_PORT` | Port number (default: 18765) |
+| GPU host | `IMAS_CODEX_EMBED_HOST` | Hostname override (escape hatch) |
 
 Architecture: `workstation → SSH tunnel → facility:18765` or on facility: direct `localhost:18765`
 
@@ -549,6 +558,12 @@ imas-codex serve embed stop      # Stop all embed processes
 imas-codex serve embed logs      # View SLURM logs
 imas-codex serve embed start     # Start server locally (foreground)
 imas-codex serve embed service install  # Install systemd service
+
+# Switch to login node deployment without editing YAML
+IMAS_CODEX_EMBED_LOCATION=local imas-codex serve embed deploy
+
+# Use a different port
+IMAS_CODEX_EMBED_PORT=18766 imas-codex serve embed deploy
 ```
 
 If embedding fails, check in order:

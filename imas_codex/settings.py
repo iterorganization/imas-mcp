@@ -145,17 +145,18 @@ def get_embedding_dimension() -> int:
 
 
 def _get_embed_service_config() -> dict:
-    """Load embedding_service config from the active facility's private YAML.
+    """Load embedding_service config from the active facility's YAML.
 
     Returns the ``embedding_service`` dict (backend, deploy, server_port)
     from the facility identified by the current graph location.
+    Reads from the merged public + private config.
     """
     try:
-        from imas_codex.discovery.base.facility import get_facility_infrastructure
+        from imas_codex.discovery.base.facility import get_facility
 
         facility_id = get_graph_location()
-        infra = get_facility_infrastructure(facility_id)
-        return infra.get("embedding_service", {})
+        config = get_facility(facility_id)
+        return config.get("embedding_service", {})
     except Exception:
         return {}
 
@@ -199,8 +200,7 @@ def get_embed_location() -> str:
 
     Returns ``"local"`` (systemd on login node) or ``"slurm"`` (batch job
     on a compute node).  When ``"slurm"``, the partition, GPU node hostname,
-    and SSH host are read from the facility's compute config in its private
-    YAML (e.g. ``iter_private.yaml``).
+    and SSH host are read from the facility's compute config.
 
     Priority: IMAS_CODEX_EMBED_LOCATION env → facility YAML → "local".
     """
