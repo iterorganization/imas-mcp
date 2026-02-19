@@ -374,7 +374,7 @@ uv run ruff format .
 # 2. Stage specific files (never git add -A)
 # NEVER stage auto-generated files (models.py, dd_models.py, physics_domain.py)
 # NEVER stage gitignored files — run `git status --ignored` to check
-# ABSOLUTELY NEVER commit *_private.yaml files — they contain sensitive infrastructure data
+# NEVER commit *_private.yaml files — they contain sensitive infrastructure data
 git add <file1> <file2> ...
 
 # 3. Commit with conventional format
