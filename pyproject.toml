@@ -80,26 +80,21 @@ test = [
 ]
 bench = ["asv>=0.6.0,<1.0.0"]
 serve = [
-    # litellm proxy deps (can't use litellm[proxy] due to uvicorn<0.32 pin)
-    "apscheduler>=3.10.4,<4",
-    "backoff",
-    "fastapi-sso>=0.16.0,<0.17.0",
-    "orjson>=3.9.7",
-    "uvloop>=0.21.0",
+    # Embedding server deps (GPU inference)
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
-    "litellm>=1.81.0",
-    "langfuse>=2.0.0",
+    "uvloop>=0.21.0",
 ]
 # PyTorch backend selection - choose one:
 #   uv sync --extra cpu  (default, ~2GB, no CUDA)
 #   uv sync --extra gpu  (CUDA 12.1, ~6GB, torch 2.5.1 max due to iter driver)
-# Both include serve deps (litellm, langfuse, etc.) for single-extra deploys.
+# Both include serve deps (embedding server) for single-extra deploys.
 cpu = [
     "torch",
     "sentence-transformers>=5.0.0",
     "imas-codex[serve]",
 ]
+# LLM proxy runs via `uv tool run litellm[proxy]` — no venv deps needed.
 gpu = [
     "torch==2.5.1",
     "accelerate>=1.0.0",

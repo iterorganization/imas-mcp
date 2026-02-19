@@ -338,14 +338,7 @@ def llm_start(
     # Check Langfuse config
     if os.environ.get("LANGFUSE_PUBLIC_KEY"):
         click.echo("Langfuse: configured (cost tracking enabled)")
-        # Enable langfuse callbacks via env var (not hardcoded in config YAML)
-        # so the proxy works without langfuse installed.
-        try:
-            import langfuse  # noqa: F401
-
-            os.environ.setdefault("LITELLM_CALLBACKS", "langfuse")
-        except ImportError:
-            click.echo("  Warning: langfuse keys set but package not installed")
+        os.environ.setdefault("LITELLM_CALLBACKS", "langfuse")
     else:
         click.echo(
             "Langfuse: not configured (set LANGFUSE_PUBLIC_KEY for cost tracking)"
@@ -357,6 +350,8 @@ def llm_start(
         "run",
         "--with",
         "litellm[proxy]>=1.81.0",
+        "--with",
+        "langfuse>=2.0.0",
         "--",
         "litellm",
         "--config",
@@ -367,27 +362,6 @@ def llm_start(
         str(port),
         "--detailed_debug" if log_level == "DEBUG" else "--drop_params",
     ]
-
-    # Prefer the venv-installed litellm (available via uv sync --extra serve)
-    # over uv tool run which needs PyPI access (unavailable on compute nodes).
-    try:
-        import litellm as _litellm  # noqa: F401
-
-        cmd = [
-            uv_path,
-            "run",
-            "--offline",
-            "litellm",
-            "--config",
-            config_path,
-            "--host",
-            host,
-            "--port",
-            str(port),
-            "--detailed_debug" if log_level == "DEBUG" else "--drop_params",
-        ]
-    except ImportError:
-        pass
 
     try:
         subprocess.run(cmd, check=True)
@@ -511,6 +485,9 @@ def llm_service(action: str, port: int | None) -> None:
 
         env_file = project_dir / ".env"
 
+        log_dir = Path.home() / ".local" / "share" / "imas-codex" / "services"
+        log_file = log_dir / "llm.log"
+
         service_content = f"""[Unit]
 Description=IMAS Codex LiteLLM Proxy
 After=network.target
@@ -520,8 +497,12 @@ Type=simple
 WorkingDirectory={project_dir}
 EnvironmentFile=-{env_file}
 Environment="PATH={Path.home()}/.local/bin:/usr/local/bin:/usr/bin"
-ExecStart={uv_path} tool run --with 'litellm[proxy]>=1.81.0' -- litellm --config {config_path} --host 127.0.0.1 --port {port}
+Environment="LITELLM_CALLBACKS=langfuse"
+ExecStartPre=/bin/mkdir -p {log_dir}
+ExecStart={uv_path} tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' -- litellm --config {config_path} --host 127.0.0.1 --port {port} --drop_params
 ExecStop=/bin/kill -15 $MAINPID
+StandardOutput=append:{log_file}
+StandardError=append:{log_file}
 TimeoutStopSec=30
 Restart=on-failure
 RestartSec=10
@@ -572,24 +553,17 @@ WantedBy=default.target
             text=True,
         )
         if result.returncode != 0:
-            # Grab recent journal lines for diagnostics
-            journal = subprocess.run(
-                [
-                    "journalctl",
-                    "--user",
-                    "-eu",
-                    "imas-codex-llm",
-                    "-n",
-                    "10",
-                    "--no-pager",
-                ],
-                capture_output=True,
-                text=True,
+            # Read recent log lines for diagnostics
+            log_file = (
+                Path.home() / ".local" / "share" / "imas-codex" / "services" / "llm.log"
             )
+            log_tail = ""
+            if log_file.exists():
+                log_tail = log_file.read_text()[-2000:]
             raise click.ClickException(
                 "Failed to start LLM proxy service.\n"
-                + (journal.stdout or journal.stderr or "")
-                + "\nCheck full logs: journalctl --user -xeu imas-codex-llm"
+                + log_tail
+                + "\nCheck full logs: imas-codex serve llm logs"
             )
         click.echo("LLM proxy service started")
 
@@ -603,16 +577,11 @@ WantedBy=default.target
 
 @serve_llm.command("deploy")
 def llm_deploy() -> None:
-    """Deploy LLM proxy server.
+    """Deploy LLM proxy on the login node via systemd.
 
-    When ``[llm].scheduler = "slurm"``, ensures a SLURM allocation
-    exists on the compute node and starts the LLM proxy on it.
-    The allocation is shared with embed and Neo4j — each service has an
-    independent lifecycle.
-
-    When scheduler is not set, deploys via systemd on the login node.
-
+    Installs the systemd user service if needed, then starts it.
     CPU-only service (~50 MB RAM), no GPU required.
+    Runs on the login node which has outbound HTTPS for API providers.
 
     Idempotent: no-op if already running.
 
@@ -620,107 +589,69 @@ def llm_deploy() -> None:
     Examples:
         imas-codex serve llm deploy
     """
-    if _is_llm_compute_target():
-        alloc = _ensure_allocation()
-        node = alloc["node"]
-        if _service_running(node, "llm"):
-            click.echo(
-                f"Already running: llm on {node} "
-                f"(alloc {alloc['job_id']}, {alloc['gres']}, {alloc['time']})"
-            )
-            click.echo(f"  URL: http://{node}:{_llm_port()}")
-            return
-
-        click.echo(f"Starting LLM proxy on {node}...")
-        cmd = _llm_service_command()
-        _start_service(node, "llm", cmd)
-
-        port = _llm_port()
-        _wait_for_health(
-            "LLM proxy",
-            f"curl -sf http://{node}:{port}/",
-            timeout_s=60,
-        )
-
-        click.echo(f"  URL: http://{node}:{port}")
-    else:
-        _deploy_login_llm()
-        port = _llm_port()
-        _wait_for_health(
-            "LLM proxy",
-            f"curl -sf http://localhost:{port}/",
-            timeout_s=60,
-        )
-        click.echo(f"  URL: http://localhost:{port}")
+    _deploy_login_llm()
+    port = _llm_port()
+    _wait_for_health(
+        "LLM proxy",
+        f"curl -sf http://localhost:{port}/",
+        timeout_s=60,
+    )
+    click.echo(f"  URL: http://localhost:{port}")
 
 
 @serve_llm.command("stop")
 def llm_stop() -> None:
-    """Stop the LLM proxy server.
-
-    Stops the LLM service on the compute node (allocation stays alive)
-    or the nohup service on the login node.
+    """Stop the LLM proxy server on the login node.
 
     \\b
     Examples:
         imas-codex serve llm stop
     """
-    stopped = False
-
-    alloc = _get_allocation()
-    if alloc and alloc["state"] == "RUNNING":
-        if _stop_service(alloc["node"], "llm"):
-            stopped = True
-
-    if not stopped and _login_service_running("llm"):
-        if _stop_login_service("llm"):
-            stopped = True
-
-    if not stopped:
-        click.echo("No active LLM proxy found")
+    try:
+        result = _run_remote(
+            "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
+            timeout=10,
+        )
+        if "active" in result and "inactive" not in result:
+            _run_remote(
+                "systemctl --user stop imas-codex-llm",
+                timeout=15,
+                check=True,
+            )
+            click.echo("LLM proxy stopped")
+        else:
+            click.echo("LLM proxy not running")
+    except subprocess.CalledProcessError:
+        click.echo("Failed to stop LLM proxy")
 
 
 @serve_llm.command("restart")
 def llm_restart() -> None:
-    """Restart the LLM proxy server (stop + deploy).
-
-    Stops the LLM service and redeploys.  The SLURM allocation and
-    other services (e.g. embed, Neo4j) are not affected.
+    """Restart the LLM proxy server on the login node.
 
     \\b
     Examples:
         imas-codex serve llm restart
     """
-    # Stop
-    alloc = _get_allocation()
-    if alloc and alloc["state"] == "RUNNING":
-        _stop_service(alloc["node"], "llm")
-        time.sleep(2)
-    if _login_service_running("llm"):
-        _stop_login_service("llm")
-        time.sleep(2)
+    try:
+        _run_remote(
+            "systemctl --user restart imas-codex-llm",
+            timeout=30,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(
+            "Failed to restart. Is the service installed?\n"
+            "  Install: imas-codex serve llm service install"
+        ) from exc
 
-    # Deploy
-    if _is_llm_compute_target():
-        alloc = _ensure_allocation()
-        node = alloc["node"]
-        click.echo(f"Starting LLM proxy on {node}...")
-        cmd = _llm_service_command()
-        _start_service(node, "llm", cmd)
-        port = _llm_port()
-        _wait_for_health(
-            "LLM proxy",
-            f"curl -sf http://{node}:{port}/",
-            timeout_s=60,
-        )
-    else:
-        _deploy_login_llm()
-        port = _llm_port()
-        _wait_for_health(
-            "LLM proxy",
-            f"curl -sf http://localhost:{port}/",
-            timeout_s=60,
-        )
+    port = _llm_port()
+    _wait_for_health(
+        "LLM proxy",
+        f"curl -sf http://localhost:{port}/",
+        timeout_s=60,
+    )
+    click.echo(f"  URL: http://localhost:{port}")
 
 
 @serve_llm.command("logs")
@@ -741,111 +672,93 @@ def llm_logs(follow: bool, lines: int) -> None:
     _tail_log(log_file, follow, lines)
 
 
-def _login_service_running(name: str) -> bool:
-    """Check if a named service is running on the login node (PID + port fallback)."""
-    check = (
-        f"pid=$(cat {_SERVICES_DIR}/{name}.pid 2>/dev/null) || exit 1\n"
-        f'kill -0 "$pid" 2>/dev/null || exit 1\n'
-        f'echo "running"\n'
-    )
-    try:
-        result = _run_remote(check, timeout=10)
-        if "running" in result:
-            return True
-    except subprocess.CalledProcessError:
-        pass
-
-    # Fallback: check if the service port is responding
-    port_fn_name = _SERVICE_PORTS.get(name)
-    if port_fn_name:
-        port = globals()[port_fn_name]()
-        try:
-            result = _run_remote(
-                f"ss -tlnp sport = :{port} 2>/dev/null | grep -q LISTEN && echo listening",
-                timeout=10,
-            )
-            if "listening" in result:
-                return True
-        except subprocess.CalledProcessError:
-            pass
-
-    return False
-
-
-def _start_login_service(name: str, command: str) -> None:
-    """Start a named service on the login node via nohup.
-
-    Uses the same PID/log file convention as compute-node services.
-    Idempotent: no-op if already running.
-    """
-    import base64 as b64
-
-    if _login_service_running(name):
-        click.echo(f"  {name} already running on login node")
-        return
-
-    svc_script = f"{_SERVICES_DIR}/{name}.sh"
-    script_content = (
-        f"#!/bin/bash\n"
-        f"cd {_PROJECT}\n"
-        f"source {_PROJECT}/.env 2>/dev/null || true\n"
-        f"exec {command}\n"
-    )
-    script_b64 = b64.b64encode(script_content.encode()).decode()
-    _run_remote(
-        f"mkdir -p {_SERVICES_DIR} && "
-        f'echo "{script_b64}" | base64 -d > {svc_script} && '
-        f"chmod +x {svc_script}",
-        timeout=10,
-    )
-
-    launch = (
-        f"nohup {svc_script} > {_SERVICES_DIR}/{name}.log 2>&1 &\n"
-        f"echo $! > {_SERVICES_DIR}/{name}.pid\n"
-        f'echo "Started {name} (PID $!)"\n'
-    )
-    result = _run_remote(launch, timeout=30)
-    click.echo(f"  {result.strip()}")
-
-
-def _stop_login_service(name: str) -> bool:
-    """Stop a named service on the login node. Returns True if stopped."""
-    stop = (
-        f"pid=$(cat {_SERVICES_DIR}/{name}.pid 2>/dev/null) || exit 0\n"
-        f'if kill -0 "$pid" 2>/dev/null; then\n'
-        f'    pkill -TERM -P "$pid" 2>/dev/null || true\n'
-        f'    kill -TERM "$pid" 2>/dev/null || true\n'
-        f"    sleep 3\n"
-        f'    if kill -0 "$pid" 2>/dev/null; then\n'
-        f'        pkill -KILL -P "$pid" 2>/dev/null || true\n'
-        f'        kill -KILL "$pid" 2>/dev/null || true\n'
-        f"        sleep 1\n"
-        f"    fi\n"
-        f'    echo "Stopped {name} (PID $pid)"\n'
-        f"else\n"
-        f'    echo "{name} not running"\n'
-        f"fi\n"
-        f"rm -f {_SERVICES_DIR}/{name}.pid {_SERVICES_DIR}/{name}.sh\n"
-    )
-    result = _run_remote(stop, timeout=30)
-    click.echo(f"  {result.strip()}")
-    return "Stopped" in result
-
-
 def _deploy_login_llm() -> None:
-    """Deploy LLM proxy to login node via nohup.
+    """Deploy LLM proxy to login node via systemd.
 
+    Installs the systemd user service if not present, then starts it.
     The LLM proxy needs outbound HTTPS to reach API providers
     (OpenRouter, Anthropic, Google), so it must run on the login
     node which has internet access, not on a compute node.
+
+    Idempotent: no-op if already running.
     """
+    # Check if already running
+    try:
+        result = _run_remote(
+            "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
+            timeout=10,
+        )
+        if "active" in result and "inactive" not in result:
+            click.echo("  LLM proxy already running on login node")
+            return
+    except subprocess.CalledProcessError:
+        pass
+
+    # Install service if not present, then start
+    try:
+        _run_remote(
+            "systemctl --user cat imas-codex-llm >/dev/null 2>&1",
+            timeout=10,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        # Service not installed — install it remotely
+        click.echo("  Installing systemd service...")
+        _install_llm_service_remote()
+
+    click.echo("  Starting LLM proxy on login node...")
+    try:
+        _run_remote(
+            "systemctl --user start imas-codex-llm",
+            timeout=15,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        log_tail = _run_remote(
+            f"tail -20 {_SERVICES_DIR}/llm.log 2>/dev/null || true",
+            timeout=10,
+        )
+        raise click.ClickException(f"Failed to start LLM proxy.\n{log_tail}") from exc
+
+
+def _install_llm_service_remote() -> None:
+    """Install the LLM systemd user service on the remote login node via SSH."""
+    import base64
+
     port = _llm_port()
-    command = (
-        "uv run --offline --extra serve "
-        f"litellm --config {_PROJECT}/imas_codex/config/litellm_config.yaml "
-        f"--host 0.0.0.0 --port {port} --drop_params"
+    service_content = f"""[Unit]
+Description=IMAS Codex LiteLLM Proxy
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory={_PROJECT}
+EnvironmentFile=-{_PROJECT}/.env
+Environment="PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin"
+Environment="LITELLM_CALLBACKS=langfuse"
+ExecStartPre=/bin/mkdir -p {_SERVICES_DIR}
+ExecStart=$HOME/.local/bin/uv tool run --with 'litellm[proxy]>=1.81.0' --with 'langfuse>=2.0.0' -- litellm --config {_PROJECT}/imas_codex/config/litellm_config.yaml --host 127.0.0.1 --port {port} --drop_params
+ExecStop=/bin/kill -15 $MAINPID
+StandardOutput=append:{_SERVICES_DIR}/llm.log
+StandardError=append:{_SERVICES_DIR}/llm.log
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+"""
+    content_b64 = base64.b64encode(service_content.encode()).decode()
+    _run_remote(
+        'mkdir -p "$HOME/.config/systemd/user" && '
+        f'echo "{content_b64}" | base64 -d > '
+        '"$HOME/.config/systemd/user/imas-codex-llm.service" && '
+        "systemctl --user daemon-reload && "
+        "systemctl --user enable imas-codex-llm",
+        timeout=15,
+        check=True,
     )
-    _start_login_service("llm", command)
+    click.echo("  Service installed and enabled")
 
 
 # ============================================================================
@@ -1324,13 +1237,6 @@ def _is_graph_compute_target() -> bool:
     return get_graph_scheduler() == "slurm"
 
 
-def _is_llm_compute_target() -> bool:
-    """True when LLM scheduler is 'slurm' (deploy via SLURM)."""
-    from imas_codex.settings import get_llm_scheduler
-
-    return get_llm_scheduler() == "slurm"
-
-
 # ── Facility compute config ─────────────────────────────────────────────
 
 
@@ -1733,7 +1639,6 @@ def _stop_service(node: str, name: str) -> bool:
 _SERVICE_PORTS: dict[str, str] = {
     "neo4j": "_graph_port",
     "embed": "_embed_port",
-    "llm": "_llm_port",
 }
 
 
@@ -1890,29 +1795,6 @@ def _embed_service_command(gpus: int, workers: int) -> str:
         "uv run --offline --extra gpu imas-codex serve embed start "
         f"--host 0.0.0.0 --port {port} "
         f"--gpus {gpu_ids} --workers {workers} --deploy-label {partition_name}"
-    )
-
-
-def _llm_service_command() -> str:
-    """Build the shell command to start the LLM proxy on a compute node.
-
-    Binds to ``0.0.0.0`` on the exclusively-allocated SLURM compute
-    node.  Accessible from the login node via the compute node's
-    hostname on the cluster network.
-
-    CPU-only service (~50 MB RAM), no GPU required.
-
-    Uses ``litellm`` from the project venv (installed via ``uv sync
-    --extra serve``) rather than ``uv tool run`` which needs PyPI access
-    that compute nodes typically lack.
-
-    Note: ``.env`` sourcing is handled by ``_start_service()``'s launcher
-    script, not here. This command is wrapped with ``exec`` by the launcher.
-    """
-    port = _llm_port()
-    return (
-        "uv run --offline --extra serve imas-codex serve llm start "
-        f"--host 0.0.0.0 --port {port}"
     )
 
 
@@ -2530,9 +2412,7 @@ def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
     if workers is None:
         workers = gpus
 
-    any_compute = (
-        _is_graph_compute_target() or _is_compute_target() or _is_llm_compute_target()
-    )
+    any_compute = _is_graph_compute_target() or _is_compute_target()
 
     # ── Step 1: SLURM allocation ─────────────────────────────────────
     node: str | None = None
@@ -2589,31 +2469,14 @@ def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
 
     # ── Step 4: LLM proxy (login node — needs outbound HTTPS) ──────
     click.echo("── LLM Proxy ──")
-    if _is_llm_compute_target():
-        assert node is not None
-        if _service_running(node, "llm"):
-            click.echo(f"  Already running on {node}")
-        else:
-            click.echo(f"  Starting LLM proxy on {node}...")
-            _start_service(node, "llm", _llm_service_command())
-            _wait_for_health(
-                "LLM proxy",
-                f"curl -sf http://{node}:{_llm_port()}/",
-                timeout_s=60,
-            )
-        click.echo(f"  URL: http://{node}:{_llm_port()}")
-    else:
-        port = _llm_port()
-        if _login_service_running("llm"):
-            click.echo("  Already running on login node")
-        else:
-            _deploy_login_llm()
-            _wait_for_health(
-                "LLM proxy",
-                f"curl -sf http://localhost:{port}/",
-                timeout_s=60,
-            )
-        click.echo(f"  URL: http://localhost:{port}")
+    _deploy_login_llm()
+    port = _llm_port()
+    _wait_for_health(
+        "LLM proxy",
+        f"curl -sf http://localhost:{port}/",
+        timeout_s=60,
+    )
+    click.echo(f"  URL: http://localhost:{port}")
     click.echo()
 
     # ── Step 5: SSH tunnels ──────────────────────────────────────────
@@ -2768,10 +2631,6 @@ def serve_status() -> None:
     click.echo("Environment:")
     _missing: list[str] = []
     try:
-        import litellm  # noqa: F401
-    except ImportError:
-        _missing.append("litellm (serve extra)")
-    try:
         import torch
 
         _torch_cuda = torch.cuda.is_available()
@@ -2784,10 +2643,6 @@ def serve_status() -> None:
     except ImportError:
         _missing.append("torch (cpu/gpu extra)")
         _torch_cuda = False
-    try:
-        import langfuse  # noqa: F401
-    except ImportError:
-        _missing.append("langfuse (serve extra)")
     if _missing:
         click.echo(f"  ✗ Missing: {', '.join(_missing)}")
         click.echo("  Hint: uv sync --extra gpu  (or --extra cpu)")
@@ -2980,21 +2835,24 @@ def serve_status() -> None:
 
     # ── LLM Proxy ────────────────────────────────────────────────────────
     click.echo("LLM Proxy:")
-    from imas_codex.settings import (
-        get_llm_location,
-        get_llm_scheduler,
-    )
+    from imas_codex.settings import get_llm_location
 
     llm_location = get_llm_location()
-    llm_scheduler = get_llm_scheduler()
     click.echo(f"  Location: {llm_location}")
-    click.echo(f"  Scheduler: {llm_scheduler}")
+    click.echo("  Deploy: systemd (uv tool run)")
 
-    # LLM proxy runs on the login node (needs outbound internet for OpenRouter)
-    if _login_service_running("llm"):
-        click.echo("  ✓ Status: running (login node)")
-    else:
-        click.echo("  ✗ Status: not running on login node")
+    # Check systemd status on login node
+    try:
+        result = _run_remote(
+            "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
+            timeout=10,
+        )
+        if "active" in result and "inactive" not in result:
+            click.echo("  ✓ Status: running (login node)")
+        else:
+            click.echo("  ✗ Status: not running on login node")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        click.echo("  ✗ Status: could not check (SSH error)")
 
     # Check local accessibility (direct or via tunnel)
     from imas_codex.settings import get_llm_proxy_url
