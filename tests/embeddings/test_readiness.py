@@ -44,6 +44,10 @@ class TestEnsureEmbeddingReady:
         # Should not need further steps since server is already available
         client_instance.is_available.assert_called_once()
 
+    @patch(
+        "imas_codex.embeddings.readiness._get_embed_host",
+        return_value="98dci4-srv-1001",
+    )
     @patch("imas_codex.embeddings.readiness._is_on_iter_login", return_value=True)
     @patch("imas_codex.embeddings.readiness._is_on_iter", return_value=True)
     @patch("imas_codex.embeddings.readiness._try_start_service", return_value=True)
@@ -54,7 +58,14 @@ class TestEnsureEmbeddingReady:
         return_value="http://localhost:18765",
     )
     def test_tries_systemd_service_on_iter(
-        self, mock_url, mock_port, mock_client, mock_start, mock_on_iter, mock_login
+        self,
+        mock_url,
+        mock_port,
+        mock_client,
+        mock_start,
+        mock_on_iter,
+        mock_login,
+        mock_embed_host,
     ):
         """On ITER login node, should try starting systemd service when server not responding."""
         from imas_codex.embeddings.readiness import ensure_embedding_ready
@@ -71,6 +82,44 @@ class TestEnsureEmbeddingReady:
         ok, msg = ensure_embedding_ready(timeout=5.0)
         assert ok is True
         mock_start.assert_called_once()
+
+    @patch(
+        "imas_codex.embeddings.readiness._get_embed_host",
+        return_value="98dci4-gpu-0002",
+    )
+    @patch("imas_codex.embeddings.readiness._is_on_iter_login", return_value=True)
+    @patch("imas_codex.embeddings.readiness._is_on_iter", return_value=True)
+    @patch("imas_codex.embeddings.readiness._try_start_service", return_value=True)
+    @patch("imas_codex.embeddings.client.RemoteEmbeddingClient")
+    @patch("imas_codex.settings.get_embed_server_port", return_value=18765)
+    @patch(
+        "imas_codex.settings.get_embed_remote_url",
+        return_value="http://localhost:18765",
+    )
+    def test_skips_systemd_when_embed_on_titan(
+        self,
+        mock_url,
+        mock_port,
+        mock_client,
+        mock_start,
+        mock_on_iter,
+        mock_login,
+        mock_embed_host,
+    ):
+        """On ITER login node, should NOT try systemd when embed server is on Titan."""
+        from imas_codex.embeddings.readiness import ensure_embedding_ready
+
+        client_instance = MagicMock()
+        client_instance.is_available.side_effect = [False, True]
+        info = MagicMock()
+        info.model = "Qwen/Qwen3-Embedding-0.6B"
+        info.hostname = "98dci4-gpu-0002"
+        client_instance.get_info.return_value = info
+        mock_client.return_value = client_instance
+
+        ok, msg = ensure_embedding_ready(timeout=5.0)
+        assert ok is True
+        mock_start.assert_not_called()
 
     @patch("imas_codex.embeddings.readiness._is_on_iter", return_value=False)
     @patch("imas_codex.embeddings.readiness._ensure_ssh_tunnel", return_value=True)
@@ -314,25 +363,39 @@ class TestIsOnIterLoginAndCompute:
 class TestResolveUrlForCompute:
     """Tests for compute node URL redirection."""
 
+    @patch(
+        "imas_codex.embeddings.readiness._get_embed_host",
+        return_value="98dci4-gpu-0002",
+    )
     @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=True)
-    def test_rewrites_localhost(self, mock_compute):
-        from imas_codex.embeddings.readiness import (
-            ITER_LOGIN_HOST,
-            _resolve_url_for_compute,
-        )
+    def test_rewrites_localhost(self, mock_compute, mock_host):
+        from imas_codex.embeddings.readiness import _resolve_url_for_compute
 
         result = _resolve_url_for_compute("http://localhost:18765")
-        assert result == f"http://{ITER_LOGIN_HOST}:18765"
+        assert result == "http://98dci4-gpu-0002:18765"
 
+    @patch(
+        "imas_codex.embeddings.readiness._get_embed_host",
+        return_value="98dci4-gpu-0002",
+    )
     @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=True)
-    def test_rewrites_127_0_0_1(self, mock_compute):
-        from imas_codex.embeddings.readiness import (
-            ITER_LOGIN_HOST,
-            _resolve_url_for_compute,
-        )
+    def test_rewrites_127_0_0_1(self, mock_compute, mock_host):
+        from imas_codex.embeddings.readiness import _resolve_url_for_compute
 
         result = _resolve_url_for_compute("http://127.0.0.1:18765")
-        assert result == f"http://{ITER_LOGIN_HOST}:18765"
+        assert result == "http://98dci4-gpu-0002:18765"
+
+    @patch(
+        "imas_codex.embeddings.readiness._get_embed_host",
+        return_value="98dci4-srv-1001",
+    )
+    @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=True)
+    def test_rewrites_localhost_to_login_fallback(self, mock_compute, mock_host):
+        """When embed-host is login node, compute still rewrites localhost."""
+        from imas_codex.embeddings.readiness import _resolve_url_for_compute
+
+        result = _resolve_url_for_compute("http://localhost:18765")
+        assert result == "http://98dci4-srv-1001:18765"
 
     @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=True)
     def test_no_rewrite_for_remote_url(self, mock_compute):
