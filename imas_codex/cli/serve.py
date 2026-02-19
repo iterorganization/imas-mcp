@@ -993,30 +993,31 @@ def _cancel_embed_jobs() -> list[str]:
     return cancelled
 
 
-def _deploy_titan(gpus: int, workers: int, pull: bool) -> None:
-    """Deploy embed server to Titan via SLURM."""
-    import base64
+def _stop_login_service() -> None:
+    """Stop and uninstall the login node systemd embed service if present.
 
-    # Cancel existing jobs
-    jobs = _embed_slurm_jobs()
-    if jobs:
-        for job in jobs:
-            click.echo(
-                f"Cancelling job {job['job_id']} ({job['state']} on {job['node']})"
-            )
-            _run_iter(f"scancel {job['job_id']}")
-        time.sleep(2)
-
-    # Git pull
-    if pull:
-        click.echo("Pulling latest code...")
-        output = _run_iter(
-            f"cd {_PROJECT} && git pull --no-rebase origin main", timeout=60
+    Prevents both SLURM (Titan) and systemd (login) embed servers from
+    running simultaneously.
+    """
+    try:
+        result = _run_iter(
+            "systemctl --user is-active imas-codex-embed 2>/dev/null || true",
+            timeout=10,
         )
-        for line in output.strip().split("\n"):
-            line = line.strip()
-            if line and not line.startswith("[stderr]"):
-                click.echo(f"  {line}")
+        if "active" in result:
+            _run_iter(
+                "systemctl --user stop imas-codex-embed && "
+                "systemctl --user disable imas-codex-embed 2>/dev/null",
+                timeout=15,
+            )
+            click.echo("Stopped login node embed service (conflicts with Titan)")
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+
+
+def _submit_titan(gpus: int, workers: int) -> None:
+    """Submit embed server SLURM job to Titan."""
+    import base64
 
     # Generate SLURM script
     gpu_ids = ",".join(str(i) for i in range(gpus))
@@ -1052,8 +1053,10 @@ def _deploy_titan(gpus: int, workers: int, pull: bool) -> None:
         "rm -f /tmp/codex-embed-deploy.sh"
     )
     output = _run_iter(submit_cmd, timeout=30, check=True)
-    # First line is "Submitted batch job XXXXX"
     click.echo(output.split("\n")[0])
+
+    # Ensure login service isn't competing
+    _stop_login_service()
 
     # Wait for health
     click.echo(f"Waiting for server on {_TITAN_NODE}:{_EMBED_PORT}...")
@@ -1081,6 +1084,15 @@ def _deploy_titan(gpus: int, workers: int, pull: bool) -> None:
 
 def _deploy_login() -> None:
     """Deploy embed server to login node via systemd."""
+    # Stop Titan SLURM job if running (prevent both competing)
+    jobs = _embed_slurm_jobs()
+    if jobs:
+        for job in jobs:
+            click.echo(
+                f"Cancelling Titan job {job['job_id']} (conflicts with login deploy)"
+            )
+            _run_iter(f"scancel {job['job_id']}")
+
     click.echo("Deploying to login node via systemd...")
     try:
         _run_iter(
@@ -1137,23 +1149,18 @@ def _show_server_info() -> None:
     type=int,
     help="Worker processes (default: same as gpus)",
 )
-@click.option(
-    "--pull/--no-pull",
-    default=True,
-    help="Git pull before deploying (default: pull)",
-)
 def embed_deploy(
     target: str,
     gpus: int,
     workers: int | None,
-    pull: bool,
 ) -> None:
     """Deploy embedding server to Titan GPU node or login node.
 
-    For Titan (default): cancel existing job, git pull, sbatch new job,
-    wait for health.
+    Idempotent: no-op if the server is already running on the target.
+    Use 'restart' to cancel and redeploy.
 
-    For login: restart systemd service.
+    For Titan (default): sbatch job, stop login systemd service.
+    For login: start systemd service, cancel Titan SLURM job.
 
     Works from ITER login node or WSL/workstation (via SSH).
 
@@ -1162,13 +1169,20 @@ def embed_deploy(
         imas-codex serve embed deploy              # 4 GPUs on Titan
         imas-codex serve embed deploy -g 2         # 2 GPUs on Titan
         imas-codex serve embed deploy -t login     # systemd on login
-        imas-codex serve embed deploy --no-pull    # Skip git pull
     """
     if workers is None:
         workers = gpus
 
     if target == "titan":
-        _deploy_titan(gpus, workers, pull)
+        jobs = _embed_slurm_jobs()
+        if jobs:
+            job = jobs[0]
+            click.echo(
+                f"Already running: job {job['job_id']} ({job['state']} "
+                f"on {job['node']}, {job['gres']}, {job['time']})"
+            )
+            return
+        _submit_titan(gpus, workers)
     else:
         _deploy_login()
 
@@ -1245,7 +1259,7 @@ def embed_stop(target: str | None) -> None:
 @click.option(
     "--pull/--no-pull",
     default=True,
-    help="Git pull before deploying (default: pull)",
+    help="Git pull before redeploying (default: pull)",
 )
 def embed_restart(
     target: str,
@@ -1253,13 +1267,17 @@ def embed_restart(
     workers: int | None,
     pull: bool,
 ) -> None:
-    """Restart the embedding server (stop + deploy).
+    """Restart the embedding server (cancel, pull, redeploy).
+
+    Unlike 'deploy' (idempotent), this always cancels the existing
+    server and resubmits with a fresh git pull.
 
     \b
     Examples:
         imas-codex serve embed restart             # 4 GPUs on Titan
         imas-codex serve embed restart -g 2        # 2 GPUs
         imas-codex serve embed restart -t login    # Restart login service
+        imas-codex serve embed restart --no-pull   # Skip git pull
     """
     if workers is None:
         workers = gpus
@@ -1280,9 +1298,20 @@ def embed_restart(
         except subprocess.CalledProcessError:
             pass
 
-    # Deploy
+    # Git pull
+    if pull:
+        click.echo("Pulling latest code...")
+        output = _run_iter(
+            f"cd {_PROJECT} && git pull --no-rebase origin main", timeout=60
+        )
+        for line in output.strip().split("\n"):
+            line = line.strip()
+            if line and not line.startswith("[stderr]"):
+                click.echo(f"  {line}")
+
+    # Redeploy
     if target == "titan":
-        _deploy_titan(gpus, workers, pull)
+        _submit_titan(gpus, workers)
     else:
         _deploy_login()
 
