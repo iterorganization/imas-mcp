@@ -6,6 +6,7 @@ semantic groupings of IMAS paths, including:
 - ClusterInfo: Individual cluster with scope and enrichment metadata
 - ClusterScope: Hierarchical scope (global, domain, ids)
 - RelationshipSet: Complete clustering results
+- ClusterLabelResult / ClusterLabelBatch: LLM response format for labeling
 """
 
 from typing import Any, Literal
@@ -15,6 +16,54 @@ from pydantic import BaseModel, ConfigDict, Field
 # Type aliases for clarity
 ClusterScope = Literal["global", "domain", "ids"]
 MappingRelevanceLevel = Literal["high", "medium", "low"]
+
+
+# =============================================================================
+# LLM Response Models (for prompt schema injection)
+# =============================================================================
+
+
+class ClusterLabelResult(BaseModel):
+    """LLM-generated label and enrichment for a single cluster.
+
+    Used for Pydantic schema injection into Jinja2 prompt templates.
+    """
+
+    id: int | str = Field(description="Cluster ID from the input batch")
+    label: str = Field(
+        description="3-6 word Title Case label capturing the physics concept"
+    )
+    description: str = Field(
+        description="1-2 sentence explanation of the physics grouping"
+    )
+    physics_concepts: list[str] = Field(
+        default_factory=list,
+        description="1-3 concepts from the controlled vocabulary",
+    )
+    data_type: str = Field(
+        default="",
+        description="Exactly 1 data type from the controlled vocabulary",
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description="1-5 tags from the controlled vocabulary",
+    )
+    mapping_relevance: MappingRelevanceLevel = Field(
+        default="medium",
+        description="How useful for experimental data mapping: high, medium, or low",
+    )
+    suggested_concepts: list[str] = Field(
+        default_factory=list,
+        description="New concepts not in the vocabulary (optional, for human review)",
+    )
+
+
+class ClusterLabelBatch(BaseModel):
+    """Batch of cluster label results for efficient LLM processing."""
+
+    results: list[ClusterLabelResult] = Field(
+        description="Label results, one per input cluster in the same order"
+    )
 
 
 class ClusterInfo(BaseModel):

@@ -647,7 +647,7 @@ class RelationshipExtractor:
         """
         from .labeler import ClusterLabeler
 
-        labeler = ClusterLabeler(enable_enrichment=True)
+        labeler = ClusterLabeler()
         labels = labeler.label_clusters(clusters)
 
         # Save any proposed new vocabulary terms

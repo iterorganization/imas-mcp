@@ -5,11 +5,14 @@ for clusters using controlled vocabularies from LinkML schemas.
 Routes through the canonical ``call_llm`` infrastructure so that LiteLLM
 proxy routing, retry logic, and cost tracking are shared with all other
 LLM consumers.
+
+Prompts are rendered via the shared Jinja2 template system in
+``imas_codex/agentic/prompts/clusters/labeler.md``, with schema context
+injected from LinkML-defined controlled vocabularies.
 """
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -68,28 +71,23 @@ class ClusterLabeler:
     Uses ``call_llm`` from ``discovery.base.llm`` for all LLM calls,
     inheriting LiteLLM proxy routing, retry logic, and cost tracking.
 
-    Uses controlled vocabularies from LinkML schemas for:
-    - physics_concepts: Normalized physics quantities
-    - data_type: Data structure classification
-    - tags: Classification tags
-    - mapping_relevance: Usefulness for data mapping
+    Controlled vocabularies are injected into the prompt via Jinja2 templates
+    from ``imas_codex/agentic/prompts/clusters/labeler.md``.  Validation of
+    LLM responses still uses the vocabularies loaded here.
     """
 
     def __init__(
         self,
         model: str | None = None,
-        enable_enrichment: bool = True,
     ):
         """Initialize the labeler.
 
         Args:
             model: LLM model to use (default from settings)
-            enable_enrichment: Whether to extract enrichment fields
         """
         self.model = model or get_model("language")
-        self.enable_enrichment = enable_enrichment
 
-        # Load controlled vocabularies
+        # Load controlled vocabularies for response validation
         self._concepts = _load_vocabulary(CONCEPTS_SCHEMA, "PhysicsConcept")
         self._data_types = _load_vocabulary(DATA_TYPES_SCHEMA, "DataTypeHint")
         self._tags = _load_vocabulary(TAGS_SCHEMA, "ClusterTag")
@@ -100,8 +98,14 @@ class ClusterLabeler:
         # Track proposed new terms for human review
         self._proposed_terms: list[dict] = []
 
-    def _build_prompt(self, clusters: list[dict]) -> str:
-        """Build the labeling prompt for a batch of clusters."""
+    def _build_prompt(self, clusters: list[dict]) -> tuple[str, str]:
+        """Build system and user prompts using the Jinja2 template system.
+
+        Returns (system_prompt, user_prompt) matching the canonical pattern
+        used by other LLM consumers (scorer, signal enricher, etc.).
+        """
+        from imas_codex.agentic.prompt_loader import render_prompt
+
         cluster_data = []
         for cluster in clusters:
             cluster_data.append(
@@ -114,92 +118,14 @@ class ClusterLabeler:
                     "scope": cluster.get("scope", "global"),
                     "scope_detail": cluster.get("scope_detail"),
                     "ids": cluster.get("ids", cluster.get("ids_names", [])),
-                    "paths": cluster.get("paths", [])[:20],  # Limit paths for context
+                    "paths": cluster.get("paths", [])[:20],
                     "path_count": len(cluster.get("paths", [])),
                 }
             )
 
-        if self.enable_enrichment:
-            return self._build_enriched_prompt(cluster_data)
-        return self._build_simple_prompt(cluster_data)
-
-    def _build_simple_prompt(self, cluster_data: list[dict]) -> str:
-        """Build a simple labeling-only prompt."""
-        return f"""You are an expert in fusion plasma physics and the IMAS data dictionary.
-
-Generate a concise label and description for each cluster of related IMAS data paths.
-
-INSTRUCTIONS:
-1. Label: 3-6 words in Title Case, capturing the physics concept
-2. Description: 1-2 sentences explaining what physics quantities are grouped and why
-3. Labels must be unique across all clusters
-4. Focus on the physics meaning, not the data structure
-
-CLUSTERS TO LABEL:
-{json.dumps(cluster_data, indent=2)}
-
-RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
-[
-  {{"id": 0, "label": "Example Physics Label", "description": "Brief physics explanation."}},
-  ...
-]"""
-
-    def _build_enriched_prompt(self, cluster_data: list[dict]) -> str:
-        """Build an enriched prompt with controlled vocabularies."""
-        # Format vocabularies for the prompt
-        concepts_str = ", ".join(self._concepts[:50])  # Limit for context
-        if len(self._concepts) > 50:
-            concepts_str += f", ... ({len(self._concepts)} total)"
-
-        data_types_str = ", ".join(self._data_types)
-        tags_str = ", ".join(self._tags)
-
-        return f"""You are an expert in fusion plasma physics and the IMAS data dictionary.
-
-Classify and label each cluster of related IMAS data paths.
-
-CONTROLLED VOCABULARIES (use ONLY these values where specified):
-
-PHYSICS CONCEPTS (select 1-3 that best describe the cluster):
-{concepts_str}
-
-DATA TYPES (select exactly 1):
-{data_types_str}
-
-TAGS (select 1-5 applicable tags):
-{tags_str}
-
-MAPPING RELEVANCE (how useful for experimental data mapping):
-- high: Core physics quantities commonly measured (Te, ne, Ip, q-profile, etc.)
-- medium: Secondary/derived quantities, diagnostic-specific data
-- low: Metadata, indices, rarely-populated fields
-
-INSTRUCTIONS:
-1. label: 3-6 words in Title Case, capturing the physics concept
-2. description: 1-2 sentences explaining the physics grouping
-3. physics_concepts: Select 1-3 concepts from the vocabulary above
-4. data_type: Select exactly 1 from the vocabulary above
-5. tags: Select 1-5 applicable tags from the vocabulary above
-6. mapping_relevance: "high", "medium", or "low"
-7. suggested_concepts: If a key concept is missing from the vocabulary, suggest it here (optional)
-
-CLUSTERS TO CLASSIFY:
-{json.dumps(cluster_data, indent=2)}
-
-RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
-[
-  {{
-    "id": 0,
-    "label": "Example Physics Label",
-    "description": "Brief physics explanation.",
-    "physics_concepts": ["electron_temperature", "ion_temperature"],
-    "data_type": "profile_1d",
-    "tags": ["core", "measured"],
-    "mapping_relevance": "high",
-    "suggested_concepts": []
-  }},
-  ...
-]"""
+        system_prompt = render_prompt("clusters/labeler")
+        user_prompt = json.dumps(cluster_data, indent=2)
+        return system_prompt, user_prompt
 
     def label_clusters(
         self,
@@ -218,7 +144,8 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
         Raises:
             Exception: If LLM calls fail (no fallback — labels require LLM).
         """
-        from imas_codex.discovery.base.llm import call_llm
+        from imas_codex.clusters.models import ClusterLabelBatch
+        from imas_codex.discovery.base.llm import call_llm_structured
 
         if batch_size is None:
             batch_size = get_labeling_batch_size()
@@ -237,17 +164,19 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
                 f"Processing batch {batch_num}/{total_batches} ({len(batch)} clusters)"
             )
 
-            prompt = self._build_prompt(batch)
-            messages = [{"role": "user", "content": prompt}]
-
-            response, _cost = call_llm(
+            system_prompt, user_prompt = self._build_prompt(batch)
+            parsed_batch, _cost, _tokens = call_llm_structured(
                 model=self.model,
-                messages=messages,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_model=ClusterLabelBatch,
                 max_tokens=65000,
                 temperature=0.3,
             )
-            content = response.choices[0].message.content
-            batch_labels = self._parse_response(content, batch)
+
+            batch_labels = self._validate_batch(parsed_batch, batch)
             all_labels.extend(batch_labels)
             logger.info(
                 f"Batch {batch_num} complete: {len(batch_labels)} labels generated"
@@ -259,39 +188,29 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
         logger.info(f"Labeling complete: {len(all_labels)} labels generated")
         return all_labels
 
-    def _parse_response(
-        self, response: str, clusters: list[dict]
+    def _validate_batch(
+        self, parsed_batch: object, clusters: list[dict]
     ) -> list[ClusterLabel]:
-        """Parse the LLM response into ClusterLabel objects."""
-        # Extract JSON from response (handle markdown code blocks)
-        json_match = re.search(r"\[[\s\S]*\]", response)
-        if not json_match:
-            raise ValueError(f"No JSON array found in response: {response[:200]}")
+        """Validate parsed LLM results against controlled vocabularies.
 
-        try:
-            labels_data = json.loads(json_match.group())
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in response: {e}") from e
-
-        # Create lookup for cluster IDs in this batch
+        Converts a ``ClusterLabelBatch`` (Pydantic model from structured
+        output) into ``ClusterLabel`` dataclass instances, filtering
+        enrichment fields against the loaded vocabularies.
+        """
         batch_ids = {c["id"] for c in clusters}
 
         labels = []
-        for item in labels_data:
-            cluster_id = item.get("id")
+        for item in parsed_batch.results:
+            cluster_id = item.id
             if cluster_id not in batch_ids:
                 continue
 
-            # Validate and filter enrichment fields against vocabularies
-            physics_concepts = self._validate_concepts(item.get("physics_concepts", []))
-            data_type = self._validate_data_type(item.get("data_type"))
-            tags = self._validate_tags(item.get("tags", []))
-            mapping_relevance = self._validate_relevance(
-                item.get("mapping_relevance", "medium")
-            )
+            physics_concepts = self._validate_concepts(item.physics_concepts)
+            data_type = self._validate_data_type(item.data_type or None)
+            tags = self._validate_tags(item.tags)
+            mapping_relevance = self._validate_relevance(item.mapping_relevance)
 
-            # Track suggested concepts for human review
-            suggested = item.get("suggested_concepts", [])
+            suggested = item.suggested_concepts
             if suggested:
                 self._proposed_terms.append(
                     {
@@ -304,8 +223,8 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
             labels.append(
                 ClusterLabel(
                     cluster_id=cluster_id,
-                    label=item.get("label", f"Cluster {cluster_id}"),
-                    description=item.get("description", ""),
+                    label=item.label or f"Cluster {cluster_id}",
+                    description=item.description or "",
                     physics_concepts=physics_concepts,
                     data_type=data_type,
                     tags=tags,

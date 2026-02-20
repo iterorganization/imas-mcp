@@ -736,6 +736,61 @@ def _provide_signal_enrichment_schema() -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _provide_cluster_vocabularies() -> dict[str, Any]:
+    """Provide controlled vocabularies for cluster labeling prompts.
+
+    Loads physics concepts, data types, tags, and mapping relevance levels
+    from LinkML schema definitions in imas_codex/definitions/clusters/.
+    """
+    from linkml_runtime.utils.schemaview import SchemaView
+
+    from imas_codex.definitions.clusters import (
+        CONCEPTS_SCHEMA,
+        DATA_TYPES_SCHEMA,
+        MAPPING_RELEVANCE_SCHEMA,
+        TAGS_SCHEMA,
+    )
+
+    def load_enum_values(schema_path: Path, enum_name: str) -> list[dict[str, str]]:
+        """Load enum values with descriptions from a LinkML schema."""
+        if not schema_path.exists():
+            return []
+        try:
+            sv = SchemaView(str(schema_path))
+            enum_def = sv.get_enum(enum_name)
+            if not enum_def or not enum_def.permissible_values:
+                return []
+            return [
+                {"value": name, "description": pv.description or ""}
+                for name, pv in enum_def.permissible_values.items()
+            ]
+        except Exception:
+            return []
+
+    return {
+        "cluster_physics_concepts": load_enum_values(CONCEPTS_SCHEMA, "PhysicsConcept"),
+        "cluster_data_types": load_enum_values(DATA_TYPES_SCHEMA, "DataTypeHint"),
+        "cluster_tags": load_enum_values(TAGS_SCHEMA, "ClusterTag"),
+        "cluster_mapping_relevance": load_enum_values(
+            MAPPING_RELEVANCE_SCHEMA, "MappingRelevance"
+        ),
+    }
+
+
+@lru_cache(maxsize=1)
+def _provide_cluster_label_schema() -> dict[str, Any]:
+    """Provide ClusterLabelBatch Pydantic schema for LLM prompts."""
+    from imas_codex.clusters.models import ClusterLabelBatch, ClusterLabelResult
+
+    return {
+        "cluster_label_schema_example": get_pydantic_schema_json(ClusterLabelBatch),
+        "cluster_label_schema_fields": get_pydantic_schema_description(
+            ClusterLabelResult
+        ),
+    }
+
+
 # Registry mapping schema_needs names to provider functions
 _SCHEMA_PROVIDERS: dict[str, Any] = {
     "path_purposes": _provide_path_purposes,
@@ -755,6 +810,9 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "image_caption_schema": _provide_image_caption_schema,
     # Signal enrichment
     "signal_enrichment_schema": _provide_signal_enrichment_schema,
+    # Cluster labeling
+    "cluster_vocabularies": _provide_cluster_vocabularies,
+    "cluster_label_schema": _provide_cluster_label_schema,
 }
 
 # Default schema needs per prompt (when not specified in frontmatter)
