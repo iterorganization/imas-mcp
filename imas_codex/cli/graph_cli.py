@@ -2594,6 +2594,29 @@ def graph_pull(
 
     artifact_ref = f"{target_registry}/{pkg_name}:{resolved_version}"
 
+    # ── Pull compatibility check ─────────────────────────────────────────
+    if not force:
+        try:
+            from imas_codex.graph.client import GraphClient
+            from imas_codex.graph.meta import check_pull_compatibility, get_graph_meta
+
+            gc = GraphClient.from_profile()
+            meta = get_graph_meta(gc)
+            gc.close()
+            if meta:
+                pull_warnings = check_pull_compatibility(
+                    meta,
+                    imas_only=imas_only,
+                    no_imas=no_imas,
+                    facilities=list(facilities) or None,
+                )
+                for w in pull_warnings:
+                    click.echo(f"Warning: {w}", err=True)
+                if pull_warnings and not click.confirm("Continue anyway?"):
+                    raise SystemExit(1)
+        except Exception:
+            pass  # Can't reach Neo4j — skip check
+
     # ── Remote dispatch ──────────────────────────────────────────────────
     from imas_codex.graph.remote import is_remote_location
 
@@ -3093,7 +3116,14 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
     help="Facility ID to include (repeatable). Omit for DD-only graphs.",
 )
 @click.option("--force", is_flag=True, help="Allow using an existing directory")
-def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
+@click.option(
+    "--no-imas",
+    is_flag=True,
+    help="Mark graph as not containing IMAS DD data",
+)
+def graph_init(
+    name: str, facilities: tuple[str, ...], force: bool, no_imas: bool
+) -> None:
     """Initialize a new graph instance.
 
     Creates a name-based directory in .neo4j/<NAME>/, points the neo4j/
@@ -3105,13 +3135,14 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
 
     \b
     Examples:
-      imas-codex graph init codex -f iter -f tcv -f jt-60sa
+      imas-codex graph init codex -F iter -F tcv -F jt-60sa
       imas-codex graph init imas              # DD-only, no facilities
-      imas-codex graph init dev -f tcv
+      imas-codex graph init dev -F tcv --no-imas
     """
     from imas_codex.graph.profiles import resolve_neo4j
 
     facility_list = sorted(set(facilities))
+    include_imas = not no_imas
 
     # ── Remote dispatch ──────────────────────────────────────────────────
     from imas_codex.graph.remote import is_remote_location
@@ -3184,7 +3215,7 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
             from imas_codex.graph.meta import init_graph_meta
 
             gc = GraphClient.from_profile()
-            init_graph_meta(gc, name, facility_list)
+            init_graph_meta(gc, name, facility_list, imas=include_imas)
             gc.close()
             click.echo("\n✓ GraphMeta node initialized")
         except Exception as e:
@@ -3233,7 +3264,7 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
         from imas_codex.graph.meta import init_graph_meta
 
         gc = GraphClient.from_profile()
-        init_graph_meta(gc, name, facility_list)
+        init_graph_meta(gc, name, facility_list, imas=include_imas)
         gc.close()
         click.echo("\n✓ GraphMeta node initialized")
     else:

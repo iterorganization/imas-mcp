@@ -24,16 +24,19 @@ def init_graph_meta(
     client: Any,
     name: str,
     facilities: list[str],
+    *,
+    imas: bool = True,
 ) -> dict[str, Any]:
     """Create the GraphMeta singleton node (idempotent).
 
-    Uses ``MERGE`` so it is safe to call repeatedly.  Updates name
-    and facilities on every call.
+    Uses ``MERGE`` so it is safe to call repeatedly.  Updates name,
+    facilities, and imas on every call.
 
     Args:
         client: A :class:`GraphClient` instance (or anything with ``.query()``).
         name: Graph name (e.g. ``"codex"``).
         facilities: List of facility IDs this graph contains.
+        imas: Whether this graph includes IMAS DD data (default True).
 
     Returns:
         Dict of the created/updated GraphMeta properties.
@@ -44,18 +47,21 @@ def init_graph_meta(
         MERGE (m:GraphMeta {id: "meta"})
         ON CREATE SET m.name = $name,
                       m.facilities = $facilities,
+                      m.imas = $imas,
                       m.created_at = $now,
                       m.updated_at = $now
         ON MATCH SET  m.name = $name,
                       m.facilities = $facilities,
+                      m.imas = $imas,
                       m.updated_at = $now
         """,
         name=name,
         facilities=facilities,
+        imas=imas,
         now=now,
     )
-    logger.info("GraphMeta: name=%s, facilities=%s", name, facilities)
-    return {"name": name, "facilities": facilities}
+    logger.info("GraphMeta: name=%s, facilities=%s, imas=%s", name, facilities, imas)
+    return {"name": name, "facilities": facilities, "imas": imas}
 
 
 def get_graph_meta(client: Any) -> dict[str, Any] | None:
@@ -68,6 +74,7 @@ def get_graph_meta(client: Any) -> dict[str, Any] | None:
     result = client.query(
         "MATCH (m:GraphMeta {id: 'meta'}) "
         "RETURN m.name AS name, m.facilities AS facilities, "
+        "       m.imas AS imas, "
         "       m.created_at AS created_at, m.updated_at AS updated_at"
     )
     if result:
@@ -167,9 +174,7 @@ def remove_facility_from_meta(client: Any, facility_id: str) -> None:
 
     # DETACH DELETE the Facility node and clean up orphans
     result = client.query(
-        "MATCH (f:Facility {id: $id}) "
-        "DETACH DELETE f "
-        "RETURN count(f) AS deleted",
+        "MATCH (f:Facility {id: $id}) DETACH DELETE f RETURN count(f) AS deleted",
         id=facility_id,
     )
     deleted = result[0]["deleted"] if result else 0
@@ -187,11 +192,74 @@ def remove_facility_from_meta(client: Any, facility_id: str) -> None:
     )
     orphans = orphan_result[0]["deleted"] if orphan_result else 0
     if orphans:
-        logger.info("Cleaned up %d orphan nodes for facility '%s'", orphans, facility_id)
+        logger.info(
+            "Cleaned up %d orphan nodes for facility '%s'", orphans, facility_id
+        )
+
+
+def check_pull_compatibility(
+    meta: dict[str, Any],
+    *,
+    imas_only: bool = False,
+    no_imas: bool = False,
+    facilities: list[str] | None = None,
+) -> list[str]:
+    """Check whether a pull operation is compatible with the active graph.
+
+    Compares the pull flags (which determine the GHCR package) against
+    the active graph's GraphMeta to detect mismatches.
+
+    Args:
+        meta: GraphMeta dict from :func:`get_graph_meta`.
+        imas_only: Whether pulling the IMAS-only package.
+        no_imas: Whether pulling the no-imas variant.
+        facilities: Facility filter for the pull.
+
+    Returns:
+        List of warning strings. Empty if compatible.
+    """
+    warnings = []
+    graph_name = meta.get("name", "?")
+    graph_facilities = set(meta.get("facilities") or [])
+    graph_imas = meta.get("imas", True)  # default True for pre-existing graphs
+
+    if imas_only:
+        # Pulling DD-only into a graph that has facilities
+        if graph_facilities:
+            warnings.append(
+                f"Pulling IMAS-only package into graph '{graph_name}' "
+                f"which has facilities {sorted(graph_facilities)}. "
+                f"This will replace all data including facility data."
+            )
+    elif facilities:
+        pull_set = set(facilities)
+        # Pulling facility package into wrong graph
+        if not pull_set.issubset(graph_facilities):
+            missing = pull_set - graph_facilities
+            warnings.append(
+                f"Pulling facility package for {sorted(pull_set)} but "
+                f"graph '{graph_name}' does not include "
+                f"{sorted(missing)}. Allowed: {sorted(graph_facilities)}."
+            )
+    else:
+        # Pulling full graph
+        if no_imas and graph_imas:
+            warnings.append(
+                f"Pulling no-imas variant into graph '{graph_name}' "
+                f"which has imas=true. DD data will be lost."
+            )
+        elif not no_imas and not graph_imas:
+            warnings.append(
+                f"Pulling package with IMAS DD into graph '{graph_name}' "
+                f"which has imas=false."
+            )
+
+    return warnings
 
 
 __all__ = [
     "add_facility_to_meta",
+    "check_pull_compatibility",
     "gate_ingestion",
     "get_graph_meta",
     "init_graph_meta",
