@@ -205,7 +205,7 @@ def clusters_label(
 
         # Initialize cache and labeler
         label_cache = LabelCache()
-        labeler = ClusterLabeler(batch_size=batch_size)
+        labeler = ClusterLabeler()
 
         # Get cached and uncached clusters
         if force:
@@ -227,7 +227,7 @@ def clusters_label(
 
         # Generate labels with cost tracking
         click.echo(f"Generating labels (cost limit: ${cost_limit:.2f})...")
-        labels = labeler.label_clusters(uncached)
+        labels = labeler.label_clusters(uncached, batch_size=batch_size)
 
         # Store in cache
         label_tuples = [
