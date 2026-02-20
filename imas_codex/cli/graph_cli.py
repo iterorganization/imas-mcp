@@ -1384,6 +1384,167 @@ _IMAS_DD_LABELS = [
 # ============================================================================
 
 
+def _write_temp_neo4j_conf(conf_dir: Path, bolt_port: int, http_port: int) -> Path:
+    """Write a neo4j.conf for a temporary filtering instance.
+
+    Disables authentication and binds to non-standard ports to avoid
+    conflicts with the production instance.  The config file is
+    required because Apptainer does not run the Docker entrypoint that
+    translates ``NEO4J_`` environment variables into config settings.
+    """
+    conf_file = conf_dir / "neo4j.conf"
+    conf_file.write_text(
+        f"""\
+dbms.security.auth_enabled=false
+server.bolt.listen_address=127.0.0.1:{bolt_port}
+server.http.listen_address=127.0.0.1:{http_port}
+server.memory.heap.initial_size=256m
+server.memory.heap.max_size=1g
+server.memory.pagecache.size=256m
+"""
+    )
+    return conf_file
+
+
+def _start_temp_neo4j(
+    temp_dir: Path,
+    bolt_port: int,
+    http_port: int,
+) -> tuple[subprocess.Popen, Path]:
+    """Load a dump and start a temporary Neo4j instance for filtering.
+
+    Returns the process handle and log file path.  The caller is
+    responsible for terminating the process.
+    """
+    import time
+    import urllib.request
+
+    # Load dump into temp data dir
+    click.echo("  Loading dump into temp instance...")
+    load_cmd = [
+        "apptainer",
+        "exec",
+        "--bind",
+        f"{temp_dir}/data:/data",
+        "--bind",
+        f"{temp_dir}/dumps:/dumps",
+        "--writable-tmpfs",
+        str(NEO4J_IMAGE),
+        "neo4j-admin",
+        "database",
+        "load",
+        "neo4j",
+        "--from-path=/dumps",
+        "--overwrite-destination=true",
+    ]
+    result = subprocess.run(load_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"Failed to load dump into temp instance: {result.stderr}"
+        )
+
+    # Write config file — neo4j console does not process NEO4J_ env vars
+    conf_dir = temp_dir / "conf"
+    conf_dir.mkdir(exist_ok=True)
+    _write_temp_neo4j_conf(conf_dir, bolt_port, http_port)
+
+    click.echo("  Starting temp Neo4j instance...")
+    start_cmd = [
+        "apptainer",
+        "exec",
+        "--bind",
+        f"{temp_dir}/data:/data",
+        "--bind",
+        f"{temp_dir}/logs:/logs",
+        "--bind",
+        f"{temp_dir}/conf:/var/lib/neo4j/conf",
+        "--writable-tmpfs",
+        str(NEO4J_IMAGE),
+        "neo4j",
+        "console",
+    ]
+    neo4j_log = temp_dir / "logs" / "neo4j-temp.log"
+    log_fh = open(neo4j_log, "w")  # noqa: SIM115
+    proc = subprocess.Popen(
+        start_cmd,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+    ready = False
+    for _ in range(180):
+        if proc.poll() is not None:
+            log_fh.flush()
+            tail = neo4j_log.read_text()[-500:] if neo4j_log.exists() else ""
+            raise click.ClickException(
+                f"Temp Neo4j exited prematurely (rc={proc.returncode})\n"
+                f"Last log output:\n{tail}"
+            )
+        try:
+            urllib.request.urlopen(f"http://localhost:{http_port}/", timeout=2)
+            ready = True
+            break
+        except Exception:
+            time.sleep(1)
+
+    if not ready:
+        log_fh.flush()
+        proc.terminate()
+        proc.wait(timeout=15)
+        log_fh.close()
+        tail = neo4j_log.read_text()[-500:] if neo4j_log.exists() else ""
+        raise click.ClickException(
+            f"Temp Neo4j instance did not start within 180 seconds\n"
+            f"Last log output:\n{tail}"
+        )
+
+    return proc, neo4j_log
+
+
+def _stop_temp_neo4j(proc: subprocess.Popen) -> None:
+    """Terminate a temporary Neo4j process."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def _dump_temp_neo4j(temp_dir: Path, output_path: Path) -> None:
+    """Dump the filtered temp database and move to output path."""
+    (temp_dir / "dumps" / "neo4j.dump").unlink(missing_ok=True)
+
+    dump_cmd = [
+        "apptainer",
+        "exec",
+        "--bind",
+        f"{temp_dir}/data:/data",
+        "--bind",
+        f"{temp_dir}/dumps:/dumps",
+        "--writable-tmpfs",
+        str(NEO4J_IMAGE),
+        "neo4j-admin",
+        "database",
+        "dump",
+        "neo4j",
+        "--to-path=/dumps",
+        "--overwrite-destination=true",
+    ]
+    result = subprocess.run(dump_cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to dump filtered graph: {result.stderr}")
+
+    filtered_dump = temp_dir / "dumps" / "neo4j.dump"
+    if not filtered_dump.exists():
+        raise click.ClickException("Filtered dump file not created")
+
+    shutil.move(str(filtered_dump), str(output_path))
+    size_mb = output_path.stat().st_size / 1024 / 1024
+    click.echo(f"    Filtered dump: {size_mb:.1f} MB")
+
+
 def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
     """Create an IMAS-only dump by filtering out facility nodes.
 
@@ -1391,9 +1552,6 @@ def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
     nodes that are not IMAS Data Dictionary types, then dumps the
     filtered graph.
     """
-    import time
-    import urllib.request
-
     temp_bolt_port = 27687
     temp_http_port = 27474
 
@@ -1404,98 +1562,9 @@ def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
 
         shutil.copy(source_dump_path, temp_dir / "dumps" / "neo4j.dump")
 
-        click.echo("  Loading full dump into temp instance for IMAS-only filtering...")
-
-        load_cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{temp_dir}/data:/data",
-            "--bind",
-            f"{temp_dir}/dumps:/dumps",
-            "--writable-tmpfs",
-            str(NEO4J_IMAGE),
-            "neo4j-admin",
-            "database",
-            "load",
-            "neo4j",
-            "--from-path=/dumps",
-            "--overwrite-destination=true",
-        ]
-        result = subprocess.run(load_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise click.ClickException(
-                f"Failed to load dump into temp instance: {result.stderr}"
-            )
-
-        pw_cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{temp_dir}/data:/data",
-            "--writable-tmpfs",
-            str(NEO4J_IMAGE),
-            "neo4j-admin",
-            "dbms",
-            "set-initial-password",
-            "temp-password",
-        ]
-        subprocess.run(pw_cmd, capture_output=True, text=True)
-
-        click.echo("  Starting temp Neo4j instance...")
-        start_cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{temp_dir}/data:/data",
-            "--bind",
-            f"{temp_dir}/logs:/logs",
-            "--writable-tmpfs",
-            "--env",
-            "NEO4J_AUTH=neo4j/temp-password",
-            "--env",
-            f"NEO4J_server_bolt_listen__address=127.0.0.1:{temp_bolt_port}",
-            "--env",
-            f"NEO4J_server_http_listen__address=127.0.0.1:{temp_http_port}",
-            "--env",
-            "NEO4J_server_memory_heap_initial__size=256m",
-            "--env",
-            "NEO4J_server_memory_heap_max__size=1g",
-            "--env",
-            "NEO4J_server_memory_pagecache_size=256m",
-            str(NEO4J_IMAGE),
-            "neo4j",
-            "console",
-        ]
-        neo4j_log = temp_dir / "logs" / "neo4j-temp.log"
-        log_fh = open(neo4j_log, "w")  # noqa: SIM115
-        proc = subprocess.Popen(
-            start_cmd,
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        proc, neo4j_log = _start_temp_neo4j(temp_dir, temp_bolt_port, temp_http_port)
 
         try:
-            ready = False
-            for _ in range(180):
-                try:
-                    urllib.request.urlopen(
-                        f"http://localhost:{temp_http_port}/", timeout=2
-                    )
-                    ready = True
-                    break
-                except Exception:
-                    time.sleep(1)
-
-            if not ready:
-                log_fh.flush()
-                tail = neo4j_log.read_text()[-500:] if neo4j_log.exists() else ""
-                raise click.ClickException(
-                    f"Temp Neo4j instance did not start within 180 seconds\n"
-                    f"Last log output:\n{tail}"
-                )
-
             click.echo("  Filtering graph: keeping only IMAS DD nodes...")
 
             from neo4j import GraphDatabase
@@ -1503,7 +1572,6 @@ def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
             label_check = " AND ".join(f"NOT n:{label}" for label in _IMAS_DD_LABELS)
             driver = GraphDatabase.driver(
                 f"bolt://localhost:{temp_bolt_port}",
-                auth=("neo4j", "temp-password"),
             )
             with driver.session() as session:
                 result = session.run(
@@ -1515,48 +1583,11 @@ def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
                 click.echo(f"    Removed {deleted} non-DD nodes")
 
             driver.close()
-
         finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            log_fh.close()
+            _stop_temp_neo4j(proc)
 
         click.echo("  Dumping filtered graph...")
-        (temp_dir / "dumps" / "neo4j.dump").unlink(missing_ok=True)
-
-        dump_cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{temp_dir}/data:/data",
-            "--bind",
-            f"{temp_dir}/dumps:/dumps",
-            "--writable-tmpfs",
-            str(NEO4J_IMAGE),
-            "neo4j-admin",
-            "database",
-            "dump",
-            "neo4j",
-            "--to-path=/dumps",
-            "--overwrite-destination=true",
-        ]
-        result = subprocess.run(dump_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise click.ClickException(
-                f"Failed to dump filtered graph: {result.stderr}"
-            )
-
-        filtered_dump = temp_dir / "dumps" / "neo4j.dump"
-        if not filtered_dump.exists():
-            raise click.ClickException("Filtered dump file not created")
-
-        shutil.move(str(filtered_dump), str(output_path))
-        size_mb = output_path.stat().st_size / 1024 / 1024
-        click.echo(f"    IMAS-only dump: {size_mb:.1f} MB")
+        _dump_temp_neo4j(temp_dir, output_path)
 
 
 def _create_facility_dump(
@@ -1573,9 +1604,6 @@ def _create_facility_dump(
         facility: Facility ID to keep (e.g. ``"tcv"``).
         output_path: Where to write the filtered dump file.
     """
-    import time
-    import urllib.request
-
     temp_bolt_port = 27687
     temp_http_port = 27474
 
@@ -1584,117 +1612,19 @@ def _create_facility_dump(
         for subdir in ("data", "logs", "dumps"):
             (temp_dir / subdir).mkdir(parents=True)
 
-        # Copy source dump into temp dumps dir
         shutil.copy(source_dump_path, temp_dir / "dumps" / "neo4j.dump")
 
-        click.echo(
-            f"  Loading full dump into temp instance for {facility} filtering..."
-        )
-
-        # Load dump into temp data dir
-        load_cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{temp_dir}/data:/data",
-            "--bind",
-            f"{temp_dir}/dumps:/dumps",
-            "--writable-tmpfs",
-            str(NEO4J_IMAGE),
-            "neo4j-admin",
-            "database",
-            "load",
-            "neo4j",
-            "--from-path=/dumps",
-            "--overwrite-destination=true",
-        ]
-        result = subprocess.run(load_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise click.ClickException(
-                f"Failed to load dump into temp instance: {result.stderr}"
-            )
-
-        # Set initial password for temp instance
-        pw_cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{temp_dir}/data:/data",
-            "--writable-tmpfs",
-            str(NEO4J_IMAGE),
-            "neo4j-admin",
-            "dbms",
-            "set-initial-password",
-            "temp-password",
-        ]
-        subprocess.run(pw_cmd, capture_output=True, text=True)
-
-        # Start temp Neo4j
-        click.echo("  Starting temp Neo4j instance...")
-        start_cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{temp_dir}/data:/data",
-            "--bind",
-            f"{temp_dir}/logs:/logs",
-            "--writable-tmpfs",
-            "--env",
-            "NEO4J_AUTH=neo4j/temp-password",
-            "--env",
-            f"NEO4J_server_bolt_listen__address=127.0.0.1:{temp_bolt_port}",
-            "--env",
-            f"NEO4J_server_http_listen__address=127.0.0.1:{temp_http_port}",
-            "--env",
-            "NEO4J_server_memory_heap_initial__size=256m",
-            "--env",
-            "NEO4J_server_memory_heap_max__size=1g",
-            "--env",
-            "NEO4J_server_memory_pagecache_size=256m",
-            str(NEO4J_IMAGE),
-            "neo4j",
-            "console",
-        ]
-        neo4j_log = temp_dir / "logs" / "neo4j-temp.log"
-        log_fh = open(neo4j_log, "w")  # noqa: SIM115
-        proc = subprocess.Popen(
-            start_cmd,
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        proc, neo4j_log = _start_temp_neo4j(temp_dir, temp_bolt_port, temp_http_port)
 
         try:
-            # Wait for temp instance to be ready
-            ready = False
-            for _ in range(180):
-                try:
-                    urllib.request.urlopen(
-                        f"http://localhost:{temp_http_port}/", timeout=2
-                    )
-                    ready = True
-                    break
-                except Exception:
-                    time.sleep(1)
-
-            if not ready:
-                log_fh.flush()
-                tail = neo4j_log.read_text()[-500:] if neo4j_log.exists() else ""
-                raise click.ClickException(
-                    f"Temp Neo4j instance did not start within 180 seconds\n"
-                    f"Last log output:\n{tail}"
-                )
-
             click.echo(f"  Filtering graph: keeping facility={facility}...")
 
             from neo4j import GraphDatabase
 
             driver = GraphDatabase.driver(
                 f"bolt://localhost:{temp_bolt_port}",
-                auth=("neo4j", "temp-password"),
             )
             with driver.session() as session:
-                # Delete non-target facility nodes
                 result = session.run(
                     "MATCH (n) "
                     "WHERE n.facility_id IS NOT NULL "
@@ -1706,7 +1636,6 @@ def _create_facility_dump(
                 deleted_facility = result.single()["deleted"]
                 click.echo(f"    Removed {deleted_facility} non-{facility} nodes")
 
-                # Delete orphan nodes (no relationships, not IMAS DD types)
                 result = session.run(
                     "MATCH (n) WHERE NOT (n)--() "
                     "AND NOT n:IMASPath AND NOT n:DDVersion AND NOT n:Unit "
@@ -1719,51 +1648,11 @@ def _create_facility_dump(
                 click.echo(f"    Removed {deleted_orphans} orphan nodes")
 
             driver.close()
-
         finally:
-            # Stop temp Neo4j
-            proc.terminate()
-            try:
-                proc.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            log_fh.close()
+            _stop_temp_neo4j(proc)
 
-        # Dump filtered graph from temp instance
         click.echo("  Dumping filtered graph...")
-        # Clear old dump file
-        (temp_dir / "dumps" / "neo4j.dump").unlink(missing_ok=True)
-
-        dump_cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{temp_dir}/data:/data",
-            "--bind",
-            f"{temp_dir}/dumps:/dumps",
-            "--writable-tmpfs",
-            str(NEO4J_IMAGE),
-            "neo4j-admin",
-            "database",
-            "dump",
-            "neo4j",
-            "--to-path=/dumps",
-            "--overwrite-destination=true",
-        ]
-        result = subprocess.run(dump_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise click.ClickException(
-                f"Failed to dump filtered graph: {result.stderr}"
-            )
-
-        filtered_dump = temp_dir / "dumps" / "neo4j.dump"
-        if not filtered_dump.exists():
-            raise click.ClickException("Filtered dump file not created")
-
-        shutil.move(str(filtered_dump), str(output_path))
-        size_mb = output_path.stat().st_size / 1024 / 1024
-        click.echo(f"    Filtered dump: {size_mb:.1f} MB")
+        _dump_temp_neo4j(temp_dir, output_path)
 
 
 # ============================================================================
