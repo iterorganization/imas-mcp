@@ -1146,10 +1146,10 @@ def build_dd_graph(
         "paths_created": 0,
         "units_created": 0,
         "path_changes_created": 0,
+        "definitions_changed": 0,
         "clusters_created": 0,
         "embeddings_updated": 0,
         "embeddings_cached": 0,
-        "definitions_changed": 0,
         "error_relationships": 0,
         "paths_filtered": 0,
         "skipped": False,
@@ -1260,6 +1260,11 @@ def build_dd_graph(
                     )
                     stats["path_changes_created"] += change_count
 
+                    # Count paths with documentation (definition) changes
+                    for path_changes in changes["changed"].values():
+                        if any(c["field"] == "documentation" for c in path_changes):
+                            stats["definitions_changed"] += 1
+
                 prev_paths = data["paths"]
                 phase.update(version)
 
@@ -1285,8 +1290,8 @@ def build_dd_graph(
                 )
                 stats["paths_filtered"] = len(merged_paths) - len(embeddable_paths)
                 monitor.status(
-                    f"Embedding {len(embeddable_paths)} paths "
-                    f"(filtered {stats['paths_filtered']})..."
+                    f"Embedding {len(embeddable_paths)} meaningful paths "
+                    f"({stats['paths_filtered']} excluded)..."
                 )
 
                 if error_relationships:
@@ -1919,7 +1924,10 @@ def _import_clusters(
                     if batch < 5000:
                         break
                 if deleted > 0:
-                    logger.info("Cleared %d stale cluster nodes before import", deleted)
+                    logger.info(
+                        "Cleared %d existing cluster nodes before import",
+                        deleted,
+                    )
 
             # --- Batch import cluster nodes ---
             cluster_batch: list[dict] = []

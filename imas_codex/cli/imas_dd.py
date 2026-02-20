@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 import click
@@ -209,20 +210,21 @@ def imas_build(
 
         click.echo("\n=== Build Complete ===")
         click.echo(f"Versions processed: {stats['versions_processed']}")
-        click.echo(f"IDS nodes: {stats['ids_created']}")
-        click.echo(f"IMASPath nodes created: {stats['paths_created']}")
+        click.echo(f"IDS types: {stats['ids_created']}")
+        click.echo(f"IMASPath nodes (across all versions): {stats['paths_created']}")
         click.echo(f"Unit nodes: {stats['units_created']}")
         click.echo(f"IMASPathChange nodes: {stats['path_changes_created']}")
+        click.echo(
+            f"Definitions changed (documentation): {stats['definitions_changed']}"
+        )
         if not skip_embeddings:
-            click.echo(f"Paths filtered (error/metadata): {stats['paths_filtered']}")
+            click.echo(
+                f"Paths excluded from embedding (error/metadata): "
+                f"{stats['paths_filtered']}"
+            )
             click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
             click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
             click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
-            if stats.get("definitions_changed", 0) > 0:
-                click.echo(
-                    f"Definitions changed: {stats['definitions_changed']} "
-                    "(deprecated paths cleaned)"
-                )
         if not skip_clusters:
             click.echo(f"Cluster nodes: {stats['clusters_created']}")
 
@@ -336,6 +338,20 @@ def imas_status(version_filter: str | None) -> None:
             )
             if clusters and clusters[0]["count"] > 0:
                 console.print(f"\nIMASSemanticCluster nodes: {clusters[0]['count']}")
+
+            # IMASPathChange stats
+            change_stats = gc.query("""
+                MATCH (pc:IMASPathChange)
+                WITH count(pc) AS total
+                OPTIONAL MATCH (pc2:IMASPathChange {change_type: 'documentation'})
+                RETURN total, count(pc2) AS definitions_changed
+            """)
+            if change_stats and change_stats[0]["total"] > 0:
+                cs = change_stats[0]
+                console.print(
+                    f"IMASPathChange nodes: {cs['total']} "
+                    f"({cs['definitions_changed']} definition changes)"
+                )
 
 
 @imas.command("search")
@@ -740,3 +756,124 @@ def imas_clear(force: bool, dump_first: bool) -> None:
         table.add_row("[bold]Total[/bold]", f"[bold]{total:,}[/bold]")
         console.print(table)
         console.print("[green]DD graph cleared successfully[/green]")
+
+
+@imas.command("path-history")
+@click.argument("path")
+@click.option(
+    "--type",
+    "-t",
+    "change_type",
+    help="Filter by change type (documentation, units, data_type, node_type)",
+)
+def imas_path_history(path: str, change_type: str | None) -> None:
+    """Show all definition changes for a specific IMAS path.
+
+    Displays the version-by-version history of metadata changes including
+    documentation, units, data_type, and node_type modifications.
+
+    \b
+    Examples:
+        imas-codex imas path-history core_profiles/profiles_1d/electrons/temperature
+        imas-codex imas path-history equilibrium/time_slice/boundary/psi -t documentation
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        # Check the path exists
+        exists = gc.query(
+            "MATCH (p:IMASPath {id: $path}) RETURN p.id AS id",
+            path=path,
+        )
+        if not exists:
+            console.print(f"[red]Path not found: {path}[/red]")
+            # Suggest similar paths
+            suggestions = gc.query(
+                """
+                MATCH (p:IMASPath)
+                WHERE p.id CONTAINS $fragment
+                RETURN p.id AS id
+                LIMIT 5
+                """,
+                fragment=path.split("/")[-1],
+            )
+            if suggestions:
+                console.print("[dim]Did you mean:[/dim]")
+                for s in suggestions:
+                    console.print(f"  {s['id']}")
+            return
+
+        # Build query with optional type filter
+        where = "WHERE pc.change_type = $change_type" if change_type else ""
+        params = {"path": path}
+        if change_type:
+            params["change_type"] = change_type
+
+        changes = gc.query(
+            f"""
+            MATCH (pc:IMASPathChange)-[:FOR_IMAS_PATH]->(p:IMASPath {{id: $path}})
+            MATCH (pc)-[:IN_VERSION]->(v:DDVersion)
+            {where}
+            RETURN v.id AS version, pc.change_type AS change_type,
+                   pc.old_value AS old_value, pc.new_value AS new_value,
+                   pc.semantic_type AS semantic_type,
+                   pc.keywords_detected AS keywords_detected
+            ORDER BY v.id
+            """,
+            **params,
+        )
+
+        # Get introduction version
+        intro = gc.query(
+            """
+            MATCH (p:IMASPath {id: $path})-[:INTRODUCED_IN]->(v:DDVersion)
+            RETURN v.id AS version
+            """,
+            path=path,
+        )
+
+        # Get deprecation version if any
+        depr = gc.query(
+            """
+            MATCH (p:IMASPath {id: $path})-[:DEPRECATED_IN]->(v:DDVersion)
+            RETURN v.id AS version
+            """,
+            path=path,
+        )
+
+        console.print(f"\n[bold]History for [cyan]{path}[/cyan][/bold]\n")
+
+        if intro:
+            console.print(f"Introduced in: [green]{intro[0]['version']}[/green]")
+        if depr:
+            console.print(f"Deprecated in: [red]{depr[0]['version']}[/red]")
+
+        if not changes:
+            console.print("\n[dim]No metadata changes recorded.[/dim]")
+            return
+
+        console.print(f"\n[bold]{len(changes)} change(s):[/bold]\n")
+
+        table = Table(show_header=True)
+        table.add_column("Version", style="cyan", width=8)
+        table.add_column("Field", style="magenta", width=15)
+        table.add_column("Old Value", style="red", max_width=40, overflow="fold")
+        table.add_column("New Value", style="green", max_width=40, overflow="fold")
+        table.add_column("Semantic", style="yellow", width=25)
+
+        for c in changes:
+            semantic = c["semantic_type"] or ""
+            if c["keywords_detected"]:
+                try:
+                    kw = json.loads(c["keywords_detected"])
+                    if kw:
+                        semantic += f" ({', '.join(kw)})"
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Truncate long values for display
+            old = (c["old_value"] or "")[:120]
+            new = (c["new_value"] or "")[:120]
+            table.add_row(c["version"], c["change_type"], old, new, semantic)
+
+        console.print(table)
