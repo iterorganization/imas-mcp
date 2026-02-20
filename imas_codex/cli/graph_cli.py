@@ -1689,6 +1689,11 @@ def graph_export(
                 size_mb = output_path.stat().st_size / 1024 / 1024
                 gp.complete_phase(f"{size_mb:.1f} MB")
 
+                # Clean up remote archive after successful transfer
+                from imas_codex.graph.remote import remote_cleanup_archive
+
+                remote_cleanup_archive(remote_archive, profile.host)
+
         return
     # ── End remote dispatch ──────────────────────────────────────────────
 
@@ -1996,8 +2001,6 @@ def graph_push(
     """
     from imas_codex.cli.graph_progress import GraphProgress, run_oras_with_progress
 
-    require_oras()
-
     git_info = get_git_info()
 
     if not dev:
@@ -2017,12 +2020,108 @@ def graph_push(
         click.echo(f"  2. Push to {target_registry}/{pkg_name}:{version_tag}")
         return
 
-    archive_path = Path(f"{pkg_name}-{version_tag}.tar.gz")
+    # ── Remote dispatch ──────────────────────────────────────────────────
+    from imas_codex.graph.profiles import resolve_neo4j
+    from imas_codex.graph.remote import is_remote_location
 
-    with GraphProgress("push") as gp:
-        gp.set_total_phases(3 if not dev else 2)
+    profile = resolve_neo4j()
 
-        try:
+    if is_remote_location(profile.host):
+        from imas_codex.cli.graph_progress import remote_operation_streaming
+        from imas_codex.graph.remote import (
+            build_remote_push_script,
+            remote_check_oras,
+        )
+
+        if not remote_check_oras(profile.host):
+            raise click.ClickException(
+                f"oras not found on {profile.host}. "
+                "Install with: imas-codex tools install"
+            )
+
+        if facilities:
+            click.echo(
+                "Warning: --facility filtering is not supported for remote push. "
+                "The full graph will be pushed.",
+                err=True,
+            )
+
+        artifact_ref = f"{target_registry}/{pkg_name}:{version_tag}"
+
+        _remote_markers_push = {
+            "STOPPING": f"Stopping Neo4j on {profile.host}",
+            "DUMPING": "Dumping graph database",
+            "RECOVERY": "Recovery cycle (clean start/stop)",
+            "ARCHIVING": "Creating archive",
+            "STARTING": f"Starting Neo4j on {profile.host}",
+            "LOGIN": "Authenticating with GHCR",
+            "PUSHING": f"Pushing to GHCR ({artifact_ref})",
+            "TAGGING": "Tagging as latest",
+            "COMPLETE": "Push complete",
+        }
+
+        phases = 1  # single streaming operation
+        with GraphProgress("push") as gp:
+            gp.set_total_phases(phases)
+            gp.start_phase(f"Pushing [{profile.name}] from {profile.host}")
+
+            script = build_remote_push_script(
+                profile.name,
+                artifact_ref,
+                version_tag=version_tag,
+                git_commit=git_info["commit"],
+                message=message,
+                token=token,
+                is_dev=dev,
+            )
+
+            try:
+                push_output = remote_operation_streaming(
+                    script,
+                    profile.host,
+                    progress=gp,
+                    progress_markers=_remote_markers_push,
+                    timeout=900,
+                )
+            except Exception as e:
+                gp.fail_phase(str(e))
+                raise click.ClickException(
+                    f"Remote push on {profile.host} failed: {e}"
+                ) from e
+
+            size_str = None
+            for line in push_output.strip().splitlines():
+                if line.startswith("SIZE="):
+                    size_str = line.split("=", 1)[1].strip()
+            gp.complete_phase(size_str)
+
+        # Update local manifest
+        manifest = get_local_graph_manifest() or {}
+        manifest["pushed"] = True
+        manifest["pushed_version"] = version_tag
+        manifest["pushed_to"] = artifact_ref
+        manifest["pushed_at"] = datetime.now(UTC).isoformat()
+        if message:
+            manifest["pushed_message"] = message
+        save_local_graph_manifest(manifest)
+
+        if dev:
+            base = __version__.replace("+", "-")
+            rev_str = version_tag.rsplit("-r", 1)[-1]
+            _save_dev_revision(base, int(rev_str))
+
+        _dispatch_graph_quality(git_info, version_tag, target_registry)
+        return
+    # ── End remote dispatch ──────────────────────────────────────────────
+
+    require_oras()
+
+    with tempfile.TemporaryDirectory() as push_tmpdir:
+        archive_path = Path(push_tmpdir) / f"{pkg_name}-{version_tag}.tar.gz"
+
+        with GraphProgress("push") as gp:
+            gp.set_total_phases(3 if not dev else 2)
+
             gp.start_phase("Exporting graph database")
             from click.testing import CliRunner
 
@@ -2094,10 +2193,6 @@ def graph_push(
                     gp.complete_phase()
                 else:
                     gp.fail_phase(result.stderr.strip())
-
-        finally:
-            if archive_path.exists():
-                archive_path.unlink()
 
     # Dispatch graph quality CI
     _dispatch_graph_quality(git_info, version_tag, target_registry)

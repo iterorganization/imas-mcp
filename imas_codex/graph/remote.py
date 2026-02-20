@@ -990,10 +990,148 @@ echo "ARCHIVE_PATH=$ARCHIVE"
 """
 
 
+def build_remote_push_script(
+    graph_name: str,
+    artifact_ref: str,
+    *,
+    version_tag: str,
+    git_commit: str,
+    message: str | None = None,
+    token: str | None = None,
+    is_dev: bool = False,
+) -> str:
+    """Build a bash script for remote graph export + ORAS push.
+
+    Performs the full dump → archive → oras push cycle on the remote
+    host, avoiding any SCP transfer back to the local machine.  The
+    archive is cleaned up automatically after a successful push.
+
+    Emits ``PROGRESS:`` markers for phase tracking.
+    """
+    login_cmd = ""
+    if token:
+        login_cmd = f'echo "{token}" | oras login ghcr.io -u token --password-stdin'
+
+    annotations = [
+        f'--annotation "org.opencontainers.image.version={version_tag}"',
+        f'--annotation "io.imas-codex.git-commit={git_commit}"',
+    ]
+    if message:
+        annotations.append(
+            f'--annotation "org.opencontainers.image.description={message}"'
+        )
+    annotation_args = " \\\n    ".join(annotations)
+
+    tag_latest_block = ""
+    if not is_dev:
+        tag_latest_block = f"""
+echo "PROGRESS:TAGGING"
+oras tag "{artifact_ref}" latest 2>&1
+"""
+
+    return f"""\
+set -e
+DATA_DIR="{REMOTE_LINK}"
+EXPORTS="{REMOTE_EXPORTS}"
+SERVICE_OLD="imas-codex-neo4j"
+SERVICE_NEW="imas-codex-neo4j-{graph_name}"
+IMAGE="{_neo4j_image_shell()}"
+mkdir -p "$EXPORTS" && chmod 700 "$EXPORTS"
+ARCHIVE="$EXPORTS/imas-codex-graph-push-$$.tar.gz"
+
+stop_neo4j() {{
+    systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
+        systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
+    for i in $(seq 1 18); do
+        state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
+                systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+        [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
+        sleep 5
+    done
+}}
+
+start_neo4j() {{
+    systemctl --user start "$SERVICE_NEW" 2>/dev/null || \
+        systemctl --user start "$SERVICE_OLD" 2>/dev/null || true
+}}
+
+wait_neo4j_ready() {{
+    for i in $(seq 1 12); do
+        if curl -sf http://localhost:7474 >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "Warning: Neo4j did not become ready within 60s" >&2
+}}
+
+do_dump() {{
+    mkdir -p "$DATA_DIR/dumps"
+    apptainer exec \
+        --bind "$DATA_DIR/data:/data" \
+        --bind "$DATA_DIR/dumps:/dumps" \
+        --writable-tmpfs \
+        "$IMAGE" \
+        neo4j-admin database dump neo4j \
+            --to-path=/dumps \
+            --overwrite-destination=true
+}}
+
+cleanup() {{
+    rm -f "$ARCHIVE"
+}}
+trap cleanup EXIT
+
+echo "PROGRESS:STOPPING"
+stop_neo4j
+
+echo "PROGRESS:DUMPING"
+if ! do_dump; then
+    echo "PROGRESS:RECOVERY"
+    start_neo4j
+    wait_neo4j_ready
+    stop_neo4j
+    do_dump
+fi
+
+echo "PROGRESS:ARCHIVING"
+TMPDIR=$(mktemp -d)
+ARCHIVE_DIR="$TMPDIR/imas-codex-graph-push"
+mkdir -p "$ARCHIVE_DIR"
+cp "$DATA_DIR/dumps/neo4j.dump" "$ARCHIVE_DIR/graph.dump"
+
+DATE=$(date -Iseconds)
+cat > "$ARCHIVE_DIR/manifest.json" << MANIFEST_EOF
+{{"version": "remote-push", "timestamp": "$DATE"}}
+MANIFEST_EOF
+
+tar czf "$ARCHIVE" -C "$TMPDIR" "imas-codex-graph-push"
+rm -rf "$TMPDIR"
+SIZE=$(du -h "$ARCHIVE" | cut -f1)
+
+echo "PROGRESS:STARTING"
+start_neo4j
+
+echo "PROGRESS:LOGIN"
+{login_cmd}
+
+echo "PROGRESS:PUSHING"
+oras push "{artifact_ref}" \
+    "$ARCHIVE:application/gzip" \
+    {annotation_args} \
+    2>&1
+{tag_latest_block}
+echo "PROGRESS:COMPLETE"
+echo "SIZE=$SIZE"
+echo "PUSH_COMPLETE"
+"""
+
+
 __all__ = [
     "build_remote_export_script",
     "build_remote_fetch_script",
     "build_remote_load_script",
+    "build_remote_push_script",
     "is_remote_location",
     "remote_backup",
     "remote_check_oras",
