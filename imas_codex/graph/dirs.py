@@ -195,16 +195,13 @@ def list_local_graphs() -> list[GraphDirInfo]:
 def get_active_graph() -> GraphDirInfo | None:
     """Get info for the currently active graph (symlink target).
 
-    Returns ``None`` if:
-    - The ``neo4j/`` path doesn't exist
-    - It's a real directory (legacy, not yet migrated)
-    - The symlink target doesn't exist
+    Returns ``None`` if the ``neo4j/`` symlink doesn't exist
+    or its target doesn't exist.
     """
     if not ACTIVE_LINK.exists():
         return None
 
     if not ACTIVE_LINK.is_symlink():
-        # Legacy: real directory, not symlinked yet
         return None
 
     target = ACTIVE_LINK.resolve()
@@ -212,11 +209,6 @@ def get_active_graph() -> GraphDirInfo | None:
         return None
 
     return GraphDirInfo(name=target.name, path=target, active=True)
-
-
-def is_legacy_data_dir() -> bool:
-    """Check if ``neo4j/`` is a real directory (pre-migration)."""
-    return ACTIVE_LINK.exists() and not ACTIVE_LINK.is_symlink()
 
 
 def switch_active_graph(name: str) -> GraphDirInfo:
@@ -246,9 +238,7 @@ def switch_active_graph(name: str) -> GraphDirInfo:
         ACTIVE_LINK.unlink()
     elif ACTIVE_LINK.exists():
         raise FileExistsError(
-            f"{ACTIVE_LINK} is a real directory, not a symlink.\n"
-            "Manual migration needed: move contents into .neo4j/ first.\n"
-            "See: imas-codex graph init --help"
+            f"{ACTIVE_LINK} exists but is not a symlink.\nRemove it manually and retry."
         )
 
     ACTIVE_LINK.symlink_to(target)
@@ -325,7 +315,6 @@ __all__ = [
     "ensure_graph_store",
     "find_graph",
     "get_active_graph",
-    "is_legacy_data_dir",
     "list_local_graphs",
     "switch_active_graph",
 ]

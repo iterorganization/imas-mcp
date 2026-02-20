@@ -191,32 +191,18 @@ done
     return run_script_via_stdin(script, ssh_host=ssh_host)
 
 
-def remote_is_legacy_data_dir(ssh_host: str) -> bool:
-    """Check if ``neo4j/`` is a real directory on a remote host."""
-    from imas_codex.remote.executor import run_command
-
-    result = run_command(
-        f'[ -d "{REMOTE_LINK}" ] && [ ! -L "{REMOTE_LINK}" ] '
-        f'&& echo "LEGACY" || echo "OK"',
-        ssh_host=ssh_host,
-    )
-    return "LEGACY" in result
-
-
 # ── Service operations ──────────────────────────────────────────────────────
 
 
 def resolve_remote_service_name(graph_name: str, ssh_host: str) -> str:
     """Resolve the Neo4j systemd service name on a remote host.
 
-    The naming convention changed from ``imas-codex-neo4j`` (old) to
-    ``imas-codex-neo4j-<name>`` (new).  Since all services bind the
-    ``neo4j/`` symlink, any installed service can run any active graph.
+    Since all services bind the ``neo4j/`` symlink, any installed
+    service can run any active graph.
 
     Resolution priority:
     1. ``imas-codex-neo4j-<name>`` (exact match for requested graph)
     2. Any ``imas-codex-neo4j-*`` service that exists
-    3. ``imas-codex-neo4j`` (legacy name)
 
     Args:
         graph_name: Active graph name (e.g. ``"codex"``).
@@ -224,20 +210,23 @@ def resolve_remote_service_name(graph_name: str, ssh_host: str) -> str:
 
     Returns:
         Service unit name.
+
+    Raises:
+        RuntimeError: No service found.
     """
     from imas_codex.remote.executor import run_command
 
     # 1. Try exact match
-    new_name = f"imas-codex-neo4j-{graph_name}"
+    exact = f"imas-codex-neo4j-{graph_name}"
     try:
         out = run_command(
-            f"systemctl --user cat {new_name} >/dev/null 2>&1 "
+            f"systemctl --user cat {exact} >/dev/null 2>&1 "
             f"&& echo FOUND || echo MISSING",
             ssh_host=ssh_host,
             timeout=10,
         )
         if "FOUND" in out:
-            return new_name
+            return exact
     except Exception:
         pass
 
@@ -255,8 +244,10 @@ def resolve_remote_service_name(graph_name: str, ssh_host: str) -> str:
     except Exception:
         pass
 
-    # 3. Fall back to legacy name
-    return "imas-codex-neo4j"
+    raise RuntimeError(
+        f"No imas-codex-neo4j-* service found on {ssh_host}.\n"
+        f"Install one with: imas-codex graph service install"
+    )
 
 
 def remote_service_action(
@@ -465,18 +456,15 @@ def remote_load_archive(
 set -e
 ARCHIVE="{archive_remote_path}"
 DATA_DIR="{REMOTE_LINK}"
-SERVICE_OLD="imas-codex-neo4j"
-SERVICE_NEW="imas-codex-neo4j-{graph_name}"
+SERVICE="imas-codex-neo4j-{graph_name}"
 IMAGE="{_neo4j_image_shell()}"
 
 # Stop Neo4j — let systemd handle the full shutdown lifecycle.
 # Do NOT pkill separately; that races with ExecStop and causes SIGSEGV.
-systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
-    systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
+systemctl --user stop "$SERVICE" 2>/dev/null || true
 # Wait until fully inactive (up to 90s for large graphs)
 for i in $(seq 1 18); do
-    state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
-            systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+    state=$(systemctl --user is-active "$SERVICE" 2>/dev/null || echo inactive)
     [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
     sleep 5
 done
@@ -516,8 +504,7 @@ apptainer exec \
     neo4j-admin dbms set-initial-password "{password}" 2>/dev/null || true
 
 # Restart Neo4j
-systemctl --user start "$SERVICE_NEW" 2>/dev/null || \
-    systemctl --user start "$SERVICE_OLD" 2>/dev/null || true
+systemctl --user start "$SERVICE" 2>/dev/null || true
 
 # Clean up
 rm -rf "$TMPDIR"
@@ -551,8 +538,7 @@ def remote_export_graph(
 set -e
 DATA_DIR="{REMOTE_LINK}"
 EXPORTS="{REMOTE_EXPORTS}"
-SERVICE_OLD="imas-codex-neo4j"
-SERVICE_NEW="imas-codex-neo4j-{graph_name}"
+SERVICE="imas-codex-neo4j-{graph_name}"
 IMAGE="{_neo4j_image_shell()}"
 mkdir -p "$EXPORTS" && chmod 700 "$EXPORTS"
 ARCHIVE="$EXPORTS/imas-codex-graph-export-$$.tar.gz"
@@ -561,20 +547,17 @@ stop_neo4j() {{
     # Use systemctl stop and wait for it to fully complete.
     # Do NOT pkill separately — that races with systemd's ExecStop
     # and can cause SIGSEGV on large databases that need time to flush.
-    systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
-        systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
+    systemctl --user stop "$SERVICE" 2>/dev/null || true
     # Wait until the service is fully inactive (up to 90s for large graphs)
     for i in $(seq 1 18); do
-        state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
-                systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+        state=$(systemctl --user is-active "$SERVICE" 2>/dev/null || echo inactive)
         [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
         sleep 5
     done
 }}
 
 start_neo4j() {{
-    systemctl --user start "$SERVICE_NEW" 2>/dev/null || \
-        systemctl --user start "$SERVICE_OLD" 2>/dev/null || true
+    systemctl --user start "$SERVICE" 2>/dev/null || true
 }}
 
 wait_neo4j_ready() {{
@@ -892,16 +875,13 @@ def build_remote_load_script(
 set -e
 ARCHIVE="{archive_remote_path}"
 DATA_DIR="{REMOTE_LINK}"
-SERVICE_OLD="imas-codex-neo4j"
-SERVICE_NEW="imas-codex-neo4j-{graph_name}"
+SERVICE="imas-codex-neo4j-{graph_name}"
 IMAGE="{_neo4j_image_shell()}"
 
 echo "PROGRESS:STOPPING"
-systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
-    systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
+systemctl --user stop "$SERVICE" 2>/dev/null || true
 for i in $(seq 1 18); do
-    state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
-            systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+    state=$(systemctl --user is-active "$SERVICE" 2>/dev/null || echo inactive)
     [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
     sleep 5
 done
@@ -941,8 +921,7 @@ apptainer exec \
     neo4j-admin dbms set-initial-password "{password}" 2>/dev/null || true
 
 echo "PROGRESS:STARTING"
-systemctl --user start "$SERVICE_NEW" 2>/dev/null || \
-    systemctl --user start "$SERVICE_OLD" 2>/dev/null || true
+systemctl --user start "$SERVICE" 2>/dev/null || true
 
 rm -rf "$TMPDIR"
 echo "PROGRESS:COMPLETE"
@@ -959,26 +938,22 @@ def build_remote_export_script(graph_name: str) -> str:
 set -e
 DATA_DIR="{REMOTE_LINK}"
 EXPORTS="{REMOTE_EXPORTS}"
-SERVICE_OLD="imas-codex-neo4j"
-SERVICE_NEW="imas-codex-neo4j-{graph_name}"
+SERVICE="imas-codex-neo4j-{graph_name}"
 IMAGE="{_neo4j_image_shell()}"
 mkdir -p "$EXPORTS" && chmod 700 "$EXPORTS"
 ARCHIVE="$EXPORTS/imas-codex-graph-export-$$.tar.gz"
 
 stop_neo4j() {{
-    systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
-        systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
+    systemctl --user stop "$SERVICE" 2>/dev/null || true
     for i in $(seq 1 18); do
-        state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
-                systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+        state=$(systemctl --user is-active "$SERVICE" 2>/dev/null || echo inactive)
         [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
         sleep 5
     done
 }}
 
 start_neo4j() {{
-    systemctl --user start "$SERVICE_NEW" 2>/dev/null || \
-        systemctl --user start "$SERVICE_OLD" 2>/dev/null || true
+    systemctl --user start "$SERVICE" 2>/dev/null || true
 }}
 
 wait_neo4j_ready() {{
@@ -1146,26 +1121,22 @@ oras tag "{artifact_ref}" latest 2>&1
 set -e
 DATA_DIR="{REMOTE_LINK}"
 EXPORTS="{REMOTE_EXPORTS}"
-SERVICE_OLD="imas-codex-neo4j"
-SERVICE_NEW="imas-codex-neo4j-{graph_name}"
+SERVICE="imas-codex-neo4j-{graph_name}"
 IMAGE="{_neo4j_image_shell()}"
 mkdir -p "$EXPORTS" && chmod 700 "$EXPORTS"
 ARCHIVE="$EXPORTS/imas-codex-graph-push-$$.tar.gz"
 
 stop_neo4j() {{
-    systemctl --user stop "$SERVICE_NEW" 2>/dev/null || \
-        systemctl --user stop "$SERVICE_OLD" 2>/dev/null || true
+    systemctl --user stop "$SERVICE" 2>/dev/null || true
     for i in $(seq 1 18); do
-        state=$(systemctl --user is-active "$SERVICE_NEW" 2>/dev/null || \
-                systemctl --user is-active "$SERVICE_OLD" 2>/dev/null || echo inactive)
+        state=$(systemctl --user is-active "$SERVICE" 2>/dev/null || echo inactive)
         [ "$state" = "inactive" ] || [ "$state" = "failed" ] && break
         sleep 5
     done
 }}
 
 start_neo4j() {{
-    systemctl --user start "$SERVICE_NEW" 2>/dev/null || \
-        systemctl --user start "$SERVICE_OLD" 2>/dev/null || true
+    systemctl --user start "$SERVICE" 2>/dev/null || true
 }}
 
 wait_neo4j_ready() {{
@@ -1255,7 +1226,6 @@ __all__ = [
     "remote_ensure_exports_dir",
     "remote_export_graph",
     "remote_fetch_from_ghcr",
-    "remote_is_legacy_data_dir",
     "remote_is_neo4j_running",
     "remote_list_graphs",
     "remote_load_archive",

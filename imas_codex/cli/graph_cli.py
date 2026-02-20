@@ -3095,22 +3095,12 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
     if is_remote_location(profile.host):
         from imas_codex.graph.remote import (
             remote_create_graph_dir,
-            remote_is_legacy_data_dir,
             remote_is_neo4j_running,
             remote_service_action,
             remote_set_initial_password,
             remote_switch_active_graph,
             resolve_remote_service_name,
         )
-
-        if remote_is_legacy_data_dir(profile.host):
-            raise click.ClickException(
-                f"neo4j/ on {profile.host} is a real directory (pre-migration).\n"
-                f"Migrate manually via SSH:\n"
-                f"  ssh {profile.host} 'cd ~/.local/share/imas-codex && "
-                f"mkdir -p .neo4j && mv neo4j .neo4j/{name} && "
-                f"ln -s .neo4j/{name} neo4j'"
-            )
 
         click.echo(f"Initializing graph on {profile.host}...")
         try:
@@ -3182,19 +3172,8 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
 
     from imas_codex.graph.dirs import (
         create_graph_dir,
-        is_legacy_data_dir,
         switch_active_graph,
     )
-
-    if is_legacy_data_dir():
-        raise click.ClickException(
-            "neo4j/ exists as a real directory (pre-migration layout).\n"
-            "Move it manually into .neo4j/ first:\n"
-            f"  mkdir -p ~/.local/share/imas-codex/.neo4j\n"
-            f"  mv ~/.local/share/imas-codex/neo4j "
-            f"~/.local/share/imas-codex/.neo4j/{name}\n"
-            f"  ln -s .neo4j/{name} ~/.local/share/imas-codex/neo4j"
-        )
 
     # Create new graph directory
     profile = resolve_neo4j(auto_tunnel=False)

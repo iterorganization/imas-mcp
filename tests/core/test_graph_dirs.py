@@ -11,7 +11,6 @@ from imas_codex.graph.dirs import (
     delete_graph_dir,
     find_graph,
     get_active_graph,
-    is_legacy_data_dir,
     list_local_graphs,
     switch_active_graph,
 )
@@ -184,7 +183,7 @@ class TestSwitchActiveGraph:
             switch_active_graph("nonexistent")
 
     def test_switch_real_dir_raises(self, tmp_path):
-        """Can't switch if neo4j/ is a real directory."""
+        """Can't switch if neo4j/ is not a symlink."""
         create_graph_dir("codex")
         (tmp_path / "neo4j").mkdir()
         with pytest.raises(FileExistsError):
@@ -214,23 +213,6 @@ class TestFindGraph:
 
         info_inactive = find_graph("dev")
         assert info_inactive.active is False
-
-
-# ── Legacy detection ────────────────────────────────────────────────────────
-
-
-class TestIsLegacyDataDir:
-    def test_no_dir(self):
-        assert is_legacy_data_dir() is False
-
-    def test_real_dir(self, tmp_path):
-        (tmp_path / "neo4j").mkdir()
-        assert is_legacy_data_dir() is True
-
-    def test_symlink(self):
-        create_graph_dir("codex")
-        switch_active_graph("codex")
-        assert is_legacy_data_dir() is False
 
 
 # ── Delete ──────────────────────────────────────────────────────────────────
