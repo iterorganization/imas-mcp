@@ -13,6 +13,17 @@ location: Cadarache, France
 # (hostname contains 'iter' so run() executes locally without SSH)
 ssh_host: iter
 
+# Login node FQDN patterns for is_local_host() detection.
+# When the current machine's FQDN matches any pattern, the local_hosts
+# aliases below are treated as local (no SSH needed).
+login_nodes:
+  - "98dci4-srv-*.iter.org"
+  - "98dci4-gpu-*.iter.org"
+
+# SSH aliases treated as local when running on a matching login node.
+local_hosts:
+  - iter
+
 # Data systems available at this facility
 data_systems:
   - imas

@@ -511,21 +511,16 @@ def _is_local_address(hostname: str) -> bool:
 
 @lru_cache(maxsize=1)
 def _get_facility_local_hosts() -> frozenset[str]:
-    """Return host aliases declared local via facility private configs.
+    """Return host aliases declared local via facility configs.
 
     Reads ``login_nodes`` (FQDN glob patterns) and ``local_hosts`` (SSH aliases)
-    from each facility's private YAML. If the current machine's FQDN matches
+    from each facility's public YAML. If the current machine's FQDN matches
     any ``login_nodes`` pattern, returns that facility's ``local_hosts``.
-
-    This approach:
-    - Syncs with ``config private push/pull`` (GitHub Gist)
-    - Uses existing facility config infrastructure
-    - No separate per-machine config file needed
     """
     import fnmatch
 
     from imas_codex.discovery.base.facility import (
-        get_facility_infrastructure,
+        get_facility,
         list_facilities,
     )
 
@@ -534,9 +529,9 @@ def _get_facility_local_hosts() -> frozenset[str]:
 
     for facility_id in list_facilities():
         try:
-            infra = get_facility_infrastructure(facility_id)
-            login_nodes = infra.get("login_nodes", [])
-            local_hosts = infra.get("local_hosts", [])
+            config = get_facility(facility_id)
+            login_nodes = config.get("login_nodes", [])
+            local_hosts = config.get("local_hosts", [])
 
             # Check if current FQDN matches any login_nodes pattern
             for pattern in login_nodes:
@@ -557,14 +552,14 @@ def _get_configured_local_hosts() -> frozenset[str]:
 
     Sources (merged, case-insensitive):
 
-    1. Facility private configs — ``login_nodes`` (FQDN patterns) and
-       ``local_hosts`` (SSH aliases). Syncs with ``config private push/pull``.
+    1. Facility configs — ``login_nodes`` (FQDN patterns) and
+       ``local_hosts`` (SSH aliases) in public facility YAML.
     2. ``IMAS_CODEX_LOCAL_HOSTS`` env var — comma-separated,
        session-level override for debugging/testing only (do NOT put in .env).
     """
     hosts: set[str] = set()
 
-    # Facility private configs (primary source)
+    # Facility configs (primary source)
     hosts.update(_get_facility_local_hosts())
 
     # Env var (session-level override — NOT for .env files)
@@ -581,7 +576,7 @@ def is_local_host(ssh_host: str | None) -> bool:
 
     1. ``None`` / ``"local"`` → always local
     2. Facility-configured local hosts — ``login_nodes`` (FQDN patterns) and
-       ``local_hosts`` (SSH aliases) in ``<facility>_private.yaml``. If the
+       ``local_hosts`` (SSH aliases) in ``<facility>.yaml``. If the
        current machine's FQDN matches a facility's ``login_nodes`` pattern,
        that facility's ``local_hosts`` are treated as local.
     3. Session override — ``IMAS_CODEX_LOCAL_HOSTS`` env var (debugging only,

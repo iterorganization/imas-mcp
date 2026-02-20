@@ -258,17 +258,15 @@ classes:
           Supports wildcards (*, ?). When is_local_host() detects the current
           machine's FQDN matches any pattern, the facility's local_hosts aliases
           are treated as local. Example: ["98dci4-srv-*.iter.org"]
+          Public field — not security-sensitive (FQDN patterns only).
         multivalued: true
-        annotations:
-          is_private: true
       local_hosts:
         description: >-
           SSH host aliases that refer to this machine when on a matching login node.
           Used by is_local_host() for location-aware graph profile resolution.
           Typically just the facility name, e.g. ["iter"] for ITER login nodes.
+          Public field — not security-sensitive (SSH aliases only).
         multivalued: true
-        annotations:
-          is_private: true
       nice_level:
         description: >-
           Unix nice level (0-19) applied to all remote SSH commands targeting

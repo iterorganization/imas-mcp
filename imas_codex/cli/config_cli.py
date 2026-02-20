@@ -545,18 +545,18 @@ def config_local_hosts() -> None:
     """Show which hosts are treated as local on this machine.
 
     Location detection uses ``login_nodes`` and ``local_hosts`` fields in
-    facility private YAML files (``<facility>_private.yaml``).
+    facility public YAML files (``<facility>.yaml``).
 
     If this machine's FQDN matches a facility's ``login_nodes`` pattern,
     that facility's ``local_hosts`` SSH aliases are treated as local.
 
-    To configure: edit the facility's private YAML file directly or use
+    To configure: edit the facility's public YAML file directly or use
     ``update_facility_infrastructure()`` MCP tool.
     """
     import fnmatch
 
     from imas_codex.discovery.base.facility import (
-        get_facility_infrastructure,
+        get_facility,
         list_facilities,
     )
 
@@ -571,9 +571,9 @@ def config_local_hosts() -> None:
 
     for facility_id in list_facilities():
         try:
-            infra = get_facility_infrastructure(facility_id)
-            login_nodes = infra.get("login_nodes", [])
-            local_hosts = infra.get("local_hosts", [])
+            config = get_facility(facility_id)
+            login_nodes = config.get("login_nodes", [])
+            local_hosts = config.get("local_hosts", [])
 
             # Check if FQDN matches any pattern
             for pattern in login_nodes:
@@ -593,7 +593,7 @@ def config_local_hosts() -> None:
     if not matched_facilities:
         click.echo("No facility matches this machine's FQDN.")
         click.echo()
-        click.echo("To configure, add to <facility>_private.yaml:")
+        click.echo("To configure, add to <facility>.yaml:")
         click.echo("  login_nodes:")
         click.echo('    - "hostname-pattern-*.example.org"')
         click.echo("  local_hosts:")
