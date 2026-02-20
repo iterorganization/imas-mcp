@@ -181,21 +181,26 @@ def clusters_label(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    import json
+
+    from imas_codex import dd_version
     from imas_codex.clusters.label_cache import LabelCache
     from imas_codex.clusters.labeler import ClusterLabeler
-    from imas_codex.core.clusters import Clusters
-    from imas_codex.embeddings.config import EncoderConfig
+    from imas_codex.resource_path_accessor import ResourcePathAccessor
 
     try:
-        # Load clusters
-        encoder_config = EncoderConfig(use_rich=not quiet)
-        clusters_manager = Clusters(encoder_config=encoder_config)
+        # Load clusters directly from JSON — no dependency checking or
+        # auto-rebuild.  The label command only needs cluster data, not
+        # embeddings.  Run 'clusters build' separately if clusters are stale.
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        clusters_file = path_accessor.clusters_dir / "clusters.json"
 
-        if not clusters_manager.is_available():
+        if not clusters_file.exists():
             click.echo("No clusters found. Run 'clusters build' first.", err=True)
             raise SystemExit(1)
 
-        cluster_data = clusters_manager.get_clusters()
+        with clusters_file.open() as f:
+            cluster_data = json.load(f).get("clusters", [])
         click.echo(f"Found {len(cluster_data)} clusters")
 
         # Initialize cache and labeler
@@ -222,7 +227,7 @@ def clusters_label(
 
         # Generate labels with cost tracking
         click.echo(f"Generating labels (cost limit: ${cost_limit:.2f})...")
-        labels = labeler.generate_labels(uncached)
+        labels = labeler.label_clusters(uncached)
 
         # Store in cache
         label_tuples = [
