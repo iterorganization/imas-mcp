@@ -3140,8 +3140,7 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
     "-f",
     "facilities",
     multiple=True,
-    required=True,
-    help="Facility ID to include (repeatable)",
+    help="Facility ID to include (repeatable). Omit for DD-only graphs.",
 )
 @click.option("--force", is_flag=True, help="Allow using an existing directory")
 def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
@@ -3157,6 +3156,7 @@ def graph_init(name: str, facilities: tuple[str, ...], force: bool) -> None:
     \b
     Examples:
       imas-codex graph init codex -f iter -f tcv -f jt-60sa
+      imas-codex graph init imas              # DD-only, no facilities
       imas-codex graph init dev -f tcv
     """
     from imas_codex.graph.profiles import resolve_neo4j
