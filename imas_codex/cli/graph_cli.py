@@ -1457,20 +1457,28 @@ def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
             f"NEO4J_server_bolt_listen__address=127.0.0.1:{temp_bolt_port}",
             "--env",
             f"NEO4J_server_http_listen__address=127.0.0.1:{temp_http_port}",
+            "--env",
+            "NEO4J_server_memory_heap_initial__size=256m",
+            "--env",
+            "NEO4J_server_memory_heap_max__size=1g",
+            "--env",
+            "NEO4J_server_memory_pagecache_size=256m",
             str(NEO4J_IMAGE),
             "neo4j",
             "console",
         ]
+        neo4j_log = temp_dir / "logs" / "neo4j-temp.log"
+        log_fh = open(neo4j_log, "w")  # noqa: SIM115
         proc = subprocess.Popen(
             start_cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
             start_new_session=True,
         )
 
         try:
             ready = False
-            for _ in range(60):
+            for _ in range(180):
                 try:
                     urllib.request.urlopen(
                         f"http://localhost:{temp_http_port}/", timeout=2
@@ -1481,8 +1489,11 @@ def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
                     time.sleep(1)
 
             if not ready:
+                log_fh.flush()
+                tail = neo4j_log.read_text()[-500:] if neo4j_log.exists() else ""
                 raise click.ClickException(
-                    "Temp Neo4j instance did not start within 60 seconds"
+                    f"Temp Neo4j instance did not start within 180 seconds\n"
+                    f"Last log output:\n{tail}"
                 )
 
             click.echo("  Filtering graph: keeping only IMAS DD nodes...")
@@ -1512,6 +1523,7 @@ def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
+            log_fh.close()
 
         click.echo("  Dumping filtered graph...")
         (temp_dir / "dumps" / "neo4j.dump").unlink(missing_ok=True)
@@ -1633,21 +1645,29 @@ def _create_facility_dump(
             f"NEO4J_server_bolt_listen__address=127.0.0.1:{temp_bolt_port}",
             "--env",
             f"NEO4J_server_http_listen__address=127.0.0.1:{temp_http_port}",
+            "--env",
+            "NEO4J_server_memory_heap_initial__size=256m",
+            "--env",
+            "NEO4J_server_memory_heap_max__size=1g",
+            "--env",
+            "NEO4J_server_memory_pagecache_size=256m",
             str(NEO4J_IMAGE),
             "neo4j",
             "console",
         ]
+        neo4j_log = temp_dir / "logs" / "neo4j-temp.log"
+        log_fh = open(neo4j_log, "w")  # noqa: SIM115
         proc = subprocess.Popen(
             start_cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
             start_new_session=True,
         )
 
         try:
             # Wait for temp instance to be ready
             ready = False
-            for _ in range(60):
+            for _ in range(180):
                 try:
                     urllib.request.urlopen(
                         f"http://localhost:{temp_http_port}/", timeout=2
@@ -1658,8 +1678,11 @@ def _create_facility_dump(
                     time.sleep(1)
 
             if not ready:
+                log_fh.flush()
+                tail = neo4j_log.read_text()[-500:] if neo4j_log.exists() else ""
                 raise click.ClickException(
-                    "Temp Neo4j instance did not start within 60 seconds"
+                    f"Temp Neo4j instance did not start within 180 seconds\n"
+                    f"Last log output:\n{tail}"
                 )
 
             click.echo(f"  Filtering graph: keeping facility={facility}...")
@@ -1705,6 +1728,7 @@ def _create_facility_dump(
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
+            log_fh.close()
 
         # Dump filtered graph from temp instance
         click.echo("  Dumping filtered graph...")
