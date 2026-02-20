@@ -1116,8 +1116,10 @@ echo "PROGRESS:LOGIN"
 {login_cmd}
 
 echo "PROGRESS:PUSHING"
+ARCHIVE_NAME=$(basename "$ARCHIVE")
+cd "$(dirname "$ARCHIVE")"
 oras push "{artifact_ref}" \
-    "$ARCHIVE:application/gzip" \
+    "$ARCHIVE_NAME:application/gzip" \
     {annotation_args} \
     2>&1
 {tag_latest_block}
