@@ -478,16 +478,20 @@ def get_package_name(
     facilities: list[str] | None = None,
     *,
     no_imas: bool = False,
+    imas_only: bool = False,
 ) -> str:
     """Get the GHCR package name, optionally scoped to facilities.
 
     Args:
         facilities: If given, appends sorted facility IDs to the name.
         no_imas: If True, appends ``-no-imas`` suffix.
+        imas_only: If True, uses ``imas-codex-graph-imas`` (DD-only graph).
 
     Returns:
         Package name, e.g. ``"imas-codex-graph-iter-tcv-no-imas"``.
     """
+    if imas_only:
+        return "imas-codex-graph-imas"
     parts = ["imas-codex-graph"]
     if facilities:
         parts.extend(sorted(facilities))
@@ -1357,8 +1361,190 @@ def _update_env_file(env_file: Path, new_password: str) -> None:
 
 
 # ============================================================================
+# DD node labels to keep for --imas-only exports
+_IMAS_DD_LABELS = [
+    "DDVersion",
+    "IDS",
+    "IMASPath",
+    "IMASCoordinateSpec",
+    "IMASSemanticCluster",
+    "IdentifierSchema",
+    "IMASPathChange",
+    "CoordinateRelationship",
+    "ClusterMembership",
+    "EmbeddingChange",
+    "Unit",
+    "PhysicsDomain",
+    "SignConvention",
+]
+
+
+# ============================================================================
 # Graph Data Operations
 # ============================================================================
+
+
+def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
+    """Create an IMAS-only dump by filtering out facility nodes.
+
+    Loads the full dump into a temporary Neo4j instance, deletes all
+    nodes that are not IMAS Data Dictionary types, then dumps the
+    filtered graph.
+    """
+    import time
+    import urllib.request
+
+    temp_bolt_port = 27687
+    temp_http_port = 27474
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dir = Path(tmpdir) / "neo4j-temp"
+        for subdir in ("data", "logs", "dumps"):
+            (temp_dir / subdir).mkdir(parents=True)
+
+        shutil.copy(source_dump_path, temp_dir / "dumps" / "neo4j.dump")
+
+        click.echo("  Loading full dump into temp instance for IMAS-only filtering...")
+
+        load_cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{temp_dir}/data:/data",
+            "--bind",
+            f"{temp_dir}/dumps:/dumps",
+            "--writable-tmpfs",
+            str(NEO4J_IMAGE),
+            "neo4j-admin",
+            "database",
+            "load",
+            "neo4j",
+            "--from-path=/dumps",
+            "--overwrite-destination=true",
+        ]
+        result = subprocess.run(load_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise click.ClickException(
+                f"Failed to load dump into temp instance: {result.stderr}"
+            )
+
+        pw_cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{temp_dir}/data:/data",
+            "--writable-tmpfs",
+            str(NEO4J_IMAGE),
+            "neo4j-admin",
+            "dbms",
+            "set-initial-password",
+            "temp-password",
+        ]
+        subprocess.run(pw_cmd, capture_output=True, text=True)
+
+        click.echo("  Starting temp Neo4j instance...")
+        start_cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{temp_dir}/data:/data",
+            "--bind",
+            f"{temp_dir}/logs:/logs",
+            "--writable-tmpfs",
+            "--env",
+            "NEO4J_AUTH=neo4j/temp-password",
+            "--env",
+            f"NEO4J_server_bolt_listen__address=127.0.0.1:{temp_bolt_port}",
+            "--env",
+            f"NEO4J_server_http_listen__address=127.0.0.1:{temp_http_port}",
+            str(NEO4J_IMAGE),
+            "neo4j",
+            "console",
+        ]
+        proc = subprocess.Popen(
+            start_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        try:
+            ready = False
+            for _ in range(60):
+                try:
+                    urllib.request.urlopen(
+                        f"http://localhost:{temp_http_port}/", timeout=2
+                    )
+                    ready = True
+                    break
+                except Exception:
+                    time.sleep(1)
+
+            if not ready:
+                raise click.ClickException(
+                    "Temp Neo4j instance did not start within 60 seconds"
+                )
+
+            click.echo("  Filtering graph: keeping only IMAS DD nodes...")
+
+            from neo4j import GraphDatabase
+
+            label_check = " AND ".join(f"NOT n:{label}" for label in _IMAS_DD_LABELS)
+            driver = GraphDatabase.driver(
+                f"bolt://localhost:{temp_bolt_port}",
+                auth=("neo4j", "temp-password"),
+            )
+            with driver.session() as session:
+                result = session.run(
+                    f"MATCH (n) WHERE {label_check} "
+                    "DETACH DELETE n "
+                    "RETURN count(*) AS deleted"
+                )
+                deleted = result.single()["deleted"]
+                click.echo(f"    Removed {deleted} non-DD nodes")
+
+            driver.close()
+
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+        click.echo("  Dumping filtered graph...")
+        (temp_dir / "dumps" / "neo4j.dump").unlink(missing_ok=True)
+
+        dump_cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{temp_dir}/data:/data",
+            "--bind",
+            f"{temp_dir}/dumps:/dumps",
+            "--writable-tmpfs",
+            str(NEO4J_IMAGE),
+            "neo4j-admin",
+            "database",
+            "dump",
+            "neo4j",
+            "--to-path=/dumps",
+            "--overwrite-destination=true",
+        ]
+        result = subprocess.run(dump_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise click.ClickException(
+                f"Failed to dump filtered graph: {result.stderr}"
+            )
+
+        filtered_dump = temp_dir / "dumps" / "neo4j.dump"
+        if not filtered_dump.exists():
+            raise click.ClickException("Filtered dump file not created")
+
+        shutil.move(str(filtered_dump), str(output_path))
+        size_mb = output_path.stat().st_size / 1024 / 1024
+        click.echo(f"    IMAS-only dump: {size_mb:.1f} MB")
 
 
 def _create_facility_dump(
@@ -1582,6 +1768,11 @@ def _create_facility_dump(
     help="Exclude IMAS Data Dictionary nodes from export",
 )
 @click.option(
+    "--imas-only",
+    is_flag=True,
+    help="Export only IMAS Data Dictionary nodes (no facility data)",
+)
+@click.option(
     "--local",
     is_flag=True,
     help="Also transfer the archive locally (remote graphs only).",
@@ -1591,6 +1782,7 @@ def graph_export(
     no_restart: bool,
     facilities: tuple[str, ...],
     no_imas: bool,
+    imas_only: bool,
     local: bool,
 ) -> None:
     """Export graph database to archive.
@@ -1605,7 +1797,9 @@ def graph_export(
 
     git_info = get_git_info()
     version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
-    pkg_name = get_package_name(facilities=list(facilities), no_imas=no_imas)
+    pkg_name = get_package_name(
+        facilities=list(facilities), no_imas=no_imas, imas_only=imas_only
+    )
 
     if output:
         output_path = Path(output)
@@ -1751,6 +1945,13 @@ def graph_export(
                         fac,
                         archive_dir / "graph.dump",
                     )
+
+            # If imas-only, remove all facility nodes
+            if imas_only:
+                _create_imas_only_dump(
+                    archive_dir / "graph.dump",
+                    archive_dir / "graph.dump",
+                )
 
             manifest = {
                 "version": __version__,
@@ -1980,6 +2181,11 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
     help="Exclude IMAS Data Dictionary nodes",
 )
 @click.option(
+    "--imas-only",
+    is_flag=True,
+    help="Push only IMAS Data Dictionary nodes (no facility data)",
+)
+@click.option(
     "-m",
     "--message",
     default=None,
@@ -1992,11 +2198,13 @@ def graph_push(
     dry_run: bool,
     facilities: tuple[str, ...],
     no_imas: bool,
+    imas_only: bool,
     message: str | None,
 ) -> None:
     """Push graph archive to GHCR.
 
     Use --facility/-f (repeatable) to push a filtered per-facility graph.
+    Use --imas-only to push only IMAS Data Dictionary nodes.
     Use -m/--message to attach a short description (like a git commit message).
     """
     from imas_codex.cli.graph_progress import GraphProgress, run_oras_with_progress
@@ -2008,7 +2216,9 @@ def graph_push(
 
     target_registry = get_registry(git_info, registry)
     version_tag = get_version_tag(git_info, dev)
-    pkg_name = get_package_name(list(facilities) or None, no_imas=no_imas)
+    pkg_name = get_package_name(
+        list(facilities) or None, no_imas=no_imas, imas_only=imas_only
+    )
 
     click.echo(f"Push target: {target_registry}/{pkg_name}:{version_tag}")
     if git_info["is_fork"]:
@@ -2052,6 +2262,7 @@ def graph_push(
             "STOPPING": f"Stopping Neo4j on {profile.host}",
             "DUMPING": "Dumping graph database",
             "RECOVERY": "Recovery cycle (clean start/stop)",
+            "FILTERING": "Filtering to IMAS DD nodes only",
             "ARCHIVING": "Creating archive",
             "STARTING": f"Starting Neo4j on {profile.host}",
             "LOGIN": "Authenticating with GHCR",
@@ -2073,6 +2284,7 @@ def graph_push(
                 message=message,
                 token=token,
                 is_dev=dev,
+                imas_only=imas_only,
             )
 
             try:
@@ -2131,6 +2343,8 @@ def graph_push(
                 dump_args.extend(["--facility", fac])
             if no_imas:
                 dump_args.append("--no-imas")
+            if imas_only:
+                dump_args.append("--imas-only")
             result = runner.invoke(graph_export, dump_args)
             if result.exit_code != 0:
                 if result.exception and not isinstance(result.exception, SystemExit):
@@ -2222,6 +2436,11 @@ def graph_push(
     help="Fetch no-imas variant",
 )
 @click.option(
+    "--imas-only",
+    is_flag=True,
+    help="Fetch IMAS-only variant (DD nodes only)",
+)
+@click.option(
     "--local",
     is_flag=True,
     help="Also transfer the archive locally (remote graphs only).",
@@ -2233,6 +2452,7 @@ def graph_fetch(
     output: str | None,
     facilities: tuple[str, ...],
     no_imas: bool,
+    imas_only: bool,
     local: bool,
 ) -> Path:
     """Fetch graph archive from GHCR without loading.
@@ -2258,7 +2478,9 @@ def graph_fetch(
     profile = resolve_neo4j()
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
-    pkg_name = get_package_name(list(facilities) or None, no_imas=no_imas)
+    pkg_name = get_package_name(
+        list(facilities) or None, no_imas=no_imas, imas_only=imas_only
+    )
 
     # Resolve version: if "latest" doesn't exist, find most recent tag
     resolved_version = version
@@ -2396,6 +2618,11 @@ def graph_fetch(
     is_flag=True,
     help="Pull no-imas variant",
 )
+@click.option(
+    "--imas-only",
+    is_flag=True,
+    help="Pull IMAS-only variant (DD nodes only)",
+)
 def graph_pull(
     version: str,
     registry: str | None,
@@ -2404,6 +2631,7 @@ def graph_pull(
     no_backup: bool,
     facilities: tuple[str, ...],
     no_imas: bool,
+    imas_only: bool,
 ) -> None:
     """Pull graph from GHCR and load it (convenience for fetch + load).
 
@@ -2430,7 +2658,9 @@ def graph_pull(
     profile = resolve_neo4j()
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
-    pkg_name = get_package_name(list(facilities) or None, no_imas=no_imas)
+    pkg_name = get_package_name(
+        list(facilities) or None, no_imas=no_imas, imas_only=imas_only
+    )
 
     # Resolve version: if "latest" doesn't exist, find most recent tag
     resolved_version = version

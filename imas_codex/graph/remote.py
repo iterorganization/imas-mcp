@@ -999,12 +999,17 @@ def build_remote_push_script(
     message: str | None = None,
     token: str | None = None,
     is_dev: bool = False,
+    imas_only: bool = False,
 ) -> str:
     """Build a bash script for remote graph export + ORAS push.
 
     Performs the full dump → archive → oras push cycle on the remote
     host, avoiding any SCP transfer back to the local machine.  The
     archive is cleaned up automatically after a successful push.
+
+    When ``imas_only`` is True, the dump is loaded into a temporary
+    Neo4j instance, all non-DD nodes are deleted, and the filtered
+    graph is re-dumped before archiving.
 
     Emits ``PROGRESS:`` markers for phase tracking.
     """
@@ -1027,6 +1032,92 @@ def build_remote_push_script(
         tag_latest_block = f"""
 echo "PROGRESS:TAGGING"
 oras tag "{artifact_ref}" latest 2>&1
+"""
+
+    # Build IMAS-only filtering block (temp Neo4j + cypher-shell)
+    filter_block = ""
+    if imas_only:
+        dd_labels = [
+            "DDVersion",
+            "IDS",
+            "IMASPath",
+            "IMASCoordinateSpec",
+            "IMASSemanticCluster",
+            "IdentifierSchema",
+            "IMASPathChange",
+            "CoordinateRelationship",
+            "ClusterMembership",
+            "EmbeddingChange",
+            "Unit",
+            "PhysicsDomain",
+            "SignConvention",
+        ]
+        label_check = " AND ".join(f"NOT n:{lb}" for lb in dd_labels)
+        filter_block = f"""
+echo "PROGRESS:FILTERING"
+FILTER_DIR=$(mktemp -d)
+mkdir -p "$FILTER_DIR/data" "$FILTER_DIR/logs" "$FILTER_DIR/dumps"
+cp "$DATA_DIR/dumps/neo4j.dump" "$FILTER_DIR/dumps/neo4j.dump"
+
+apptainer exec \\
+    --bind "$FILTER_DIR/data:/data" \\
+    --bind "$FILTER_DIR/dumps:/dumps" \\
+    --writable-tmpfs \\
+    "$IMAGE" \\
+    neo4j-admin database load neo4j \\
+        --from-path=/dumps \\
+        --overwrite-destination=true
+
+apptainer exec \\
+    --bind "$FILTER_DIR/data:/data" \\
+    --writable-tmpfs \\
+    "$IMAGE" \\
+    neo4j-admin dbms set-initial-password temp-password 2>/dev/null || true
+
+# Start temp Neo4j on alternate ports
+apptainer exec \\
+    --bind "$FILTER_DIR/data:/data" \\
+    --bind "$FILTER_DIR/logs:/logs" \\
+    --writable-tmpfs \\
+    --env NEO4J_AUTH=neo4j/temp-password \\
+    --env NEO4J_server_bolt_listen__address=127.0.0.1:27687 \\
+    --env NEO4J_server_http_listen__address=127.0.0.1:27474 \\
+    "$IMAGE" \\
+    neo4j console &
+FILTER_PID=$!
+
+# Wait for temp instance to be ready
+for i in $(seq 1 60); do
+    if curl -sf http://localhost:27474 >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+# Delete all non-DD nodes
+apptainer exec --writable-tmpfs "$IMAGE" \\
+    cypher-shell -a bolt://localhost:27687 -u neo4j -p temp-password \\
+    "MATCH (n) WHERE {label_check} DETACH DELETE n RETURN count(*) AS deleted;"
+
+# Stop temp instance
+kill $FILTER_PID 2>/dev/null || true
+wait $FILTER_PID 2>/dev/null || true
+
+# Re-dump filtered graph
+rm -f "$FILTER_DIR/dumps/neo4j.dump"
+apptainer exec \\
+    --bind "$FILTER_DIR/data:/data" \\
+    --bind "$FILTER_DIR/dumps:/dumps" \\
+    --writable-tmpfs \\
+    "$IMAGE" \\
+    neo4j-admin database dump neo4j \\
+        --to-path=/dumps \\
+        --overwrite-destination=true
+
+# Replace original dump with filtered version
+cp "$FILTER_DIR/dumps/neo4j.dump" "$DATA_DIR/dumps/neo4j.dump"
+rm -rf "$FILTER_DIR"
+echo "IMAS-only filtering complete"
 """
 
     return f"""\
@@ -1093,7 +1184,7 @@ if ! do_dump; then
     stop_neo4j
     do_dump
 fi
-
+{filter_block}
 echo "PROGRESS:ARCHIVING"
 TMPDIR=$(mktemp -d)
 ARCHIVE_DIR="$TMPDIR/imas-codex-graph-push"
