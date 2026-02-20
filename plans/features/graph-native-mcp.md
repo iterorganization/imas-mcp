@@ -6,7 +6,31 @@ The IMAS MCP server currently loads all data from flat JSON files at startup, ru
 
 The graph already contains every data point the server needs: `IMASPath` nodes with documentation, units, coordinates, physics domains, embeddings, and cluster memberships; `IMASSemanticCluster` nodes with label/description embeddings; `IDS`, `Unit`, `IMASCoordinateSpec`, and `IdentifierSchema` nodes. The `DocumentStore` and its JSON files are a redundant read-only projection of this graph.
 
-This plan replaces all file-based data with a single Neo4j instance embedded in the Docker image, loaded from a pre-built IMAS-only graph pulled from GHCR. JSON files, pickle caches, and numpy arrays are eliminated entirely. This is a clean break — no backward compatibility with file-based deployments.
+The graph also contains the complete version history of the IMAS Data Dictionary — 34 versions from 3.22.0 to 4.1.0 — with `IMASPathChange` nodes tracking every metadata mutation, `INTRODUCED_IN`/`DEPRECATED_IN` version lifecycle on every path, `RENAMED_TO` migration chains, and `SemanticChangeType` classification of physics-significant changes (sign conventions, coordinate systems). None of this version intelligence is currently exposed to MCP clients. The file-based server is locked to a single DD version with no ability to query evolution.
+
+This plan replaces all file-based data with a single Neo4j instance embedded in the Docker image, loaded from a pre-built IMAS-only graph pulled from GHCR. JSON files, pickle caches, and numpy arrays are eliminated entirely. The graph-native architecture also enables a new class of version-aware and schema-introspecting tools that support flexible codegen discovery. This is a clean break — no backward compatibility with file-based deployments.
+
+## Phase Dependencies
+
+```
+Phase 0: Test Infrastructure ──────────────────────────────────┐
+                                                                │
+Phase 1: IMAS Graph on GHCR ───┐                               │
+                                ├── Phase 3: Embedded Neo4j ──── Phase 5: Graph-Native Search
+Phase 2: Tool Architecture ────┘                               │
+                                                                │
+Phase 4: Incremental Clusters ─────────────────────────────────┘
+                                                                │
+                                                    Phase 6: Cleanup
+```
+
+**Parallel work:**
+- Phase 0 (test infrastructure) can start immediately and run throughout
+- Phase 1 (GHCR) and Phase 2 (tool architecture) are independent — work in parallel
+- Phase 4 (incremental clusters) is independent of the main pipeline — can be done at any time
+- Phase 3 (embedded Neo4j) depends on Phase 1 completing
+- Phase 5 (graph-native search) depends on Phases 2 and 3
+- Phase 6 (cleanup) is the final step after everything else is validated
 
 ## Architecture
 
@@ -25,6 +49,7 @@ Server startup:
   Embeddings ← .pkl cache → numpy matrix
   SemanticSearch ← numpy dot products
   ClusterSearcher ← clusters.json + .npz → numpy dot products
+  dd_version ← hardcoded from imas-python package
 ```
 
 ### Target Flow
@@ -40,6 +65,8 @@ Server startup:
   GraphClient ← connects to local bolt://localhost:7687
   All search ← Neo4j vector indexes + Cypher traversal
   Encoder ← loads model for query-time embedding only
+  DD versions ← queried from DDVersion nodes (version range + current)
+  Schema ← introspected from LinkML at startup, exposed to clients
 ```
 
 ### What Changes
@@ -53,7 +80,9 @@ Server startup:
 | IDS listing | JSON catalog file | `MATCH (i:IDS) RETURN i.name` |
 | Cluster path membership | in-memory dict from clusters.json | `MATCH (p)-[:IN_CLUSTER]->(c)` |
 | Identifier schemas | identifier_catalog.json | `MATCH (s:IdentifierSchema)` |
-| Version info | JSON metadata + package version | `MATCH (v:DDVersion {is_current: true})` |
+| Version info | `imas_codex.dd_version` (single hardcoded) | DDVersion nodes from graph (range + current) |
+| Graph exploration | Not exposed to MCP clients | Read-only Cypher tool + schema introspection |
+| Version evolution | Not available | `IMASPathChange` traversal via Cypher |
 | Docker image data | JSON + pkl + npz (~200MB) | Neo4j data directory (~500MB) |
 | Build steps in Dockerfile | 5 (models, schemas, path-map, embeddings, clusters) | 1 (graph pull + load) |
 
@@ -70,6 +99,7 @@ Server startup:
 - `SearchIndex` in-memory indices
 - `SemanticSearch` numpy implementation
 - `ClusterSearcher` numpy implementation
+- `imas_codex.dd_version` module constant as the source of truth for version info
 
 ### What Stays
 
@@ -77,6 +107,72 @@ Server startup:
 - **`build-models`**: generated Python models for graph node types
 - **All graph build CLI** (`imas build`, `clusters build/label/sync`): used on ITER cluster to populate the graph, not in Docker
 - **`graph push/pull`**: used to move graph dumps to/from GHCR
+
+## Version Management
+
+The graph contains all 34 DD versions (3.22.0 → 4.1.0) with full version tracking infrastructure: `DDVersion` nodes chained by `PREDECESSOR`, every `IMASPath` linked to its introduction and deprecation versions, `IMASPathChange` nodes recording every metadata mutation between versions with semantic classification. This version intelligence must be the single source of truth — not the `imas-python` package version, not JSON metadata, not hardcoded constants.
+
+### Version Reporting
+
+The server's `/health` endpoint and `server_name` currently embed the `imas_codex.dd_version` constant. Replace this with graph-derived version metadata:
+
+- **DD version range**: Query `DDVersion` nodes for min and max version IDs (e.g., `3.22.0 - 4.1.0`), showing the full scope of data available in the graph
+- **Current version**: The `DDVersion` node with `is_current: true` identifies the latest version — use this as the primary version for default queries
+- **Package version**: Keep the `imas-codex` package version as a separate field for debugging, but it should not be conflated with DD version
+
+The overview tool should report both the version range and current version so clients understand that the server contains multi-version data.
+
+### Version-Aware Queries
+
+Currently no tools accept a version parameter — they operate against a single implicit version. The graph-native architecture enables version-scoped queries:
+
+- **Path at version**: Fetch a path's documentation, units, and coordinates as they existed at a specific DD version. The graph's `INTRODUCED_IN`/`DEPRECATED_IN` relationships and `IMASPathChange` history make this a traversal, not a separate data store.
+- **Evolution tracking**: Query the full change history of a path across versions — when it was introduced, what changed, whether sign conventions or coordinate systems shifted. `IMASPathChange` nodes with `SemanticChangeType` classification (sign_convention, coordinate_convention, definition_clarification) are already in the graph.
+- **Version comparison**: Compare a path between two versions to surface what changed. This is a direct graph query pattern, not something that requires a specialized tool.
+- **Deprecation/migration**: Follow `RENAMED_TO` chains to trace a path's lineage. The `PathMap` currently does this from JSON — the graph already has the same data as relationships.
+
+These capabilities are best exposed through the read-only Cypher tool (below) rather than adding version parameters to every existing tool. The structured tools (search, path, list) should default to the current version. Version-specific queries are graph traversal — let agents compose them.
+
+## Tool Architecture
+
+The current MCP server exposes 6 rigid tools (`search_imas_paths`, `check_imas_paths`, `fetch_imas_paths`, `list_imas_paths`, `get_imas_overview`, `search_imas_clusters`, `get_imas_identifiers`) backed by `DocumentStore` and in-process search. The graph-native server should expose flexible access patterns that support codegen discovery, version evolution, and schema-driven query composition — not just a 1:1 port of existing tools with a different backend.
+
+### Read-Only Cypher Tool
+
+Add a read-only Cypher tool that lets agents compose arbitrary graph queries. The agentic server already has `query_neo4j` (smolagents) and `query()` in the python REPL — this brings the same capability to MCP clients, with safety constraints:
+
+- Accept only read-only Cypher (`MATCH`, `RETURN`, `CALL`, `WITH`, `WHERE`, `ORDER BY`, `LIMIT`)
+- Reject mutations (`CREATE`, `DELETE`, `SET`, `MERGE`, `REMOVE`, `DROP`)
+- Return results as structured data with row limits to prevent context overflow
+- No Cypher injection risk — Neo4j parameterized queries with agent-provided Cypher are read-only by design when mutations are blocked
+
+This is the primary enabler of flexible codegen discovery. Instead of building specialized tools for every query pattern, agents use the schema tool to understand the graph structure, then compose Cypher queries for their specific needs. Example access patterns the Cypher tool enables without additional tooling:
+
+- "What sign convention changes happened between DD v3 and v4?"
+- "Show me all paths in equilibrium that were renamed since 3.42.0"
+- "Which IDS gained the most new paths in 4.0.0?"
+- "Find all paths with units that changed between versions"
+- "What coordinate specifications exist for 2D profile data?"
+- "List all paths that cross-reference psi in their coordinates"
+
+### DD Graph Schema Tool
+
+Add a tool that returns the IMAS DD graph schema — node types, properties, relationships, enums, and vector indexes. The agentic server already has `get_graph_schema()` which exposes the full schema (facility + DD). The MCP server version should expose only the DD portion.
+
+Agents call this before composing Cypher queries to understand what's available. The schema is derived from the LinkML definitions (`imas_codex/schemas/imas_dd.yaml`) and loaded once at startup. This replaces agents needing to guess at node properties or relationship types.
+
+The schema should include:
+- All DD node types with their properties and types
+- All DD relationship types with source → target directionality
+- Enum values for `ChangeType`, `SemanticChangeType`, `DDDataType`, `DDNodeType`, `PhysicsDomain`
+- Vector indexes available for semantic search
+- Notes on version lifecycle relationships (`INTRODUCED_IN`, `DEPRECATED_IN`, `PREDECESSOR`, `RENAMED_TO`)
+
+### Existing Tools — Graph Backend Swap
+
+The existing structured tools (`search_imas_paths`, `check_imas_paths`, `fetch_imas_paths`, `list_imas_paths`, `get_imas_overview`, `search_imas_clusters`, `get_imas_identifiers`) are preserved with their current interfaces. Their backends change from `DocumentStore` to `GraphClient`, but the MCP contract stays the same. These tools default to the current DD version and serve the common case.
+
+For version-specific or evolution queries, agents use the Cypher tool. This avoids polluting every existing tool with version parameters that most callers don't need.
 
 ## Data Preparation: IMAS-Only Graph on GHCR
 
@@ -90,7 +186,13 @@ The IMAS-only graph is ~500MB. The full graph with all facility data is signific
 
 ### Versioning
 
-The server version displayed by `/health` and `server_name` should be the IMAS DD version of the backing graph data, not the `imas-codex` package version. Read from `DDVersion {is_current: true}` at startup. The package version can be included as a separate field for debugging.
+The server's health endpoint reports DD version metadata derived from the graph:
+- **`dd_versions`**: The full version range present in the graph (e.g., `"3.22.0 - 4.1.0"`)
+- **`dd_version_current`**: The version marked `is_current: true` (e.g., `"4.1.0"`)
+- **`dd_version_count`**: Number of DD versions in the graph (e.g., `34`)
+- **`imas_codex_version`**: The package version, for debugging
+
+The `server_name` includes the current DD version for identification.
 
 ### Graph Build Workflow
 
@@ -122,13 +224,55 @@ Replace with incremental sync:
 - Preserve cluster embeddings that haven't changed
 - Remove the dependency on `labels.json` as a version-controlled file — labels are persisted in the graph on `IMASSemanticCluster.label` and `.description` properties
 
+## Test-Driven Development
+
+This migration benefits from a TDD approach because the boundaries are sharply defined: every tool has a clear input/output contract, every graph query has deterministic results given known data, and the graph schema is machine-readable.
+
+### Why TDD Fits
+
+- **Query contracts are testable**: Each graph query (semantic search, path lookup, version traversal) produces deterministic output from known graph state. Write the expected query results first, then implement the Cypher.
+- **Tool interfaces are stable**: The MCP tool signatures are the contract. Write tests against the current tool responses, then swap the backend from `DocumentStore` to `GraphClient` while keeping tests green.
+- **Schema is the spec**: The LinkML schema defines exactly what nodes, properties, and relationships exist. Tests validate graph content against the schema — if the schema changes, tests and models update together via `build-models`.
+- **Version queries are pure functions**: Given a path and a version, the graph returns deterministic metadata. These are ideal candidates for parameterized tests across version ranges.
+- **Agentic validation**: The Cypher tool accepts arbitrary queries — fuzz tests and safety tests (mutation rejection, result truncation) are critical and easy to write upfront.
+
+### Test Infrastructure
+
+Tests need a Neo4j instance loaded with known DD graph data. Options:
+- **Graph service container in CI**: Pull the IMAS graph from GHCR into a Neo4j testcontainer. This enables data quality checks against real graph content and makes the existing `tests/graph/` test suite (structural, referential integrity, DD build) run in CI.
+- **Fixture graphs**: For unit tests, use small hand-crafted graph fixtures with a few DDVersions and paths to test query logic without needing the full graph.
+
+Write tests first for each phase:
+- Phase 1: Tests that the IMAS-only graph contains exactly the expected DD node types
+- Phase 2: Tests for Cypher tool safety (mutation rejection), schema tool completeness, version reporting
+- Phase 3: Tests for embedded Neo4j lifecycle (startup, health, shutdown)
+- Phase 5: Tests that each graph-backed tool produces equivalent results to the current file-backed tool for the same queries
+
 ## Key Steps
+
+### Phase 0: Test Infrastructure
+
+Set up graph test fixtures and CI integration before starting the migration. This phase runs throughout and supports all subsequent phases.
+
+- Graph service container configuration for CI
+- Small fixture graphs for unit testing version queries and tool contracts
+- Equivalence test harness: run the same tool request against both file-backed and graph-backed implementations, assert matching results
+- Baseline coverage of existing tool responses to use as regression targets
 
 ### Phase 1: IMAS-Only Graph on GHCR
 
 Extend `graph push/pull` to support IMAS-only exports. The filtering logic already exists for per-facility graphs — apply the same dump-and-clean approach but keep only DD node types.
 
-### Phase 2: Embedded Neo4j in Docker
+### Phase 2: Tool Architecture
+
+Add the read-only Cypher tool, DD graph schema tool, and version reporting — these can be built and tested against the current local Neo4j graph before the Docker embedding work.
+
+- Read-only Cypher tool with mutation blocking and result truncation
+- DD graph schema tool exposing LinkML-derived schema for the IMAS DD portion of the graph
+- Version metadata reporting: query DDVersion nodes for range, current, and count
+- Update overview tool to report version range and available graph capabilities
+
+### Phase 3: Embedded Neo4j in Docker
 
 Add Neo4j Community to the Docker image. Pull the IMAS-only graph during Docker build. The image must fail to build if the graph cannot be downloaded (no fallback to file-based data).
 
@@ -139,28 +283,24 @@ Add Neo4j Community to the Docker image. Pull the IMAS-only graph during Docker 
 - Internal bolt port only — not exposed externally
 - Health check verifies both Neo4j and MCP server
 
-### Phase 3: GraphClient in Server + Graph-Native Search
+### Phase 4: Incremental Cluster Sync
 
-Replace `DocumentStore`, `SemanticSearch`, and `ClusterSearcher` with `GraphClient` queries.
+Replace the delete-all-recreate pattern in `_import_clusters` with a diff-based merge. Labels and descriptions persist in graph — no more `labels.json`. This phase is independent and can be done at any point.
+
+### Phase 5: Graph-Native Search
+
+Replace `DocumentStore`, `SemanticSearch`, and `ClusterSearcher` with `GraphClient` queries. Run the equivalence test harness to validate.
 
 - `GraphClient` singleton in `Server.__post_init__`
 - Vector index queries for semantic search (paths + clusters)
 - Neo4j full-text index for keyword search (replaces SQLite FTS5)
 - Cypher for path lookup, IDS listing, identifier schemas
-- `DDVersion.is_current` for server version
+- Version-aware search defaults (current version for structured tools)
 - Enriched queries combining vector similarity with relationship traversal
 
-### Phase 4: Incremental Cluster Sync
+### Phase 6: Cleanup
 
-Replace the delete-all-recreate pattern in `_import_clusters` with a diff-based merge. Labels and descriptions persist in graph — no more `labels.json`.
-
-### Phase 5: Cleanup
-
-Remove all file-based data paths from the server. Remove `build-schemas`, `build-embeddings`, `build-path-map`, and `clusters build` steps from the Dockerfile. Remove `DocumentStore`, pickle/numpy loaders, `labels.json`, and the `definitions/clusters/` directory from the Docker context.
-
-### Future: Graph-Based CI Testing
-
-Use a Neo4j service container in CI that pulls the IMAS graph from GHCR. This enables data quality checks against real graph content (embedding coverage, cluster integrity, relationship completeness). Not critical for the current implementation.
+Remove all file-based data paths from the server. Remove `build-schemas`, `build-embeddings`, `build-path-map`, and `clusters build` steps from the Dockerfile. Remove `DocumentStore`, pickle/numpy loaders, `labels.json`, and the `definitions/clusters/` directory from the Docker context. Remove `imas_codex.dd_version` as a module-level constant — version comes from the graph.
 
 ## Risks and Mitigations
 
@@ -172,10 +312,12 @@ Use a Neo4j service container in CI that pulls the IMAS graph from GHCR. This en
 | GHCR_TOKEN not available | Build secret must be provided. Document required token scopes (`read:packages`). Use `gh auth token` or PAT |
 | Private GHCR package access | Configure package visibility and token permissions. GitHub Actions can use `GITHUB_TOKEN` with appropriate scopes |
 | JRE dependency adds image size | Multi-stage build: copy only JRE + Neo4j runtime, not build tools |
+| Cypher tool injection/mutation | Blocklist mutation keywords before execution. Read-only Neo4j user as defense in depth |
+| Version queries return too much data | Default to current version in structured tools. Cypher tool has result row limits |
 
 ## Non-Goals
 
 - Running Neo4j as a separate service (embedded is simpler for MCP)
 - Supporting graph writes from the MCP server (read-only)
 - Backward compatibility with file-based deployments (clean break)
-- Graph-based CI testing (future work, not blocking)
+- Adding version parameters to every existing tool (use Cypher tool for version-specific queries)
