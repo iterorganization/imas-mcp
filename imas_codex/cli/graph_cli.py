@@ -2153,6 +2153,7 @@ def graph_push(
         from imas_codex.cli.graph_progress import remote_operation_streaming
         from imas_codex.graph.remote import (
             build_remote_push_script,
+            remote_check_imas_codex,
             remote_check_oras,
         )
 
@@ -2161,6 +2162,15 @@ def graph_push(
                 f"oras not found on {profile.host}. "
                 "Install with: imas-codex tools install"
             )
+
+        codex_cli_path: str | None = None
+        if imas_only:
+            codex_cli_path = remote_check_imas_codex(profile.host)
+            if not codex_cli_path:
+                raise click.ClickException(
+                    f"imas-codex CLI not found on {profile.host}. "
+                    "Install with: cd ~/Code/imas-codex && uv sync"
+                )
 
         if facilities:
             click.echo(
@@ -2199,6 +2209,7 @@ def graph_push(
                 token=token,
                 is_dev=dev,
                 imas_only=imas_only,
+                codex_cli_path=codex_cli_path,
             )
 
             try:

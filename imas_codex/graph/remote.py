@@ -706,6 +706,31 @@ def remote_check_oras(ssh_host: str) -> bool:
         return False
 
 
+def remote_check_imas_codex(ssh_host: str) -> str | None:
+    """Check if ``imas-codex`` CLI is available on the remote host.
+
+    Searches PATH first, then common uv-managed project locations.
+    Returns the absolute path to the binary, or ``None`` if not found.
+    """
+    from imas_codex.remote.executor import run_command
+
+    # Check PATH, then common venv locations
+    check_script = (
+        "command -v imas-codex 2>/dev/null || "
+        'for d in "$HOME/Code/imas-codex" "$HOME/imas-codex"; do '
+        '  if [ -x "$d/.venv/bin/imas-codex" ]; then '
+        '    echo "$d/.venv/bin/imas-codex"; exit 0; '
+        "  fi; "
+        "done; "
+        "exit 1"
+    )
+    try:
+        result = run_command(check_script, ssh_host=ssh_host, timeout=15)
+        return result.stdout.strip()
+    except Exception:
+        return None
+
+
 def remote_fetch_from_ghcr(
     artifact_ref: str,
     ssh_host: str,
@@ -996,6 +1021,7 @@ def _build_remote_imas_only_push_script(
     login_cmd: str,
     annotation_args: str,
     tag_latest_block: str,
+    codex_cli_path: str,
 ) -> str:
     """Build a push script that delegates to ``imas-codex graph export --imas-only``.
 
@@ -1015,7 +1041,7 @@ cleanup() {{
 trap cleanup EXIT
 
 echo "PROGRESS:EXPORTING"
-imas-codex graph export --imas-only -o "$ARCHIVE"
+"{codex_cli_path}" graph export --imas-only -o "$ARCHIVE"
 
 SIZE=$(du -h "$ARCHIVE" | cut -f1)
 
@@ -1046,6 +1072,7 @@ def build_remote_push_script(
     token: str | None = None,
     is_dev: bool = False,
     imas_only: bool = False,
+    codex_cli_path: str | None = None,
 ) -> str:
     """Build a bash script for remote graph export + ORAS push.
 
@@ -1088,6 +1115,7 @@ oras tag "{artifact_ref}" latest 2>&1
             login_cmd=login_cmd,
             annotation_args=annotation_args,
             tag_latest_block=tag_latest_block,
+            codex_cli_path=codex_cli_path or "imas-codex",
         )
 
     return f"""\
