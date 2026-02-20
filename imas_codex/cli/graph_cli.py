@@ -1670,7 +1670,7 @@ def _create_facility_dump(
 @click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after export")
 @click.option(
     "--facility",
-    "-f",
+    "-F",
     "facilities",
     multiple=True,
     help="Facility to include (repeatable). Filters out other facilities.",
@@ -2083,7 +2083,7 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
 @click.option("--dry-run", is_flag=True, help="Show what would be pushed")
 @click.option(
     "--facility",
-    "-f",
+    "-F",
     "facilities",
     multiple=True,
     help="Facility to include (repeatable). Filters the dump.",
@@ -2350,7 +2350,7 @@ def graph_push(
 )
 @click.option(
     "--facility",
-    "-f",
+    "-F",
     "facilities",
     multiple=True,
     help="Facility to filter (repeatable). Selects GHCR package name.",
@@ -2533,7 +2533,7 @@ def graph_fetch(
 @click.option("--no-backup", is_flag=True, help="Skip backup marker")
 @click.option(
     "--facility",
-    "-f",
+    "-F",
     "facilities",
     multiple=True,
     help="Facility to filter (repeatable). Selects GHCR package name.",
@@ -2889,7 +2889,9 @@ def graph_switch(name: str) -> None:
 
     if is_remote_location(profile.host):
         from imas_codex.graph.remote import (
+            remote_create_graph_dir,
             remote_is_neo4j_running,
+            remote_list_graphs,
             remote_service_action,
             remote_switch_active_graph,
             resolve_remote_service_name,
@@ -2907,6 +2909,27 @@ def graph_switch(name: str) -> None:
                 if not remote_is_neo4j_running(profile.http_port, profile.host):
                     break
                 time.sleep(1)
+
+        # Auto-init if graph doesn't exist
+        listing = remote_list_graphs(profile.host)
+        graph_names = []
+        for line in listing.strip().splitlines():
+            line = line.strip()
+            if line.startswith("[stderr]"):
+                continue
+            if line.startswith("ACTIVE:"):
+                graph_names.append(line.removeprefix("ACTIVE:"))
+            elif line.startswith("GRAPH:"):
+                graph_names.append(line.removeprefix("GRAPH:"))
+
+        if name not in graph_names:
+            click.echo(f"Graph '{name}' not found — creating...")
+            remote_create_graph_dir(
+                name,
+                profile.host,
+                bolt_port=profile.bolt_port,
+                http_port=profile.http_port,
+            )
 
         try:
             remote_switch_active_graph(name, profile.host)
@@ -2933,6 +2956,7 @@ def graph_switch(name: str) -> None:
     # ── End remote dispatch ──────────────────────────────────────────────
 
     from imas_codex.graph.dirs import (
+        create_graph_dir,
         find_graph,
         get_active_graph,
         switch_active_graph,
@@ -2940,8 +2964,10 @@ def graph_switch(name: str) -> None:
 
     try:
         target = find_graph(name)
-    except LookupError as e:
-        raise click.ClickException(str(e)) from e
+    except LookupError:
+        click.echo(f"Graph '{name}' not found — creating...")
+        create_graph_dir(name)
+        target = find_graph(name)
 
     # Check if already active
     active = get_active_graph()
@@ -3061,7 +3087,7 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
 @click.argument("name")
 @click.option(
     "--facility",
-    "-f",
+    "-F",
     "facilities",
     multiple=True,
     help="Facility ID to include (repeatable). Omit for DD-only graphs.",
@@ -3672,7 +3698,7 @@ def graph_clear(force: bool) -> None:
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 @click.option(
     "--facility",
-    "-f",
+    "-F",
     default=None,
     help="List tags for a facility-specific graph package.",
 )
@@ -3706,7 +3732,7 @@ def graph_tags(registry: str | None, facility: str | None) -> None:
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 @click.option(
     "--facility",
-    "-f",
+    "-F",
     default=None,
     help="Prune tags for a facility-specific graph package.",
 )
