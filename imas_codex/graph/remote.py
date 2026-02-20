@@ -210,8 +210,13 @@ def resolve_remote_service_name(graph_name: str, ssh_host: str) -> str:
     """Resolve the Neo4j systemd service name on a remote host.
 
     The naming convention changed from ``imas-codex-neo4j`` (old) to
-    ``imas-codex-neo4j-<name>`` (new).  This checks which unit exists
-    on the remote host and returns the correct name.
+    ``imas-codex-neo4j-<name>`` (new).  Since all services bind the
+    ``neo4j/`` symlink, any installed service can run any active graph.
+
+    Resolution priority:
+    1. ``imas-codex-neo4j-<name>`` (exact match for requested graph)
+    2. Any ``imas-codex-neo4j-*`` service that exists
+    3. ``imas-codex-neo4j`` (legacy name)
 
     Args:
         graph_name: Active graph name (e.g. ``"codex"``).
@@ -222,6 +227,7 @@ def resolve_remote_service_name(graph_name: str, ssh_host: str) -> str:
     """
     from imas_codex.remote.executor import run_command
 
+    # 1. Try exact match
     new_name = f"imas-codex-neo4j-{graph_name}"
     try:
         out = run_command(
@@ -234,6 +240,22 @@ def resolve_remote_service_name(graph_name: str, ssh_host: str) -> str:
             return new_name
     except Exception:
         pass
+
+    # 2. Try any installed imas-codex-neo4j-* service
+    try:
+        out = run_command(
+            "ls ~/.config/systemd/user/imas-codex-neo4j-*.service 2>/dev/null "
+            "| head -1 | xargs -r basename | sed 's/.service$//'",
+            ssh_host=ssh_host,
+            timeout=10,
+        )
+        candidate = out.strip().splitlines()[0].strip() if out.strip() else ""
+        if candidate.startswith("imas-codex-neo4j-"):
+            return candidate
+    except Exception:
+        pass
+
+    # 3. Fall back to legacy name
     return "imas-codex-neo4j"
 
 
