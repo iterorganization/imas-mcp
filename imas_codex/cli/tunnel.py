@@ -309,6 +309,66 @@ def _start_tunnels(
 
 
 # ============================================================================
+# Keyring D-Bus Forwarding
+# ============================================================================
+
+
+def _start_keyring_forward(host: str) -> None:
+    """Forward the D-Bus socket from host for keyring access.
+
+    Sets up a unix socket forward from ``host:/run/user/<uid>/bus``
+    to a local socket, enabling SecretService keyring access on
+    nodes without their own gnome-keyring-daemon.
+    """
+    from imas_codex.discovery.wiki.auth import (
+        _dbus_forward_socket,
+        _forward_dbus_socket,
+    )
+
+    if _dbus_forward_socket:
+        click.echo(f"  keyring: already forwarded ({_dbus_forward_socket})")
+        return
+
+    click.echo(f"Forwarding D-Bus socket from {host}...")
+    if _forward_dbus_socket(host):
+        click.echo(f"✓ Keyring D-Bus forwarded via {host}")
+        click.echo(f"  Socket: {_dbus_forward_socket}")
+
+        # Verify keyring works
+        try:
+            import keyring
+
+            backend = keyring.get_keyring()
+            backend_module = type(backend).__module__ or ""
+            if "fail" not in backend_module and "null" not in backend_module:
+                click.echo(f"  Backend: {type(backend).__name__}")
+            else:
+                click.echo("  ⚠ Keyring backend still not functional after forwarding")
+        except Exception as e:
+            click.echo(f"  ⚠ Keyring check failed: {e}")
+    else:
+        click.echo("✗ D-Bus forwarding failed")
+        click.echo(f"  Verify SSH access: ssh -o BatchMode=yes {host} echo ok")
+        raise SystemExit(1)
+
+
+def _get_dbus_forward_status() -> str | None:
+    """Check if a D-Bus forward socket exists and return its path."""
+    import os
+    from pathlib import Path
+
+    uid = os.getuid()
+    candidates = [
+        Path(f"/run/user/{uid}/dbus-forward.sock"),
+        Path(f"/tmp/dbus-forward-{uid}.sock"),  # noqa: S108
+    ]
+    for sock in candidates:
+        if sock.exists():
+            return str(sock)
+    return None
+
+
+# ============================================================================
 # Command Group
 # ============================================================================
 
@@ -325,8 +385,10 @@ def tunnel() -> None:
       imas-codex tunnel start HOST --neo4j   Just graph ports
       imas-codex tunnel start HOST --embed   Just embedding port
       imas-codex tunnel start HOST --llm     Just LLM proxy port
+      imas-codex tunnel start HOST --keyring D-Bus socket for keyring
       imas-codex tunnel stop [HOST]          Stop tunnels
       imas-codex tunnel status               Show active tunnels
+      imas-codex tunnel keyring HOST         Forward keyring D-Bus socket
       imas-codex tunnel service install      Persistent autossh via systemd
     """
     pass
@@ -337,11 +399,18 @@ def tunnel() -> None:
 @click.option("--neo4j", "neo4j_only", is_flag=True, help="Tunnel Neo4j ports only")
 @click.option("--embed", "embed_only", is_flag=True, help="Tunnel embedding port only")
 @click.option("--llm", "llm_only", is_flag=True, help="Tunnel LLM proxy port only")
+@click.option(
+    "--keyring",
+    "keyring_only",
+    is_flag=True,
+    help="Forward D-Bus socket for keyring access (SLURM compute nodes)",
+)
 def tunnel_start(
     host: str | None,
     neo4j_only: bool,
     embed_only: bool,
     llm_only: bool = False,
+    keyring_only: bool = False,
 ) -> None:
     """Start SSH tunnels to remote services.
 
@@ -349,14 +418,25 @@ def tunnel_start(
     falls back to plain ssh.  HOST defaults to the active graph profile's
     configured host.
 
+    The --keyring flag forwards the D-Bus socket from HOST to the local
+    machine, enabling keyring access on SLURM compute nodes that lack
+    their own SecretService daemon.
+
     \b
     Examples:
       imas-codex tunnel start iter           # All services
       imas-codex tunnel start iter --neo4j   # Just graph
       imas-codex tunnel start iter --embed   # Just embedding
       imas-codex tunnel start iter --llm     # Just LLM proxy
+      imas-codex tunnel start iter --keyring # D-Bus for keyring
     """
     target = _resolve_host(host)
+
+    # Handle keyring-only mode separately (unix socket, not TCP port)
+    if keyring_only:
+        _start_keyring_forward(target)
+        return
+
     use_autossh = bool(shutil.which("autossh"))
 
     if use_autossh:
@@ -508,6 +588,11 @@ def tunnel_status() -> None:
             click.echo(f"  :{port}  {label}{marker}")
     else:
         click.echo("No active tunnels on known service ports")
+
+    # Check D-Bus keyring forwarding
+    dbus_sock = _get_dbus_forward_status()
+    if dbus_sock:
+        click.echo(f"\nD-Bus keyring forward: {dbus_sock}")
 
 
 # ============================================================================
