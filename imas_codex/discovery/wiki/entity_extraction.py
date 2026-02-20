@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from imas_codex.discovery.base.imas_patterns import (
     build_imas_pattern as _build_imas_pattern,
     extract_imas_paths as _extract_imas_paths_shared,
+    get_all_ids_names,  # noqa: F401 – re-exported for backwards compat
 )
 
 logger = logging.getLogger(__name__)

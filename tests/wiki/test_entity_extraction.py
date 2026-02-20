@@ -158,9 +158,10 @@ class TestExtractImasPaths:
         assert extract_imas_paths("no IMAS paths here") == []
 
     def test_array_index_notation(self):
+        """Array indices are accepted in input but stripped during normalization."""
         paths = extract_imas_paths("equilibrium/time_slice[0]/profiles_1d/psi")
         assert len(paths) == 1
-        assert "[0]" in paths[0]
+        assert paths[0] == "equilibrium/time_slice/profiles_1d/psi"
 
     def test_multiple_paths(self):
         text = "equilibrium/ip and core_profiles/te and magnetics/flux"
