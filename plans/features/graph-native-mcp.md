@@ -259,9 +259,26 @@ Set up graph test fixtures and CI integration before starting the migration. Thi
 - Equivalence test harness: run the same tool request against both file-backed and graph-backed implementations, assert matching results
 - Baseline coverage of existing tool responses to use as regression targets
 
-### Phase 1: IMAS-Only Graph on GHCR
+### Phase 1: IMAS-Only Graph on GHCR ✅
 
-Extend `graph push/pull` to support IMAS-only exports. The filtering logic already exists for per-facility graphs — apply the same dump-and-clean approach but keep only DD node types.
+**Status: Complete.** IMAS-only graph push/pull/switch fully operational.
+
+**What was built:**
+- `--imas-only` flag on `graph push`, `graph pull`, `graph fetch`, `graph export`
+- `get_package_name(imas_only=True)` → `imas-codex-graph-imas` GHCR package
+- Temp Neo4j filtering: loads full dump, deletes non-DD nodes, re-dumps via shared helpers (`_write_temp_neo4j_conf`, `_start_temp_neo4j`, `_stop_temp_neo4j`, `_dump_temp_neo4j`)
+- Remote push delegates to `imas-codex graph export --imas-only` on iter (avoids 500MB SCP)
+- `remote_check_imas_codex()` pre-flight check discovers CLI path on remote host
+- `resolve_remote_service_name()` 3-step resolution: exact match → any `imas-codex-neo4j-*` → legacy
+- `graph switch` works across named graphs with a single service (all bind `neo4j/` symlink)
+
+**E2E validated:**
+- Push: 477MB imas-only graph to `ghcr.io/simon-mcintosh/imas-codex-graph-imas`
+- Pull: downloaded and loaded on iter
+- Switch: `codex` ↔ `imas` bidirectional, auto-restarts Neo4j via any available service
+- Content: 61,366 IMASPath + 9,287 IMASPathChange + 7,133 IMASSemanticCluster + 132 Unit + 87 IDS + 35 DDVersion + 8 IMASCoordinateSpec (zero facility nodes)
+
+**DD node labels retained:** DDVersion, IDS, IMASPath, IMASCoordinateSpec, IMASSemanticCluster, IdentifierSchema, IMASPathChange, CoordinateRelationship, ClusterMembership, EmbeddingChange, Unit, PhysicsDomain, SignConvention
 
 ### Phase 2: Tool Architecture
 
