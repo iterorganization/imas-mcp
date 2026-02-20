@@ -1,13 +1,14 @@
-"""
-LLM-based cluster labeling using OpenRouter API.
+"""LLM-based cluster labeling.
 
 Generates human-readable labels, descriptions, and enrichment metadata
 for clusters using controlled vocabularies from LinkML schemas.
+Routes through the canonical ``call_llm`` infrastructure so that LiteLLM
+proxy routing, retry logic, and cost tracking are shared with all other
+LLM consumers.
 """
 
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +22,6 @@ from imas_codex.definitions.clusters import (
     PROPOSED_TERMS_FILE,
     TAGS_SCHEMA,
 )
-from imas_codex.embeddings.openrouter_client import OpenRouterClient
 from imas_codex.settings import get_labeling_batch_size, get_model
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class ClusterLabel:
     label: str
     description: str
 
-    # Enrichment fields (NEW)
+    # Enrichment fields
     physics_concepts: list[str] = field(default_factory=list)
     data_type: str | None = None
     tags: list[str] = field(default_factory=list)
@@ -65,6 +65,9 @@ def _load_vocabulary(schema_path: Path, enum_name: str) -> list[str]:
 class ClusterLabeler:
     """Generates labels, descriptions, and enrichment metadata for clusters.
 
+    Uses ``call_llm`` from ``discovery.base.llm`` for all LLM calls,
+    inheriting LiteLLM proxy routing, retry logic, and cost tracking.
+
     Uses controlled vocabularies from LinkML schemas for:
     - physics_concepts: Normalized physics quantities
     - data_type: Data structure classification
@@ -75,36 +78,16 @@ class ClusterLabeler:
     def __init__(
         self,
         model: str | None = None,
-        api_key: str | None = None,
-        base_url: str | None = None,
         enable_enrichment: bool = True,
     ):
         """Initialize the labeler.
 
         Args:
             model: LLM model to use (default from settings)
-            api_key: OpenRouter API key (uses OPENAI_API_KEY env var if not provided)
-            base_url: API base URL (uses OPENAI_BASE_URL env var if not provided)
             enable_enrichment: Whether to extract enrichment fields
         """
         self.model = model or get_model("language")
         self.enable_enrichment = enable_enrichment
-        api_key = api_key or os.getenv("OPENAI_API_KEY")
-        base_url = base_url or os.getenv(
-            "OPENAI_BASE_URL", "https://openrouter.ai/api/v1"
-        )
-
-        if not api_key:
-            raise ValueError(
-                "API key required. Set OPENAI_API_KEY environment variable."
-            )
-
-        # Use shared OpenRouterClient for retry logic and rate limit handling
-        self._client = OpenRouterClient(
-            model_name=self.model,
-            api_key=api_key,
-            base_url=base_url,
-        )
 
         # Load controlled vocabularies
         self._concepts = _load_vocabulary(CONCEPTS_SCHEMA, "PhysicsConcept")
@@ -223,7 +206,7 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
         clusters: list[dict],
         batch_size: int | None = None,
     ) -> list[ClusterLabel]:
-        """Generate labels for all clusters.
+        """Generate labels for all clusters via LLM.
 
         Args:
             clusters: List of cluster dictionaries
@@ -231,7 +214,12 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
 
         Returns:
             List of ClusterLabel objects
+
+        Raises:
+            Exception: If LLM calls fail (no fallback — labels require LLM).
         """
+        from imas_codex.discovery.base.llm import call_llm
+
         if batch_size is None:
             batch_size = get_labeling_batch_size()
 
@@ -240,18 +228,10 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
 
         logger.info(f"Labeling {total_clusters} clusters using {self.model}")
 
-        network_failed = False
-
         for i in range(0, total_clusters, batch_size):
             batch = clusters[i : i + batch_size]
             batch_num = i // batch_size + 1
             total_batches = (total_clusters + batch_size - 1) // batch_size
-
-            # If a previous batch failed due to network, skip remaining batches
-            if network_failed:
-                for cluster in batch:
-                    all_labels.append(self._generate_fallback_label(cluster))
-                continue
 
             logger.info(
                 f"Processing batch {batch_num}/{total_batches} ({len(batch)} clusters)"
@@ -260,33 +240,18 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
             prompt = self._build_prompt(batch)
             messages = [{"role": "user", "content": prompt}]
 
-            try:
-                response = self._client.make_chat_request(
-                    messages, model=self.model, max_tokens=100000
-                )
-                batch_labels = self._parse_response(response, batch)
-                all_labels.extend(batch_labels)
-                logger.info(
-                    f"Batch {batch_num} complete: {len(batch_labels)} labels generated"
-                )
-            except Exception as e:
-                logger.error(f"Batch {batch_num} failed: {e}")
-                # Detect network errors and abort remaining batches
-                err_msg = str(e).lower()
-                if (
-                    "unreachable" in err_msg
-                    or "connectionerror" in err_msg
-                    or "newconnectionerror" in err_msg
-                    or "name or service not known" in err_msg
-                ):
-                    logger.warning(
-                        "Network unreachable — skipping remaining %d batches, using fallback labels",
-                        total_batches - batch_num,
-                    )
-                    network_failed = True
-                # Generate fallback labels for failed batch
-                for cluster in batch:
-                    all_labels.append(self._generate_fallback_label(cluster))
+            response, _cost = call_llm(
+                model=self.model,
+                messages=messages,
+                max_tokens=65000,
+                temperature=0.3,
+            )
+            content = response.choices[0].message.content
+            batch_labels = self._parse_response(content, batch)
+            all_labels.extend(batch_labels)
+            logger.info(
+                f"Batch {batch_num} complete: {len(batch_labels)} labels generated"
+            )
 
         # Ensure unique labels
         all_labels = self._deduplicate_labels(all_labels)
@@ -404,108 +369,6 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
         self._proposed_terms = []
         logger.info(f"Saved {count} proposed terms to {PROPOSED_TERMS_FILE}")
         return count
-
-    def _generate_fallback_label(self, cluster: dict) -> ClusterLabel:
-        """Generate a fallback label when LLM fails."""
-        cluster_id = cluster["id"]
-        ids = cluster.get("ids", cluster.get("ids_names", []))
-        paths = cluster.get("paths", [])
-
-        # Extract common terms from paths
-        if paths:
-            last_segments = [p.split("/")[-1] for p in paths[:5]]
-            common = "_".join(last_segments[:2])
-            label = f"{common.replace('_', ' ').title()}"
-        else:
-            label = f"Cluster {cluster_id}"
-
-        is_cross = cluster.get("is_cross_ids", cluster.get("type") == "cross_ids")
-        type_desc = "cross-IDS" if is_cross else "intra-IDS"
-        description = (
-            f"A {type_desc} cluster containing paths from {', '.join(ids[:3])}."
-        )
-
-        # Infer basic enrichment from path patterns
-        data_type = self._infer_data_type_from_paths(paths)
-        tags = self._infer_tags_from_paths(paths)
-
-        return ClusterLabel(
-            cluster_id=cluster_id,
-            label=label,
-            description=description,
-            physics_concepts=[],
-            data_type=data_type,
-            tags=tags,
-            mapping_relevance="medium",
-        )
-
-    def _infer_data_type_from_paths(self, paths: list[str]) -> str | None:
-        """Infer data type from path patterns."""
-        if not paths:
-            return None
-
-        path_str = " ".join(paths).lower()
-
-        if "profiles_1d" in path_str or "profile" in path_str:
-            return "profile_1d"
-        if "profiles_2d" in path_str:
-            return "profile_2d"
-        if "time" in path_str and "slice" not in path_str:
-            return "timeseries"
-        if "geometry" in path_str or "boundary" in path_str or "outline" in path_str:
-            return "geometry"
-        if "coefficient" in path_str or "diffusion" in path_str:
-            return "coefficient"
-        if "fit" in path_str or "reconstructed" in path_str:
-            return "fitting"
-        if any(x in path_str for x in ["identifier", "name", "index", "description"]):
-            return "metadata"
-        if "global" in path_str or "total" in path_str or "average" in path_str:
-            return "scalar"
-
-        return None
-
-    def _infer_tags_from_paths(self, paths: list[str]) -> list[str]:
-        """Infer tags from path patterns."""
-        if not paths:
-            return []
-
-        path_str = " ".join(paths).lower()
-        tags = []
-
-        # Region tags
-        if "core" in path_str:
-            tags.append("core")
-        if "edge" in path_str:
-            tags.append("edge")
-        if "separatrix" in path_str:
-            tags.append("separatrix")
-        if "divertor" in path_str:
-            tags.append("divertor")
-        if "wall" in path_str:
-            tags.append("wall")
-
-        # Species tags
-        if "electron" in path_str:
-            tags.append("electron")
-        if "/ion" in path_str or "ion/" in path_str:
-            tags.append("ion")
-        if "neutral" in path_str:
-            tags.append("neutral")
-
-        # Provenance tags
-        if "measured" in path_str:
-            tags.append("measured")
-        if "fit" in path_str:
-            tags.append("fitted")
-        if "reconstructed" in path_str:
-            tags.append("reconstructed")
-
-        # GGD
-        if "/ggd" in path_str or "ggd/" in path_str:
-            tags.append("ggd")
-
-        return tags[:5]  # Limit to 5 tags
 
     def _deduplicate_labels(self, labels: list[ClusterLabel]) -> list[ClusterLabel]:
         """Ensure all labels are unique by appending suffixes."""

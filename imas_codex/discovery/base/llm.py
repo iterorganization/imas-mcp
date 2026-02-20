@@ -365,24 +365,52 @@ def _build_kwargs(
     When max_tokens or timeout are not explicitly set, uses
     model-family defaults from MODEL_TOKEN_LIMITS.
 
+    When ``LITELLM_PROXY_URL`` is set, routes through the LiteLLM proxy
+    (essential on air-gapped clusters where direct outbound HTTPS is
+    unavailable).  The proxy handles model routing via its own
+    ``model_list`` configuration.
+
     For models with caching support (per ``config/prompt_caching.yaml``),
     ``cache_control`` breakpoints are injected on the system prompt to
     enable prompt caching via OpenRouter.
     """
-    model_id = ensure_openrouter_prefix(model)
     limits = get_model_limits(model)
 
-    # Inject cache_control for models that support explicit breakpoints
-    if _supports_cache_control(model):
-        messages = inject_cache_control(messages)
+    # Route through LiteLLM proxy when configured
+    proxy_url = os.getenv("LITELLM_PROXY_URL")
+    if proxy_url:
+        # Proxy is an OpenAI-compatible endpoint; use openai/ prefix
+        # so LiteLLM sends raw model name to the proxy, which handles
+        # provider routing via its model_list configuration.
+        model_id = f"openai/{model}" if not model.startswith("openai/") else model
+        proxy_key = os.getenv("LITELLM_MASTER_KEY", api_key)
+        kwargs: dict[str, Any] = {
+            "model": model_id,
+            "api_key": proxy_key,
+            "api_base": proxy_url,
+            "max_tokens": max_tokens
+            if max_tokens is not None
+            else limits["max_tokens"],
+            "timeout": timeout if timeout is not None else limits["timeout"],
+            "messages": messages,
+        }
+    else:
+        model_id = ensure_openrouter_prefix(model)
 
-    kwargs: dict[str, Any] = {
-        "model": model_id,
-        "api_key": api_key,
-        "max_tokens": max_tokens if max_tokens is not None else limits["max_tokens"],
-        "timeout": timeout if timeout is not None else limits["timeout"],
-        "messages": messages,
-    }
+        # Inject cache_control for models that support explicit breakpoints
+        if _supports_cache_control(model):
+            messages = inject_cache_control(messages)
+
+        kwargs = {
+            "model": model_id,
+            "api_key": api_key,
+            "max_tokens": max_tokens
+            if max_tokens is not None
+            else limits["max_tokens"],
+            "timeout": timeout if timeout is not None else limits["timeout"],
+            "messages": messages,
+        }
+
     if response_format is not None:
         kwargs["response_format"] = response_format
     if temperature is not None:

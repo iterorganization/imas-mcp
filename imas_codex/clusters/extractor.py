@@ -645,120 +645,25 @@ class RelationshipExtractor:
         Returns:
             Dict mapping cluster_id (UUID) to enrichment dict
         """
-        import os
-
-        # Check if API key is available for LLM labeling
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key or api_key.startswith("your_"):
-            self.logger.warning(
-                "No API key available for LLM labeling. Using fallback labels."
-            )
-            return self._generate_fallback_labels_from_dicts(clusters)
-
-        try:
-            from .labeler import ClusterLabeler
-
-            labeler = ClusterLabeler(enable_enrichment=True)
-            labels = labeler.label_clusters(clusters)
-
-            # Save any proposed new vocabulary terms
-            labeler.save_proposed_terms()
-
-            return {
-                label.cluster_id: {
-                    "label": label.label,
-                    "description": label.description,
-                    "physics_concepts": label.physics_concepts,
-                    "data_type": label.data_type,
-                    "tags": label.tags,
-                    "mapping_relevance": label.mapping_relevance,
-                }
-                for label in labels
-            }
-
-        except Exception as e:
-            self.logger.error(f"LLM labeling failed: {e}. Using fallback labels.")
-            return self._generate_fallback_labels_from_dicts(clusters)
-
-    def _generate_fallback_labels_from_dicts(
-        self, clusters: list[dict]
-    ) -> dict[str, dict[str, Any]]:
-        """Generate fallback labels with basic enrichment from cluster dicts."""
         from .labeler import ClusterLabeler
 
-        # Use the labeler's inference methods for basic enrichment
-        temp_labeler = ClusterLabeler.__new__(ClusterLabeler)
-        temp_labeler._concepts = []
-        temp_labeler._data_types = []
-        temp_labeler._tags = []
+        labeler = ClusterLabeler(enable_enrichment=True)
+        labels = labeler.label_clusters(clusters)
 
-        labels: dict[str, dict[str, Any]] = {}
-        for cluster in clusters:
-            cluster_id = cluster["id"]
-            paths = cluster.get("paths", [])[:5]
-            is_cross_ids = cluster.get("is_cross_ids", False)
-            ids_names = cluster.get("ids_names", [])
+        # Save any proposed new vocabulary terms
+        labeler.save_proposed_terms()
 
-            if paths:
-                segments = [p.split("/")[-1] for p in paths]
-                common = " ".join(segments[:2]).replace("_", " ").title()
-                label = common[:50]
-            else:
-                label = f"Cluster {cluster_id[:8]}"
-
-            type_str = "cross-IDS" if is_cross_ids else "intra-IDS"
-            scope = cluster.get("scope", "global")
-            ids_str = ", ".join(ids_names[:3])
-            description = (
-                f"A {type_str} {scope}-level cluster of related paths from {ids_str}."
-            )
-
-            # Basic enrichment from path patterns
-            all_paths = cluster.get("paths", [])
-            data_type = temp_labeler._infer_data_type_from_paths(all_paths)
-            tags = temp_labeler._infer_tags_from_paths(all_paths)
-
-            labels[cluster_id] = {
-                "label": label,
-                "description": description,
-                "physics_concepts": [],
-                "data_type": data_type,
-                "tags": tags,
-                "mapping_relevance": "medium",
+        return {
+            label.cluster_id: {
+                "label": label.label,
+                "description": label.description,
+                "physics_concepts": label.physics_concepts,
+                "data_type": label.data_type,
+                "tags": label.tags,
+                "mapping_relevance": label.mapping_relevance,
             }
-
-        return labels
-
-    def _generate_fallback_labels(self, clusters: list) -> dict[str, dict[str, Any]]:
-        """Generate fallback labels without LLM."""
-        labels: dict[str, dict[str, Any]] = {}
-        for cluster in clusters:
-            # Extract common terms from paths
-            paths = cluster.paths[:5]
-            cluster_id_display = (
-                cluster.id[:8] if isinstance(cluster.id, str) else cluster.id
-            )
-            if paths:
-                segments = [p.split("/")[-1] for p in paths]
-                common = " ".join(segments[:2]).replace("_", " ").title()
-                label = common[:50]  # Truncate
-            else:
-                label = f"Cluster {cluster_id_display}"
-
-            type_str = "cross-IDS" if cluster.is_cross_ids else "intra-IDS"
-            ids_str = ", ".join(cluster.ids_names[:3])
-            description = f"A {type_str} cluster of related paths from {ids_str}."
-
-            labels[cluster.id] = {
-                "label": label,
-                "description": description,
-                "physics_concepts": [],
-                "data_type": None,
-                "tags": [],
-                "mapping_relevance": "medium",
-            }
-
-        return labels
+            for label in labels
+        }
 
     def _generate_label_embeddings(
         self, labels_map: dict[str, dict[str, Any]]

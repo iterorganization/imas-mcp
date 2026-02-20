@@ -261,129 +261,13 @@ class TestBuildSummaries:
         assert summary.by_ids["equilibrium"]["path_count"] == 5  # 3 + 2
 
 
-class TestFallbackLabels:
-    """Tests for fallback label generation."""
-
-    @pytest.fixture
-    def extractor(self, extraction_config):
-        """Create extractor instance."""
-        return RelationshipExtractor(extraction_config)
-
-    def test_generate_fallback_labels(self, extractor):
-        """_generate_fallback_labels creates labels from paths."""
-        clusters = [
-            ClusterInfo(
-                id="uuid-1",
-                similarity_score=0.85,
-                size=3,
-                is_cross_ids=True,
-                ids_names=["equilibrium", "core_profiles"],
-                paths=[
-                    "equilibrium/temperature",
-                    "equilibrium/density",
-                    "core_profiles/pressure",
-                ],
-            ),
-        ]
-
-        labels = extractor._generate_fallback_labels(clusters)
-
-        assert "uuid-1" in labels
-        assert "label" in labels["uuid-1"]
-        assert "description" in labels["uuid-1"]
-        assert "cross-IDS" in labels["uuid-1"]["description"]
-
-    def test_generate_fallback_labels_with_single_path(self, extractor):
-        """_generate_fallback_labels handles minimal paths (size must be >= 1)."""
-        clusters = [
-            ClusterInfo(
-                id="uuid-1",
-                similarity_score=0.85,
-                size=1,
-                is_cross_ids=False,
-                ids_names=["equilibrium"],
-                paths=["equilibrium/single_path"],
-            ),
-        ]
-
-        labels = extractor._generate_fallback_labels(clusters)
-
-        assert "uuid-1" in labels
-        assert "label" in labels["uuid-1"]
-        # Single path should generate label from that path
-        assert labels["uuid-1"]["label"] != ""
-
-    def test_generate_fallback_labels_from_dicts(self, extractor):
-        """_generate_fallback_labels_from_dicts creates labels from dicts."""
-        cluster_dicts = [
-            {
-                "id": "uuid-1",
-                "is_cross_ids": True,
-                "ids_names": ["equilibrium", "transport"],
-                "paths": ["equilibrium/flux", "transport/conductivity"],
-            },
-            {
-                "id": "uuid-2",
-                "is_cross_ids": False,
-                "ids_names": ["mhd"],
-                "paths": [],
-            },
-        ]
-
-        labels = extractor._generate_fallback_labels_from_dicts(cluster_dicts)
-
-        assert "uuid-1" in labels
-        assert "uuid-2" in labels
-        assert "label" in labels["uuid-1"]
-        assert "description" in labels["uuid-1"]
-        assert "cross-IDS" in labels["uuid-1"]["description"]
-        assert labels["uuid-2"]["label"] == "Cluster uuid-2"  # Empty paths
-
-
 class TestLabelGeneration:
-    """Tests for label generation with cache."""
+    """Tests for label generation via LLM."""
 
     @pytest.fixture
     def extractor(self, extraction_config):
         """Create extractor instance."""
         return RelationshipExtractor(extraction_config)
-
-    @patch("os.getenv")
-    def test_generate_cluster_labels_no_api_key(self, mock_getenv, extractor):
-        """Falls back when no API key available."""
-        mock_getenv.return_value = None
-
-        clusters = [
-            {
-                "id": "uuid-1",
-                "is_cross_ids": False,
-                "ids_names": ["eq"],
-                "paths": ["eq/path"],
-            }
-        ]
-
-        labels = extractor._generate_cluster_labels_for_batch(clusters)
-
-        assert "uuid-1" in labels
-        assert "label" in labels["uuid-1"]
-
-    @patch("os.getenv")
-    def test_generate_cluster_labels_placeholder_key(self, mock_getenv, extractor):
-        """Falls back when placeholder API key."""
-        mock_getenv.return_value = "your_api_key_here"
-
-        clusters = [
-            {
-                "id": "uuid-1",
-                "is_cross_ids": False,
-                "ids_names": ["eq"],
-                "paths": ["eq/path"],
-            }
-        ]
-
-        labels = extractor._generate_cluster_labels_for_batch(clusters)
-
-        assert "uuid-1" in labels
 
     def test_get_labeling_model(self, extractor):
         """_get_labeling_model returns model name."""
