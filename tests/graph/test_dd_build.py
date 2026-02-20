@@ -475,6 +475,22 @@ class TestClusterLabels:
             f"Run `imas-codex imas clusters label` to generate."
         )
 
+    def test_all_clusters_have_descriptions(self, graph_client, label_counts):
+        """Every cluster should have a description for NL search."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.description IS NULL OR c.description = '' "
+            "RETURN count(c) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} clusters without descriptions. "
+            f"Run `imas-codex imas clusters label` to generate."
+        )
+
     def test_cluster_labels_unique_within_scope(self, graph_client, label_counts):
         """Cluster labels should be unique within the same scope."""
         if not label_counts.get("IMASSemanticCluster"):
@@ -560,6 +576,85 @@ class TestClusterLabels:
                 f"{count} clusters have path_count mismatch "
                 f"(declared vs actual IN_CLUSTER). Samples: {samples}"
             )
+
+
+class TestClusterEmbeddings:
+    """Verify cluster embedding vectors for semantic search."""
+
+    def test_clusters_have_centroid_embeddings(self, graph_client, label_counts):
+        """All clusters should have centroid embeddings (mean of member paths)."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        total = label_counts["IMASSemanticCluster"]
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.embedding IS NOT NULL "
+            "RETURN count(c) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == total, f"Only {count}/{total} clusters have centroid embeddings"
+
+    def test_clusters_have_label_embeddings(self, graph_client, label_counts):
+        """All clusters should have label_embedding for NL search."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        total = label_counts["IMASSemanticCluster"]
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.label_embedding IS NOT NULL "
+            "RETURN count(c) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == total, (
+            f"Only {count}/{total} clusters have label embeddings. "
+            f"Run `imas-codex imas clusters embed` to generate."
+        )
+
+    def test_clusters_have_description_embeddings(self, graph_client, label_counts):
+        """All clusters should have description_embedding for NL search."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        total = label_counts["IMASSemanticCluster"]
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.description_embedding IS NOT NULL "
+            "RETURN count(c) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == total, (
+            f"Only {count}/{total} clusters have description embeddings. "
+            f"Run `imas-codex imas clusters embed` to generate."
+        )
+
+    def test_cluster_embedding_dimensions_consistent(self, graph_client, label_counts):
+        """All embedding types should have the same dimensionality."""
+        if not label_counts.get("IMASSemanticCluster"):
+            pytest.skip("No IMASSemanticCluster nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (c:IMASSemanticCluster) "
+            "WHERE c.embedding IS NOT NULL "
+            "AND c.label_embedding IS NOT NULL "
+            "AND c.description_embedding IS NOT NULL "
+            "WITH size(c.embedding) AS centroid_dim, "
+            "     size(c.label_embedding) AS label_dim, "
+            "     size(c.description_embedding) AS desc_dim "
+            "WITH DISTINCT centroid_dim, label_dim, desc_dim "
+            "RETURN centroid_dim, label_dim, desc_dim"
+        )
+        assert len(result) == 1, (
+            f"Expected exactly 1 dimension set, got {len(result)}: {result}"
+        )
+        row = result[0]
+        assert row["centroid_dim"] == row["label_dim"] == row["desc_dim"], (
+            f"Embedding dimensions differ: "
+            f"centroid={row['centroid_dim']}, "
+            f"label={row['label_dim']}, "
+            f"description={row['desc_dim']}"
+        )
 
 
 class TestDeprecationTracking:

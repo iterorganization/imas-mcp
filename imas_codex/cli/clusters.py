@@ -309,6 +309,51 @@ def clusters_sync(verbose: bool, quiet: bool, dry_run: bool) -> None:
         raise SystemExit(1) from e
 
 
+@clusters.command("embed")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress all logging except errors")
+def clusters_embed(verbose: bool, quiet: bool) -> None:
+    """Embed cluster labels and descriptions for semantic search.
+
+    Generates vector embeddings from LLM-generated label and description
+    text. Creates two vector indexes for natural language cluster search.
+
+    Run after 'clusters label' and 'clusters sync'.
+
+    \b
+    Examples:
+      imas-codex imas clusters embed           # Embed labels + descriptions
+      imas-codex imas clusters embed -v        # Verbose output
+    """
+    if quiet:
+        log_level = logging.ERROR
+    elif verbose:
+        log_level = logging.DEBUG
+    else:
+        log_level = logging.INFO
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    from imas_codex.graph.build_dd import _embed_cluster_text
+    from imas_codex.graph.client import GraphClient
+
+    try:
+        with GraphClient() as client:
+            click.echo("Embedding cluster labels and descriptions...")
+            _embed_cluster_text(client, use_rich=not quiet)
+            click.echo("✓ Cluster text embeddings complete")
+    except Exception as e:
+        click.echo(f"Error embedding clusters: {e}", err=True)
+        if verbose:
+            import traceback
+
+            traceback.print_exc()
+        raise SystemExit(1) from e
+
+
 @clusters.command("status")
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed statistics")
 def clusters_status(verbose: bool) -> None:

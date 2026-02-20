@@ -432,13 +432,30 @@ classes:
       # Cluster embedding for semantic search
       embedding:
         description: >-
-          Cluster embedding vector (256-dim, L2-normalized).
+          Cluster centroid embedding vector (256-dim, L2-normalized).
           Mean of member path embeddings. Enables hierarchical search:
           first match clusters by embedding, then search within cluster.
         multivalued: true
         range: float
         annotations:
           vector_index_name: cluster_embedding
+      label_embedding:
+        description: >-
+          Embedding of the LLM-generated cluster label text (256-dim).
+          Enables natural language search by short physics concept name.
+        multivalued: true
+        range: float
+        annotations:
+          vector_index_name: cluster_label_embedding
+      description_embedding:
+        description: >-
+          Embedding of the LLM-generated cluster description (256-dim).
+          Primary vector for natural language cluster search — richer
+          semantic content than label or centroid embeddings.
+        multivalued: true
+        range: float
+        annotations:
+          vector_index_name: cluster_description_embedding
       similarity_score:
         description: Average intra-cluster cosine similarity (0-1)
         range: float

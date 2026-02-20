@@ -1888,6 +1888,8 @@ def _import_clusters(
     """
     with suppress_third_party_logging():
         try:
+            import json as _json
+
             from imas_codex.core.clusters import Clusters
             from imas_codex.embeddings.config import EncoderConfig
 
@@ -1897,12 +1899,19 @@ def _import_clusters(
                 graph_client=client,
             )
 
-            # Single call — get_clusters() triggers build internally if
-            # the data is stale. Do NOT also call is_available() as that
-            # would run the dependency check a second time and trigger a
-            # redundant HDBSCAN rebuild (the build takes minutes, which
-            # exceeds the 1-second dependency_check_interval).
-            cluster_data = clusters_manager.get_clusters()
+            # Read clusters.json directly — do NOT use get_clusters()
+            # which triggers auto-rebuild via dependency checking. The
+            # rebuild runs HDBSCAN and generates new UUIDs but does NOT
+            # re-label, discarding existing labels and descriptions.
+            # If you need to rebuild, run 'clusters build' + 'clusters label'
+            # separately, then sync.
+            clusters_file = clusters_manager.file_path
+            if not clusters_file.exists():
+                logger.warning("No clusters.json found at %s", clusters_file)
+                return 0
+
+            with clusters_file.open("r", encoding="utf-8") as f:
+                cluster_data = _json.load(f).get("clusters", [])
             if not cluster_data:
                 logger.warning("No cluster data produced")
                 return 0
@@ -1950,10 +1959,13 @@ def _import_clusters(
                 ids_names = cluster.get("ids_names", cluster.get("ids", []))
                 scope = cluster.get("scope", "global")
 
+                description = cluster.get("description", "")
+
                 cluster_batch.append(
                     {
                         "cluster_id": str(cluster_id),
                         "label": label,
+                        "description": description,
                         "physics_domain": physics_domain,
                         "path_count": len(paths),
                         "cross_ids": cross_ids,
@@ -1988,6 +2000,7 @@ def _import_clusters(
                     UNWIND $clusters AS c
                     MERGE (n:IMASSemanticCluster {id: c.cluster_id})
                     SET n.label = c.label,
+                        n.description = c.description,
                         n.physics_domain = c.physics_domain,
                         n.path_count = c.path_count,
                         n.cross_ids = c.cross_ids,
@@ -2048,6 +2061,9 @@ def _import_clusters(
                         "%d clusters have no embedding (members may lack embeddings)",
                         missing,
                     )
+
+                # --- Embed cluster labels and descriptions ---
+                _embed_cluster_text(client, embedding_batch_size=256, use_rich=use_rich)
 
                 # --- Export cluster embeddings to .npz as CI fallback ---
                 _export_cluster_embeddings_npz(
@@ -2116,6 +2132,110 @@ def _export_cluster_embeddings_npz(
         )
     except Exception as e:
         logger.warning("Failed to export cluster embeddings to .npz: %s", e)
+
+
+def _embed_cluster_text(
+    client: GraphClient,
+    embedding_batch_size: int = 256,
+    use_rich: bool | None = None,
+) -> None:
+    """Embed cluster labels and descriptions into separate vector properties.
+
+    Generates two embedding vectors per cluster:
+    - label_embedding: from the short label text (3-6 words)
+    - description_embedding: from the longer description (1-2 sentences)
+
+    The description embedding is the primary vector for natural language
+    cluster search due to its richer semantic content.
+
+    Args:
+        client: GraphClient instance
+        embedding_batch_size: Number of texts to embed per batch
+        use_rich: Force rich progress setting
+    """
+    from imas_codex.embeddings.config import EncoderConfig
+    from imas_codex.embeddings.encoder import Encoder
+    from imas_codex.settings import get_embedding_dimension
+
+    # Fetch all clusters with labels/descriptions
+    results = client.query("""
+        MATCH (c:IMASSemanticCluster)
+        WHERE c.label IS NOT NULL
+        RETURN c.id AS id, c.label AS label, c.description AS description
+        ORDER BY c.id
+    """)
+
+    if not results:
+        logger.warning("No clusters with labels found for embedding")
+        return
+
+    dim = get_embedding_dimension()
+    logger.info(
+        "Embedding %d cluster labels and descriptions (%d-dim)", len(results), dim
+    )
+
+    # Ensure vector indexes exist
+    for index_name, prop_name in [
+        ("cluster_label_embedding", "label_embedding"),
+        ("cluster_description_embedding", "description_embedding"),
+    ]:
+        client.query(f"""
+            CREATE VECTOR INDEX {index_name} IF NOT EXISTS
+            FOR (n:IMASSemanticCluster) ON n.{prop_name}
+            OPTIONS {{
+                indexConfig: {{
+                    `vector.dimensions`: {dim},
+                    `vector.similarity_function`: 'cosine'
+                }}
+            }}
+        """)
+
+    config = EncoderConfig(normalize_embeddings=True, use_rich=use_rich or False)
+    encoder = Encoder(config=config)
+
+    cluster_ids = [r["id"] for r in results]
+    labels = [r["label"] for r in results]
+    descriptions = [r["description"] or r["label"] for r in results]
+
+    # Embed labels in batches
+    label_embeddings = encoder.embed_texts(labels)
+    logger.info("Generated %d label embeddings", len(label_embeddings))
+
+    # Embed descriptions in batches
+    description_embeddings = encoder.embed_texts(descriptions)
+    logger.info("Generated %d description embeddings", len(description_embeddings))
+
+    # Write to graph in batches
+    batch_size = 500
+    for i in range(0, len(cluster_ids), batch_size):
+        batch_ids = cluster_ids[i : i + batch_size]
+        batch_label_embs = label_embeddings[i : i + batch_size]
+        batch_desc_embs = description_embeddings[i : i + batch_size]
+
+        batch_data = [
+            {
+                "id": cid,
+                "label_embedding": lemb.tolist(),
+                "description_embedding": demb.tolist(),
+            }
+            for cid, lemb, demb in zip(
+                batch_ids, batch_label_embs, batch_desc_embs, strict=True
+            )
+        ]
+
+        client.query(
+            """
+            UNWIND $batch AS b
+            MATCH (c:IMASSemanticCluster {id: b.id})
+            SET c.label_embedding = b.label_embedding,
+                c.description_embedding = b.description_embedding
+            """,
+            batch=batch_data,
+        )
+
+    logger.info(
+        "Stored label and description embeddings for %d clusters", len(cluster_ids)
+    )
 
 
 def import_semantic_clusters(

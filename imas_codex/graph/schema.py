@@ -203,13 +203,12 @@ class GraphSchema:
 
             for slot in self._view.class_induced_slots(label):
                 slot_name = slot.name
+                custom_name = get_vector_annotation(slot)
 
-                # Only process embedding slots
-                if slot_name != "embedding":
+                # Process slots named "embedding" OR with explicit vector_index_name
+                if slot_name != "embedding" and not custom_name:
                     continue
 
-                # Check for explicit index name annotation
-                custom_name = get_vector_annotation(slot)
                 if custom_name:
                     index_name = custom_name
                 else:
