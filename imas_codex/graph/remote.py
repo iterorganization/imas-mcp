@@ -725,8 +725,10 @@ def remote_check_imas_codex(ssh_host: str) -> str | None:
         "exit 1"
     )
     try:
-        result = run_command(check_script, ssh_host=ssh_host, timeout=15)
-        return result.stdout.strip()
+        output = run_command(check_script, ssh_host=ssh_host, timeout=15, check=True)
+        # run_command returns a string; extract the path (first line)
+        path = output.strip().splitlines()[0].strip()
+        return path if path.startswith("/") else None
     except Exception:
         return None
 
