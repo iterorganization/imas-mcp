@@ -1974,6 +1974,12 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
     is_flag=True,
     help="Exclude IMAS Data Dictionary nodes",
 )
+@click.option(
+    "-m",
+    "--message",
+    default=None,
+    help="Short description to attach to this push (shown by 'graph tags').",
+)
 def graph_push(
     dev: bool,
     registry: str | None,
@@ -1981,10 +1987,12 @@ def graph_push(
     dry_run: bool,
     facilities: tuple[str, ...],
     no_imas: bool,
+    message: str | None,
 ) -> None:
     """Push graph archive to GHCR.
 
     Use --facility/-f (repeatable) to push a filtered per-facility graph.
+    Use -m/--message to attach a short description (like a git commit message).
     """
     from imas_codex.cli.graph_progress import GraphProgress, run_oras_with_progress
 
@@ -2048,6 +2056,13 @@ def graph_push(
                 "--annotation",
                 f"io.imas-codex.git-commit={git_info['commit']}",
             ]
+            if message:
+                push_cmd.extend(
+                    [
+                        "--annotation",
+                        f"org.opencontainers.image.description={message}",
+                    ]
+                )
 
             gp.start_phase(f"Pushing to GHCR ({artifact_ref})")
             run_oras_with_progress(push_cmd, progress=gp)
@@ -2058,6 +2073,8 @@ def graph_push(
             manifest["pushed_version"] = version_tag
             manifest["pushed_to"] = artifact_ref
             manifest["pushed_at"] = datetime.now(UTC).isoformat()
+            if message:
+                manifest["pushed_message"] = message
             save_local_graph_manifest(manifest)
 
             # Save dev revision for auto-increment on next push
@@ -3141,6 +3158,36 @@ def _list_registry_tags(
     return [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
 
 
+def _fetch_tag_messages(
+    registry: str,
+    tags: list[str],
+    *,
+    pkg_name: str = "imas-codex-graph",
+) -> dict[str, str | None]:
+    """Fetch the push message for each tag from OCI manifest annotations.
+
+    Returns a mapping of tag -> message (None if no message was set).
+    """
+    messages: dict[str, str | None] = {}
+    for tag in tags:
+        ref = f"{registry}/{pkg_name}:{tag}"
+        result = subprocess.run(
+            ["oras", "manifest", "fetch", ref],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            messages[tag] = None
+            continue
+        try:
+            manifest = json.loads(result.stdout)
+            annotations = manifest.get("annotations", {})
+            messages[tag] = annotations.get("org.opencontainers.image.description")
+        except (json.JSONDecodeError, AttributeError):
+            messages[tag] = None
+    return messages
+
+
 _GITHUB_API = "https://api.github.com"
 
 _SCOPE_FIX_HINT = (
@@ -3411,9 +3458,18 @@ def graph_tags(registry: str | None, facility: str | None) -> None:
         click.echo(f"No tags found for {target_registry}/{pkg_name}")
         return
 
+    # Fetch messages for each tag from OCI annotations
+    tag_messages = _fetch_tag_messages(target_registry, tags, pkg_name=pkg_name)
+
     click.echo(f"Tags in {target_registry}/{pkg_name}:")
     for tag in sorted(tags):
-        click.echo(f"  {tag}")
+        msg = tag_messages.get(tag)
+        if msg:
+            # Clip long messages to keep output tidy
+            display_msg = msg if len(msg) <= 72 else msg[:69] + "..."
+            click.echo(f"  {tag}  — {display_msg}")
+        else:
+            click.echo(f"  {tag}")
     click.echo(f"\n{len(tags)} tag(s) total")
 
 
