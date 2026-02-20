@@ -802,7 +802,9 @@ class GraphClient:
         """Execute a Cypher query and return results as dicts.
 
         Retries once on connection failure after attempting tunnel
-        re-establishment.
+        re-establishment.  For database critical errors (OOM, txlog
+        corruption), waits for the database to recover (systemd
+        ``Restart=on-failure`` or manual restart) before retrying.
         """
         try:
             with self.session() as sess:
@@ -811,7 +813,16 @@ class GraphClient:
         except Exception as e:
             if not self._is_connection_error(e):
                 raise
-            logger.warning("Query failed with connection error: %s", e)
+            is_db_critical = self._is_database_critical_error(e)
+            if is_db_critical:
+                logger.warning(
+                    "Neo4j database in critical error state, "
+                    "waiting for auto-restart before retrying: %s",
+                    e,
+                )
+                self._wait_for_database_recovery()
+            else:
+                logger.warning("Query failed with connection error: %s", e)
             if self._try_reconnect():
                 with self.session() as sess:
                     result = sess.run(cypher, **params)
@@ -819,12 +830,83 @@ class GraphClient:
             raise
 
     @staticmethod
+    def _is_database_critical_error(exc: Exception) -> bool:
+        """Check if the error is specifically a Neo4j database critical error."""
+        from neo4j.exceptions import DatabaseError
+
+        if isinstance(exc, DatabaseError):
+            msg = str(exc).lower()
+            return "critical error" in msg or "needs to be restarted" in msg
+        return False
+
+    def _wait_for_database_recovery(self, timeout: int = 60) -> None:
+        """Wait for Neo4j to recover from a critical error.
+
+        Systemd services with ``Restart=on-failure`` will auto-restart
+        Neo4j.  We wait up to ``timeout`` seconds for the HTTP endpoint
+        to come back before proceeding with driver recreation.
+        """
+        import time
+        import urllib.request
+
+        from imas_codex.graph.profiles import resolve_neo4j
+        from imas_codex.remote.tunnel import TUNNEL_OFFSET
+
+        try:
+            profile = resolve_neo4j(auto_tunnel=False)
+        except Exception:
+            time.sleep(10)
+            return
+
+        # Determine effective HTTP port (may be tunneled)
+        http_port = profile.http_port
+        host = "localhost"
+        if profile.host and f":{profile.bolt_port + TUNNEL_OFFSET}" in self.uri:
+            http_port = profile.http_port + TUNNEL_OFFSET
+        elif profile.host:
+            host = profile.host
+
+        url = f"http://{host}:{http_port}/"
+        deadline = time.time() + timeout
+
+        # Close existing driver so Neo4j can fully shut down
+        if self._driver:
+            try:
+                self._driver.close()
+            except Exception:
+                pass
+            self._driver = None
+
+        logger.info("Waiting up to %ds for Neo4j recovery at %s", timeout, url)
+        while time.time() < deadline:
+            time.sleep(5)
+            try:
+                urllib.request.urlopen(url, timeout=3)
+                logger.info("Neo4j recovered")
+                return
+            except Exception:
+                pass
+        logger.warning("Neo4j did not recover within %ds", timeout)
+
+    @staticmethod
     def _is_connection_error(exc: Exception) -> bool:
-        """Check if an exception indicates a dead connection/tunnel."""
-        from neo4j.exceptions import ServiceUnavailable
+        """Check if an exception indicates a dead connection/tunnel or
+        a database-level critical error that requires restart.
+
+        Neo4j raises ``DatabaseError`` with code
+        ``Neo.DatabaseError.Transaction.TransactionStartFailed`` when the
+        database enters an unrecoverable state (OOM, corrupted txlog,
+        GPFS lock issues).  Treating this as a connection-level error
+        allows the retry path to reconnect after the database restarts.
+        """
+        from neo4j.exceptions import DatabaseError, ServiceUnavailable
 
         if isinstance(exc, ServiceUnavailable | ConnectionError | OSError):
             return True
+        if isinstance(exc, DatabaseError):
+            msg = str(exc).lower()
+            if "critical error" in msg or "needs to be restarted" in msg:
+                return True
         # Check nested cause
         cause = getattr(exc, "__cause__", None)
         if isinstance(cause, ConnectionError | OSError):

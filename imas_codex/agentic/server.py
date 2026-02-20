@@ -97,9 +97,15 @@ def _neo4j_error_message(e: Exception) -> str:
     """Format Neo4j errors with helpful instructions."""
     if isinstance(e, ServiceUnavailable):
         return NEO4J_NOT_RUNNING_MSG
-    if "Connection refused" in str(e) or "ServiceUnavailable" in str(e):
+    msg = str(e)
+    if "Connection refused" in msg or "ServiceUnavailable" in msg:
         return NEO4J_NOT_RUNNING_MSG
-    return str(e)
+    if "critical error" in msg.lower() or "needs to be restarted" in msg.lower():
+        return (
+            "Neo4j database has entered a critical error state and needs to be "
+            "restarted. Run: imas-codex serve neo4j stop && imas-codex serve neo4j deploy"
+        )
+    return msg
 
 
 # =============================================================================

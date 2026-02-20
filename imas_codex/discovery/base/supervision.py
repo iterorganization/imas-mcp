@@ -98,6 +98,7 @@ def is_infrastructure_error(exc: Exception) -> bool:
     Infrastructure errors warrant retry with backoff rather than immediate
     failure. They include:
     - Neo4j connection issues (ServiceUnavailable, SessionExpired, TransientError)
+    - Neo4j critical database errors (OOM, txlog corruption on GPFS)
     - Network errors (timeouts, connection refused, reset)
     - SSH failures
 
@@ -107,9 +108,18 @@ def is_infrastructure_error(exc: Exception) -> bool:
     Returns:
         True if this is a transient infrastructure error
     """
+    from neo4j.exceptions import DatabaseError
+
     # Neo4j transient errors
     if isinstance(exc, ServiceUnavailable | SessionExpired | TransientError):
         return True
+
+    # Neo4j critical database errors — the database needs a restart
+    # but the error is transient from the worker's perspective
+    if isinstance(exc, DatabaseError):
+        msg = str(exc).lower()
+        if "critical error" in msg or "needs to be restarted" in msg:
+            return True
 
     # Connection errors (often wrapped in other exception types)
     error_msg = str(exc).lower()

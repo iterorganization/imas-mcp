@@ -744,6 +744,19 @@ def graph_start(
     # Secure permissions to prevent other users accessing our database
     secure_data_directory(data_path)
 
+    # Ensure neo4j.conf exists with proper memory/recovery settings.
+    # create_graph_dir writes it at init time, but it may be missing
+    # if the directory was created manually.
+    conf_file = data_path / "conf" / "neo4j.conf"
+    if not conf_file.exists():
+        from imas_codex.graph.dirs import DEFAULT_NEO4J_CONF
+
+        conf_file.write_text(
+            DEFAULT_NEO4J_CONF.format(
+                bolt_port=profile.bolt_port, http_port=profile.http_port
+            )
+        )
+
     cmd = [
         "apptainer",
         "exec",
@@ -753,11 +766,13 @@ def graph_start(
         f"{data_path}/logs:/logs",
         "--bind",
         f"{data_path}/import:/import",
+        "--bind",
+        f"{data_path}/conf:/var/lib/neo4j/conf",
         "--writable-tmpfs",
         "--env",
-        f"NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port}",
-        "--env",
-        f"NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port}",
+        "NEO4J_server_jvm_additional=-Dfile.encoding=UTF-8 "
+        "--add-opens=java.base/java.nio=ALL-UNNAMED "
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
         str(image_path),
         "neo4j",
         "console",
@@ -3060,6 +3075,17 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
 
     secure_data_directory(data_path)
 
+    # Ensure neo4j.conf exists with proper memory/recovery settings
+    conf_file = data_path / "conf" / "neo4j.conf"
+    if not conf_file.exists():
+        from imas_codex.graph.dirs import DEFAULT_NEO4J_CONF
+
+        conf_file.write_text(
+            DEFAULT_NEO4J_CONF.format(
+                bolt_port=profile.bolt_port, http_port=profile.http_port
+            )
+        )
+
     cmd = [
         "apptainer",
         "exec",
@@ -3069,11 +3095,13 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
         f"{data_path}/logs:/logs",
         "--bind",
         f"{data_path}/import:/import",
+        "--bind",
+        f"{data_path}/conf:/var/lib/neo4j/conf",
         "--writable-tmpfs",
         "--env",
-        f"NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port}",
-        "--env",
-        f"NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port}",
+        "NEO4J_server_jvm_additional=-Dfile.encoding=UTF-8 "
+        "--add-opens=java.base/java.nio=ALL-UNNAMED "
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
         str(NEO4J_IMAGE),
         "neo4j",
         "console",
