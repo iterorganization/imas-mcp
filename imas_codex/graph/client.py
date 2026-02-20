@@ -142,8 +142,26 @@ class GraphClient:
 
             self.graph_name = get_active_graph_name()
 
+        # Limit pool size for tunneled connections — fewer concurrent
+        # connections reduce pressure on SSH tunnels and avoid congestion
+        # that causes tunnel drops under DDL bursts.
+        from imas_codex.remote.tunnel import TUNNEL_OFFSET
+
+        pool_size = 100  # Neo4j default
+        # Detect tunneled URIs by checking for offset ports (e.g. 17687)
+        try:
+            port_str = self.uri.rsplit(":", 1)[-1].rstrip("/")
+            port = int(port_str)
+            if port >= TUNNEL_OFFSET:
+                pool_size = 5
+        except (ValueError, IndexError):
+            pass
+
         self._driver = GraphDatabase.driver(
-            self.uri, auth=(self.username, self.password)
+            self.uri,
+            auth=(self.username, self.password),
+            max_connection_pool_size=pool_size,
+            connection_acquisition_timeout=30,
         )
         self._schema = get_schema()
 
@@ -226,8 +244,22 @@ class GraphClient:
             except Exception:
                 pass
 
+        # Preserve pool size limit for tunneled connections
+        from imas_codex.remote.tunnel import TUNNEL_OFFSET
+
+        pool_size = 100
+        try:
+            port_str = new_uri.rsplit(":", 1)[-1].rstrip("/")
+            if int(port_str) >= TUNNEL_OFFSET:
+                pool_size = 5
+        except (ValueError, IndexError):
+            pass
+
         self._driver = GraphDatabase.driver(
-            new_uri, auth=(self.username, self.password)
+            new_uri,
+            auth=(self.username, self.password),
+            max_connection_pool_size=pool_size,
+            connection_acquisition_timeout=30,
         )
         self.uri = new_uri
         return True
@@ -248,7 +280,23 @@ class GraphClient:
         as a constraint (e.g., from DD build) by dropping the index first.
 
         Processes both facility and DD schemas to cover all node types.
+
+        Resilient to tunnel drops: if a connection error occurs mid-way,
+        attempts tunnel reconnection and retries the remaining statements.
         """
+        try:
+            self._initialize_schema_impl()
+        except Exception as e:
+            if not self._is_connection_error(e):
+                raise
+            logger.warning("Schema init failed with connection error, reconnecting...")
+            if self._try_reconnect():
+                self._initialize_schema_impl()
+            else:
+                raise
+
+    def _initialize_schema_impl(self) -> None:
+        """Inner implementation of schema initialization."""
         # Get constraints and indexes from both schemas
         dd_schema = GraphSchema(schema_path="imas_codex/schemas/imas_dd.yaml")
         constraints = self.schema.constraint_statements()

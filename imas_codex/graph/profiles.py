@@ -276,13 +276,30 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
         return f"bolt://localhost:{tunnel_port}"
 
     # Auto-tunnel: remote_port + TUNNEL_OFFSET
-    from imas_codex.remote.tunnel import TUNNEL_OFFSET, ensure_tunnel
+    from imas_codex.remote.tunnel import (
+        TUNNEL_OFFSET,
+        ensure_tunnel,
+        resolve_remote_bind,
+    )
 
     tunnel_port_int = bolt_port + TUNNEL_OFFSET
+
+    # Determine remote bind address: when the graph scheduler is "slurm",
+    # Neo4j runs on a compute node, not the login node.
+    try:
+        from imas_codex.settings import get_graph_scheduler
+
+        scheduler = get_graph_scheduler()
+    except Exception:
+        scheduler = "none"
+
+    remote_bind = resolve_remote_bind(host, scheduler)
+
     ok = ensure_tunnel(
         port=bolt_port,
         ssh_host=host,
         tunnel_port=tunnel_port_int,
+        remote_bind=remote_bind,
     )
     if ok:
         logger.info(
@@ -421,13 +438,25 @@ def invalidate_uri_cache() -> None:
 def reconnect_tunnel() -> bool:
     """Force re-establishment of the graph tunnel.
 
-    Invalidates the URI cache, stops any stale tunnel processes, and
-    creates a fresh tunnel via ``ensure_tunnel()``.
+    Invalidates the URI cache, stops any stale tunnel processes, waits
+    for port release, and creates a fresh tunnel via ``ensure_tunnel()``.
+
+    Handles the autossh + ExitOnForwardFailure race: after killing the
+    old tunnel, the listening port may still be held briefly.  We wait
+    up to 5 seconds for it to clear before starting the new tunnel.
 
     Returns:
         True if the tunnel is active after reconnection.
     """
-    from imas_codex.remote.tunnel import TUNNEL_OFFSET, ensure_tunnel, stop_tunnel
+    import time
+
+    from imas_codex.remote.tunnel import (
+        TUNNEL_OFFSET,
+        ensure_tunnel,
+        is_tunnel_active,
+        resolve_remote_bind,
+        stop_tunnel,
+    )
 
     profile = resolve_neo4j(auto_tunnel=False)
     if not profile.host:
@@ -439,12 +468,37 @@ def reconnect_tunnel() -> bool:
     # Kill stale tunnel
     stop_tunnel(profile.host)
 
-    # Re-establish
     tunnel_port = profile.bolt_port + TUNNEL_OFFSET
+
+    # Wait for port to be released after killing old tunnel.
+    # Without this, ensure_tunnel() sees the port as "active" (fast path)
+    # or the new SSH fails to bind (ExitOnForwardFailure).
+    for _ in range(10):
+        if not is_tunnel_active(tunnel_port):
+            break
+        time.sleep(0.5)
+    else:
+        logger.warning(
+            "Port %d still bound after stopping tunnel — may conflict",
+            tunnel_port,
+        )
+
+    # Determine remote bind (compute node for SLURM, login node otherwise)
+    try:
+        from imas_codex.settings import get_graph_scheduler
+
+        scheduler = get_graph_scheduler()
+    except Exception:
+        scheduler = "none"
+
+    remote_bind = resolve_remote_bind(profile.host, scheduler)
+
+    # Re-establish
     ok = ensure_tunnel(
         port=profile.bolt_port,
         ssh_host=profile.host,
         tunnel_port=tunnel_port,
+        remote_bind=remote_bind,
     )
     if ok:
         logger.info(

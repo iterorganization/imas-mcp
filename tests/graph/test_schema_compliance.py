@@ -96,8 +96,12 @@ class TestLabelsAndRelationships:
 class TestConstraints:
     """Verify expected constraints exist in the graph."""
 
-    def test_constraints_created(self, graph_constraints, schema):
-        """All schema-derived constraints should be present (facility + DD)."""
+    def test_constraints_created(self, graph_with_schema, schema):
+        """All schema-derived constraints should be present (facility + DD).
+
+        Uses ``graph_with_schema`` fixture to ensure constraints are
+        initialized before checking (idempotent DDL).
+        """
         dd_schema = GraphSchema(schema_path="imas_codex/schemas/imas_dd.yaml")
 
         expected_names = set()
@@ -107,16 +111,24 @@ class TestConstraints:
                 if id_field:
                     expected_names.add(f"{label.lower()}_{id_field}")
 
-        existing_names = {c["name"] for c in graph_constraints}
+        constraints = graph_with_schema.query(
+            "SHOW CONSTRAINTS YIELD name, type, labelsOrTypes, properties "
+            "RETURN name, type, labelsOrTypes, properties"
+        )
+        existing_names = {c["name"] for c in constraints}
         missing = expected_names - existing_names
         assert not missing, (
             f"Missing constraints: {missing}. "
             f"Run GraphClient().initialize_schema() to create them."
         )
 
-    def test_composite_constraints_correct(self, graph_constraints, schema):
+    def test_composite_constraints_correct(self, graph_with_schema, schema):
         """Facility-owned nodes have composite (id, facility_id) constraints."""
-        for constraint in graph_constraints:
+        constraints = graph_with_schema.query(
+            "SHOW CONSTRAINTS YIELD name, type, labelsOrTypes, properties "
+            "RETURN name, type, labelsOrTypes, properties"
+        )
+        for constraint in constraints:
             label = (
                 constraint["labelsOrTypes"][0] if constraint["labelsOrTypes"] else ""
             )

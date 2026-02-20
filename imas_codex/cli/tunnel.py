@@ -44,30 +44,11 @@ def _record_tunnel_pid(host: str, first_local_port: int) -> None:
 def _discover_compute_node(host: str) -> str | None:
     """SSH to host and discover the SLURM compute node for imas-codex services.
 
-    Returns the compute node hostname if a running allocation exists,
-    otherwise ``None``.
+    Delegates to the shared ``discover_compute_node`` in the tunnel module.
     """
-    try:
-        result = subprocess.run(
-            [
-                "ssh",
-                host,
-                "-o",
-                "ConnectTimeout=10",
-                'squeue -n imas-codex-services -u "$USER" '
-                '--format="%N" --noheader 2>/dev/null',
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if result.returncode == 0:
-            node = result.stdout.strip()
-            if node:
-                return node
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-    return None
+    from imas_codex.remote.tunnel import discover_compute_node
+
+    return discover_compute_node(host)
 
 
 def _resolve_host(host: str | None) -> str:
@@ -178,14 +159,8 @@ def _get_tunnel_ports(
 
         embed_port = get_embed_server_port()
         # When a SLURM compute node is active, forward through it.
-        # Otherwise fall back to embed_host (legacy) or localhost.
-        if compute_node:
-            remote_bind = compute_node
-        else:
-            from imas_codex.settings import get_embed_host
-
-            embed_host = get_embed_host()
-            remote_bind = embed_host if embed_host else "127.0.0.1"
+        # Otherwise fall back to localhost (embed on login node).
+        remote_bind = compute_node or "127.0.0.1"
         # Embed uses same-port forwarding (no offset)
         ports.append((embed_port, embed_port, "embed", remote_bind))
 

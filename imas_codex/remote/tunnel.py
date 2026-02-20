@@ -23,6 +23,7 @@ Example::
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import shutil
@@ -56,6 +57,7 @@ SSH_TUNNEL_OPTS: list[str] = [
     "-o", f"ServerAliveInterval={_SSH_ALIVE_INTERVAL}",
     "-o", f"ServerAliveCountMax={_SSH_ALIVE_COUNT_MAX}",
     "-o", "ConnectTimeout=10",
+    "-o", "ExitOnForwardFailure=yes",
 ]  # fmt: skip
 
 
@@ -173,19 +175,35 @@ def verify_tunnel(port: int, ssh_host: str) -> bool:
     return is_port_bound_by_ssh(port)
 
 
+# Timeout (seconds) for acquiring the tunnel lock.  If another process
+# is already starting a tunnel, we wait up to this long before giving up.
+_LOCK_TIMEOUT = 30
+
+
+def _lock_path(ssh_host: str) -> Path:
+    """Return the lock file path for tunnel serialisation."""
+    _PID_DIR.mkdir(parents=True, exist_ok=True)
+    return _PID_DIR / f"{ssh_host}.lock"
+
+
 def ensure_tunnel(
     port: int,
     ssh_host: str,
     tunnel_port: int | None = None,
     timeout: float = 15.0,
+    remote_bind: str = "127.0.0.1",
 ) -> bool:
     """Ensure an SSH tunnel is active from localhost to a remote host.
 
     Prefers ``autossh`` for automatic reconnection. Falls back to plain
     ``ssh -f -N`` if autossh is not installed.
 
+    Uses a file lock to serialise concurrent callers — prevents the race
+    where two processes both detect "port unbound" and both try to start
+    a tunnel, causing ``bind: Address already in use`` or silent clobber.
+
     If ``tunnel_port`` is already bound locally, verifies the tunnel
-    process is alive and returns immediately.
+    process is alive and returns immediately (no lock needed).
 
     Args:
         port: Remote port to forward.
@@ -193,26 +211,86 @@ def ensure_tunnel(
         tunnel_port: Local port for the tunnel.  Defaults to ``port``
             (same-port forwarding, used for embedding server).
         timeout: Seconds to wait for SSH command and connection probe.
+        remote_bind: Hostname on the remote side to bind the forward to.
+            Use a SLURM compute node hostname when Neo4j runs on a compute
+            node rather than the login node.  Default ``"127.0.0.1"``.
 
     Returns:
         True if tunnel is active (pre-existing or newly created).
     """
     local_port = tunnel_port if tunnel_port is not None else port
 
-    # Already bound → verify it's still a valid tunnel
-    if is_tunnel_active(local_port):
-        logger.debug("Port %d already bound locally, tunnel likely active", local_port)
+    # Fast path (no lock): port bound AND backed by SSH → tunnel active
+    if verify_tunnel(local_port, ssh_host):
+        logger.debug("Port %d bound by SSH process, tunnel active", local_port)
         return True
 
+    # Port might be bound by a non-SSH process (local Neo4j) or in
+    # TIME_WAIT from a dead tunnel.  Only skip if a real service holds it.
+    if is_tunnel_active(local_port) and not is_port_bound_by_ssh(local_port):
+        # Something other than SSH is listening — don't interfere
+        logger.debug("Port %d bound by non-SSH process, skipping", local_port)
+        return True
+
+    # Serialise tunnel startup via file lock.  This prevents two callers
+    # from racing through the "port unbound → start ssh" sequence.
+    lock_file = _lock_path(ssh_host)
+    lock_fd = lock_file.open("w")
+    try:
+        deadline = time.monotonic() + _LOCK_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    logger.warning("Timed out waiting for tunnel lock (%s)", ssh_host)
+                    return is_tunnel_active(local_port)
+                time.sleep(0.5)
+
+        # Re-check after acquiring lock — another process may have
+        # started the tunnel while we were waiting.
+        if verify_tunnel(local_port, ssh_host):
+            logger.debug("Port %d became active while waiting for lock", local_port)
+            return True
+
+        # Port might be bound but not by SSH (dead tunnel in TIME_WAIT).
+        # Clean up stale state and proceed with starting a new tunnel.
+        if is_tunnel_active(local_port) and not is_port_bound_by_ssh(local_port):
+            # Something else holds the port — can't start tunnel
+            logger.debug("Port %d bound by non-SSH process after lock", local_port)
+            return True
+
+        return _start_tunnel_locked(port, ssh_host, local_port, timeout, remote_bind)
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        lock_fd.close()
+
+
+def _start_tunnel_locked(
+    port: int,
+    ssh_host: str,
+    local_port: int,
+    timeout: float,
+    remote_bind: str = "127.0.0.1",
+) -> bool:
+    """Start an SSH tunnel (caller must hold the file lock)."""
     # Port is dead — clean up stale PID if any
     _clear_pid(ssh_host)
 
     logger.info(
-        "Starting SSH tunnel %s:%d → localhost:%d ...", ssh_host, port, local_port
+        "Starting SSH tunnel %s:%s:%d → localhost:%d ...",
+        ssh_host,
+        remote_bind,
+        port,
+        local_port,
     )
 
     use_autossh = _has_autossh()
-    forward_arg = f"{local_port}:127.0.0.1:{port}"
+    forward_arg = f"{local_port}:{remote_bind}:{port}"
 
     if use_autossh:
         cmd = [
@@ -246,12 +324,15 @@ def ensure_tunnel(
             text=True,
             env=env,
         )
-        # Record PID for targeted cleanup
-        time.sleep(0.5)
+        # ssh -f forks after connection setup; ExitOnForwardFailure=yes
+        # ensures the forward is bound before the fork.  Brief sleep for
+        # the forked process to appear in the process table.
+        time.sleep(0.3)
         _find_and_record_pid(ssh_host, local_port)
 
-        # Wait for tunnel to bind
-        for _attempt in range(6):
+        # Wait for tunnel to bind — with ExitOnForwardFailure, this
+        # should succeed quickly.  Retry to handle slow networks.
+        for _attempt in range(8):
             if is_tunnel_active(local_port):
                 logger.info(
                     "SSH tunnel established (%s): %s:%d → localhost:%d",
@@ -330,6 +411,60 @@ def stop_tunnel(ssh_host: str) -> bool:
     return stopped
 
 
+def discover_compute_node(ssh_host: str) -> str | None:
+    """Discover the SLURM compute node running imas-codex services.
+
+    SSHes to ``ssh_host`` and queries ``squeue`` for the
+    ``imas-codex-services`` job to find which compute node it runs on.
+
+    Returns:
+        Compute node hostname, or None if no allocation is active.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                ssh_host,
+                "-o",
+                "ConnectTimeout=10",
+                'squeue -n imas-codex-services -u "$USER" '
+                '--format="%N" --noheader 2>/dev/null',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            node = result.stdout.strip()
+            if node:
+                return node
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def resolve_remote_bind(ssh_host: str, scheduler: str) -> str:
+    """Resolve the remote bind address for a tunnel.
+
+    When the scheduler is ``"slurm"``, discovers the compute node and
+    returns its hostname.  Otherwise returns ``"127.0.0.1"`` (login node).
+
+    Args:
+        ssh_host: SSH host alias.
+        scheduler: Service scheduler (``"slurm"`` or ``"none"``).
+
+    Returns:
+        Remote bind hostname for the ``-L`` forward argument.
+    """
+    if scheduler == "slurm":
+        node = discover_compute_node(ssh_host)
+        if node:
+            logger.info("SLURM compute node for %s: %s", ssh_host, node)
+            return node
+        logger.debug("No SLURM allocation found, using login node")
+    return "127.0.0.1"
+
+
 def is_systemd_tunnel_active(ssh_host: str) -> bool:
     """Check if a systemd-managed tunnel service is active for this host.
 
@@ -354,10 +489,13 @@ __all__ = [
     "SSH_TUNNEL_OPTS",
     "TUNNEL_OFFSET",
     "_write_pid",
+    "discover_compute_node",
     "ensure_tunnel",
     "is_port_bound_by_ssh",
     "is_systemd_tunnel_active",
     "is_tunnel_active",
+    "resolve_remote_bind",
     "stop_tunnel",
     "verify_tunnel",
+    "_lock_path",
 ]

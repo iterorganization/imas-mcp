@@ -1,7 +1,8 @@
 """Fixtures for graph quality tests.
 
 All tests in this package require a live Neo4j connection. If Neo4j
-is not reachable, tests are skipped automatically.
+is not reachable, tests are skipped automatically at collection time
+(visible as "skipped" rather than silently deselected).
 """
 
 from pathlib import Path
@@ -12,6 +13,43 @@ from imas_codex.graph.schema import GraphSchema, get_schema
 
 # Apply graph marker to all tests in this directory
 pytestmark = pytest.mark.graph
+
+# ── Auto-skip when Neo4j is unreachable ──────────────────────────────────
+# Checked once per session, cached in module-level variable.
+
+_neo4j_available: bool | None = None
+
+
+def _check_neo4j_available() -> bool:
+    """Quick probe to see if Neo4j is reachable (cached)."""
+    global _neo4j_available
+    if _neo4j_available is not None:
+        return _neo4j_available
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        client = GraphClient()
+        client.get_stats()
+        client.close()
+        _neo4j_available = True
+    except Exception:
+        _neo4j_available = False
+    return _neo4j_available
+
+
+def pytest_collection_modifyitems(config, items):  # noqa: ARG001
+    """Auto-skip all graph-marked tests when Neo4j is not reachable.
+
+    Runs the connectivity check once per session. Skipping is visible
+    in test output ('s') so users know graph tests *exist* but were not
+    executed, rather than being silently deselected.
+    """
+    if _check_neo4j_available():
+        return
+    skip_marker = pytest.mark.skip(reason="Neo4j not available")
+    for item in items:
+        if item.get_closest_marker("graph"):
+            item.add_marker(skip_marker)
 
 
 # =============================================================================
@@ -72,18 +110,58 @@ def get_description_embeddable_labels() -> list[str]:
 
 @pytest.fixture(scope="session")
 def graph_client():
-    """Session-scoped GraphClient that skips if Neo4j is unreachable."""
+    """Session-scoped GraphClient that skips if Neo4j is unreachable.
+
+    Does NOT run ``initialize_schema()`` — that is heavy DDL work that
+    overwhelms SSH tunnels.  Tests needing constraints should use the
+    ``graph_with_schema`` fixture instead.
+    """
     from imas_codex.graph.client import GraphClient
 
     try:
         client = GraphClient()
-        # Verify connectivity
         client.get_stats()
     except Exception as e:
         pytest.skip(f"Neo4j not available: {e}")
 
     yield client
     client.close()
+
+
+@pytest.fixture(scope="session")
+def graph_with_schema(graph_client):
+    """GraphClient with schema constraints initialized.
+
+    Calls ``initialize_schema()`` once per session — idempotent but
+    does many DDL round-trips.  Only used by constraint tests.
+    Verifies connectivity after the DDL burst in case the tunnel dropped.
+    """
+    from imas_codex.graph.client import GraphClient
+
+    try:
+        graph_client.initialize_schema()
+    except Exception:
+        pass  # Non-fatal — constraint tests will report specifics
+
+    # Verify the connection survived the DDL burst
+    try:
+        graph_client.query("RETURN 1 AS ping")
+    except Exception:
+        # Connection pool poisoned — recreate
+        try:
+            graph_client.close()
+        except Exception:
+            pass
+        try:
+            new_client = GraphClient()
+            new_client.get_stats()
+            yield new_client
+            new_client.close()
+            return
+        except Exception as e:
+            pytest.skip(f"Neo4j connection lost during schema init: {e}")
+
+    yield graph_client
 
 
 @pytest.fixture(scope="session")

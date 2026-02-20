@@ -311,7 +311,7 @@ addopts = [
     "--verbose",
     "--durations=10",
     "--cache-clear",
-    "-m", "not graph and not slow",
+    "-m", "not slow",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
@@ -323,7 +323,7 @@ markers = [
     "fast: marks tests as fast-running unit tests",
     "performance: marks tests that focus on performance",
     "timeout: marks tests with timeout constraints (requires pytest-timeout)",
-    "graph: marks tests requiring a live Neo4j connection (excluded by default)",
+    "graph: marks tests requiring a live Neo4j connection (auto-skipped when unavailable)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
