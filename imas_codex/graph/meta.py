@@ -216,9 +216,9 @@ def check_pull_compatibility(
         facilities: Facility filter for the pull.
 
     Returns:
-        List of warning strings. Empty if compatible.
+        List of error strings. Empty if compatible.
     """
-    warnings = []
+    errors = []
     graph_name = meta.get("name", "?")
     graph_facilities = set(meta.get("facilities") or [])
     graph_imas = meta.get("imas", True)  # default True for pre-existing graphs
@@ -226,7 +226,7 @@ def check_pull_compatibility(
     if imas_only:
         # Pulling DD-only into a graph that has facilities
         if graph_facilities:
-            warnings.append(
+            errors.append(
                 f"Pulling IMAS-only package into graph '{graph_name}' "
                 f"which has facilities {sorted(graph_facilities)}. "
                 f"This will replace all data including facility data."
@@ -236,7 +236,7 @@ def check_pull_compatibility(
         # Pulling facility package into wrong graph
         if not pull_set.issubset(graph_facilities):
             missing = pull_set - graph_facilities
-            warnings.append(
+            errors.append(
                 f"Pulling facility package for {sorted(pull_set)} but "
                 f"graph '{graph_name}' does not include "
                 f"{sorted(missing)}. Allowed: {sorted(graph_facilities)}."
@@ -244,17 +244,17 @@ def check_pull_compatibility(
     else:
         # Pulling full graph
         if no_imas and graph_imas:
-            warnings.append(
+            errors.append(
                 f"Pulling no-imas variant into graph '{graph_name}' "
                 f"which has imas=true. DD data will be lost."
             )
         elif not no_imas and not graph_imas:
-            warnings.append(
+            errors.append(
                 f"Pulling package with IMAS DD into graph '{graph_name}' "
                 f"which has imas=false."
             )
 
-    return warnings
+    return errors
 
 
 __all__ = [

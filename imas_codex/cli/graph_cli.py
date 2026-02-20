@@ -2604,16 +2604,17 @@ def graph_pull(
             meta = get_graph_meta(gc)
             gc.close()
             if meta:
-                pull_warnings = check_pull_compatibility(
+                pull_errors = check_pull_compatibility(
                     meta,
                     imas_only=imas_only,
                     no_imas=no_imas,
                     facilities=list(facilities) or None,
                 )
-                for w in pull_warnings:
-                    click.echo(f"Warning: {w}", err=True)
-                if pull_warnings and not click.confirm("Continue anyway?"):
-                    raise SystemExit(1)
+                if pull_errors:
+                    msg = "\n".join(pull_errors)
+                    raise click.ClickException(f"{msg}\nUse --force to override.")
+        except click.ClickException:
+            raise
         except Exception:
             pass  # Can't reach Neo4j — skip check
 
