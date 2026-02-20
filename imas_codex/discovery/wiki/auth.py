@@ -111,6 +111,8 @@ class CredentialManager:
 
         Returns False (disables keyring) in these cases:
         - No DISPLAY and no DBUS_SESSION_BUS_ADDRESS (headless server)
+        - Keyring resolves to fail/null backend (e.g., SLURM compute nodes
+          that inherit DBUS_SESSION_BUS_ADDRESS but lack SecretService)
         - Keyring backend check times out
         - PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring (explicit disable)
         """
@@ -134,9 +136,22 @@ class CredentialManager:
         def _do_check() -> bool:
             import keyring
 
-            # Test with a dummy operation
             backend = keyring.get_keyring()
             logger.debug("Keyring backend: %s", backend)
+
+            # Detect non-functional backends:
+            # - fail.Keyring: selected when no real backend is available
+            #   (e.g., DBUS_SESSION_BUS_ADDRESS is set but SecretService
+            #   is not registered — common on SLURM compute nodes)
+            # - null.Keyring: explicit no-op backend
+            backend_module = type(backend).__module__ or ""
+            if "fail" in backend_module or "null" in backend_module:
+                logger.info(
+                    "No usable keyring backend (got %s) — using env vars.",
+                    backend_module,
+                )
+                return False
+
             return True
 
         try:
