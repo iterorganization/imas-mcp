@@ -2262,6 +2262,7 @@ def graph_push(
             "STOPPING": f"Stopping Neo4j on {profile.host}",
             "DUMPING": "Dumping graph database",
             "RECOVERY": "Recovery cycle (clean start/stop)",
+            "EXPORTING": "Exporting IMAS-only graph via imas-codex CLI",
             "FILTERING": "Filtering to IMAS DD nodes only",
             "ARCHIVING": "Creating archive",
             "STARTING": f"Starting Neo4j on {profile.host}",
