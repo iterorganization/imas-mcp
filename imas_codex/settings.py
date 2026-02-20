@@ -302,13 +302,49 @@ def get_llm_proxy_port() -> int:
 def get_llm_proxy_url() -> str:
     """Get the LLM proxy URL.
 
-    Derived from proxy port: ``http://127.0.0.1:{port}``.
+    When the proxy runs on a remote facility (``[llm].location`` is set),
+    resolves the login node hostname from facility config so that compute
+    nodes can reach the proxy directly.  Falls back to ``127.0.0.1`` when
+    running locally or when the hostname cannot be resolved.
+
     Override: LITELLM_PROXY_URL env var.
     """
     if env := os.getenv("LITELLM_PROXY_URL"):
         return env
     port = get_llm_proxy_port()
-    return f"http://127.0.0.1:{port}"
+    host = _get_llm_proxy_host()
+    return f"http://{host}:{port}"
+
+
+def _get_llm_proxy_host() -> str:
+    """Resolve the host where the LLM proxy runs.
+
+    When ``[llm].location`` names a facility and ``scheduler != "slurm"``,
+    the proxy runs on that facility's login node.  Reads the login node
+    hostname from ``compute.login_node.hostname`` in the facility's
+    private YAML config.
+
+    Returns ``"127.0.0.1"`` for local or when hostname is unavailable.
+    """
+    location = get_llm_location()
+    if location == "local":
+        return "127.0.0.1"
+
+    # Proxy runs on login node (not SLURM)
+    if get_llm_scheduler() == "slurm":
+        return "127.0.0.1"
+
+    try:
+        from imas_codex.discovery.base.facility import get_facility_infrastructure
+
+        infra = get_facility_infrastructure(location)
+        hostname = infra.get("compute", {}).get("login_node", {}).get("hostname")
+        if hostname:
+            # Strip FQDN domain for short hostname (avoids DNS issues)
+            return hostname.split(".")[0]
+    except Exception:
+        pass
+    return "127.0.0.1"
 
 
 def get_llm_location() -> str:

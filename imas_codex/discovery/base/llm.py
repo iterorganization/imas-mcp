@@ -365,20 +365,23 @@ def _build_kwargs(
     When max_tokens or timeout are not explicitly set, uses
     model-family defaults from MODEL_TOKEN_LIMITS.
 
-    When ``LITELLM_PROXY_URL`` is set, routes through the LiteLLM proxy
-    (essential on air-gapped clusters where direct outbound HTTPS is
-    unavailable).  The proxy handles model routing via its own
-    ``model_list`` configuration.
+    Routes through the LiteLLM proxy when ``[llm].location`` is configured
+    or ``LITELLM_PROXY_URL`` is set (essential on air-gapped clusters where
+    direct outbound HTTPS is unavailable).  The proxy handles model routing
+    via its own ``model_list`` configuration.
 
     For models with caching support (per ``config/prompt_caching.yaml``),
     ``cache_control`` breakpoints are injected on the system prompt to
     enable prompt caching via OpenRouter.
     """
+    from imas_codex.settings import get_llm_location, get_llm_proxy_url
+
     limits = get_model_limits(model)
 
-    # Route through LiteLLM proxy when configured
-    proxy_url = os.getenv("LITELLM_PROXY_URL")
-    if proxy_url:
+    # Route through LiteLLM proxy when configured (location != "local" or env override)
+    llm_location = get_llm_location()
+    if llm_location != "local" or os.getenv("LITELLM_PROXY_URL"):
+        proxy_url = get_llm_proxy_url()
         # Proxy is an OpenAI-compatible endpoint; use openai/ prefix
         # so LiteLLM sends raw model name to the proxy, which handles
         # provider routing via its model_list configuration.
