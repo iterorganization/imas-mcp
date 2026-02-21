@@ -193,9 +193,17 @@ def bulk_discover_pages(
                 session = ks.login(f"{base_url}/")
                 adapter_kwargs["session"] = session
                 close_session = True
-            except RuntimeError as e:
-                logger.error("Keycloak authentication failed: %s", e)
-                return 0
+            except Exception as e:
+                if ssh_host:
+                    logger.warning(
+                        "Keycloak login failed (%s: %s), falling back to SSH via %s",
+                        type(e).__name__,
+                        e,
+                        ssh_host,
+                    )
+                else:
+                    logger.error("Keycloak authentication failed: %s", e)
+                    return 0
         elif auth_type == "basic" and credential_service:
             import requests
 

@@ -388,6 +388,28 @@ def wiki(
     site_configs: list[dict] = []
     validated_cred_services: set[str] = set()
 
+    # Pre-check Keycloak domain reachability once (avoids 5s timeout × N sites)
+    _keycloak_unreachable_domains: set[str] = set()
+    _keycloak_domains = set()
+    for _ws in wiki_sites:
+        if _ws.get("auth_type") == "keycloak":
+            from urllib.parse import urlparse as _kc_parse
+
+            _kc_domain = _kc_parse(_ws.get("url", "")).netloc
+            if _kc_domain:
+                _keycloak_domains.add(_kc_domain)
+    for _kc_dom in _keycloak_domains:
+        import socket as _sock
+
+        try:
+            _kc_sock = _sock.create_connection((_kc_dom, 443), timeout=5)
+            _kc_sock.close()
+        except Exception:
+            _keycloak_unreachable_domains.add(_kc_dom)
+            log_print(
+                f"[yellow]{_kc_dom} not reachable directly, will use SSH for page discovery[/yellow]"
+            )
+
     for site_idx in site_indices:
         site = wiki_sites[site_idx]
         site_type = site.get("site_type", "mediawiki")
@@ -455,12 +477,21 @@ def wiki(
         if should_bulk_discover and not score_only:
             from imas_codex.discovery.wiki.parallel import bulk_discover_pages
 
+            # Skip Keycloak auth if the domain is unreachable
+            effective_auth_type = auth_type or "none"
+            if auth_type == "keycloak" and ssh_host:
+                from urllib.parse import urlparse as _auth_parse
+
+                domain = _auth_parse(base_url).netloc
+                if domain in _keycloak_unreachable_domains:
+                    effective_auth_type = "none"
+
             discover_kwargs: dict = {
                 "facility": facility,
                 "site_type": site_type,
                 "base_url": base_url,
                 "ssh_host": ssh_host,
-                "auth_type": auth_type or "none",
+                "auth_type": effective_auth_type,
                 "credential_service": credential_service,
                 "access_method": access_method,
             }
@@ -485,37 +516,42 @@ def wiki(
             def bulk_progress_log(msg, _):
                 wiki_logger.info(f"BULK: {msg}")
 
-            if use_rich:
-                from rich.status import Status
+            try:
+                if use_rich:
+                    from rich.status import Status
 
-                with Status(
-                    f"[cyan]Bulk discovery: {rich_escape(base_url)}...[/cyan]",
-                    console=console,
-                    spinner="dots",
-                ) as status:
+                    with Status(
+                        f"[cyan]Bulk discovery: {rich_escape(base_url)}...[/cyan]",
+                        console=console,
+                        spinner="dots",
+                    ) as status:
 
-                    def bulk_progress_rich(msg, _, _url=base_url):
-                        safe_url = rich_escape(_url)
-                        safe_msg = rich_escape(msg)
-                        if "pages" in msg:
-                            status.update(f"[cyan]{safe_url}: {safe_msg}[/cyan]")
-                        elif "creating" in msg:
-                            status.update(f"[cyan]{safe_url}: {safe_msg}[/cyan]")
-                        elif "created" in msg:
-                            status.update(f"[green]{safe_url}: {safe_msg}[/green]")
+                        def bulk_progress_rich(msg, _, _url=base_url):
+                            safe_url = rich_escape(_url)
+                            safe_msg = rich_escape(msg)
+                            if "pages" in msg:
+                                status.update(f"[cyan]{safe_url}: {safe_msg}[/cyan]")
+                            elif "creating" in msg:
+                                status.update(f"[cyan]{safe_url}: {safe_msg}[/cyan]")
+                            elif "created" in msg:
+                                status.update(f"[green]{safe_url}: {safe_msg}[/green]")
 
+                        bulk_discovered = bulk_discover_pages(
+                            **discover_kwargs, on_progress=bulk_progress_rich
+                        )
+
+                    if bulk_discovered > 0:
+                        log_print(f"  [green]{bulk_discovered:,} pages[/green]")
+                else:
                     bulk_discovered = bulk_discover_pages(
-                        **discover_kwargs, on_progress=bulk_progress_rich
+                        **discover_kwargs, on_progress=bulk_progress_log
                     )
-
-                if bulk_discovered > 0:
-                    log_print(f"  [green]{bulk_discovered:,} pages[/green]")
-            else:
-                bulk_discovered = bulk_discover_pages(
-                    **discover_kwargs, on_progress=bulk_progress_log
-                )
-                if bulk_discovered > 0:
-                    wiki_logger.info(f"{short_name}: {bulk_discovered} pages")
+                    if bulk_discovered > 0:
+                        wiki_logger.info(f"{short_name}: {bulk_discovered} pages")
+            except Exception as e:
+                log_print(f"  [red]Bulk discovery failed: {e}[/red]")
+                wiki_logger.warning("Bulk discovery failed for %s: %s", base_url, e)
+                continue
 
         # Artifact scanning
         should_discover_artifacts_site = (
@@ -556,11 +592,16 @@ def wiki(
                         KeycloakWikiClient,
                     )
 
-                    wiki_client = KeycloakWikiClient(
+                    kc = KeycloakWikiClient(
                         base_url=base_url,
                         credential_service=credential_service,
                     )
-                    wiki_client.authenticate()
+                    if kc.authenticate():
+                        wiki_client = kc
+                    else:
+                        log_print(
+                            "  [yellow]Keycloak auth failed, artifact discovery will use SSH[/yellow]"
+                        )
 
             if use_rich:
                 from rich.status import Status
@@ -583,6 +624,29 @@ def wiki(
                         elif "created" in msg or "discovered" in msg:
                             status.update(f"[green]{safe_url}: {safe_msg}[/green]")
 
+                    try:
+                        artifacts_discovered, page_artifacts = bulk_discover_artifacts(
+                            facility=facility,
+                            base_url=base_url,
+                            site_type=site_type,
+                            ssh_host=ssh_host,
+                            wiki_client=wiki_client,
+                            credential_service=credential_service,
+                            access_method=access_method,
+                            data_path=site.get("data_path"),
+                            pub_path=site.get("pub_path"),
+                            space_key=portal_page
+                            if site_type == "confluence"
+                            else None,
+                            on_progress=artifact_progress_rich,
+                        )
+                    except Exception:
+                        logger.exception("Artifact discovery failed for %s", base_url)
+                        log_print(
+                            f"  [red]Artifact discovery failed for {short_name}[/red]"
+                        )
+            else:
+                try:
                     artifacts_discovered, page_artifacts = bulk_discover_artifacts(
                         facility=facility,
                         base_url=base_url,
@@ -594,22 +658,13 @@ def wiki(
                         data_path=site.get("data_path"),
                         pub_path=site.get("pub_path"),
                         space_key=portal_page if site_type == "confluence" else None,
-                        on_progress=artifact_progress_rich,
+                        on_progress=artifact_progress_log,
                     )
-            else:
-                artifacts_discovered, page_artifacts = bulk_discover_artifacts(
-                    facility=facility,
-                    base_url=base_url,
-                    site_type=site_type,
-                    ssh_host=ssh_host,
-                    wiki_client=wiki_client,
-                    credential_service=credential_service,
-                    access_method=access_method,
-                    data_path=site.get("data_path"),
-                    pub_path=site.get("pub_path"),
-                    space_key=portal_page if site_type == "confluence" else None,
-                    on_progress=artifact_progress_log,
-                )
+                except Exception:
+                    logger.exception("Artifact discovery failed for %s", base_url)
+                    log_print(
+                        f"  [red]Artifact discovery failed for {short_name}[/red]"
+                    )
 
             if wiki_client:
                 wiki_client.close()

@@ -298,9 +298,16 @@ class CredentialManager:
     # Persists across instances within the same process
     _memory_cache: dict[str, tuple[str, str]] = {}
 
+    # Class-level flag: set to True when keyring ops timeout, so
+    # subsequent instances skip keyring entirely (avoids 3s per site).
+    _keyring_timed_out: bool = False
+
     def __init__(self) -> None:
         """Initialize credential manager."""
-        self._keyring_available = self._check_keyring()
+        if CredentialManager._keyring_timed_out:
+            self._keyring_available = False
+        else:
+            self._keyring_available = self._check_keyring()
 
     def _check_keyring(self) -> bool:
         """Check if keyring is available and functional.
@@ -379,40 +386,38 @@ class CredentialManager:
             logger.info("Keyring available via D-Bus forwarding (%s)", backend_module)
             return True
 
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_do_check)
-                result = future.result(timeout=self.KEYRING_TIMEOUT)
+            future = executor.submit(_do_check)
+            result = future.result(timeout=self.KEYRING_TIMEOUT)
 
-                if result:
-                    return True
+            if result:
+                return True
 
-                # On SLURM compute nodes, try D-Bus forwarding (outside the
-                # tight timeout — SSH setup needs more time).
-                if not _is_slurm_compute_node():
-                    return False
+            # On SLURM compute nodes, try D-Bus forwarding (outside the
+            # tight timeout — SSH setup needs more time).
+            if not _is_slurm_compute_node():
+                return False
 
-                login_node = _get_login_node()
-                if not login_node:
-                    logger.info(
-                        "SLURM compute node with no keyring backend and "
-                        "no login node found — using env vars."
-                    )
-                    return False
-
+            login_node = _get_login_node()
+            if not login_node:
                 logger.info(
-                    "SLURM compute node detected — forwarding D-Bus from %s",
-                    login_node,
+                    "SLURM compute node with no keyring backend and "
+                    "no login node found — using env vars."
                 )
-                if not _forward_dbus_socket(login_node):
-                    logger.warning(
-                        "D-Bus forwarding failed — falling back to env vars."
-                    )
-                    return False
+                return False
 
-                # Re-check with a fresh timeout now that D-Bus is forwarded
-                future2 = executor.submit(_do_check_after_forward)
-                return future2.result(timeout=self.KEYRING_TIMEOUT)
+            logger.info(
+                "SLURM compute node detected — forwarding D-Bus from %s",
+                login_node,
+            )
+            if not _forward_dbus_socket(login_node):
+                logger.warning("D-Bus forwarding failed — falling back to env vars.")
+                return False
+
+            # Re-check with a fresh timeout now that D-Bus is forwarded
+            future2 = executor.submit(_do_check_after_forward)
+            return future2.result(timeout=self.KEYRING_TIMEOUT)
 
         except concurrent.futures.TimeoutError:
             logger.warning(
@@ -420,6 +425,7 @@ class CredentialManager:
                 "Using environment variables instead.",
                 self.KEYRING_TIMEOUT,
             )
+            CredentialManager._keyring_timed_out = True
             if _is_wsl():
                 logger.warning(
                     "WSL detected: If GNOME Keyring prompts for unlock password, "
@@ -429,6 +435,8 @@ class CredentialManager:
         except Exception as e:
             logger.warning("Keyring not available: %s", e)
             return False
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _service_name(self, site: str) -> str:
         """Generate full service name for keyring."""
@@ -510,20 +518,25 @@ class CredentialManager:
         """
         import concurrent.futures
 
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(func, *args, **kwargs)
-                return future.result(timeout=self.KEYRING_TIMEOUT)
+            future = executor.submit(func, *args, **kwargs)
+            return future.result(timeout=self.KEYRING_TIMEOUT)
         except concurrent.futures.TimeoutError:
             logger.warning(
                 "Keyring operation timed out after %ds - may need unlock. "
                 "See: imas-codex credentials status",
                 self.KEYRING_TIMEOUT,
             )
+            # Disable keyring for this session to avoid repeated timeouts
+            self._keyring_available = False
+            CredentialManager._keyring_timed_out = True
             return None
         except Exception as e:
             logger.debug("Keyring operation failed: %s", e)
             return None
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def set_credentials(
         self,

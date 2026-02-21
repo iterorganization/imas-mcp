@@ -71,7 +71,9 @@ class KeycloakSession:
         s.verify = False
 
         # Step 1: GET the wiki URL - follows redirects to Keycloak login form
-        r = s.get(start_url, allow_redirects=True, timeout=30)
+        # Use short connect timeout (5s) to fail fast when host is unreachable,
+        # with longer read timeout (30s) for the Keycloak auth redirect chain.
+        r = s.get(start_url, allow_redirects=True, timeout=(5, 30))
 
         if "/auth/realms/" not in r.url:
             # No Keycloak redirect - maybe already authenticated or no auth needed
@@ -102,7 +104,7 @@ class KeycloakSession:
             login_url,
             data={"username": username, "password": password},
             allow_redirects=True,
-            timeout=30,
+            timeout=(5, 30),
         )
 
         # Verify auth succeeded - should be back on the wiki with 200
@@ -205,7 +207,11 @@ class AsyncKeycloakSession:
 
         username, password = creds
 
-        client = httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=False)
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0, connect=5.0),
+            follow_redirects=True,
+            verify=False,
+        )
 
         # Step 1: GET the wiki URL - follows redirects to Keycloak login form
         r = await client.get(start_url)
