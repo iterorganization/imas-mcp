@@ -346,13 +346,28 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
         import litellm
 
         litellm.drop_params = True
-        response = litellm.completion(
-            model=model,
-            messages=[{"role": "user", "content": "ping"}],
-            max_tokens=1,
-            temperature=0,
-            timeout=30,
-        )
+
+        # Route through LiteLLM proxy when configured (air-gapped clusters)
+        from imas_codex.settings import get_llm_location, get_llm_proxy_url
+
+        llm_location = get_llm_location()
+        completion_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+            "temperature": 0,
+            "timeout": 30,
+        }
+        if llm_location != "local" or os.getenv("LITELLM_PROXY_URL"):
+            proxy_url = get_llm_proxy_url()
+            completion_kwargs["model"] = (
+                f"openai/{model}" if not model.startswith("openai/") else model
+            )
+            completion_kwargs["api_base"] = proxy_url
+            completion_kwargs["api_key"] = os.getenv("LITELLM_MASTER_KEY", "")
+            label = f"{short_name} (proxy)"
+
+        response = litellm.completion(**completion_kwargs)
         if response and response.choices:
             return True, label
         return False, f"{label} no response"
