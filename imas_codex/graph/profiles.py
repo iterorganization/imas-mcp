@@ -515,6 +515,14 @@ def reconnect_tunnel() -> bool:
     if not profile.host:
         return True  # Local graph, no tunnel needed
 
+    # If we're local to the host (e.g. on the same SLURM cluster),
+    # no tunnel is needed — just clear cache so URI re-resolves.
+    from imas_codex.remote.executor import is_local_host
+
+    if is_local_host(profile.host):
+        invalidate_uri_cache()
+        return True
+
     # Clear cache so next resolve picks up the new tunnel
     invalidate_uri_cache()
 
