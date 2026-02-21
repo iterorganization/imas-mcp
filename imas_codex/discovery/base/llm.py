@@ -167,6 +167,38 @@ def get_model_limits(model: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=1)
+def _can_reach_github(timeout: float = 1.5) -> bool:
+    """Fast cached check for GitHub raw content connectivity.
+
+    Used to decide whether LiteLLM should fetch remote model pricing
+    and Anthropic beta headers, or use bundled local copies.
+
+    Returns True when GitHub is reachable (e.g. login nodes with
+    internet), False on air-gapped compute nodes (e.g. Titan).
+    """
+    import socket
+
+    try:
+        socket.create_connection(("raw.githubusercontent.com", 443), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+def set_litellm_offline_env() -> None:
+    """Set env vars to prevent LiteLLM import-time remote fetches.
+
+    **Must be called before** ``import litellm`` to be effective.
+    Only sets the vars when GitHub is unreachable (air-gapped nodes).
+    When GitHub is reachable, lets LiteLLM fetch the latest data.
+    """
+    if not _can_reach_github():
+        os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+        os.environ.setdefault("LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS", "True")
+        logger.debug("Air-gapped: using local LiteLLM model cost map")
+
+
 def suppress_litellm_noise() -> None:
     """Suppress all LiteLLM diagnostic output.
 
@@ -178,6 +210,7 @@ def suppress_litellm_noise() -> None:
 
     Call this once at module load time in any module that uses LiteLLM.
     """
+    set_litellm_offline_env()
     import litellm
 
     # Suppress print-based diagnostic messages
@@ -190,7 +223,6 @@ def suppress_litellm_noise() -> None:
 
     # Environment variables for litellm internals
     os.environ.setdefault("LITELLM_LOG", "ERROR")
-    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 
 # ---------------------------------------------------------------------------

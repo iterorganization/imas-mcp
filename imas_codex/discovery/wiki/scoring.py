@@ -328,6 +328,9 @@ async def _score_artifacts_batch(
     import os
     import re
 
+    from imas_codex.discovery.base.llm import set_litellm_offline_env
+
+    set_litellm_offline_env()
     import litellm
 
     from imas_codex.agentic.prompt_loader import render_prompt
@@ -573,6 +576,9 @@ async def _score_images_batch(
     import os
     import re
 
+    from imas_codex.discovery.base.llm import set_litellm_offline_env
+
+    set_litellm_offline_env()
     import litellm
 
     from imas_codex.agentic.prompt_loader import render_prompt

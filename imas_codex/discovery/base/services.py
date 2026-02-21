@@ -340,6 +340,9 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
         label = f"{short_name} ({provider})"
 
         # Try a lightweight LiteLLM call to verify connectivity
+        from imas_codex.discovery.base.llm import set_litellm_offline_env
+
+        set_litellm_offline_env()
         import litellm
 
         litellm.drop_params = True

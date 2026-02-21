@@ -113,10 +113,10 @@ def imas_build(
         imas-codex imas build --dry-run -v     # Preview without writing
         imas-codex imas build --ids-filter "core_profiles equilibrium"  # Test subset
     """
-    # Suppress LiteLLM remote model cost map fetch before any LiteLLM import
-    import os
+    # On air-gapped nodes, prevent LiteLLM import-time remote fetches
+    from imas_codex.discovery.base.llm import set_litellm_offline_env
 
-    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    set_litellm_offline_env()
 
     from imas_codex import dd_version as current_dd_version
     from imas_codex.cli.logging import configure_cli_logging
