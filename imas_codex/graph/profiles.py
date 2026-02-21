@@ -206,6 +206,24 @@ def get_location_offset(location: str) -> int:
 # ─── Resolution ─────────────────────────────────────────────────────────────
 
 
+def _get_service_job_name(location: str | None = None) -> str:
+    """Read ``service_job_name`` from the facility private YAML.
+
+    Falls back to ``"imas-codex-services"`` if not configured.
+    """
+    if location is None:
+        location = get_graph_location()
+    try:
+        from imas_codex.config import get_facility_config
+
+        cfg = get_facility_config(location, include_private=True)
+        compute = cfg.get("compute", {})
+        scheduler = compute.get("scheduler", {})
+        return scheduler.get("service_job_name", "imas-codex-services")
+    except Exception:
+        return "imas-codex-services"
+
+
 def get_active_graph_name() -> str:
     """Return the name of the currently active graph.
 
@@ -258,13 +276,57 @@ def _resolve_uri(host: str | None, bolt_port: int) -> str:
 
 
 def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
-    """Uncached URI resolution — called once per (host, bolt_port) pair."""
+    """Uncached URI resolution — called once per (host, bolt_port) pair.
+
+    Three connectivity modes:
+
+    1. **Local, no scheduler** — Neo4j on this machine → ``bolt://localhost:{port}``.
+    2. **Local, scheduler=slurm** — on a SLURM-managed cluster.  Discover the
+       compute node running services via ``squeue``.  If we're *on* that node,
+       use localhost; otherwise connect directly to the compute-node hostname.
+    3. **Remote** — SSH tunnel with +10 000 offset, optionally targeting a
+       compute node discovered via ``squeue`` over SSH.
+    """
     from imas_codex.remote.executor import is_local_host
 
-    if host is None or host == "local" or is_local_host(host):
+    local = host is None or host == "local" or is_local_host(host)
+
+    # Determine scheduler type
+    try:
+        from imas_codex.settings import get_graph_scheduler
+
+        scheduler = get_graph_scheduler()
+    except Exception:
+        scheduler = "none"
+
+    job_name = _get_service_job_name()
+
+    # ── Mode 1: local, no scheduler ────────────────────────────────────
+    if local and scheduler != "slurm":
         return f"bolt://localhost:{bolt_port}"
 
-    # Non-local: check tunnel port override
+    # ── Mode 2: local + SLURM ──────────────────────────────────────────
+    if local and scheduler == "slurm":
+        import socket
+
+        from imas_codex.remote.tunnel import discover_compute_node_local
+
+        compute_node = discover_compute_node_local(service_job_name=job_name)
+        if compute_node:
+            my_hostname = socket.gethostname().split(".")[0]
+            if compute_node.split(".")[0] == my_hostname:
+                logger.debug("SLURM: Neo4j on this node → localhost:%d", bolt_port)
+                return f"bolt://localhost:{bolt_port}"
+            logger.info(
+                "SLURM: Neo4j on peer node %s → direct connection", compute_node
+            )
+            return f"bolt://{compute_node}:{bolt_port}"
+        # squeue failed or no job found — fall back to localhost
+        logger.debug("SLURM: no service job found → localhost:%d", bolt_port)
+        return f"bolt://localhost:{bolt_port}"
+
+    # ── Mode 3: remote ─────────────────────────────────────────────────
+    # Check tunnel port override
     env_key = f"IMAS_CODEX_TUNNEL_BOLT_{host.upper().replace('-', '_')}"
     if tunnel_port := os.getenv(env_key):
         logger.debug(
@@ -284,16 +346,7 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
 
     tunnel_port_int = bolt_port + TUNNEL_OFFSET
 
-    # Determine remote bind address: when the graph scheduler is "slurm",
-    # Neo4j runs on a compute node, not the login node.
-    try:
-        from imas_codex.settings import get_graph_scheduler
-
-        scheduler = get_graph_scheduler()
-    except Exception:
-        scheduler = "none"
-
-    remote_bind = resolve_remote_bind(host, scheduler)
+    remote_bind = resolve_remote_bind(host, scheduler, service_job_name=job_name)
 
     ok = ensure_tunnel(
         port=bolt_port,
@@ -491,7 +544,9 @@ def reconnect_tunnel() -> bool:
     except Exception:
         scheduler = "none"
 
-    remote_bind = resolve_remote_bind(profile.host, scheduler)
+    remote_bind = resolve_remote_bind(
+        profile.host, scheduler, service_job_name=_get_service_job_name()
+    )
 
     # Re-establish
     ok = ensure_tunnel(

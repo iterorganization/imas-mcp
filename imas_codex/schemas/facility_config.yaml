@@ -765,6 +765,14 @@ classes:
           Whether SSH tunnels are needed from compute nodes back to login node services
           (embed server, Neo4j). True when services bind to 127.0.0.1 on login node.
         range: boolean
+      service_job_name:
+        description: >-
+          SLURM job name for the imas-codex services allocation (Neo4j + embed
+          server).  Used by ``discover_compute_node()`` to find which compute
+          node the services run on via ``squeue -n <name>``.  Default:
+          ``"imas-codex-services"``.  Override per facility when using a
+          different job name or wrapper script.
+        ifabsent: "imas-codex-services"
 
   PartitionConfig:
     description: A scheduler partition (Slurm) or queue (SGE/PBS)

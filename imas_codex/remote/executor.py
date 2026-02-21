@@ -525,6 +525,7 @@ def _get_facility_local_hosts() -> frozenset[str]:
     )
 
     fqdn = socket.getfqdn().lower()
+    hostname = socket.gethostname().lower()
     hosts: set[str] = set()
 
     for facility_id in list_facilities():
@@ -533,10 +534,16 @@ def _get_facility_local_hosts() -> frozenset[str]:
             login_nodes = config.get("login_nodes", [])
             local_hosts = config.get("local_hosts", [])
 
-            # Check if current FQDN matches any login_nodes pattern
+            # Check if current FQDN or hostname matches any login_nodes
+            # pattern.  SLURM compute nodes may not resolve a full FQDN
+            # (e.g. "98dci4-gpu-0002" without ".iter.org"), so we test
+            # both the FQDN and the short hostname.
             for pattern in login_nodes:
-                if fnmatch.fnmatch(fqdn, pattern.lower()):
-                    # We're on this facility's login node - add its local_hosts
+                pat_lower = pattern.lower()
+                if fnmatch.fnmatch(fqdn, pat_lower) or fnmatch.fnmatch(
+                    hostname, pat_lower
+                ):
+                    # We're on this facility — add its local_hosts
                     hosts.update(h.lower() for h in local_hosts)
                     break
         except Exception:

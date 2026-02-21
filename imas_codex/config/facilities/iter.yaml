@@ -16,9 +16,12 @@ ssh_host: iter
 # Login node FQDN patterns for is_local_host() detection.
 # When the current machine's FQDN matches any pattern, the local_hosts
 # aliases below are treated as local (no SSH needed).
+# Both FQDN and short hostname are tested against these patterns.
 login_nodes:
   - "98dci4-srv-*.iter.org"
   - "98dci4-gpu-*.iter.org"
+  - "98dci4-srv-*"
+  - "98dci4-gpu-*"
 
 # SSH aliases treated as local when running on a matching login node.
 local_hosts:

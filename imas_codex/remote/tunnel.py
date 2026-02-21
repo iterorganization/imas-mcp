@@ -411,11 +411,19 @@ def stop_tunnel(ssh_host: str) -> bool:
     return stopped
 
 
-def discover_compute_node(ssh_host: str) -> str | None:
+def discover_compute_node(
+    ssh_host: str, service_job_name: str = "imas-codex-services"
+) -> str | None:
     """Discover the SLURM compute node running imas-codex services.
 
-    SSHes to ``ssh_host`` and queries ``squeue`` for the
-    ``imas-codex-services`` job to find which compute node it runs on.
+    SSHes to ``ssh_host`` and queries ``squeue`` for the service job
+    to find which compute node it runs on.
+
+    Args:
+        ssh_host: SSH host alias for the facility login node.
+        service_job_name: SLURM job name to look for.
+            Configurable via ``compute.scheduler.service_job_name``
+            in the facility\'s private YAML.
 
     Returns:
         Compute node hostname, or None if no allocation is active.
@@ -427,7 +435,7 @@ def discover_compute_node(ssh_host: str) -> str | None:
                 ssh_host,
                 "-o",
                 "ConnectTimeout=10",
-                'squeue -n imas-codex-services -u "$USER" '
+                f'squeue -n {service_job_name} -u "$USER" '
                 '--format="%N" --noheader 2>/dev/null',
             ],
             capture_output=True,
@@ -443,7 +451,57 @@ def discover_compute_node(ssh_host: str) -> str | None:
     return None
 
 
-def resolve_remote_bind(ssh_host: str, scheduler: str) -> str:
+def discover_compute_node_local(
+    service_job_name: str = "imas-codex-services",
+) -> str | None:
+    """Discover the SLURM compute node running services — local squeue.
+
+    Like :func:`discover_compute_node` but runs ``squeue`` directly on
+    the current machine instead of SSHing.  Use this when
+    ``is_local_host()`` has already confirmed we are on the facility\'s
+    cluster (login or compute node).
+
+    Args:
+        service_job_name: SLURM job name to look for.
+            Configurable via ``compute.scheduler.service_job_name``
+            in the facility\'s private YAML.
+
+    Returns:
+        Compute node hostname, or None if squeue is unavailable or no
+        matching job is running.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "squeue",
+                "-n",
+                service_job_name,
+                "-u",
+                os.environ.get("USER", ""),
+                "--format=%N",
+                "--noheader",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            node = result.stdout.strip()
+            if node:
+                logger.debug(
+                    "Local squeue found service node: %s (job=%s)",
+                    node,
+                    service_job_name,
+                )
+                return node
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+
+def resolve_remote_bind(
+    ssh_host: str, scheduler: str, service_job_name: str = "imas-codex-services"
+) -> str:
     """Resolve the remote bind address for a tunnel.
 
     When the scheduler is ``"slurm"``, discovers the compute node and
@@ -452,12 +510,13 @@ def resolve_remote_bind(ssh_host: str, scheduler: str) -> str:
     Args:
         ssh_host: SSH host alias.
         scheduler: Service scheduler (``"slurm"`` or ``"none"``).
+        service_job_name: SLURM job name for compute node discovery.
 
     Returns:
         Remote bind hostname for the ``-L`` forward argument.
     """
     if scheduler == "slurm":
-        node = discover_compute_node(ssh_host)
+        node = discover_compute_node(ssh_host, service_job_name=service_job_name)
         if node:
             logger.info("SLURM compute node for %s: %s", ssh_host, node)
             return node
@@ -490,6 +549,7 @@ __all__ = [
     "TUNNEL_OFFSET",
     "_write_pid",
     "discover_compute_node",
+    "discover_compute_node_local",
     "ensure_tunnel",
     "is_port_bound_by_ssh",
     "is_systemd_tunnel_active",
