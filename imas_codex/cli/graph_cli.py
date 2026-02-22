@@ -1045,6 +1045,19 @@ def graph_service_install(
         )
     # ── End remote dispatch ──────────────────────────────────────────────
 
+    # ── SLURM guard ──────────────────────────────────────────────────────
+    # When graph runs on a compute node via SLURM, a systemd service on the
+    # login node would compete for GPFS locks and corrupt the database.
+    from imas_codex.settings import get_graph_scheduler
+
+    if get_graph_scheduler() == "slurm":
+        raise click.ClickException(
+            f"Graph scheduler is 'slurm' (location: {profile.location}).\n"
+            f"Neo4j runs on the compute node, not as a login-node systemd service.\n"
+            f"Use: imas-codex serve neo4j deploy"
+        )
+    # ── End SLURM guard ──────────────────────────────────────────────────
+
     if platform.system() != "Linux":
         raise click.ClickException("systemd services only supported on Linux")
 
@@ -1125,6 +1138,15 @@ def graph_service_start() -> None:
 
     profile = resolve_neo4j(auto_tunnel=False)
     service_name = f"imas-codex-neo4j-{profile.name}"
+
+    from imas_codex.settings import get_graph_scheduler
+
+    if get_graph_scheduler() == "slurm":
+        raise click.ClickException(
+            f"Graph scheduler is 'slurm' (location: {profile.location}).\n"
+            f"Neo4j runs on the compute node, not as a login-node systemd service.\n"
+            f"Use: imas-codex serve neo4j deploy"
+        )
 
     from imas_codex.graph.remote import is_remote_location
 
