@@ -540,8 +540,9 @@ class DataProgressDisplay:
         enriched = self.state.signals_enriched + self.state.signals_checked
         checked = self.state.signals_checked
 
-        # Compute ETC
-        total_cost = self.state.accumulated_cost + self.state.run_cost
+        # Compute ETC — accumulated_cost from graph is source of truth
+        # (already includes current-session costs after graph refresh)
+        total_cost = self.state.accumulated_cost
         etc = total_cost
         signals_enriched = self.state.run_enriched
         signals_remaining = self.state.pending_enrich + self.state.pending_check
@@ -864,11 +865,10 @@ class DataProgressDisplay:
         summary.append("\n")
 
         # USAGE stats
-        total_cost = self.state.accumulated_cost + self.state.run_cost
         summary.append("  USAGE ", style="bold cyan")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
-        summary.append(f"  cost=${self.state.run_cost:.2f}", style="yellow")
-        if self.state.accumulated_cost > 0:
-            summary.append(f"  total=${total_cost:.2f}", style="dim")
+        summary.append(f"  cost=${self.state.accumulated_cost:.2f}", style="yellow")
+        if self.state.run_cost > 0:
+            summary.append(f"  session=${self.state.run_cost:.2f}", style="dim")
 
         return summary

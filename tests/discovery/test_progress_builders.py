@@ -67,7 +67,7 @@ class TestBuildResourceSection:
         assert "COST" not in result.plain
 
     def test_cost_with_accumulated(self):
-        """COST row shows accumulated total when accumulated_cost > 0."""
+        """COST row shows accumulated total from graph as primary cost."""
         config = ResourceConfig(
             elapsed=60.0,
             run_cost=2.50,
@@ -76,8 +76,8 @@ class TestBuildResourceSection:
         result = build_resource_section(config, gauge_width=20)
         text = result.plain
         assert "COST" in text
-        assert "$2.50" in text
-        assert "total $7.50" in text  # 5.0 + 2.5
+        assert "$5.00" in text  # accumulated from graph is primary
+        assert "session $2.50" in text
 
     def test_cost_with_etc(self):
         """COST row shows ETC when projection exceeds current total."""

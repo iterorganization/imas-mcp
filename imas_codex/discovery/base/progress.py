@@ -1024,23 +1024,23 @@ def build_resource_section(
             section.append(f"  ETA {format_time(eta)}", style="dim")
     section.append("\n")
 
-    # COST row — informational spend display, no limit gauge
+    # COST row — accumulated cost from graph (source of truth)
     if not config.scan_only and config.run_cost is not None:
         section.append(f"{'  COST':<{LABEL_WIDTH}}", style="bold yellow")
 
-        # Show spend-to-projection gauge when ETC is available
-        total_cost = config.accumulated_cost + config.run_cost
+        # accumulated_cost from graph already includes current-session costs
+        total_cost = config.accumulated_cost
         etc = config.etc
         if etc is not None and etc > total_cost:
             section.append_text(make_resource_gauge(total_cost, etc, gauge_width))
         else:
             section.append("━" * gauge_width, style="yellow")
 
-        section.append(f"  ${config.run_cost:.2f}", style="bold")
+        section.append(f"  ${total_cost:.2f}", style="bold")
         if etc is not None and etc > total_cost:
             section.append(f"  ETC ${etc:.2f}", style="dim")
-        elif config.accumulated_cost > 0:
-            section.append(f"  total ${total_cost:.2f}", style="dim")
+        elif config.run_cost > 0:
+            section.append(f"  session ${config.run_cost:.2f}", style="dim")
         section.append("\n")
 
     # STATS row

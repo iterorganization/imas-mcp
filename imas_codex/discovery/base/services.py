@@ -331,9 +331,9 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
             )
             completion_kwargs["api_base"] = proxy_url
             completion_kwargs["api_key"] = os.getenv("LITELLM_MASTER_KEY", "")
-            label = f"litellm ({llm_location})"
+            label = llm_location
         else:
-            label = "litellm"
+            label = "local"
 
         response = litellm.completion(**completion_kwargs)
         if response and response.choices:

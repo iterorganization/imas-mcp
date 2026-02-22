@@ -834,40 +834,35 @@ class WikiProgressDisplay:
 
         scan_only = self.state.scan_only
 
-        # SCAN rate/cost: prefer live, fall back to final snapshot / accumulated
+        # SCAN rate/cost: prefer live rate, use accumulated graph cost
+        # (persists across sessions — graph is source of truth for cost)
         scan_rate = self.state.score_rate or self.state._final_score_rate
         scan_cost: float | None = (
-            self.state._run_score_cost if self.state._run_score_cost > 0 else None
+            self.state.accumulated_page_cost
+            if self.state.accumulated_page_cost > 0
+            else None
         )
-        if triage_complete and scan_cost is None:
-            scan_cost = (
-                self.state.accumulated_page_cost
-                if self.state.accumulated_page_cost > 0
-                else None
-            )
 
         # PAGE rate: prefer live, fall back to final snapshot
         page_rate = self.state.ingest_rate or self.state._final_ingest_rate
 
-        # DOC rate/cost: prefer live, fall back to final snapshot / accumulated
+        # DOC rate/cost: prefer live rate, use accumulated graph cost
         docs_display_rate = art_rate or self.state._final_artifact_rate
-        if docs_complete and docs_cost is None:
-            docs_cost = (
-                self.state.accumulated_artifact_cost
-                if self.state.accumulated_artifact_cost > 0
-                else None
-            )
+        docs_cost = (
+            self.state.accumulated_artifact_cost
+            if self.state.accumulated_artifact_cost > 0
+            else None
+        )
 
-        # IMAGE rate/cost: prefer live, fall back to final snapshot / accumulated
+        # IMAGE rate/cost: prefer live rate, use accumulated graph cost
         images_display_rate = (
             self.state.image_score_rate or self.state._final_image_rate
         )
-        if images_complete and images_cost is None:
-            images_cost = (
-                self.state.accumulated_image_cost
-                if self.state.accumulated_image_cost > 0
-                else None
-            )
+        images_cost = (
+            self.state.accumulated_image_cost
+            if self.state.accumulated_image_cost > 0
+            else None
+        )
 
         rows = [
             PipelineRowConfig(
@@ -1017,8 +1012,9 @@ class WikiProgressDisplay:
 
     def _build_resources_section(self) -> Text:
         """Build the resource consumption gauges using unified builder."""
-        # Compute ETC
-        total_facility_cost = self.state.accumulated_cost + self.state.run_cost
+        # Compute ETC — accumulated_cost from graph is source of truth
+        # (already includes current-session costs after graph refresh)
+        total_facility_cost = self.state.accumulated_cost
         etc = total_facility_cost
         cpp = self.state.cost_per_page
         if cpp and cpp > 0 and self.state.pending_score > 0:

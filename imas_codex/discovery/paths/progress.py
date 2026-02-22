@@ -691,8 +691,9 @@ class ParallelProgressDisplay:
 
     def _build_resources_section(self) -> Text:
         """Build the resource consumption gauges using unified builder."""
-        # Compute ETC
-        total_facility_cost = self.state.accumulated_cost + self.state.run_cost
+        # Compute ETC — accumulated_cost from graph is source of truth
+        # (already includes current-session costs after graph refresh)
+        total_facility_cost = self.state.accumulated_cost
         etc = total_facility_cost
         cpp = self.state.cost_per_path
         if cpp and cpp > 0:
