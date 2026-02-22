@@ -197,7 +197,12 @@ def enrich_directory(
     # tokei runs after du because its timeout scales by total_bytes.
 
     def _run_du() -> tuple:
-        """Run du -sb and return (total_bytes, timed_out)."""
+        """Run du -sb and return (total_bytes, timed_out).
+
+        Parse stdout regardless of return code: du returns non-zero
+        when it encounters permission-denied subdirectories (common on
+        NFS/GPFS) but still writes the valid total to stdout.
+        """
         try:
             proc = subprocess.run(
                 ["du", "-sb", path],
@@ -205,7 +210,7 @@ def enrich_directory(
                 text=True,
                 timeout=60,
             )
-            if proc.returncode == 0 and proc.stdout.strip():
+            if proc.stdout.strip():
                 try:
                     return int(proc.stdout.split()[0]), False
                 except (ValueError, IndexError):

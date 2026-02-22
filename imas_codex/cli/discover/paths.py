@@ -423,7 +423,10 @@ def _print_discovery_summary(
 
     # Row 3: ENRICH stats
     enrichment_aggs = result.get("enrichment_aggregates", {})
-    if enrichment_aggs and enrichment_aggs.get("total_bytes", 0) > 0:
+    if enrichment_aggs and (
+        enrichment_aggs.get("total_bytes", 0) > 0
+        or enrichment_aggs.get("total_lines", 0) > 0
+    ):
         total_bytes = enrichment_aggs.get("total_bytes", 0)
         total_lines = enrichment_aggs.get("total_lines", 0)
         multiformat = enrichment_aggs.get("multiformat_count", 0)
