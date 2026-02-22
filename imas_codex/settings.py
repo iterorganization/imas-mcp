@@ -194,13 +194,62 @@ def is_embedding_remote() -> bool:
 def get_embed_remote_url() -> str | None:
     """Get the remote embedding server URL.
 
-    Derived from server_port: ``http://localhost:{port}``.
-    Override: IMAS_CODEX_EMBED_REMOTE_URL env var.
+    Resolution mirrors the graph's SLURM-aware URI resolution:
+
+    1. Env override → ``IMAS_CODEX_EMBED_REMOTE_URL``
+    2. Local + SLURM scheduler → discover compute node via ``squeue``,
+       connect directly to ``http://{compute_node}:{port}``
+    3. Remote → tunnel via ``http://localhost:{port}``
+    4. Fallback → ``http://localhost:{port}``
     """
     if env := os.getenv("IMAS_CODEX_EMBED_REMOTE_URL"):
         return env or None
+
     port = get_embed_server_port()
+    location = get_embedding_location()
+
+    if location == "local":
+        return None
+
+    # Check if we're on the same facility as the embed server
+    try:
+        from imas_codex.remote.executor import is_local_host
+
+        local = is_local_host(location)
+    except Exception:
+        local = False
+
+    if local and get_embed_scheduler() == "slurm":
+        # Discover the SLURM compute node running services
+        import socket
+
+        from imas_codex.remote.tunnel import discover_compute_node_local
+
+        job_name = _get_embed_service_job_name(location)
+        compute_node = discover_compute_node_local(service_job_name=job_name)
+        if compute_node:
+            my_hostname = socket.gethostname().split(".")[0]
+            if compute_node.split(".")[0] == my_hostname:
+                return f"http://localhost:{port}"
+            return f"http://{compute_node}:{port}"
+
     return f"http://localhost:{port}"
+
+
+def _get_embed_service_job_name(location: str) -> str:
+    """Read ``service_job_name`` from the facility private YAML.
+
+    Falls back to ``"imas-codex-services"``.
+    """
+    try:
+        from imas_codex.config import get_facility_config
+
+        cfg = get_facility_config(location, include_private=True)
+        compute = cfg.get("compute", {})
+        scheduler = compute.get("scheduler", {})
+        return scheduler.get("service_job_name", "imas-codex-services")
+    except Exception:
+        return "imas-codex-services"
 
 
 def get_embed_server_port() -> int:

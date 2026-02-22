@@ -91,20 +91,28 @@ class ServiceStatus:
 # =============================================================================
 
 
-def get_graph_location() -> str:
-    """Get the configured graph location display name.
+def _get_service_display_label(location: str, scheduler: str) -> str:
+    """Build a display label that reflects where a service actually runs.
 
-    Reads from pyproject.toml ``[tool.imas-codex.graph].location`` via
-    the profiles module.  Returns the location name (e.g. ``"iter"``,
-    ``"local"``).
+    When scheduler is ``"slurm"``, the service runs on a compute node
+    within the facility, so display ``"{location} (slurm)"``.
+    Otherwise just return the location name.
+    """
+    if scheduler == "slurm":
+        return f"{location} (slurm)"
+    return location
 
-    Returns:
-        Location name, or 'unknown' if not configured.
+
+def get_graph_display_label() -> str:
+    """Get the display label for the graph service.
+
+    Combines location with scheduler context for accurate status display.
     """
     try:
         from imas_codex.graph.profiles import get_graph_location as _get_loc
+        from imas_codex.settings import get_graph_scheduler
 
-        return _get_loc()
+        return _get_service_display_label(_get_loc(), get_graph_scheduler())
     except Exception:
         return "unknown"
 
@@ -113,8 +121,8 @@ def neo4j_health_check() -> tuple[bool, str]:
     """Check Neo4j connectivity via bolt protocol.
 
     Returns:
-        (healthy, detail) tuple where detail is the graph location
-        (e.g., 'iter-login') instead of the raw bolt URI.
+        (healthy, detail) tuple where detail shows location and scheduler
+        context (e.g., ``"iter (slurm)"``).
     """
     try:
         from imas_codex.graph.client import GraphClient
@@ -122,8 +130,7 @@ def neo4j_health_check() -> tuple[bool, str]:
         with GraphClient() as gc:
             result = gc.query("RETURN 1 AS ok")
             if result and result[0]["ok"] == 1:
-                # Return the location display name instead of raw URI
-                return True, get_graph_location()
+                return True, get_graph_display_label()
         return False, "query returned unexpected result"
     except Exception as e:
         return False, str(e)[:100]
@@ -256,13 +263,14 @@ def embed_health_check() -> tuple[bool, str]:
     """Check embedding server health.
 
     Returns:
-        (healthy, detail) tuple where detail is the configured
-        embedding location (e.g. ``"iter"``) or ``"local"``.
+        (healthy, detail) tuple where detail shows location and scheduler
+        context (e.g. ``"iter (slurm)"``) or ``"local"``.
     """
     try:
         from imas_codex.embeddings.client import RemoteEmbeddingClient
         from imas_codex.settings import (
             get_embed_remote_url,
+            get_embed_scheduler,
             get_embedding_location,
         )
 
@@ -272,10 +280,12 @@ def embed_health_check() -> tuple[bool, str]:
         if not url:
             return True, "local"
 
+        label = _get_service_display_label(location, get_embed_scheduler())
+
         client = RemoteEmbeddingClient(url)
         try:
             if client.is_available(timeout=5.0):
-                return True, location
+                return True, label
             return False, "server unavailable"
         finally:
             client.close()
@@ -846,7 +856,7 @@ __all__ = [
     "build_servers_row",
     "create_service_monitor",
     "embed_health_check",
-    "get_graph_location",
+    "get_graph_display_label",
     "llm_health_check",
     "neo4j_health_check",
     "ssh_health_check",
