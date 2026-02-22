@@ -185,6 +185,7 @@ class ProgressState:
     ingest_rate: float | None = None
 
     # Artifact stats
+    total_artifacts: int = 0  # All wiki artifacts in graph (DOC denominator)
     artifacts_ingested: int = 0
     artifacts_scored: int = 0
     run_artifacts: int = 0
@@ -201,6 +202,18 @@ class ProgressState:
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
+
+    # Per-group accumulated costs (from graph, across all sessions)
+    accumulated_page_cost: float = 0.0
+    accumulated_artifact_cost: float = 0.0
+    accumulated_image_cost: float = 0.0
+
+    # Final rate snapshots — captured when workers reach done state
+    # so the done row still shows the average active rate achieved
+    _final_score_rate: float | None = None
+    _final_ingest_rate: float | None = None
+    _final_artifact_rate: float | None = None
+    _final_image_rate: float | None = None
 
     # Multi-site tracking (for facilities with multiple wiki instances)
     current_site_name: str = ""
@@ -668,9 +681,8 @@ class WikiProgressDisplay:
         # DOCS: artifact scoring + ingestion
         art_scored = self.state.artifacts_scored
         art_ingested = self.state.artifacts_ingested
-        art_pending_score = self.state.pending_artifact_score
         art_completed = art_scored + art_ingested
-        art_total = art_pending_score + art_completed
+        art_total = self.state.total_artifacts or art_completed
         art_score_rate = self.state.artifact_score_rate
         art_ingest_rate = self.state.artifact_rate
         art_rate = (
@@ -708,6 +720,9 @@ class WikiProgressDisplay:
         triage_at_100 = scored_pages >= score_total > 1
         if (self._worker_complete("triage") or triage_at_100) and not score:
             triage_complete = True
+            # Snapshot rate on completion transition
+            if self.state._final_score_rate is None and self.state.score_rate:
+                self.state._final_score_rate = self.state.score_rate
             if self.state.provider_budget_exhausted:
                 triage_complete_label = "api budget"
             elif self.state.cost_limit_reached:
@@ -734,6 +749,9 @@ class WikiProgressDisplay:
         pages_at_100 = self.state.pages_ingested >= ingest_total > 1
         if (self._worker_complete("pages") or pages_at_100) and not ingest:
             pages_complete = True
+            # Snapshot rate on completion transition
+            if self.state._final_ingest_rate is None and self.state.ingest_rate:
+                self.state._final_ingest_rate = self.state.ingest_rate
         if ingest:
             pages_text = self._clip_title(ingest.title, content_width - LABEL_WIDTH)
             pages_score = ingest.score
@@ -752,6 +770,9 @@ class WikiProgressDisplay:
         docs_at_100 = art_completed >= art_total > 1
         if (self._worker_complete("docs") or docs_at_100) and not artifact:
             docs_complete = True
+            # Snapshot rate on completion transition
+            if self.state._final_artifact_rate is None and art_rate:
+                self.state._final_artifact_rate = art_rate
             if self.state.provider_budget_exhausted:
                 docs_complete_label = "api budget"
             elif self.state.cost_limit_reached:
@@ -788,6 +809,9 @@ class WikiProgressDisplay:
         images_at_100 = img_scored >= img_total > 1
         if (self._worker_complete("images") or images_at_100) and not image:
             images_complete = True
+            # Snapshot rate on completion transition
+            if self.state._final_image_rate is None and self.state.image_score_rate:
+                self.state._final_image_rate = self.state.image_score_rate
             if self.state.provider_budget_exhausted:
                 images_complete_label = "api budget"
             elif self.state.cost_limit_reached:
@@ -803,8 +827,47 @@ class WikiProgressDisplay:
                 images_desc_fallback = "scoring image with VLM"
 
         # --- Build pipeline rows ---
+        #
+        # When a worker group is complete, show the accumulated cost from
+        # the graph (all sessions) and the final average active rate rather
+        # than the live EMA (which decays to None after workers stop).
 
         scan_only = self.state.scan_only
+
+        # SCAN rate/cost: prefer live, fall back to final snapshot / accumulated
+        scan_rate = self.state.score_rate or self.state._final_score_rate
+        scan_cost: float | None = (
+            self.state._run_score_cost if self.state._run_score_cost > 0 else None
+        )
+        if triage_complete and scan_cost is None:
+            scan_cost = (
+                self.state.accumulated_page_cost
+                if self.state.accumulated_page_cost > 0
+                else None
+            )
+
+        # PAGE rate: prefer live, fall back to final snapshot
+        page_rate = self.state.ingest_rate or self.state._final_ingest_rate
+
+        # DOC rate/cost: prefer live, fall back to final snapshot / accumulated
+        docs_display_rate = art_rate or self.state._final_artifact_rate
+        if docs_complete and docs_cost is None:
+            docs_cost = (
+                self.state.accumulated_artifact_cost
+                if self.state.accumulated_artifact_cost > 0
+                else None
+            )
+
+        # IMAGE rate/cost: prefer live, fall back to final snapshot / accumulated
+        images_display_rate = (
+            self.state.image_score_rate or self.state._final_image_rate
+        )
+        if images_complete and images_cost is None:
+            images_cost = (
+                self.state.accumulated_image_cost
+                if self.state.accumulated_image_cost > 0
+                else None
+            )
 
         rows = [
             PipelineRowConfig(
@@ -812,12 +875,8 @@ class WikiProgressDisplay:
                 style="bold blue",
                 completed=scored_pages,
                 total=score_total,
-                rate=self.state.score_rate,
-                cost=(
-                    self.state._run_score_cost
-                    if self.state._run_score_cost > 0
-                    else None
-                ),
+                rate=scan_rate,
+                cost=scan_cost,
                 disabled=scan_only,
                 worker_count=triage_count,
                 worker_annotation=triage_ann,
@@ -843,7 +902,7 @@ class WikiProgressDisplay:
                 style="bold magenta",
                 completed=self.state.pages_ingested,
                 total=ingest_total,
-                rate=self.state.ingest_rate,
+                rate=page_rate,
                 disabled=scan_only,
                 worker_count=pages_count,
                 worker_annotation=pages_ann,
@@ -867,7 +926,7 @@ class WikiProgressDisplay:
                 style="bold yellow",
                 completed=art_completed,
                 total=max(art_total, 1),
-                rate=art_rate,
+                rate=docs_display_rate,
                 cost=docs_cost,
                 disabled=scan_only,
                 worker_count=docs_count,
@@ -900,7 +959,7 @@ class WikiProgressDisplay:
                 style="bold green",
                 completed=img_scored,
                 total=max(img_total, 1),
-                rate=self.state.image_score_rate,
+                rate=images_display_rate,
                 cost=images_cost,
                 disabled=scan_only,
                 worker_count=images_count,
@@ -1447,7 +1506,16 @@ class WikiProgressDisplay:
         self.state.pending_artifact_score = pending_artifact_score
         self.state.pending_artifact_ingest = pending_artifact_ingest
         self.state.accumulated_cost = accumulated_cost
+        # Per-group accumulated costs
+        if "accumulated_page_cost" in kwargs:
+            self.state.accumulated_page_cost = kwargs["accumulated_page_cost"]
+        if "accumulated_artifact_cost" in kwargs:
+            self.state.accumulated_artifact_cost = kwargs["accumulated_artifact_cost"]
+        if "accumulated_image_cost" in kwargs:
+            self.state.accumulated_image_cost = kwargs["accumulated_image_cost"]
         # Update graph-based artifact counts if provided
+        if "total_artifacts" in kwargs:
+            self.state.total_artifacts = kwargs["total_artifacts"]
         if "artifacts_ingested" in kwargs:
             self.state.artifacts_ingested = kwargs["artifacts_ingested"]
         if "artifacts_scored" in kwargs:

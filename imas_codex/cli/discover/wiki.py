@@ -888,6 +888,16 @@ def wiki(
                                     "pending_artifact_ingest", 0
                                 ),
                                 accumulated_cost=stats.get("accumulated_cost", 0.0),
+                                accumulated_page_cost=stats.get(
+                                    "accumulated_page_cost", 0.0
+                                ),
+                                accumulated_artifact_cost=stats.get(
+                                    "accumulated_artifact_cost", 0.0
+                                ),
+                                accumulated_image_cost=stats.get(
+                                    "accumulated_image_cost", 0.0
+                                ),
+                                total_artifacts=stats.get("total_artifacts", 0),
                                 artifacts_ingested=stats.get("artifacts_ingested", 0),
                                 artifacts_scored=stats.get("artifacts_scored", 0),
                                 images_scored=stats.get("images_scored", 0),
