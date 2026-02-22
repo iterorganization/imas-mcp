@@ -529,6 +529,7 @@ class MediaWikiAdapter(WikiAdapter):
                 data = response.json()
                 images = data.get("query", {}).get("allimages", [])
 
+                prev_count = len(artifacts)
                 for img in images:
                     artifact = self._parse_image_info(img, facility)
                     if artifact:
@@ -537,6 +538,10 @@ class MediaWikiAdapter(WikiAdapter):
                 batch += 1
                 if on_progress:
                     on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
+
+                # Stop if API returned 0 new artifacts (pagination exhausted)
+                if len(artifacts) == prev_count:
+                    break
 
                 if "continue" in data:
                     continue_token = data["continue"].get("aicontinue")
@@ -646,6 +651,7 @@ class MediaWikiAdapter(WikiAdapter):
                 data = json.loads(stdout)
                 images = data.get("query", {}).get("allimages", [])
 
+                prev_count = len(artifacts)
                 for img in images:
                     artifact = self._parse_image_info(img, facility)
                     if artifact:
@@ -654,6 +660,10 @@ class MediaWikiAdapter(WikiAdapter):
                 batch += 1
                 if on_progress:
                     on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
+
+                # Stop if API returned 0 new artifacts (pagination exhausted)
+                if len(artifacts) == prev_count:
+                    break
 
                 # Check for continuation
                 if "continue" in data:
@@ -830,6 +840,7 @@ class MediaWikiAdapter(WikiAdapter):
                 data = response.json()
                 images = data.get("query", {}).get("allimages", [])
 
+                prev_count = len(artifacts)
                 for img in images:
                     artifact = self._parse_image_info(img, facility)
                     if artifact:
@@ -838,6 +849,10 @@ class MediaWikiAdapter(WikiAdapter):
                 batch += 1
                 if on_progress:
                     on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
+
+                # Stop if API returned 0 new artifacts (pagination exhausted)
+                if len(artifacts) == prev_count:
+                    break
 
                 # Check for continuation
                 if "continue" in data:
