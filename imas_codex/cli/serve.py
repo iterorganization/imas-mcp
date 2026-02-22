@@ -1249,21 +1249,24 @@ def _is_graph_compute_target() -> bool:
 def _compute_config() -> dict:
     """Load compute config from the facility's private YAML.
 
-    The facility is determined by ``[embedding].location`` (e.g. ``"iter"``).
+    Resolves the facility from ``[embedding].location`` (e.g.
+    ``"titan"`` → ``"iter"``).
     """
     from imas_codex.discovery.base.facility import get_facility_infrastructure
+    from imas_codex.remote.locations import resolve_location
     from imas_codex.settings import get_embedding_location
 
-    facility_id = get_embedding_location()
-    if facility_id == "local":
+    location = get_embedding_location()
+    if location == "local":
         raise click.ClickException(
             "Embedding location is 'local' — no compute config available."
         )
-    infra = get_facility_infrastructure(facility_id)
+    info = resolve_location(location)
+    infra = get_facility_infrastructure(info.facility)
     compute = infra.get("compute", {})
     if not compute:
         raise click.ClickException(
-            f"No compute config in {facility_id}_private.yaml.\n"
+            f"No compute config in {info.facility}_private.yaml.\n"
             "Add via: update_facility_infrastructure()"
         )
     return compute
@@ -1294,18 +1297,15 @@ def _gpu_partition() -> dict:
 
 def _facility_ssh() -> str | None:
     """SSH host for reaching the facility, or None if local."""
-    from imas_codex.discovery.base.facility import get_facility
-    from imas_codex.remote.executor import is_local_host
+    from imas_codex.remote.locations import is_location_local, resolve_location
     from imas_codex.settings import get_embedding_location
 
-    facility_id = get_embedding_location()
-    if facility_id == "local":
+    location = get_embedding_location()
+    if location == "local":
         return None
-    config = get_facility(facility_id)
-    ssh_host = config.get("ssh_host", facility_id)
-    if is_local_host(ssh_host):
+    if is_location_local(location):
         return None
-    return ssh_host
+    return resolve_location(location).ssh_host
 
 
 def _run_remote(cmd: str, timeout: int = 30, check: bool = False) -> str:

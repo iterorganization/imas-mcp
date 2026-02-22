@@ -120,8 +120,9 @@ def _ensure_ssh_tunnel(port: int, ssh_host: str | None = None) -> bool:
     """
     if ssh_host is None:
         from imas_codex.graph.profiles import get_graph_location
+        from imas_codex.remote.locations import resolve_location
 
-        ssh_host = get_graph_location()
+        ssh_host = resolve_location(get_graph_location()).ssh_host
 
     return ensure_tunnel(port=port, ssh_host=ssh_host)
 

@@ -90,20 +90,16 @@ def _get_tunnel_ports(
     ports: list[tuple[int, int, str, str]] = []
     all_services = not neo4j and not embed and not llm
 
-    # Discover SLURM compute node if any service uses slurm scheduler.
+    # Discover SLURM compute node if any service uses a compute location.
     # All services share the same allocation, so one lookup suffices.
     compute_node: str | None = None
     try:
-        from imas_codex.settings import (
-            get_embed_scheduler,
-            get_graph_scheduler,
-            get_llm_scheduler,
-        )
+        from imas_codex.graph.profiles import get_graph_location
+        from imas_codex.remote.locations import resolve_location
+        from imas_codex.settings import get_embedding_location, get_llm_location
 
-        if any(
-            s() == "slurm"
-            for s in [get_embed_scheduler, get_graph_scheduler, get_llm_scheduler]
-        ):
+        locations = [get_graph_location(), get_embedding_location(), get_llm_location()]
+        if any(resolve_location(loc).scheduler == "slurm" for loc in locations):
             compute_node = _discover_compute_node(host)
             if compute_node:
                 click.echo(f"  SLURM compute node: {compute_node}")

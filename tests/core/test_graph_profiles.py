@@ -92,7 +92,7 @@ class TestResolveNeo4j:
     """Tests for resolve_neo4j() profile resolution."""
 
     def test_resolve_default(self, monkeypatch):
-        """Default resolution uses iter location."""
+        """Default resolution uses titan location (SLURM compute on iter)."""
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
@@ -101,7 +101,7 @@ class TestResolveNeo4j:
 
         profile = resolve_neo4j()
         assert isinstance(profile, Neo4jProfile)
-        assert profile.location == "iter"
+        assert profile.location == "titan"
         assert profile.bolt_port == 7687
         assert profile.http_port == 7474
         assert profile.uri == "bolt://localhost:7687"

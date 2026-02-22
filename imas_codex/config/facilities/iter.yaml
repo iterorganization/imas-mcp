@@ -27,6 +27,15 @@ login_nodes:
 local_hosts:
   - iter
 
+# Compute sub-locations — SLURM partitions addressable as service locations.
+# When pyproject.toml sets location = "titan", the code looks up this table
+# to derive: facility=iter, scheduler=slurm, partition=titan.
+compute_locations:
+  titan:
+    scheduler: slurm
+    partition: titan
+    service_job_name: imas-codex-services
+
 # Data systems available at this facility
 data_systems:
   - imas

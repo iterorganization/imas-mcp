@@ -218,11 +218,11 @@ locations = ["iter", "tcv", "jt-60sa", "jet", "west", "mast-u", "asdex-u", "east
 # iter, tcv, jt-60sa use location name as SSH alias (implicit)
 
 [tool.imas-codex.graph]
-# Location = where Neo4j runs (SSH alias). Override: IMAS_CODEX_GRAPH_LOCATION=local
-# Graph name (data identity) lives in the (:GraphMeta) node, set via: graph init
-# Override active graph name: IMAS_CODEX_GRAPH=dev
-location = "iter"
-scheduler = "slurm"     # job scheduler: "slurm" or omit for login-node systemd
+# Location = where Neo4j runs. Use a facility name ("iter") for the login node,
+# or a compute location ("titan") for SLURM-managed services.
+# Compute locations are defined in {facility}.yaml under compute_locations.
+# Override: IMAS_CODEX_GRAPH_LOCATION=local
+location = "titan"
 neo4j-version = "2026.01.4-community"  # Docker tag for Apptainer image
 username = "neo4j"
 password = "imas-codex"
@@ -242,8 +242,7 @@ include-error-fields = false
 [tool.imas-codex.embedding]
 model = "Qwen/Qwen3-Embedding-0.6B"
 dimension = 256
-location = "iter"       # facility hosting embed server (or "local" for in-process)
-scheduler = "slurm"     # job scheduler: "slurm" or omit for login-node systemd
+location = "titan"      # compute location for embed server (or "local" for in-process)
 
 [tool.imas-codex.language]
 model = "google/gemini-3-flash-preview"

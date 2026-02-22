@@ -91,28 +91,21 @@ class ServiceStatus:
 # =============================================================================
 
 
-def _get_service_display_label(location: str, scheduler: str) -> str:
-    """Build a display label that reflects where a service actually runs.
+def _get_service_display_label(location: str) -> str:
+    """Get the display label for a service at the given location.
 
-    When scheduler is ``"slurm"``, the service runs on a compute node
-    within the facility, so display ``"{location} (slurm)"``.
-    Otherwise just return the location name.
+    Resolves compute locations (e.g. ``"titan"``) to their display name
+    directly.  The location string is already the label.
     """
-    if scheduler == "slurm":
-        return f"{location} (slurm)"
     return location
 
 
 def get_graph_display_label() -> str:
-    """Get the display label for the graph service.
-
-    Combines location with scheduler context for accurate status display.
-    """
+    """Get the display label for the graph service."""
     try:
-        from imas_codex.graph.profiles import get_graph_location as _get_loc
-        from imas_codex.settings import get_graph_scheduler
+        from imas_codex.graph.profiles import get_graph_location
 
-        return _get_service_display_label(_get_loc(), get_graph_scheduler())
+        return _get_service_display_label(get_graph_location())
     except Exception:
         return "unknown"
 
@@ -263,14 +256,13 @@ def embed_health_check() -> tuple[bool, str]:
     """Check embedding server health.
 
     Returns:
-        (healthy, detail) tuple where detail shows location and scheduler
-        context (e.g. ``"iter (slurm)"``) or ``"local"``.
+        (healthy, detail) tuple where detail is the location name
+        (e.g. ``"titan"``) or ``"local"``.
     """
     try:
         from imas_codex.embeddings.client import RemoteEmbeddingClient
         from imas_codex.settings import (
             get_embed_remote_url,
-            get_embed_scheduler,
             get_embedding_location,
         )
 
@@ -280,7 +272,7 @@ def embed_health_check() -> tuple[bool, str]:
         if not url:
             return True, "local"
 
-        label = _get_service_display_label(location, get_embed_scheduler())
+        label = _get_service_display_label(location)
 
         client = RemoteEmbeddingClient(url)
         try:

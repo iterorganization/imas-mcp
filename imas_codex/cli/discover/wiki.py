@@ -169,10 +169,10 @@ def wiki(
         from imas_codex.settings import get_embedding_location
 
         backend_str = get_embedding_location()
-        try:
-            backend = EmbeddingBackend(backend_str)
-        except ValueError:
+        if backend_str == "local":
             backend = EmbeddingBackend.LOCAL
+        else:
+            backend = EmbeddingBackend.REMOTE
 
         if backend == EmbeddingBackend.REMOTE:
             from imas_codex.embeddings.readiness import ensure_embedding_ready

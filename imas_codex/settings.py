@@ -194,70 +194,30 @@ def is_embedding_remote() -> bool:
 def get_embed_remote_url() -> str | None:
     """Get the remote embedding server URL.
 
-    Resolution mirrors the graph's SLURM-aware URI resolution:
+    Delegates to :func:`resolve_service_url` from the shared locations
+    module for unified local/SLURM/remote resolution.
 
-    1. Env override → ``IMAS_CODEX_EMBED_REMOTE_URL``
-    2. Local + SLURM scheduler → discover compute node via ``squeue``,
-       connect directly to ``http://{compute_node}:{port}``
-    3. Remote → tunnel via ``http://localhost:{port}``
-    4. Fallback → ``http://localhost:{port}``
+    Override: ``IMAS_CODEX_EMBED_REMOTE_URL`` env var.
     """
     if env := os.getenv("IMAS_CODEX_EMBED_REMOTE_URL"):
         return env or None
 
-    port = get_embed_server_port()
     location = get_embedding_location()
-
     if location == "local":
         return None
 
-    # Check if we're on the same facility as the embed server
-    try:
-        from imas_codex.remote.executor import is_local_host
+    from imas_codex.remote.locations import resolve_service_url
 
-        local = is_local_host(location)
-    except Exception:
-        local = False
-
-    if local and get_embed_scheduler() == "slurm":
-        # Discover the SLURM compute node running services
-        import socket
-
-        from imas_codex.remote.tunnel import discover_compute_node_local
-
-        job_name = _get_embed_service_job_name(location)
-        compute_node = discover_compute_node_local(service_job_name=job_name)
-        if compute_node:
-            my_hostname = socket.gethostname().split(".")[0]
-            if compute_node.split(".")[0] == my_hostname:
-                return f"http://localhost:{port}"
-            return f"http://{compute_node}:{port}"
-
-    return f"http://localhost:{port}"
-
-
-def _get_embed_service_job_name(location: str) -> str:
-    """Read ``service_job_name`` from the facility private YAML.
-
-    Falls back to ``"imas-codex-services"``.
-    """
-    try:
-        from imas_codex.config import get_facility_config
-
-        cfg = get_facility_config(location, include_private=True)
-        compute = cfg.get("compute", {})
-        scheduler = compute.get("scheduler", {})
-        return scheduler.get("service_job_name", "imas-codex-services")
-    except Exception:
-        return "imas-codex-services"
+    port = get_embed_server_port()
+    return resolve_service_url(location, port)
 
 
 def get_embed_server_port() -> int:
     """Get the embedding server port.
 
-    Derived from the embedding location's offset in the ``locations`` list,
-    mirroring the graph port convention:
-    ``embed_port = 18765 + location_offset``.
+    Derived from the embedding location's facility offset:
+    ``embed_port = 18765 + facility_offset``.
+    For compute locations (e.g. ``"titan"``), uses the parent facility's offset.
 
     Priority: IMAS_CODEX_EMBED_PORT env → convention offset → 18765.
     """
@@ -266,33 +226,36 @@ def get_embed_server_port() -> int:
     location = get_embedding_location()
     if location == "local":
         return EMBED_BASE_PORT
-    return EMBED_BASE_PORT + _get_location_offset(location)
+    from imas_codex.remote.locations import get_port_offset
+
+    return EMBED_BASE_PORT + get_port_offset(location)
 
 
 def get_embed_scheduler() -> str:
     """Get the embed server job scheduler.
 
-    Returns ``"slurm"`` when the server should be submitted as a SLURM
-    batch job on a compute node.  When omitted or ``"none"``, the server
-    runs directly on the login node via systemd.
+    Derived from the location — compute locations (e.g. ``"titan"``)
+    automatically resolve to ``"slurm"``.  Direct facility locations
+    and ``"local"`` resolve to ``"none"``.
 
-    Priority: IMAS_CODEX_EMBED_SCHEDULER env → [embedding].scheduler → "none".
+    Priority: IMAS_CODEX_EMBED_SCHEDULER env → location resolution → "none".
     """
     if env := os.getenv("IMAS_CODEX_EMBED_SCHEDULER"):
         return env.lower()
-    # Legacy env var
-    if env := os.getenv("IMAS_CODEX_EMBED_LOCATION"):
-        return "slurm" if env.lower() == "slurm" else "none"
-    scheduler = _get_section("embedding").get("scheduler")
-    return str(scheduler).lower() if scheduler else "none"
+    location = get_embedding_location()
+    if location == "local":
+        return "none"
+    from imas_codex.remote.locations import resolve_location
+
+    return resolve_location(location).scheduler
 
 
 def get_embed_host() -> str | None:
     """Get the hostname where the embedding server runs.
 
-    When ``scheduler = "slurm"``, reads the GPU node hostname from the
-    embedding facility's compute config (``gpus[current_use=embed_server].location``).
-    Otherwise returns ``None`` (server on login node / localhost).
+    For compute locations (e.g. ``"titan"``), reads the GPU node hostname
+    from the facility's compute config.  For direct facility locations,
+    returns ``None`` (server on login node / localhost).
 
     Override: IMAS_CODEX_EMBED_HOST env var (escape hatch).
     """
@@ -306,14 +269,17 @@ def get_embed_host() -> str | None:
 def _embed_host_from_facility() -> str | None:
     """Read GPU node hostname from the embedding facility's compute config.
 
-    Uses ``get_embedding_location()`` to identify the facility, then looks
-    for a ``GPUResource`` with ``current_use == "embed_server"`` and
-    returns its ``location`` (the hostname).
+    Resolves the facility from the embedding location (e.g. ``"titan"`` →
+    ``"iter"``), then looks for a ``GPUResource`` with
+    ``current_use == "embed_server"`` and returns its ``location``.
     """
     try:
         from imas_codex.discovery.base.facility import get_facility_infrastructure
+        from imas_codex.remote.locations import resolve_location
 
-        facility_id = get_embedding_location()
+        location = get_embedding_location()
+        info = resolve_location(location)
+        facility_id = info.facility
         if facility_id == "local":
             return None
         infra = get_facility_infrastructure(facility_id)
@@ -334,7 +300,7 @@ def get_llm_proxy_port() -> int:
     """Get the LLM proxy (LiteLLM) port.
 
     Follows the same convention as embed/graph ports:
-    ``llm_port = 18400 + location_offset``.
+    ``llm_port = 18400 + facility_offset``.
 
     Priority: IMAS_CODEX_LLM_PORT env → LITELLM_PORT env → convention offset → 18400.
     """
@@ -345,7 +311,9 @@ def get_llm_proxy_port() -> int:
     location = get_llm_location()
     if location == "local":
         return LLM_BASE_PORT
-    return LLM_BASE_PORT + _get_location_offset(location)
+    from imas_codex.remote.locations import get_port_offset
+
+    return LLM_BASE_PORT + get_port_offset(location)
 
 
 def get_llm_proxy_url() -> str:
@@ -368,27 +336,27 @@ def get_llm_proxy_url() -> str:
 def _get_llm_proxy_host() -> str:
     """Resolve the host where the LLM proxy runs.
 
-    When ``[llm].location`` names a facility and ``scheduler != "slurm"``,
-    the proxy runs on that facility's login node.  If we are running on
-    that facility (detected via ``is_local_host``), use the login node
-    hostname directly.  Otherwise return ``"127.0.0.1"`` so callers go
-    through the SSH tunnel.
-
-    Returns ``"127.0.0.1"`` for local, tunneled, or when hostname is unavailable.
+    For facility locations, the proxy runs on the login node.  If we are
+    on that facility (via ``is_local_host``), use the login node hostname
+    directly.  Otherwise return ``"127.0.0.1"`` for SSH tunnel access.
     """
     location = get_llm_location()
     if location == "local":
         return "127.0.0.1"
 
-    # Proxy runs on login node (not SLURM)
-    if get_llm_scheduler() == "slurm":
+    from imas_codex.remote.locations import resolve_location
+
+    info = resolve_location(location)
+
+    # Proxy on SLURM compute node — access via localhost (tunnel or direct)
+    if info.scheduler == "slurm":
         return "127.0.0.1"
 
     # If we're NOT on the facility, use 127.0.0.1 (access via SSH tunnel)
     try:
         from imas_codex.remote.executor import is_local_host
 
-        if not is_local_host(location):
+        if not is_local_host(info.ssh_host):
             return "127.0.0.1"
     except Exception:
         return "127.0.0.1"
@@ -397,10 +365,9 @@ def _get_llm_proxy_host() -> str:
     try:
         from imas_codex.discovery.base.facility import get_facility_infrastructure
 
-        infra = get_facility_infrastructure(location)
+        infra = get_facility_infrastructure(info.facility)
         hostname = infra.get("compute", {}).get("login_node", {}).get("hostname")
         if hostname:
-            # Strip FQDN domain for short hostname (avoids DNS issues)
             return hostname.split(".")[0]
     except Exception:
         pass
@@ -425,15 +392,19 @@ def get_llm_location() -> str:
 def get_llm_scheduler() -> str:
     """Get the LLM proxy job scheduler.
 
-    Returns ``"slurm"`` when the proxy should run on a SLURM compute node.
-    When omitted or ``"none"``, the proxy runs directly (login node / local).
+    Derived from the location — compute locations automatically resolve
+    to ``"slurm"``.
 
-    Priority: IMAS_CODEX_LLM_SCHEDULER env → [llm].scheduler → "none".
+    Priority: IMAS_CODEX_LLM_SCHEDULER env → location resolution → "none".
     """
     if env := os.getenv("IMAS_CODEX_LLM_SCHEDULER"):
         return env.lower()
-    scheduler = _get_section("llm").get("scheduler")
-    return str(scheduler).lower() if scheduler else "none"
+    location = get_llm_location()
+    if location == "local":
+        return "none"
+    from imas_codex.remote.locations import resolve_location
+
+    return resolve_location(location).scheduler
 
 
 # ─── Graph scheduler settings ──────────────────────────────────────────────
@@ -442,16 +413,20 @@ def get_llm_scheduler() -> str:
 def get_graph_scheduler() -> str:
     """Get the graph server job scheduler.
 
-    Returns ``"slurm"`` when the graph (Neo4j) should be submitted as a
-    SLURM batch job on a compute node.  When omitted or ``"none"``, the
-    server runs directly on the login node via systemd.
+    Derived from the graph location — compute locations (e.g. ``"titan"``)
+    automatically resolve to ``"slurm"``.
 
-    Priority: IMAS_CODEX_GRAPH_SCHEDULER env → [graph].scheduler → "none".
+    Priority: IMAS_CODEX_GRAPH_SCHEDULER env → location resolution → "none".
     """
     if env := os.getenv("IMAS_CODEX_GRAPH_SCHEDULER"):
         return env.lower()
-    scheduler = _get_section("graph").get("scheduler")
-    return str(scheduler).lower() if scheduler else "none"
+    from imas_codex.graph.profiles import get_graph_location
+    from imas_codex.remote.locations import resolve_location
+
+    location = get_graph_location()
+    if location == "local":
+        return "none"
+    return resolve_location(location).scheduler
 
 
 # ─── Model accessors ───────────────────────────────────────────────────────

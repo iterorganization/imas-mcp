@@ -76,10 +76,13 @@ class TestRemoteEmbeddingClient:
 class TestEncoderConfigRemote:
     """Tests for remote embedding configuration."""
 
-    def test_config_loads_remote_url_for_remote_backend(self):
+    def test_config_loads_remote_url_for_remote_backend(self, monkeypatch):
         """EncoderConfig loads remote_url from settings when backend=REMOTE."""
         from imas_codex.embeddings.config import EmbeddingBackend
 
+        # Override the conftest "local" location so get_embed_remote_url()
+        # returns a URL instead of None.
+        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_LOCATION", "iter")
         config = EncoderConfig(backend=EmbeddingBackend.REMOTE)
         # Should have loaded default from settings
         assert config.remote_url is not None

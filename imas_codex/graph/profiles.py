@@ -180,6 +180,9 @@ def check_graph_conflict(bolt_port: int = 7687) -> str | None:
 def get_graph_location() -> str:
     """Return where Neo4j runs (the location, not the graph name).
 
+    This returns the raw location string from config (e.g. ``"titan"``).
+    Use :func:`resolve_location` to get full metadata (facility, scheduler).
+
     Priority:
         1. ``IMAS_CODEX_GRAPH_LOCATION`` environment variable
         2. ``[tool.imas-codex.graph].location`` in pyproject.toml
@@ -199,27 +202,32 @@ def get_graph_location() -> str:
 
 
 def get_location_offset(location: str) -> int:
-    """Get the port offset for a location (its index in the locations list)."""
-    return _get_all_offsets().get(location, 0)
+    """Get the port offset for a location (its index in the locations list).
+
+    For compute locations (e.g. ``"titan"``), uses the parent facility's
+    offset since compute nodes share the facility's port slots.
+    """
+    from imas_codex.remote.locations import get_port_offset
+
+    return get_port_offset(location)
 
 
 # ─── Resolution ─────────────────────────────────────────────────────────────
 
 
 def _get_service_job_name(location: str | None = None) -> str:
-    """Read ``service_job_name`` from the facility private YAML.
+    """Read ``service_job_name`` from the resolved location.
 
-    Falls back to ``"imas-codex-services"`` if not configured.
+    Delegates to :mod:`imas_codex.remote.locations` for compute location
+    metadata.  Falls back to ``"imas-codex-services"`` if not configured.
     """
     if location is None:
         location = get_graph_location()
     try:
-        from imas_codex.config import get_facility_config
+        from imas_codex.remote.locations import resolve_location
 
-        cfg = get_facility_config(location, include_private=True)
-        compute = cfg.get("compute", {})
-        scheduler = compute.get("scheduler", {})
-        return scheduler.get("service_job_name", "imas-codex-services")
+        info = resolve_location(location)
+        return info.service_job_name
     except Exception:
         return "imas-codex-services"
 
@@ -278,40 +286,32 @@ def _resolve_uri(host: str | None, bolt_port: int) -> str:
 def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
     """Uncached URI resolution — called once per (host, bolt_port) pair.
 
-    Three connectivity modes:
-
-    1. **Local, no scheduler** — Neo4j on this machine → ``bolt://localhost:{port}``.
-    2. **Local, scheduler=slurm** — on a SLURM-managed cluster.  Discover the
-       compute node running services via ``squeue``.  If we're *on* that node,
-       use localhost; otherwise connect directly to the compute-node hostname.
-    3. **Remote** — SSH tunnel with +10 000 offset, optionally targeting a
-       compute node discovered via ``squeue`` over SSH.
+    Delegates local/SLURM resolution to :func:`resolve_service_url` from
+    the shared locations module.  Remote mode still handles auto-tunneling
+    directly since bolt needs the ``bolt://`` protocol and tunnel offset.
     """
+    from imas_codex.remote.locations import resolve_location
+
+    location = get_graph_location()
+    info = resolve_location(location)
+
     from imas_codex.remote.executor import is_local_host
 
     local = host is None or host == "local" or is_local_host(host)
 
-    # Determine scheduler type
-    try:
-        from imas_codex.settings import get_graph_scheduler
-
-        scheduler = get_graph_scheduler()
-    except Exception:
-        scheduler = "none"
-
-    job_name = _get_service_job_name()
-
     # ── Mode 1: local, no scheduler ────────────────────────────────────
-    if local and scheduler != "slurm":
+    if local and info.scheduler != "slurm":
         return f"bolt://localhost:{bolt_port}"
 
     # ── Mode 2: local + SLURM ──────────────────────────────────────────
-    if local and scheduler == "slurm":
+    if local and info.scheduler == "slurm":
         import socket
 
         from imas_codex.remote.tunnel import discover_compute_node_local
 
-        compute_node = discover_compute_node_local(service_job_name=job_name)
+        compute_node = discover_compute_node_local(
+            service_job_name=info.service_job_name
+        )
         if compute_node:
             my_hostname = socket.gethostname().split(".")[0]
             if compute_node.split(".")[0] == my_hostname:
@@ -346,7 +346,9 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
 
     tunnel_port_int = bolt_port + TUNNEL_OFFSET
 
-    remote_bind = resolve_remote_bind(host, scheduler, service_job_name=job_name)
+    remote_bind = resolve_remote_bind(
+        host, info.scheduler, service_job_name=info.service_job_name
+    )
 
     ok = ensure_tunnel(
         port=bolt_port,
@@ -402,9 +404,13 @@ def resolve_neo4j(
     password = graph_section.get("password", DEFAULT_PASSWORD)
     location = get_graph_location()
 
+    from imas_codex.remote.locations import resolve_location
+
+    loc_info = resolve_location(location)
+
     bolt_port = _convention_bolt_port(location)
     http_port = _convention_http_port(location)
-    host = _get_all_hosts().get(location)
+    host = loc_info.ssh_host if loc_info.ssh_host != "local" else None
 
     # Location-aware URI resolution (with optional auto-tunneling)
     if auto_tunnel:
@@ -437,13 +443,25 @@ def resolve_neo4j(
 
 
 def _convention_bolt_port(location: str) -> int:
-    """Bolt port for a known location, or base port for unknown."""
-    return BOLT_BASE_PORT + _get_all_offsets().get(location, 0)
+    """Bolt port for a location.
+
+    For compute locations (e.g. ``"titan"``), uses the parent facility's
+    offset since compute nodes share the facility's port slots.
+    """
+    from imas_codex.remote.locations import get_port_offset
+
+    return BOLT_BASE_PORT + get_port_offset(location)
 
 
 def _convention_http_port(location: str) -> int:
-    """HTTP port for a known location, or base port for unknown."""
-    return HTTP_BASE_PORT + _get_all_offsets().get(location, 0)
+    """HTTP port for a location.
+
+    For compute locations (e.g. ``"titan"``), uses the parent facility's
+    offset since compute nodes share the facility's port slots.
+    """
+    from imas_codex.remote.locations import get_port_offset
+
+    return HTTP_BASE_PORT + get_port_offset(location)
 
 
 def list_profiles() -> list[Neo4jProfile]:
@@ -567,15 +585,14 @@ def reconnect_tunnel() -> bool:
         )
 
     # Determine remote bind (compute node for SLURM, login node otherwise)
-    try:
-        from imas_codex.settings import get_graph_scheduler
+    from imas_codex.remote.locations import resolve_location
 
-        scheduler = get_graph_scheduler()
-    except Exception:
-        scheduler = "none"
+    loc_info = resolve_location(get_graph_location())
 
     remote_bind = resolve_remote_bind(
-        profile.host, scheduler, service_job_name=_get_service_job_name()
+        profile.host,
+        loc_info.scheduler,
+        service_job_name=loc_info.service_job_name,
     )
 
     # Re-establish
