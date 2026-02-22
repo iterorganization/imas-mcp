@@ -288,3 +288,56 @@ def session_status(service: str) -> None:
     except Exception as e:
         console.print(f"[red]Error checking session: {e}[/red]")
         raise SystemExit(1) from e
+
+
+@session.command("login")
+@click.argument("facility")
+@click.option("--site-index", "-i", default=0, type=int, help="Wiki site index")
+@click.option("--force", "-f", is_flag=True, help="Force re-authentication")
+def session_login(facility: str, site_index: int, force: bool) -> None:
+    """Authenticate to a wiki site and cache the session.
+
+    Triggers the full authentication flow (including MFA if required)
+    and caches session cookies for subsequent runs.
+
+    \b
+    Examples:
+      imas-codex wiki session login iter
+      imas-codex wiki session login iter --force
+    """
+    from imas_codex.discovery.wiki.config import WikiConfig
+
+    try:
+        config = WikiConfig.from_facility(facility, site_index)
+    except Exception as e:
+        console.print(f"[red]Error loading wiki config: {e}[/red]")
+        raise SystemExit(1) from e
+
+    console.print(f"[bold]Authenticating: {config.base_url}[/bold]")
+    console.print(f"  Type: {config.site_type}, Auth: {config.auth_type}")
+
+    if config.site_type == "confluence":
+        from imas_codex.discovery.wiki.confluence import ConfluenceClient
+
+        client = ConfluenceClient(
+            base_url=config.base_url,
+            credential_service=config.credential_service or facility,
+        )
+
+        if force:
+            from imas_codex.discovery.wiki.auth import CredentialManager
+
+            CredentialManager().delete_session(config.credential_service or facility)
+            console.print("  [dim]Cleared existing session[/dim]")
+
+        if client.authenticate(force=force):
+            console.print("[green]✓ Authenticated — session cached for 72h[/green]")
+        else:
+            console.print("[red]✗ Authentication failed[/red]")
+            raise SystemExit(1)
+    else:
+        console.print(
+            f"[yellow]Session login not yet supported for {config.site_type}[/yellow]"
+        )
+        console.print("Use 'imas-codex wiki test' instead")
+        raise SystemExit(1)
