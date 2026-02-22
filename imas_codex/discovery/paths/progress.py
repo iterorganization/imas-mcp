@@ -173,7 +173,7 @@ class ProgressState:
     # Worker group for supervision display
     worker_group: SupervisedWorkerGroup | None = None
 
-    # Service monitor (graph, embed, model, SSH health)
+    # Service monitor (graph, embed, models, SSH health)
     service_monitor: Any = None
 
     # Enrichment aggregates for summary display

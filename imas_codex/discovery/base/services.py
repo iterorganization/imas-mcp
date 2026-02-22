@@ -289,45 +289,21 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
     """Check LLM provider health via a lightweight API call.
 
     Uses LiteLLM's model list or a minimal completion to verify
-    the configured model is reachable. Returns model short name
-    and provider as detail.
+    the configured model is reachable. Returns the service routing
+    label (e.g. ``"litellm"`` or the proxy location) as detail.
 
     Args:
         section: Model section to check (language, vision, etc.)
 
     Returns:
-        (healthy, detail) tuple where detail is like "gemini-flash (openrouter)"
+        (healthy, detail) tuple where detail is the service name
     """
     try:
         from imas_codex.settings import get_model
 
         model = get_model(section)
 
-        # Extract short model name and provider
-        parts = model.rsplit("/", 1)
-        short_name = parts[-1] if parts else model
-        # Truncate long model names
-        if len(short_name) > 25:
-            short_name = short_name[:22] + "..."
-
-        # Detect provider from base URL or model prefix
         import os
-
-        base_url = os.getenv("OPENAI_BASE_URL", "")
-        if "openrouter" in base_url.lower():
-            provider = "openrouter"
-        elif model.startswith("openrouter/"):
-            provider = "openrouter"
-        elif model.startswith("google/"):
-            provider = "google"
-        elif model.startswith("anthropic/"):
-            provider = "anthropic"
-        elif model.startswith("openai/"):
-            provider = "openai"
-        else:
-            provider = parts[0] if len(parts) > 1 else "api"
-
-        label = f"{short_name} ({provider})"
 
         # Try a lightweight LiteLLM call to verify connectivity
         from imas_codex.discovery.base.llm import set_litellm_offline_env
@@ -355,7 +331,9 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
             )
             completion_kwargs["api_base"] = proxy_url
             completion_kwargs["api_key"] = os.getenv("LITELLM_MASTER_KEY", "")
-            label = f"{short_name} ({llm_location})"
+            label = f"litellm ({llm_location})"
+        else:
+            label = "litellm"
 
         response = litellm.completion(**completion_kwargs)
         if response and response.choices:
@@ -363,11 +341,7 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
         return False, f"{label} no response"
     except Exception as e:
         err = str(e)[:60]
-        if "model" in locals():
-            parts = model.rsplit("/", 1)  # type: ignore[possibly-undefined]
-            short_name = parts[-1] if parts else model  # type: ignore[possibly-undefined]
-            return False, f"{short_name}: {err}"
-        return False, err
+        return False, f"litellm: {err}"
 
 
 # =============================================================================
@@ -697,7 +671,7 @@ def create_service_monitor(
 
     - ``graph``: Neo4j connectivity
     - ``embed``: Embedding server health
-    - ``model``: LLM provider health (OpenRouter, Google, Anthropic, etc.)
+    - ``models``: LLM service health (LiteLLM proxy)
     - ``ssh``: SSH connectivity to remote host (critical — workers pause)
     - ``auth``: Wiki page reachability via HTTP (critical — workers pause)
 
@@ -738,7 +712,7 @@ def create_service_monitor(
 
     if check_model:
         monitor.add_check(
-            "model",
+            "models",
             lambda sec=model_section: llm_health_check(sec),
             poll_interval=60.0,  # LLM APIs are generally stable
             critical=False,  # Workers have their own retry logic
