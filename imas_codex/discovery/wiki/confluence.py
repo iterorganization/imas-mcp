@@ -30,6 +30,7 @@ Example:
     content = client.get_page_content(page_id)
 """
 
+import json
 import logging
 import re
 import time
@@ -48,6 +49,9 @@ DEFAULT_TIMEOUT = 30
 
 # Rate limiting: minimum seconds between requests
 RATE_LIMIT_DELAY = 0.5
+
+# Content-Type header for HTML form submissions (SSO flow)
+_FORM_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
 
 
 @dataclass
@@ -186,7 +190,10 @@ class ConfluenceClient:
     def authenticate(self, force: bool = False) -> bool:
         """Authenticate with Confluence.
 
-        Attempts to use existing session, falls back to credentials.
+        Supports multiple authentication methods:
+        1. Existing session cookies (fast path)
+        2. Azure AD SAML SSO via F5 BIG-IP APM
+        3. HTTP Basic Auth fallback (simple instances)
 
         Args:
             force: Force re-authentication even if session exists
@@ -202,61 +209,651 @@ class ConfluenceClient:
 
         if not force:
             try:
-                # Test session with a simple API call
+                # Test session — don't follow redirects so we can detect SSO
                 response = session.get(
                     f"{self.api_url}/user/current",
                     timeout=self.timeout,
+                    allow_redirects=False,
                 )
                 if response.status_code == 200:
-                    user = response.json()
-                    logger.info(
-                        "Session valid for user: %s",
-                        user.get("displayName", user.get("username")),
-                    )
-                    self._authenticated = True
-                    return True
+                    try:
+                        user = response.json()
+                        logger.info(
+                            "Session valid for user: %s",
+                            user.get("displayName", user.get("username")),
+                        )
+                        self._authenticated = True
+                        return True
+                    except (json.JSONDecodeError, ValueError):
+                        logger.debug("Session returned non-JSON — SSO redirect likely")
+                elif response.status_code in (301, 302, 303):
+                    logger.debug("Session expired (got redirect)")
             except Exception as e:
                 logger.debug("Session check failed: %s", e)
 
         # Need to authenticate with credentials
         username, password = require_credentials(self.credential_service)
 
-        # Confluence uses session-based auth via login page
-        # Try basic auth first (works for API tokens)
-        session.auth = (username, password)
+        # Try Azure AD SSO authentication first
+        # (handles F5 BIG-IP APM → Azure AD → SAML → Confluence flow)
+        if self._authenticate_sso(username, password):
+            return True
 
+        # Fallback: HTTP Basic Auth (simple Confluence instances without SSO)
+        session.auth = (username, password)
         try:
             response = session.get(
                 f"{self.api_url}/user/current",
                 timeout=self.timeout,
+                allow_redirects=False,
             )
             if response.status_code == 200:
-                user = response.json()
-                logger.info(
-                    "Authenticated as: %s",
-                    user.get("displayName", user.get("username")),
-                )
-
-                # Save session cookies (clear duplicates first)
-                # Convert to dict to deduplicate cookies by name
-                cookie_dict = {}
-                for cookie in session.cookies:
-                    cookie_dict[cookie.name] = cookie.value
-
-                self._creds.set_session(
-                    self.credential_service,
-                    cookie_dict,
-                )
-                self._authenticated = True
-                return True
+                try:
+                    user = response.json()
+                    logger.info(
+                        "Authenticated as: %s",
+                        user.get("displayName", user.get("username")),
+                    )
+                    cookie_dict = {c.name: c.value for c in session.cookies}
+                    self._creds.set_session(
+                        self.credential_service,
+                        cookie_dict,
+                    )
+                    self._authenticated = True
+                    return True
+                except (json.JSONDecodeError, ValueError):
+                    logger.debug("Basic auth returned non-JSON — SSO blocking access")
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 logger.error("Authentication failed: invalid credentials")
             else:
                 logger.error("Authentication failed: %s", e)
+        except Exception as e:
+            logger.error("Authentication failed: %s", e)
+
+        # Clear basic auth so it doesn't interfere with subsequent requests
+        session.auth = None
+        return False
+
+    def _authenticate_sso(self, username: str, password: str) -> bool:
+        """Authenticate via Azure AD SAML SSO through F5 BIG-IP APM.
+
+        Flow:
+        1. Navigate to Confluence → F5 redirects to Azure AD
+        2. Extract login config ($Config) from Azure AD page
+        3. Call GetCredentialType to validate user and get updated flowToken
+        4. POST credentials to Azure AD login endpoint
+        5. Handle KMSI (Keep Me Signed In) prompt if shown
+        6. Follow SAML assertion redirects back through F5
+        7. Verify authenticated API access and save session cookies
+
+        Returns:
+            True if SSO authentication succeeded
+        """
+        session = self._get_session()
+        session.auth = None  # Clear any basic auth
+
+        logger.info("Attempting Azure AD SSO for %s", self.base_url)
+
+        # Step 1: Navigate to Confluence → triggers F5 → Azure AD redirect
+        try:
+            response = session.get(
+                f"{self.base_url}/",
+                timeout=60,
+                allow_redirects=True,
+            )
+        except Exception as e:
+            logger.debug("SSO initial navigation failed: %s", e)
             return False
 
+        if "login.microsoftonline.com" not in response.url:
+            logger.debug(
+                "SSO did not redirect to Azure AD (url: %s)", response.url[:100]
+            )
+            return False
+
+        # Step 2: Extract $Config JSON from Azure AD login page
+        config = self._extract_azure_config(response.text)
+        if config is None:
+            logger.warning("Could not extract Azure AD config from login page")
+            return False
+
+        flow_token = config.get("sFT", "")
+        ctx = config.get("sCtx", "")
+        url_post = config.get("urlPost", "")
+        canary = config.get("canary", "")
+
+        if not flow_token or not ctx or not url_post:
+            logger.warning("Missing required Azure AD login parameters")
+            return False
+
+        # Username must be a full email (Azure AD UPN)
+        if "@" not in username:
+            logger.error(
+                "Azure AD SSO requires an email address as username, "
+                "got '%s'. Update credentials with: "
+                "imas-codex credentials set %s --username your.name@iter.org",
+                username,
+                self.credential_service,
+            )
+            return False
+
+        # Step 3: Call GetCredentialType to validate user and refresh flowToken
+        gct_url = config.get(
+            "urlGetCredentialType",
+            "https://login.microsoftonline.com/common/GetCredentialType?mkt=en-US",
+        )
+        gct_data = {
+            "username": username,
+            "isOtherIdpSupported": True,
+            "checkPhones": False,
+            "isRemoteNGCSupported": True,
+            "isCookieBannerShown": False,
+            "isFidoSupported": True,
+            "forceotclogin": False,
+            "isExternalFederationDisallowed": False,
+            "isRemoteConnectSupported": False,
+            "federationFlags": 0,
+            "isSignup": False,
+            "flowToken": flow_token,
+        }
+
+        try:
+            gct_resp = session.post(gct_url, json=gct_data, timeout=30)
+            gct_result = gct_resp.json()
+
+            if_exists = gct_result.get("IfExistsResult", -1)
+            if if_exists == 1:
+                logger.error(
+                    "Azure AD: User '%s' does not exist in this tenant. "
+                    "Check your email format (e.g., firstname.lastname@iter.org). "
+                    "Update with: imas-codex credentials set %s --username your.name@iter.org",
+                    username,
+                    self.credential_service,
+                )
+                return False
+
+            # Update flowToken from GetCredentialType response
+            updated_ft = gct_result.get("FlowToken")
+            if updated_ft:
+                flow_token = updated_ft
+                logger.debug("Updated flowToken from GetCredentialType")
+
+            # Check for federation redirect
+            fed_url = gct_result.get("Credentials", {}).get("FederationRedirectUrl")
+            if fed_url:
+                logger.info("User is federated, redirect: %s", fed_url[:100])
+                # Federated users need to authenticate at their IdP
+                # For now, try the standard Azure AD flow — federation may be
+                # handled server-side via the updated credential type info
+
+        except Exception as e:
+            logger.debug("GetCredentialType failed (non-fatal): %s", e)
+
+        # Step 4: POST credentials to Azure AD
+        login_url = f"https://login.microsoftonline.com{url_post}"
+        logger.debug("Posting credentials to Azure AD for %s", username)
+
+        post_data = {
+            "i13": "0",
+            "login": username,
+            "loginfmt": username,
+            "type": "11",
+            "LoginOptions": "3",
+            "lrt": "",
+            "lrtPartition": "",
+            "hisRegion": "",
+            "hisScaleUnit": "",
+            "passwd": password,
+            "ps": "2",
+            "psRNGCDefaultType": "",
+            "psRNGCEntropy": "",
+            "psRNGCSLK": "",
+            "canary": canary,
+            "ctx": ctx,
+            "hpgrequestid": "",
+            "flowToken": flow_token,
+            "PPSX": "",
+            "NewUser": "1",
+            "FoundMSAs": "",
+            "fspost": "0",
+            "i21": "0",
+            "CookieDisclosure": "0",
+            "IsFidoSupported": "1",
+            "isSignupPost": "0",
+            "i19": "2326",
+        }
+
+        try:
+            response = session.post(
+                login_url,
+                data=post_data,
+                timeout=60,
+                allow_redirects=False,
+                headers=_FORM_HEADERS,
+            )
+        except Exception as e:
+            logger.warning("SSO credential POST failed: %s", e)
+            return False
+
+        # Step 5: Follow auto-submit forms (device auth, SAML assertions)
+        # and handle interactive pages (TFA, KMSI) in a unified loop.
+        for _step in range(20):
+            # Handle redirects
+            if response.status_code in (301, 302, 303):
+                redirect_url = response.headers.get("Location", "")
+                if redirect_url.startswith("/"):
+                    parsed = urlparse(response.url)
+                    redirect_url = f"{parsed.scheme}://{parsed.netloc}{redirect_url}"
+                logger.debug("Following redirect → %s", redirect_url[:100])
+                response = session.get(
+                    redirect_url,
+                    timeout=60,
+                    allow_redirects=False,
+                )
+                continue
+
+            if response.status_code != 200:
+                break
+
+            # Check for Azure AD error page
+            resp_config = self._extract_azure_config(response.text)
+            if resp_config:
+                err_code = resp_config.get("sErrorCode")
+                if err_code:
+                    logger.error(
+                        "Azure AD error %s: %s",
+                        err_code,
+                        resp_config.get("sErrTxt", ""),
+                    )
+                    return False
+
+                # Handle MFA (Two-Factor Authentication)
+                pgid = resp_config.get("pgid", "")
+                if pgid == "ConvergedTFA":
+                    response = self._handle_mfa(session, resp_config)
+                    if response is None:
+                        return False
+                    continue
+
+                # Handle KMSI ("Stay signed in?")
+                if pgid == "KmsiInterrupt":
+                    response = self._handle_kmsi(session, resp_config)
+                    if response is None:
+                        return False
+                    continue
+
+            # Try auto-submit form (device auth, SAML assertion relay)
+            action, fields = self._extract_auto_submit_form(response.text, response.url)
+            if action:
+                logger.debug("Submitting form → %s", action[:80])
+                try:
+                    response = session.post(
+                        action,
+                        data=fields,
+                        timeout=60,
+                        allow_redirects=False,
+                        headers=_FORM_HEADERS,
+                    )
+                except Exception as e:
+                    logger.warning("Form submission failed: %s", e)
+                    return False
+                continue
+
+            # No more forms/redirects — we should be on Confluence now
+            break
+
+        # Step 7: Verify authentication
+        try:
+            verify = session.get(
+                f"{self.api_url}/user/current",
+                timeout=self.timeout,
+                allow_redirects=False,
+            )
+            if verify.status_code == 200:
+                try:
+                    user = verify.json()
+                    logger.info(
+                        "SSO authentication successful: %s",
+                        user.get("displayName", user.get("username", "unknown")),
+                    )
+                    cookie_dict = {c.name: c.value for c in session.cookies}
+                    self._creds.set_session(self.credential_service, cookie_dict)
+                    self._authenticated = True
+                    return True
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(
+                        "SSO produced non-JSON API response — auth may have failed"
+                    )
+            else:
+                logger.warning(
+                    "SSO verification returned status %d", verify.status_code
+                )
+        except Exception as e:
+            logger.warning("SSO verification request failed: %s", e)
+
         return False
+
+    def _handle_mfa(
+        self, session: requests.Session, config: dict
+    ) -> requests.Response | None:
+        """Handle Azure AD Multi-Factor Authentication.
+
+        Supports PhoneAppOTP (authenticator TOTP code) and
+        PhoneAppNotification (push notification with polling).
+
+        Returns the response after MFA completion, or None on failure.
+        """
+        flow_token = config.get("sFT", "")
+        ctx = config.get("sCtx", "")
+        url_begin = config.get(
+            "urlBeginAuth",
+            "https://login.microsoftonline.com/common/SAS/BeginAuth",
+        )
+        url_end = config.get(
+            "urlEndAuth",
+            "https://login.microsoftonline.com/common/SAS/EndAuth",
+        )
+        url_process = config.get(
+            "urlPost",
+            "https://login.microsoftonline.com/common/SAS/ProcessAuth",
+        )
+
+        proofs = config.get("arrUserProofs", [])
+        default_method = None
+        for p in proofs:
+            if p.get("isDefault"):
+                default_method = p.get("authMethodId")
+                break
+        if not default_method and proofs:
+            default_method = proofs[0].get("authMethodId")
+
+        logger.info("MFA required (method: %s)", default_method)
+
+        # Step 1: Begin MFA authentication
+        begin_data = {
+            "AuthMethodId": default_method,
+            "Method": "BeginAuth",
+            "ctx": ctx,
+            "flowToken": flow_token,
+        }
+        try:
+            begin_resp = session.post(url_begin, json=begin_data, timeout=30)
+            begin_result = begin_resp.json()
+        except Exception as e:
+            logger.error("MFA BeginAuth failed: %s", e)
+            return None
+
+        if not begin_result.get("Success"):
+            logger.error("MFA BeginAuth rejected: %s", begin_result.get("Message", ""))
+            return None
+
+        mfa_flow_token = begin_result.get("FlowToken", flow_token)
+        mfa_ctx = begin_result.get("Ctx", ctx)
+        session_id = begin_result.get("SessionId", "")
+
+        # Step 2: Get OTP code from user
+        if default_method in ("PhoneAppOTP", "OneWaySMS"):
+            otp_code = self._prompt_mfa_code()
+            if not otp_code:
+                logger.error("MFA: No OTP code provided")
+                return None
+        elif default_method == "PhoneAppNotification":
+            # Push notification — poll for approval
+            logger.info("MFA: Check your authenticator app for approval")
+            otp_code = None
+            max_polls = config.get("iMaxPollAttempts", 12)
+            for poll in range(max_polls):
+                time.sleep(5)
+                poll_data = {
+                    "AuthMethodId": default_method,
+                    "Method": "EndAuth",
+                    "SessionId": session_id,
+                    "FlowToken": mfa_flow_token,
+                    "Ctx": mfa_ctx,
+                    "PollCount": poll + 1,
+                }
+                try:
+                    poll_resp = session.post(url_end, json=poll_data, timeout=30)
+                    poll_result = poll_resp.json()
+                except Exception as e:
+                    logger.warning("MFA poll %d failed: %s", poll + 1, e)
+                    continue
+
+                if poll_result.get("Success"):
+                    mfa_flow_token = poll_result.get("FlowToken", mfa_flow_token)
+                    mfa_ctx = poll_result.get("Ctx", mfa_ctx)
+                    logger.info("MFA push approved")
+                    break
+                if poll_result.get("Retry", True) is False:
+                    logger.error("MFA push denied")
+                    return None
+            else:
+                logger.error("MFA push approval timed out")
+                return None
+        else:
+            logger.error("Unsupported MFA method: %s", default_method)
+            return None
+
+        # Step 3: End MFA verification (for OTP methods)
+        if otp_code is not None:
+            end_data = {
+                "AuthMethodId": default_method,
+                "Method": "EndAuth",
+                "SessionId": session_id,
+                "FlowToken": mfa_flow_token,
+                "Ctx": mfa_ctx,
+                "AdditionalAuthData": otp_code,
+            }
+            try:
+                end_resp = session.post(url_end, json=end_data, timeout=30)
+                end_result = end_resp.json()
+            except Exception as e:
+                logger.error("MFA EndAuth failed: %s", e)
+                return None
+
+            if not end_result.get("Success"):
+                logger.error(
+                    "MFA verification failed: %s",
+                    end_result.get("Message", "Invalid code"),
+                )
+                return None
+
+            mfa_flow_token = end_result.get("FlowToken", mfa_flow_token)
+            mfa_ctx = end_result.get("Ctx", mfa_ctx)
+
+        # Step 4: Process MFA completion
+        process_data = {
+            "type": 19,
+            "GeneralVerify": False,
+            "request": mfa_ctx,
+            "mfaLastPollStart": "",
+            "mfaLastPollEnd": "",
+            "mfaPollingInterval": "",
+            "flowToken": mfa_flow_token,
+            "canary": config.get("canary", ""),
+            "login": "",
+            "hpgrequestid": "",
+        }
+        try:
+            response = session.post(
+                url_process,
+                data=process_data,
+                timeout=60,
+                allow_redirects=False,
+                headers=_FORM_HEADERS,
+            )
+            logger.debug("MFA ProcessAuth → status %d", response.status_code)
+            return response
+        except Exception as e:
+            logger.error("MFA ProcessAuth failed: %s", e)
+            return None
+
+    def _prompt_mfa_code(self) -> str | None:
+        """Prompt user for MFA verification code.
+
+        Returns:
+            OTP code string, or None if unable to prompt.
+        """
+        import sys
+
+        if not sys.stdin.isatty():
+            logger.error(
+                "MFA code required but no interactive terminal. "
+                "Run interactively or use a session with valid cookies."
+            )
+            return None
+
+        try:
+            code = input("\nMFA verification code from authenticator app: ").strip()
+            return code if code else None
+        except (EOFError, KeyboardInterrupt):
+            return None
+
+    def _handle_kmsi(
+        self, session: requests.Session, config: dict
+    ) -> requests.Response | None:
+        """Handle Azure AD KMSI (Keep Me Signed In) prompt.
+
+        Automatically accepts "Stay signed in?" to get longer sessions.
+
+        Returns the response after KMSI, or None on failure.
+        """
+        flow_token = config.get("sFT", "")
+        ctx = config.get("sCtx", "")
+        canary = config.get("canary", "")
+        url_post = config.get("urlPost", "")
+
+        if not url_post:
+            logger.warning("KMSI page missing urlPost")
+            return None
+
+        # Accept KMSI — value "0" means "Yes, stay signed in"
+        kmsi_data = {
+            "LoginOptions": "1",
+            "type": "28",
+            "ctx": ctx,
+            "hpgrequestid": "",
+            "flowToken": flow_token,
+            "canary": canary,
+            "i19": "2326",
+        }
+
+        try:
+            response = session.post(
+                url_post,
+                data=kmsi_data,
+                timeout=60,
+                allow_redirects=False,
+                headers=_FORM_HEADERS,
+            )
+            logger.debug("KMSI submitted → status %d", response.status_code)
+            return response
+        except Exception as e:
+            logger.warning("KMSI submission failed: %s", e)
+            return None
+
+    def _extract_azure_config(self, html: str) -> dict | None:
+        """Extract $Config JSON from Azure AD login page.
+
+        Azure AD embeds authentication parameters as a JavaScript variable:
+        $Config={...};
+
+        Uses bracket-depth counting to handle nested objects.
+        """
+        idx = html.find("$Config=")
+        if idx == -1:
+            return None
+
+        json_start = idx + len("$Config=")
+        if json_start >= len(html) or html[json_start] != "{":
+            return None
+
+        # Find matching closing brace with depth tracking
+        depth = 0
+        i = json_start
+        in_string = False
+        while i < len(html):
+            c = html[i]
+            if in_string:
+                if c == "\\":
+                    i += 1  # Skip escaped character
+                elif c == '"':
+                    in_string = False
+            else:
+                if c == '"':
+                    in_string = True
+                elif c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+            i += 1
+
+        if depth != 0:
+            return None
+
+        try:
+            return json.loads(html[json_start : i + 1])
+        except json.JSONDecodeError as e:
+            logger.debug("Failed to parse Azure AD config: %s", e)
+            return None
+
+    def _extract_auto_submit_form(
+        self, html: str, current_url: str
+    ) -> tuple[str | None, dict]:
+        """Extract action URL and fields from an auto-submit HTML form.
+
+        Detects forms with JavaScript auto-submit patterns used in SAML
+        SSO flows (assertion forwarding, KMSI prompts, etc.).
+        """
+        html_lower = html.lower()
+        if "<form" not in html_lower:
+            return None, {}
+
+        has_autosubmit = any(
+            p in html_lower
+            for p in [
+                "document.forms[0].submit()",
+                ".submit()",
+                "onload",
+            ]
+        )
+        if not has_autosubmit:
+            return None, {}
+
+        form_match = re.search(
+            r'<form[^>]+action="([^"]+)"[^>]*>(.*?)</form>',
+            html,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if not form_match:
+            return None, {}
+
+        action = form_match.group(1).replace("&amp;", "&")
+        body = form_match.group(2)
+
+        fields = dict(
+            re.findall(
+                r'<input[^>]+name="([^"]+)"[^>]+value="([^"]*)"',
+                body,
+                re.IGNORECASE,
+            )
+        )
+        if not fields:
+            return None, {}
+
+        # Resolve relative URLs
+        if action.startswith("/"):
+            parsed = urlparse(current_url)
+            action = f"{parsed.scheme}://{parsed.netloc}{action}"
+        elif not action.startswith("http"):
+            from urllib.parse import urljoin
+
+            action = urljoin(current_url, action)
+
+        return action, fields
 
     def get_space(self, space_key: str) -> ConfluenceSpace | None:
         """Get space information.

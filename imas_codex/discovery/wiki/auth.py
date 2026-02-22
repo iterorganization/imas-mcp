@@ -52,8 +52,8 @@ logger = logging.getLogger(__name__)
 # Service name prefix for all imas-codex credentials
 SERVICE_PREFIX = "imas-codex"
 
-# Session TTL in seconds (default: 8 hours)
-DEFAULT_SESSION_TTL = 8 * 60 * 60
+# Session TTL in seconds (default: 72 hours)
+DEFAULT_SESSION_TTL = 72 * 60 * 60
 
 # Legacy credential service names (pre-rename).
 # Used to auto-migrate credentials stored under old names.
