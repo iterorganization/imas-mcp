@@ -427,13 +427,22 @@ class MediaWikiAdapter(WikiAdapter):
 
         Example API call:
         /api.php?action=query&list=allimages&ailimit=500&aiprop=url|size|mime&format=json
+
+        Priority: SSH > session > wiki_client.
+        SSH is preferred when available because each curl request is
+        independent (no session state), avoiding session-timeout issues
+        that cause incomplete pagination with Tequila/Keycloak auth.
         """
+        # Prefer SSH — stateless curl avoids session-timeout truncation
+        if self.ssh_host:
+            artifacts = self._discover_artifacts_ssh(facility, base_url, on_progress)
+            if artifacts:
+                return artifacts
+            logger.debug("SSH artifact discovery returned nothing, trying HTTP")
         if self.session:
             return self._discover_artifacts_via_session(facility, base_url, on_progress)
         elif self.wiki_client:
             return self._discover_artifacts_http(facility, base_url, on_progress)
-        elif self.ssh_host:
-            return self._discover_artifacts_ssh(facility, base_url, on_progress)
         else:
             logger.warning("No SSH host or wiki client configured")
             return []
@@ -506,6 +515,15 @@ class MediaWikiAdapter(WikiAdapter):
 
                 content_type = response.headers.get("content-type", "")
                 if "text/html" in content_type:
+                    if batch == 0:
+                        break
+                    # Mid-pagination HTML → session expiry
+                    logger.warning(
+                        "Session expired mid-pagination (batch %d, %d artifacts). "
+                        "Cannot re-authenticate a raw session, stopping.",
+                        batch,
+                        len(artifacts),
+                    )
                     break
 
                 data = response.json()
@@ -522,6 +540,9 @@ class MediaWikiAdapter(WikiAdapter):
 
                 if "continue" in data:
                     continue_token = data["continue"].get("aicontinue")
+                    if not continue_token:
+                        params.pop("aicontinue", None)
+                        break
                 else:
                     break
 
@@ -600,7 +621,7 @@ class MediaWikiAdapter(WikiAdapter):
         while True:
             url = f"{api_url}?{params}"
             if continue_token:
-                url += f"&aicontinue={continue_token}"
+                url += f"&aicontinue={urllib.parse.quote(continue_token, safe='')}"
 
             cmd = f'curl -sk "{url}"'
 
@@ -637,6 +658,8 @@ class MediaWikiAdapter(WikiAdapter):
                 # Check for continuation
                 if "continue" in data:
                     continue_token = data["continue"].get("aicontinue")
+                    if not continue_token:
+                        break
                 else:
                     break
 
@@ -768,12 +791,41 @@ class MediaWikiAdapter(WikiAdapter):
                 # Check if response is HTML (API unavailable) instead of JSON
                 content_type = response.headers.get("content-type", "")
                 if "text/html" in content_type:
-                    # Old MediaWiki versions don't support list=allimages API
-                    # This is expected - HTML fallback will be used
-                    logger.debug(
-                        f"API returned HTML, falling back to HTML scraping. URL: {response.url}"
+                    if batch == 0:
+                        # First request returned HTML — API truly unavailable
+                        logger.debug(
+                            "API returned HTML on first request, falling back. URL: %s",
+                            response.url,
+                        )
+                        break
+
+                    # Mid-pagination HTML → likely session expiry (Tequila/Keycloak)
+                    logger.warning(
+                        "Session expired mid-pagination (batch %d, %d artifacts so far). "
+                        "Attempting re-authentication...",
+                        batch,
+                        len(artifacts),
                     )
-                    break
+                    if hasattr(self.wiki_client, "authenticate"):
+                        try:
+                            self.wiki_client.authenticate()
+                            logger.info("Re-authenticated, retrying batch %d", batch + 1)
+                            # Retry the same request with fresh session
+                            response = self.wiki_client.session.get(
+                                api_url, params=params, verify=False, timeout=60
+                            )
+                            ct2 = response.headers.get("content-type", "")
+                            if response.status_code != 200 or "text/html" in ct2:
+                                logger.warning(
+                                    "Re-auth succeeded but API still returns HTML, stopping"
+                                )
+                                break
+                            # Fall through to normal JSON processing below
+                        except Exception as e:
+                            logger.warning("Re-authentication failed: %s", e)
+                            break
+                    else:
+                        break
 
                 data = response.json()
                 images = data.get("query", {}).get("allimages", [])
@@ -790,6 +842,10 @@ class MediaWikiAdapter(WikiAdapter):
                 # Check for continuation
                 if "continue" in data:
                     continue_token = data["continue"].get("aicontinue")
+                    if not continue_token:
+                        # Defensive: remove stale key if token is None
+                        params.pop("aicontinue", None)
+                        break
                 else:
                     break
 
