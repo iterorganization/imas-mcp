@@ -982,20 +982,40 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             ingest_result[0]["pending_ingest"] if ingest_result else 0
         )
 
-        # Get accumulated cost from all pages
+        # Get accumulated cost from all pages, artifacts, and images
         cost_result = gc.query(
             """
-            MATCH (wp:WikiPage {facility_id: $facility})
+            OPTIONAL MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.score_cost IS NOT NULL
-            RETURN sum(wp.score_cost) AS total_cost
+            WITH sum(wp.score_cost) AS page_cost
+            OPTIONAL MATCH (wa:WikiArtifact {facility_id: $facility})
+            WHERE wa.score_cost IS NOT NULL
+            WITH page_cost, sum(wa.score_cost) AS artifact_cost
+            OPTIONAL MATCH (img:Image {facility_id: $facility})
+            WHERE img.score_cost IS NOT NULL
+            RETURN page_cost, artifact_cost, sum(img.score_cost) AS image_cost
             """,
             facility=facility,
         )
-        stats["accumulated_cost"] = (
-            cost_result[0]["total_cost"]
-            if cost_result and cost_result[0]["total_cost"]
+        page_cost = (
+            cost_result[0]["page_cost"]
+            if cost_result and cost_result[0]["page_cost"]
             else 0.0
         )
+        artifact_cost = (
+            cost_result[0]["artifact_cost"]
+            if cost_result and cost_result[0]["artifact_cost"]
+            else 0.0
+        )
+        image_cost = (
+            cost_result[0]["image_cost"]
+            if cost_result and cost_result[0]["image_cost"]
+            else 0.0
+        )
+        stats["accumulated_cost"] = page_cost + artifact_cost + image_cost
+        stats["accumulated_page_cost"] = page_cost
+        stats["accumulated_artifact_cost"] = artifact_cost
+        stats["accumulated_image_cost"] = image_cost
 
         # Add artifact stats (total + pending counts per worker)
         artifact_result = gc.query(
