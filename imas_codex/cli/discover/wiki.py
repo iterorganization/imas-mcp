@@ -603,6 +603,9 @@ def wiki(
                             "  [yellow]Keycloak auth failed, artifact discovery will use SSH[/yellow]"
                         )
 
+            artifacts_discovered = 0
+            page_artifacts = {}
+
             if use_rich:
                 from rich.status import Status
 
@@ -731,6 +734,7 @@ def wiki(
                 "scored": 0,
                 "ingested": 0,
                 "artifacts": 0,
+                "images_scored": 0,
                 "cost": 0.0,
                 "elapsed_seconds": 0.0,
             }

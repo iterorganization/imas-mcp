@@ -157,10 +157,11 @@ def get_embed_model(*, cached: bool = True) -> BaseEmbedding:
     backend_str = get_embedding_location()
     model_name = get_embedding_model()
 
-    try:
-        backend = EmbeddingBackend(backend_str)
-    except ValueError:
+    if backend_str == "local":
         backend = EmbeddingBackend.LOCAL
+    else:
+        # Any non-local location (facility name like "iter") means remote
+        backend = EmbeddingBackend.REMOTE
 
     logger.debug(f"Creating embed model: {model_name} (backend={backend})")
 

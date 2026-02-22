@@ -225,6 +225,28 @@ def ensure_tunnel(
         logger.debug("Port %d bound by SSH process, tunnel active", local_port)
         return True
 
+    # If a systemd service manages tunnels for this host, don't create
+    # ad-hoc tunnels that conflict with the service's autossh.
+    # Wait briefly for the service to recover the tunnel.
+    if is_systemd_tunnel_active(ssh_host):
+        logger.debug(
+            "Systemd tunnel service active for %s, waiting for port %d",
+            ssh_host,
+            local_port,
+        )
+        for _ in range(int(timeout / 0.5)):
+            if is_tunnel_active(local_port):
+                logger.debug("Systemd tunnel recovered on port %d", local_port)
+                return True
+            time.sleep(0.5)
+        logger.warning(
+            "Systemd tunnel for %s did not recover port %d within %.0fs",
+            ssh_host,
+            local_port,
+            timeout,
+        )
+        return is_tunnel_active(local_port)
+
     # Port might be bound by a non-SSH process (local Neo4j) or in
     # TIME_WAIT from a dead tunnel.  Only skip if a real service holds it.
     if is_tunnel_active(local_port) and not is_port_bound_by_ssh(local_port):

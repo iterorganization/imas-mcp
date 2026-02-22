@@ -360,14 +360,17 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
         )
         return f"bolt://localhost:{tunnel_port_int}"
 
-    # Tunnel failed — fall back to same-port (user may have manual tunnel)
+    # Tunnel failed — return the tunnel port URI anyway so the caller gets
+    # a clean connection error instead of hitting a wrong Neo4j instance on
+    # the default port with mismatched credentials (AuthenticationRateLimit).
     logger.warning(
-        "Auto-tunnel to %s:%d failed. Falling back to bolt://localhost:%d",
+        "Auto-tunnel to %s:%d failed. Returning tunnel URI bolt://localhost:%d "
+        "(connection will fail until tunnel recovers)",
         host,
         bolt_port,
-        bolt_port,
+        tunnel_port_int,
     )
-    return f"bolt://localhost:{bolt_port}"
+    return f"bolt://localhost:{tunnel_port_int}"
 
 
 def resolve_neo4j(
@@ -491,12 +494,11 @@ def invalidate_uri_cache() -> None:
 def reconnect_tunnel() -> bool:
     """Force re-establishment of the graph tunnel.
 
-    Invalidates the URI cache, stops any stale tunnel processes, waits
-    for port release, and creates a fresh tunnel via ``ensure_tunnel()``.
+    If a systemd tunnel service is active for this host, defers to systemd
+    and just invalidates the URI cache — avoids ad-hoc tunnel conflicts.
 
-    Handles the autossh + ExitOnForwardFailure race: after killing the
-    old tunnel, the listening port may still be held briefly.  We wait
-    up to 5 seconds for it to clear before starting the new tunnel.
+    Otherwise, invalidates the URI cache, stops any stale tunnel processes,
+    waits for port release, and creates a fresh tunnel via ``ensure_tunnel()``.
 
     Returns:
         True if the tunnel is active after reconnection.
@@ -506,6 +508,7 @@ def reconnect_tunnel() -> bool:
     from imas_codex.remote.tunnel import (
         TUNNEL_OFFSET,
         ensure_tunnel,
+        is_systemd_tunnel_active,
         is_tunnel_active,
         resolve_remote_bind,
         stop_tunnel,
@@ -522,6 +525,25 @@ def reconnect_tunnel() -> bool:
     if is_local_host(profile.host):
         invalidate_uri_cache()
         return True
+
+    tunnel_port = profile.bolt_port + TUNNEL_OFFSET
+
+    # If a systemd tunnel service is managing this host, don't create
+    # ad-hoc tunnels — they conflict with the service's autossh.
+    # Invalidate cache and wait for autossh to recover the tunnel.
+    if is_systemd_tunnel_active(profile.host):
+        logger.info(
+            "Systemd tunnel service active for %s, waiting for recovery",
+            profile.host,
+        )
+        invalidate_uri_cache()
+        for _ in range(30):
+            if is_tunnel_active(tunnel_port):
+                logger.info("Systemd tunnel recovered on port %d", tunnel_port)
+                return True
+            time.sleep(0.5)
+        logger.warning("Systemd tunnel did not recover port %d in 15s", tunnel_port)
+        return is_tunnel_active(tunnel_port)
 
     # Clear cache so next resolve picks up the new tunnel
     invalidate_uri_cache()

@@ -320,11 +320,12 @@ def _get_llm_proxy_host() -> str:
     """Resolve the host where the LLM proxy runs.
 
     When ``[llm].location`` names a facility and ``scheduler != "slurm"``,
-    the proxy runs on that facility's login node.  Reads the login node
-    hostname from ``compute.login_node.hostname`` in the facility's
-    private YAML config.
+    the proxy runs on that facility's login node.  If we are running on
+    that facility (detected via ``is_local_host``), use the login node
+    hostname directly.  Otherwise return ``"127.0.0.1"`` so callers go
+    through the SSH tunnel.
 
-    Returns ``"127.0.0.1"`` for local or when hostname is unavailable.
+    Returns ``"127.0.0.1"`` for local, tunneled, or when hostname is unavailable.
     """
     location = get_llm_location()
     if location == "local":
@@ -334,6 +335,16 @@ def _get_llm_proxy_host() -> str:
     if get_llm_scheduler() == "slurm":
         return "127.0.0.1"
 
+    # If we're NOT on the facility, use 127.0.0.1 (access via SSH tunnel)
+    try:
+        from imas_codex.remote.executor import is_local_host
+
+        if not is_local_host(location):
+            return "127.0.0.1"
+    except Exception:
+        return "127.0.0.1"
+
+    # We're on the facility — resolve the login node hostname
     try:
         from imas_codex.discovery.base.facility import get_facility_infrastructure
 
