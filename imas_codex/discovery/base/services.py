@@ -94,24 +94,17 @@ class ServiceStatus:
 def get_graph_location() -> str:
     """Get the configured graph location display name.
 
-    Reads from config/graph.yaml and returns the display name for the
-    current location (e.g., 'iter-login', 'local', 'docker').
+    Reads from pyproject.toml ``[tool.imas-codex.graph].location`` via
+    the profiles module.  Returns the location name (e.g. ``"iter"``,
+    ``"local"``).
 
     Returns:
-        Location display name, or 'unknown' if not configured.
+        Location name, or 'unknown' if not configured.
     """
-    from importlib.resources import files
-
-    import yaml
-
     try:
-        config_path = files("imas_codex.config").joinpath("graph.yaml")
-        with config_path.open() as f:
-            config = yaml.safe_load(f)
-        location = config.get("location", "local")
-        locations = config.get("locations", {})
-        loc_config = locations.get(location, {})
-        return loc_config.get("display_name", location)
+        from imas_codex.graph.profiles import get_graph_location as _get_loc
+
+        return _get_loc()
     except Exception:
         return "unknown"
 
@@ -263,31 +256,26 @@ def embed_health_check() -> tuple[bool, str]:
     """Check embedding server health.
 
     Returns:
-        (healthy, detail) tuple with source info
+        (healthy, detail) tuple where detail is the configured
+        embedding location (e.g. ``"iter"``) or ``"local"``.
     """
     try:
-        from imas_codex.embeddings import get_embedding_source
         from imas_codex.embeddings.client import RemoteEmbeddingClient
-        from imas_codex.settings import get_embed_remote_url
+        from imas_codex.settings import (
+            get_embed_remote_url,
+            get_embedding_location,
+        )
+
+        location = get_embedding_location()
 
         url = get_embed_remote_url()
         if not url:
-            # Local embeddings don't need a server
-            source = get_embedding_source()
-            return True, f"local ({source})"
+            return True, "local"
 
         client = RemoteEmbeddingClient(url)
         try:
             if client.is_available(timeout=5.0):
-                source = get_embedding_source()
-                if source == "unknown":
-                    # Server healthy but no embeddings performed yet —
-                    # derive label from URL hostname
-                    from urllib.parse import urlparse
-
-                    hostname = urlparse(url).hostname or "remote"
-                    source = hostname
-                return True, source
+                return True, location
             return False, "server unavailable"
         finally:
             client.close()
@@ -365,7 +353,7 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
             )
             completion_kwargs["api_base"] = proxy_url
             completion_kwargs["api_key"] = os.getenv("LITELLM_MASTER_KEY", "")
-            label = f"{short_name} (proxy)"
+            label = f"{short_name} ({llm_location})"
 
         response = litellm.completion(**completion_kwargs)
         if response and response.choices:
