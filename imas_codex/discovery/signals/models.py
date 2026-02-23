@@ -59,7 +59,8 @@ class SignalEnrichmentResult(BaseModel):
     """
 
     signal_index: int = Field(
-        description="1-based index matching the input signal order (Signal 1 = index 1)"
+        description="1-based index matching the input signal order (Signal 1 = index 1)",
+        json_schema_extra={"examples": [1]},
     )
 
     physics_domain: PhysicsDomain = Field(
@@ -79,9 +80,9 @@ class SignalEnrichmentResult(BaseModel):
 
     diagnostic: str = Field(
         default="",
-        description="Diagnostic system name if identifiable from the signal path "
+        description="Diagnostic system name if identifiable "
         "(e.g., 'thomson_scattering', 'bolometer_array', 'interferometer'). "
-        "Leave empty if not clearly a diagnostic signal.",
+        "Use lowercase_snake_case. Leave empty if not a diagnostic signal.",
     )
 
     @field_validator("diagnostic")
@@ -109,7 +110,7 @@ class SignalEnrichmentResult(BaseModel):
     confidence: float = Field(
         default=0.8,
         description="Confidence in the physics_domain classification (0.0-1.0). "
-        "Lower if signal name/path is ambiguous.",
+        "Lower if signal name is ambiguous.",
     )
 
     # Keywords for search

@@ -153,45 +153,30 @@ Process each independently but maintain consistent classification standards acro
 
 {{ signal_enrichment_schema_fields }}
 
+## Output Format
+
+Return a JSON object matching this schema:
+```json
+{{ signal_enrichment_schema_example }}
+```
+
 ## Examples
 
 ### TDI Function Signal (TCV)
+
+Input:
 ```
 ## TDI Function: tcv_eq
-```tdi
-public fun tcv_eq(public _quantity, optional _source)
-{
-  _source = if_error(_source, 'LIUQE');
-  switch(_quantity)
-  {
-    case('I_P') { return(\results::liuqe:i_p); }
-    case('PSI') { return(\results::liuqe:psi); }
-    ...
-  }
-}
-```
-
 ### Signal 1
 accessor: tcv_eq('I_P')
 name: I_P
 ```
 
-Classification:
-```json
-{
-  "signal_index": 1,
-  "physics_domain": "equilibrium",
-  "name": "Plasma Current",
-  "description": "Total plasma current from LIUQE equilibrium reconstruction.",
-  "diagnostic": "",
-  "analysis_code": "liuqe",
-  "units_extracted": "",
-  "confidence": 0.95,
-  "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]
-}
-```
+Output: `{"signal_index": 1, "physics_domain": "equilibrium", "name": "Plasma Current", "description": "Total plasma current from LIUQE equilibrium reconstruction.", "diagnostic": "", "analysis_code": "liuqe", "units_extracted": "", "confidence": 0.95, "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]}`
 
 ### PPF Signal (JET)
+
+Input:
 ```
 ## PPF DDA: HRTS
 ### Signal 2
@@ -201,19 +186,6 @@ wiki_description: Electron temperature profile from High Resolution Thomson Scat
 wiki_units: eV
 ```
 
-Classification:
-```json
-{
-  "signal_index": 2,
-  "physics_domain": "particle_measurement_diagnostics",
-  "name": "Electron Temperature (HRTS)",
-  "description": "Electron temperature profile from High Resolution Thomson Scattering diagnostic.",
-  "diagnostic": "hrts",
-  "analysis_code": "",
-  "units_extracted": "eV",
-  "confidence": 0.95,
-  "keywords": ["electron temperature", "thomson scattering", "hrts", "te"]
-}
-```
+Output: `{"signal_index": 2, "physics_domain": "particle_measurement_diagnostics", "name": "Electron Temperature (HRTS)", "description": "Electron temperature profile from High Resolution Thomson Scattering diagnostic.", "diagnostic": "thomson_scattering", "analysis_code": "", "units_extracted": "eV", "confidence": 0.95, "keywords": ["electron temperature", "thomson scattering", "hrts", "te"]}`
 
 {% include "safety.md" %}

@@ -220,6 +220,12 @@ def get_pydantic_schema_json(
 
     def generate_example_value(field_info, field_type) -> Any:
         """Generate a reasonable example value for a field type."""
+        # Use explicit examples from json_schema_extra if provided
+        extra = getattr(field_info, "json_schema_extra", None) or {}
+        examples = extra.get("examples") if isinstance(extra, dict) else None
+        if examples:
+            return examples[0]
+
         # Handle Optional types
         origin = get_origin(field_type)
         args = get_args(field_type)
