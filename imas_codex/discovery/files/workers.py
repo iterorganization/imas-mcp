@@ -40,6 +40,7 @@ async def scan_worker(
     """
     from imas_codex.discovery.files.graph_ops import (
         claim_paths_for_file_scan,
+        mark_path_file_scanned,
         release_path_file_scan_claim,
     )
     from imas_codex.discovery.files.scanner import (
@@ -120,6 +121,9 @@ async def scan_worker(
                             [{"path": f["path"]} for f in files[:5]],
                         )
                 else:
+                    # Mark path as scanned even with 0 files to prevent re-scanning
+                    if path_id:
+                        await asyncio.to_thread(mark_path_file_scanned, path_id, 0)
                     if on_progress:
                         on_progress(f"no files in {path}", state.scan_stats, None)
 

@@ -141,6 +141,27 @@ def claim_paths_for_file_scan(
         return paths
 
 
+def mark_path_file_scanned(path_id: str, file_count: int) -> None:
+    """Mark a FacilityPath as scanned with the file count.
+
+    Sets ``files_scanned`` so the path won't be re-claimed for scanning.
+    Called for all paths including those with 0 files.
+    """
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                MATCH (p:FacilityPath {id: $id})
+                SET p.files_scanned = $count,
+                    p.last_file_scan_at = datetime()
+                """,
+                id=path_id,
+                count=file_count,
+            )
+    except Exception as e:
+        logger.warning("Failed to mark path %s as scanned: %s", path_id, e)
+
+
 def release_path_file_scan_claim(path_id: str) -> None:
     """Release file-scan claim on a FacilityPath.
 
