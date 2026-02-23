@@ -93,6 +93,10 @@ def claim_paths_for_file_scan(
     Uses ``files_claimed_at`` (separate from the paths module's ``claimed_at``)
     to avoid conflicts with the paths discovery pipeline.
 
+    Skips paths that have already been scanned (files_scanned > 0) and paths
+    linked to publicly-accessible software repos (INSTANCE_OF → SoftwareRepo
+    with remote_url containing github/gitlab/bitbucket).
+
     Args:
         facility: Facility ID
         min_score: Minimum path score to include
@@ -109,8 +113,13 @@ def claim_paths_for_file_scan(
             WHERE p.status IN ['scored', 'explored']
               AND coalesce(p.score, 0) >= $min_score
               AND p.path IS NOT NULL
+              AND coalesce(p.files_scanned, 0) = 0
               AND (p.files_claimed_at IS NULL
                    OR p.files_claimed_at < datetime() - duration($cutoff))
+              AND NOT EXISTS {
+                MATCH (p)-[:INSTANCE_OF]->(r:SoftwareRepo)
+                WHERE r.source_type IN ['github', 'gitlab', 'bitbucket']
+              }
             WITH p ORDER BY p.score DESC LIMIT $limit
             SET p.files_claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.score AS score,
@@ -187,6 +196,9 @@ def claim_files_for_scoring(
     Claims files with ``status='discovered'`` and no ``interest_score``.
     Uses ``claimed_at`` timeout for orphan recovery.
 
+    Files are ordered by ``path_heuristic_score`` descending so the
+    highest-value files (by path pattern matching) are scored first.
+
     Args:
         facility: Facility ID
         limit: Maximum files to claim
@@ -203,7 +215,9 @@ def claim_files_for_scoring(
               AND sf.interest_score IS NULL
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
-            WITH sf ORDER BY sf.discovered_at ASC LIMIT $limit
+            WITH sf ORDER BY coalesce(sf.path_heuristic_score, 0) DESC,
+                             sf.discovered_at ASC
+            LIMIT $limit
             SET sf.claimed_at = datetime()
             RETURN sf.id AS id, sf.path AS path, sf.language AS language,
                    sf.file_category AS file_category

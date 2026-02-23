@@ -35,8 +35,8 @@ async def scan_worker(
 ) -> None:
     """Scan worker: SSH file enumeration from scored FacilityPaths.
 
-    Claims FacilityPaths via files_claimed_at, runs SSH file listing,
-    creates SourceFile nodes.
+    Claims FacilityPaths via files_claimed_at, runs batched SSH file listing
+    (single SSH call per batch), creates SourceFile nodes.
     """
     from imas_codex.discovery.files.graph_ops import (
         claim_paths_for_file_scan,
@@ -44,13 +44,16 @@ async def scan_worker(
     )
     from imas_codex.discovery.files.scanner import (
         _persist_discovered_files,
-        _scan_remote_path,
+        async_scan_remote_paths_batch,
     )
     from imas_codex.graph import GraphClient
 
     # Ensure Facility node exists
     with GraphClient() as gc:
         gc.ensure_facility(state.facility)
+
+    ssh_retry_count = 0
+    max_ssh_retries = 5
 
     while not state.should_stop():
         # Claim paths atomically
@@ -70,39 +73,49 @@ async def scan_worker(
 
         state.scan_phase.record_activity(len(paths))
 
-        for path_info in paths:
-            if state.should_stop():
-                break
+        # Build path list for batched SSH scan
+        path_map = {p["path"]: p for p in paths}
+        path_list = [p["path"] for p in paths]
 
-            path = path_info["path"]
-            path_id = path_info["id"]
-            score = path_info.get("score", 0)
+        if on_progress:
+            scores = [f"{p.get('score', 0):.2f}" for p in paths]
+            on_progress(
+                f"scanning {len(paths)} paths (scores: {', '.join(scores[:3])}...)",
+                state.scan_stats,
+                None,
+            )
 
-            if on_progress:
-                on_progress(
-                    f"scanning {path} (score={score:.2f})", state.scan_stats, None
-                )
+        try:
+            # Single SSH call for the entire batch
+            result_map = await async_scan_remote_paths_batch(
+                state.facility,
+                path_list,
+                ssh_host=state.ssh_host,
+            )
 
-            try:
-                files = await asyncio.to_thread(
-                    _scan_remote_path,
-                    state.facility,
-                    path,
-                    ssh_host=state.ssh_host,
-                )
+            # Reset retry count on success
+            ssh_retry_count = 0
+
+            # Process results per path
+            for path, files in result_map.items():
+                if state.should_stop():
+                    break
+
+                path_info = path_map.get(path)
+                path_id = path_info["id"] if path_info else None
 
                 if files:
-                    result = await asyncio.to_thread(
+                    persist_result = await asyncio.to_thread(
                         _persist_discovered_files,
                         state.facility,
                         files,
                         source_path_id=path_id,
                     )
-                    state.scan_stats.processed += result.get("discovered", 0)
+                    state.scan_stats.processed += persist_result.get("discovered", 0)
 
                     if on_progress:
                         on_progress(
-                            f"found {result.get('discovered', 0)} files in {path}",
+                            f"found {persist_result.get('discovered', 0)} files in {path}",
                             state.scan_stats,
                             [{"path": f["path"]} for f in files[:5]],
                         )
@@ -110,13 +123,44 @@ async def scan_worker(
                     if on_progress:
                         on_progress(f"no files in {path}", state.scan_stats, None)
 
-            except Exception as e:
-                logger.warning("Error scanning %s: %s", path, e)
-                state.scan_stats.errors += 1
-                await asyncio.to_thread(release_path_file_scan_claim, path_id)
-                continue
+                # Release claim after processing
+                if path_id:
+                    await asyncio.to_thread(release_path_file_scan_claim, path_id)
 
-            await asyncio.to_thread(release_path_file_scan_claim, path_id)
+        except Exception as e:
+            ssh_retry_count += 1
+            logger.warning(
+                "SSH scan failed (%d/%d): %s", ssh_retry_count, max_ssh_retries, e
+            )
+            state.scan_stats.errors += len(paths)
+
+            # Release all claims on error
+            for p in paths:
+                await asyncio.to_thread(release_path_file_scan_claim, p["id"])
+
+            if ssh_retry_count >= max_ssh_retries:
+                logger.error(
+                    "SSH connection failed after %d attempts. Scan worker stopping.",
+                    max_ssh_retries,
+                )
+                state.scan_phase.mark_done()
+                if on_progress:
+                    on_progress(
+                        f"SSH failed: {str(e)[:100]}",
+                        state.scan_stats,
+                        None,
+                    )
+                break
+
+            backoff = min(2**ssh_retry_count, 32)
+            if on_progress:
+                on_progress(
+                    f"SSH retry {ssh_retry_count} in {backoff}s",
+                    state.scan_stats,
+                    None,
+                )
+            await asyncio.sleep(backoff)
+            continue
 
         await asyncio.sleep(0.1)
 

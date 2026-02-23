@@ -2,10 +2,14 @@
 
 Enumerates files at remote facilities using SSH, filtering by supported
 extensions. Creates SourceFile nodes with status='discovered'.
+
+Uses a batched remote script (scan_files.py) to enumerate multiple paths
+in a single SSH connection, avoiding SSH connection flooding.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 from collections.abc import Callable
@@ -23,10 +27,144 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[int, int, str], None]
 
 
-def _build_fd_extensions_arg() -> str:
-    """Build fd extension arguments for supported file types."""
-    exts = sorted({e.lstrip(".").lower() for e in ALL_SUPPORTED_EXTENSIONS})
-    return " ".join(f"-e {ext}" for ext in exts)
+def _get_extensions_list() -> list[str]:
+    """Get sorted list of supported file extensions (without dots)."""
+    return sorted({e.lstrip(".").lower() for e in ALL_SUPPORTED_EXTENSIONS})
+
+
+def _scan_remote_paths_batch(
+    facility: str,
+    remote_paths: list[str],
+    ssh_host: str | None = None,
+    max_depth: int = 5,
+    timeout: int = 300,
+    max_files_per_path: int = 5000,
+) -> dict[str, list[dict]]:
+    """Scan multiple remote paths for supported files in a single SSH call.
+
+    Uses the scan_files.py remote script via run_python_script() to batch
+    all path scans into one SSH connection, avoiding connection flooding.
+
+    Args:
+        facility: Facility ID
+        remote_paths: Remote directory paths to scan
+        ssh_host: SSH host alias (defaults to facility)
+        max_depth: Maximum directory depth to scan
+        timeout: SSH command timeout in seconds
+        max_files_per_path: Maximum files per path before truncation
+
+    Returns:
+        Dict mapping path -> list of file info dicts
+    """
+    from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.remote.executor import run_python_script
+
+    if not remote_paths:
+        return {}
+
+    host = ssh_host
+    if not host:
+        try:
+            config = get_facility(facility)
+            host = config.get("ssh_host", facility)
+        except ValueError:
+            host = facility
+
+    input_data = {
+        "paths": remote_paths,
+        "extensions": _get_extensions_list(),
+        "max_depth": max_depth,
+        "max_files_per_path": max_files_per_path,
+    }
+
+    try:
+        output = run_python_script(
+            "scan_files.py",
+            input_data=input_data,
+            ssh_host=host,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "Batch scan timed out after %ds for %s (%d paths)",
+            timeout,
+            facility,
+            len(remote_paths),
+        )
+        return {p: [] for p in remote_paths}
+    except subprocess.CalledProcessError as e:
+        logger.warning("Batch scan failed for %s: %s", facility, e)
+        return {p: [] for p in remote_paths}
+
+    # Parse JSON output
+    try:
+        if "[stderr]:" in output:
+            output = output.split("[stderr]:")[0].strip()
+        results_data = json.loads(output)
+    except json.JSONDecodeError as e:
+        logger.warning("Failed to parse scan output for %s: %s", facility, e)
+        return {p: [] for p in remote_paths}
+
+    # Convert to file info dicts
+    result_map: dict[str, list[dict]] = {}
+    for entry in results_data:
+        path = entry.get("path", "")
+        error = entry.get("error")
+        if error:
+            logger.warning("Scan error for %s:%s: %s", facility, path, error)
+            result_map[path] = []
+            continue
+
+        files = []
+        for file_path in entry.get("files", []):
+            files.append(
+                {
+                    "path": file_path,
+                    "language": detect_language(file_path),
+                    "file_category": detect_file_category(file_path),
+                    "facility_id": facility,
+                }
+            )
+
+        if entry.get("truncated"):
+            logger.warning(
+                "Path %s:%s truncated at %d files",
+                facility,
+                path,
+                max_files_per_path,
+            )
+
+        if files:
+            logger.info("Found %d files in %s:%s", len(files), facility, path)
+
+        result_map[path] = files
+
+    return result_map
+
+
+async def async_scan_remote_paths_batch(
+    facility: str,
+    remote_paths: list[str],
+    ssh_host: str | None = None,
+    max_depth: int = 5,
+    timeout: int = 300,
+    max_files_per_path: int = 5000,
+) -> dict[str, list[dict]]:
+    """Async version of _scan_remote_paths_batch.
+
+    Runs the batched scan in a thread executor to avoid blocking the event loop.
+    """
+    import asyncio
+
+    return await asyncio.to_thread(
+        _scan_remote_paths_batch,
+        facility,
+        remote_paths,
+        ssh_host=ssh_host,
+        max_depth=max_depth,
+        timeout=timeout,
+        max_files_per_path=max_files_per_path,
+    )
 
 
 def _scan_remote_path(
@@ -37,79 +175,20 @@ def _scan_remote_path(
     timeout: int = 60,
     max_files_per_path: int = 5000,
 ) -> list[dict]:
-    """Scan a remote path for supported files via SSH.
+    """Scan a single remote path for supported files via SSH.
 
-    Uses fd (fast finder) if available, falls back to find.
-
-    Args:
-        facility: Facility ID
-        remote_path: Remote directory path to scan
-        ssh_host: SSH host alias (defaults to facility)
-        max_depth: Maximum directory depth to scan
-        timeout: SSH command timeout in seconds
-
-    Returns:
-        List of file info dicts with path, language, category
+    Wraps _scan_remote_paths_batch for single-path convenience.
+    Prefer _scan_remote_paths_batch for multiple paths.
     """
-    host = ssh_host or facility
-    ext_args = _build_fd_extensions_arg()
-
-    # Try fd first (faster), fall back to find
-    fd_cmd = f"fd --type f --max-depth {max_depth} {ext_args} {remote_path} 2>/dev/null"
-    find_exts = " -o ".join(
-        f'-name "*.{e.lstrip(".").lower()}"' for e in sorted(ALL_SUPPORTED_EXTENSIONS)
+    result_map = _scan_remote_paths_batch(
+        facility,
+        [remote_path],
+        ssh_host=ssh_host,
+        max_depth=max_depth,
+        timeout=timeout,
+        max_files_per_path=max_files_per_path,
     )
-    find_cmd = (
-        f"find {remote_path} -maxdepth {max_depth} -type f "
-        f"\\( {find_exts} \\) 2>/dev/null"
-    )
-
-    cmd = f"{fd_cmd} || {find_cmd}"
-
-    try:
-        result = subprocess.run(
-            ["ssh", host, cmd],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-        files = []
-        for line in result.stdout.strip().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            files.append(
-                {
-                    "path": line,
-                    "language": detect_language(line),
-                    "file_category": detect_file_category(line),
-                    "facility_id": facility,
-                }
-            )
-
-        if len(files) > max_files_per_path:
-            logger.warning(
-                "Path %s:%s has %d files (limit %d), truncating",
-                host,
-                remote_path,
-                len(files),
-                max_files_per_path,
-            )
-            files = files[:max_files_per_path]
-        elif files:
-            logger.info("Found %d files in %s:%s", len(files), host, remote_path)
-
-        return files
-
-    except subprocess.TimeoutExpired:
-        logger.warning(
-            "Scan timed out for %s:%s (timeout=%ds)", host, remote_path, timeout
-        )
-        return []
-    except subprocess.CalledProcessError as e:
-        logger.warning("Scan failed for %s:%s: %s", host, remote_path, e)
-        return []
+    return result_map.get(remote_path, [])
 
 
 def _get_scannable_paths(
@@ -152,6 +231,9 @@ def _persist_discovered_files(
 ) -> dict[str, int]:
     """Create SourceFile nodes from scanned files.
 
+    Computes a path-based heuristic score for each file to enable
+    priority ordering during LLM scoring (highest-value first).
+
     Args:
         facility: Facility ID
         files: List of file info dicts
@@ -162,10 +244,13 @@ def _persist_discovered_files(
     """
     from datetime import UTC, datetime
 
+    from imas_codex.discovery.files.scorer import compute_path_heuristic_score
+
     now = datetime.now(UTC).isoformat()
     items = []
     for f in files:
         file_id = f"{facility}:{f['path']}"
+        heuristic = compute_path_heuristic_score(f["path"])
         items.append(
             {
                 "id": file_id,
@@ -176,6 +261,7 @@ def _persist_discovered_files(
                 "status": "discovered",
                 "discovered_at": now,
                 "in_directory": source_path_id,
+                "path_heuristic_score": heuristic,
             }
         )
 

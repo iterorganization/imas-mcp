@@ -5,12 +5,17 @@ assign interest_score + file_category. Updates SourceFile node properties.
 
 Supports natural language focus prompts to steer scoring towards specific
 topics (e.g., "equilibrium reconstruction codes").
+
+Also provides path-based heuristic pre-scoring using the same pattern
+registry as the paths enrichment module, allowing high-value files to
+be prioritized for LLM scoring.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -22,6 +27,76 @@ logger = logging.getLogger(__name__)
 
 # Progress callback: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
+
+# ============================================================================
+# Path-based heuristic pre-scoring (no LLM, no SSH)
+# ============================================================================
+
+# Patterns matched against file paths to estimate relevance.
+# Reuses categories from imas_codex.discovery.paths.enrichment.PATTERN_REGISTRY
+# but applied to file paths rather than directory contents.
+_PATH_PATTERNS: dict[str, tuple[re.Pattern, float]] = {
+    # High value: IMAS, data access patterns in path names
+    "imas": (
+        re.compile(r"imas|ids_|access_layer|data_dictionary|dd_|imasdb", re.I),
+        0.3,
+    ),
+    "mdsplus": (re.compile(r"mdsplus|mds_|tdi_|treeshr", re.I), 0.25),
+    "equilibrium": (
+        re.compile(r"equil|efit|liuqe|cliste|helena|chease|eqdsk", re.I),
+        0.25,
+    ),
+    "cocos": (re.compile(r"cocos|sign_conv|coordinate", re.I), 0.2),
+    "transport": (
+        re.compile(r"transp|jetto|astra|cronos|ets_|core_profile", re.I),
+        0.2,
+    ),
+    "diagnostic": (re.compile(r"thomson|ece_|interfer|mse_|cxrs|bolom", re.I), 0.15),
+    "mhd": (re.compile(r"jorek|mars_|kinx|mishka|stability|tearing", re.I), 0.15),
+    "heating": (
+        re.compile(r"nubeam|rabbit|nemo|pencil|toric|ecrh|icrf|nbi_", re.I),
+        0.15,
+    ),
+    "data_format": (re.compile(r"hdf5|netcdf|ufile|shotfile|ppf_", re.I), 0.1),
+    # Low-noise indicators
+    "test": (re.compile(r"/tests?/|_test\.py$|test_\w+\.py$|conftest", re.I), -0.1),
+    "setup": (
+        re.compile(r"setup\.py$|setup\.cfg|pyproject|__pycache__|\.egg", re.I),
+        -0.15,
+    ),
+    "migration": (re.compile(r"migration|alembic|changelog", re.I), -0.1),
+    "generated": (re.compile(r"generated|auto_gen|\.bak$|\.orig$|\.swp$", re.I), -0.2),
+    "vendor": (re.compile(r"/vendor/|/third_party/|/external/|/deps/", re.I), -0.15),
+}
+
+# Files with these patterns in their path are likely available via GitHub/similar
+_PUBLIC_REPO_PATTERNS = re.compile(
+    r"(omas|omfit|freeqdsk|uda-|pyuda|pint|numpy|scipy|matplotlib|"
+    r"xarray|pandas|sklearn|tensorflow|pytorch|ansible|docker|"
+    r"jenkins|travis|circleci|github)",
+    re.I,
+)
+
+
+def compute_path_heuristic_score(file_path: str) -> float:
+    """Compute a heuristic relevance score based on file path alone.
+
+    Uses pattern matching against the file path to estimate relevance
+    without SSH or LLM calls. Score ranges 0.0-1.0.
+
+    Args:
+        file_path: Full remote file path
+
+    Returns:
+        Heuristic score between 0.0 and 1.0
+    """
+    base_score = 0.3  # Neutral starting point
+
+    for _name, (pattern, weight) in _PATH_PATTERNS.items():
+        if pattern.search(file_path):
+            base_score += weight
+
+    return max(0.0, min(1.0, base_score))
 
 
 class FileScore(BaseModel):
