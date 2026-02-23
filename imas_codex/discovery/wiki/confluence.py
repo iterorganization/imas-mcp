@@ -546,17 +546,23 @@ class ConfluenceClient:
         """
         flow_token = config.get("sFT", "")
         ctx = config.get("sCtx", "")
-        url_begin = config.get(
-            "urlBeginAuth",
-            "https://login.microsoftonline.com/common/SAS/BeginAuth",
+        url_begin = self._resolve_azure_url(
+            config.get(
+                "urlBeginAuth",
+                "https://login.microsoftonline.com/common/SAS/BeginAuth",
+            )
         )
-        url_end = config.get(
-            "urlEndAuth",
-            "https://login.microsoftonline.com/common/SAS/EndAuth",
+        url_end = self._resolve_azure_url(
+            config.get(
+                "urlEndAuth",
+                "https://login.microsoftonline.com/common/SAS/EndAuth",
+            )
         )
-        url_process = config.get(
-            "urlPost",
-            "https://login.microsoftonline.com/common/SAS/ProcessAuth",
+        url_process = self._resolve_azure_url(
+            config.get(
+                "urlPost",
+                "https://login.microsoftonline.com/common/SAS/ProcessAuth",
+            )
         )
 
         proofs = config.get("arrUserProofs", [])
@@ -710,6 +716,13 @@ class ConfluenceClient:
         except (EOFError, KeyboardInterrupt):
             return None
 
+    @staticmethod
+    def _resolve_azure_url(url: str) -> str:
+        """Resolve a possibly-relative Azure AD URL to absolute."""
+        if url and url.startswith("/"):
+            return f"https://login.microsoftonline.com{url}"
+        return url
+
     def _handle_kmsi(
         self, session: requests.Session, config: dict
     ) -> requests.Response | None:
@@ -722,7 +735,7 @@ class ConfluenceClient:
         flow_token = config.get("sFT", "")
         ctx = config.get("sCtx", "")
         canary = config.get("canary", "")
-        url_post = config.get("urlPost", "")
+        url_post = self._resolve_azure_url(config.get("urlPost", ""))
 
         if not url_post:
             logger.warning("KMSI page missing urlPost")
