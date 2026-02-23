@@ -507,7 +507,7 @@ ExecStop=/bin/kill -15 $MAINPID
 StandardOutput=append:{log_file}
 StandardError=append:{log_file}
 TimeoutStopSec=30
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]
@@ -748,7 +748,7 @@ ExecStop=/bin/kill -15 $MAINPID
 StandardOutput=append:{_services_h}/llm.log
 StandardError=append:{_services_h}/llm.log
 TimeoutStopSec=30
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]

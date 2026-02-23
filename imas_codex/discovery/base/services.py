@@ -286,72 +286,107 @@ def embed_health_check() -> tuple[bool, str]:
 
 
 def llm_health_check(section: str = "language") -> tuple[bool, str]:
-    """Check LLM provider health via a lightweight API call.
+    """Check LLM provider health via the proxy's ``/health`` endpoint.
 
-    Uses LiteLLM's model list or a minimal completion to verify
-    the configured model is reachable. Returns the service routing
-    label (e.g. ``"litellm"`` or the proxy location) as detail.
+    When a LiteLLM proxy is configured (``[llm].location`` is set),
+    probes ``GET /health`` with the master key.  This is lightweight
+    (no token cost), fast, and returns healthy/unhealthy model counts.
+
+    Falls back to a minimal ``litellm.completion()`` call when no
+    proxy is configured (``location=local``).
 
     Args:
         section: Model section to check (language, vision, etc.)
 
     Returns:
-        (healthy, detail) tuple where detail is the service name
+        (healthy, detail) tuple where detail is the proxy location
     """
+    import os
+
+    from imas_codex.settings import get_llm_location
+
+    llm_location = get_llm_location()
+
+    # --- Proxy mode: lightweight HTTP probe ---
+    if llm_location != "local" or os.getenv("LITELLM_PROXY_URL"):
+        return _probe_litellm_proxy(llm_location)
+
+    # --- Local mode: minimal completion call ---
+    return _probe_litellm_local(section)
+
+
+def _probe_litellm_proxy(location: str) -> tuple[bool, str]:
+    """Probe LiteLLM proxy via its ``/health`` endpoint."""
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+
+    from imas_codex.settings import get_llm_proxy_url
+
+    proxy_url = get_llm_proxy_url()
+    health_url = f"{proxy_url}/health"
+    api_key = os.getenv("LITELLM_MASTER_KEY", "")
+
+    try:
+        req = urllib.request.Request(health_url)
+        if api_key:
+            req.add_header("Authorization", f"Bearer {api_key}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            healthy_count = data.get("healthy_count", 0)
+            unhealthy_count = data.get("unhealthy_count", 0)
+            if healthy_count > 0 and unhealthy_count == 0:
+                return True, location
+            if healthy_count > 0:
+                return True, f"{location} ({unhealthy_count} degraded)"
+            return False, "no healthy models"
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return False, "auth error (401)"
+        return False, f"HTTP {e.code}"
+    except urllib.error.URLError as e:
+        reason = str(e.reason).lower()
+        if "refused" in reason:
+            return False, "proxy refused"
+        if "timed out" in reason or "timeout" in reason:
+            return False, "proxy timeout"
+        return False, str(e.reason)[:60]
+    except Exception as e:
+        return False, str(e)[:80]
+
+
+def _probe_litellm_local(section: str) -> tuple[bool, str]:
+    """Probe a local LLM via a minimal completion call."""
     try:
         from imas_codex.settings import get_model
 
         model = get_model(section)
 
-        import os
-
-        # Try a lightweight LiteLLM call to verify connectivity
         from imas_codex.discovery.base.llm import set_litellm_offline_env
 
         set_litellm_offline_env()
         import litellm
 
         litellm.drop_params = True
-
-        # Route through LiteLLM proxy when configured (air-gapped clusters)
-        from imas_codex.settings import get_llm_location, get_llm_proxy_url
-
-        llm_location = get_llm_location()
-        completion_kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 1,
-            "temperature": 0,
-            "timeout": 30,
-        }
-        if llm_location != "local" or os.getenv("LITELLM_PROXY_URL"):
-            proxy_url = get_llm_proxy_url()
-            completion_kwargs["model"] = (
-                f"openai/{model}" if not model.startswith("openai/") else model
-            )
-            completion_kwargs["api_base"] = proxy_url
-            completion_kwargs["api_key"] = os.getenv("LITELLM_MASTER_KEY", "")
-            label = llm_location
-        else:
-            label = "local"
-
-        response = litellm.completion(**completion_kwargs)
+        response = litellm.completion(
+            model=model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+            temperature=0,
+            timeout=30,
+        )
         if response and response.choices:
-            return True, label
-        return False, f"{label} no response"
+            return True, "local"
+        return False, "no response"
     except Exception as e:
         err = str(e).lower()
-        # Surface specific error reasons for display
         if "402" in err or "insufficient" in err or "budget" in err:
             return False, "no credit (402)"
         if "401" in err or "invalid api key" in err or "authentication" in err:
             return False, "auth error (401)"
         if "429" in err or "rate limit" in err:
             return False, "rate limited (429)"
-        if "connection refused" in err:
-            return False, "proxy refused"
-        if "timeout" in err or "timed out" in err:
-            return False, "proxy timeout"
         return False, str(e)[:80]
 
 
