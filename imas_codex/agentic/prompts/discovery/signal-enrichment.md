@@ -7,6 +7,7 @@ dynamic: true
 schema_needs:
   - physics_domains
   - signal_enrichment_schema
+  - diagnostic_categories
 ---
 
 You are a tokamak physics expert classifying fusion facility data signals.
@@ -67,6 +68,10 @@ When `wiki_description` or `wiki_units` are provided:
 Direct tree traversal signals have tree_name and node_path:
 - Path structure reveals diagnostics: `\RESULTS::LIUQE:*` → equilibrium
 - Tree name reveals data organization
+
+## Diagnostic Naming Convention
+
+{% include "schema/diagnostic-categories.md" %}
 
 ## Classification Guidelines
 

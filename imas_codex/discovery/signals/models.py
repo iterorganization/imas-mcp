@@ -14,7 +14,7 @@ Design principles:
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from imas_codex.core.physics_domain import PhysicsDomain
 
@@ -83,6 +83,14 @@ class SignalEnrichmentResult(BaseModel):
         "(e.g., 'thomson_scattering', 'bolometer_array', 'interferometer'). "
         "Leave empty if not clearly a diagnostic signal.",
     )
+
+    @field_validator("diagnostic")
+    @classmethod
+    def normalize_diagnostic(cls, v: str) -> str:
+        """Normalize diagnostic to lowercase_snake_case."""
+        if not v:
+            return v
+        return v.lower().replace(" ", "_").replace("-", "_")
 
     analysis_code: str = Field(
         default="",

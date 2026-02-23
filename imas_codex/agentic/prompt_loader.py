@@ -607,6 +607,37 @@ def _provide_physics_domains() -> dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
+def _provide_diagnostic_categories() -> dict[str, Any]:
+    """Provide DiagnosticCategory enum values for signal enrichment prompts.
+
+    Loads categories from the LinkML facility schema so the LLM outputs
+    canonical lowercase diagnostic names rather than freeform strings.
+    """
+    from pathlib import Path
+
+    try:
+        from linkml_runtime.utils.schemaview import SchemaView
+
+        schema_path = Path(__file__).parent.parent / "schemas/facility.yaml"
+        if schema_path.exists():
+            sv = SchemaView(str(schema_path))
+            enum_def = sv.get_enum("DiagnosticCategory")
+            if enum_def and enum_def.permissible_values:
+                categories = [
+                    {
+                        "value": name,
+                        "description": pv.description or "",
+                    }
+                    for name, pv in enum_def.permissible_values.items()
+                ]
+                return {"diagnostic_categories": categories}
+    except Exception:
+        pass
+
+    return {"diagnostic_categories": []}
+
+
+@lru_cache(maxsize=1)
 def _provide_wiki_page_purposes() -> dict[str, Any]:
     """Provide ContentPurpose enum values grouped by priority."""
     from imas_codex.graph.models import ContentPurpose
@@ -810,6 +841,7 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "image_caption_schema": _provide_image_caption_schema,
     # Signal enrichment
     "signal_enrichment_schema": _provide_signal_enrichment_schema,
+    "diagnostic_categories": _provide_diagnostic_categories,
     # Cluster labeling
     "cluster_vocabularies": _provide_cluster_vocabularies,
     "cluster_label_schema": _provide_cluster_label_schema,
@@ -831,6 +863,7 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
     "discovery/signal-enrichment": [
         "physics_domains",
         "signal_enrichment_schema",
+        "diagnostic_categories",
     ],
     # Wiki prompts
     "wiki/scorer": [

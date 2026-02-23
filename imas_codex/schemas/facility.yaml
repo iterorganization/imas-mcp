@@ -118,6 +118,12 @@ enums:
         description: Interferometric density measurements
       thomson:
         description: Thomson scattering systems
+      heating:
+        description: Heating and current drive systems (ECRH, NBI, ICRH)
+      gas_fuelling:
+        description: Gas injection and fuelling systems
+      vacuum:
+        description: Vacuum and pressure measurement systems
 
   AnalysisCodeType:
     description: Types of physics analysis codes
@@ -1595,12 +1601,18 @@ classes:
 # =============================================================================
 
   Diagnostic:
-    description: A plasma diagnostic system
+    description: >-
+      A plasma diagnostic system at a facility. Canonical lowercase name serves
+      as the identifier. FacilitySignal nodes link here via BELONGS_TO_DIAGNOSTIC,
+      preserving their original casing for data access while enabling
+      consistent grouping and wiki cross-referencing.
     class_uri: facility:Diagnostic
     attributes:
       name:
         identifier: true
-        description: Diagnostic name (e.g., "Thomson", "ECE", "MSE")
+        description: >-
+          Canonical lowercase diagnostic name (e.g., "thomson_scattering",
+          "cxrs", "bolometer"). Used as grouping key across case variants.
         required: true
       facility_id:
         description: Parent facility ID
@@ -1612,7 +1624,17 @@ classes:
         description: Diagnostic category
         range: DiagnosticCategory
       description:
-        description: Diagnostic description
+        description: Diagnostic description from wiki or LLM enrichment
+      wiki_page:
+        description: >-
+          Primary wiki page documenting this diagnostic.
+          E.g., "Thomson", "CXRS", "Langmuir"
+        range: WikiPage
+        annotations:
+          relationship_type: DOCUMENTED_BY
+      signal_count:
+        description: Number of FacilitySignal nodes linked to this diagnostic
+        range: integer
 
   StandardName:
     description: >-
@@ -1720,9 +1742,17 @@ classes:
           E.g., "Plasma Current", "Electron Temperature Profile"
       diagnostic:
         description: >-
-          Facility-specific diagnostic name if different from physics_domain.
-          E.g., "bolometer_array", "thomson_scattering", "FIR_interferometer"
-          This preserves facility naming while physics_domain provides consistency.
+          Facility-specific diagnostic name as discovered (preserves original casing
+          for data access). E.g., "CXRS", "thomson_scattering", "FIR".
+          The canonical lowercase form links to the Diagnostic node via
+          BELONGS_TO_DIAGNOSTIC.
+      diagnostic_node:
+        description: >-
+          Link to the canonical Diagnostic node. Created during enrichment
+          by lowercasing the diagnostic field.
+        range: Diagnostic
+        annotations:
+          relationship_type: BELONGS_TO_DIAGNOSTIC
       analysis_code:
         description: >-
           Analysis code that produces this signal if applicable.

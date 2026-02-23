@@ -542,6 +542,10 @@ def mark_signals_enriched(
 ) -> int:
     """Mark signals as enriched with LLM-generated metadata.
 
+    Also creates/links Diagnostic nodes: the original diagnostic casing is
+    preserved on the FacilitySignal for data access, while a canonical
+    lowercase Diagnostic node is MERGE'd and linked via BELONGS_TO_DIAGNOSTIC.
+
     Expected signal dict keys:
     - id: signal ID
     - physics_domain: physics domain value
@@ -585,6 +589,32 @@ def mark_signals_enriched(
                 enriched=FacilitySignalStatus.enriched.value,
                 per_signal_cost=per_signal_cost,
             )
+
+            # Create Diagnostic nodes and BELONGS_TO_DIAGNOSTIC edges.
+            # The diagnostic name on FacilitySignal preserves original casing
+            # (needed for data access); the Diagnostic node uses canonical
+            # lowercase for grouping.
+            diag_signals = [
+                s for s in signals
+                if s.get("diagnostic") and s["diagnostic"].strip()
+            ]
+            if diag_signals:
+                gc.query(
+                    """
+                    UNWIND $signals AS sig
+                    MATCH (s:FacilitySignal {id: sig.id})
+                    WITH s, toLower(trim(sig.diagnostic)) AS diag_name
+                    WHERE diag_name <> ''
+                    MERGE (d:Diagnostic {name: diag_name})
+                    ON CREATE SET d.facility_id = s.facility_id
+                    MERGE (s)-[:BELONGS_TO_DIAGNOSTIC]->(d)
+                    WITH d, s
+                    MATCH (f:Facility {id: s.facility_id})
+                    MERGE (d)-[:AT_FACILITY]->(f)
+                    """,
+                    signals=diag_signals,
+                )
+
         return len(signals)
     except Exception as e:
         logger.warning("Could not mark signals enriched: %s", e)
