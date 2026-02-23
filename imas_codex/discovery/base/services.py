@@ -340,8 +340,19 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
             return True, label
         return False, f"{label} no response"
     except Exception as e:
-        err = str(e)[:60]
-        return False, f"litellm: {err}"
+        err = str(e).lower()
+        # Surface specific error reasons for display
+        if "402" in err or "insufficient" in err or "budget" in err:
+            return False, "no credit (402)"
+        if "401" in err or "invalid api key" in err or "authentication" in err:
+            return False, "auth error (401)"
+        if "429" in err or "rate limit" in err:
+            return False, "rate limited (429)"
+        if "connection refused" in err:
+            return False, "proxy refused"
+        if "timeout" in err or "timed out" in err:
+            return False, "proxy timeout"
+        return False, str(e)[:80]
 
 
 # =============================================================================

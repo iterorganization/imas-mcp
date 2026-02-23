@@ -832,24 +832,32 @@ def build_servers_section(
             style = "yellow"
             label = f"recovering ({int(s.downtime_seconds)}s)"
         else:
-            # Unhealthy: show grayed label with concise reason
+            # Unhealthy: show concise error reason from health check
             style = "dim"
+            detail = (s.detail or "").lower()
             if s.healthy_detail:
                 # Was healthy before — show last-known good state grayed out
                 label = s.healthy_detail
             elif s.auth_label:
                 label = s.auth_label
+            elif "402" in detail or "budget" in detail or "insufficient" in detail:
+                label = "no credit"
+                style = "yellow"
+            elif "401" in detail or "auth" in detail or "api_key" in detail:
+                label = "auth error"
+            elif "429" in detail or "rate" in detail:
+                label = "rate limited"
+                style = "yellow"
+            elif "timeout" in detail or "timed out" in detail:
+                label = "timeout"
+            elif "connection refused" in detail:
+                label = "refused"
+            elif "no route" in detail or "unreachable" in detail:
+                label = "unreachable"
+            elif "proxy" in detail or "502" in detail or "503" in detail:
+                label = "proxy down"
             else:
-                # Derive concise label from error detail
-                detail = (s.detail or "").lower()
-                if "timeout" in detail or "timed out" in detail:
-                    label = "down"
-                elif "connection refused" in detail:
-                    label = "down"
-                elif "no route" in detail:
-                    label = "down"
-                else:
-                    label = "down"
+                label = "down"
             if s.downtime_seconds > 0:
                 label += f" ({int(s.downtime_seconds)}s)"
 

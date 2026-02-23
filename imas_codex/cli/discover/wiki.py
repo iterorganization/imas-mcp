@@ -1088,6 +1088,50 @@ def wiki(
                             remaining_pages -= result.get("scored", 0)
 
                 finally:
+                    # Final graph refresh so progress bars show 100% state
+                    try:
+                        from imas_codex.discovery.wiki.parallel import (
+                            get_wiki_discovery_stats,
+                        )
+
+                        stats = get_wiki_discovery_stats(_facility)
+                        display.update_from_graph(
+                            total_pages=stats.get("total", 0),
+                            pages_scanned=stats.get("scanned", 0),
+                            pages_scored=stats.get("scored", 0),
+                            pages_ingested=stats.get("ingested", 0),
+                            pages_skipped=stats.get("skipped", 0),
+                            pages_failed=stats.get("failed", 0),
+                            pending_score=stats.get(
+                                "pending_score",
+                                stats.get("scanned", 0),
+                            ),
+                            pending_ingest=stats.get("pending_ingest", 0),
+                            pending_artifact_score=stats.get(
+                                "pending_artifact_score", 0
+                            ),
+                            pending_artifact_ingest=stats.get(
+                                "pending_artifact_ingest", 0
+                            ),
+                            accumulated_cost=stats.get("accumulated_cost", 0.0),
+                            accumulated_page_cost=stats.get(
+                                "accumulated_page_cost", 0.0
+                            ),
+                            accumulated_artifact_cost=stats.get(
+                                "accumulated_artifact_cost", 0.0
+                            ),
+                            accumulated_image_cost=stats.get(
+                                "accumulated_image_cost", 0.0
+                            ),
+                            total_artifacts=stats.get("total_artifacts", 0),
+                            artifacts_ingested=stats.get("artifacts_ingested", 0),
+                            artifacts_scored=stats.get("artifacts_scored", 0),
+                            images_scored=stats.get("images_scored", 0),
+                            pending_image_score=stats.get("pending_image_score", 0),
+                        )
+                        display.tick()
+                    except Exception:
+                        pass
                     refresh_task.cancel()
                     ticker_task.cancel()
                     try:

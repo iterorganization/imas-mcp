@@ -1126,7 +1126,7 @@ class WikiProgressDisplay:
             self._build_display(),
             console=self.console,
             refresh_per_second=4,
-            transient=True,  # Remove live display on exit; summary replaces it
+            transient=False,  # Keep final progress visible; summary prints below
             vertical_overflow="visible",
         )
         self._live.__enter__()

@@ -16,6 +16,7 @@ from imas_codex.discovery.base.progress import (
     ResourceConfig,
     build_pipeline_section,
     build_resource_section,
+    build_servers_section,
 )
 
 # =============================================================================
@@ -439,3 +440,113 @@ class TestDisplayClassIntegration:
         text = panel.renderable.plain
         # scan_only should show "SCAN ONLY" in header
         assert "SCAN ONLY" in text
+
+
+# =============================================================================
+# build_servers_section (service status rendering)
+# =============================================================================
+
+
+class TestBuildServersSection:
+    """Tests for build_servers_section error label rendering."""
+
+    def _status(self, **kwargs):
+        from imas_codex.discovery.base.services import ServiceState, ServiceStatus
+
+        defaults = {
+            "name": "models",
+            "state": ServiceState.unhealthy,
+            "detail": "",
+        }
+        defaults.update(kwargs)
+        return ServiceStatus(**defaults)
+
+    def test_healthy_shows_detail(self):
+        from imas_codex.discovery.base.services import ServiceState
+
+        s = self._status(state=ServiceState.healthy, detail="titan")
+        result = build_servers_section([s])
+        assert "titan" in result.plain
+
+    def test_unknown_shows_pending(self):
+        from imas_codex.discovery.base.services import ServiceState
+
+        s = self._status(state=ServiceState.unknown)
+        result = build_servers_section([s])
+        assert "pending" in result.plain
+
+    def test_unhealthy_402_shows_no_credit(self):
+        s = self._status(detail="no credit (402)")
+        result = build_servers_section([s])
+        assert "no credit" in result.plain
+
+    def test_unhealthy_budget_shows_no_credit(self):
+        s = self._status(detail="insufficient budget")
+        result = build_servers_section([s])
+        assert "no credit" in result.plain
+
+    def test_unhealthy_401_shows_auth_error(self):
+        s = self._status(detail="auth error (401)")
+        result = build_servers_section([s])
+        assert "auth error" in result.plain
+
+    def test_unhealthy_429_shows_rate_limited(self):
+        s = self._status(detail="rate limited (429)")
+        result = build_servers_section([s])
+        assert "rate limited" in result.plain
+
+    def test_unhealthy_timeout_shows_timeout(self):
+        s = self._status(detail="connection timed out")
+        result = build_servers_section([s])
+        assert "timeout" in result.plain
+
+    def test_unhealthy_refused_shows_refused(self):
+        s = self._status(detail="connection refused")
+        result = build_servers_section([s])
+        assert "refused" in result.plain
+
+    def test_unhealthy_proxy_shows_proxy_down(self):
+        s = self._status(detail="502 bad gateway via proxy")
+        result = build_servers_section([s])
+        assert "proxy down" in result.plain
+
+    def test_unhealthy_generic_shows_down(self):
+        s = self._status(detail="some unknown error")
+        result = build_servers_section([s])
+        assert "down" in result.plain
+
+    def test_unhealthy_with_healthy_detail_shows_grayed(self):
+        s = self._status(detail="error", healthy_detail="titan")
+        result = build_servers_section([s])
+        assert "titan" in result.plain
+
+    def test_unhealthy_with_downtime(self):
+        import time
+
+        s = self._status(detail="connection refused")
+        s.last_healthy = time.time() - 30
+        result = build_servers_section([s])
+        assert "30s" in result.plain
+
+    def test_returns_none_for_empty_list(self):
+        assert build_servers_section([]) is None
+        assert build_servers_section(None) is None
+
+
+# =============================================================================
+# WikiProgressDisplay transient=False
+# =============================================================================
+
+
+class TestWikiDisplayTransient:
+    """Verify Wiki progress display uses transient=False."""
+
+    def test_live_not_transient(self):
+        """Live display should persist after exit (transient=False)."""
+        from imas_codex.discovery.wiki.progress import WikiProgressDisplay
+
+        display = WikiProgressDisplay(facility="test", cost_limit=1.0)
+        display.__enter__()
+        assert display._live is not None
+        assert display._live.transient is False
+        display.__exit__(None, None, None)
