@@ -1410,6 +1410,11 @@ def _submit_allocation(gpus: int) -> None:
     partition_name = partition["name"]
     cpus = gpus * 4
 
+    # Resolve remote $HOME for SBATCH directives (SLURM does NOT expand
+    # shell variables in #SBATCH lines — only inside the script body).
+    remote_home = _run_remote("echo $HOME", timeout=10).strip()
+    services_dir_abs = f"{remote_home}/.local/share/imas-codex/services"
+
     script = (
         "#!/bin/bash\n"
         f"#SBATCH --partition={partition_name}\n"
@@ -1419,7 +1424,7 @@ def _submit_allocation(gpus: int) -> None:
         "#SBATCH --time=UNLIMITED\n"
         f"#SBATCH --job-name={_ALLOC_JOB}\n"
         f"#SBATCH --nodelist={host}\n"
-        f"#SBATCH --output={_SERVICES_DIR}/allocation.log\n"
+        f"#SBATCH --output={services_dir_abs}/allocation.log\n"
         "\n"
         f"SERVICES_DIR={_SERVICES_DIR}\n"
         'mkdir -p "$SERVICES_DIR"\n'
@@ -2881,8 +2886,6 @@ def serve_status() -> None:
                     click.echo("  ✗ Status: not available")
             except Exception as e:
                 click.echo(f"  ✗ Status: error ({e})")
-        elif embed_location != "local":
-            click.echo("  ✗ Status: no running SLURM service allocation")
         elif embed_location == "local":
             click.echo("  ✓ Mode: in-process (no server)")
 
