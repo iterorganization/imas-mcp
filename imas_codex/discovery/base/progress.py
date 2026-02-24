@@ -505,12 +505,12 @@ class PipelineRowConfig:
     into a single block.  Each pipeline stage renders as:
 
         TRIAGEx4  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  7,782 100%
-        0.85  electromagnetic  Thomson Scattering    $12.54    0.23/s
-        General documentation for Thomson Scattering
+        0.85  electromagnetic  Thomson Scattering            0.23/s
+        General documentation for Thomson Scattering        $12.54
 
     Line 1: NAMExN + bar + count + pct
-    Line 2: score + domain + name … cost + rate (right-aligned)
-    Line 3: description
+    Line 2: score + domain + name … rate (right-aligned)
+    Line 3: description … cost (right-aligned below rate)
 
     This is the standard layout for discovery CLI tools that want
     integrated per-stage progress and activity display.
@@ -572,8 +572,8 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
 
     Renders 3 lines:
       Line 1: NAMExN + bar + count + pct
-      Line 2: score + domain + name … cost + rate (right-aligned)
-      Line 3: description
+      Line 2: score + domain + name … rate (right-aligned)
+      Line 3: description … cost (right-aligned below rate)
 
     Args:
         config: Pipeline row configuration.
@@ -656,11 +656,8 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         else:
             line2.append("idle", style="dim italic")
 
-    # Right-align cost + rate on line 2
-    # Cost first (if applicable), rate always shown (even when complete)
+    # Right-align rate on line 2
     right_parts: list[str] = []
-    if config.cost is not None and config.cost > 0:
-        right_parts.append(f"${config.cost:.2f}")
     if config.rate and config.rate > 0:
         right_parts.append(f"{config.rate:.2f}/s")
     elif config.is_complete:
@@ -672,7 +669,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         line2.append(right_s, style="dim")
     row.append_text(line2)
 
-    # ── Line 3: description ──
+    # ── Line 3: description (left) + cost (right-aligned with rate) ──
     row.append("\n")
     line3 = Text()
     if config.has_structured_detail:
@@ -687,6 +684,12 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         line3.append("  ", style="dim")
         for text, style in config.detail_parts:
             line3.append(text, style=style)
+    # Right-align cost on line 3 (below rate on line 2)
+    if config.cost is not None and config.cost > 0:
+        cost_s = f"${config.cost:.2f}"
+        gap = max(1, row_width - cell_len(line3.plain) - len(cost_s))
+        line3.append(" " * gap)
+        line3.append(cost_s, style="dim")
     row.append_text(line3)
 
     return row

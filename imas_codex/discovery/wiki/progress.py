@@ -468,8 +468,8 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
     Each stage shows a 3-line block:
       Line 1: progress bar + count + pct
-      Line 2: score + domain + name … rate + cost (right-aligned)
-      Line 3: description
+      Line 2: score + domain + name … rate (right-aligned)
+      Line 3: description … cost (right-aligned below rate)
 
     Progress is tracked against total pages in graph, not just this session.
     Uses common pipeline infrastructure from base.progress.
@@ -623,8 +623,8 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
         Each pipeline stage gets a 3-line block:
           Line 1: SCANx4  ━━━━━━━━━━━━━━━━━━    2,238  29%
-          Line 2:         0.00  general  Mailinglists    0.23/s    $8.30
-          Line 3:         Information regarding SPC...
+          Line 2:         0.00  general  Mailinglists            0.23/s
+          Line 3:         Information regarding SPC...           $8.30
 
         Stages: SCAN → PAGES → DOC → IMAGES
         """
@@ -693,11 +693,13 @@ class WikiProgressDisplay(BaseProgressDisplay):
         triage_complete = False
         triage_complete_label = "done"
         triage_at_100 = scored_pages >= score_total > 1
+        # Snapshot rate when workers stop (regardless of completion)
         if (self._worker_complete("triage") or triage_at_100) and not score:
-            triage_complete = True
-            # Snapshot rate on completion transition
             if self.state._final_score_rate is None and self.state.score_rate:
                 self.state._final_score_rate = self.state.score_rate
+        # Only mark complete when progress is actually at 100%
+        if triage_at_100 and not score:
+            triage_complete = True
             if self.state.provider_budget_exhausted:
                 triage_complete_label = "api budget"
             elif self.state.cost_limit_reached:
@@ -722,11 +724,13 @@ class WikiProgressDisplay(BaseProgressDisplay):
         pages_desc = ""
         pages_complete = False
         pages_at_100 = self.state.pages_ingested >= ingest_total > 1
+        # Snapshot rate when workers stop (regardless of completion)
         if (self._worker_complete("pages") or pages_at_100) and not ingest:
-            pages_complete = True
-            # Snapshot rate on completion transition
             if self.state._final_ingest_rate is None and self.state.ingest_rate:
                 self.state._final_ingest_rate = self.state.ingest_rate
+        # Only mark complete when progress is actually at 100%
+        if pages_at_100 and not ingest:
+            pages_complete = True
         if ingest:
             pages_text = self._clip_title(ingest.title, content_width - LABEL_WIDTH)
             pages_score = ingest.score
@@ -743,11 +747,13 @@ class WikiProgressDisplay(BaseProgressDisplay):
         docs_complete = False
         docs_complete_label = "done"
         docs_at_100 = art_completed >= art_total > 1
+        # Snapshot rate when workers stop (regardless of completion)
         if (self._worker_complete("docs") or docs_at_100) and not artifact:
-            docs_complete = True
-            # Snapshot rate on completion transition
             if self.state._final_artifact_rate is None and art_rate:
                 self.state._final_artifact_rate = art_rate
+        # Only mark complete when progress is actually at 100%
+        if docs_at_100 and not artifact:
+            docs_complete = True
             if self.state.provider_budget_exhausted:
                 docs_complete_label = "api budget"
             elif self.state.cost_limit_reached:
@@ -782,11 +788,13 @@ class WikiProgressDisplay(BaseProgressDisplay):
         images_complete = False
         images_complete_label = "done"
         images_at_100 = img_scored >= img_total > 1
+        # Snapshot rate when workers stop (regardless of completion)
         if (self._worker_complete("images") or images_at_100) and not image:
-            images_complete = True
-            # Snapshot rate on completion transition
             if self.state._final_image_rate is None and self.state.image_score_rate:
                 self.state._final_image_rate = self.state.image_score_rate
+        # Only mark complete when progress is actually at 100%
+        if images_at_100 and not image:
+            images_complete = True
             if self.state.provider_budget_exhausted:
                 images_complete_label = "api budget"
             elif self.state.cost_limit_reached:
