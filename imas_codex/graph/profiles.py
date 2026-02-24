@@ -307,11 +307,22 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
     if local and info.scheduler == "slurm":
         import socket
 
-        from imas_codex.remote.tunnel import TUNNEL_OFFSET, discover_compute_node_local
+        from imas_codex.remote.tunnel import discover_compute_node_local
 
         compute_node = discover_compute_node_local(
             service_job_name=info.service_job_name
         )
+        if not compute_node:
+            # squeue found no running service job — try the configured
+            # compute host (services may outlive the SLURM allocation).
+            from imas_codex.remote.locations import _resolve_compute_host
+
+            compute_node = _resolve_compute_host(info)
+            if compute_node:
+                logger.info(
+                    "SLURM: no service job, using configured host %s",
+                    compute_node,
+                )
         if compute_node:
             my_hostname = socket.gethostname().split(".")[0]
             if compute_node.split(".")[0] == my_hostname:
@@ -321,13 +332,9 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
                 "SLURM: Neo4j on peer node %s → direct connection", compute_node
             )
             return f"bolt://{compute_node}:{bolt_port}"
-        tunnel_port = bolt_port + TUNNEL_OFFSET
-        logger.warning(
-            "SLURM service allocation not running; using unresolved tunnel endpoint "
-            "localhost:%d",
-            tunnel_port,
-        )
-        return f"bolt://localhost:{tunnel_port}"
+        # squeue failed and no configured compute host — fall back to localhost
+        logger.debug("SLURM: no service job found → localhost:%d", bolt_port)
+        return f"bolt://localhost:{bolt_port}"
 
     # ── Mode 3: remote ─────────────────────────────────────────────────
     # Check tunnel port override
@@ -353,13 +360,6 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
     remote_bind = resolve_remote_bind(
         host, info.scheduler, service_job_name=info.service_job_name
     )
-    if remote_bind is None:
-        logger.warning(
-            "SLURM service allocation not running; using unresolved tunnel endpoint "
-            "localhost:%d",
-            tunnel_port_int,
-        )
-        return f"bolt://localhost:{tunnel_port_int}"
 
     ok = ensure_tunnel(
         port=bolt_port,
@@ -605,9 +605,6 @@ def reconnect_tunnel() -> bool:
         loc_info.scheduler,
         service_job_name=loc_info.service_job_name,
     )
-    if remote_bind is None:
-        logger.error("Cannot reconnect tunnel: no running SLURM service allocation")
-        return False
 
     # Re-establish
     ok = ensure_tunnel(

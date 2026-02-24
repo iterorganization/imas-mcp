@@ -6,8 +6,6 @@ connection.  All calls to ``is_local_host`` are mocked so no SSH
 probes occur.
 """
 
-import socket
-
 import pytest
 
 from imas_codex.graph.profiles import (
@@ -43,12 +41,10 @@ def _mock_is_local_host(monkeypatch):
         "imas_codex.remote.executor.is_local_host",
         lambda h: True,
     )
-    # Provide deterministic SLURM node discovery for local resolution paths.
+    # Prevent compute host fallback from reading private YAML.
     monkeypatch.setattr(
-        "imas_codex.remote.tunnel.discover_compute_node_local",
-        lambda service_job_name="imas-codex-services": socket.gethostname().split(".")[
-            0
-        ],
+        "imas_codex.remote.locations._resolve_compute_host",
+        lambda info: None,
     )
 
 
