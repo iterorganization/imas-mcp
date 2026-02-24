@@ -252,7 +252,7 @@ class TestCountGroupWorkers:
         display = DataProgressDisplay(facility="test", cost_limit=10.0)
         group = MagicMock(spec=SupervisedWorkerGroup)
         group.workers = workers
-        display.state.worker_group = group
+        display.worker_group = group
         return display
 
     def test_no_worker_group(self):
@@ -620,7 +620,7 @@ class TestDataProgressDisplay:
                 name="enrich_worker_1", group="enrich", state=WorkerState.running
             ),
         }
-        display.state.worker_group = group
+        display.worker_group = group
 
         section = display._build_pipeline_section()
         text = section.plain
@@ -723,8 +723,10 @@ class TestDisplayLayout:
 
     def test_min_width(self):
         """Width never goes below MIN_WIDTH."""
+        from imas_codex.discovery.base.progress import MIN_WIDTH
+
         display = DataProgressDisplay(facility="test", cost_limit=1.0, console=None)
-        assert display.width >= display.MIN_WIDTH
+        assert display.width >= MIN_WIDTH
 
     def test_bar_width_positive(self):
         """Bar width always positive."""
@@ -775,4 +777,5 @@ class TestSummary:
         display.state.accumulated_cost = 5.00
         summary = display._build_summary()
         text = summary.plain
-        assert "total=$6.00" in text
+        assert "cost=$5.00" in text
+        assert "session=$1.00" in text

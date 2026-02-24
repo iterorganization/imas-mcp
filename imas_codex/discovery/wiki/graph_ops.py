@@ -811,7 +811,7 @@ def mark_page_failed(page_id: str, error: str, fallback_status: str) -> None:
         )
 
 
-def _release_claimed_pages(page_ids: list[str], *, max_fetch_retries: int = 3) -> None:
+def _release_claimed_pages(page_ids: list[str], *, max_fetch_retries: int = 10) -> None:
     """Release claimed pages back for reprocessing.
 
     Increments fetch_retries counter on each page. Pages that exceed
@@ -929,6 +929,56 @@ def release_orphaned_claims(facility: str) -> dict[str, int]:
     except Exception as e:
         logger.warning("Could not release orphaned claims: %s", e)
         return {"released_pages": 0, "released_artifacts": 0, "error": str(e)}
+
+
+def recover_failed_pages(facility: str) -> int:
+    """Reset failed pages back to scanned for re-scoring.
+
+    Pages marked as 'failed' due to exhausted fetch_retries (transient
+    fetch failures, e.g. auth session expiry) are reset to 'scanned'
+    with fetch_retries cleared. This gives them a fresh chance on the
+    next discovery run.
+
+    Only recovers pages that have NO error field set — pages with an
+    explicit error were genuinely broken
+    (e.g. parse errors), not transient fetch failures.
+
+    Args:
+        facility: Facility ID
+
+    Returns:
+        Number of pages recovered
+    """
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (wp:WikiPage {facility_id: $facility})
+                WHERE wp.status = $failed
+                  AND wp.error IS NULL
+                  AND wp.score IS NULL
+                SET wp.status = $scanned,
+                    wp.fetch_retries = 0,
+                    wp.claimed_at = null,
+                    wp.claim_token = null,
+                    wp.failed_at = null
+                RETURN count(wp) AS recovered
+                """,
+                facility=facility,
+                failed=WikiPageStatus.failed.value,
+                scanned=WikiPageStatus.scanned.value,
+            )
+            recovered = result[0]["recovered"] if result else 0
+            if recovered > 0:
+                logger.info(
+                    "Recovered %d failed pages for %s (reset to scanned)",
+                    recovered,
+                    facility,
+                )
+            return recovered
+    except Exception as e:
+        logger.warning("Could not recover failed pages: %s", e)
+        return 0
 
 
 # =============================================================================

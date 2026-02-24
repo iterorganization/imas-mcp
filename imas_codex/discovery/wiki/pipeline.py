@@ -1648,10 +1648,9 @@ class WikiArtifactPipeline:
         Raises:
             ValueError: If content is not a valid PDF (wrong magic bytes)
         """
-        import tempfile
-        from pathlib import Path
+        import io
 
-        from llama_index.readers.file import PDFReader
+        import pypdf
 
         stats: ArtifactIngestionStats = {
             "chunks": 0,
@@ -1674,54 +1673,48 @@ class WikiArtifactPipeline:
             else:
                 raise ValueError(f"Invalid PDF: missing %PDF header (got: {preview!r})")
 
-        # Write to temp file for PDFReader
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            f.write(pdf_bytes)
-            temp_path = Path(f.name)
+        # Suppress pypdf's verbose warnings and errors.
+        # pypdf._cmap uses logger_error() for benign "Advanced
+        # encoding ... not implemented yet" messages, so ERROR
+        # level doesn't suppress them — use CRITICAL.
+        pypdf_logger = logging.getLogger("pypdf")
+        original_level = pypdf_logger.level
+        pypdf_logger.setLevel(logging.CRITICAL)
 
         try:
-            # Suppress pypdf's verbose warnings and errors.
-            # pypdf._cmap uses logger_error() for benign "Advanced
-            # encoding ... not implemented yet" messages, so ERROR
-            # level doesn't suppress them — use CRITICAL.
-            pypdf_logger = logging.getLogger("pypdf")
-            original_level = pypdf_logger.level
-            pypdf_logger.setLevel(logging.CRITICAL)
+            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+            text_parts = []
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    text_parts.append(text)
+        finally:
+            pypdf_logger.setLevel(original_level)
 
-            try:
-                reader = PDFReader()
-                documents = reader.load_data(temp_path)
-            finally:
-                pypdf_logger.setLevel(original_level)
-
-            if not documents:
-                logger.warning("No content extracted from PDF: %s", artifact_id)
-                return stats
-
-            # Combine all pages
-            full_text = "\n\n".join(doc.text for doc in documents if doc.text)
-
-            if not full_text.strip():
-                logger.warning("No text content in PDF: %s", artifact_id)
-                return stats
-
-            stats["content_preview"] = full_text[:300]
-            stats = await self._create_artifact_chunks(
-                artifact_id, full_text, "pdf", stats
-            )
-
-            # Extract embedded images for VLM captioning pipeline
-            try:
-                images = self._extract_pdf_images(pdf_bytes, artifact_id)
-                if images:
-                    stats["extracted_images"] = images
-            except Exception as e:
-                logger.debug("PDF image extraction failed for %s: %s", artifact_id, e)
-
+        if not text_parts:
+            logger.warning("No content extracted from PDF: %s", artifact_id)
             return stats
 
-        finally:
-            temp_path.unlink(missing_ok=True)
+        full_text = "\n\n".join(text_parts)
+
+        if not full_text.strip():
+            logger.warning("No text content in PDF: %s", artifact_id)
+            return stats
+
+        stats["content_preview"] = full_text[:300]
+        stats = await self._create_artifact_chunks(
+            artifact_id, full_text, "pdf", stats
+        )
+
+        # Extract embedded images for VLM captioning pipeline
+        try:
+            images = self._extract_pdf_images(pdf_bytes, artifact_id)
+            if images:
+                stats["extracted_images"] = images
+        except Exception as e:
+            logger.debug("PDF image extraction failed for %s: %s", artifact_id, e)
+
+        return stats
 
     def _extract_pdf_images(
         self,
@@ -1742,9 +1735,8 @@ class WikiArtifactPipeline:
         Returns:
             List of dicts with image_bytes, page_num, width, height
         """
+        import io
         import logging as _logging
-        import tempfile
-        from pathlib import Path
 
         import pypdf
 
@@ -1754,35 +1746,28 @@ class WikiArtifactPipeline:
 
         images: list[dict[str, Any]] = []
         try:
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-                f.write(pdf_bytes)
-                temp_path = Path(f.name)
-
-            try:
-                reader = pypdf.PdfReader(temp_path)
-                for page_num, page in enumerate(reader.pages, 1):
-                    if len(images) >= max_images:
-                        break
-                    try:
-                        for img in page.images:
-                            if len(images) >= max_images:
-                                break
-                            img_bytes = img.data
-                            # Skip tiny images (likely icons/bullets)
-                            if len(img_bytes) < 2048:
-                                continue
-                            images.append(
-                                {
-                                    "image_bytes": img_bytes,
-                                    "page_num": page_num,
-                                    "name": getattr(img, "name", ""),
-                                }
-                            )
-                    except Exception:
-                        # Some pages may have unsupported image formats
-                        continue
-            finally:
-                temp_path.unlink(missing_ok=True)
+            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+            for page_num, page in enumerate(reader.pages, 1):
+                if len(images) >= max_images:
+                    break
+                try:
+                    for img in page.images:
+                        if len(images) >= max_images:
+                            break
+                        img_bytes = img.data
+                        # Skip tiny images (likely icons/bullets)
+                        if len(img_bytes) < 2048:
+                            continue
+                        images.append(
+                            {
+                                "image_bytes": img_bytes,
+                                "page_num": page_num,
+                                "name": getattr(img, "name", ""),
+                            }
+                        )
+                except Exception:
+                    # Some pages may have unsupported image formats
+                    continue
         finally:
             pypdf_logger.setLevel(original_level)
 
@@ -1802,8 +1787,7 @@ class WikiArtifactPipeline:
         Returns:
             Ingestion stats
         """
-        import tempfile
-        from pathlib import Path
+        import io
 
         from docx import Document as DocxDocument
 
@@ -1813,26 +1797,19 @@ class WikiArtifactPipeline:
             "artifact_type": "docx",
         }
 
-        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
-            f.write(content_bytes)
-            temp_path = Path(f.name)
+        doc = DocxDocument(io.BytesIO(content_bytes))
+        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+        full_text = "\n\n".join(paragraphs)
 
-        try:
-            doc = DocxDocument(temp_path)
-            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-            full_text = "\n\n".join(paragraphs)
-
-            if not full_text.strip():
-                logger.warning("No content extracted from DOCX: %s", artifact_id)
-                return stats
-
-            stats["content_preview"] = full_text[:300]
-            stats = await self._create_artifact_chunks(
-                artifact_id, full_text, "docx", stats
-            )
+        if not full_text.strip():
+            logger.warning("No content extracted from DOCX: %s", artifact_id)
             return stats
-        finally:
-            temp_path.unlink(missing_ok=True)
+
+        stats["content_preview"] = full_text[:300]
+        stats = await self._create_artifact_chunks(
+            artifact_id, full_text, "docx", stats
+        )
+        return stats
 
     async def ingest_pptx(
         self,
@@ -1848,8 +1825,7 @@ class WikiArtifactPipeline:
         Returns:
             Ingestion stats
         """
-        import tempfile
-        from pathlib import Path
+        import io
 
         from pptx import Presentation
 
@@ -1859,44 +1835,37 @@ class WikiArtifactPipeline:
             "artifact_type": "pptx",
         }
 
-        with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as f:
-            f.write(content_bytes)
-            temp_path = Path(f.name)
+        prs = Presentation(io.BytesIO(content_bytes))
+        text_parts = []
 
-        try:
-            prs = Presentation(temp_path)
-            text_parts = []
+        for slide_num, slide in enumerate(prs.slides, 1):
+            slide_text = []
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    slide_text.append(shape.text.strip())
+            if slide_text:
+                text_parts.append(f"[Slide {slide_num}]\n" + "\n".join(slide_text))
 
-            for slide_num, slide in enumerate(prs.slides, 1):
-                slide_text = []
-                for shape in slide.shapes:
-                    if hasattr(shape, "text") and shape.text.strip():
-                        slide_text.append(shape.text.strip())
-                if slide_text:
-                    text_parts.append(f"[Slide {slide_num}]\n" + "\n".join(slide_text))
+        full_text = "\n\n".join(text_parts)
 
-            full_text = "\n\n".join(text_parts)
-
-            if not full_text.strip():
-                logger.warning("No content extracted from PPTX: %s", artifact_id)
-                return stats
-
-            stats["content_preview"] = full_text[:300]
-            stats = await self._create_artifact_chunks(
-                artifact_id, full_text, "pptx", stats
-            )
-
-            # Extract embedded images from slides for VLM captioning
-            try:
-                images = self._extract_pptx_images(content_bytes, artifact_id)
-                if images:
-                    stats["extracted_images"] = images
-            except Exception as e:
-                logger.debug("PPTX image extraction failed for %s: %s", artifact_id, e)
-
+        if not full_text.strip():
+            logger.warning("No content extracted from PPTX: %s", artifact_id)
             return stats
-        finally:
-            temp_path.unlink(missing_ok=True)
+
+        stats["content_preview"] = full_text[:300]
+        stats = await self._create_artifact_chunks(
+            artifact_id, full_text, "pptx", stats
+        )
+
+        # Extract embedded images from slides for VLM captioning
+        try:
+            images = self._extract_pptx_images(content_bytes, artifact_id)
+            if images:
+                stats["extracted_images"] = images
+        except Exception as e:
+            logger.debug("PPTX image extraction failed for %s: %s", artifact_id, e)
+
+        return stats
 
     def _extract_pptx_images(
         self,
@@ -1917,43 +1886,35 @@ class WikiArtifactPipeline:
         Returns:
             List of dicts with image_bytes, slide_num, name
         """
-        import tempfile
-        from pathlib import Path
+        import io
 
         from pptx import Presentation
         from pptx.enum.shapes import MSO_SHAPE_TYPE
 
         images: list[dict[str, Any]] = []
 
-        with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as f:
-            f.write(content_bytes)
-            temp_path = Path(f.name)
-
-        try:
-            prs = Presentation(temp_path)
-            for slide_num, slide in enumerate(prs.slides, 1):
+        prs = Presentation(io.BytesIO(content_bytes))
+        for slide_num, slide in enumerate(prs.slides, 1):
+            if len(images) >= max_images:
+                break
+            for shape in slide.shapes:
                 if len(images) >= max_images:
                     break
-                for shape in slide.shapes:
-                    if len(images) >= max_images:
-                        break
-                    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                        try:
-                            img_bytes = shape.image.blob
-                            if len(img_bytes) < 2048:
-                                continue
-                            images.append(
-                                {
-                                    "image_bytes": img_bytes,
-                                    "slide_num": slide_num,
-                                    "name": getattr(shape, "name", ""),
-                                    "content_type": shape.image.content_type,
-                                }
-                            )
-                        except Exception:
+                if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                    try:
+                        img_bytes = shape.image.blob
+                        if len(img_bytes) < 2048:
                             continue
-        finally:
-            temp_path.unlink(missing_ok=True)
+                        images.append(
+                            {
+                                "image_bytes": img_bytes,
+                                "slide_num": slide_num,
+                                "name": getattr(shape, "name", ""),
+                                "content_type": shape.image.content_type,
+                            }
+                        )
+                    except Exception:
+                        continue
 
         return images
 

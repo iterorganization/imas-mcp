@@ -143,84 +143,190 @@ def files(
         log_print(f"[red]No SSH host configured for {facility}[/red]")
         raise SystemExit(1)
 
-    log_print(f"\n[bold]File Discovery: {facility}[/bold]")
-    log_print(f"  SSH host: {ssh_host}")
-    log_print(f"  Min score: {min_score}")
-    log_print(f"  Cost limit: ${cost_limit:.2f}")
-    if focus:
-        log_print(f"  Focus: {focus}")
-
-    # Worker summary
-    worker_parts = [f"{scan_workers} scan"]
-    if not scan_only:
-        worker_parts.append(f"{score_workers} score")
-    if not scan_only and not score_only:
-        worker_parts.append(f"{code_workers} code")
-        worker_parts.append("1 artifact")
-    log_print(f"  Workers: {', '.join(worker_parts)}")
-    if time_limit is not None:
-        log_print(f"  Time limit: {time_limit} min")
-    log_print("")
-
     deadline: float | None = None
     if time_limit is not None:
         deadline = time.time() + (time_limit * 60)
 
-    # Run parallel discovery
     try:
         from imas_codex.discovery.files.parallel import run_parallel_file_discovery
 
-        async def _run():
-            # Logging callbacks for non-rich mode
-            def log_scan(msg, stats, results=None):
-                if msg != "idle":
-                    file_logger.info("SCAN: %s", msg)
+        # Logging callbacks for non-rich mode
+        def log_scan(msg, stats, results=None):
+            if msg != "idle":
+                file_logger.info("SCAN: %s", msg)
 
-            def log_score(msg, stats, results=None):
-                if msg != "idle":
-                    file_logger.info("SCORE: %s", msg)
+        def log_score(msg, stats, results=None):
+            if msg != "idle":
+                file_logger.info("SCORE: %s", msg)
 
-            def log_code(msg, stats, results=None):
-                if msg != "idle":
-                    file_logger.info("CODE: %s", msg)
+        def log_code(msg, stats, results=None):
+            if msg != "idle":
+                file_logger.info("CODE: %s", msg)
 
-            def log_artifact(msg, stats, results=None):
-                if msg != "idle":
-                    file_logger.info("ARTIFACT: %s", msg)
+        def log_artifact(msg, stats, results=None):
+            if msg != "idle":
+                file_logger.info("ARTIFACT: %s", msg)
 
-            return await run_parallel_file_discovery(
-                facility=facility,
-                ssh_host=ssh_host,
-                cost_limit=cost_limit,
-                min_score=min_score,
-                max_paths=max_paths,
-                focus=focus,
-                num_scan_workers=scan_workers,
-                num_score_workers=score_workers,
-                num_code_workers=code_workers,
-                num_artifact_workers=1,
-                scan_only=scan_only,
-                score_only=score_only,
-                deadline=deadline,
-                on_scan_progress=log_scan,
-                on_score_progress=log_score,
-                on_code_progress=log_code,
-                on_artifact_progress=log_artifact,
+        if not use_rich:
+            log_print(f"\n[bold]File Discovery: {facility}[/bold]")
+            log_print(f"  SSH host: {ssh_host}")
+            log_print(f"  Min score: {min_score}")
+            log_print(f"  Cost limit: ${cost_limit:.2f}")
+            if focus:
+                log_print(f"  Focus: {focus}")
+            log_print("")
+
+            result = asyncio.run(
+                run_parallel_file_discovery(
+                    facility=facility,
+                    ssh_host=ssh_host,
+                    cost_limit=cost_limit,
+                    min_score=min_score,
+                    max_paths=max_paths,
+                    focus=focus,
+                    num_scan_workers=scan_workers,
+                    num_score_workers=score_workers,
+                    num_code_workers=code_workers,
+                    num_artifact_workers=1,
+                    scan_only=scan_only,
+                    score_only=score_only,
+                    deadline=deadline,
+                    on_scan_progress=log_scan,
+                    on_score_progress=log_score,
+                    on_code_progress=log_code,
+                    on_artifact_progress=log_artifact,
+                )
+            )
+        else:
+            # Rich progress display
+            from imas_codex.cli.discover.common import create_discovery_monitor
+            from imas_codex.discovery.files.progress import FileProgressDisplay
+
+            service_monitor = create_discovery_monitor(
+                config,
+                check_graph=True,
+                check_embed=not scan_only and not score_only,
+                check_model=not scan_only,
+                check_ssh=True,
+                check_auth=False,
             )
 
-        result = asyncio.run(_run())
+            # Suppress noisy INFO during rich display
+            for mod in (
+                "imas_codex.embeddings",
+                "imas_codex.discovery.files",
+            ):
+                logging.getLogger(mod).setLevel(logging.WARNING)
 
-        # Summary
+            with FileProgressDisplay(
+                facility=facility,
+                cost_limit=cost_limit,
+                focus=focus or "",
+                console=console,
+                scan_only=scan_only,
+                score_only=score_only,
+            ) as display:
+                display.service_monitor = service_monitor
+
+                async def run_with_display():
+                    await service_monitor.__aenter__()
+
+                    async def refresh_graph_state():
+                        while True:
+                            try:
+                                display.refresh_from_graph(facility)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                pass
+                            await asyncio.sleep(0.5)
+
+                    async def queue_ticker():
+                        while True:
+                            try:
+                                display.tick()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                pass
+                            await asyncio.sleep(0.15)
+
+                    refresh_task = asyncio.create_task(refresh_graph_state())
+                    ticker_task = asyncio.create_task(queue_ticker())
+
+                    def on_scan(msg, stats, results=None):
+                        display.update_scan(msg, stats, results)
+
+                    def on_score(msg, stats, results=None):
+                        display.update_score(msg, stats, results)
+
+                    def on_code(msg, stats, results=None):
+                        display.update_code(msg, stats, results)
+
+                    def on_artifact(msg, stats, results=None):
+                        display.update_artifact(msg, stats, results)
+
+                    def on_worker_status(worker_group):
+                        display.update_worker_status(worker_group)
+
+                    try:
+                        return await run_parallel_file_discovery(
+                            facility=facility,
+                            ssh_host=ssh_host,
+                            cost_limit=cost_limit,
+                            min_score=min_score,
+                            max_paths=max_paths,
+                            focus=focus,
+                            num_scan_workers=scan_workers,
+                            num_score_workers=score_workers,
+                            num_code_workers=code_workers,
+                            num_artifact_workers=1,
+                            scan_only=scan_only,
+                            score_only=score_only,
+                            deadline=deadline,
+                            on_scan_progress=on_scan,
+                            on_score_progress=on_score,
+                            on_code_progress=on_code,
+                            on_artifact_progress=on_artifact,
+                            on_worker_status=on_worker_status,
+                        )
+                    finally:
+                        refresh_task.cancel()
+                        ticker_task.cancel()
+                        try:
+                            await refresh_task
+                        except asyncio.CancelledError:
+                            pass
+                        try:
+                            await ticker_task
+                        except asyncio.CancelledError:
+                            pass
+                        await service_monitor.__aexit__(None, None, None)
+
+                result = asyncio.run(run_with_display())
+
+                # Final graph refresh for accurate summary
+                try:
+                    display.refresh_from_graph(facility)
+                except Exception:
+                    pass
+
+                display.print_summary()
+
+        # Final output
+        scanned = result.get("scanned", 0)
+        scored = result.get("scored", 0)
+        code_ingested = result.get("code_ingested", 0)
+        artifacts_ingested = result.get("artifacts_ingested", 0)
+        cost = result.get("cost", 0)
+        elapsed = result.get("elapsed_seconds", 0)
+
         log_print(
-            f"\n  [green]{result.get('scanned', 0)} scanned, "
-            f"{result.get('scored', 0)} scored, "
-            f"{result.get('code_ingested', 0)} code ingested, "
-            f"{result.get('artifacts_ingested', 0)} artifacts ingested[/green]"
+            f"\n  [green]{scanned} scanned, {scored} scored, "
+            f"{code_ingested} code ingested, "
+            f"{artifacts_ingested} artifacts ingested[/green]"
         )
-        log_print(
-            f"  [dim]Cost: ${result.get('cost', 0):.2f}, "
-            f"Time: {result.get('elapsed_seconds', 0):.1f}s[/dim]"
-        )
+        log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
 
     except Exception as e:
         log_print(f"[red]Error: {e}[/red]")
@@ -228,5 +334,6 @@ def files(
             import traceback
 
             traceback.print_exc()
+        raise SystemExit(1) from e
 
     log_print("\n[green]File discovery complete.[/green]")

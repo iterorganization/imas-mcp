@@ -645,7 +645,7 @@ async def _async_discovery_loop(
             scan_only=scan_only,
             score_only=score_only,
         ) as display:
-            display.state.service_monitor = service_monitor
+            display.service_monitor = service_monitor
             await service_monitor.__aenter__()
 
             async def refresh_graph_state():

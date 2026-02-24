@@ -62,7 +62,7 @@ def scan_path_fd(
     for ext in extensions:
         ext_args.extend(["-e", ext])
 
-    cmd = ["fd", "--type", "f", "--max-depth", str(max_depth)] + ext_args + [path]
+    cmd = ["fd", ".", "--type", "f", "--max-depth", str(max_depth)] + ext_args + [path]
     try:
         result = subprocess.run(
             cmd,

@@ -274,7 +274,7 @@ def signals(
                 discover_only=scan_only,
                 enrich_only=enrich_only,
             ) as display:
-                display.state.service_monitor = service_monitor
+                display.service_monitor = service_monitor
 
                 async def run_with_display():
                     await service_monitor.__aenter__()

@@ -37,11 +37,17 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from rich.cells import cell_len
 from rich.console import Console
 from rich.live import Live
 from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
+
+from imas_codex.discovery.base.supervision import (
+    SupervisedWorkerGroup,
+    WorkerState,
+)
 
 if TYPE_CHECKING:
     pass
@@ -65,15 +71,16 @@ def clip_path(path: str, max_len: int = 63) -> str:
 
     Center-clips the path, keeping the start (context) and end (specificity).
     The /.../ format is distinctive and indicates path truncation.
+    Uses cell_len for accurate terminal width.
     """
-    if len(path) <= max_len:
+    if cell_len(path) <= max_len:
         return path
     # Keep more of the end (specific part) than the start
     keep_start = max_len // 3
     keep_end = max_len - keep_start - 5  # 5 for "/.../"
     if keep_end < 10:
         # Very short max_len - just clip end
-        return path[: max_len - 3] + "..."
+        return clip_text(path, max_len)
     return f"{path[:keep_start]}/.../{path[-keep_end:]}"
 
 
@@ -81,10 +88,21 @@ def clip_text(text: str, max_len: int = 60) -> str:
     """Clip end of text with ellipsis: Long description text...
 
     End-clips for descriptions/reasons where the start is most important.
+    Uses cell_len for accurate terminal width (handles wide Unicode chars).
     """
-    if len(text) <= max_len:
+    if cell_len(text) <= max_len:
         return text
-    return text[: max_len - 3] + "..."
+    # Trim character by character until display width fits
+    target = max_len - 3  # room for "..."
+    result = []
+    width = 0
+    for ch in text:
+        ch_width = cell_len(ch)
+        if width + ch_width > target:
+            break
+        result.append(ch)
+        width += ch_width
+    return "".join(result) + "..."
 
 
 def format_time(seconds: float) -> str:
@@ -487,11 +505,11 @@ class PipelineRowConfig:
     into a single block.  Each pipeline stage renders as:
 
         TRIAGEx4  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  7,782 100%
-        0.85  electromagnetic  Thomson Scattering    0.23/s    $12.54
+        0.85  electromagnetic  Thomson Scattering    $12.54    0.23/s
         General documentation for Thomson Scattering
 
     Line 1: NAMExN + bar + count + pct
-    Line 2: score + domain + name … rate + cost (right-aligned)
+    Line 2: score + domain + name … cost + rate (right-aligned)
     Line 3: description
 
     This is the standard layout for discovery CLI tools that want
@@ -554,7 +572,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
 
     Renders 3 lines:
       Line 1: NAMExN + bar + count + pct
-      Line 2: score + domain + name … rate + cost (right-aligned)
+      Line 2: score + domain + name … cost + rate (right-aligned)
       Line 3: description
 
     Args:
@@ -638,15 +656,18 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         else:
             line2.append("idle", style="dim italic")
 
-    # Right-align rate + cost on line 2
+    # Right-align cost + rate on line 2
+    # Cost first (if applicable), rate always shown (even when complete)
     right_parts: list[str] = []
-    if config.rate and config.rate > 0:
-        right_parts.append(f"{config.rate:.2f}/s")
     if config.cost is not None and config.cost > 0:
         right_parts.append(f"${config.cost:.2f}")
+    if config.rate and config.rate > 0:
+        right_parts.append(f"{config.rate:.2f}/s")
+    elif config.is_complete:
+        right_parts.append("--/s")
     if right_parts:
         right_s = "    ".join(right_parts)
-        gap = max(1, row_width - len(line2.plain) - len(right_s))
+        gap = max(1, row_width - cell_len(line2.plain) - len(right_s))
         line2.append(" " * gap)
         line2.append(right_s, style="dim")
     row.append_text(line2)
@@ -904,24 +925,201 @@ def build_header(
 class BaseProgressDisplay(ABC):
     """Abstract base class for discovery progress displays.
 
-    Provides common infrastructure for Live display management.
-    Subclasses implement domain-specific rendering logic.
+    Provides common infrastructure for Live display management,
+    worker status tracking, headers, server sections, and the
+    standard HEADER → SERVERS → PIPELINE → RESOURCES layout.
+
+    Subclasses must implement:
+    - ``_build_pipeline_section()`` — domain-specific pipeline rows
+    - ``_build_resources_section()`` — domain-specific resource gauges
+
+    Subclasses may override:
+    - ``_header_title_suffix()`` — e.g. "Wiki Discovery", "Signal Discovery"
+    - ``_header_mode_label()`` — e.g. "SCAN ONLY"
     """
 
     def __init__(
         self,
-        config: ProgressConfig,
+        facility: str,
+        cost_limit: float,
         console: Console | None = None,
+        focus: str = "",
+        title_suffix: str = "Discovery",
     ) -> None:
-        self.config = config
+        self.facility = facility
+        self.cost_limit = cost_limit
         self.console = console or Console()
+        self.focus = focus
+        self._title_suffix = title_suffix
         self._live: Live | None = None
         self.start_time = time.time()
+        # Service monitor (set by CLI after construction)
+        self.service_monitor: Any = None
+        # Worker group (set by on_worker_status callback)
+        self.worker_group: SupervisedWorkerGroup | None = None
+
+    # ── Layout properties ──
+
+    @property
+    def width(self) -> int:
+        """Display width based on terminal size (fills terminal)."""
+        term_width = self.console.width or 100
+        return max(MIN_WIDTH, term_width)
+
+    @property
+    def bar_width(self) -> int:
+        """Progress bar width to fill available space."""
+        return compute_bar_width(self.width)
+
+    @property
+    def gauge_width(self) -> int:
+        """Resource gauge width (shorter than bar to fit metrics)."""
+        return compute_gauge_width(self.width)
 
     @property
     def elapsed(self) -> float:
         """Elapsed time since display started."""
         return time.time() - self.start_time
+
+    # ── Worker helpers ──
+
+    def _count_group_workers(self, group: str) -> tuple[int, str]:
+        """Count workers in a group and build annotation string.
+
+        Returns:
+            (count, annotation) where annotation describes backoff/failed state.
+        """
+        wg = self.worker_group
+        if not wg:
+            return 0, ""
+
+        count = 0
+        backoff = 0
+        failed = 0
+        for _name, status in wg.workers.items():
+            grp = status.group or _name.split("_worker")[0]
+            if grp == group:
+                count += 1
+                if status.state == WorkerState.backoff:
+                    backoff += 1
+                elif status.state == WorkerState.crashed:
+                    failed += 1
+
+        parts: list[str] = []
+        if backoff > 0:
+            parts.append(f"{backoff} backoff")
+        if failed > 0:
+            parts.append(f"{failed} failed")
+        return count, f"({', '.join(parts)})" if parts else ""
+
+    def _worker_complete(self, group: str) -> bool:
+        """Check if all workers in a group have stopped."""
+        wg = self.worker_group
+        if not wg:
+            return False
+        workers = [
+            s
+            for _n, s in wg.workers.items()
+            if (s.group or _n.split("_worker")[0]) == group
+        ]
+        return len(workers) > 0 and all(s.state == WorkerState.stopped for s in workers)
+
+    def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
+        """Update worker status from supervised worker group."""
+        self.worker_group = worker_group
+        self._refresh()
+
+    # ── Header ──
+
+    def _header_mode_label(self) -> str | None:
+        """Override to provide mode label (e.g. 'SCAN ONLY')."""
+        return None
+
+    def _build_header(self) -> Text:
+        """Build centered header with facility and focus."""
+        header = Text()
+
+        title = f"{self.facility.upper()} {self._title_suffix}"
+        mode = self._header_mode_label()
+        if mode:
+            title += f" ({mode})"
+        header.append(title.center(self.width - 4), style="bold cyan")
+
+        if self.focus:
+            header.append("\n")
+            focus_line = f"Focus: {self.focus}"
+            header.append(focus_line.center(self.width - 4), style="italic dim")
+
+        return header
+
+    # ── Servers ──
+
+    def _build_servers_section(self) -> Text | None:
+        """Build SERVERS status row from service monitor.
+
+        Always returns a section (even before checks complete) so the
+        SERVERS row is visible from the first render.
+        """
+        monitor = self.service_monitor
+        if monitor is None:
+            return None
+        statuses = monitor.get_status()
+        if not statuses:
+            section = Text()
+            section.append("  SERVERS", style="bold white")
+            section.append("  checking...", style="dim italic")
+            return section
+        return build_servers_section(statuses)
+
+    # ── Abstract pipeline/resources ──
+
+    @abstractmethod
+    def _build_pipeline_section(self) -> Text:
+        """Build domain-specific pipeline section."""
+        ...
+
+    @abstractmethod
+    def _build_resources_section(self) -> Text:
+        """Build domain-specific resource gauges."""
+        ...
+
+    # ── Display assembly ──
+
+    def _build_display(self) -> Panel:
+        """Build the complete display.
+
+        Standard layout: HEADER → SERVERS → PIPELINE → RESOURCES
+        """
+        sections: list[Text] = [self._build_header()]
+
+        # SERVERS section (optional)
+        servers = self._build_servers_section()
+        if servers is not None:
+            sections.append(Text("─" * (self.width - 4), style="dim"))
+            sections.append(servers)
+
+        # Pipeline section
+        sections.append(Text("─" * (self.width - 4), style="dim"))
+        sections.append(self._build_pipeline_section())
+
+        # Resource gauges
+        sections.append(Text("─" * (self.width - 4), style="dim"))
+        sections.append(self._build_resources_section())
+
+        content = Text()
+        for i, section in enumerate(sections):
+            if i > 0:
+                content.append("\n")
+            content.append_text(section)
+
+        return Panel(
+            content,
+            border_style="cyan",
+            width=self.width,
+            padding=(0, 1),
+        )
+
+    # ── Lifecycle ──
 
     def __enter__(self) -> BaseProgressDisplay:
         """Start live display."""
@@ -943,14 +1141,6 @@ class BaseProgressDisplay(ABC):
         """Refresh the live display."""
         if self._live:
             self._live.update(self._build_display())
-
-    @abstractmethod
-    def _build_display(self) -> Panel:
-        """Build the complete display panel.
-
-        Subclasses must implement this to render their specific content.
-        """
-        ...
 
     def tick(self) -> None:  # noqa: B027
         """Drain streaming queues for smooth display.
@@ -1000,12 +1190,18 @@ def build_resource_section(
 
     TIME and COST rows show informational metrics without limit-based gauges.
     TIME shows elapsed + ETA. COST shows spend + ETC projection.
+    ETA/ETC markers are left-aligned at a fixed position after the gauge
+    so they don't shift when values change width.
 
     Args:
         config: Resource configuration.
         gauge_width: Width of resource gauge bars (use ``compute_gauge_width()``).
     """
     section = Text()
+
+    # Fixed column for metrics after gauge: "  $12.34  ETA 5m 30s"
+    # Value column starts right after gauge, ETA/ETC at fixed offset
+    value_col_width = 10  # "  $12.34" or "  1h 23m"
 
     # TIME row — elapsed ticker, no limit gauge
     section.append(f"{'  TIME':<{LABEL_WIDTH}}", style="bold cyan")
@@ -1018,18 +1214,22 @@ def build_resource_section(
     else:
         section.append("━" * gauge_width, style="cyan")
 
-    section.append(f"  {format_time(config.elapsed)}", style="bold")
+    elapsed_s = f"  {format_time(config.elapsed)}"
+    section.append(elapsed_s, style="bold")
+    # Left-align ETA at fixed position
+    pad = max(1, value_col_width - len(elapsed_s))
+    section.append(" " * pad)
 
     if eta is not None:
         if eta <= 0:
             if config.limit_reason:
                 section.append(
-                    f"  {config.limit_reason} limit reached", style="yellow dim"
+                    f"{config.limit_reason} limit reached", style="yellow dim"
                 )
             else:
-                section.append("  complete", style="green dim")
+                section.append("complete", style="green dim")
         else:
-            section.append(f"  ETA {format_time(eta)}", style="dim")
+            section.append(f"ETA {format_time(eta)}", style="dim")
     section.append("\n")
 
     # COST row — accumulated cost from graph (source of truth)
@@ -1044,11 +1244,16 @@ def build_resource_section(
         else:
             section.append("━" * gauge_width, style="yellow")
 
-        section.append(f"  ${total_cost:.2f}", style="bold")
+        cost_s = f"  ${total_cost:.2f}"
+        section.append(cost_s, style="bold")
+        # Left-align ETC at fixed position
+        pad = max(1, value_col_width - len(cost_s))
+        section.append(" " * pad)
+
         if etc is not None and etc > total_cost:
-            section.append(f"  ETC ${etc:.2f}", style="dim")
+            section.append(f"ETC ${etc:.2f}", style="dim")
         elif config.run_cost > 0:
-            section.append(f"  session ${config.run_cost:.2f}", style="dim")
+            section.append(f"session ${config.run_cost:.2f}", style="dim")
         section.append("\n")
 
     # STATS row

@@ -26,34 +26,25 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from rich.console import Console
-from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
 from imas_codex.discovery.base.progress import (
-    GAUGE_METRICS_WIDTH,
     LABEL_WIDTH,
-    METRICS_WIDTH,
-    MIN_WIDTH,
+    BaseProgressDisplay,
     PipelineRowConfig,
     ResourceConfig,
     StreamQueue,
     build_pipeline_section,
     build_resource_section,
-    build_servers_section,
     clean_text,
     clip_text,
-    compute_bar_width,
-    compute_gauge_width,
     format_time,
 )
-from imas_codex.discovery.base.supervision import (
-    SupervisedWorkerGroup,
-    WorkerState,
-)
+from imas_codex.discovery.base.supervision import WorkerState
 from imas_codex.embeddings import get_embedding_source
 from imas_codex.embeddings.resilience import get_embed_status
 
@@ -161,9 +152,6 @@ class ProgressState:
     score_only: bool = False
     provider_budget_exhausted: bool = False  # API key credit limit hit (402)
 
-    # Worker group for status tracking
-    worker_group: SupervisedWorkerGroup | None = None
-
     # Counts from graph (total pages for progress denominator)
     total_pages: int = 0  # All wiki pages in graph for this facility
     pages_scanned: int = 0  # Status = scanned (awaiting score)
@@ -188,6 +176,9 @@ class ProgressState:
     total_artifacts: int = 0  # All wiki artifacts in graph (DOC denominator)
     artifacts_ingested: int = 0
     artifacts_scored: int = 0
+    artifacts_failed: int = 0
+    artifacts_deferred: int = 0
+    artifacts_skipped: int = 0
     run_artifacts: int = 0
     run_artifacts_scored: int = 0
     artifact_rate: float | None = None
@@ -268,9 +259,6 @@ class ProgressState:
             rate=0.3, max_rate=1.0, min_display_time=0.5
         )
     )
-
-    # Service monitor reference (for SERVERS display row)
-    service_monitor: Any = None
 
     # Per-page image display counters (tracks Nth image shown per page)
     _page_image_seen: dict[str, int] = field(default_factory=dict)
@@ -467,7 +455,7 @@ class ProgressState:
 # =============================================================================
 
 
-class WikiProgressDisplay:
+class WikiProgressDisplay(BaseProgressDisplay):
     """Clean progress display for parallel wiki discovery.
 
     Layout: HEADER → SERVERS → PIPELINE → RESOURCES
@@ -487,12 +475,6 @@ class WikiProgressDisplay:
     Uses common pipeline infrastructure from base.progress.
     """
 
-    # Layout constants imported from base.progress
-    LABEL_WIDTH = LABEL_WIDTH
-    MIN_WIDTH = MIN_WIDTH
-    METRICS_WIDTH = METRICS_WIDTH
-    GAUGE_METRICS_WIDTH = GAUGE_METRICS_WIDTH
-
     def __init__(
         self,
         facility: str,
@@ -503,7 +485,13 @@ class WikiProgressDisplay:
         scan_only: bool = False,
         score_only: bool = False,
     ) -> None:
-        self.console = console or Console()
+        super().__init__(
+            facility=facility,
+            cost_limit=cost_limit,
+            console=console,
+            focus=focus,
+            title_suffix="Wiki Discovery",
+        )
         self.state = ProgressState(
             facility=facility,
             cost_limit=cost_limit,
@@ -512,34 +500,23 @@ class WikiProgressDisplay:
             scan_only=scan_only,
             score_only=score_only,
         )
-        self._live: Live | None = None
 
-    @property
-    def width(self) -> int:
-        """Get display width based on terminal size (fills terminal)."""
-        term_width = self.console.width or 100
-        return max(self.MIN_WIDTH, term_width)
-
-    @property
-    def bar_width(self) -> int:
-        """Calculate progress bar width to fill available space."""
-        return compute_bar_width(self.width)
-
-    @property
-    def gauge_width(self) -> int:
-        """Calculate resource gauge width (shorter than bar to fit metrics)."""
-        return compute_gauge_width(self.width)
+    def _header_mode_label(self) -> str | None:
+        """Show SCAN ONLY / SCORE ONLY mode in header."""
+        if self.state.scan_only:
+            return "SCAN ONLY"
+        if self.state.score_only:
+            return "SCORE ONLY"
+        return None
 
     def _build_header(self) -> Text:
-        """Build centered header with facility and focus."""
+        """Build centered header with facility, focus, and multi-site indicator."""
         header = Text()
 
-        # Facility name with mode indicator
-        title = f"{self.state.facility.upper()} Wiki Discovery"
-        if self.state.scan_only:
-            title += " (SCAN ONLY)"
-        elif self.state.score_only:
-            title += " (SCORE ONLY)"
+        title = f"{self.facility.upper()} {self._title_suffix}"
+        mode = self._header_mode_label()
+        if mode:
+            title += f" ({mode})"
 
         # Multi-site indicator: show current site URL
         if self.state.total_sites > 1 and self.state.current_site_name:
@@ -547,10 +524,9 @@ class WikiProgressDisplay:
 
         header.append(title.center(self.width - 4), style="bold cyan")
 
-        # Focus (if set and not scan_only)
-        if self.state.focus and not self.state.scan_only:
+        if self.focus and not self.state.scan_only:
             header.append("\n")
-            focus_line = f"Focus: {self.state.focus}"
+            focus_line = f"Focus: {self.focus}"
             header.append(focus_line.center(self.width - 4), style="italic dim")
 
         return header
@@ -558,10 +534,10 @@ class WikiProgressDisplay:
     def _count_group_workers(self, group: str) -> tuple[int, str]:
         """Count workers in a group and build annotation string.
 
-        Returns:
-            (count, annotation) where annotation describes backoff/failed state.
+        Extends base version with budget exhaustion annotations for
+        triage/docs/images groups.
         """
-        wg = self.state.worker_group
+        wg = self.worker_group
         if not wg:
             return 0, ""
 
@@ -602,14 +578,6 @@ class WikiProgressDisplay:
 
         return count, f"({', '.join(parts)})" if parts else ""
 
-    def _worker_complete(self, group: str) -> bool:
-        """Check if all workers in a group have stopped."""
-        wg = self.state.worker_group
-        if not wg:
-            return False
-        workers = [s for _n, s in wg.workers.items() if s.group == group]
-        return len(workers) > 0 and all(s.state == WorkerState.stopped for s in workers)
-
     def _score_detail(
         self,
         score_val: float | None,
@@ -620,6 +588,8 @@ class WikiProgressDisplay:
         content_width: int = 80,
     ) -> list[tuple[str, str]]:
         """Build detail parts for a score + domain + description line."""
+        from rich.cells import cell_len
+
         parts: list[tuple[str, str]] = []
         used = 4  # indent
         if score_val is not None:
@@ -632,11 +602,11 @@ class WikiProgressDisplay:
             )
             s = f"{score_val:.2f}"
             parts.append((f"{s}  ", style))
-            used += len(s) + 2
+            used += cell_len(s) + 2
         d = domain or ("physics" if is_physics else "")
         if d:
             parts.append((f"{d}  ", "cyan"))
-            used += len(d) + 2
+            used += cell_len(d) + 2
         if description:
             desc = clean_text(description)
             parts.append((clip_text(desc, max(10, content_width - used)), "italic dim"))
@@ -644,9 +614,9 @@ class WikiProgressDisplay:
 
     def _clip_title(self, title: str, max_len: int = 70) -> str:
         """Clip title to max length, preferring end truncation."""
-        if len(title) <= max_len:
-            return title
-        return title[: max_len - 3] + "..."
+        from imas_codex.discovery.base.progress import clip_text
+
+        return clip_text(title, max_len)
 
     def _build_pipeline_section(self) -> Text:
         """Build the unified pipeline section (progress + activity merged).
@@ -659,7 +629,7 @@ class WikiProgressDisplay:
         Stages: SCAN → PAGES → DOC → IMAGES
         """
         content_width = self.width - 6
-        monitor = self.state.service_monitor
+        monitor = self.service_monitor
         is_paused = monitor is not None and monitor.paused
 
         # --- Compute progress data ---
@@ -681,7 +651,12 @@ class WikiProgressDisplay:
         # DOCS: artifact scoring + ingestion
         art_scored = self.state.artifacts_scored
         art_ingested = self.state.artifacts_ingested
-        art_completed = art_scored + art_ingested
+        art_terminal = (
+            self.state.artifacts_failed
+            + self.state.artifacts_deferred
+            + self.state.artifacts_skipped
+        )
+        art_completed = art_scored + art_ingested + art_terminal
         art_total = self.state.total_artifacts or art_completed
         art_score_rate = self.state.artifact_score_rate
         art_ingest_rate = self.state.artifact_rate
@@ -994,7 +969,7 @@ class WikiProgressDisplay:
 
     def _get_embed_indicator(self) -> tuple[str, str] | None:
         """Get embedding source indicator label and style."""
-        if self.state.service_monitor is not None:
+        if self.service_monitor is not None:
             return None  # Service monitor handles embed display
         embed_health = get_embed_status()
         if embed_health != "ready":
@@ -1062,85 +1037,9 @@ class WikiProgressDisplay:
         )
         return build_resource_section(config, self.gauge_width)
 
-    def _build_servers_section(self) -> Text | None:
-        """Build SERVERS status row from service monitor.
-
-        Always returns a section (even before checks complete) so the
-        SERVERS row is visible from the first render.
-        """
-        monitor = self.state.service_monitor
-        if monitor is None:
-            return None
-        statuses = monitor.get_status()
-        if not statuses:
-            # Monitor registered but no checks configured yet — show pending
-            section = Text()
-            section.append("  SERVERS", style="bold white")
-            section.append("  checking...", style="dim italic")
-            return section
-        return build_servers_section(statuses)
-
-    def _build_display(self) -> Panel:
-        """Build the complete display.
-
-        Layout: HEADER → SERVERS → PIPELINE (unified) → RESOURCES
-        """
-        sections = [
-            self._build_header(),
-        ]
-
-        # SERVERS section (optional — only when service monitor is configured)
-        servers = self._build_servers_section()
-        if servers is not None:
-            sections.append(Text("─" * (self.width - 4), style="dim"))
-            sections.append(servers)
-
-        # Unified pipeline section (progress bars + activity merged)
-        sections.append(Text("─" * (self.width - 4), style="dim"))
-        sections.append(self._build_pipeline_section())
-
-        # Resource gauges
-        sections.append(Text("─" * (self.width - 4), style="dim"))
-        sections.append(self._build_resources_section())
-
-        content = Text()
-        for i, section in enumerate(sections):
-            if i > 0:
-                content.append("\n")
-            content.append_text(section)
-
-        return Panel(
-            content,
-            border_style="cyan",
-            width=self.width,
-            padding=(0, 1),
-        )
-
     # ========================================================================
     # Public API
     # ========================================================================
-
-    def __enter__(self) -> WikiProgressDisplay:
-        """Start live display."""
-        self._live = Live(
-            self._build_display(),
-            console=self.console,
-            refresh_per_second=4,
-            transient=False,  # Keep final progress visible; summary prints below
-            vertical_overflow="visible",
-        )
-        self._live.__enter__()
-        return self
-
-    def __exit__(self, *args) -> None:
-        """Stop live display."""
-        if self._live:
-            self._live.__exit__(*args)
-
-    def _refresh(self) -> None:
-        """Refresh the live display."""
-        if self._live:
-            self._live.update(self._build_display())
 
     def tick(self) -> None:
         """Drain streaming queues for smooth display.
@@ -1516,16 +1415,17 @@ class WikiProgressDisplay:
             self.state.artifacts_ingested = kwargs["artifacts_ingested"]
         if "artifacts_scored" in kwargs:
             self.state.artifacts_scored = kwargs["artifacts_scored"]
+        if "artifacts_failed" in kwargs:
+            self.state.artifacts_failed = kwargs["artifacts_failed"]
+        if "artifacts_deferred" in kwargs:
+            self.state.artifacts_deferred = kwargs["artifacts_deferred"]
+        if "artifacts_skipped" in kwargs:
+            self.state.artifacts_skipped = kwargs["artifacts_skipped"]
         # Update graph-based image counts if provided
         if "images_scored" in kwargs:
             self.state.images_scored = kwargs["images_scored"]
         if "pending_image_score" in kwargs:
             self.state.pending_image_score = kwargs["pending_image_score"]
-        self._refresh()
-
-    def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
-        """Update worker status from supervised worker group."""
-        self.state.worker_group = worker_group
         self._refresh()
 
     def set_site_info(self, site_name: str, site_index: int, total_sites: int) -> None:
@@ -1580,7 +1480,7 @@ class WikiProgressDisplay:
         self.state.image_processing = False
 
         # Reset worker group (set by new run_parallel_wiki_discovery)
-        self.state.worker_group = None
+        self.worker_group = None
 
         # Reset streaming queues
         self.state.score_queue = StreamQueue(
@@ -1634,6 +1534,8 @@ class WikiProgressDisplay:
         if artifacts_scored > 0:
             summary.append(f"+{artifacts_scored:,}docs", style="blue dim")
         summary.append(f"  skipped={self.state.pages_skipped:,}", style="yellow")
+        if self.state.pages_failed > 0:
+            summary.append(f"  failed={self.state.pages_failed:,}", style="red")
         summary.append(f"  cost=${total_score_cost:.3f}", style="yellow")
         if self.state.score_rate:
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
@@ -1659,19 +1561,27 @@ class WikiProgressDisplay:
                 summary.append(f"  {self.state.image_score_rate:.1f}/s", style="dim")
             summary.append("\n")
 
-        # USAGE stats
+        # USAGE stats — session time + accumulated graph cost (all sessions)
         summary.append(f"{'  USAGE':<{LABEL_WIDTH}}", style="bold white")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
-        summary.append(f"  total_cost=${self.state.run_cost:.2f}", style="yellow")
+        # Show accumulated cost from graph (all sessions) as the total
+        accumulated = self.state.accumulated_cost
+        if accumulated > 0:
+            summary.append(f"  total_cost=${accumulated:.2f}", style="yellow")
+        else:
+            summary.append(f"  total_cost=${self.state.run_cost:.2f}", style="yellow")
         if self.state.total_sites > 1:
             summary.append(
                 f"  sites={self.state.current_site_index + 1}/{self.state.total_sites}",
                 style="cyan",
             )
 
-        # Show coverage percentage
+        # Show coverage percentage (include all terminal states)
         if self.state.total_pages > 0:
-            coverage = total_scored / self.state.total_pages * 100
+            processed = (
+                total_scored + self.state.pages_skipped + self.state.pages_failed
+            )
+            coverage = processed / self.state.total_pages * 100
             summary.append(f"  coverage={coverage:.1f}%", style="cyan")
 
         # Show limit reason if applicable

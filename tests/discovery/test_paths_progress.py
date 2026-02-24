@@ -523,8 +523,10 @@ class TestDisplayLayout:
 
     def test_min_width(self):
         """Width never goes below MIN_WIDTH."""
+        from imas_codex.discovery.base.progress import MIN_WIDTH
+
         display = ParallelProgressDisplay(facility="test", cost_limit=1.0, console=None)
-        assert display.width >= display.MIN_WIDTH
+        assert display.width >= MIN_WIDTH
 
     def test_bar_width_positive(self):
         """Bar width is always positive."""
@@ -558,7 +560,7 @@ class TestCountGroupWorkers:
         display = ParallelProgressDisplay(facility="test", cost_limit=10.0)
         group = MagicMock(spec=SupervisedWorkerGroup)
         group.workers = workers
-        display.state.worker_group = group
+        display.worker_group = group
         return display
 
     def test_no_worker_group(self):
@@ -690,7 +692,7 @@ class TestWorkerStatusUpdate:
         group = SupervisedWorkerGroup()
         group.create_status("scan_worker_0", group="scan")
         display.update_worker_status(group)
-        assert display.state.worker_group is group
+        assert display.worker_group is group
 
     def test_pipeline_shows_worker_counts(self):
         """Pipeline rows include worker count annotations."""
@@ -710,7 +712,7 @@ class TestWorkerStatusUpdate:
                 name="enrich_worker_0", group="enrich", state=WorkerState.running
             ),
         }
-        display.state.worker_group = group
+        display.worker_group = group
         display.state.total = 100
         display.state.scored = 50
 

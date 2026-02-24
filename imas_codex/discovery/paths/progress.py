@@ -18,35 +18,24 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
-from rich.live import Live
-from rich.panel import Panel
 from rich.text import Text
 
 # Import common utilities
 from imas_codex.discovery.base.progress import (
-    GAUGE_METRICS_WIDTH,
     LABEL_WIDTH,
-    METRICS_WIDTH,
-    MIN_WIDTH,
+    BaseProgressDisplay,
     PipelineRowConfig,
     ResourceConfig,
     StreamQueue,
     build_pipeline_section,
     build_resource_section,
-    build_servers_section,
     clean_text,
     clip_path,
     clip_text,
-    compute_bar_width,
-    compute_gauge_width,
-)
-from imas_codex.discovery.base.supervision import (
-    SupervisedWorkerGroup,
-    WorkerState,
 )
 
 if TYPE_CHECKING:
-    from imas_codex.discovery.paths.parallel import WorkerStats
+    from imas_codex.discovery.base.progress import WorkerStats
 
 
 # ============================================================================
@@ -169,12 +158,6 @@ class ProgressState:
     # Tracking
     scored_paths: set[str] = field(default_factory=set)
     start_time: float = field(default_factory=time.time)
-
-    # Worker group for supervision display
-    worker_group: SupervisedWorkerGroup | None = None
-
-    # Service monitor (graph, embed, models, SSH health)
-    service_monitor: Any = None
 
     # Enrichment aggregates for summary display
     total_bytes_enriched: int = 0
@@ -333,31 +316,13 @@ class ProgressState:
 # ============================================================================
 
 
-class ParallelProgressDisplay:
+class ParallelProgressDisplay(BaseProgressDisplay):
     """Clean progress display for parallel discovery.
 
-    Layout (100 chars wide - matches summary panel):
-    ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │                               ITER Discovery                                                     │
-    │                           Focus: equilibrium codes                                               │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  SCAN   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────────  1,234  42%  77.1/s        │
-    │  SCORE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────────────     892  28%   3.2/s        │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  /gss/work/imas/codes/chease/src                                                                 │
-    │    Scan:  45 files, 3 dirs, code project                                                         │
-    │    Score: 0.85 simulation_code                                                                   │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  COST   ▐████████████░░░░░░░░░░░░░░▌  $4.50 / $10.00                                             │
-    │  TIME    ━━━━━━━━━━━━━━━━━━━━━━━━━━  12m 30s  ETA 8m                                            │
-    └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+    Extends ``BaseProgressDisplay`` for the paths discovery pipeline
+    (SCAN → SCORE → ENRICH).  Inherits header, servers, worker tracking,
+    and live-display lifecycle from the base class.
     """
-
-    # Layout constants imported from base.progress
-    LABEL_WIDTH = LABEL_WIDTH
-    MIN_WIDTH = MIN_WIDTH
-    METRICS_WIDTH = METRICS_WIDTH
-    GAUGE_METRICS_WIDTH = GAUGE_METRICS_WIDTH
 
     def __init__(
         self,
@@ -370,7 +335,13 @@ class ParallelProgressDisplay:
         scan_only: bool = False,
         score_only: bool = False,
     ) -> None:
-        self.console = console or Console()
+        super().__init__(
+            facility=facility,
+            cost_limit=cost_limit,
+            console=console,
+            focus=focus,
+            title_suffix="Discovery",
+        )
         self.state = ProgressState(
             facility=facility,
             cost_limit=cost_limit,
@@ -380,88 +351,14 @@ class ParallelProgressDisplay:
             scan_only=scan_only,
             score_only=score_only,
         )
-        self._live: Live | None = None
 
-    @property
-    def width(self) -> int:
-        """Get display width based on terminal size (fills terminal)."""
-        term_width = self.console.width or 100
-        return max(self.MIN_WIDTH, term_width)
-
-    @property
-    def bar_width(self) -> int:
-        """Calculate progress bar width to fill available space."""
-        return compute_bar_width(self.width)
-
-    @property
-    def gauge_width(self) -> int:
-        """Calculate resource gauge width (shorter than bar to fit metrics)."""
-        return compute_gauge_width(self.width)
-
-    def _count_group_workers(self, group: str) -> tuple[int, str]:
-        """Count workers in a group and build annotation string.
-
-        Returns (count, annotation) where annotation describes
-        unhealthy workers (e.g., "(1 backoff)").
-        """
-        wg = self.state.worker_group
-        if not wg:
-            return 0, ""
-
-        count = 0
-        running = 0
-        backoff = 0
-        crashed = 0
-        for _name, status in wg.workers.items():
-            grp = status.group or _name.split("_worker")[0]
-            if grp == group:
-                count += 1
-                if status.state == WorkerState.running:
-                    running += 1
-                elif status.state == WorkerState.backoff:
-                    backoff += 1
-                elif status.state == WorkerState.crashed:
-                    crashed += 1
-
-        ann_parts: list[str] = []
-        if backoff > 0:
-            ann_parts.append(f"{backoff} backoff")
-        if crashed > 0:
-            ann_parts.append(f"{crashed} failed")
-        annotation = f"({', '.join(ann_parts)})" if ann_parts else ""
-        return count, annotation
-
-    def _worker_complete(self, group: str) -> bool:
-        """Check if all workers in a group have stopped."""
-        wg = self.state.worker_group
-        if not wg:
-            return False
-        workers = [
-            s
-            for _n, s in wg.workers.items()
-            if (s.group or _n.split("_worker")[0]) == group
-        ]
-        return len(workers) > 0 and all(s.state == WorkerState.stopped for s in workers)
-
-    def _build_header(self) -> Text:
-        """Build centered header with facility and focus."""
-        header = Text()
-
-        # Facility name with mode indicator
-        title = f"{self.state.facility.upper()} Discovery"
+    def _header_mode_label(self) -> str | None:
+        """Show SCAN ONLY / SCORE ONLY mode in header."""
         if self.state.scan_only:
-            title += " (SCAN ONLY)"
-        elif self.state.score_only:
-            title += " (SCORE ONLY)"
-        header.append(title.center(self.width - 4), style="bold cyan")
-
-        # Focus (if set and not scan_only)
-        if self.state.focus and not self.state.scan_only:
-            header.append("\n")
-            focus_line = f"Focus: {self.state.focus}"
-            header.append(focus_line.center(self.width - 4), style="italic dim")
-
-        return header
+            return "SCAN ONLY"
+        if self.state.score_only:
+            return "SCORE ONLY"
+        return None
 
     def _build_pipeline_section(self) -> Text:
         """Build the unified pipeline section (progress + activity merged).
@@ -734,72 +631,9 @@ class ParallelProgressDisplay:
         )
         return build_resource_section(config, self.gauge_width)
 
-    def _build_servers_section(self) -> Text | None:
-        """Build SERVERS status row from service monitor."""
-        monitor = self.state.service_monitor
-        if monitor is None:
-            return None
-        statuses = monitor.get_status()
-        if not statuses:
-            section = Text()
-            section.append("  SERVERS", style="bold white")
-            section.append("  checking...", style="dim italic")
-            return section
-        return build_servers_section(statuses)
-
-    def _build_display(self) -> Panel:
-        """Build the complete display."""
-        sections = [
-            self._build_header(),
-        ]
-
-        # SERVERS section (optional)
-        servers = self._build_servers_section()
-        if servers is not None:
-            sections.append(Text("─" * (self.width - 4), style="dim"))
-            sections.append(servers)
-
-        sections.extend(
-            [
-                Text("─" * (self.width - 4), style="dim"),
-                self._build_pipeline_section(),
-                Text("─" * (self.width - 4), style="dim"),
-                self._build_resources_section(),
-            ]
-        )
-
-        content = Text()
-        for i, section in enumerate(sections):
-            if i > 0:
-                content.append("\n")
-            content.append_text(section)
-
-        return Panel(
-            content,
-            border_style="cyan",
-            width=self.width,
-            padding=(0, 1),
-        )
-
     # ========================================================================
     # Public API
     # ========================================================================
-
-    def __enter__(self) -> ParallelProgressDisplay:
-        """Start live display."""
-        self._live = Live(
-            self._build_display(),
-            console=self.console,
-            refresh_per_second=4,
-            vertical_overflow="visible",
-        )
-        self._live.__enter__()
-        return self
-
-    def __exit__(self, *args) -> None:
-        """Stop live display."""
-        if self._live:
-            self._live.__exit__(*args)
 
     def update_scan(
         self,
@@ -1066,11 +900,6 @@ class ParallelProgressDisplay:
 
         self._refresh()
 
-    def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
-        """Update worker status from supervised worker group."""
-        self.state.worker_group = worker_group
-        self._refresh()
-
     def refresh_from_graph(self, facility: str) -> None:
         """Refresh totals from graph database."""
         from imas_codex.discovery.paths.frontier import (
@@ -1164,11 +993,6 @@ class ParallelProgressDisplay:
         self.state.pending_score = stats.get("scanned", 0) + scoring
         self.state.pending_expand = stats.get("expansion_ready", 0)
         self.state.pending_enrich = stats.get("enrichment_ready", 0)
-
-    def _refresh(self) -> None:
-        """Refresh the live display."""
-        if self._live:
-            self._live.update(self._build_display())
 
 
 def print_discovery_status(

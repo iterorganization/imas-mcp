@@ -1054,19 +1054,31 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             ):
                 pending_artifact_ingest += r["cnt"]
 
-        # Count ingested artifacts
+        # Count artifacts by terminal status
         artifacts_ingested = 0
         artifacts_scored = 0
+        artifacts_failed = 0
+        artifacts_deferred = 0
+        artifacts_skipped = 0
         for r in artifact_result:
             st = r["status"]
             if st == WikiArtifactStatus.ingested.value:
                 artifacts_ingested += r["cnt"]
             elif st == WikiArtifactStatus.scored.value:
                 artifacts_scored += r["cnt"]
+            elif st == "failed":
+                artifacts_failed += r["cnt"]
+            elif st == "deferred":
+                artifacts_deferred += r["cnt"]
+            elif st == "skipped":
+                artifacts_skipped += r["cnt"]
 
         stats["total_artifacts"] = total_artifacts
         stats["artifacts_ingested"] = artifacts_ingested
         stats["artifacts_scored"] = artifacts_scored
+        stats["artifacts_failed"] = artifacts_failed
+        stats["artifacts_deferred"] = artifacts_deferred
+        stats["artifacts_skipped"] = artifacts_skipped
         stats["pending_artifact_score"] = pending_artifact_score
         stats["pending_artifact_ingest"] = pending_artifact_ingest
 

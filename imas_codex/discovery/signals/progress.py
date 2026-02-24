@@ -24,15 +24,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from rich.console import Console
-from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
 from imas_codex.discovery.base.progress import (
-    GAUGE_METRICS_WIDTH,
-    LABEL_WIDTH,
-    METRICS_WIDTH,
-    MIN_WIDTH,
+    BaseProgressDisplay,
     PipelineRowConfig,
     ResourceConfig,
     StreamQueue,
@@ -40,13 +36,7 @@ from imas_codex.discovery.base.progress import (
     build_resource_section,
     clean_text,
     clip_text,
-    compute_bar_width,
-    compute_gauge_width,
     format_time,
-)
-from imas_codex.discovery.base.supervision import (
-    SupervisedWorkerGroup,
-    WorkerState,
 )
 
 if TYPE_CHECKING:
@@ -112,9 +102,6 @@ class DataProgressState:
     # Mode flags
     discover_only: bool = False
     enrich_only: bool = False
-
-    # Worker group for status tracking
-    worker_group: SupervisedWorkerGroup | None = None
 
     # Counts from graph
     total_signals: int = 0  # All FacilitySignal nodes for this facility
@@ -239,37 +226,13 @@ class DataProgressState:
 # =============================================================================
 
 
-class DataProgressDisplay:
+class DataProgressDisplay(BaseProgressDisplay):
     """Clean progress display for parallel signal discovery.
 
-    Layout (100 chars wide):
-    ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-    │                               TCV Signal Discovery                                               │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  WORKERS  scan:1 (running)  enrich:2 (1 active)  check:1                                        │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  SCAN   ━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────   2944        83.4/s             │
-    │  ENRICH ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────       5   0%    0.0/s             │
-    │  CHECK━━━━━━━━─────────────────────────────────────────────       0   0%    0.0/s             │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  SCAN   \\HYBRID::PID_I                                                                          │
-    │          tree=hybrid  2944 signals discovered                                                    │
-    │  ENRICH tcv:equilibrium/plasma_current                                                           │
-    │          equilibrium  Main plasma current from LIUQE equilibrium code                            │
-    │  CHECK shot=85000 testing...                                                                  │
-    │          tcv:equilibrium/elongation                                                              │
-    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  TIME    ━━━━━━━━━━━━━━━━━━━━━━  6m 50s                                                          │
-    │  COST    ━━━━━━━━━━━━━━━━━━━━━━  $0.00 / $0.20                                                   │
-    │  STATS  discovered=2944  enriched=5  checked=0  pending=[enrich:2944 check:5]                    │
-    └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+    Extends ``BaseProgressDisplay`` for the signal discovery pipeline
+    (SCAN → ENRICH → CHECK).  Inherits header, servers, worker tracking,
+    and live-display lifecycle from the base class.
     """
-
-    # Layout constants imported from base.progress
-    LABEL_WIDTH = LABEL_WIDTH
-    MIN_WIDTH = MIN_WIDTH
-    METRICS_WIDTH = METRICS_WIDTH
-    GAUGE_METRICS_WIDTH = GAUGE_METRICS_WIDTH
 
     def __init__(
         self,
@@ -281,7 +244,13 @@ class DataProgressDisplay:
         discover_only: bool = False,
         enrich_only: bool = False,
     ) -> None:
-        self.console = console or Console()
+        super().__init__(
+            facility=facility,
+            cost_limit=cost_limit,
+            console=console,
+            focus=focus,
+            title_suffix="Signal Discovery",
+        )
         self.state = DataProgressState(
             facility=facility,
             cost_limit=cost_limit,
@@ -290,86 +259,14 @@ class DataProgressDisplay:
             discover_only=discover_only,
             enrich_only=enrich_only,
         )
-        self._live: Live | None = None
 
-    @property
-    def width(self) -> int:
-        """Get display width based on terminal size (fills terminal)."""
-        term_width = self.console.width or 100
-        return max(self.MIN_WIDTH, term_width)
-
-    @property
-    def bar_width(self) -> int:
-        """Calculate progress bar width to fill available space."""
-        return compute_bar_width(self.width)
-
-    @property
-    def gauge_width(self) -> int:
-        """Calculate resource gauge width (shorter than bar to fit metrics)."""
-        return compute_gauge_width(self.width)
-
-    def _build_header(self) -> Text:
-        """Build centered header with facility and focus."""
-        header = Text()
-
-        title = f"{self.state.facility.upper()} Signal Discovery"
+    def _header_mode_label(self) -> str | None:
+        """Show SCAN ONLY / ENRICH ONLY mode in header."""
         if self.state.discover_only:
-            title += " (SCAN ONLY)"
-        elif self.state.enrich_only:
-            title += " (ENRICH ONLY)"
-        header.append(title.center(self.width - 4), style="bold cyan")
-
-        if self.state.focus:
-            header.append("\n")
-            focus_line = f"Focus: {self.state.focus}"
-            header.append(focus_line.center(self.width - 4), style="italic dim")
-
-        return header
-
-    def _count_group_workers(self, group: str) -> tuple[int, str]:
-        """Count workers in a group and build annotation string.
-
-        Returns (count, annotation) where annotation describes
-        unhealthy workers (e.g., "(1 backoff)").
-        """
-        wg = self.state.worker_group
-        if not wg:
-            return 0, ""
-
-        count = 0
-        running = 0
-        backoff = 0
-        crashed = 0
-        for _name, status in wg.workers.items():
-            grp = status.group or _name.split("_worker")[0]
-            if grp == group:
-                count += 1
-                if status.state == WorkerState.running:
-                    running += 1
-                elif status.state == WorkerState.backoff:
-                    backoff += 1
-                elif status.state == WorkerState.crashed:
-                    crashed += 1
-
-        ann_parts: list[str] = []
-        if backoff > 0:
-            ann_parts.append(f"{backoff} backoff")
-        if crashed > 0:
-            ann_parts.append(f"{crashed} failed")
-        annotation = f"({', '.join(ann_parts)})" if ann_parts else ""
-        return count, annotation
-
-    def _worker_complete(self, group: str) -> bool:
-        """Check if all workers in a group have stopped."""
-        wg = self.state.worker_group
-        if not wg:
-            return False
-        workers = [
-            s
-            for _n, s in wg.workers.items()
-            if (s.group or _n.split("_worker")[0]) == group
-        ]
-        return len(workers) > 0 and all(s.state == WorkerState.stopped for s in workers)
+            return "SCAN ONLY"
+        if self.state.enrich_only:
+            return "ENRICH ONLY"
+        return None
 
     def _build_pipeline_section(self) -> Text:
         """Build the unified pipeline section (progress + activity merged).
@@ -577,53 +474,9 @@ class DataProgressDisplay:
         )
         return build_resource_section(config, self.gauge_width)
 
-    def _build_display(self) -> Panel:
-        """Build the complete display."""
-        sections = [
-            self._build_header(),
-            Text("─" * (self.width - 4), style="dim"),
-            self._build_pipeline_section(),
-            Text("─" * (self.width - 4), style="dim"),
-            self._build_resources_section(),
-        ]
-
-        content = Text()
-        for i, section in enumerate(sections):
-            if i > 0:
-                content.append("\n")
-            content.append_text(section)
-
-        return Panel(
-            content,
-            border_style="cyan",
-            width=self.width,
-            padding=(0, 1),
-        )
-
     # ========================================================================
     # Public API
     # ========================================================================
-
-    def __enter__(self) -> DataProgressDisplay:
-        """Start live display."""
-        self._live = Live(
-            self._build_display(),
-            console=self.console,
-            refresh_per_second=4,
-            vertical_overflow="visible",
-        )
-        self._live.__enter__()
-        return self
-
-    def __exit__(self, *args) -> None:
-        """Stop live display."""
-        if self._live:
-            self._live.__exit__(*args)
-
-    def _refresh(self) -> None:
-        """Refresh the live display."""
-        if self._live:
-            self._live.update(self._build_display())
 
     def tick(self) -> None:
         """Drain streaming queues for smooth display.
@@ -813,11 +666,6 @@ class DataProgressDisplay:
         self.state.pending_enrich = pending_enrich
         self.state.pending_check = pending_check
         self.state.accumulated_cost = accumulated_cost
-        self._refresh()
-
-    def update_worker_status(self, worker_group: SupervisedWorkerGroup) -> None:
-        """Update worker status from supervised worker group."""
-        self.state.worker_group = worker_group
         self._refresh()
 
     def print_summary(self) -> None:

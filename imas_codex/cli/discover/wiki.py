@@ -119,7 +119,10 @@ def wiki(
     from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki import get_wiki_stats
-    from imas_codex.discovery.wiki.graph_ops import reset_transient_pages
+    from imas_codex.discovery.wiki.graph_ops import (
+        recover_failed_pages,
+        reset_transient_pages,
+    )
     from imas_codex.discovery.wiki.parallel import run_parallel_wiki_discovery
 
     use_rich = should_use_rich()
@@ -353,6 +356,16 @@ def wiki(
     if any(reset_counts.values()):
         total_reset = sum(reset_counts.values())
         log_print(f"[dim]Reset {total_reset} orphaned pages from previous run[/dim]")
+
+    # Recover pages that were marked failed due to transient fetch failures.
+    # These pages have exhausted fetch_retries but have no actual error — they
+    # just couldn't be fetched (e.g. auth session expired). Reset them back to
+    # scanned so they get another chance.
+    recovered = recover_failed_pages(facility)
+    if recovered > 0:
+        log_print(
+            f"[dim]Recovered {recovered:,} pages from transient fetch failures[/dim]"
+        )
 
     # Pre-warm SSH ControlMaster for all sites that need SSH access.
     # This prevents race conditions when bulk_discover_pages tries SSH
@@ -850,7 +863,7 @@ def wiki(
             )
             # Set service_monitor BEFORE entering the Live context so the
             # SERVERS row renders from the very first frame.
-            display.state.service_monitor = service_monitor
+            display.service_monitor = service_monitor
             await service_monitor.__aenter__()
 
             with display:

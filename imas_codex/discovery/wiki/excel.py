@@ -13,9 +13,8 @@ Key optimizations over raw cell dumps:
 
 from __future__ import annotations
 
+import io
 import logging
-import tempfile
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -203,47 +202,40 @@ def _extract_excel_preview_openpyxl(content_bytes: bytes) -> str:
     """Extract preview from modern .xlsx using openpyxl."""
     from openpyxl import load_workbook
 
-    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
-        f.write(content_bytes)
-        temp_path = Path(f.name)
+    wb = load_workbook(io.BytesIO(content_bytes), data_only=True)
+    text_parts: list[str] = []
+    sheets_processed = 0
 
-    try:
-        wb = load_workbook(temp_path, data_only=True)
-        text_parts: list[str] = []
-        sheets_processed = 0
+    for sheet_name in wb.sheetnames:
+        if sheets_processed >= PREVIEW_MAX_SHEETS:
+            break
 
-        for sheet_name in wb.sheetnames:
-            if sheets_processed >= PREVIEW_MAX_SHEETS:
-                break
+        ws = wb[sheet_name]
+        all_rows = list(ws.iter_rows(values_only=True))
+        if not all_rows:
+            continue
 
-            ws = wb[sheet_name]
-            all_rows = list(ws.iter_rows(values_only=True))
-            if not all_rows:
-                continue
+        # Check if sheet has enough text content
+        text_fraction = _compute_text_fraction(all_rows)
+        if text_fraction < MIN_TEXT_CELL_FRACTION:
+            continue
 
-            # Check if sheet has enough text content
-            text_fraction = _compute_text_fraction(all_rows)
-            if text_fraction < MIN_TEXT_CELL_FRACTION:
-                continue
+        sheets_processed += 1
+        headers, data_start = _detect_header_row(all_rows)
 
-            sheets_processed += 1
-            headers, data_start = _detect_header_row(all_rows)
+        sheet_lines = [f"[Sheet: {sheet_name}]"]
+        if headers:
+            sheet_lines.append("Columns: " + " | ".join(h for h in headers if h))
 
-            sheet_lines = [f"[Sheet: {sheet_name}]"]
-            if headers:
-                sheet_lines.append("Columns: " + " | ".join(h for h in headers if h))
+        for row in all_rows[data_start : data_start + PREVIEW_MAX_ROWS]:
+            line = _format_row_with_headers(row, headers)
+            if line:
+                sheet_lines.append(line)
 
-            for row in all_rows[data_start : data_start + PREVIEW_MAX_ROWS]:
-                line = _format_row_with_headers(row, headers)
-                if line:
-                    sheet_lines.append(line)
+        if len(sheet_lines) > 1:
+            text_parts.append("\n".join(sheet_lines))
 
-            if len(sheet_lines) > 1:
-                text_parts.append("\n".join(sheet_lines))
-
-        return "\n\n".join(text_parts)
-    finally:
-        temp_path.unlink(missing_ok=True)
+    return "\n\n".join(text_parts)
 
 
 def extract_excel_full(content_bytes: bytes) -> str:
@@ -311,51 +303,44 @@ def _extract_excel_full_openpyxl(content_bytes: bytes) -> str:
     """Extract full text from modern .xlsx using openpyxl."""
     from openpyxl import load_workbook
 
-    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
-        f.write(content_bytes)
-        temp_path = Path(f.name)
+    wb = load_workbook(io.BytesIO(content_bytes), data_only=True)
+    text_parts: list[str] = []
 
-    try:
-        wb = load_workbook(temp_path, data_only=True)
-        text_parts: list[str] = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        all_rows = list(ws.iter_rows(values_only=True))
+        if not all_rows:
+            continue
 
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            all_rows = list(ws.iter_rows(values_only=True))
-            if not all_rows:
-                continue
+        # Check if sheet has enough text content
+        text_fraction = _compute_text_fraction(all_rows)
+        if text_fraction < MIN_TEXT_CELL_FRACTION:
+            logger.debug(
+                "Skipping sheet '%s': only %.0f%% text cells",
+                sheet_name,
+                text_fraction * 100,
+            )
+            continue
 
-            # Check if sheet has enough text content
-            text_fraction = _compute_text_fraction(all_rows)
-            if text_fraction < MIN_TEXT_CELL_FRACTION:
-                logger.debug(
-                    "Skipping sheet '%s': only %.0f%% text cells",
-                    sheet_name,
-                    text_fraction * 100,
-                )
-                continue
+        headers, data_start = _detect_header_row(all_rows)
 
-            headers, data_start = _detect_header_row(all_rows)
+        sheet_lines = [f"[Sheet: {sheet_name}]"]
+        if headers:
+            sheet_lines.append("Columns: " + " | ".join(h for h in headers if h))
 
-            sheet_lines = [f"[Sheet: {sheet_name}]"]
-            if headers:
-                sheet_lines.append("Columns: " + " | ".join(h for h in headers if h))
+        rows_emitted = 0
+        for row in all_rows[data_start:]:
+            line = _format_row_with_headers(row, headers)
+            if line:
+                sheet_lines.append(line)
+                rows_emitted += 1
+                if rows_emitted >= FULL_MAX_ROWS_PER_SHEET:
+                    remaining = len(all_rows) - data_start - rows_emitted
+                    if remaining > 0:
+                        sheet_lines.append(f"[... {remaining} more rows truncated]")
+                    break
 
-            rows_emitted = 0
-            for row in all_rows[data_start:]:
-                line = _format_row_with_headers(row, headers)
-                if line:
-                    sheet_lines.append(line)
-                    rows_emitted += 1
-                    if rows_emitted >= FULL_MAX_ROWS_PER_SHEET:
-                        remaining = len(all_rows) - data_start - rows_emitted
-                        if remaining > 0:
-                            sheet_lines.append(f"[... {remaining} more rows truncated]")
-                        break
+        if len(sheet_lines) > 1:
+            text_parts.append("\n".join(sheet_lines))
 
-            if len(sheet_lines) > 1:
-                text_parts.append("\n".join(sheet_lines))
-
-        return "\n\n".join(text_parts)
-    finally:
-        temp_path.unlink(missing_ok=True)
+    return "\n\n".join(text_parts)

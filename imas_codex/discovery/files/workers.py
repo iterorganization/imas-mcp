@@ -114,6 +114,12 @@ async def scan_worker(
                     )
                     state.scan_stats.processed += persist_result.get("discovered", 0)
 
+                    # Mark path as scanned with file count
+                    if path_id:
+                        await asyncio.to_thread(
+                            mark_path_file_scanned, path_id, len(files)
+                        )
+
                     if on_progress:
                         on_progress(
                             f"found {persist_result.get('discovered', 0)} files in {path}",

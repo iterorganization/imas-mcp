@@ -189,8 +189,7 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
 
     Uses semantic artifact type names matching ArtifactType enum values.
     """
-    import tempfile
-    from pathlib import Path
+    import io
 
     at = artifact_type.lower()
 
@@ -203,28 +202,22 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
 
             import pypdf
 
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-                f.write(content_bytes)
-                temp_path = Path(f.name)
+            # Suppress pypdf's verbose warnings and errors.
+            # pypdf._cmap uses logger_error() for benign "Advanced
+            # encoding" messages at ERROR level — CRITICAL silences them.
+            pypdf_logger = _logging.getLogger("pypdf")
+            original_level = pypdf_logger.level
+            pypdf_logger.setLevel(_logging.CRITICAL)
             try:
-                # Suppress pypdf's verbose warnings and errors.
-                # pypdf._cmap uses logger_error() for benign "Advanced
-                # encoding" messages at ERROR level — CRITICAL silences them.
-                pypdf_logger = _logging.getLogger("pypdf")
-                original_level = pypdf_logger.level
-                pypdf_logger.setLevel(_logging.CRITICAL)
-                try:
-                    reader = pypdf.PdfReader(temp_path)
-                    text_parts = []
-                    for page in reader.pages[:5]:  # First 5 pages
-                        text = page.extract_text()
-                        if text:
-                            text_parts.append(text)
-                finally:
-                    pypdf_logger.setLevel(original_level)
-                return "\n\n".join(text_parts)
+                reader = pypdf.PdfReader(io.BytesIO(content_bytes))
+                text_parts = []
+                for page in reader.pages[:5]:  # First 5 pages
+                    text = page.extract_text()
+                    if text:
+                        text_parts.append(text)
             finally:
-                temp_path.unlink(missing_ok=True)
+                pypdf_logger.setLevel(original_level)
+            return "\n\n".join(text_parts)
         except Exception:
             return ""
 
@@ -232,15 +225,9 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
         try:
             from docx import Document as DocxDocument
 
-            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
-                f.write(content_bytes)
-                temp_path = Path(f.name)
-            try:
-                doc = DocxDocument(temp_path)
-                paragraphs = [p.text for p in doc.paragraphs[:50] if p.text.strip()]
-                return "\n\n".join(paragraphs)
-            finally:
-                temp_path.unlink(missing_ok=True)
+            doc = DocxDocument(io.BytesIO(content_bytes))
+            paragraphs = [p.text for p in doc.paragraphs[:50] if p.text.strip()]
+            return "\n\n".join(paragraphs)
         except Exception:
             return ""
 
@@ -248,19 +235,13 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
         try:
             from pptx import Presentation
 
-            with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as f:
-                f.write(content_bytes)
-                temp_path = Path(f.name)
-            try:
-                prs = Presentation(temp_path)
-                text_parts = []
-                for slide in list(prs.slides)[:10]:  # First 10 slides
-                    for shape in slide.shapes:
-                        if hasattr(shape, "text") and shape.text.strip():
-                            text_parts.append(shape.text.strip())
-                return "\n".join(text_parts)
-            finally:
-                temp_path.unlink(missing_ok=True)
+            prs = Presentation(io.BytesIO(content_bytes))
+            text_parts = []
+            for slide in list(prs.slides)[:10]:  # First 10 slides
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        text_parts.append(shape.text.strip())
+            return "\n".join(text_parts)
         except Exception:
             return ""
 

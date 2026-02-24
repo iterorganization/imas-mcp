@@ -471,6 +471,7 @@ done
 
 # Extract archive
 TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 tar xzf "$ARCHIVE" -C "$TMPDIR"
 ARCHIVE_DIR=$(ls "$TMPDIR" | head -1)
 
@@ -506,8 +507,6 @@ apptainer exec \
 # Restart Neo4j
 systemctl --user start "$SERVICE" 2>/dev/null || true
 
-# Clean up
-rm -rf "$TMPDIR"
 echo "LOAD_COMPLETE"
 """
     return run_script_via_stdin(script, ssh_host=ssh_host, timeout=600, check=True)
@@ -599,6 +598,7 @@ fi
 
 # Package archive
 TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 ARCHIVE_DIR="$TMPDIR/imas-codex-graph-export"
 mkdir -p "$ARCHIVE_DIR"
 cp "$DATA_DIR/dumps/neo4j.dump" "$ARCHIVE_DIR/graph.dump"
@@ -786,12 +786,12 @@ chmod 700 "$EXPORTS"
 
 # Pull to temp dir then find archive
 TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 oras pull "{artifact_ref}" -o "$TMPDIR"
 
 # Move archive to exports dir
 ARCHIVE=$(find "$TMPDIR" -name '*.tar.gz' | head -1)
 if [ -z "$ARCHIVE" ]; then
-    rm -rf "$TMPDIR"
     echo "ERROR: No archive found in artifact" >&2
     exit 1
 fi
@@ -842,12 +842,12 @@ echo "PROGRESS:LOGIN"
 
 echo "PROGRESS:PULLING"
 TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 oras pull "{artifact_ref}" -o "$TMPDIR" 2>&1
 
 echo "PROGRESS:MOVING"
 ARCHIVE=$(find "$TMPDIR" -name '*.tar.gz' | head -1)
 if [ -z "$ARCHIVE" ]; then
-    rm -rf "$TMPDIR"
     echo "ERROR: No archive found in artifact" >&2
     exit 1
 fi
@@ -888,6 +888,7 @@ done
 
 echo "PROGRESS:EXTRACTING"
 TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 tar xzf "$ARCHIVE" -C "$TMPDIR"
 ARCHIVE_DIR=$(ls "$TMPDIR" | head -1)
 
@@ -992,6 +993,7 @@ fi
 
 echo "PROGRESS:ARCHIVING"
 TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 ARCHIVE_DIR="$TMPDIR/imas-codex-graph-export"
 mkdir -p "$ARCHIVE_DIR"
 cp "$DATA_DIR/dumps/neo4j.dump" "$ARCHIVE_DIR/graph.dump"
@@ -1163,6 +1165,7 @@ do_dump() {{
 
 cleanup() {{
     rm -f "$ARCHIVE"
+    [ -n "$TMPDIR" ] && rm -rf "$TMPDIR"
 }}
 trap cleanup EXIT
 
