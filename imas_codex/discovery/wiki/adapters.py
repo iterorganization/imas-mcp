@@ -819,7 +819,9 @@ class MediaWikiAdapter(WikiAdapter):
                     if hasattr(self.wiki_client, "authenticate"):
                         try:
                             self.wiki_client.authenticate()
-                            logger.info("Re-authenticated, retrying batch %d", batch + 1)
+                            logger.info(
+                                "Re-authenticated, retrying batch %d", batch + 1
+                            )
                             # Retry the same request with fresh session
                             response = self.wiki_client.session.get(
                                 api_url, params=params, verify=False, timeout=60
@@ -2468,9 +2470,10 @@ class StaticHtmlAdapter(WikiAdapter):
                         continue
 
                     # Exclude paths belonging to other wiki sites
+                    # Prefixes end with '/' to prevent /tfe matching /tfe1
+                    link_p = parsed_link.path.rstrip("/") + "/"
                     if any(
-                        parsed_link.path.startswith(prefix)
-                        for prefix in self._exclude_prefixes
+                        link_p.startswith(prefix) for prefix in self._exclude_prefixes
                     ):
                         continue
 

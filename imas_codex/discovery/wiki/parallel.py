@@ -840,8 +840,10 @@ def _get_exclude_prefixes(facility: str, current_base_url: str) -> list[str]:
         site_origin = f"{site_parsed.scheme}://{site_parsed.netloc}"
 
         # Same origin, different path → exclude that path
+        # Append trailing '/' to prevent /tfe from matching /tfe1, /tfe2 etc.
         if site_origin == current_origin and site_parsed.path:
-            prefixes.append(site_parsed.path)
+            path = site_parsed.path.rstrip("/") + "/"
+            prefixes.append(path)
 
     if prefixes:
         logger.info(
