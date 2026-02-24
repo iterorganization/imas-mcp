@@ -595,8 +595,7 @@ def mark_signals_enriched(
             # (needed for data access); the Diagnostic node uses canonical
             # lowercase for grouping.
             diag_signals = [
-                s for s in signals
-                if s.get("diagnostic") and s["diagnostic"].strip()
+                s for s in signals if s.get("diagnostic") and s["diagnostic"].strip()
             ]
             if diag_signals:
                 gc.query(
@@ -1425,6 +1424,9 @@ async def enrich_worker(
     # Cache for TDI function source code
     tdi_source_cache: dict[str, str] = {}
 
+    # Cache for semantic wiki context queries (avoids redundant embedding calls)
+    wiki_context_cache: dict[str, list[dict[str, str]]] = {}
+
     async def get_tdi_source(func_name: str) -> str:
         """Fetch TDI function source code from graph (cached)."""
         if func_name in tdi_source_cache:
@@ -1527,6 +1529,88 @@ async def enrich_worker(
 
         return "_ungrouped_"
 
+    async def _fetch_facility_wiki_context(
+        facility: str,
+        cache: dict[str, list[dict[str, str]]],
+    ) -> list[dict[str, str]]:
+        """Fetch facility-level wiki context (sign conventions, coordinates).
+
+        Queries the wiki_chunk_embedding vector index for content about
+        facility sign conventions and coordinate systems. Results are cached
+        for the lifetime of the enrichment worker.
+        """
+        cache_key = f"_facility_{facility}"
+        if cache_key in cache:
+            return cache[cache_key]
+
+        from imas_codex.discovery.signals.scanners.wiki import (
+            fetch_semantic_wiki_context,
+        )
+
+        query = (
+            f"{facility} sign conventions coordinate systems COCOS toroidal poloidal"
+        )
+        chunks = await asyncio.to_thread(
+            fetch_semantic_wiki_context, facility, query, k=5, min_score=0.35
+        )
+        cache[cache_key] = chunks
+        if chunks:
+            logger.info(
+                "Facility wiki context: %d chunks for %s (conventions, coordinates)",
+                len(chunks),
+                facility,
+            )
+        return chunks
+
+    async def _fetch_group_wiki_context(
+        facility: str,
+        group_key: str,
+        indexed_signals: list[tuple[int, dict]],
+        cache: dict[str, list[dict[str, str]]],
+    ) -> list[dict[str, str]]:
+        """Fetch group-level wiki context for a batch of related signals.
+
+        Builds a semantic query from the group key and signal names, then
+        searches the wiki_chunk_embedding index for relevant documentation
+        about the diagnostic, tree, or analysis code.
+        """
+        if group_key in cache:
+            return cache[group_key]
+
+        from imas_codex.discovery.signals.scanners.wiki import (
+            fetch_semantic_wiki_context,
+        )
+
+        # Build a targeted query from the group context
+        if group_key.startswith("tdi:"):
+            func_name = group_key[4:]
+            signal_names = " ".join(s.get("name", "") for _, s in indexed_signals[:10])
+            query = f"{func_name} TDI function {signal_names}"
+        elif group_key.startswith("ppf:"):
+            dda = group_key[4:]
+            query = f"{dda} JET diagnostic processed pulse file"
+        elif group_key.startswith("edas:"):
+            cat = group_key[5:]
+            query = f"{cat} JT-60SA diagnostic data"
+        elif group_key.startswith("tree:"):
+            tree = group_key[5:]
+            signal_names = " ".join(s.get("name", "") for _, s in indexed_signals[:10])
+            query = f"{tree} MDSplus tree {signal_names}"
+        else:
+            # Ungrouped — use first few signal names
+            signal_names = " ".join(s.get("name", "") for _, s in indexed_signals[:10])
+            query = signal_names
+
+        if not query.strip():
+            cache[group_key] = []
+            return []
+
+        chunks = await asyncio.to_thread(
+            fetch_semantic_wiki_context, facility, query, k=3, min_score=0.4
+        )
+        cache[group_key] = chunks
+        return chunks
+
     while not state.should_stop_enriching():
         # Claim batch of signals (sorted by tdi_function)
         # Batch size 50 - signals grouped by function so one source code per group
@@ -1554,11 +1638,31 @@ async def enrich_worker(
             key = _signal_context_key(signal)
             context_groups[key].append((i, signal))
 
+        # Fetch facility-level wiki context (sign conventions, coordinate systems)
+        # This is a single semantic search per batch, cached across batches
+        facility_wiki_context = await _fetch_facility_wiki_context(
+            state.facility, wiki_context_cache
+        )
+
         # Build user prompt with context from each signal group
         user_lines = [
             f"Classify these {len(signals)} signals.\n",
             "Return results in the same order using signal_index (1-based).\n",
         ]
+
+        # Inject facility-level wiki context (sign conventions, coordinates)
+        if facility_wiki_context:
+            user_lines.append("\n## Facility Wiki Reference")
+            user_lines.append(
+                "The following is authoritative documentation from the facility wiki. "
+                "Use it to determine sign conventions, coordinate systems, and units.\n"
+            )
+            for chunk in facility_wiki_context:
+                user_lines.append(f"### From: {chunk['page_title']}")
+                if chunk.get("conventions"):
+                    user_lines.append(f"Conventions: {', '.join(chunk['conventions'])}")
+                user_lines.append(chunk["content"])
+                user_lines.append("")
 
         signal_index = 0
         for group_key, indexed_signals in context_groups.items():
@@ -1600,6 +1704,16 @@ async def enrich_worker(
                 user_lines.append(f"\n## MDSplus Tree: {tree}")
                 user_lines.append(f"Direct MDSplus tree traversal signals from {tree}.")
                 user_lines.append("\nSignals from this tree:")
+
+            # Fetch group-level semantic wiki context (e.g., wiki content
+            # about a specific diagnostic, tree, or analysis code)
+            group_wiki = await _fetch_group_wiki_context(
+                state.facility, group_key, indexed_signals, wiki_context_cache
+            )
+            if group_wiki:
+                user_lines.append("\n**Relevant wiki documentation:**")
+                for chunk in group_wiki:
+                    user_lines.append(f"- [{chunk['page_title']}] {chunk['content']}")
 
             # Add individual signal entries
             for _, signal in indexed_signals:

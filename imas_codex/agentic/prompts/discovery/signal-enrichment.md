@@ -63,6 +63,24 @@ When `wiki_description` or `wiki_units` are provided:
 - Use wiki descriptions as the primary source for the signal description
 - Wiki units are authoritative — use them for `units_extracted`
 
+### Facility Wiki Reference
+
+A "Facility Wiki Reference" section may be provided at the top of the signal list.
+This contains semantically-retrieved content from the facility's wiki covering:
+- **Sign conventions** — toroidal/poloidal direction definitions, current direction
+- **Coordinate systems** — cylindrical, flux coordinates, COCOS conventions
+- **Diagnostic descriptions** — authoritative documentation about diagnostics
+
+Use this grounded context to:
+- Accurately describe what signals measure and their physical meaning
+- Reference the correct sign conventions in descriptions when relevant
+- Identify coordinate systems and conventions used by the facility
+- Extract units when mentioned in wiki documentation
+
+Group-level wiki context may also appear as "Relevant wiki documentation" under
+each signal group header. This is targeted documentation about the specific
+diagnostic, analysis code, or MDSplus tree being classified.
+
 ### MDSplus Tree Nodes
 
 Direct tree traversal signals have tree_name and node_path:

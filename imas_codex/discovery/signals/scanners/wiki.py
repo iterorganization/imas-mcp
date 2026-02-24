@@ -36,6 +36,7 @@ from imas_codex.discovery.signals.scanners.base import (
     register_scanner,
 )
 from imas_codex.discovery.wiki.entity_extraction import UNIT_PATTERN
+from imas_codex.graph import GraphClient
 from imas_codex.graph.models import (
     FacilitySignal,
     FacilitySignalStatus,
@@ -131,8 +132,6 @@ def _build_wiki_context(
     description, units, and source page. This context is injected into the
     LLM enrichment prompt to reduce hallucination and improve quality.
     """
-    from imas_codex.graph import GraphClient
-
     context: dict[str, dict[str, str]] = {}
 
     try:
@@ -248,6 +247,83 @@ def _build_wiki_context(
         logger.warning("Failed to build wiki context for %s: %s", facility, e)
 
     return context
+
+
+def fetch_semantic_wiki_context(
+    facility: str,
+    query_text: str,
+    k: int = 5,
+    min_score: float = 0.4,
+) -> list[dict[str, str]]:
+    """Fetch semantically relevant wiki chunks for signal enrichment.
+
+    Uses the wiki_chunk_embedding vector index to find wiki content
+    relevant to a batch of signals. This complements the exact path-matching
+    in _build_wiki_context by surfacing content about sign conventions,
+    coordinate systems, units, and diagnostic descriptions that don't
+    contain explicit MDSplus paths.
+
+    Args:
+        facility: Facility ID to scope results.
+        query_text: Natural language query describing the signals being enriched.
+        k: Number of results to return.
+        min_score: Minimum similarity score threshold.
+
+    Returns:
+        List of dicts with keys: content, page_title, conventions, units.
+        Content is truncated to 500 chars to stay within prompt budget.
+    """
+    from imas_codex.embeddings.config import EncoderConfig
+    from imas_codex.embeddings.encoder import Encoder
+
+    try:
+        config = EncoderConfig()
+        encoder = Encoder(config)
+        embedding = encoder.embed_texts([query_text])[0].tolist()
+    except Exception as e:
+        logger.warning("Could not create embedding for wiki semantic search: %s", e)
+        return []
+
+    try:
+        with GraphClient() as gc:
+            results = gc.query(
+                """
+                CALL db.index.vector.queryNodes('wiki_chunk_embedding', $k, $embedding)
+                YIELD node, score
+                MATCH (p:WikiPage)-[:HAS_CHUNK]->(node)
+                WHERE p.facility_id = $facility AND score >= $min_score
+                RETURN node.content AS content,
+                       p.title AS page_title,
+                       node.conventions_mentioned AS conventions,
+                       node.units_mentioned AS units,
+                       node.mdsplus_paths_mentioned AS mdsplus_paths,
+                       score
+                ORDER BY score DESC
+                """,
+                k=k,
+                embedding=embedding,
+                facility=facility,
+                min_score=min_score,
+            )
+            chunks = []
+            for row in results:
+                content = row.get("content", "")
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                chunks.append(
+                    {
+                        "content": content,
+                        "page_title": row.get("page_title", ""),
+                        "conventions": row.get("conventions") or [],
+                        "units": row.get("units") or [],
+                        "mdsplus_paths": row.get("mdsplus_paths") or [],
+                        "score": row.get("score", 0.0),
+                    }
+                )
+            return chunks
+    except Exception as e:
+        logger.warning("Semantic wiki search failed for %s: %s", facility, e)
+        return []
 
 
 class WikiScanner:
