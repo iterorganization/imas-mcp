@@ -275,7 +275,7 @@ def ensure_python3_symlink(
     Idempotent — only creates/updates if the target is missing or stale.
     """
     major_minor = version if "." in version else f"3.{version}"
-    check = f'test -e ~/.local/bin/python{major_minor} && echo yes || echo no'
+    check = f"test -e ~/.local/bin/python{major_minor} && echo yes || echo no"
     try:
         result = run(check, facility=facility, timeout=5)
         if result.strip() != "yes":
@@ -284,7 +284,7 @@ def ensure_python3_symlink(
         return
 
     # Create python3 → python{major_minor} symlink
-    cmd = f'ln -sf ~/.local/bin/python{major_minor} ~/.local/bin/python3'
+    cmd = f"ln -sf ~/.local/bin/python{major_minor} ~/.local/bin/python3"
     try:
         run(cmd, facility=facility, timeout=5)
         logger.info("Created ~/.local/bin/python3 -> python%s symlink", major_minor)
@@ -611,5 +611,15 @@ def setup_python_env(
         results["python_version"] = venv_result.get("python_version")
     else:
         results["error"] = venv_result.get("error", "Failed to create venv")
+
+    # Clean uv cache to avoid accumulating GBs on remote hosts
+    try:
+        run("uv cache clean", facility=facility, timeout=120)
+        results["steps"].append({"step": "cache_clean", "result": {"success": True}})
+    except Exception as e:
+        logger.warning("Failed to clean uv cache: %s", e)
+        results["steps"].append(
+            {"step": "cache_clean", "result": {"success": False, "error": str(e)}}
+        )
 
     return results

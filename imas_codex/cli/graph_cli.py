@@ -1821,19 +1821,20 @@ def graph_export(
                 )
             gp.complete_phase(size_str)
 
-            if local or output:
-                gp.start_phase(f"Transferring from {profile.host}")
-                try:
-                    scp_from_remote(remote_archive, output_path, profile.host)
-                except Exception as e:
-                    gp.fail_phase(str(e))
-                    raise click.ClickException(
-                        f"Transfer from {profile.host} failed: {e}"
-                    ) from e
-                size_mb = output_path.stat().st_size / 1024 / 1024
-                gp.complete_phase(f"{size_mb:.1f} MB")
-
-                # Clean up remote archive after successful transfer
+            try:
+                if local or output:
+                    gp.start_phase(f"Transferring from {profile.host}")
+                    try:
+                        scp_from_remote(remote_archive, output_path, profile.host)
+                    except Exception as e:
+                        gp.fail_phase(str(e))
+                        raise click.ClickException(
+                            f"Transfer from {profile.host} failed: {e}"
+                        ) from e
+                    size_mb = output_path.stat().st_size / 1024 / 1024
+                    gp.complete_phase(f"{size_mb:.1f} MB")
+            finally:
+                # Always clean up remote archive
                 from imas_codex.graph.remote import remote_cleanup_archive
 
                 remote_cleanup_archive(remote_archive, profile.host)
@@ -1961,19 +1962,20 @@ def graph_load(
         click.echo(f"  Transferring archive to {profile.host}...")
         scp_to_remote(archive_path, remote_archive, profile.host)
 
-        click.echo("  Loading on remote host...")
-        output = remote_load_archive(
-            remote_archive,
-            profile.name,
-            profile.host,
-            password=password,
-        )
-        if "LOAD_COMPLETE" in output:
-            click.echo("✓ Load complete (remote)")
-        else:
-            click.echo(f"Warning: Unexpected output: {output}", err=True)
-
-        remote_cleanup_archive(remote_archive, profile.host)
+        try:
+            click.echo("  Loading on remote host...")
+            output = remote_load_archive(
+                remote_archive,
+                profile.name,
+                profile.host,
+                password=password,
+            )
+            if "LOAD_COMPLETE" in output:
+                click.echo("✓ Load complete (remote)")
+            else:
+                click.echo(f"Warning: Unexpected output: {output}", err=True)
+        finally:
+            remote_cleanup_archive(remote_archive, profile.host)
 
         # Update local manifest (extract version info from archive)
         manifest = {"pushed": False, "loaded_from": str(archive_path)}
@@ -2749,14 +2751,16 @@ def graph_pull(
             load_script = build_remote_load_script(
                 remote_archive, profile.name, password
             )
-            load_output = remote_operation_streaming(
-                load_script,
-                profile.host,
-                progress=gp,
-                progress_markers=_remote_markers_load,
-                timeout=600,
-            )
-            remote_cleanup_archive(remote_archive, profile.host)
+            try:
+                load_output = remote_operation_streaming(
+                    load_script,
+                    profile.host,
+                    progress=gp,
+                    progress_markers=_remote_markers_load,
+                    timeout=600,
+                )
+            finally:
+                remote_cleanup_archive(remote_archive, profile.host)
 
             if "LOAD_COMPLETE" not in load_output:
                 gp.fail_phase("Unexpected output")
