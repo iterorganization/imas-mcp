@@ -28,7 +28,7 @@ def _set_all_idle(state: WikiDiscoveryState, count: int = 3) -> None:
     state.scan_idle_count = count
     state.score_idle_count = count
     state.ingest_idle_count = count
-    state.artifact_idle_count = count
+    state.docs_idle_count = count
     state.artifact_score_idle_count = count
     state.image_idle_count = count
 
@@ -81,7 +81,7 @@ class TestShouldStop:
 
         state.scan_idle_count = 3
         state.ingest_idle_count = 3
-        state.artifact_idle_count = 3
+        state.docs_idle_count = 3
 
         assert state.budget_exhausted is True
 
@@ -102,7 +102,7 @@ class TestShouldStop:
 
         state.scan_idle_count = 3
         state.ingest_idle_count = 3
-        state.artifact_idle_count = 3
+        state.docs_idle_count = 3
 
         # Pending ingest work (scored pages waiting for embedding)
         mock_ops = mock_graph_ops.return_value
@@ -112,7 +112,7 @@ class TestShouldStop:
         assert state.should_stop() is False
         # I/O idle counts should be reset
         assert state.ingest_idle_count == 0
-        assert state.artifact_idle_count == 0
+        assert state.docs_idle_count == 0
         # LLM idle counts should NOT be reset (they've exited)
         assert state.score_idle_count == 0
         assert state.artifact_score_idle_count == 0
@@ -132,7 +132,7 @@ class TestShouldStop:
 
         state.scan_idle_count = 3
         state.ingest_idle_count = 3
-        state.artifact_idle_count = 3
+        state.docs_idle_count = 3
 
         # No I/O work pending — only LLM work pending
         mock_ops = mock_graph_ops.return_value
@@ -165,7 +165,7 @@ class TestShouldStop:
         assert state.scan_idle_count == 0
         assert state.score_idle_count == 0
         assert state.ingest_idle_count == 0
-        assert state.artifact_idle_count == 0
+        assert state.docs_idle_count == 0
         assert state.artifact_score_idle_count == 0
         assert state.image_idle_count == 0
 

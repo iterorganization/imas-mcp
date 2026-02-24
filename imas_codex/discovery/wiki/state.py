@@ -83,7 +83,7 @@ class WikiDiscoveryState:
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
     score_stats: WorkerStats = field(default_factory=WorkerStats)
     ingest_stats: WorkerStats = field(default_factory=WorkerStats)
-    artifact_stats: WorkerStats = field(default_factory=WorkerStats)
+    docs_stats: WorkerStats = field(default_factory=WorkerStats)
     artifact_score_stats: WorkerStats = field(default_factory=WorkerStats)
     image_stats: WorkerStats = field(default_factory=WorkerStats)
 
@@ -97,9 +97,7 @@ class WikiDiscoveryState:
     scan_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("scan"))
     score_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("score"))
     ingest_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("ingest"))
-    artifact_phase: PipelinePhase = field(
-        default_factory=lambda: PipelinePhase("artifact")
-    )
+    docs_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("artifact"))
     artifact_score_phase: PipelinePhase = field(
         default_factory=lambda: PipelinePhase("artifact_score")
     )
@@ -131,12 +129,12 @@ class WikiDiscoveryState:
         self.ingest_phase._idle_count = value
 
     @property
-    def artifact_idle_count(self) -> int:
-        return self.artifact_phase.idle_count
+    def docs_idle_count(self) -> int:
+        return self.docs_phase.idle_count
 
-    @artifact_idle_count.setter
-    def artifact_idle_count(self, value: int) -> None:
-        self.artifact_phase._idle_count = value
+    @docs_idle_count.setter
+    def docs_idle_count(self, value: int) -> None:
+        self.docs_phase._idle_count = value
 
     @property
     def artifact_score_idle_count(self) -> int:
@@ -257,7 +255,7 @@ class WikiDiscoveryState:
             self.scan_phase.is_idle_or_done
             and score_done
             and self.ingest_phase.is_idle_or_done
-            and self.artifact_phase.is_idle_or_done
+            and self.docs_phase.is_idle_or_done
             and artifact_score_done
             and image_done
         )
@@ -293,12 +291,12 @@ class WikiDiscoveryState:
                 # Reset all phases when no limit is hit.
                 if limit_done:
                     self.ingest_phase.record_activity()
-                    self.artifact_phase.record_activity()
+                    self.docs_phase.record_activity()
                 else:
                     self.scan_phase.record_activity()
                     self.score_phase.record_activity()
                     self.ingest_phase.record_activity()
-                    self.artifact_phase.record_activity()
+                    self.docs_phase.record_activity()
                     self.artifact_score_phase.record_activity()
                     self.image_phase.record_activity()
                 return False
@@ -366,7 +364,7 @@ class WikiDiscoveryState:
                 return True
         return False
 
-    def should_stop_artifact_worker(self) -> bool:
+    def should_stop_docs_worker(self) -> bool:
         """Check if artifact ingest workers should stop.
 
         Artifact ingest workers continue draining scored artifacts.
@@ -379,7 +377,7 @@ class WikiDiscoveryState:
             return True
         if self.deadline_expired:
             return True
-        if self.artifact_phase.is_idle_or_done:
+        if self.docs_phase.is_idle_or_done:
             # Only stop if artifact scoring is also done AND no pending work
             scoring_done = (
                 self.artifact_score_phase.is_idle_or_done
@@ -392,7 +390,7 @@ class WikiDiscoveryState:
                 return True
         return False
 
-    def should_stop_artifact_scoring(self) -> bool:
+    def should_stop_docs_scoring(self) -> bool:
         """Check if artifact score workers should stop.
 
         Artifact score workers stop when budget exhausted, provider budget

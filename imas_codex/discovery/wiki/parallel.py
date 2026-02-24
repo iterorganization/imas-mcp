@@ -38,8 +38,8 @@ from .graph_ops import (
 )
 from .state import WikiDiscoveryState
 from .workers import (
-    artifact_score_worker,
-    artifact_worker,
+    docs_score_worker,
+    docs_worker,
     image_score_worker,
     ingest_worker,
     score_worker,
@@ -423,7 +423,7 @@ async def run_parallel_wiki_discovery(
     on_scan_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
     on_ingest_progress: Callable | None = None,
-    on_artifact_progress: Callable | None = None,
+    on_docs_progress: Callable | None = None,
     on_artifact_score_progress: Callable | None = None,
     on_image_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
@@ -445,7 +445,7 @@ async def run_parallel_wiki_discovery(
         skip_reset: If True, skip orphan recovery on entry. The reset
             is now timeout-based and parallel-safe, so this is mainly
             a performance optimization for multi-site loops.
-        on_artifact_progress: Progress callback for artifact ingest worker.
+        on_docs_progress: Progress callback for artifact ingest worker.
         on_artifact_score_progress: Progress callback for artifact score worker.
         on_worker_status: Callback for worker status changes. Called with
             SupervisedWorkerGroup for live status display.
@@ -566,8 +566,8 @@ async def run_parallel_wiki_discovery(
         logger.info("Starting bulk artifact discovery via API...")
 
         def artifact_progress(msg, _stats):
-            if on_artifact_progress:
-                on_artifact_progress(f"bulk: {msg}", state.artifact_stats)
+            if on_docs_progress:
+                on_docs_progress(f"bulk: {msg}", state.docs_stats)
 
         # Determine space_key for Confluence sites (stored on portal_page)
         _space_key = portal_page if site_type == "confluence" else None
@@ -593,7 +593,7 @@ async def run_parallel_wiki_discovery(
 
         if bulk_artifacts_discovered:
             logger.info(f"Bulk discovery found {bulk_artifacts_discovered} artifacts")
-            state.artifact_stats.processed = bulk_artifacts_discovered
+            state.docs_stats.processed = bulk_artifacts_discovered
 
     # Create portal page if not exists (may already exist from bulk discovery)
     _seed_portal_page(facility, portal_page, base_url, site_type)
@@ -642,15 +642,15 @@ async def run_parallel_wiki_discovery(
     if ingest_artifacts:
         # Artifact score worker: LLM scoring with text preview extraction
         artifact_score_status = worker_group.create_status(
-            "artifact_score_worker", group="docs"
+            "docs_score_worker", group="docs"
         )
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
-                    artifact_score_worker,
-                    "artifact_score_worker",
+                    docs_score_worker,
+                    "docs_score_worker",
                     state,
-                    state.should_stop_artifact_scoring,
+                    state.should_stop_docs_scoring,
                     on_progress=on_artifact_score_progress,
                     status_tracker=artifact_score_status,
                 )
@@ -712,16 +712,16 @@ async def run_parallel_wiki_discovery(
         if ingest_artifacts:
             # Artifact ingest worker: download and embed scored artifacts
             artifact_ingest_status = worker_group.create_status(
-                "artifact_worker", group="docs"
+                "docs_worker", group="docs"
             )
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
-                        artifact_worker,
-                        "artifact_worker",
+                        docs_worker,
+                        "docs_worker",
                         state,
-                        state.should_stop_artifact_worker,
-                        on_progress=on_artifact_progress,
+                        state.should_stop_docs_worker,
+                        on_progress=on_docs_progress,
                         status_tracker=artifact_ingest_status,
                     )
                 )
@@ -730,7 +730,7 @@ async def run_parallel_wiki_discovery(
         # In score_only mode, mark I/O worker phases as done so should_stop()
         # doesn't hang waiting for workers that were never started.
         state.ingest_phase.mark_done()
-        state.artifact_phase.mark_done()
+        state.docs_phase.mark_done()
 
     # Scan workers were removed (replaced by bulk discovery above).
     # Mark scan phase as done so should_stop() doesn't block on a non-existent worker.
@@ -772,7 +772,7 @@ async def run_parallel_wiki_discovery(
         "scanned": state.scan_stats.processed,
         "scored": state.score_stats.processed,
         "ingested": state.ingest_stats.processed,
-        "artifacts": state.artifact_stats.processed,
+        "artifacts": state.docs_stats.processed,
         "images_scored": state.image_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
@@ -1057,7 +1057,7 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
                 pending_artifact_ingest += r["cnt"]
 
         # Count artifacts by terminal status
-        artifacts_ingested = 0
+        docs_ingested = 0
         artifacts_scored = 0
         artifacts_failed = 0
         artifacts_deferred = 0
@@ -1065,7 +1065,7 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
         for r in artifact_result:
             st = r["status"]
             if st == WikiArtifactStatus.ingested.value:
-                artifacts_ingested += r["cnt"]
+                docs_ingested += r["cnt"]
             elif st == WikiArtifactStatus.scored.value:
                 artifacts_scored += r["cnt"]
             elif st == "failed":
@@ -1076,7 +1076,7 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
                 artifacts_skipped += r["cnt"]
 
         stats["total_artifacts"] = total_artifacts
-        stats["artifacts_ingested"] = artifacts_ingested
+        stats["docs_ingested"] = docs_ingested
         stats["artifacts_scored"] = artifacts_scored
         stats["artifacts_failed"] = artifacts_failed
         stats["artifacts_deferred"] = artifacts_deferred

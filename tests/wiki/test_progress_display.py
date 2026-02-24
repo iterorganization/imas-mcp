@@ -11,7 +11,7 @@ import time
 import pytest
 
 from imas_codex.discovery.wiki.progress import (
-    ArtifactItem,
+    DocsItem,
     ImageItem,
     IngestItem,
     ProgressState,
@@ -43,11 +43,11 @@ class TestProgressStateProperties:
         state = self._state(
             _run_score_cost=0.10,
             _run_ingest_cost=0.05,
-            _run_artifact_score_cost=0.03,
+            _run_docs_score_cost=0.03,
             _run_image_score_cost=0.02,
             _offset_score_cost=0.01,
             _offset_ingest_cost=0.01,
-            _offset_artifact_score_cost=0.01,
+            _offset_docs_score_cost=0.01,
             _offset_image_score_cost=0.01,
         )
         expected = 0.10 + 0.05 + 0.03 + 0.02 + 0.01 + 0.01 + 0.01 + 0.01
@@ -110,9 +110,7 @@ class TestProgressStateProperties:
         assert state.limit_reason == "cost"
 
     def test_limit_reason_page(self):
-        state = self._state(
-            cost_limit=10.0, page_limit=50, run_scored=50
-        )
+        state = self._state(cost_limit=10.0, page_limit=50, run_scored=50)
         assert state.limit_reason == "page"
 
     def test_limit_reason_none(self):
@@ -132,8 +130,8 @@ class TestProgressStateProperties:
     def test_cost_per_artifact_score(self):
         state = self._state(
             cost_limit=1.0,
-            run_artifacts_scored=5,
-            _run_artifact_score_cost=0.25,
+            run_docs_scored=5,
+            _run_docs_score_cost=0.25,
         )
         assert state.cost_per_artifact_score == pytest.approx(0.05)
 
@@ -162,13 +160,13 @@ class TestProgressStateProperties:
         )
         assert state.total_run_ingested == 25
 
-    def test_total_run_artifacts_with_offsets(self):
+    def test_total_run_docs_with_offsets(self):
         state = self._state(
             cost_limit=1.0,
-            run_artifacts=5,
-            _offset_artifacts=10,
+            run_docs=5,
+            _offset_docs=10,
         )
-        assert state.total_run_artifacts == 15
+        assert state.total_run_docs == 15
 
     def test_total_run_images_with_offsets(self):
         state = self._state(
@@ -276,7 +274,7 @@ class TestDisplayItems:
         assert item.chunk_count == 12
 
     def test_artifact_item(self):
-        item = ArtifactItem(
+        item = DocsItem(
             filename="report.pdf",
             artifact_type="pdf",
             score=0.75,
@@ -311,15 +309,11 @@ class TestWikiProgressDisplayConstruction:
         assert display.state.score_only is False
 
     def test_scan_only_mode(self):
-        display = WikiProgressDisplay(
-            facility="iter", cost_limit=0.0, scan_only=True
-        )
+        display = WikiProgressDisplay(facility="iter", cost_limit=0.0, scan_only=True)
         assert display.state.scan_only is True
 
     def test_score_only_mode(self):
-        display = WikiProgressDisplay(
-            facility="jet", cost_limit=0.5, score_only=True
-        )
+        display = WikiProgressDisplay(facility="jet", cost_limit=0.5, score_only=True)
         assert display.state.score_only is True
 
     def test_with_focus(self):
@@ -329,9 +323,7 @@ class TestWikiProgressDisplayConstruction:
         assert display.state.focus == "diagnostics"
 
     def test_with_page_limit(self):
-        display = WikiProgressDisplay(
-            facility="tcv", cost_limit=1.0, page_limit=500
-        )
+        display = WikiProgressDisplay(facility="tcv", cost_limit=1.0, page_limit=500)
         assert display.state.page_limit == 500
 
     def test_width_calculation(self):
@@ -357,16 +349,12 @@ class TestWikiProgressDisplayHeader:
         assert "Wiki Discovery" in header.plain
 
     def test_scan_only_header(self):
-        display = WikiProgressDisplay(
-            facility="tcv", cost_limit=0.0, scan_only=True
-        )
+        display = WikiProgressDisplay(facility="tcv", cost_limit=0.0, scan_only=True)
         header = display._build_header()
         assert "SCAN ONLY" in header.plain
 
     def test_score_only_header(self):
-        display = WikiProgressDisplay(
-            facility="tcv", cost_limit=1.0, score_only=True
-        )
+        display = WikiProgressDisplay(facility="tcv", cost_limit=1.0, score_only=True)
         header = display._build_header()
         assert "SCORE ONLY" in header.plain
 

@@ -100,7 +100,9 @@ STATIC_HTML = """\
 
 EMPTY_HTML = "<html><body></body></html>"
 
-MINIMAL_HTML = "<html><head><title>Test</title></head><body><p>Hello world</p></body></html>"
+MINIMAL_HTML = (
+    "<html><head><title>Test</title></head><body><p>Hello world</p></body></html>"
+)
 
 
 # =============================================================================
@@ -171,7 +173,7 @@ def make_score_results(
             "score_cost": 0.001,
             "preview_text": f"Preview text for {pid}",
         }
-        for pid, score in zip(page_ids, scores)
+        for pid, score in zip(page_ids, scores, strict=False)
     ]
 
 
@@ -217,7 +219,7 @@ def make_artifact_score_results(
             "artifact_type": "pdf",
             "preview_text": "Preview of artifact",
         }
-        for aid, score in zip(artifact_ids, scores)
+        for aid, score in zip(artifact_ids, scores, strict=False)
     ]
 
 
@@ -277,7 +279,6 @@ def mock_graph_ops():
 
     Returns a namespace with all mocked functions for easy assertion.
     """
-    patches = {}
     funcs = [
         "claim_pages_for_scoring",
         "claim_pages_for_ingesting",
@@ -350,14 +351,14 @@ def mock_state():
     # Worker stats
     state.score_stats = MockWorkerStats()
     state.ingest_stats = MockWorkerStats()
-    state.artifact_stats = MockWorkerStats()
+    state.docs_stats = MockWorkerStats()
     state.artifact_score_stats = MockWorkerStats()
     state.image_stats = MockWorkerStats()
 
     # Idle counts
     state.score_idle_count = 0
     state.ingest_idle_count = 0
-    state.artifact_idle_count = 0
+    state.docs_idle_count = 0
     state.artifact_score_idle_count = 0
     state.image_idle_count = 0
 
@@ -375,8 +376,8 @@ def mock_state():
 
     state.should_stop_scoring = MagicMock(side_effect=_make_stop_fn("score"))
     state.should_stop_ingesting = MagicMock(side_effect=_make_stop_fn("ingest"))
-    state.should_stop_artifact_worker = MagicMock(side_effect=_make_stop_fn("artifact"))
-    state.should_stop_artifact_scoring = MagicMock(side_effect=_make_stop_fn("ascore"))
+    state.should_stop_docs_worker = MagicMock(side_effect=_make_stop_fn("artifact"))
+    state.should_stop_docs_scoring = MagicMock(side_effect=_make_stop_fn("ascore"))
     state.should_stop_image_scoring = MagicMock(side_effect=_make_stop_fn("image"))
 
     # Semaphores

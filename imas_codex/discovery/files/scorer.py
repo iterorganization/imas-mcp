@@ -69,20 +69,16 @@ _PATH_PATTERNS: dict[str, tuple[re.Pattern, float]] = {
     "vendor": (re.compile(r"/vendor/|/third_party/|/external/|/deps/", re.I), -0.15),
 }
 
-# Files with these patterns in their path are likely available via GitHub/similar
-_PUBLIC_REPO_PATTERNS = re.compile(
-    r"(omas|omfit|freeqdsk|uda-|pyuda|pint|numpy|scipy|matplotlib|"
-    r"xarray|pandas|sklearn|tensorflow|pytorch|ansible|docker|"
-    r"jenkins|travis|circleci|github)",
-    re.I,
-)
-
 
 def compute_path_heuristic_score(file_path: str) -> float:
     """Compute a heuristic relevance score based on file path alone.
 
     Uses pattern matching against the file path to estimate relevance
     without SSH or LLM calls. Score ranges 0.0-1.0.
+
+    Public repos are already excluded at the graph level via
+    claim_paths_for_file_scan() which filters out FacilityPaths
+    linked to SoftwareRepo nodes.
 
     Args:
         file_path: Full remote file path
@@ -95,10 +91,6 @@ def compute_path_heuristic_score(file_path: str) -> float:
     for _name, (pattern, weight) in _PATH_PATTERNS.items():
         if pattern.search(file_path):
             base_score += weight
-
-    # Public repo penalty — these codebases are available via GitHub etc.
-    if _PUBLIC_REPO_PATTERNS.search(file_path):
-        base_score -= 0.3
 
     return max(0.0, min(1.0, base_score))
 

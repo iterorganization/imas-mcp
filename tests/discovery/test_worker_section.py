@@ -41,8 +41,8 @@ class TestBuildWorkerStatusSection:
                 ("score_worker_0", "score", WorkerState.running),
                 ("score_worker_1", "score", WorkerState.running),
                 ("ingest_worker_0", "ingest", WorkerState.running),
-                ("artifact_score_worker", "score", WorkerState.running),
-                ("artifact_worker", "ingest", WorkerState.running),
+                ("docs_score_worker", "score", WorkerState.running),
+                ("docs_worker", "ingest", WorkerState.running),
                 ("image_score_worker", "score", WorkerState.running),
             ]
         )

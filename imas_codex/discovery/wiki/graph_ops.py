@@ -50,7 +50,7 @@ INGESTABLE_ARTIFACT_TYPES = {
 }
 
 # Types that should become Image nodes (routed to image pipeline, not text extraction).
-# Used by artifact_worker for routing; Cypher queries use score_exempt property instead.
+# Used by docs_worker for routing; Cypher queries use score_exempt property instead.
 IMAGE_ARTIFACT_TYPES = {"image"}
 
 # All types worth scoring via LLM (metadata-only scoring for data/archive/other).

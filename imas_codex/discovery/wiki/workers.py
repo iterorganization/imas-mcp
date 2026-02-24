@@ -3,8 +3,8 @@
 Five supervised workers that process wiki content through the pipeline:
 - score_worker: LLM content-aware scoring (scanned → scored)
 - ingest_worker: Chunk and embed high-value pages (scored → ingested)
-- artifact_worker: Download and ingest scored artifacts (scored → ingested)
-- artifact_score_worker: LLM scoring for artifacts (discovered → scored)
+- docs_worker: Download and ingest scored artifacts (scored → ingested)
+- docs_score_worker: LLM scoring for artifacts (discovered → scored)
 - image_score_worker: VLM captioning and scoring (ingested → captioned)
 
 Workers are supervised via base.supervision for automatic restart on crash.
@@ -475,7 +475,7 @@ async def ingest_worker(
             )
 
 
-async def artifact_worker(
+async def docs_worker(
     state: WikiDiscoveryState,
     on_progress: Callable | None = None,
     max_size_mb: float = 5.0,
@@ -512,21 +512,19 @@ async def artifact_worker(
     # not be initialized yet when the worker starts (race with page discovery).
     auth_session = None
 
-    while not state.should_stop_artifact_worker():
+    while not state.should_stop_docs_worker():
         # Lazily acquire Confluence session when first needed
         if auth_session is None and state.site_type == "confluence":
             confluence_client = await state.get_confluence_client()
             if confluence_client is not None:
                 auth_session = confluence_client._get_session()
-                logger.info(
-                    "artifact_worker: acquired Confluence session for downloads"
-                )
+                logger.info("docs_worker: acquired Confluence session for downloads")
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
             if on_progress:
-                on_progress("paused", state.artifact_stats)
+                on_progress("paused", state.docs_stats)
             await state.service_monitor.await_services_ready()
-            if state.should_stop_artifact_worker():
+            if state.should_stop_docs_worker():
                 break
 
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
@@ -535,21 +533,21 @@ async def artifact_worker(
                 claim_artifacts_for_ingesting, state.facility, limit=4
             )
         except Exception as e:
-            logger.warning("artifact_worker: claim failed: %s", e)
+            logger.warning("docs_worker: claim failed: %s", e)
             await asyncio.sleep(5.0)
             continue
 
         if not artifacts:
-            state.artifact_phase.record_idle()
+            state.docs_phase.record_idle()
             if on_progress:
-                on_progress("idle", state.artifact_stats)
+                on_progress("idle", state.docs_stats)
             await asyncio.sleep(1.0)
             continue
 
-        state.artifact_phase.record_activity()
+        state.docs_phase.record_activity()
 
         if on_progress:
-            on_progress(f"ingesting {len(artifacts)} artifacts", state.artifact_stats)
+            on_progress(f"ingesting {len(artifacts)} artifacts", state.docs_stats)
 
         results = []
         for artifact in artifacts:
@@ -562,7 +560,7 @@ async def artifact_worker(
             if on_progress:
                 on_progress(
                     f"ingesting {filename}",
-                    state.artifact_stats,
+                    state.docs_stats,
                     results=[
                         {
                             "filename": filename,
@@ -680,17 +678,17 @@ async def artifact_worker(
 
         # Run blocking Neo4j call in thread pool
         await asyncio.to_thread(mark_artifacts_ingested, state.facility, results)
-        state.artifact_stats.processed += len(results)
+        state.docs_stats.processed += len(results)
 
         if on_progress:
             on_progress(
                 f"ingested {len(results)} artifacts",
-                state.artifact_stats,
+                state.docs_stats,
                 results=results,
             )
 
 
-async def artifact_score_worker(
+async def docs_score_worker(
     state: WikiDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
@@ -707,7 +705,7 @@ async def artifact_score_worker(
     from imas_codex.settings import get_model
 
     worker_id = id(asyncio.current_task())
-    logger.info(f"artifact_score_worker started (task={worker_id})")
+    logger.info(f"docs_score_worker started (task={worker_id})")
 
     # Confluence session for artifact preview downloads (lazily acquired)
     auth_session = None
@@ -721,7 +719,7 @@ async def artifact_score_worker(
         facility_access_patterns = facility_config.get("data_access_patterns")
         if facility_access_patterns:
             logger.info(
-                "artifact_score_worker %s: loaded data_access_patterns for %s "
+                "docs_score_worker %s: loaded data_access_patterns for %s "
                 "(primary_method=%s, %d key_tools)",
                 worker_id,
                 state.facility,
@@ -729,18 +727,16 @@ async def artifact_score_worker(
                 len(facility_access_patterns.get("key_tools") or []),
             )
     except Exception as e:
-        logger.debug(
-            "artifact_score_worker %s: no data_access_patterns: %s", worker_id, e
-        )
+        logger.debug("docs_score_worker %s: no data_access_patterns: %s", worker_id, e)
 
-    while not state.should_stop_artifact_scoring():
+    while not state.should_stop_docs_scoring():
         # Lazily acquire Confluence session when first needed
         if auth_session is None and state.site_type == "confluence":
             confluence_client = await state.get_confluence_client()
             if confluence_client is not None:
                 auth_session = confluence_client._get_session()
                 logger.info(
-                    "artifact_score_worker %s: acquired Confluence session", worker_id
+                    "docs_score_worker %s: acquired Confluence session", worker_id
                 )
 
         # Gate on service health (SSH/VPN) before claiming work
@@ -748,7 +744,7 @@ async def artifact_score_worker(
             if on_progress:
                 on_progress("paused", state.artifact_score_stats)
             await state.service_monitor.await_services_ready()
-            if state.should_stop_artifact_scoring():
+            if state.should_stop_docs_scoring():
                 break
 
         # Claim artifacts for scoring
@@ -757,7 +753,7 @@ async def artifact_score_worker(
                 claim_artifacts_for_scoring, state.facility, 10
             )
         except Exception as e:
-            logger.warning("artifact_score_worker %s: claim failed: %s", worker_id, e)
+            logger.warning("docs_score_worker %s: claim failed: %s", worker_id, e)
             await asyncio.sleep(5.0)
             continue
 
@@ -839,7 +835,7 @@ async def artifact_score_worker(
 
         if not artifacts_to_score:
             logger.debug(
-                "artifact_score_worker %s: no artifacts with content, skipping LLM",
+                "docs_score_worker %s: no artifacts with content, skipping LLM",
                 worker_id,
             )
             continue

@@ -82,7 +82,7 @@ class IngestItem:
 
 
 @dataclass
-class ArtifactItem:
+class DocsItem:
     """Current artifact activity (score or ingest)."""
 
     filename: str
@@ -174,16 +174,16 @@ class ProgressState:
 
     # Artifact stats
     total_artifacts: int = 0  # All wiki artifacts in graph (DOC denominator)
-    artifacts_ingested: int = 0
-    artifacts_scored: int = 0
+    docs_ingested: int = 0
+    docs_scored: int = 0
     artifacts_failed: int = 0
     artifacts_deferred: int = 0
     artifacts_skipped: int = 0
-    run_artifacts: int = 0
-    run_artifacts_scored: int = 0
-    artifact_rate: float | None = None
+    run_docs: int = 0
+    run_docs_scored: int = 0
+    docs_rate: float | None = None
     artifact_score_rate: float | None = None
-    _run_artifact_score_cost: float = 0.0
+    _run_docs_score_cost: float = 0.0
 
     # Image stats
     images_scored: int = 0  # From graph
@@ -203,7 +203,7 @@ class ProgressState:
     # so the done row still shows the average active rate achieved
     _final_score_rate: float | None = None
     _final_ingest_rate: float | None = None
-    _final_artifact_rate: float | None = None
+    _final_docs_rate: float | None = None
     _final_image_rate: float | None = None
 
     # Multi-site tracking (for facilities with multiple wiki instances)
@@ -217,20 +217,20 @@ class ProgressState:
     _offset_ingested: int = 0
     _offset_score_cost: float = 0.0
     _offset_ingest_cost: float = 0.0
-    _offset_artifact_score_cost: float = 0.0
-    _offset_artifacts: int = 0
-    _offset_artifacts_scored: int = 0
+    _offset_docs_score_cost: float = 0.0
+    _offset_docs: int = 0
+    _offset_docs_scored: int = 0
     _offset_images_scored: int = 0
     _offset_image_score_cost: float = 0.0
 
     # Current items (and their processing state)
     current_score: ScoreItem | None = None
     current_ingest: IngestItem | None = None
-    current_artifact: ArtifactItem | None = None
+    current_docs: DocsItem | None = None
     current_image: ImageItem | None = None
     score_processing: bool = False
     ingest_processing: bool = False
-    artifact_processing: bool = False
+    docs_processing: bool = False
     image_processing: bool = False
 
     # Streaming queues - adaptive rate based on worker speed
@@ -285,8 +285,8 @@ class ProgressState:
             + self._run_score_cost
             + self._offset_ingest_cost
             + self._run_ingest_cost
-            + self._offset_artifact_score_cost
-            + self._run_artifact_score_cost
+            + self._offset_docs_score_cost
+            + self._run_docs_score_cost
             + self._offset_image_score_cost
             + self._run_image_score_cost
         )
@@ -302,14 +302,14 @@ class ProgressState:
         return self._offset_ingested + self.run_ingested
 
     @property
-    def total_run_artifacts(self) -> int:
+    def total_run_docs(self) -> int:
         """Total artifacts ingested across all sites."""
-        return self._offset_artifacts + self.run_artifacts
+        return self._offset_docs + self.run_docs
 
     @property
-    def total_run_artifacts_scored(self) -> int:
+    def total_run_docs_scored(self) -> int:
         """Total artifacts scored across all sites."""
-        return self._offset_artifacts_scored + self.run_artifacts_scored
+        return self._offset_docs_scored + self.run_docs_scored
 
     @property
     def total_run_images_scored(self) -> int:
@@ -322,8 +322,8 @@ class ProgressState:
         return (
             self._offset_score_cost
             + self._run_score_cost
-            + self._offset_artifact_score_cost
-            + self._run_artifact_score_cost
+            + self._offset_docs_score_cost
+            + self._run_docs_score_cost
             + self._offset_image_score_cost
             + self._run_image_score_cost
         )
@@ -367,8 +367,8 @@ class ProgressState:
     @property
     def cost_per_artifact_score(self) -> float | None:
         """Average LLM cost per scored artifact."""
-        total = self.total_run_artifacts_scored
-        cost = self._offset_artifact_score_cost + self._run_artifact_score_cost
+        total = self.total_run_docs_scored
+        cost = self._offset_docs_score_cost + self._run_docs_score_cost
         if total > 0:
             return cost / total
         return None
@@ -428,12 +428,8 @@ class ProgressState:
             worker_etas.append(self.pending_artifact_score / self.artifact_score_rate)
 
         # Artifact ingestion ETA
-        if (
-            self.pending_artifact_ingest > 0
-            and self.artifact_rate
-            and self.artifact_rate > 0
-        ):
-            worker_etas.append(self.pending_artifact_ingest / self.artifact_rate)
+        if self.pending_artifact_ingest > 0 and self.docs_rate and self.docs_rate > 0:
+            worker_etas.append(self.pending_artifact_ingest / self.docs_rate)
 
         # Image scoring ETA
         if (
@@ -649,8 +645,8 @@ class WikiProgressDisplay(BaseProgressDisplay):
         pages_count, pages_ann = self._count_group_workers("pages")
 
         # DOCS: artifact scoring + ingestion
-        art_scored = self.state.artifacts_scored
-        art_ingested = self.state.artifacts_ingested
+        art_scored = self.state.docs_scored
+        art_ingested = self.state.docs_ingested
         art_terminal = (
             self.state.artifacts_failed
             + self.state.artifacts_deferred
@@ -659,13 +655,13 @@ class WikiProgressDisplay(BaseProgressDisplay):
         art_completed = art_scored + art_ingested + art_terminal
         art_total = self.state.total_artifacts or art_completed
         art_score_rate = self.state.artifact_score_rate
-        art_ingest_rate = self.state.artifact_rate
+        art_ingest_rate = self.state.docs_rate
         art_rate = (
             sum(r for r in [art_score_rate, art_ingest_rate] if r and r > 0) or None
         )
         docs_cost = (
-            self.state._run_artifact_score_cost
-            if self.state._run_artifact_score_cost > 0
+            self.state._run_docs_score_cost
+            if self.state._run_docs_score_cost > 0
             else None
         )
         docs_count, docs_ann = self._count_group_workers("docs")
@@ -738,7 +734,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             pages_desc = ingest.description
 
         # DOCS activity
-        artifact = self.state.current_artifact
+        artifact = self.state.current_docs
         docs_text = ""
         docs_score: float | None = None
         docs_domain = ""
@@ -749,8 +745,8 @@ class WikiProgressDisplay(BaseProgressDisplay):
         docs_at_100 = art_completed >= art_total > 1
         # Snapshot rate when workers stop (regardless of completion)
         if (self._worker_complete("docs") or docs_at_100) and not artifact:
-            if self.state._final_artifact_rate is None and art_rate:
-                self.state._final_artifact_rate = art_rate
+            if self.state._final_docs_rate is None and art_rate:
+                self.state._final_docs_rate = art_rate
         # Only mark complete when progress is actually at 100%
         if docs_at_100 and not artifact:
             docs_complete = True
@@ -830,7 +826,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         page_rate = self.state.ingest_rate or self.state._final_ingest_rate
 
         # DOC rate/cost: prefer live rate, use accumulated graph cost
-        docs_display_rate = art_rate or self.state._final_artifact_rate
+        docs_display_rate = art_rate or self.state._final_docs_rate
         docs_cost = (
             self.state.accumulated_artifact_cost
             if self.state.accumulated_artifact_cost > 0
@@ -914,7 +910,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 physics_domain=docs_domain,
                 description=docs_desc,
                 description_fallback=docs_desc_fallback,
-                is_processing=self.state.artifact_processing,
+                is_processing=self.state.docs_processing,
                 is_complete=docs_complete,
                 complete_label=docs_complete_label,
                 is_paused=is_paused,
@@ -928,7 +924,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                         or not self.state.artifact_score_queue.is_empty()
                     )
                     and not artifact
-                    and not self.state.artifact_processing
+                    and not self.state.docs_processing
                     else 0
                 ),
             ),
@@ -1085,7 +1081,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
         # Pop from artifact score queue (priority over ingest queue)
         if item := self.state.artifact_score_queue.pop():
-            self.state.current_artifact = ArtifactItem(
+            self.state.current_docs = DocsItem(
                 filename=item.get("filename", ""),
                 artifact_type=item.get("artifact_type", ""),
                 score=item.get("score"),
@@ -1095,7 +1091,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             )
         # Pop from artifact ingest queue
         elif item := self.state.artifact_queue.pop():
-            self.state.current_artifact = ArtifactItem(
+            self.state.current_docs = DocsItem(
                 filename=item.get("filename", ""),
                 artifact_type=item.get("artifact_type", ""),
                 score=item.get("score"),
@@ -1108,7 +1104,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             self.state.artifact_score_queue.is_stale()
             and self.state.artifact_queue.is_stale()
         ):
-            self.state.current_artifact = None
+            self.state.current_docs = None
 
         # Pop from image queue
         if item := self.state.image_queue.pop():
@@ -1244,30 +1240,30 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    def update_artifact(
+    def update_docs(
         self,
         message: str,
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
         """Update artifact worker state."""
-        self.state.run_artifacts = stats.processed
+        self.state.run_docs = stats.processed
 
         # Track processing state and idle/active transitions
         if "waiting" in message.lower() or message == "idle":
-            self.state.artifact_processing = False
+            self.state.docs_processing = False
             stats.mark_idle()
         elif "ingesting" in message.lower():
-            self.state.artifact_processing = True
+            self.state.docs_processing = True
             stats.mark_active()
         elif "ingested" in message.lower() and results:
-            self.state.artifact_processing = not self.state.artifact_queue.is_empty()
+            self.state.docs_processing = not self.state.artifact_queue.is_empty()
             stats.mark_active()
             stats.record_batch(len(results))
         else:
-            self.state.artifact_processing = False
+            self.state.docs_processing = False
 
-        self.state.artifact_rate = stats.ema_rate
+        self.state.docs_rate = stats.ema_rate
 
         # Queue results for streaming
         if results:
@@ -1289,31 +1285,29 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    def update_artifact_score(
+    def update_docs_score(
         self,
         message: str,
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
         """Update artifact score worker state."""
-        self.state.run_artifacts_scored = stats.processed
-        self.state._run_artifact_score_cost = stats.cost
+        self.state.run_docs_scored = stats.processed
+        self.state._run_docs_score_cost = stats.cost
 
         # Track processing state and idle/active transitions
         if "waiting" in message.lower() or message == "idle":
-            self.state.artifact_processing = False
+            self.state.docs_processing = False
             stats.mark_idle()
         elif "scoring" in message.lower() or "extracting" in message.lower():
-            self.state.artifact_processing = True
+            self.state.docs_processing = True
             stats.mark_active()
         elif "scored" in message.lower() and results:
-            self.state.artifact_processing = (
-                not self.state.artifact_score_queue.is_empty()
-            )
+            self.state.docs_processing = not self.state.artifact_score_queue.is_empty()
             stats.mark_active()
             stats.record_batch(len(results))
         else:
-            self.state.artifact_processing = False
+            self.state.docs_processing = False
 
         self.state.artifact_score_rate = stats.ema_rate
 
@@ -1419,10 +1413,10 @@ class WikiProgressDisplay(BaseProgressDisplay):
         # Update graph-based artifact counts if provided
         if "total_artifacts" in kwargs:
             self.state.total_artifacts = kwargs["total_artifacts"]
-        if "artifacts_ingested" in kwargs:
-            self.state.artifacts_ingested = kwargs["artifacts_ingested"]
-        if "artifacts_scored" in kwargs:
-            self.state.artifacts_scored = kwargs["artifacts_scored"]
+        if "docs_ingested" in kwargs:
+            self.state.docs_ingested = kwargs["docs_ingested"]
+        if "docs_scored" in kwargs:
+            self.state.docs_scored = kwargs["docs_scored"]
         if "artifacts_failed" in kwargs:
             self.state.artifacts_failed = kwargs["artifacts_failed"]
         if "artifacts_deferred" in kwargs:
@@ -1455,9 +1449,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
         self.state._offset_ingested += self.state.run_ingested
         self.state._offset_score_cost += self.state._run_score_cost
         self.state._offset_ingest_cost += self.state._run_ingest_cost
-        self.state._offset_artifact_score_cost += self.state._run_artifact_score_cost
-        self.state._offset_artifacts += self.state.run_artifacts
-        self.state._offset_artifacts_scored += self.state.run_artifacts_scored
+        self.state._offset_docs_score_cost += self.state._run_docs_score_cost
+        self.state._offset_docs += self.state.run_docs
+        self.state._offset_docs_scored += self.state.run_docs_scored
         self.state._offset_images_scored += self.state.run_images_scored
         self.state._offset_image_score_cost += self.state._run_image_score_cost
 
@@ -1466,25 +1460,25 @@ class WikiProgressDisplay(BaseProgressDisplay):
         self.state.run_ingested = 0
         self.state._run_score_cost = 0.0
         self.state._run_ingest_cost = 0.0
-        self.state._run_artifact_score_cost = 0.0
-        self.state.run_artifacts = 0
-        self.state.run_artifacts_scored = 0
+        self.state._run_docs_score_cost = 0.0
+        self.state.run_docs = 0
+        self.state.run_docs_scored = 0
         self.state.run_images_scored = 0
         self.state._run_image_score_cost = 0.0
         self.state.score_rate = None
         self.state.ingest_rate = None
-        self.state.artifact_rate = None
+        self.state.docs_rate = None
         self.state.artifact_score_rate = None
         self.state.image_score_rate = None
 
         # Reset activity displays
         self.state.current_score = None
         self.state.current_ingest = None
-        self.state.current_artifact = None
+        self.state.current_docs = None
         self.state.current_image = None
         self.state.score_processing = False
         self.state.ingest_processing = False
-        self.state.artifact_processing = False
+        self.state.docs_processing = False
         self.state.image_processing = False
 
         # Reset worker group (set by new run_parallel_wiki_discovery)
@@ -1538,9 +1532,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
         total_score_cost = self.state.total_score_cost
         summary.append(f"{'  SCAN':<{LABEL_WIDTH}}", style="bold blue")
         summary.append(f"  scored={total_scored:,}", style="blue")
-        artifacts_scored = self.state.total_run_artifacts_scored
-        if artifacts_scored > 0:
-            summary.append(f"+{artifacts_scored:,}docs", style="blue dim")
+        docs_scored = self.state.total_run_docs_scored
+        if docs_scored > 0:
+            summary.append(f"+{docs_scored:,}docs", style="blue dim")
         summary.append(f"  skipped={self.state.pages_skipped:,}", style="yellow")
         if self.state.pages_failed > 0:
             summary.append(f"  failed={self.state.pages_failed:,}", style="red")
@@ -1553,9 +1547,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
         total_ingested = self.state.pages_ingested
         summary.append(f"{'  PAGE':<{LABEL_WIDTH}}", style="bold magenta")
         summary.append(f"  ingested={total_ingested:,}", style="magenta")
-        artifacts_ingested = self.state.total_run_artifacts
-        if artifacts_ingested > 0:
-            summary.append(f"+{artifacts_ingested:,}docs", style="magenta dim")
+        docs_ingested = self.state.total_run_docs
+        if docs_ingested > 0:
+            summary.append(f"+{docs_ingested:,}docs", style="magenta dim")
         if self.state.ingest_rate:
             summary.append(f"  {self.state.ingest_rate:.1f}/s", style="dim")
         summary.append("\n")

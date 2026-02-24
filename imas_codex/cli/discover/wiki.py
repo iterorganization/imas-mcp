@@ -917,7 +917,7 @@ def wiki(
                                     "accumulated_image_cost", 0.0
                                 ),
                                 total_artifacts=stats.get("total_artifacts", 0),
-                                artifacts_ingested=stats.get("artifacts_ingested", 0),
+                                docs_ingested=stats.get("docs_ingested", 0),
                                 artifacts_scored=stats.get("artifacts_scored", 0),
                                 images_scored=stats.get("images_scored", 0),
                                 pending_image_score=stats.get("pending_image_score", 0),
@@ -1003,7 +1003,7 @@ def wiki(
                             }
                             for r in results[:5]
                         ]
-                    display.update_artifact(msg, stats, result_dicts)
+                    display.update_docs(msg, stats, result_dicts)
 
                 def on_artifact_score(msg, stats, results=None):
                     if msg == "provider_budget_exhausted":
@@ -1021,7 +1021,7 @@ def wiki(
                             }
                             for r in results[:5]
                         ]
-                    display.update_artifact_score(msg, stats, result_dicts)
+                    display.update_docs_score(msg, stats, result_dicts)
 
                 def on_image(msg, stats, results=None):
                     if msg == "provider_budget_exhausted":
@@ -1081,7 +1081,7 @@ def wiki(
                                 on_scan_progress=on_scan,
                                 on_score_progress=on_score,
                                 on_ingest_progress=on_ingest,
-                                on_artifact_progress=on_artifact,
+                                on_docs_progress=on_artifact,
                                 on_artifact_score_progress=on_artifact_score,
                                 on_image_progress=on_image,
                                 on_worker_status=on_worker_status,
@@ -1143,7 +1143,7 @@ def wiki(
                                 "accumulated_image_cost", 0.0
                             ),
                             total_artifacts=stats.get("total_artifacts", 0),
-                            artifacts_ingested=stats.get("artifacts_ingested", 0),
+                            docs_ingested=stats.get("docs_ingested", 0),
                             artifacts_scored=stats.get("artifacts_scored", 0),
                             images_scored=stats.get("images_scored", 0),
                             pending_image_score=stats.get("pending_image_score", 0),
