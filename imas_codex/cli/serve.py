@@ -2881,6 +2881,8 @@ def serve_status() -> None:
                     click.echo("  ✗ Status: not available")
             except Exception as e:
                 click.echo(f"  ✗ Status: error ({e})")
+        elif embed_location != "local":
+            click.echo("  ✗ Status: no running SLURM service allocation")
         elif embed_location == "local":
             click.echo("  ✓ Mode: in-process (no server)")
 

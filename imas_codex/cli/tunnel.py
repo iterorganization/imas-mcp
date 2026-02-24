@@ -93,12 +93,18 @@ def _get_tunnel_ports(
     # Discover SLURM compute node if any service uses a compute location.
     # All services share the same allocation, so one lookup suffices.
     compute_node: str | None = None
+    graph_location: str | None = None
+    embed_location: str | None = None
+    llm_location: str | None = None
     try:
         from imas_codex.graph.profiles import get_graph_location
         from imas_codex.remote.locations import resolve_location
         from imas_codex.settings import get_embedding_location, get_llm_location
 
-        locations = [get_graph_location(), get_embedding_location(), get_llm_location()]
+        graph_location = get_graph_location()
+        embed_location = get_embedding_location()
+        llm_location = get_llm_location()
+        locations = [graph_location, embed_location, llm_location]
         if any(resolve_location(loc).scheduler == "slurm" for loc in locations):
             compute_node = _discover_compute_node(host)
             if compute_node:
@@ -109,9 +115,19 @@ def _get_tunnel_ports(
     if neo4j or all_services:
         try:
             from imas_codex.graph.profiles import resolve_neo4j
+            from imas_codex.remote.locations import resolve_location
 
             profile = resolve_neo4j(auto_tunnel=False)
-            bind = compute_node or "127.0.0.1"
+            graph_scheduler = resolve_location(graph_location or "local").scheduler
+            if graph_scheduler == "slurm":
+                if not compute_node:
+                    raise click.ClickException(
+                        "No running SLURM service allocation for graph location; "
+                        "cannot create Neo4j tunnel"
+                    ) from None
+                bind = compute_node
+            else:
+                bind = "127.0.0.1"
             ports.append(
                 (
                     profile.bolt_port,
@@ -131,8 +147,19 @@ def _get_tunnel_ports(
         except Exception:
             # Fallback: use base ports from convention constants
             from imas_codex.graph.profiles import BOLT_BASE_PORT, HTTP_BASE_PORT
+            from imas_codex.remote.locations import resolve_location
 
-            bind = compute_node or "127.0.0.1"
+            graph_scheduler = resolve_location(graph_location or "local").scheduler
+            if graph_scheduler == "slurm":
+                if not compute_node:
+                    msg = (
+                        "No running SLURM service allocation for graph location; "
+                        "cannot create Neo4j tunnel"
+                    )
+                    raise click.ClickException(msg) from None
+                bind = compute_node
+            else:
+                bind = "127.0.0.1"
             ports.append(
                 (
                     BOLT_BASE_PORT,
@@ -151,12 +178,20 @@ def _get_tunnel_ports(
             )
 
     if embed or all_services:
+        from imas_codex.remote.locations import resolve_location
         from imas_codex.settings import get_embed_server_port
 
         embed_port = get_embed_server_port()
-        # When a SLURM compute node is active, forward through it.
-        # Otherwise fall back to localhost (embed on login node).
-        remote_bind = compute_node or "127.0.0.1"
+        embed_scheduler = resolve_location(embed_location or "local").scheduler
+        if embed_scheduler == "slurm":
+            if not compute_node:
+                raise click.ClickException(
+                    "No running SLURM service allocation for embedding location; "
+                    "cannot create embedding tunnel"
+                )
+            remote_bind = compute_node
+        else:
+            remote_bind = "127.0.0.1"
         # Embed uses same-port forwarding (no offset)
         ports.append((embed_port, embed_port, "embed", remote_bind))
 

@@ -523,11 +523,12 @@ def discover_compute_node_local(
 
 def resolve_remote_bind(
     ssh_host: str, scheduler: str, service_job_name: str = "imas-codex-services"
-) -> str:
+) -> str | None:
     """Resolve the remote bind address for a tunnel.
 
     When the scheduler is ``"slurm"``, discovers the compute node and
-    returns its hostname.  Otherwise returns ``"127.0.0.1"`` (login node).
+    returns its hostname. If no compute node is running, returns ``None``.
+    For non-SLURM services, returns ``"127.0.0.1"`` (login node).
 
     Args:
         ssh_host: SSH host alias.
@@ -535,14 +536,16 @@ def resolve_remote_bind(
         service_job_name: SLURM job name for compute node discovery.
 
     Returns:
-        Remote bind hostname for the ``-L`` forward argument.
+        Remote bind hostname for the ``-L`` forward argument, or ``None``
+        when scheduler is SLURM but no running service job is discoverable.
     """
     if scheduler == "slurm":
         node = discover_compute_node(ssh_host, service_job_name=service_job_name)
         if node:
             logger.info("SLURM compute node for %s: %s", ssh_host, node)
             return node
-        logger.debug("No SLURM allocation found, using login node")
+        logger.warning("No running SLURM service allocation found for %s", ssh_host)
+        return None
     return "127.0.0.1"
 
 
