@@ -620,6 +620,14 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     row.append("\n")
     line2 = Text()
 
+    # Pre-compute rate text so we can clip left content to fit
+    rate_s = ""
+    if config.rate and config.rate > 0:
+        rate_s = f"{config.rate:.2f}/s"
+    elif config.is_complete:
+        rate_s = "--/s"
+    rate_reserve = (len(rate_s) + 4) if rate_s else 0  # 4-char gap
+
     if config.has_content and config.has_structured_detail:
         line2.append("  ", style="dim")
         # Order: score → domain → name
@@ -636,10 +644,12 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         if config.physics_domain:
             line2.append(config.physics_domain, style="cyan")
             line2.append("  ", style="dim")
-        line2.append(config.primary_text, style="white")
+        max_name = max(10, row_width - cell_len(line2.plain) - rate_reserve)
+        line2.append(clip_text(config.primary_text, max_name), style="white")
     elif config.has_content:
         line2.append("  ", style="dim")
-        line2.append(config.primary_text, style="white")
+        max_name = max(10, row_width - cell_len(line2.plain) - rate_reserve)
+        line2.append(clip_text(config.primary_text, max_name), style="white")
     else:
         # No content: show status text
         line2.append("  ", style="dim")
@@ -657,36 +667,40 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
             line2.append("idle", style="dim italic")
 
     # Right-align rate on line 2
-    right_parts: list[str] = []
-    if config.rate and config.rate > 0:
-        right_parts.append(f"{config.rate:.2f}/s")
-    elif config.is_complete:
-        right_parts.append("--/s")
-    if right_parts:
-        right_s = "    ".join(right_parts)
-        gap = max(1, row_width - cell_len(line2.plain) - len(right_s))
+    if rate_s:
+        gap = max(1, row_width - cell_len(line2.plain) - len(rate_s))
         line2.append(" " * gap)
-        line2.append(right_s, style="dim")
+        line2.append(rate_s, style="dim")
     row.append_text(line2)
 
     # ── Line 3: description (left) + cost (right-aligned with rate) ──
     row.append("\n")
     line3 = Text()
+
+    # Pre-compute cost text so we can clip left content to fit
+    cost_s = ""
+    if config.cost is not None and config.cost > 0:
+        cost_s = f"${config.cost:.2f}"
+    cost_reserve = (len(cost_s) + 4) if cost_s else 0  # 4-char gap
+
     if config.has_structured_detail:
         line3.append("  ", style="dim")
         if config.description:
             desc = clean_text(config.description)
-            max_desc = max(10, row_width - 4)
+            max_desc = max(10, row_width - 4 - cost_reserve)
             line3.append(clip_text(desc, max_desc), style="italic dim")
         elif config.description_fallback:
-            line3.append(config.description_fallback, style="cyan dim italic")
+            max_fb = max(10, row_width - 4 - cost_reserve)
+            line3.append(
+                clip_text(config.description_fallback, max_fb),
+                style="cyan dim italic",
+            )
     elif config.detail_parts:
         line3.append("  ", style="dim")
         for text, style in config.detail_parts:
             line3.append(text, style=style)
     # Right-align cost on line 3 (below rate on line 2)
-    if config.cost is not None and config.cost > 0:
-        cost_s = f"${config.cost:.2f}"
+    if cost_s:
         gap = max(1, row_width - cell_len(line3.plain) - len(cost_s))
         line3.append(" " * gap)
         line3.append(cost_s, style="dim")

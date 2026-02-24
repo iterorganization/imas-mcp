@@ -12,8 +12,11 @@ import pytest
 from rich.text import Text
 
 from imas_codex.discovery.base.progress import (
+    LABEL_WIDTH,
+    METRICS_WIDTH,
     PipelineRowConfig,
     ResourceConfig,
+    build_pipeline_row,
     build_pipeline_section,
     build_resource_section,
     build_servers_section,
@@ -383,6 +386,33 @@ class TestBuildPipelineSection:
         ]
         result = build_pipeline_section(rows, bar_width=20)
         assert "25%" in result.plain
+
+    def test_long_text_clipped_to_row_width(self):
+        """Long primary_text and description are clipped so lines don't wrap."""
+        bar_width = 40
+        row_width = LABEL_WIDTH + bar_width + METRICS_WIDTH
+        long_name = "A" * 200
+        long_desc = "B" * 200
+        config = PipelineRowConfig(
+            name="TRIAGE",
+            style="bold blue",
+            completed=50,
+            total=100,
+            rate=1.23,
+            cost=5.67,
+            primary_text=long_name,
+            score_value=0.85,
+            physics_domain="magnetics",
+            description=long_desc,
+        )
+        result = build_pipeline_row(config, bar_width=bar_width)
+        lines = result.plain.split("\n")
+        assert len(lines) == 3
+        for i, line in enumerate(lines):
+            assert len(line) <= row_width, (
+                f"Line {i + 1} is {len(line)} chars, exceeds row_width {row_width}: "
+                f"{line!r}"
+            )
 
 
 # =============================================================================
