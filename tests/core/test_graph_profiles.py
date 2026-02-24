@@ -41,6 +41,11 @@ def _mock_is_local_host(monkeypatch):
         "imas_codex.remote.executor.is_local_host",
         lambda h: True,
     )
+    # Prevent compute host fallback from reading private YAML.
+    monkeypatch.setattr(
+        "imas_codex.remote.locations._resolve_compute_host",
+        lambda info: None,
+    )
 
 
 # ── Port convention ─────────────────────────────────────────────────────────

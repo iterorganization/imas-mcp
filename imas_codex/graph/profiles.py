@@ -312,6 +312,17 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
         compute_node = discover_compute_node_local(
             service_job_name=info.service_job_name
         )
+        if not compute_node:
+            # squeue found no running service job — try the configured
+            # compute host (services may outlive the SLURM allocation).
+            from imas_codex.remote.locations import _resolve_compute_host
+
+            compute_node = _resolve_compute_host(info)
+            if compute_node:
+                logger.info(
+                    "SLURM: no service job, using configured host %s",
+                    compute_node,
+                )
         if compute_node:
             my_hostname = socket.gethostname().split(".")[0]
             if compute_node.split(".")[0] == my_hostname:
@@ -321,7 +332,7 @@ def _resolve_uri_uncached(host: str | None, bolt_port: int) -> str:
                 "SLURM: Neo4j on peer node %s → direct connection", compute_node
             )
             return f"bolt://{compute_node}:{bolt_port}"
-        # squeue failed or no job found — fall back to localhost
+        # squeue failed and no configured compute host — fall back to localhost
         logger.debug("SLURM: no service job found → localhost:%d", bolt_port)
         return f"bolt://localhost:{bolt_port}"
 
