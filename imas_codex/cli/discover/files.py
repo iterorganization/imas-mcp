@@ -48,8 +48,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--score-workers",
     type=int,
-    default=2,
-    help="Number of parallel score workers (default: 2)",
+    default=1,
+    help="Number of parallel score workers (default: 1)",
 )
 @click.option(
     "--code-workers",

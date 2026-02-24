@@ -142,7 +142,9 @@ class MDSplusExtractor(TransformComponent):
 
             if refs:
                 node.metadata["mdsplus_ref_count"] = len(refs)
-                node.metadata["_mdsplus_refs"] = refs
+                # Store as flat string list — NamedTuples cause
+                # "Collections containing collections" in Neo4j
+                node.metadata["_mdsplus_refs"] = [r.path for r in refs]
 
         return nodes
 
