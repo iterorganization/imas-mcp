@@ -369,19 +369,27 @@ class WikiDiscoveryState:
     def should_stop_artifact_worker(self) -> bool:
         """Check if artifact ingest workers should stop.
 
-        Artifact ingest workers continue until no pending scored artifacts remain.
-        They stop when explicitly requested, deadline expired, or idle with
-        no work remaining.
+        Artifact ingest workers continue draining scored artifacts.
+        They only stop when:
+        1. Explicitly requested or deadline expired
+        2. Idle with no pending ingest work AND
+           artifact scoring is also done (no more scoring happening)
         """
         if self.stop_requested:
             return True
         if self.deadline_expired:
             return True
-        if (
-            self.artifact_phase.is_idle_or_done
-            and not _get_graph_ops().has_pending_artifact_ingest_work(self.facility)
-        ):
-            return True
+        if self.artifact_phase.is_idle_or_done:
+            # Only stop if artifact scoring is also done AND no pending work
+            scoring_done = (
+                self.artifact_score_phase.is_idle_or_done
+                or self.budget_exhausted
+                or self.provider_budget_exhausted
+            )
+            if scoring_done and not _get_graph_ops().has_pending_artifact_ingest_work(
+                self.facility
+            ):
+                return True
         return False
 
     def should_stop_artifact_scoring(self) -> bool:

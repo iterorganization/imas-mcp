@@ -1560,11 +1560,14 @@ class WikiProgressDisplay(BaseProgressDisplay):
             summary.append(f"  {self.state.ingest_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # IMAGES stats
-        images_scored = self.state.total_run_images_scored
-        if images_scored > 0:
+        # IMAGES stats — use graph total to match the main monitor
+        images_enriched = self.state.images_scored
+        if images_enriched > 0:
             summary.append(f"{'  IMAGE':<{LABEL_WIDTH}}", style="bold green")
-            summary.append(f"  scored={images_scored:,}", style="green")
+            summary.append(f"  enriched={images_enriched:,}", style="green")
+            pending_img = self.state.pending_image_score
+            if pending_img > 0:
+                summary.append(f"  pending={pending_img:,}", style="yellow")
             if self.state.image_score_rate:
                 summary.append(f"  {self.state.image_score_rate:.1f}/s", style="dim")
             summary.append("\n")
