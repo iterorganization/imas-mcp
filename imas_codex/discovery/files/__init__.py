@@ -1,7 +1,7 @@
 """File discovery module for source file scanning, scoring, and ingestion.
 
 Bridges from scored FacilityPaths to source file ingestion. Parallel
-worker architecture (scan → score → code/artifact) following the
+worker architecture (scan → score → code/docs) following the
 same pattern as wiki discovery.
 
 Pipeline:
@@ -9,7 +9,7 @@ Pipeline:
       1. SCAN: SSH enumerate files in high-scoring FacilityPaths
       2. SCORE: LLM batch scores files for relevance + interest
       3. CODE: Fetch, chunk, embed high-scoring code files
-      4. ARTIFACT: Ingest documents, notebooks, configs
+      4. DOCS: Ingest documents, notebooks, configs
 
 Uses claim coordination via ``claimed_at`` and ``files_claimed_at``
 for parallel-safe execution across CLI instances.

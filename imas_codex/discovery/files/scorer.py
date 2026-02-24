@@ -96,6 +96,10 @@ def compute_path_heuristic_score(file_path: str) -> float:
         if pattern.search(file_path):
             base_score += weight
 
+    # Public repo penalty — these codebases are available via GitHub etc.
+    if _PUBLIC_REPO_PATTERNS.search(file_path):
+        base_score -= 0.3
+
     return max(0.0, min(1.0, base_score))
 
 

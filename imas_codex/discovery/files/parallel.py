@@ -4,7 +4,7 @@ Main entry point for file discovery with async workers. Orchestrates:
 - Scan: SSH file enumeration from scored FacilityPaths
 - Score: LLM batch scoring of discovered SourceFiles
 - Code: Fetch, chunk, embed code files (replaces ``ingest run``)
-- Artifact: Ingest non-code files (documents, notebooks, configs)
+- Docs: Ingest non-code files (documents, notebooks, configs)
 
 Use ``run_parallel_file_discovery()`` as the main entry point.
 """
@@ -28,7 +28,7 @@ from imas_codex.graph import GraphClient
 
 from .graph_ops import reset_orphaned_file_claims
 from .state import FileDiscoveryState
-from .workers import artifact_worker, code_worker, scan_worker, score_worker
+from .workers import code_worker, docs_worker, scan_worker, score_worker
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,14 +47,14 @@ async def run_parallel_file_discovery(
     num_scan_workers: int = 2,
     num_score_workers: int = 2,
     num_code_workers: int = 2,
-    num_artifact_workers: int = 1,
+    num_docs_workers: int = 1,
     scan_only: bool = False,
     score_only: bool = False,
     deadline: float | None = None,
     on_scan_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
     on_code_progress: Callable | None = None,
-    on_artifact_progress: Callable | None = None,
+    on_docs_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
 ) -> dict[str, Any]:
@@ -64,7 +64,7 @@ async def run_parallel_file_discovery(
     1. Scan workers: SSH file enumeration from scored FacilityPaths
     2. Score workers: LLM batch scoring of discovered SourceFiles
     3. Code workers: Fetch, chunk, embed code files (ingestion)
-    4. Artifact workers: Ingest non-code files
+    4. Docs workers: Ingest non-code files (documents, notebooks, configs)
 
     Args:
         facility: Facility ID
@@ -76,14 +76,14 @@ async def run_parallel_file_discovery(
         num_scan_workers: Number of parallel scan workers
         num_score_workers: Number of parallel score workers
         num_code_workers: Number of parallel code workers
-        num_artifact_workers: Number of parallel artifact workers
+        num_docs_workers: Number of parallel docs workers
         scan_only: Only scan, skip scoring and ingestion
         score_only: Only score, skip scanning and ingestion
         deadline: Absolute time (epoch) when discovery should stop
         on_scan_progress: Callback for scan worker progress
         on_score_progress: Callback for score worker progress
         on_code_progress: Callback for code worker progress
-        on_artifact_progress: Callback for artifact worker progress
+        on_docs_progress: Callback for docs worker progress
         on_worker_status: Callback for worker status updates
         service_monitor: ServiceMonitor for health monitoring
 
@@ -194,34 +194,34 @@ async def run_parallel_file_discovery(
                 )
             )
 
-        # --- Artifact workers ---
-        for i in range(num_artifact_workers):
-            worker_name = f"artifact_worker_{i}"
-            status = worker_group.create_status(worker_name, group="artifact")
+        # --- Docs workers ---
+        for i in range(num_docs_workers):
+            worker_name = f"docs_worker_{i}"
+            status = worker_group.create_status(worker_name, group="docs")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
-                        artifact_worker,
+                        docs_worker,
                         worker_name,
                         state,
                         state.should_stop,
-                        on_progress=on_artifact_progress,
+                        on_progress=on_docs_progress,
                         status_tracker=status,
                     )
                 )
             )
     else:
         state.code_phase.mark_done()
-        state.artifact_phase.mark_done()
+        state.docs_phase.mark_done()
 
     logger.info(
-        "Started %d workers: scan=%d score=%d code=%d artifact=%d "
+        "Started %d workers: scan=%d score=%d code=%d docs=%d "
         "scan_only=%s score_only=%s",
         worker_group.get_active_count(),
         num_scan_workers if not score_only else 0,
         num_score_workers if not scan_only else 0,
         num_code_workers if not (scan_only or score_only) else 0,
-        num_artifact_workers if not (scan_only or score_only) else 0,
+        num_docs_workers if not (scan_only or score_only) else 0,
         scan_only,
         score_only,
     )
@@ -252,7 +252,7 @@ async def run_parallel_file_discovery(
         "scanned": state.scan_stats.processed,
         "scored": state.score_stats.processed,
         "code_ingested": state.code_stats.processed,
-        "artifacts_ingested": state.artifact_stats.processed,
+        "docs_ingested": state.docs_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_errors": state.scan_stats.errors,

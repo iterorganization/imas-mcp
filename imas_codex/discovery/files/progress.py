@@ -13,7 +13,7 @@ Display layout: PIPELINE → RESOURCES
 - SCAN: SSH file enumeration from scored FacilityPaths
 - SCORE: LLM batch scoring of discovered SourceFiles
 - CODE: Fetch, chunk, embed high-scoring code files
-- ARTIFACT: Ingest documents, notebooks, configs
+- DOCS: Ingest documents, notebooks, configs
 
 Uses common pipeline infrastructure from base.progress module.
 """
@@ -75,8 +75,8 @@ class CodeItem:
 
 
 @dataclass
-class ArtifactItem:
-    """Current artifact ingestion activity."""
+class DocsItem:
+    """Current docs ingestion activity."""
 
     path: str
     file_type: str = ""  # document, notebook, config
@@ -116,12 +116,12 @@ class FileProgressState:
     run_scanned: int = 0
     run_scored: int = 0
     run_code_ingested: int = 0
-    run_artifacts_ingested: int = 0
+    run_docs_ingested: int = 0
     _run_score_cost: float = 0.0
     scan_rate: float | None = None
     score_rate: float | None = None
     code_rate: float | None = None
-    artifact_rate: float | None = None
+    docs_rate: float | None = None
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
@@ -130,11 +130,11 @@ class FileProgressState:
     current_scan: ScanItem | None = None
     current_score: ScoreItem | None = None
     current_code: CodeItem | None = None
-    current_artifact: ArtifactItem | None = None
+    current_docs: DocsItem | None = None
     scan_processing: bool = False
     score_processing: bool = False
     code_processing: bool = False
-    artifact_processing: bool = False
+    docs_processing: bool = False
 
     # Streaming queues
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
@@ -148,7 +148,7 @@ class FileProgressState:
             rate=0.5, max_rate=2.0, min_display_time=0.4
         )
     )
-    artifact_queue: StreamQueue = field(
+    docs_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.5, max_rate=2.0, min_display_time=0.4
         )
@@ -218,7 +218,7 @@ class FileProgressDisplay(BaseProgressDisplay):
     """Clean progress display for parallel file discovery.
 
     Extends ``BaseProgressDisplay`` for the file discovery pipeline
-    (SCAN → SCORE → CODE → ARTIFACT).  Inherits header, servers, worker
+    (SCAN → SCORE → CODE → DOCS).  Inherits header, servers, worker
     tracking, and live-display lifecycle from the base class.
     """
 
@@ -262,7 +262,7 @@ class FileProgressDisplay(BaseProgressDisplay):
           Line 2:        /home/codes/liuqe/src
           Line 3:        45 files found
 
-        Stages: SCAN → SCORE → CODE → ARTIFACT
+        Stages: SCAN → SCORE → CODE → DOCS
         """
         content_width = self.width - 6
 
@@ -277,8 +277,8 @@ class FileProgressDisplay(BaseProgressDisplay):
         # CODE: code files ingested / total code files
         code_total = max(self.state.code_files, 1)
 
-        # ARTIFACT: non-code files ingested
-        artifact_total = max(
+        # DOCS: non-code files ingested
+        docs_total = max(
             self.state.document_files
             + self.state.notebook_files
             + self.state.config_files,
@@ -294,20 +294,20 @@ class FileProgressDisplay(BaseProgressDisplay):
         scan_count, scan_ann = self._count_group_workers("scan")
         score_count, score_ann = self._count_group_workers("triage")
         code_count, code_ann = self._count_group_workers("code")
-        artifact_count, artifact_ann = self._count_group_workers("artifact")
+        docs_count, docs_ann = self._count_group_workers("docs")
 
         # --- Build activity data ---
 
         scan = self.state.current_scan
         score = self.state.current_score
         code = self.state.current_code
-        artifact = self.state.current_artifact
+        docs = self.state.current_docs
 
         # Worker completion detection
         scan_complete = self._worker_complete("scan") and not scan
         score_complete = self._worker_complete("triage") and not score
         code_complete = self._worker_complete("code") and not code
-        artifact_complete = self._worker_complete("artifact") and not artifact
+        docs_complete = self._worker_complete("docs") and not docs
 
         # SCAN activity
         scan_text = ""
@@ -348,13 +348,13 @@ class FileProgressDisplay(BaseProgressDisplay):
                 parts.append((f"  [{code.language}]", "green dim"))
             code_detail = parts or None
 
-        # ARTIFACT activity
-        artifact_text = ""
-        artifact_detail: list[tuple[str, str]] | None = None
-        if artifact:
-            artifact_text = clip_path(artifact.path, content_width - 10)
-            if artifact.file_type:
-                artifact_detail = [(artifact.file_type, "dim")]
+        # DOCS activity
+        docs_text = ""
+        docs_detail: list[tuple[str, str]] | None = None
+        if docs:
+            docs_text = clip_path(docs.path, content_width - 10)
+            if docs.file_type:
+                docs_detail = [(docs.file_type, "dim")]
 
         # --- Build pipeline rows ---
 
@@ -403,18 +403,18 @@ class FileProgressDisplay(BaseProgressDisplay):
                 worker_annotation=code_ann,
             ),
             PipelineRowConfig(
-                name="ARTIFACT",
+                name="DOCS",
                 style="bold yellow",
-                completed=self.state.run_artifacts_ingested,
-                total=artifact_total,
-                rate=self.state.artifact_rate,
+                completed=self.state.run_docs_ingested,
+                total=docs_total,
+                rate=self.state.docs_rate,
                 disabled=self.state.scan_only or self.state.score_only,
-                primary_text=artifact_text,
-                detail_parts=artifact_detail,
-                is_processing=self.state.artifact_processing,
-                is_complete=artifact_complete,
-                worker_count=artifact_count,
-                worker_annotation=artifact_ann,
+                primary_text=docs_text,
+                detail_parts=docs_detail,
+                is_processing=self.state.docs_processing,
+                is_complete=docs_complete,
+                worker_count=docs_count,
+                worker_annotation=docs_ann,
             ),
         ]
         return build_pipeline_section(rows, self.bar_width)
@@ -570,28 +570,28 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    def update_artifact(
+    def update_docs(
         self,
         message: str,
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update artifact ingestion worker state."""
-        self.state.run_artifacts_ingested = stats.processed
-        self.state.artifact_rate = stats.rate
+        """Update docs ingestion worker state."""
+        self.state.run_docs_ingested = stats.processed
+        self.state.docs_rate = stats.rate
 
         if "waiting" in message.lower():
-            self.state.artifact_processing = False
+            self.state.docs_processing = False
             self._refresh()
             return
         elif "ingesting" in message.lower():
-            self.state.artifact_processing = True
+            self.state.docs_processing = True
         else:
-            self.state.artifact_processing = False
+            self.state.docs_processing = False
 
         if results:
             items = [
-                ArtifactItem(
+                DocsItem(
                     path=r.get("path", ""),
                     file_type=r.get("file_type", ""),
                 )
@@ -599,7 +599,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             ]
             max_rate = 2.0
             display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.artifact_queue.add(items, display_rate)
+            self.state.docs_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -649,15 +649,12 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.current_code = None
             updated = True
 
-        next_artifact = self.state.artifact_queue.pop()
-        if next_artifact:
-            self.state.current_artifact = next_artifact
+        next_docs = self.state.docs_queue.pop()
+        if next_docs:
+            self.state.current_docs = next_docs
             updated = True
-        elif (
-            self.state.artifact_queue.is_stale()
-            and self.state.current_artifact is not None
-        ):
-            self.state.current_artifact = None
+        elif self.state.docs_queue.is_stale() and self.state.current_docs is not None:
+            self.state.current_docs = None
             updated = True
 
         if updated:
@@ -701,13 +698,11 @@ class FileProgressDisplay(BaseProgressDisplay):
             summary.append(f"  {self.state.code_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # ARTIFACT stats
-        summary.append("  ARTIFACT ", style="bold yellow")
-        summary.append(
-            f"ingested={self.state.run_artifacts_ingested:,}", style="yellow"
-        )
-        if self.state.artifact_rate:
-            summary.append(f"  {self.state.artifact_rate:.1f}/s", style="dim")
+        # DOCS stats
+        summary.append("  DOCS     ", style="bold yellow")
+        summary.append(f"ingested={self.state.run_docs_ingested:,}", style="yellow")
+        if self.state.docs_rate:
+            summary.append(f"  {self.state.docs_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # USAGE stats

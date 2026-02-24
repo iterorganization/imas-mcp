@@ -97,7 +97,7 @@ def files(
     - SCAN: SSH to facility, enumerate files in scored FacilityPaths
     - SCORE: LLM batch-scores discovered files for relevance
     - CODE: Fetch, chunk, embed high-scoring code files
-    - ARTIFACT: Ingest documents, notebooks, configs
+    - DOCS: Ingest documents, notebooks, configs
 
     \b
     Examples:
@@ -163,9 +163,9 @@ def files(
             if msg != "idle":
                 file_logger.info("CODE: %s", msg)
 
-        def log_artifact(msg, stats, results=None):
+        def log_docs(msg, stats, results=None):
             if msg != "idle":
-                file_logger.info("ARTIFACT: %s", msg)
+                file_logger.info("DOCS: %s", msg)
 
         if not use_rich:
             log_print(f"\n[bold]File Discovery: {facility}[/bold]")
@@ -187,14 +187,14 @@ def files(
                     num_scan_workers=scan_workers,
                     num_score_workers=score_workers,
                     num_code_workers=code_workers,
-                    num_artifact_workers=1,
+                    num_docs_workers=1,
                     scan_only=scan_only,
                     score_only=score_only,
                     deadline=deadline,
                     on_scan_progress=log_scan,
                     on_score_progress=log_score,
                     on_code_progress=log_code,
-                    on_artifact_progress=log_artifact,
+                    on_docs_progress=log_docs,
                 )
             )
         else:
@@ -263,8 +263,8 @@ def files(
                     def on_code(msg, stats, results=None):
                         display.update_code(msg, stats, results)
 
-                    def on_artifact(msg, stats, results=None):
-                        display.update_artifact(msg, stats, results)
+                    def on_docs(msg, stats, results=None):
+                        display.update_docs(msg, stats, results)
 
                     def on_worker_status(worker_group):
                         display.update_worker_status(worker_group)
@@ -280,14 +280,14 @@ def files(
                             num_scan_workers=scan_workers,
                             num_score_workers=score_workers,
                             num_code_workers=code_workers,
-                            num_artifact_workers=1,
+                            num_docs_workers=1,
                             scan_only=scan_only,
                             score_only=score_only,
                             deadline=deadline,
                             on_scan_progress=on_scan,
                             on_score_progress=on_score,
                             on_code_progress=on_code,
-                            on_artifact_progress=on_artifact,
+                            on_docs_progress=on_docs,
                             on_worker_status=on_worker_status,
                         )
                     finally:
@@ -317,14 +317,14 @@ def files(
         scanned = result.get("scanned", 0)
         scored = result.get("scored", 0)
         code_ingested = result.get("code_ingested", 0)
-        artifacts_ingested = result.get("artifacts_ingested", 0)
+        docs_ingested = result.get("docs_ingested", 0)
         cost = result.get("cost", 0)
         elapsed = result.get("elapsed_seconds", 0)
 
         log_print(
             f"\n  [green]{scanned} scanned, {scored} scored, "
             f"{code_ingested} code ingested, "
-            f"{artifacts_ingested} artifacts ingested[/green]"
+            f"{docs_ingested} docs ingested[/green]"
         )
         log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
 

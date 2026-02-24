@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 # Progress callback: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
 
+# Default file size limit: 1 MB — typical user analysis code is small.
+# Machine data files, large caches, binaries are excluded.
+DEFAULT_MAX_FILE_SIZE = 1 * 1024 * 1024
+
 
 def _get_extensions_list() -> list[str]:
     """Get sorted list of supported file extensions (without dots)."""
@@ -39,6 +43,7 @@ def _scan_remote_paths_batch(
     max_depth: int = 5,
     timeout: int = 300,
     max_files_per_path: int = 5000,
+    max_file_size: int = DEFAULT_MAX_FILE_SIZE,
 ) -> dict[str, list[dict]]:
     """Scan multiple remote paths for supported files in a single SSH call.
 
@@ -52,6 +57,7 @@ def _scan_remote_paths_batch(
         max_depth: Maximum directory depth to scan
         timeout: SSH command timeout in seconds
         max_files_per_path: Maximum files per path before truncation
+        max_file_size: Maximum file size in bytes (default 1 MB)
 
     Returns:
         Dict mapping path -> list of file info dicts
@@ -75,6 +81,7 @@ def _scan_remote_paths_batch(
         "extensions": _get_extensions_list(),
         "max_depth": max_depth,
         "max_files_per_path": max_files_per_path,
+        "max_file_size": max_file_size,
     }
 
     try:
@@ -149,6 +156,7 @@ async def async_scan_remote_paths_batch(
     max_depth: int = 5,
     timeout: int = 300,
     max_files_per_path: int = 5000,
+    max_file_size: int = DEFAULT_MAX_FILE_SIZE,
 ) -> dict[str, list[dict]]:
     """Async version of _scan_remote_paths_batch.
 
@@ -164,6 +172,7 @@ async def async_scan_remote_paths_batch(
         max_depth=max_depth,
         timeout=timeout,
         max_files_per_path=max_files_per_path,
+        max_file_size=max_file_size,
     )
 
 

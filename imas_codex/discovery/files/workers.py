@@ -4,7 +4,7 @@ Four supervised workers that process source files through the pipeline:
 - scan_worker: SSH file enumeration (discovered FacilityPaths → SourceFile nodes)
 - score_worker: LLM batch scoring (discovered → scored SourceFiles)
 - code_worker: Code ingestion — fetch, chunk, embed (scored → ingested)
-- artifact_worker: Document/data ingestion (scored → ingested)
+- docs_worker: Document/notebook/config ingestion (scored → ingested)
 
 Workers coordinate through graph_ops claim/mark functions using claimed_at timestamps.
 """
@@ -430,25 +430,25 @@ async def code_worker(
 
 
 # ============================================================================
-# Artifact Worker (documents, data, configs)
+# Docs Worker (documents, notebooks, configs)
 # ============================================================================
 
 
-async def artifact_worker(
+async def docs_worker(
     state: FileDiscoveryState,
     on_progress: Callable | None = None,
     batch_size: int = 10,
 ) -> None:
-    """Artifact worker: Ingest non-code files (documents, notebooks, data).
+    """Docs worker: Ingest non-code files (documents, notebooks, configs).
 
     Claims scored SourceFiles with file_category in ('document', 'notebook',
-    'config', 'data'), runs appropriate ingestion pipeline.
+    'config'), runs appropriate ingestion pipeline.
     Transitions: discovered (scored) → ingested | failed
     """
     from imas_codex.ingestion.pipeline import ingest_files
 
-    # Artifact categories to process (everything except 'code')
-    artifact_categories = ["document", "notebook", "config"]
+    # Doc categories to process (everything except 'code')
+    doc_categories = ["document", "notebook", "config"]
 
     while not state.should_stop():
         if state.scan_only or state.score_only:
@@ -456,7 +456,7 @@ async def artifact_worker(
 
         # Try each category
         files: list[dict] = []
-        for category in artifact_categories:
+        for category in doc_categories:
             if files:
                 break
             files = await asyncio.to_thread(
@@ -467,19 +467,19 @@ async def artifact_worker(
             )
 
         if not files:
-            state.artifact_phase.record_idle()
+            state.docs_phase.record_idle()
             if on_progress:
-                on_progress("idle", state.artifact_stats, None)
+                on_progress("idle", state.docs_stats, None)
             await asyncio.sleep(3.0)
             continue
 
-        state.artifact_phase.record_activity(len(files))
+        state.docs_phase.record_activity(len(files))
         category = files[0].get("file_category", "document")
 
         if on_progress:
             on_progress(
                 f"ingesting {len(files)} {category} files",
-                state.artifact_stats,
+                state.docs_stats,
                 None,
             )
 
@@ -497,18 +497,18 @@ async def artifact_worker(
             if ingested_ids:
                 await asyncio.to_thread(_mark_files_ingested, ingested_ids)
 
-            state.artifact_stats.processed += stats.get("files", 0)
+            state.docs_stats.processed += stats.get("files", 0)
 
             if on_progress:
                 on_progress(
                     f"ingested {stats.get('files', 0)} {category} files",
-                    state.artifact_stats,
+                    state.docs_stats,
                     [{"path": p, "category": category} for p in remote_paths[:3]],
                 )
 
         except Exception as e:
-            logger.error("Artifact ingestion batch failed: %s", e)
-            state.artifact_stats.errors += 1
+            logger.error("Docs ingestion batch failed: %s", e)
+            state.docs_stats.errors += 1
             for f in files:
                 await asyncio.to_thread(_mark_file_failed, f["id"], str(e)[:200])
 
