@@ -267,6 +267,21 @@ def wiki(
     existing_pages = wiki_stats.get("pages", 0) or wiki_stats.get("total", 0)
     should_bulk_discover = rescan or existing_pages == 0
 
+    def _url_matches_site(page_url: str, site_url: str) -> bool:
+        """Return True when page_url belongs to site_url path namespace."""
+        from urllib.parse import urlparse as _parse_url
+
+        p = _parse_url(page_url)
+        s = _parse_url(site_url)
+        if p.scheme != s.scheme or p.netloc != s.netloc:
+            return False
+
+        page_path = p.path.rstrip("/")
+        site_path = s.path.rstrip("/")
+        if not site_path:
+            return True
+        return page_path == site_path or page_path.startswith(f"{site_path}/")
+
     # Check existing artifact count
     existing_artifacts = 0
     _site_page_counts: list[tuple[str, int]] = []
@@ -303,7 +318,7 @@ def wiki(
             for row in _page_rows:
                 purl = row["url"] or ""
                 for si, surl in enumerate(_site_urls):
-                    if purl.startswith(surl):
+                    if _url_matches_site(purl, surl):
                         _spc[si] = _spc.get(si, 0) + row["cnt"]
                         break
             _site_page_counts = [
@@ -323,7 +338,7 @@ def wiki(
             for row in _art_rows:
                 purl = row["url"] or ""
                 for si, surl in enumerate(_site_urls):
-                    if purl.startswith(surl):
+                    if _url_matches_site(purl, surl):
                         _sac[si] = _sac.get(si, 0) + row["cnt"]
                         break
             _site_artifact_counts = [
