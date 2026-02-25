@@ -514,16 +514,40 @@ def backup_existing_data(reason: str, data_dir: Path | None = None) -> Path | No
     return None
 
 
+def _parse_dump_error(stderr: str) -> tuple[str, bool]:
+    """Parse neo4j-admin dump stderr into a user-friendly message.
+
+    Returns (message, is_active_lock) where is_active_lock indicates
+    another process holds the database lock (recovery won't help).
+    """
+    if "database is in use" in stderr.lower() or "filelockexception" in stderr.lower():
+        return (
+            "Neo4j database is currently in use by another process.\n"
+            "Stop Neo4j first: imas-codex serve neo4j stop",
+            True,
+        )
+    # Generic failure — extract the first Caused-by or the CommandFailedException line
+    for line in stderr.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Caused by:") or "CommandFailedException" in stripped:
+            return stripped, False
+    return stderr.splitlines()[0].strip() if stderr.strip() else "Unknown error", False
+
+
 def _run_neo4j_dump(
     profile: Neo4jProfile,
     dumps_dir: Path,
+    *,
+    verbose: bool = False,
 ) -> None:
-    """Run neo4j-admin dump with verbose output and recovery retry.
+    """Run neo4j-admin dump with optional recovery retry.
 
-    If the initial dump fails (e.g. due to stale locks from an unclean
-    shutdown), performs a recovery cycle: start Neo4j briefly so it can
-    replay transaction logs and release locks, then stop cleanly and
-    retry the dump.
+    If the initial dump fails due to stale locks (unclean shutdown),
+    performs a recovery cycle: start Neo4j briefly to replay transaction
+    logs and release locks, then stop cleanly and retry.
+
+    If the database is actively in use by another process, fails
+    immediately with a clear message.
     """
     cmd = [
         "apptainer",
@@ -540,17 +564,25 @@ def _run_neo4j_dump(
         "neo4j",
         "--to-path=/dumps",
         "--overwrite-destination=true",
-        "--verbose",
     ]
+    if verbose:
+        cmd.append("--verbose")
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
         return
 
-    # Initial dump failed — attempt recovery cycle
-    click.echo(
-        f"  Initial dump failed ({result.stderr.strip()}) — "
-        "performing recovery cycle..."
-    )
+    message, is_active_lock = _parse_dump_error(result.stderr)
+
+    if is_active_lock:
+        if verbose:
+            click.echo(result.stderr, err=True)
+        raise click.ClickException(message)
+
+    # Stale lock / unclean shutdown — attempt recovery cycle
+    if verbose:
+        click.echo(f"  Initial dump stderr:\n{result.stderr}", err=True)
+    click.echo(f"  Initial dump failed ({message}) — performing recovery cycle...")
 
     # Start Neo4j so it replays transaction logs and releases stale locks
     logs_dir = profile.data_dir / "logs"
@@ -588,7 +620,8 @@ def _run_neo4j_dump(
         recovery_proc.terminate()
         recovery_proc.wait(timeout=10)
         raise click.ClickException(
-            f"Graph dump failed and recovery start timed out: {result.stderr}"
+            f"Graph dump failed and recovery start timed out: {message}\n"
+            "Run with --verbose for full error output."
         )
 
     # Stop cleanly
@@ -605,7 +638,13 @@ def _run_neo4j_dump(
     click.echo("  Retrying dump after recovery...")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise click.ClickException(f"Graph dump failed after recovery: {result.stderr}")
+        message, _ = _parse_dump_error(result.stderr)
+        if verbose:
+            click.echo(result.stderr, err=True)
+        raise click.ClickException(
+            f"Graph dump failed after recovery: {message}\n"
+            "Run with --verbose for full error output."
+        )
     click.echo("  Dump succeeded after recovery")
 
 
@@ -1804,6 +1843,12 @@ def _create_facility_dump(
     is_flag=True,
     help="Also transfer the archive locally (remote graphs only).",
 )
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show full error output from neo4j-admin.",
+)
 def graph_export(
     output: str | None,
     no_restart: bool,
@@ -1811,6 +1856,7 @@ def graph_export(
     no_imas: bool,
     imas_only: bool,
     local: bool,
+    verbose: bool = False,
 ) -> None:
     """Export graph database to archive.
 
@@ -1936,7 +1982,7 @@ def graph_export(
             dumps_dir = profile.data_dir / "dumps"
             dumps_dir.mkdir(parents=True, exist_ok=True)
 
-            _run_neo4j_dump(profile, dumps_dir)
+            _run_neo4j_dump(profile, dumps_dir, verbose=verbose)
 
             dump_file = dumps_dir / "neo4j.dump"
             if dump_file.exists():
@@ -2202,6 +2248,12 @@ def _dispatch_graph_quality(git_info: dict, version_tag: str, registry: str) -> 
     default=None,
     help="Short description to attach to this push (shown by 'graph tags').",
 )
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show full error output from neo4j-admin.",
+)
 def graph_push(
     dev: bool,
     registry: str | None,
@@ -2211,6 +2263,7 @@ def graph_push(
     no_imas: bool,
     imas_only: bool,
     message: str | None,
+    verbose: bool = False,
 ) -> None:
     """Push graph archive to GHCR.
 
@@ -2368,6 +2421,8 @@ def graph_push(
                 dump_args.append("--no-imas")
             if imas_only:
                 dump_args.append("--imas-only")
+            if verbose:
+                dump_args.append("--verbose")
             result = runner.invoke(graph_export, dump_args)
             if result.exit_code != 0:
                 if result.exception and not isinstance(result.exception, SystemExit):
