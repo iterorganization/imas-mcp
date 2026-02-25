@@ -526,12 +526,105 @@ def _parse_dump_error(stderr: str) -> tuple[str, bool]:
             "Stop Neo4j first: imas-codex serve neo4j stop",
             True,
         )
+    # "Dump failed for databases: 'neo4j'" without detail usually means
+    # the database lock couldn't be acquired (non-verbose mode).
+    if "dump failed for databases" in stderr.lower():
+        return (
+            "Neo4j database dump failed (likely locked by another process).\n"
+            "Stop Neo4j first: imas-codex serve neo4j stop",
+            True,
+        )
     # Generic failure — extract the first Caused-by or the CommandFailedException line
     for line in stderr.splitlines():
         stripped = line.strip()
         if stripped.startswith("Caused by:") or "CommandFailedException" in stripped:
             return stripped, False
     return stderr.splitlines()[0].strip() if stderr.strip() else "Unknown error", False
+
+
+def _is_database_locked(profile: Neo4jProfile) -> bool:
+    """Check if the Neo4j database is locked, via HTTP or filesystem.
+
+    On shared filesystems (GPFS), neo4j-admin on the login node sees
+    lock files held by Neo4j on a compute node even though the HTTP
+    endpoint isn't reachable from localhost.
+    """
+    if is_neo4j_running(profile.http_port):
+        return True
+    # Check the database_lock file on disk (visible on GPFS).
+    # Neo4j uses Java FileChannel.lock() which creates POSIX (fcntl)
+    # locks — BSD flock() won't detect them.  We must use fcntl.lockf
+    # with O_RDWR (POSIX exclusive-lock test needs write access).
+    lock_file = profile.data_dir / "data" / "databases" / "neo4j" / "database_lock"
+    if lock_file.exists():
+        import fcntl
+
+        try:
+            fd = os.open(str(lock_file), os.O_RDWR)
+            try:
+                fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.lockf(fd, fcntl.LOCK_UN)
+            except OSError:
+                # POSIX lock held by another process (e.g. Neo4j on compute node)
+                return True
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+    return False
+
+
+def _neo4j_process_info(profile: Neo4jProfile) -> str | None:
+    """Return a diagnostic string about running Neo4j processes, or None."""
+    lines: list[str] = []
+    # Check systemd service
+    service_name = f"imas-codex-neo4j-{profile.name}"
+    result = subprocess.run(
+        ["systemctl", "--user", "is-active", service_name],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip() == "active":
+        lines.append(f"  systemd service: {service_name} (active)")
+
+    # Check SLURM allocation (Neo4j may be on a compute node)
+    try:
+        from imas_codex.settings import get_graph_scheduler
+
+        if get_graph_scheduler() == "slurm":
+            result = subprocess.run(
+                [
+                    "squeue",
+                    "--me",
+                    "--noheader",
+                    "--format=%j %N %T",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                for line in result.stdout.strip().splitlines():
+                    if "codex" in line.lower() or "neo4j" in line.lower():
+                        lines.append(f"  SLURM: {line.strip()}")
+    except Exception:
+        pass
+
+    # Check for local neo4j processes (exclude our own Python processes)
+    result = subprocess.run(
+        ["pgrep", "-u", str(os.getuid()), "-af", "neo4j"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        for proc_line in result.stdout.strip().splitlines():
+            # Skip Python/uv processes — those are CLI tools, not Neo4j
+            if "python" in proc_line.lower() or "uv run" in proc_line:
+                continue
+            pid = proc_line.split()[0]
+            lines.append(f"  PID {pid}: {proc_line[len(pid) :].strip()[:80]}")
+
+    return "\n".join(lines) if lines else None
 
 
 def _run_neo4j_dump(
@@ -549,6 +642,17 @@ def _run_neo4j_dump(
     If the database is actively in use by another process, fails
     immediately with a clear message.
     """
+    # Pre-check: fail fast if Neo4j is running or database is locked
+    if _is_database_locked(profile):
+        proc_info = _neo4j_process_info(profile)
+        msg = (
+            "Cannot dump: Neo4j database is locked by another process.\n"
+            "Stop Neo4j first: imas-codex serve neo4j stop"
+        )
+        if proc_info:
+            msg += f"\n\nRunning processes:\n{proc_info}"
+        raise click.ClickException(msg)
+
     cmd = [
         "apptainer",
         "exec",
@@ -565,19 +669,28 @@ def _run_neo4j_dump(
         "--to-path=/dumps",
         "--overwrite-destination=true",
     ]
-    if verbose:
-        cmd.append("--verbose")
+    # Always use --verbose internally so _parse_dump_error can detect
+    # the error type; only show full output to user with verbose=True
+    cmd_verbose = [*cmd, "--verbose"]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd_verbose, capture_output=True, text=True)
     if result.returncode == 0:
         return
 
     message, is_active_lock = _parse_dump_error(result.stderr)
 
     if is_active_lock:
+        # Database locked by another process — no point attempting recovery
+        proc_info = _neo4j_process_info(profile)
+        err_msg = (
+            "Cannot dump: Neo4j database is locked by another process.\n"
+            "Stop Neo4j first: imas-codex serve neo4j stop"
+        )
+        if proc_info:
+            err_msg += f"\n\nRunning processes:\n{proc_info}"
         if verbose:
             click.echo(result.stderr, err=True)
-        raise click.ClickException(message)
+        raise click.ClickException(err_msg)
 
     # Stale lock / unclean shutdown — attempt recovery cycle
     if verbose:
@@ -636,7 +749,7 @@ def _run_neo4j_dump(
 
     # Retry dump
     click.echo("  Retrying dump after recovery...")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd_verbose, capture_output=True, text=True)
     if result.returncode != 0:
         message, _ = _parse_dump_error(result.stderr)
         if verbose:
@@ -2428,9 +2541,16 @@ def graph_push(
                 if result.exception and not isinstance(result.exception, SystemExit):
                     detail = f"{type(result.exception).__name__}: {result.exception}"
                 else:
-                    detail = result.output.strip()
+                    # Extract just the "Error: ..." line from click output
+                    # to avoid duplicating all intermediate output
+                    error_lines = [
+                        line.removeprefix("Error: ")
+                        for line in result.output.strip().splitlines()
+                        if line.startswith("Error: ")
+                    ]
+                    detail = error_lines[-1] if error_lines else result.output.strip()
                 gp.fail_phase(detail)
-                raise click.ClickException(f"Export failed: {detail}")
+                raise click.ClickException(detail)
             size_mb = archive_path.stat().st_size / 1024 / 1024
             gp.complete_phase(f"{size_mb:.1f} MB")
 
