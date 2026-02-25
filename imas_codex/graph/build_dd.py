@@ -42,6 +42,10 @@ from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
 
+# Bump when metadata properties change (new DD XML attributes, schema fields,
+# etc.) to invalidate the build hash and force re-extraction on next --force.
+_BUILD_SCHEMA_VERSION = 2
+
 _DD_INDEX_RE = re.compile(r"\([^)]*\)")
 
 
@@ -1202,6 +1206,16 @@ def load_path_mappings(version: str) -> dict:
     return {"old_to_new": {}, "new_to_old": {}}
 
 
+def _compute_cluster_content_hash(sorted_paths: list[str]) -> str:
+    """Compute a content hash for a cluster based on its sorted member paths.
+
+    This hash serves as the cluster's stable identity across HDBSCAN runs.
+    If the same set of paths clusters together, the hash matches and the
+    existing label/description/embeddings are preserved.
+    """
+    return hashlib.sha256("\n".join(sorted_paths).encode("utf-8")).hexdigest()[:16]
+
+
 def _compute_build_hash(
     versions: list[str],
     ids_filter: set[str] | None,
@@ -1213,8 +1227,11 @@ def _compute_build_hash(
 
     Used to detect whether a previous build with the same parameters
     already populated the graph, allowing fast no-op re-runs.
+    Includes _BUILD_SCHEMA_VERSION so metadata additions invalidate
+    the hash automatically.
     """
     parts = [
+        str(_BUILD_SCHEMA_VERSION),
         ",".join(sorted(versions)),
         ",".join(sorted(ids_filter)) if ids_filter else "",
         embedding_model or "",
@@ -2443,18 +2460,16 @@ def _import_clusters(
     dry_run: bool,
     use_rich: bool | None = None,
 ) -> int:
-    """Build semantic clusters and store them in the graph (graph-first).
+    """Build semantic clusters from graph embeddings and merge into the graph.
 
-    Pipeline:
-    1. Run HDBSCAN clustering via the Clusters manager (reads embeddings
-       from IMASPath nodes in the graph).
-    2. Import cluster metadata + IN_CLUSTER relationships in batches.
-    3. Compute cluster embeddings as the mean of member path embeddings
-       directly in Neo4j — the graph is the primary store.
-    4. Export cluster embeddings to .npz as a backup for CI environments
-       without a live graph.
-
-    Model name is tracked on DDVersion, not on clusters.
+    Graph-native pipeline — no file dependencies:
+    1. Run HDBSCAN on IMASPath embeddings read directly from the graph.
+    2. Compute a content hash for each cluster from its sorted member paths.
+    3. MERGE cluster nodes using content hash as ID, preserving existing
+       labels and descriptions on unchanged clusters.
+    4. Compute cluster centroid embeddings in Neo4j.
+    5. Embed cluster text (labels/descriptions) with per-cluster hash caching.
+    6. Delete stale clusters that no longer appear in the new computation.
 
     Args:
         client: GraphClient instance
@@ -2462,206 +2477,211 @@ def _import_clusters(
         use_rich: Force rich progress setting
 
     Returns:
-        Number of clusters imported
+        Number of clusters created/updated
     """
     with suppress_third_party_logging():
         try:
-            import json as _json
+            from imas_codex.clusters.clustering import HierarchicalClusterer
 
-            from imas_codex.core.clusters import Clusters
-            from imas_codex.embeddings.config import EncoderConfig
+            # Step 1: Load embeddings from graph
+            logger.info("Loading embeddings from graph for clustering...")
+            emb_result = client.query(
+                """
+                MATCH (p:IMASPath)
+                WHERE p.embedding IS NOT NULL
+                RETURN p.id AS id, p.embedding AS embedding
+                ORDER BY p.id
+                """
+            )
+            if not emb_result or len(emb_result) < 10:
+                logger.warning(
+                    "Insufficient embeddings in graph for clustering (%d)",
+                    len(emb_result) if emb_result else 0,
+                )
+                return 0
 
-            encoder_config = EncoderConfig()
-            clusters_manager = Clusters(
-                encoder_config=encoder_config,
-                graph_client=client,
+            path_ids = [r["id"] for r in emb_result]
+            embeddings = np.array(
+                [r["embedding"] for r in emb_result], dtype=np.float32
+            )
+            logger.info(
+                "Loaded %d embeddings (dim=%d) from graph",
+                embeddings.shape[0],
+                embeddings.shape[1],
             )
 
-            # Read clusters.json directly — do NOT use get_clusters()
-            # which triggers auto-rebuild via dependency checking. The
-            # rebuild runs HDBSCAN and generates new UUIDs but does NOT
-            # re-label, discarding existing labels and descriptions.
-            # If you need to rebuild, run 'clusters build' + 'clusters label'
-            # separately, then sync.
-            clusters_file = clusters_manager.file_path
-            if not clusters_file.exists():
-                logger.warning("No clusters.json found at %s", clusters_file)
+            # Step 2: Run HDBSCAN clustering
+            logger.info("Running hierarchical clustering...")
+            clusterer = HierarchicalClusterer(
+                min_cluster_size=2,
+                min_samples=2,
+                cluster_selection_method="eom",
+            )
+            clusters = clusterer.cluster_all_levels(
+                embeddings=embeddings,
+                paths=path_ids,
+                include_global=True,
+                include_domain=True,
+                include_ids=True,
+            )
+            if not clusters:
+                logger.warning("HDBSCAN produced no clusters")
                 return 0
 
-            with clusters_file.open("r", encoding="utf-8") as f:
-                cluster_data = _json.load(f).get("clusters", [])
-            if not cluster_data:
-                logger.warning("No cluster data produced")
-                return 0
+            logger.info("HDBSCAN produced %d clusters", len(clusters))
 
-            if not dry_run:
-                # --- Clear stale clusters before import ---
-                deleted = 0
-                while True:
-                    result = client.query(
-                        """
-                        MATCH (c:IMASSemanticCluster)
-                        WITH c LIMIT 5000
-                        DETACH DELETE c
-                        RETURN count(c) AS deleted
-                        """
-                    )
-                    batch = result[0]["deleted"] if result else 0
-                    deleted += batch
-                    if batch < 5000:
-                        break
-                if deleted > 0:
-                    logger.info(
-                        "Cleared %d existing cluster nodes before import",
-                        deleted,
-                    )
+            if dry_run:
+                return len(clusters)
 
-            # --- Batch import cluster nodes ---
+            # Step 3: Build cluster data with content-hash IDs
+            new_cluster_ids: set[str] = set()
             cluster_batch: list[dict] = []
             membership_batch: list[dict] = []
-            cluster_count = 0
 
-            for cluster in cluster_data:
-                cluster_id = cluster.get("id", str(cluster_count))
-                if dry_run:
-                    cluster_count += 1
-                    continue
+            for cluster in clusters:
+                sorted_paths = sorted(cluster.paths)
+                content_hash = _compute_cluster_content_hash(sorted_paths)
+                new_cluster_ids.add(content_hash)
 
-                label = cluster.get("label", f"cluster_{cluster_id}")
-                physics_domain = cluster.get("physics_domain", "general")
-                paths = cluster.get("paths", [])
-                cross_ids = cluster.get("cross_ids", False)
-                similarity_score = cluster.get(
-                    "similarity_score", cluster.get("similarity", 0.0)
-                )
-                ids_names = cluster.get("ids_names", cluster.get("ids", []))
-                scope = cluster.get("scope", "global")
-
-                description = cluster.get("description", "")
+                ids_names = sorted({p.split("/")[0] for p in cluster.paths})
+                is_cross_ids = len(ids_names) > 1
+                scope = getattr(cluster, "scope", "global")
 
                 cluster_batch.append(
                     {
-                        "cluster_id": str(cluster_id),
-                        "label": label,
-                        "description": description,
-                        "physics_domain": physics_domain,
-                        "path_count": len(paths),
-                        "cross_ids": cross_ids,
-                        "similarity_score": similarity_score,
+                        "cluster_id": content_hash,
+                        "path_count": len(cluster.paths),
+                        "cross_ids": is_cross_ids,
+                        "similarity_score": round(cluster.similarity_score, 4),
                         "scope": scope,
-                        "ids_names": ids_names if ids_names else [],
+                        "ids_names": ids_names,
                     }
                 )
 
-                for path_info in paths:
-                    if isinstance(path_info, dict):
-                        path = path_info.get("path", "")
-                        distance = path_info.get("distance", 0.0)
-                    else:
-                        path = str(path_info)
-                        distance = 0.0
-                    if path:
-                        membership_batch.append(
-                            {
-                                "cluster_id": str(cluster_id),
-                                "path": path,
-                                "distance": distance,
-                            }
-                        )
+                for path in cluster.paths:
+                    membership_batch.append(
+                        {
+                            "cluster_id": content_hash,
+                            "path": path,
+                        }
+                    )
 
-                cluster_count += 1
+            # Step 4: Get existing cluster IDs for stale detection
+            existing_result = client.query(
+                "MATCH (c:IMASSemanticCluster) RETURN c.id AS id"
+            )
+            existing_ids = (
+                {r["id"] for r in existing_result} if existing_result else set()
+            )
 
-            if not dry_run and cluster_batch:
-                # Batch create all cluster nodes
+            # Step 5: MERGE cluster nodes (preserves existing label/description)
+            logger.info("Merging %d cluster nodes...", len(cluster_batch))
+            for i in range(0, len(cluster_batch), 1000):
+                batch = cluster_batch[i : i + 1000]
                 client.query(
                     """
                     UNWIND $clusters AS c
                     MERGE (n:IMASSemanticCluster {id: c.cluster_id})
-                    SET n.label = c.label,
-                        n.description = c.description,
-                        n.physics_domain = c.physics_domain,
-                        n.path_count = c.path_count,
+                    SET n.path_count = c.path_count,
                         n.cross_ids = c.cross_ids,
                         n.similarity_score = c.similarity_score,
                         n.scope = c.scope,
                         n.ids_names = c.ids_names
                     """,
-                    clusters=cluster_batch,
+                    clusters=batch,
                 )
-                logger.info("Created %d cluster nodes", len(cluster_batch))
 
-                # Batch create IN_CLUSTER relationships
-                batch_size = 2000
-                for i in range(0, len(membership_batch), batch_size):
-                    batch = membership_batch[i : i + batch_size]
+            # Step 6: Clear old IN_CLUSTER relationships for clusters being updated
+            #         then recreate them. This handles membership changes.
+            updated_ids = list(new_cluster_ids & existing_ids)
+            if updated_ids:
+                for i in range(0, len(updated_ids), 1000):
+                    batch = updated_ids[i : i + 1000]
                     client.query(
                         """
-                        UNWIND $memberships AS m
-                        MATCH (p:IMASPath {id: m.path})
-                        MATCH (c:IMASSemanticCluster {id: m.cluster_id})
-                        MERGE (p)-[r:IN_CLUSTER]->(c)
-                        SET r.distance = m.distance
+                        UNWIND $ids AS cid
+                        MATCH (c:IMASSemanticCluster {id: cid})<-[r:IN_CLUSTER]-()
+                        DELETE r
                         """,
-                        memberships=batch,
-                    )
-                logger.info(
-                    "Created %d IN_CLUSTER relationships", len(membership_batch)
-                )
-
-                # --- Graph-first: compute cluster embeddings from member embeddings ---
-                centroid_result = client.query(
-                    """
-                    MATCH (p:IMASPath)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
-                    WHERE p.embedding IS NOT NULL
-                    WITH c, collect(p.embedding) AS embeddings, count(p) AS member_count
-                    WHERE member_count > 0
-                    WITH c, embeddings, member_count,
-                         size(embeddings[0]) AS dim
-                    WITH c, member_count, dim,
-                         [i IN range(0, dim - 1) |
-                            reduce(s = 0.0, emb IN embeddings | s + emb[i]) / member_count
-                         ] AS cluster_emb
-                    SET c.embedding = cluster_emb
-                    RETURN count(c) AS embeddings_set
-                    """
-                )
-                embeddings_set = (
-                    centroid_result[0]["embeddings_set"] if centroid_result else 0
-                )
-                missing = cluster_count - embeddings_set
-                logger.info(
-                    "Computed %d/%d cluster embeddings from graph",
-                    embeddings_set,
-                    cluster_count,
-                )
-                if missing > 0:
-                    logger.warning(
-                        "%d clusters have no embedding (members may lack embeddings)",
-                        missing,
+                        ids=batch,
                     )
 
-                # --- Embed cluster labels and descriptions ---
-                _embed_cluster_text(client, embedding_batch_size=256, use_rich=use_rich)
-
-                # --- Export cluster embeddings to .npz as CI fallback ---
-                _export_cluster_embeddings_npz(
-                    client, clusters_manager.file_path.parent
-                )
-
-                # Update DDVersion with cluster metadata
+            # Step 7: Create IN_CLUSTER relationships
+            logger.info(
+                "Creating %d IN_CLUSTER relationships...", len(membership_batch)
+            )
+            for i in range(0, len(membership_batch), 2000):
+                batch = membership_batch[i : i + 2000]
                 client.query(
                     """
-                    MATCH (v:DDVersion {is_current: true})
-                    SET v.clusters_built_at = datetime(),
-                        v.clusters_count = $count
+                    UNWIND $memberships AS m
+                    MATCH (p:IMASPath {id: m.path})
+                    MATCH (c:IMASSemanticCluster {id: m.cluster_id})
+                    MERGE (p)-[:IN_CLUSTER]->(c)
                     """,
-                    count=cluster_count,
+                    memberships=batch,
                 )
 
-            return cluster_count
+            # Step 8: Compute cluster centroid embeddings in Neo4j
+            centroid_result = client.query(
+                """
+                MATCH (p:IMASPath)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+                WHERE p.embedding IS NOT NULL
+                WITH c, collect(p.embedding) AS embeddings, count(p) AS member_count
+                WHERE member_count > 0
+                WITH c, embeddings, member_count,
+                     size(embeddings[0]) AS dim
+                WITH c, member_count, dim,
+                     [i IN range(0, dim - 1) |
+                        reduce(s = 0.0, emb IN embeddings | s + emb[i]) / member_count
+                     ] AS cluster_emb
+                SET c.embedding = cluster_emb
+                RETURN count(c) AS embeddings_set
+                """
+            )
+            embeddings_set = (
+                centroid_result[0]["embeddings_set"] if centroid_result else 0
+            )
+            logger.info(
+                "Computed %d/%d cluster centroid embeddings",
+                embeddings_set,
+                len(clusters),
+            )
+
+            # Step 9: Embed cluster labels and descriptions (with hash caching)
+            _embed_cluster_text(client, embedding_batch_size=256, use_rich=use_rich)
+
+            # Step 10: Delete stale clusters no longer in the computation
+            stale_ids = existing_ids - new_cluster_ids
+            if stale_ids:
+                logger.info("Removing %d stale clusters...", len(stale_ids))
+                stale_list = list(stale_ids)
+                for i in range(0, len(stale_list), 1000):
+                    batch = stale_list[i : i + 1000]
+                    client.query(
+                        """
+                        UNWIND $ids AS cid
+                        MATCH (c:IMASSemanticCluster {id: cid})
+                        DETACH DELETE c
+                        """,
+                        ids=batch,
+                    )
+                logger.info("Deleted %d stale clusters", len(stale_ids))
+
+            # Update DDVersion with cluster metadata
+            client.query(
+                """
+                MATCH (v:DDVersion {is_current: true})
+                SET v.clusters_built_at = datetime(),
+                    v.clusters_count = $count
+                """,
+                count=len(clusters),
+            )
+
+            return len(clusters)
 
         except Exception as e:
-            logger.error(f"Error importing clusters: {e}")
+            logger.error(f"Error building clusters: {e}")
             return 0
 
 
@@ -2717,14 +2737,15 @@ def _embed_cluster_text(
     embedding_batch_size: int = 256,
     use_rich: bool | None = None,
 ) -> None:
-    """Embed cluster labels and descriptions into separate vector properties.
+    """Embed cluster labels and descriptions with per-cluster hash caching.
 
     Generates two embedding vectors per cluster:
     - label_embedding: from the short label text (3-6 words)
     - description_embedding: from the longer description (1-2 sentences)
 
-    The description embedding is the primary vector for natural language
-    cluster search due to its richer semantic content.
+    Only re-embeds clusters whose text_embedding_hash has changed (i.e.,
+    label or description text changed, or the embedding model changed).
+    Clusters without labels are skipped.
 
     Args:
         client: GraphClient instance
@@ -2733,13 +2754,14 @@ def _embed_cluster_text(
     """
     from imas_codex.embeddings.config import EncoderConfig
     from imas_codex.embeddings.encoder import Encoder
-    from imas_codex.settings import get_embedding_dimension
+    from imas_codex.settings import get_embedding_dimension, get_embedding_model
 
     # Fetch all clusters with labels/descriptions
     results = client.query("""
         MATCH (c:IMASSemanticCluster)
         WHERE c.label IS NOT NULL
-        RETURN c.id AS id, c.label AS label, c.description AS description
+        RETURN c.id AS id, c.label AS label, c.description AS description,
+               c.text_embedding_hash AS existing_hash
         ORDER BY c.id
     """)
 
@@ -2748,9 +2770,7 @@ def _embed_cluster_text(
         return
 
     dim = get_embedding_dimension()
-    logger.info(
-        "Embedding %d cluster labels and descriptions (%d-dim)", len(results), dim
-    )
+    model_name = get_embedding_model()
 
     # Ensure vector indexes exist
     for index_name, prop_name in [
@@ -2768,36 +2788,61 @@ def _embed_cluster_text(
             }}
         """)
 
+    # Compute text hashes and filter to clusters needing re-embedding
+    clusters_to_embed = []
+    cached_count = 0
+    for r in results:
+        label = r["label"]
+        description = r["description"] or label
+        text_hash = compute_embedding_hash(f"{label}|{description}", model_name)
+        if text_hash == r.get("existing_hash"):
+            cached_count += 1
+            continue
+        clusters_to_embed.append(
+            {
+                "id": r["id"],
+                "label": label,
+                "description": description,
+                "text_hash": text_hash,
+            }
+        )
+
+    if not clusters_to_embed:
+        logger.info("All %d cluster text embeddings up to date (cached)", cached_count)
+        return
+
+    logger.info(
+        "Embedding %d cluster labels/descriptions (%d cached, %d-dim)",
+        len(clusters_to_embed),
+        cached_count,
+        dim,
+    )
+
     config = EncoderConfig(normalize_embeddings=True, use_rich=use_rich or False)
     encoder = Encoder(config=config)
 
-    cluster_ids = [r["id"] for r in results]
-    labels = [r["label"] for r in results]
-    descriptions = [r["description"] or r["label"] for r in results]
+    labels = [c["label"] for c in clusters_to_embed]
+    descriptions = [c["description"] for c in clusters_to_embed]
 
-    # Embed labels in batches
     label_embeddings = encoder.embed_texts(labels)
-    logger.info("Generated %d label embeddings", len(label_embeddings))
-
-    # Embed descriptions in batches
     description_embeddings = encoder.embed_texts(descriptions)
-    logger.info("Generated %d description embeddings", len(description_embeddings))
 
     # Write to graph in batches
     batch_size = 500
-    for i in range(0, len(cluster_ids), batch_size):
-        batch_ids = cluster_ids[i : i + batch_size]
+    for i in range(0, len(clusters_to_embed), batch_size):
+        batch_clusters = clusters_to_embed[i : i + batch_size]
         batch_label_embs = label_embeddings[i : i + batch_size]
         batch_desc_embs = description_embeddings[i : i + batch_size]
 
         batch_data = [
             {
-                "id": cid,
+                "id": c["id"],
                 "label_embedding": lemb.tolist(),
                 "description_embedding": demb.tolist(),
+                "text_embedding_hash": c["text_hash"],
             }
-            for cid, lemb, demb in zip(
-                batch_ids, batch_label_embs, batch_desc_embs, strict=True
+            for c, lemb, demb in zip(
+                batch_clusters, batch_label_embs, batch_desc_embs, strict=True
             )
         ]
 
@@ -2806,13 +2851,16 @@ def _embed_cluster_text(
             UNWIND $batch AS b
             MATCH (c:IMASSemanticCluster {id: b.id})
             SET c.label_embedding = b.label_embedding,
-                c.description_embedding = b.description_embedding
+                c.description_embedding = b.description_embedding,
+                c.text_embedding_hash = b.text_embedding_hash
             """,
             batch=batch_data,
         )
 
     logger.info(
-        "Stored label and description embeddings for %d clusters", len(cluster_ids)
+        "Embedded %d cluster labels/descriptions (%d cached)",
+        len(clusters_to_embed),
+        cached_count,
     )
 
 
