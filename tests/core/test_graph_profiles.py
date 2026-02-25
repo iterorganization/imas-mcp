@@ -97,19 +97,29 @@ class TestResolveNeo4j:
     """Tests for resolve_neo4j() profile resolution."""
 
     def test_resolve_default(self, monkeypatch):
-        """Default resolution uses titan location (SLURM compute on iter)."""
+        """Default resolution uses titan location (SLURM compute on iter).
+
+        When a SLURM service job is running on a peer compute node,
+        ``resolve_neo4j`` returns that node directly rather than localhost.
+        """
         _load_pyproject_settings.cache_clear()
         monkeypatch.delenv("NEO4J_URI", raising=False)
         monkeypatch.delenv("NEO4J_USERNAME", raising=False)
         monkeypatch.delenv("NEO4J_PASSWORD", raising=False)
         monkeypatch.delenv("IMAS_CODEX_GRAPH_LOCATION", raising=False)
 
+        # Mock SLURM discovery to return a known compute node
+        monkeypatch.setattr(
+            "imas_codex.remote.tunnel.discover_compute_node_local",
+            lambda service_job_name=None: "gpu-node-01",
+        )
+
         profile = resolve_neo4j()
         assert isinstance(profile, Neo4jProfile)
         assert profile.location == "titan"
         assert profile.bolt_port == 7687
         assert profile.http_port == 7474
-        assert profile.uri == "bolt://localhost:7687"
+        assert profile.uri == "bolt://gpu-node-01:7687"
 
     def test_env_uri_overrides_convention(self, monkeypatch):
         """NEO4J_URI env var overrides convention URI."""
