@@ -34,7 +34,7 @@ class TestEnsureEmbeddingReady:
         client_instance.is_available.return_value = True
         info = MagicMock()
         info.model = "Qwen/Qwen3-Embedding-0.6B"
-        info.hostname = "98dci4-srv-1001"
+        info.hostname = "98dci4-srv-1003"
         client_instance.get_info.return_value = info
         mock_client.return_value = client_instance
 
@@ -46,7 +46,7 @@ class TestEnsureEmbeddingReady:
 
     @patch(
         "imas_codex.embeddings.readiness._get_embed_host",
-        return_value="98dci4-srv-1001",
+        return_value="98dci4-srv-1003",
     )
     @patch("imas_codex.embeddings.readiness._is_on_iter_login", return_value=True)
     @patch("imas_codex.embeddings.readiness._is_on_iter", return_value=True)
@@ -75,7 +75,7 @@ class TestEnsureEmbeddingReady:
         client_instance.is_available.side_effect = [False, True]
         info = MagicMock()
         info.model = "Qwen/Qwen3-Embedding-0.6B"
-        info.hostname = "98dci4-srv-1001"
+        info.hostname = "98dci4-srv-1003"
         client_instance.get_info.return_value = info
         mock_client.return_value = client_instance
 
@@ -144,7 +144,7 @@ class TestEnsureEmbeddingReady:
         client_instance.is_available.side_effect = [False, True]
         info = MagicMock()
         info.model = "Qwen/Qwen3-Embedding-0.6B"
-        info.hostname = "98dci4-srv-1001"
+        info.hostname = "98dci4-srv-1003"
         client_instance.get_info.return_value = info
         mock_client.return_value = client_instance
 
@@ -220,7 +220,7 @@ class TestEnsureEmbeddingReady:
         assert "iter-gpu" in _resolve_source_label(info)
 
         # Login node
-        info.hostname = "98dci4-srv-1001"
+        info.hostname = "98dci4-srv-1003"
         assert "iter-login" in _resolve_source_label(info)
 
         # None hostname
@@ -301,7 +301,7 @@ class TestIsOnIter:
         """Should detect ITER login node by hostname."""
         from imas_codex.embeddings.readiness import _is_on_iter
 
-        mock_uname.return_value = MagicMock(nodename="98dci4-srv-1001")
+        mock_uname.return_value = MagicMock(nodename="98dci4-srv-1003")
         assert _is_on_iter() is True
 
     @patch("os.uname")
@@ -328,7 +328,7 @@ class TestIsOnIterLoginAndCompute:
     def test_login_node_detected(self, mock_uname):
         from imas_codex.embeddings.readiness import _is_on_iter_login
 
-        mock_uname.return_value = MagicMock(nodename="98dci4-srv-1001")
+        mock_uname.return_value = MagicMock(nodename="98dci4-srv-1003")
         assert _is_on_iter_login() is True
 
     @patch("os.uname")
@@ -349,7 +349,7 @@ class TestIsOnIterLoginAndCompute:
     def test_login_node_not_compute(self, mock_uname):
         from imas_codex.embeddings.readiness import _is_on_iter_compute
 
-        mock_uname.return_value = MagicMock(nodename="98dci4-srv-1001")
+        mock_uname.return_value = MagicMock(nodename="98dci4-srv-1003")
         assert _is_on_iter_compute() is False
 
     @patch("os.uname")
@@ -387,7 +387,7 @@ class TestResolveUrlForCompute:
 
     @patch(
         "imas_codex.embeddings.readiness._get_embed_host",
-        return_value="98dci4-srv-1001",
+        return_value="98dci4-srv-1003",
     )
     @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=True)
     def test_rewrites_localhost_to_login_fallback(self, mock_compute, mock_host):
@@ -395,7 +395,7 @@ class TestResolveUrlForCompute:
         from imas_codex.embeddings.readiness import _resolve_url_for_compute
 
         result = _resolve_url_for_compute("http://localhost:18765")
-        assert result == "http://98dci4-srv-1001:18765"
+        assert result == "http://98dci4-srv-1003:18765"
 
     @patch("imas_codex.embeddings.readiness._is_on_iter_compute", return_value=True)
     def test_no_rewrite_for_remote_url(self, mock_compute):

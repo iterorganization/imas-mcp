@@ -33,7 +33,7 @@ from imas_codex.remote.tunnel import ensure_tunnel
 logger = logging.getLogger(__name__)
 
 # ITER login node hostname — fallback when embed-host is not configured.
-ITER_LOGIN_HOST = "98dci4-srv-1001"
+ITER_LOGIN_HOST = "98dci4-srv-1003"
 
 
 def _get_embed_host() -> str:
