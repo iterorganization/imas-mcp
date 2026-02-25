@@ -514,6 +514,101 @@ def backup_existing_data(reason: str, data_dir: Path | None = None) -> Path | No
     return None
 
 
+def _run_neo4j_dump(
+    profile: Neo4jProfile,
+    dumps_dir: Path,
+) -> None:
+    """Run neo4j-admin dump with verbose output and recovery retry.
+
+    If the initial dump fails (e.g. due to stale locks from an unclean
+    shutdown), performs a recovery cycle: start Neo4j briefly so it can
+    replay transaction logs and release locks, then stop cleanly and
+    retry the dump.
+    """
+    cmd = [
+        "apptainer",
+        "exec",
+        "--bind",
+        f"{profile.data_dir}/data:/data",
+        "--bind",
+        f"{dumps_dir}:/dumps",
+        "--writable-tmpfs",
+        str(NEO4J_IMAGE),
+        "neo4j-admin",
+        "database",
+        "dump",
+        "neo4j",
+        "--to-path=/dumps",
+        "--overwrite-destination=true",
+        "--verbose",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        return
+
+    # Initial dump failed — attempt recovery cycle
+    click.echo(
+        f"  Initial dump failed ({result.stderr.strip()}) — "
+        "performing recovery cycle..."
+    )
+
+    # Start Neo4j so it replays transaction logs and releases stale locks
+    logs_dir = profile.data_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    _recovery_start_cmd = [
+        "apptainer",
+        "exec",
+        "--bind",
+        f"{profile.data_dir}/data:/data",
+        "--bind",
+        f"{logs_dir}:/logs",
+        "--writable-tmpfs",
+        "--env",
+        f"NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port}",
+        "--env",
+        f"NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port}",
+        str(NEO4J_IMAGE),
+        "neo4j",
+        "console",
+    ]
+    recovery_proc = subprocess.Popen(
+        _recovery_start_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    import time
+
+    click.echo("  Waiting for Neo4j recovery start...")
+    for _ in range(60):
+        if is_neo4j_running(profile.http_port):
+            break
+        time.sleep(1)
+    else:
+        recovery_proc.terminate()
+        recovery_proc.wait(timeout=10)
+        raise click.ClickException(
+            f"Graph dump failed and recovery start timed out: {result.stderr}"
+        )
+
+    # Stop cleanly
+    click.echo("  Recovery start successful — stopping cleanly...")
+    recovery_proc.terminate()
+    recovery_proc.wait(timeout=30)
+
+    for _ in range(30):
+        if not is_neo4j_running(profile.http_port):
+            break
+        time.sleep(1)
+
+    # Retry dump
+    click.echo("  Retrying dump after recovery...")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise click.ClickException(f"Graph dump failed after recovery: {result.stderr}")
+    click.echo("  Dump succeeded after recovery")
+
+
 def backup_graph_dump(
     output: Path | None = None,
 ) -> Path:
@@ -537,25 +632,7 @@ def backup_graph_dump(
     dumps_dir = profile.data_dir / "dumps"
     dumps_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
-        "apptainer",
-        "exec",
-        "--bind",
-        f"{profile.data_dir}/data:/data",
-        "--bind",
-        f"{dumps_dir}:/dumps",
-        "--writable-tmpfs",
-        str(NEO4J_IMAGE),
-        "neo4j-admin",
-        "database",
-        "dump",
-        "neo4j",
-        "--to-path=/dumps",
-        "--overwrite-destination=true",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise click.ClickException(f"Backup dump failed: {result.stderr}")
+    _run_neo4j_dump(profile, dumps_dir)
 
     neo4j_dump = dumps_dir / "neo4j.dump"
     if neo4j_dump.exists():
@@ -1859,25 +1936,7 @@ def graph_export(
             dumps_dir = profile.data_dir / "dumps"
             dumps_dir.mkdir(parents=True, exist_ok=True)
 
-            cmd = [
-                "apptainer",
-                "exec",
-                "--bind",
-                f"{profile.data_dir}/data:/data",
-                "--bind",
-                f"{dumps_dir}:/dumps",
-                "--writable-tmpfs",
-                str(NEO4J_IMAGE),
-                "neo4j-admin",
-                "database",
-                "dump",
-                "neo4j",
-                "--to-path=/dumps",
-                "--overwrite-destination=true",
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                raise click.ClickException(f"Graph dump failed: {result.stderr}")
+            _run_neo4j_dump(profile, dumps_dir)
 
             dump_file = dumps_dir / "neo4j.dump"
             if dump_file.exists():

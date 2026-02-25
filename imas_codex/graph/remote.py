@@ -579,7 +579,8 @@ do_dump() {{
         "$IMAGE" \
         neo4j-admin database dump neo4j \
             --to-path=/dumps \
-            --overwrite-destination=true
+            --overwrite-destination=true \
+            --verbose
 }}
 
 # Stop Neo4j
@@ -976,7 +977,8 @@ do_dump() {{
         "$IMAGE" \
         neo4j-admin database dump neo4j \
             --to-path=/dumps \
-            --overwrite-destination=true
+            --overwrite-destination=true \
+            --verbose
 }}
 
 echo "PROGRESS:STOPPING"
@@ -1160,7 +1162,8 @@ do_dump() {{
         "$IMAGE" \
         neo4j-admin database dump neo4j \
             --to-path=/dumps \
-            --overwrite-destination=true
+            --overwrite-destination=true \
+            --verbose
 }}
 
 cleanup() {{
