@@ -52,7 +52,15 @@ imas.add_command(clusters)
     help="Start from a specific version (for incremental updates)",
 )
 @click.option(
-    "-f", "--force", is_flag=True, help="Force regenerate all embeddings (ignore cache)"
+    "-f",
+    "--force",
+    is_flag=True,
+    help="Bypass top-level build hash check (per-item hashes still apply)",
+)
+@click.option(
+    "--no-hash",
+    is_flag=True,
+    help="Skip per-item hash caching (recompute all embeddings/clusters). Implies --force",
 )
 @click.option(
     "--skip-clusters", is_flag=True, help="Skip importing semantic clusters into graph"
@@ -82,6 +90,7 @@ def imas_build(
     current_only: bool,
     from_version: str | None,
     force: bool,
+    no_hash: bool,
     skip_clusters: bool,
     skip_embeddings: bool,
     embedding_model: str,
@@ -109,7 +118,8 @@ def imas_build(
         imas-codex imas build                  # Build all DD versions (default)
         imas-codex imas build --current-only   # Build current version only
         imas-codex imas build --from-version 4.0.0  # Incremental from 4.0.0
-        imas-codex imas build --force          # Regenerate all embeddings
+        imas-codex imas build --force          # Re-run pipeline (per-item hashes still apply)
+        imas-codex imas build --force --no-hash  # Full recomputation (skip all caches)
         imas-codex imas build --dry-run -v     # Preview without writing
         imas-codex imas build --ids-filter "core_profiles equilibrium"  # Test subset
     """
@@ -191,6 +201,10 @@ def imas_build(
         from imas_codex.graph import GraphClient
 
         with GraphClient() as client:
+            # --no-hash implies --force (no point skipping hashes if top-level check stops us)
+            if no_hash:
+                force = True
+
             stats = build_dd_graph(
                 client=client,
                 versions=versions,
@@ -200,6 +214,7 @@ def imas_build(
                 dry_run=dry_run,
                 embedding_model=embedding_model,
                 force_embeddings=force,
+                no_hash=no_hash,
             )
 
         # Report results

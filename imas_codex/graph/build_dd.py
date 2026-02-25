@@ -1095,7 +1095,13 @@ def _extract_paths_recursive(
                         path_info[key] = val
 
         # Extract identifier_enum name from metadata API
-        id_enum = getattr(child, "identifier_enum", None)
+        # imas-python raises KeyError for missing identifier schemas
+        # (e.g. transport_solver_numerics_computation_mode), so we need
+        # to catch that rather than relying on getattr's AttributeError.
+        try:
+            id_enum = child.identifier_enum
+        except (AttributeError, KeyError):
+            id_enum = None
         if id_enum and hasattr(id_enum, "__name__"):
             path_info["identifier_enum_name"] = id_enum.__name__
             # Store enum values for IdentifierSchema creation
@@ -1320,6 +1326,7 @@ def build_dd_graph(
     use_rich: bool | None = None,
     embedding_model: str | None = None,
     force_embeddings: bool = False,
+    no_hash: bool = False,
 ) -> dict:
     """
     Build the IMAS DD graph.
@@ -1338,7 +1345,8 @@ def build_dd_graph(
         dry_run: If True, don't write to graph
         use_rich: Force rich progress (True), logging (False), or auto (None)
         embedding_model: Embedding model name (defaults to configured model from settings)
-        force_embeddings: Force regenerate all embeddings (ignore cache)
+        force_embeddings: Bypass top-level build hash check (per-item hashes still apply)
+        no_hash: Skip per-item hash caching — recompute all embeddings/clusters
 
     Returns:
         Statistics about the build
@@ -1687,7 +1695,7 @@ def build_dd_graph(
                     paths_data=embeddable_paths,
                     ids_info=merged_ids_info,
                     model_name=embedding_model,
-                    force_rebuild=force_embeddings,
+                    force_rebuild=no_hash,
                     use_rich=use_rich,
                     dd_version=current_dd_version,
                     track_changes=True,
@@ -1710,7 +1718,9 @@ def build_dd_graph(
         # Phase 4: Clusters
         if include_clusters:
             monitor.status("Importing semantic clusters...")
-            cluster_count = _import_clusters(client, dry_run, use_rich=use_rich)
+            cluster_count = _import_clusters(
+                client, dry_run, use_rich=use_rich, no_hash=no_hash
+            )
             stats["clusters_created"] = cluster_count
 
         # Persist build hash on current DDVersion for idempotency on next run
@@ -2459,6 +2469,7 @@ def _import_clusters(
     client: GraphClient,
     dry_run: bool,
     use_rich: bool | None = None,
+    no_hash: bool = False,
 ) -> int:
     """Build semantic clusters from graph embeddings and merge into the graph.
 
@@ -2481,7 +2492,7 @@ def _import_clusters(
     """
     with suppress_third_party_logging():
         try:
-            from imas_codex.clusters.clustering import HierarchicalClusterer
+            from imas_codex.clusters.hierarchical import HierarchicalClusterer
 
             # Step 1: Load embeddings from graph
             logger.info("Loading embeddings from graph for clustering...")
@@ -2649,7 +2660,12 @@ def _import_clusters(
             )
 
             # Step 9: Embed cluster labels and descriptions (with hash caching)
-            _embed_cluster_text(client, embedding_batch_size=256, use_rich=use_rich)
+            _embed_cluster_text(
+                client,
+                embedding_batch_size=256,
+                use_rich=use_rich,
+                no_hash=no_hash,
+            )
 
             # Step 10: Delete stale clusters no longer in the computation
             stale_ids = existing_ids - new_cluster_ids
@@ -2736,6 +2752,7 @@ def _embed_cluster_text(
     client: GraphClient,
     embedding_batch_size: int = 256,
     use_rich: bool | None = None,
+    no_hash: bool = False,
 ) -> None:
     """Embed cluster labels and descriptions with per-cluster hash caching.
 
@@ -2745,6 +2762,7 @@ def _embed_cluster_text(
 
     Only re-embeds clusters whose text_embedding_hash has changed (i.e.,
     label or description text changed, or the embedding model changed).
+    When no_hash is True, skips hash comparison and re-embeds everything.
     Clusters without labels are skipped.
 
     Args:
@@ -2795,7 +2813,7 @@ def _embed_cluster_text(
         label = r["label"]
         description = r["description"] or label
         text_hash = compute_embedding_hash(f"{label}|{description}", model_name)
-        if text_hash == r.get("existing_hash"):
+        if not no_hash and text_hash == r.get("existing_hash"):
             cached_count += 1
             continue
         clusters_to_embed.append(
