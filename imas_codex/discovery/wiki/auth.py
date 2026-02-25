@@ -750,7 +750,7 @@ class CredentialManager:
         Args:
             site: Site identifier
             cookies: Cookie dict from requests.Session
-            ttl: Time-to-live in seconds (default: 8 hours)
+            ttl: Time-to-live in seconds (default: 72 hours)
 
         Returns:
             True if stored successfully

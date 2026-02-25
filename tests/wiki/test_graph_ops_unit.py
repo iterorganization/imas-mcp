@@ -32,7 +32,14 @@ class TestTypeClassification:
 
     def test_ingestable_types(self):
         """Ingestable types should include text-extractable formats."""
-        expected = {"pdf", "document", "presentation", "spreadsheet", "notebook", "json"}
+        expected = {
+            "pdf",
+            "document",
+            "presentation",
+            "spreadsheet",
+            "notebook",
+            "json",
+        }
         assert INGESTABLE_ARTIFACT_TYPES == expected
 
     def test_image_types(self):

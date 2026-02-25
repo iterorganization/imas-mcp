@@ -1702,9 +1702,7 @@ class WikiArtifactPipeline:
             return stats
 
         stats["content_preview"] = full_text[:300]
-        stats = await self._create_artifact_chunks(
-            artifact_id, full_text, "pdf", stats
-        )
+        stats = await self._create_artifact_chunks(artifact_id, full_text, "pdf", stats)
 
         # Extract embedded images for VLM captioning pipeline
         try:

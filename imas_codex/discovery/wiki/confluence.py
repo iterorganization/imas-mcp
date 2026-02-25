@@ -53,6 +53,11 @@ RATE_LIMIT_DELAY = 0.5
 # Content-Type header for HTML form submissions (SSO flow)
 _FORM_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
 
+# F5 BIG-IP APM reload pattern — returned when session cookies are stale.
+# The F5 expects a browser to reload (iframe postMessage), but in a
+# headless requests.Session we must detect this and force re-auth.
+_F5_RELOAD_PATTERN = "window.parent.location.reload()"
+
 
 @dataclass
 class ConfluencePage:
@@ -184,6 +189,19 @@ class ConfluenceClient:
             self._authenticated = False
             raise requests.HTTPError("Authentication required", response=response)
 
+        # Detect F5 BIG-IP reload page (stale session during request)
+        if response.status_code == 200 and _F5_RELOAD_PATTERN in response.text:
+            logger.warning(
+                "F5 returned reload page during API call — re-authenticating"
+            )
+            self._authenticated = False
+            if self.authenticate(force=True):
+                # Retry the request once with fresh session
+                response = session.request(method, url, **kwargs)
+                response.raise_for_status()
+                return response
+            raise requests.HTTPError("Session expired (F5 reload)", response=response)
+
         response.raise_for_status()
         return response
 
@@ -216,16 +234,30 @@ class ConfluenceClient:
                     allow_redirects=False,
                 )
                 if response.status_code == 200:
-                    try:
-                        user = response.json()
+                    # Detect F5 BIG-IP APM reload page — stale session
+                    if _F5_RELOAD_PATTERN in response.text:
                         logger.info(
-                            "Session valid for user: %s",
-                            user.get("displayName", user.get("username")),
+                            "F5 BIG-IP returned reload page — session stale, "
+                            "clearing cookies for fresh SSO"
                         )
-                        self._authenticated = True
-                        return True
-                    except (json.JSONDecodeError, ValueError):
-                        logger.debug("Session returned non-JSON — SSO redirect likely")
+                        session.cookies.clear()
+                        self._creds.delete_session(self.credential_service)
+                    else:
+                        try:
+                            user = response.json()
+                            logger.info(
+                                "Session valid for user: %s",
+                                user.get("displayName", user.get("username")),
+                            )
+                            self._authenticated = True
+                            return True
+                        except (json.JSONDecodeError, ValueError):
+                            logger.debug(
+                                "Session returned non-JSON — clearing cookies "
+                                "for fresh SSO"
+                            )
+                            session.cookies.clear()
+                            self._creds.delete_session(self.credential_service)
                 elif response.status_code in (301, 302, 303):
                     logger.debug("Session expired (got redirect)")
             except Exception as e:
@@ -292,6 +324,11 @@ class ConfluenceClient:
         """
         session = self._get_session()
         session.auth = None  # Clear any basic auth
+
+        # Clear stale F5/Azure AD cookies that prevent SSO redirect.
+        # F5 BIG-IP APM serves a reload page instead of redirecting to
+        # Azure AD when old MRHSession/ESTSAUTH cookies are present.
+        session.cookies.clear()
 
         logger.info("Attempting Azure AD SSO for %s", self.base_url)
 
@@ -727,6 +764,10 @@ class ConfluenceClient:
         if not url_post:
             logger.warning("KMSI page missing urlPost")
             return None
+
+        # Make relative URLs absolute (Azure AD returns paths like "/kmsi")
+        if url_post.startswith("/"):
+            url_post = f"https://login.microsoftonline.com{url_post}"
 
         # Accept KMSI — value "0" means "Yes, stay signed in"
         kmsi_data = {

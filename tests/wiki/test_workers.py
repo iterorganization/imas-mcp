@@ -20,7 +20,12 @@ from tests.wiki.conftest import CONFLUENCE_HTML, MEDIAWIKI_HTML, TWIKI_HTML
 class TestExtractImageRefs:
     """Tests for _extract_image_refs — HTML image reference extraction."""
 
-    def _extract(self, html: str, page_url: str = "https://wiki.example.com/wiki/TestPage", page_title: str = "Test"):
+    def _extract(
+        self,
+        html: str,
+        page_url: str = "https://wiki.example.com/wiki/TestPage",
+        page_title: str = "Test",
+    ):
         from imas_codex.discovery.wiki.workers import _extract_image_refs
 
         return _extract_image_refs(html, page_url, page_title)
@@ -48,7 +53,9 @@ class TestExtractImageRefs:
         assert refs[0]["src"] == "https://other.example.com/img/data.png"
 
     def test_protocol_relative_url(self):
-        html = '<html><body><img src="//cdn.example.com/plot.jpg" alt="CDN"></body></html>'
+        html = (
+            '<html><body><img src="//cdn.example.com/plot.jpg" alt="CDN"></body></html>'
+        )
         refs = self._extract(html)
         assert len(refs) == 1
         assert refs[0]["src"] == "https://cdn.example.com/plot.jpg"
@@ -65,7 +72,9 @@ class TestExtractImageRefs:
         assert len(refs) == 0
 
     def test_skip_favicon(self):
-        html = '<html><body><img src="/favicon.png" width="16" height="16"></body></html>'
+        html = (
+            '<html><body><img src="/favicon.png" width="16" height="16"></body></html>'
+        )
         refs = self._extract(html)
         assert len(refs) == 0
 
@@ -397,7 +406,9 @@ class TestExtractAndPersistImages:
             mock_gc.query.assert_called_once()
             # Check that the persisted image has status 'failed'
             call_kwargs = mock_gc.query.call_args
-            images_param = call_kwargs.kwargs.get("images") or call_kwargs[1].get("images")
+            images_param = call_kwargs.kwargs.get("images") or call_kwargs[1].get(
+                "images"
+            )
             assert images_param[0]["status"] == "failed"
 
 
@@ -479,7 +490,12 @@ class TestPersistDocumentFigures:
         """Empty image list should return 0."""
         from imas_codex.discovery.wiki.workers import _persist_document_figures
 
-        result = await _persist_document_figures([], artifact_id="tcv:doc.pdf", artifact_url="https://example.com/doc.pdf", facility="tcv")
+        result = await _persist_document_figures(
+            [],
+            artifact_id="tcv:doc.pdf",
+            artifact_url="https://example.com/doc.pdf",
+            facility="tcv",
+        )
         assert result == 0
 
     @pytest.mark.asyncio
@@ -488,7 +504,12 @@ class TestPersistDocumentFigures:
         from imas_codex.discovery.wiki.workers import _persist_document_figures
 
         images = [{"image_bytes": b"\x00" * 100, "page_num": 1}]
-        result = await _persist_document_figures(images, artifact_id="tcv:doc.pdf", artifact_url="https://example.com/doc.pdf", facility="tcv")
+        result = await _persist_document_figures(
+            images,
+            artifact_id="tcv:doc.pdf",
+            artifact_url="https://example.com/doc.pdf",
+            facility="tcv",
+        )
         assert result == 0
 
     @pytest.mark.asyncio
@@ -519,7 +540,10 @@ class TestPersistDocumentFigures:
             ),
         ):
             result = await _persist_document_figures(
-                images, artifact_id="tcv:report.pdf", artifact_url="https://example.com/report.pdf", facility="tcv"
+                images,
+                artifact_id="tcv:report.pdf",
+                artifact_url="https://example.com/report.pdf",
+                facility="tcv",
             )
             assert result == 1
             mock_gc.query.assert_called_once()

@@ -122,9 +122,7 @@ class TestGetAdapterFactory:
     def test_twiki_raw_valid(self):
         from imas_codex.discovery.wiki.adapters import TWikiRawAdapter
 
-        adapter = self._get_adapter(
-            "twiki_raw", ssh_host="host", data_path="/data"
-        )
+        adapter = self._get_adapter("twiki_raw", ssh_host="host", data_path="/data")
         assert isinstance(adapter, TWikiRawAdapter)
 
     def test_static_html(self):
@@ -164,13 +162,13 @@ class TestExtractPageLinks:
 
     def test_standard_wiki_links(self):
         """Should extract page links from /wiki/Page_Name format."""
-        html = '''
+        html = """
         <div class="mw-allpages-body">
             <a href="/wiki/Main_Page" title="Main Page">Main Page</a>
             <a href="/wiki/Thomson_Scattering" title="Thomson">Thomson Scattering</a>
             <a href="/wiki/Equilibrium" title="Equilibrium">Equilibrium</a>
         </div>
-        '''
+        """
         pages = self._extract(html)
         names = [p.name for p in pages]
         assert "Main_Page" in names
@@ -181,9 +179,9 @@ class TestExtractPageLinks:
         """Should extract page links from index.php?title format."""
         # The regex in _extract_page_links requires /wiki/ or title= in href
         # and a matching link text. The pattern captures the page name.
-        html = '''
+        html = """
         <a href="/w/index.php?title=My_Page" title="My Page">My Page</a>
-        '''
+        """
         pages = self._extract(html)
         names = [p.name for p in pages]
         # The regex captures title=<name> from the href
@@ -191,13 +189,13 @@ class TestExtractPageLinks:
 
     def test_excludes_special_namespaces(self):
         """Should exclude Special:, File:, Template:, etc."""
-        html = '''
+        html = """
         <a href="/wiki/Special:Upload" title="Upload">Upload</a>
         <a href="/wiki/File:Image.png" title="File">Image</a>
         <a href="/wiki/Template:Header" title="Template">Header</a>
         <a href="/wiki/Category:Physics" title="Category">Physics</a>
         <a href="/wiki/Good_Page" title="Good Page">Good Page</a>
-        '''
+        """
         pages = self._extract(html)
         names = [p.name for p in pages]
         assert "Good_Page" in names
@@ -205,10 +203,10 @@ class TestExtractPageLinks:
 
     def test_excludes_allpages_navigation(self):
         """Should exclude AllPages navigation links."""
-        html = '''
+        html = """
         <a href="/wiki/AllPages" title="All">All Pages</a>
         <a href="/wiki/Valid_Page" title="Valid">Valid Page</a>
-        '''
+        """
         pages = self._extract(html)
         names = [p.name for p in pages]
         assert "Valid_Page" in names
@@ -216,9 +214,9 @@ class TestExtractPageLinks:
 
     def test_url_decode(self):
         """Should decode URL-encoded page names."""
-        html = '''
+        html = """
         <a href="/wiki/Caf%C3%A9_Page" title="Café Page">Café Page</a>
-        '''
+        """
         pages = self._extract(html)
         names = [p.name for p in pages]
         assert any("Café" in name for name in names)
