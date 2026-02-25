@@ -540,6 +540,11 @@ classes:
       created_at:
         description: Timestamp when Facility node was first created in the graph
         range: datetime
+      files_scan_after:
+        description: >-
+          When set, FacilityPaths with last_file_scan_at before this timestamp
+          are eligible for re-scanning by discover files --rescan.
+        range: datetime
 
       # === PRIVATE FIELDS (<facility>_private.yaml only, never graphed) ===
       ssh_host:

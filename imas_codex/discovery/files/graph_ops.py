@@ -113,10 +113,15 @@ def claim_paths_for_file_scan(
         result = gc.query(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
+            OPTIONAL MATCH (f:Facility {id: $facility})
             WHERE p.status IN ['scored', 'explored']
               AND coalesce(p.score, 0) >= $min_score
               AND p.path IS NOT NULL
-              AND p.last_file_scan_at IS NULL
+              AND (
+                p.last_file_scan_at IS NULL
+                OR (f.files_scan_after IS NOT NULL
+                    AND p.last_file_scan_at < f.files_scan_after)
+              )
               AND (p.files_claimed_at IS NULL
                    OR p.files_claimed_at < datetime() - duration($cutoff))
               AND NOT EXISTS {
@@ -212,6 +217,23 @@ def release_path_file_scan_claims_batch(path_ids: list[str]) -> int:
     except Exception as e:
         logger.warning("Failed to release file scan claims: %s", e)
         return 0
+
+
+def set_files_scan_after(facility: str) -> None:
+    """Set files_scan_after on the Facility node to trigger rescan.
+
+    All FacilityPaths with last_file_scan_at before this timestamp
+    become eligible for re-scanning.
+    """
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (f:Facility {id: $facility})
+            SET f.files_scan_after = datetime()
+            """,
+            facility=facility,
+        )
+    logger.info("Set files_scan_after on %s — paths will be rescanned", facility)
 
 
 # ---------------------------------------------------------------------------

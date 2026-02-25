@@ -270,6 +270,7 @@ async def score_worker(
                         "path": s.path,
                         "score": s.interest_score,
                         "category": s.file_category,
+                        "description": s.description,
                     }
                     for s in parsed.results[:5]
                 ]
