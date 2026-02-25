@@ -1212,14 +1212,17 @@ def load_path_mappings(version: str) -> dict:
     return {"old_to_new": {}, "new_to_old": {}}
 
 
-def _compute_cluster_content_hash(sorted_paths: list[str]) -> str:
+def _compute_cluster_content_hash(sorted_paths: list[str], scope: str) -> str:
     """Compute a content hash for a cluster based on its sorted member paths.
 
     This hash serves as the cluster's stable identity across HDBSCAN runs.
-    If the same set of paths clusters together, the hash matches and the
-    existing label/description/embeddings are preserved.
+    If the same set of paths clusters together at the same scope, the hash
+    matches and the existing label/description/embeddings are preserved.
+    Scope is included to differentiate clusters at global/domain/IDS levels
+    that happen to contain the same set of paths.
     """
-    return hashlib.sha256("\n".join(sorted_paths).encode("utf-8")).hexdigest()[:16]
+    content = f"{scope}\n" + "\n".join(sorted_paths)
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
 def _compute_build_hash(
@@ -2548,15 +2551,17 @@ def _import_clusters(
             new_cluster_ids: set[str] = set()
             cluster_batch: list[dict] = []
             membership_batch: list[dict] = []
+            cluster_paths_map: dict[str, list[str]] = {}  # cluster_id → paths
 
             for cluster in clusters:
                 sorted_paths = sorted(cluster.paths)
-                content_hash = _compute_cluster_content_hash(sorted_paths)
+                scope = getattr(cluster, "scope", "global")
+                content_hash = _compute_cluster_content_hash(sorted_paths, scope)
                 new_cluster_ids.add(content_hash)
+                cluster_paths_map[content_hash] = sorted_paths
 
                 ids_names = sorted({p.split("/")[0] for p in cluster.paths})
                 is_cross_ids = len(ids_names) > 1
-                scope = getattr(cluster, "scope", "global")
 
                 cluster_batch.append(
                     {
@@ -2659,7 +2664,10 @@ def _import_clusters(
                 len(clusters),
             )
 
-            # Step 9: Embed cluster labels and descriptions (with hash caching)
+            # Step 9: Sync labels from label cache to graph clusters
+            _sync_labels_from_cache(client, cluster_paths_map)
+
+            # Step 10: Embed cluster labels/descriptions (with hash caching)
             _embed_cluster_text(
                 client,
                 embedding_batch_size=256,
@@ -2667,7 +2675,7 @@ def _import_clusters(
                 no_hash=no_hash,
             )
 
-            # Step 10: Delete stale clusters no longer in the computation
+            # Step 11: Delete stale clusters no longer in the computation
             stale_ids = existing_ids - new_cluster_ids
             if stale_ids:
                 logger.info("Removing %d stale clusters...", len(stale_ids))
@@ -2746,6 +2754,58 @@ def _export_cluster_embeddings_npz(
         )
     except Exception as e:
         logger.warning("Failed to export cluster embeddings to .npz: %s", e)
+
+
+def _sync_labels_from_cache(
+    client: GraphClient,
+    cluster_paths_map: dict[str, list[str]],
+) -> int:
+    """Sync labels from the label cache to graph cluster nodes.
+
+    The label cache stores labels keyed by path-only content hash,
+    while graph clusters use scope+path content hashes. This function
+    bridges the two by looking up each cluster's paths in the cache.
+
+    Returns:
+        Number of clusters that received labels.
+    """
+    from imas_codex.clusters.label_cache import LabelCache
+
+    cache = LabelCache()
+    label_batch = []
+
+    for cluster_id, sorted_paths in cluster_paths_map.items():
+        cached = cache.get_label(sorted_paths)
+        if cached:
+            label_batch.append(
+                {
+                    "id": cluster_id,
+                    "label": cached.label,
+                    "description": cached.description,
+                }
+            )
+
+    if not label_batch:
+        logger.info("No cached labels found for %d clusters", len(cluster_paths_map))
+        return 0
+
+    for i in range(0, len(label_batch), 1000):
+        batch = label_batch[i : i + 1000]
+        client.query(
+            """
+            UNWIND $batch AS b
+            MATCH (c:IMASSemanticCluster {id: b.id})
+            SET c.label = b.label, c.description = b.description
+            """,
+            batch=batch,
+        )
+
+    logger.info(
+        "Synced %d/%d cluster labels from cache",
+        len(label_batch),
+        len(cluster_paths_map),
+    )
+    return len(label_batch)
 
 
 def _embed_cluster_text(
