@@ -898,6 +898,74 @@ def extract_paths_for_version(version: str, ids_filter: set[str] | None = None) 
     if ids_filter:
         ids_names = ids_names & ids_filter
 
+    # Extract IDS-level lifecycle metadata from DD XML
+    tree = imas.dd_zip.dd_etree(version)
+    root = tree.getroot() if hasattr(tree, "getroot") else tree
+    ids_xml_meta = {}
+    for ids_el in root.findall("IDS"):
+        name = ids_el.get("name", "")
+        if name:
+            ids_xml_meta[name] = {
+                "lifecycle_status": ids_el.get("lifecycle_status"),
+                "lifecycle_version": ids_el.get("lifecycle_version"),
+                "lifecycle_last_change": ids_el.get("lifecycle_last_change"),
+                "ids_type": ids_el.get("type"),
+                "maxoccur": int(ids_el.get("maxoccur"))
+                if ids_el.get("maxoccur")
+                else None,
+            }
+
+    # Extract field-level metadata from DD XML (attributes not in metadata API)
+    field_xml_meta: dict[str, dict] = {}
+    for ids_el in root.findall("IDS"):
+        ids_name_xml = ids_el.get("name", "")
+        for field_el in ids_el.iter("field"):
+            field_path = field_el.get("path", "")
+            if field_path and ids_name_xml:
+                full_path = f"{ids_name_xml}/{field_path}"
+                meta: dict = {}
+                # Lifecycle
+                ls = field_el.get("lifecycle_status")
+                if ls:
+                    meta["lifecycle_status"] = ls
+                    meta["lifecycle_version"] = field_el.get("lifecycle_version")
+                # Timebasepath
+                tbp = field_el.get("timebasepath")
+                if tbp:
+                    meta["timebasepath"] = tbp
+                # Human-readable path
+                path_doc = field_el.get("path_doc")
+                if path_doc and path_doc != field_path:
+                    meta["path_doc"] = path_doc
+                # Introduction version
+                iav = (
+                    field_el.get("introduced_after_version")
+                    or field_el.get("introduced_after")
+                    or field_el.get("introduced-after-version")
+                )
+                if iav:
+                    meta["introduced_after_version"] = iav
+                # Non-backward-compatible changes
+                nbc_ver = field_el.get("change_nbc_version")
+                if nbc_ver:
+                    meta["change_nbc_version"] = nbc_ver
+                    meta["change_nbc_description"] = field_el.get(
+                        "change_nbc_description", ""
+                    )
+                    meta["change_nbc_previous_name"] = field_el.get(
+                        "change_nbc_previous_name", ""
+                    )
+                # URL
+                url = field_el.get("url")
+                if url:
+                    meta["url"] = url
+                # Identifier schema (doc_identifier)
+                doc_id = field_el.get("doc_identifier")
+                if doc_id:
+                    meta["doc_identifier"] = doc_id
+                if meta:
+                    field_xml_meta[full_path] = meta
+
     ids_info = {}
     paths = {}
     units = set()
@@ -907,17 +975,24 @@ def extract_paths_for_version(version: str, ids_filter: set[str] | None = None) 
             ids_def = factory.new(ids_name)
             metadata = ids_def.metadata
 
-            # IDS-level info
+            # IDS-level info (merge API + XML metadata)
+            xml_meta = ids_xml_meta.get(ids_name, {})
             ids_info[ids_name] = {
                 "name": ids_name,
                 "description": metadata.documentation or "",
                 "physics_domain": physics_categorizer.get_domain_for_ids(
                     ids_name
                 ).value,
+                "lifecycle_status": xml_meta.get("lifecycle_status"),
+                "lifecycle_version": xml_meta.get("lifecycle_version"),
+                "lifecycle_last_change": xml_meta.get("lifecycle_last_change"),
+                "ids_type": xml_meta.get("ids_type"),
             }
 
             # Extract all paths recursively
-            _extract_paths_recursive(metadata, ids_name, "", paths, units)
+            _extract_paths_recursive(
+                metadata, ids_name, "", paths, units, field_xml_meta
+            )
 
         except Exception as e:
             logger.warning(f"Error processing {ids_name} in {version}: {e}")
@@ -945,6 +1020,7 @@ def _extract_paths_recursive(
     prefix: str,
     paths: dict,
     units: set,
+    field_xml_meta: dict[str, dict] | None = None,
 ) -> None:
     """Recursively extract paths from IDS metadata."""
     for child in metadata:
@@ -970,6 +1046,36 @@ def _extract_paths_recursive(
         if cocos_label:
             path_info["cocos_label_transformation"] = str(cocos_label)
 
+        # Merge field-level XML metadata (lifecycle, timebasepath, etc.)
+        if field_xml_meta:
+            xml_meta = field_xml_meta.get(full_path)
+            if xml_meta:
+                for key in (
+                    "lifecycle_status",
+                    "lifecycle_version",
+                    "timebasepath",
+                    "path_doc",
+                    "introduced_after_version",
+                    "change_nbc_version",
+                    "change_nbc_description",
+                    "change_nbc_previous_name",
+                    "url",
+                    "doc_identifier",
+                ):
+                    val = xml_meta.get(key)
+                    if val:
+                        path_info[key] = val
+
+        # Extract identifier_enum name from metadata API
+        id_enum = getattr(child, "identifier_enum", None)
+        if id_enum and hasattr(id_enum, "__name__"):
+            path_info["identifier_enum_name"] = id_enum.__name__
+            # Store enum values for IdentifierSchema creation
+            if hasattr(id_enum, "__members__"):
+                path_info["_identifier_enum_values"] = {
+                    m.name: m.value for m in id_enum
+                }
+
         # Handle structure types
         if child.data_type:
             if child.data_type.name == "STRUCTURE":
@@ -993,7 +1099,9 @@ def _extract_paths_recursive(
 
         # Recurse into children (structures and struct arrays)
         if child.data_type and child.data_type.name in ("STRUCTURE", "STRUCT_ARRAY"):
-            _extract_paths_recursive(child, ids_name, f"{child_path}/", paths, units)
+            _extract_paths_recursive(
+                child, ids_name, f"{child_path}/", paths, units, field_xml_meta
+            )
 
 
 def compute_version_changes(
@@ -1029,6 +1137,8 @@ def compute_version_changes(
             "data_type",
             "node_type",
             "cocos_label_transformation",
+            "lifecycle_status",
+            "timebasepath",
         ):
             old_val = old_info.get(field, "")
             new_val = new_info.get(field, "")
@@ -1214,6 +1324,7 @@ def build_dd_graph(
         "error_relationships": 0,
         "paths_filtered": 0,
         "cocos_labels_updated": 0,
+        "identifier_schemas_created": 0,
         "skipped": False,
     }
 
@@ -1287,6 +1398,16 @@ def build_dd_graph(
         if not dry_run:
             monitor.status(f"Creating {len(all_coord_specs)} coordinate spec nodes...")
             _create_coordinate_spec_nodes(client, all_coord_specs)
+
+        # Create IdentifierSchema nodes from the latest version's enum data
+        if not dry_run and version_data:
+            latest_ver = sorted(version_data.keys())[-1]
+            latest_paths = version_data[latest_ver]["paths"]
+            id_schemas = _collect_identifier_schemas(latest_paths)
+            if id_schemas:
+                monitor.status(f"Creating {len(id_schemas)} identifier schema nodes...")
+                _create_identifier_schema_nodes(client, id_schemas)
+            stats["identifier_schemas_created"] = len(id_schemas)
 
         # Phase 2: Build graph nodes (IDS + IMASPath + relationships)
         prev_paths: dict[str, dict] = {}
@@ -1379,6 +1500,75 @@ def build_dd_graph(
                 """,
                 labeled_paths=list(latest_labeled),
             )
+
+        # Final-pass: Update field-level metadata from latest version on all
+        # existing paths. Paths created in early versions lack lifecycle,
+        # timebasepath, path_doc, NBC, and URL attributes added later.
+        if not dry_run and version_data:
+            latest_version = sorted(version_data.keys())[-1]
+            latest_paths = version_data[latest_version]["paths"]
+            meta_updates = []
+            for path, info in latest_paths.items():
+                update = {"id": path}
+                has_update = False
+                for key in (
+                    "lifecycle_status",
+                    "lifecycle_version",
+                    "timebasepath",
+                    "path_doc",
+                    "introduced_after_version",
+                    "change_nbc_version",
+                    "change_nbc_description",
+                    "change_nbc_previous_name",
+                    "url",
+                ):
+                    val = info.get(key)
+                    update[key] = val  # null clears stale values
+                    if val:
+                        has_update = True
+                if has_update:
+                    meta_updates.append(update)
+            if meta_updates:
+                monitor.status(
+                    f"Updating {len(meta_updates)} paths with field metadata..."
+                )
+                for i in range(0, len(meta_updates), 1000):
+                    batch = meta_updates[i : i + 1000]
+                    client.query(
+                        """
+                        UNWIND $paths AS p
+                        MATCH (path:IMASPath {id: p.id})
+                        SET path.lifecycle_status = p.lifecycle_status,
+                            path.lifecycle_version = p.lifecycle_version,
+                            path.timebasepath = p.timebasepath,
+                            path.path_doc = p.path_doc,
+                            path.introduced_after_version = p.introduced_after_version,
+                            path.change_nbc_version = p.change_nbc_version,
+                            path.change_nbc_description = p.change_nbc_description,
+                            path.change_nbc_previous_name = p.change_nbc_previous_name,
+                            path.url = p.url
+                        """,
+                        paths=batch,
+                    )
+
+            # Create HAS_IDENTIFIER_SCHEMA relationships for all paths
+            # (including those created in earlier versions)
+            id_rels = []
+            for path, info in latest_paths.items():
+                enum_name = info.get("identifier_enum_name")
+                if enum_name:
+                    id_rels.append({"id": path, "schema_name": enum_name})
+            if id_rels:
+                monitor.status(f"Linking {len(id_rels)} paths to identifier schemas...")
+                client.query(
+                    """
+                    UNWIND $rels AS r
+                    MATCH (path:IMASPath {id: r.id})
+                    MATCH (schema:IdentifierSchema {name: r.schema_name})
+                    MERGE (path)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
+                """,
+                    rels=id_rels,
+                )
 
         # Phase 3: Embeddings
         if include_embeddings and not dry_run:
@@ -1632,6 +1822,54 @@ def _create_coordinate_spec_nodes(client: GraphClient, specs: set[str]) -> None:
         )
 
 
+def _collect_identifier_schemas(paths: dict[str, dict]) -> dict[str, dict]:
+    """Collect IdentifierSchema data from extracted path metadata.
+
+    Deduplicates by enum name and aggregates field counts and option values.
+    """
+    schemas: dict[str, dict] = {}
+    for _path, info in paths.items():
+        enum_name = info.get("identifier_enum_name")
+        if not enum_name:
+            continue
+        if enum_name not in schemas:
+            enum_values = info.get("_identifier_enum_values", {})
+            # Source from doc_identifier XML attribute
+            source = info.get("doc_identifier", "")
+            schemas[enum_name] = {
+                "name": enum_name,
+                "options": json.dumps(
+                    [
+                        {"index": v, "name": k}
+                        for k, v in sorted(enum_values.items(), key=lambda x: x[1])
+                    ]
+                ),
+                "option_count": len(enum_values),
+                "field_count": 0,
+                "source": source,
+            }
+        schemas[enum_name]["field_count"] += 1
+    return schemas
+
+
+def _create_identifier_schema_nodes(
+    client: GraphClient, schemas: dict[str, dict]
+) -> None:
+    """Create IdentifierSchema nodes in the graph."""
+    schema_list = list(schemas.values())
+    client.query(
+        """
+        UNWIND $schemas AS s
+        MERGE (schema:IdentifierSchema {name: s.name})
+        SET schema.option_count = s.option_count,
+            schema.options = s.options,
+            schema.field_count = s.field_count,
+            schema.source = s.source
+    """,
+        schemas=schema_list,
+    )
+
+
 def _batch_upsert_ids_nodes(
     client: GraphClient,
     ids_info_map: dict[str, dict],
@@ -1646,6 +1884,10 @@ def _batch_upsert_ids_nodes(
             "physics_domain": info.get("physics_domain", "general"),
             "path_count": info.get("path_count", 0),
             "leaf_count": info.get("leaf_count", 0),
+            "lifecycle_status": info.get("lifecycle_status"),
+            "lifecycle_version": info.get("lifecycle_version"),
+            "lifecycle_last_change": info.get("lifecycle_last_change"),
+            "ids_type": info.get("ids_type"),
         }
         for ids_name, info in ids_info_map.items()
     ]
@@ -1662,7 +1904,11 @@ def _batch_upsert_ids_nodes(
             ids.physics_domain = ids_data.physics_domain,
             ids.path_count = ids_data.path_count,
             ids.leaf_count = ids_data.leaf_count,
-            ids.dd_version = $version
+            ids.dd_version = $version,
+            ids.lifecycle_status = ids_data.lifecycle_status,
+            ids.lifecycle_version = ids_data.lifecycle_version,
+            ids.lifecycle_last_change = ids_data.lifecycle_last_change,
+            ids.ids_type = ids_data.ids_type
     """,
         ids_list=ids_list,
         version=version,
@@ -1715,6 +1961,16 @@ def _batch_create_path_nodes(
                 "cocos_label_transformation": path_info.get(
                     "cocos_label_transformation"
                 ),
+                "lifecycle_status": path_info.get("lifecycle_status"),
+                "lifecycle_version": path_info.get("lifecycle_version"),
+                "timebasepath": path_info.get("timebasepath"),
+                "path_doc": path_info.get("path_doc"),
+                "introduced_after_version": path_info.get("introduced_after_version"),
+                "change_nbc_version": path_info.get("change_nbc_version"),
+                "change_nbc_description": path_info.get("change_nbc_description"),
+                "change_nbc_previous_name": path_info.get("change_nbc_previous_name"),
+                "url": path_info.get("url"),
+                "identifier_enum_name": path_info.get("identifier_enum_name"),
             }
         )
 
@@ -1738,7 +1994,16 @@ def _batch_create_path_nodes(
                 path.physics_domain = p.physics_domain,
                 path.maxoccur = p.maxoccur,
                 path.ids = p.ids_name,
-                path.cocos_label_transformation = p.cocos_label_transformation
+                path.cocos_label_transformation = p.cocos_label_transformation,
+                path.lifecycle_status = p.lifecycle_status,
+                path.lifecycle_version = p.lifecycle_version,
+                path.timebasepath = p.timebasepath,
+                path.path_doc = p.path_doc,
+                path.introduced_after_version = p.introduced_after_version,
+                path.change_nbc_version = p.change_nbc_version,
+                path.change_nbc_description = p.change_nbc_description,
+                path.change_nbc_previous_name = p.change_nbc_previous_name,
+                path.url = p.url
         """,
             paths=batch,
         )
@@ -1856,6 +2121,19 @@ def _batch_create_path_nodes(
             paths=batch,
             version=version,
         )
+
+        # Step 7: Create HAS_IDENTIFIER_SCHEMA relationships
+        id_schema_paths = [p for p in batch if p.get("identifier_enum_name")]
+        if id_schema_paths:
+            client.query(
+                """
+                UNWIND $paths AS p
+                MATCH (path:IMASPath {id: p.id})
+                MATCH (schema:IdentifierSchema {name: p.identifier_enum_name})
+                MERGE (path)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
+            """,
+                paths=id_schema_paths,
+            )
 
 
 def _batch_mark_paths_deprecated(

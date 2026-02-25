@@ -142,6 +142,27 @@ enums:
       grid_type_tensor_contravariant_like:
         description: Contravariant tensor component
 
+  LifecycleStatus:
+    description: >-
+      IMAS Data Dictionary lifecycle status for IDS and field definitions.
+      Extracted from the lifecycle_status XML attribute.
+    permissible_values:
+      active:
+        description: Stable, actively maintained definition
+      alpha:
+        description: Experimental definition, subject to change
+      obsolescent:
+        description: Deprecated definition, scheduled for removal
+
+  IDSType:
+    description: >-
+      IMAS IDS temporal classification from the DD XML type attribute.
+    permissible_values:
+      dynamic:
+        description: IDS containing time-varying data
+      constant:
+        description: IDS containing data constant over a pulse
+
   PhysicsDomainDD:
     description: Physics domains for IMAS data paths
     permissible_values:
@@ -189,6 +210,10 @@ enums:
         description: Data type changed (e.g., FLT_1D to FLT_2D)
       cocos_label_transformation:
         description: COCOS transformation label changed (e.g., field gained or lost COCOS sensitivity)
+      lifecycle_status:
+        description: Lifecycle status changed (e.g., alpha to active)
+      timebasepath:
+        description: Time base path reference changed
 
   SemanticChangeType:
     description: Physics significance of documentation changes
@@ -308,6 +333,24 @@ classes:
         range: float
       dd_version:
         description: Data Dictionary version string this IDS definition belongs to
+      lifecycle_status:
+        description: >-
+          Lifecycle maturity status from the DD XML (active or alpha).
+          Active IDS are stable; alpha IDS are experimental.
+        range: LifecycleStatus
+      lifecycle_version:
+        description: >-
+          DD version where this IDS was first introduced, as recorded in
+          the DD XML lifecycle_version attribute.
+      lifecycle_last_change:
+        description: >-
+          DD version where this IDS definition was last modified, as recorded
+          in the DD XML lifecycle_last_change attribute.
+      ids_type:
+        description: >-
+          Temporal classification of the IDS (dynamic or constant), from the
+          DD XML type attribute.
+        range: IDSType
       introduced_version:
         description: DD version where this IDS was introduced
         range: DDVersion
@@ -378,6 +421,48 @@ classes:
           flip sign between COCOS 11 and 17). Null for fields without COCOS
           sensitivity. Extracted from the cocos_label_transformation XML attribute.
         range: COCOSLabelTransformation
+      lifecycle_status:
+        description: >-
+          Lifecycle maturity status from the DD XML (alpha or obsolescent).
+          Only set on fields with non-default lifecycle status. Null means
+          the field inherits the IDS-level lifecycle status.
+        range: LifecycleStatus
+      lifecycle_version:
+        description: >-
+          DD version where this field's lifecycle status was set, from the
+          DD XML lifecycle_version attribute.
+      timebasepath:
+        description: >-
+          Path to the time array for this dynamic field, from the DD XML
+          timebasepath attribute. Tells data access code where to find the
+          time coordinate (e.g., "time" or "../time").
+      path_doc:
+        description: >-
+          Human-readable path with index notation from the DD XML path_doc
+          attribute (e.g., "time_slice(itime)/boundary/psi"). Differs from
+          the machine-readable path used as the node ID.
+      introduced_after_version:
+        description: >-
+          DD version after which this field was introduced, from the DD XML
+          introduced_after_version attribute. Null for fields present since
+          the IDS was created.
+      change_nbc_version:
+        description: >-
+          DD version where a non-backward-compatible change was made to this
+          field, from the DD XML change_nbc_version attribute.
+      change_nbc_description:
+        description: >-
+          Description of the non-backward-compatible change (e.g.,
+          "leaf_renamed", "type_changed"), from the DD XML.
+      change_nbc_previous_name:
+        description: >-
+          Previous name of this field before a non-backward-compatible rename,
+          from the DD XML change_nbc_previous_name attribute.
+      url:
+        description: >-
+          URL to documentation or reference material for this field, from the
+          DD XML url attribute. May be a relative path to IMAS docs or an
+          absolute URL.
       # Relationships
       parent_path:
         description: Parent path in hierarchy (null for IDS-level paths)
@@ -410,6 +495,8 @@ classes:
       identifier_schema:
         description: Identifier schema if this is an identifier field
         range: IdentifierSchema
+        annotations:
+          relationship_type: HAS_IDENTIFIER_SCHEMA
       # Embedding fields for semantic search
       embedding_text:
         description: >-
@@ -548,21 +635,35 @@ classes:
 
   IdentifierSchema:
     description: >-
-      An enumeration/identifier schema from the Data Dictionary.
-      Options are stored as JSON property rather than separate nodes.
+      An enumeration/identifier schema from the Data Dictionary. Represents
+      a typed vocabulary of valid values for identifier fields (e.g.,
+      coordinate_identifier, magnetics_probe_type_identifier). Options are
+      stored as JSON for flexible querying. Extracted from the imas-python
+      identifier_enum metadata API.
     class_uri: imas_dd:IdentifierSchema
     attributes:
       name:
         identifier: true
-        description: Schema name (e.g., "coordinate_identifier")
+        description: >-
+          Schema name (e.g., "coordinate_identifier",
+          "magnetics_probe_type_identifier")
         required: true
       description:
         description: Schema description
       option_count:
-        description: Number of valid options
+        description: Number of valid options in this schema
         range: integer
       options:
-        description: JSON-encoded list of {index, name, description}
+        description: >-
+          JSON-encoded list of {index, name} for each valid option value.
+          Index is the integer identifier, name is the string label.
+      field_count:
+        description: Number of IMASPath fields using this identifier schema
+        range: integer
+      source:
+        description: >-
+          Source XML file for this identifier schema (e.g.,
+          "utilities/coordinate_identifier.xml")
 
   IMASPathChange:
     description: >-

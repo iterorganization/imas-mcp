@@ -421,6 +421,8 @@ class TestIMASPathChanges:
             "data_type",
             "node_type",
             "cocos_label_transformation",
+            "lifecycle_status",
+            "timebasepath",
         }
         result = graph_client.query(
             "MATCH (pc:IMASPathChange) RETURN DISTINCT pc.change_type AS change_type"
@@ -783,3 +785,231 @@ class TestCoordinateRelationships:
         assert count == 0, (
             f"{count} HAS_COORDINATE relationships with invalid dimension"
         )
+
+
+class TestLifecycleMetadata:
+    """Verify IDS and field lifecycle metadata from DD XML."""
+
+    def test_ids_have_lifecycle_status(self, graph_client, label_counts):
+        """All IDS nodes should have lifecycle_status (active or alpha)."""
+        if not label_counts.get("IDS"):
+            pytest.skip("No IDS nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (i:IDS) WHERE i.lifecycle_status IS NOT NULL RETURN count(i) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        # All 82 IDS have lifecycle_status in DD 4.1.1
+        assert count >= 80, f"Expected >=80 IDS with lifecycle_status, got {count}"
+
+    def test_ids_lifecycle_status_values(self, graph_client, label_counts):
+        """IDS lifecycle_status should only be 'active' or 'alpha'."""
+        if not label_counts.get("IDS"):
+            pytest.skip("No IDS nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (i:IDS) WHERE i.lifecycle_status IS NOT NULL "
+            "RETURN DISTINCT i.lifecycle_status AS status"
+        )
+        statuses = {r["status"] for r in result}
+        valid = {"active", "alpha"}
+        invalid = statuses - valid
+        assert not invalid, f"Invalid IDS lifecycle_status values: {invalid}"
+
+    def test_ids_have_lifecycle_version(self, graph_client, label_counts):
+        """IDS nodes should have lifecycle_version (introduction version)."""
+        if not label_counts.get("IDS"):
+            pytest.skip("No IDS nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (i:IDS) WHERE i.lifecycle_version IS NOT NULL RETURN count(i) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count >= 80, f"Expected >=80 IDS with lifecycle_version, got {count}"
+
+    def test_ids_have_ids_type(self, graph_client, label_counts):
+        """IDS nodes should have ids_type (dynamic or constant)."""
+        if not label_counts.get("IDS"):
+            pytest.skip("No IDS nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (i:IDS) WHERE i.ids_type IS NOT NULL "
+            "RETURN DISTINCT i.ids_type AS t, count(*) AS cnt"
+        )
+        types = {r["t"] for r in result}
+        assert "dynamic" in types, "Expected 'dynamic' IDS type"
+        assert "constant" in types, "Expected 'constant' IDS type"
+
+    def test_ids_have_lifecycle_last_change(self, graph_client, label_counts):
+        """IDS nodes should have lifecycle_last_change."""
+        if not label_counts.get("IDS"):
+            pytest.skip("No IDS nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (i:IDS) WHERE i.lifecycle_last_change IS NOT NULL "
+            "RETURN count(i) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count >= 80, f"Expected >=80 IDS with lifecycle_last_change, got {count}"
+
+    def test_field_lifecycle_status(self, graph_client, label_counts):
+        """Fields with alpha/obsolescent lifecycle_status should be populated."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASPath) WHERE p.lifecycle_status IS NOT NULL "
+            "RETURN p.lifecycle_status AS status, count(p) AS cnt"
+        )
+        total = sum(r["cnt"] for r in result)
+        # DD 4.1.1 has 238 fields with lifecycle_status
+        assert total >= 200, f"Expected >=200 fields with lifecycle_status, got {total}"
+        statuses = {r["status"] for r in result}
+        valid = {"alpha", "obsolescent"}
+        invalid = statuses - valid
+        assert not invalid, f"Invalid field lifecycle_status values: {invalid}"
+
+
+class TestTimebasepath:
+    """Verify timebasepath metadata on dynamic fields."""
+
+    def test_timebasepath_populated(self, graph_client, label_counts):
+        """Dynamic fields should have timebasepath references."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASPath) WHERE p.timebasepath IS NOT NULL RETURN count(p) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        # DD 4.1.1 has 4,520 fields with timebasepath
+        assert count >= 4000, f"Expected >=4000 paths with timebasepath, got {count}"
+
+    def test_timebasepath_values_reasonable(self, graph_client, label_counts):
+        """Timebasepath values should be relative path references."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASPath) WHERE p.timebasepath IS NOT NULL "
+            "RETURN DISTINCT p.timebasepath AS tbp LIMIT 20"
+        )
+        for r in result:
+            tbp = r["tbp"]
+            # Should be relative paths like "time", "../time", "/time"
+            assert isinstance(tbp, str) and len(tbp) > 0, f"Invalid timebasepath: {tbp}"
+
+
+class TestPathDoc:
+    """Verify human-readable path documentation."""
+
+    def test_path_doc_populated(self, graph_client, label_counts):
+        """Fields with array notation should have path_doc."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASPath) WHERE p.path_doc IS NOT NULL RETURN count(p) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        # DD 4.1.1 has ~38,522 fields where path_doc differs from path
+        assert count >= 30000, f"Expected >=30000 paths with path_doc, got {count}"
+
+
+class TestNBCChanges:
+    """Verify non-backward-compatible change metadata."""
+
+    def test_nbc_changes_populated(self, graph_client, label_counts):
+        """Fields with NBC changes should have change_nbc_version."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASPath) WHERE p.change_nbc_version IS NOT NULL "
+            "RETURN count(p) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        # DD 4.1.1 has 1,912 fields with change_nbc_version
+        assert count >= 1500, (
+            f"Expected >=1500 paths with change_nbc_version, got {count}"
+        )
+
+    def test_nbc_changes_have_description(self, graph_client, label_counts):
+        """Fields with NBC version should also have description."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASPath) "
+            "WHERE p.change_nbc_version IS NOT NULL "
+            "  AND (p.change_nbc_description IS NULL OR p.change_nbc_description = '') "
+            "RETURN count(p) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, f"{count} paths have change_nbc_version without description"
+
+
+class TestIdentifierSchemas:
+    """Verify IdentifierSchema nodes and relationships."""
+
+    def test_identifier_schemas_exist(self, graph_client, label_counts):
+        """IdentifierSchema nodes should be created from DD enums."""
+        result = graph_client.query("MATCH (s:IdentifierSchema) RETURN count(s) AS cnt")
+        count = result[0]["cnt"] if result else 0
+        # DD 4.1.1 has 62 unique identifier_enum types
+        assert count >= 50, f"Expected >=50 IdentifierSchema nodes, got {count}"
+
+    def test_identifier_schemas_have_options(self, graph_client, label_counts):
+        """Each IdentifierSchema should have JSON-encoded options."""
+        result = graph_client.query(
+            "MATCH (s:IdentifierSchema) "
+            "WHERE s.options IS NULL OR s.option_count IS NULL "
+            "RETURN count(s) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} IdentifierSchema nodes missing options or option_count"
+        )
+
+    def test_paths_linked_to_schemas(self, graph_client, label_counts):
+        """Fields with identifier_enum should link to IdentifierSchema."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASPath)-[:HAS_IDENTIFIER_SCHEMA]->(s:IdentifierSchema) "
+            "RETURN count(p) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        # DD 4.1.1 has 315 fields with identifier_enum
+        assert count >= 250, (
+            f"Expected >=250 paths linked to IdentifierSchema, got {count}"
+        )
+
+    def test_identifier_schemas_have_field_count(self, graph_client, label_counts):
+        """IdentifierSchema nodes should track how many fields use them."""
+        result = graph_client.query(
+            "MATCH (s:IdentifierSchema) "
+            "WHERE s.field_count IS NULL OR s.field_count < 1 "
+            "RETURN count(s) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} IdentifierSchema nodes with missing/zero field_count"
+        )
+
+
+class TestURLMetadata:
+    """Verify URL metadata on fields."""
+
+    def test_url_fields_populated(self, graph_client, label_counts):
+        """Fields with documentation URLs should have url property."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASPath) WHERE p.url IS NOT NULL RETURN count(p) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        # DD 4.1.1 has 618 fields with url
+        assert count >= 500, f"Expected >=500 paths with url, got {count}"
