@@ -5,6 +5,8 @@ Source-agnostic image handling used by both wiki and files discovery:
 - Content-addressed ID generation for deduplication
 - Batch persistence of Image nodes to Neo4j
 - Image extraction from documents (PDF, PPTX)
+- Image claim/mark/release graph operations for VLM scoring
+- Fetch image bytes from URL or filesystem via SSH
 
 Design:
 - Images are downsampled to WebP format, max 768px longest side, quality 80
@@ -18,13 +20,17 @@ Third-party dependencies:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import io
 import logging
+import uuid
 from typing import Any
 
 from PIL import Image
+
+from imas_codex.discovery.base.claims import DEFAULT_CLAIM_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -335,3 +341,556 @@ def persist_document_figures(
         parent_label=parent_label,
         parent_id_key="parent_id",
     )
+
+
+# =============================================================================
+# Image Claim/Mark/Release Graph Operations (shared by wiki + files)
+# =============================================================================
+
+
+def has_pending_image_work(facility: str) -> bool:
+    """Check if there are images pending VLM scoring (status=ingested, no description)."""
+    try:
+        from imas_codex.graph import GraphClient
+
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (img:Image {facility_id: $facility})
+                WHERE img.status = 'ingested'
+                  AND img.description IS NULL
+                RETURN count(img) > 0 AS has_work
+                """,
+                facility=facility,
+            )
+            rows = list(result)
+            return rows[0]["has_work"] if rows else False
+    except Exception:
+        return False
+
+
+def claim_images_for_scoring(
+    facility: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Claim ingested images for VLM scoring.
+
+    Images with status='ingested' and no description are ready for VLM processing.
+    Uses claim token pattern with timeout-based orphan recovery.
+    """
+    from imas_codex.graph import GraphClient
+
+    cutoff = f"PT{DEFAULT_CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(uuid.uuid4())
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (img:Image {facility_id: $facility})
+            WHERE img.status = 'ingested'
+              AND img.description IS NULL
+              AND (img.claimed_at IS NULL
+                   OR img.claimed_at < datetime() - duration($cutoff))
+            WITH img
+            ORDER BY rand()
+            LIMIT $limit
+            SET img.claimed_at = datetime(), img.claim_token = $token
+            """,
+            facility=facility,
+            cutoff=cutoff,
+            limit=limit,
+            token=claim_token,
+        )
+
+        result = gc.query(
+            """
+            MATCH (img:Image {facility_id: $facility, claim_token: $token})
+            OPTIONAL MATCH (sibling:Image {facility_id: $facility,
+                                           page_title: img.page_title})
+              WHERE img.page_title IS NOT NULL
+            WITH img, count(sibling) AS page_image_count
+            RETURN img.id AS id,
+                   img.source_url AS source_url,
+                   img.source_type AS source_type,
+                   img.image_format AS image_format,
+                   img.page_title AS page_title,
+                   img.section AS section,
+                   img.surrounding_text AS surrounding_text,
+                   img.alt_text AS alt_text,
+                   img.image_data AS image_data,
+                   page_image_count
+            """,
+            facility=facility,
+            token=claim_token,
+        )
+        claimed = list(result)
+
+        logger.debug(
+            "claim_images_for_scoring: requested %d, won %d (token=%s)",
+            limit,
+            len(claimed),
+            claim_token[:8],
+        )
+        return claimed
+
+
+def mark_images_scored(
+    facility: str,
+    results: list[dict[str, Any]],
+    *,
+    store_images: bool = False,
+) -> int:
+    """Mark images as scored with VLM results.
+
+    Updates image status to 'captioned' and persists description + scoring fields.
+    When store_images is False (default), clears image_data to free graph storage.
+    """
+    if not results:
+        return 0
+
+    from imas_codex.graph import GraphClient
+
+    clear_data = "" if store_images else ", img.image_data = null"
+
+    with GraphClient() as gc:
+        gc.query(
+            f"""
+            UNWIND $batch AS item
+            MATCH (img:Image {{id: item.id}})
+            SET img.status = 'captioned',
+                img.mermaid_diagram = item.mermaid_diagram,
+                img.ocr_text = item.ocr_text,
+                img.ocr_mdsplus_paths = item.ocr_mdsplus_paths,
+                img.ocr_imas_paths = item.ocr_imas_paths,
+                img.ocr_ppf_paths = item.ocr_ppf_paths,
+                img.ocr_tool_mentions = item.ocr_tool_mentions,
+                img.purpose = item.purpose,
+                img.description = item.description,
+                img.score = item.score,
+                img.score_data_documentation = item.score_data_documentation,
+                img.score_physics_content = item.score_physics_content,
+                img.score_code_documentation = item.score_code_documentation,
+                img.score_data_access = item.score_data_access,
+                img.score_calibration = item.score_calibration,
+                img.score_imas_relevance = item.score_imas_relevance,
+                img.reasoning = item.reasoning,
+                img.keywords = item.keywords,
+                img.physics_domain = item.physics_domain,
+                img.should_ingest = item.should_ingest,
+                img.skip_reason = item.skip_reason,
+                img.score_cost = item.score_cost,
+                img.scored_at = datetime(),
+                img.captioned_at = datetime(),
+                img.claimed_at = null
+                {clear_data}
+            """,
+            batch=results,
+        )
+
+    logger.info(
+        "mark_images_scored: updated %d images to captioned for %s",
+        len(results),
+        facility,
+    )
+    return len(results)
+
+
+def release_claimed_images(image_ids: list[str]) -> None:
+    """Release claimed images back to pool (e.g., on VLM failure)."""
+    if not image_ids:
+        return
+    try:
+        from imas_codex.graph import GraphClient
+
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (img:Image {id: id})
+                SET img.claimed_at = null
+                """,
+                ids=image_ids,
+            )
+    except Exception as e:
+        logger.warning("Could not release %d claimed images: %s", len(image_ids), e)
+
+
+# =============================================================================
+# Fetch image bytes (URL or filesystem via SSH)
+# =============================================================================
+
+
+async def fetch_image_bytes(
+    source: str,
+    ssh_host: str | None = None,
+    timeout: int = 15,
+    session: Any = None,
+) -> bytes | None:
+    """Fetch image bytes from URL or filesystem path, optionally via SSH.
+
+    Dispatches based on source format:
+    - Absolute paths (starting with /): read via SSH cat
+    - URLs (http/https): fetch via HTTP, SSH curl proxy, or auth session
+
+    Args:
+        source: Image URL or absolute filesystem path
+        ssh_host: SSH host for proxied fetching or remote filesystem access
+        timeout: Timeout in seconds
+        session: Optional authenticated requests.Session (bypasses SSH)
+
+    Returns:
+        Raw image bytes or None on failure
+    """
+    import subprocess
+
+    # Filesystem path — read via SSH
+    if source.startswith("/"):
+        if not ssh_host:
+            logger.debug("Cannot fetch filesystem path without ssh_host: %s", source)
+            return None
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["ssh", ssh_host, f"cat '{source}'"],
+                capture_output=True,
+                timeout=timeout + 10,
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+            return None
+        except Exception:
+            return None
+
+    # Authenticated session (e.g. Confluence)
+    if session:
+        import requests as _req
+
+        dl_session = _req.Session()
+        dl_session.cookies.update(session.cookies)
+        dl_session.headers["Accept"] = "*/*"
+        try:
+            resp = await asyncio.to_thread(
+                dl_session.get, source, timeout=timeout, verify=False
+            )
+            if resp.status_code == 200:
+                return resp.content
+            return None
+        except Exception:
+            return None
+
+    # SSH-proxied HTTP fetch
+    if ssh_host:
+        cmd = f'curl -sk --noproxy "*" -m {timeout} "{source}" 2>/dev/null'
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["ssh", ssh_host, cmd],
+                capture_output=True,
+                timeout=timeout + 10,
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+            return None
+        except Exception:
+            return None
+
+    # Direct HTTP fetch
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(float(timeout)),
+            follow_redirects=True,
+            verify=False,
+        ) as client:
+            resp = await client.get(source)
+            if resp.status_code == 200:
+                return resp.content
+            return None
+    except Exception:
+        return None
+
+
+# =============================================================================
+# VLM Scoring
+# =============================================================================
+
+
+async def score_images_batch(
+    images: list[dict[str, Any]],
+    model: str,
+    focus: str | None = None,
+    data_access_patterns: dict[str, Any] | None = None,
+    facility_id: str | None = None,
+) -> tuple[list[dict[str, Any]], float]:
+    """Score a batch of images using VLM with structured output.
+
+    Sends image bytes + context to VLM and receives caption + scoring
+    in a single pass. Uses ImageScoreBatch Pydantic model.
+
+    Args:
+        images: List of image dicts with id, image_data, page_title, etc.
+        model: Model identifier from get_model()
+        focus: Optional focus area for scoring
+        data_access_patterns: Optional facility-specific data access patterns.
+            When provided, injected into the prompt template so the VLM can
+            recognize facility-specific path formats and tool references.
+        facility_id: Facility identifier for entity extraction (e.g., 'tcv')
+
+    Returns:
+        (results, cost) tuple
+    """
+    import os
+    import re
+
+    from imas_codex.discovery.base.llm import set_litellm_offline_env
+
+    set_litellm_offline_env()
+    import litellm
+
+    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.wiki.models import (
+        ImageScoreBatch,
+        grounded_image_score,
+    )
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY environment variable not set.")
+
+    model_id = model
+    if not model_id.startswith("openrouter/"):
+        model_id = f"openrouter/{model_id}"
+
+    # Build system prompt
+    context: dict[str, Any] = {}
+    if focus:
+        context["focus"] = focus
+    if data_access_patterns:
+        context["data_access_patterns"] = data_access_patterns
+    system_prompt = render_prompt("wiki/image-captioner", context)
+
+    # Build user message with image content
+    user_content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                f"Score and caption these {len(images)} images "
+                f"from fusion facility documentation.\n"
+            ),
+        }
+    ]
+
+    for i, img in enumerate(images, 1):
+        context_parts = [f"\n## Image {i}", f"ID: {img['id']}"]
+        if img.get("page_title"):
+            context_parts.append(f"Page: {img['page_title']}")
+        if img.get("section"):
+            context_parts.append(f"Section: {img['section']}")
+        if img.get("surrounding_text"):
+            context_parts.append(f"Context: {img['surrounding_text'][:500]}")
+        if img.get("alt_text"):
+            context_parts.append(f"Alt text: {img['alt_text']}")
+
+        user_content.append({"type": "text", "text": "\n".join(context_parts)})
+
+        img_format = img.get("image_format", "webp")
+        mime_type = f"image/{img_format}"
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{img['image_data']}",
+                },
+            }
+        )
+
+    user_content.append(
+        {
+            "type": "text",
+            "text": "\n\nReturn results for each image in order. "
+            "The response format is enforced by the schema.",
+        }
+    )
+
+    # Retry loop
+    max_retries = 5
+    retry_base_delay = 4.0
+    last_error = None
+    total_cost = 0.0
+
+    from imas_codex.discovery.base.llm import (
+        _supports_cache_control,
+        inject_cache_control,
+    )
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+    if _supports_cache_control(model):
+        messages = inject_cache_control(messages)
+
+    for attempt in range(max_retries):
+        try:
+            response = await litellm.acompletion(
+                model=model_id,
+                api_key=api_key,
+                response_format=ImageScoreBatch,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=32000,
+                timeout=180,
+            )
+
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+
+            if (
+                hasattr(response, "_hidden_params")
+                and "response_cost" in response._hidden_params
+            ):
+                cost = response._hidden_params["response_cost"]
+            else:
+                cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+
+            total_cost += cost
+
+            content = response.choices[0].message.content
+            if not content:
+                return [], total_cost
+
+            content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
+            content = content.encode("utf-8", errors="surrogateescape").decode(
+                "utf-8", errors="replace"
+            )
+
+            batch = ImageScoreBatch.model_validate_json(content)
+            llm_results = batch.results
+            break
+
+        except Exception as e:
+            last_error = e
+            error_msg = str(e).lower()
+
+            from imas_codex.discovery.base.llm import (
+                ProviderBudgetExhausted,
+                _is_budget_exhausted,
+            )
+
+            if _is_budget_exhausted(error_msg):
+                raise ProviderBudgetExhausted(
+                    f"LLM provider budget exhausted: {str(e)[:200]}"
+                ) from e
+
+            is_retryable = any(
+                x in error_msg
+                for x in [
+                    "overloaded",
+                    "rate",
+                    "429",
+                    "503",
+                    "timeout",
+                    "eof",
+                    "json",
+                    "truncated",
+                    "validation",
+                ]
+            )
+            if is_retryable and attempt < max_retries - 1:
+                delay = retry_base_delay * (2**attempt)
+                logger.debug(
+                    "VLM error (attempt %d/%d): %s. Retrying in %.1fs...",
+                    attempt + 1,
+                    max_retries,
+                    str(e)[:100],
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise ValueError(f"VLM failed after {attempt + 1} attempts: {e}") from e
+    else:
+        raise last_error  # type: ignore[misc]
+
+    # Convert to result dicts with grounded scoring
+    cost_per_image = total_cost / len(images) if images else 0.0
+    results: list[dict[str, Any]] = []
+
+    # Load facility key_tools for OCR text pattern matching
+    _facility_key_tools: list[str] | None = None
+    _facility_code_patterns: list[str] | None = None
+    if data_access_patterns:
+        _facility_key_tools = data_access_patterns.get("key_tools")
+        _facility_code_patterns = data_access_patterns.get("code_import_patterns")
+
+    # Build facility-aware extractor for OCR entity extraction
+    _extractor = None
+    if facility_id:
+        from imas_codex.discovery.wiki.entity_extraction import (
+            FacilityEntityExtractor,
+        )
+
+        _extractor = FacilityEntityExtractor(facility_id)
+    else:
+        from imas_codex.discovery.wiki.entity_extraction import (
+            extract_facility_tool_mentions,
+            extract_mdsplus_paths,
+        )
+
+    for r in llm_results[: len(images)]:
+        scores = {
+            "score_data_documentation": r.score_data_documentation,
+            "score_physics_content": r.score_physics_content,
+            "score_code_documentation": r.score_code_documentation,
+            "score_data_access": r.score_data_access,
+            "score_calibration": r.score_calibration,
+            "score_imas_relevance": r.score_imas_relevance,
+        }
+        combined_score = grounded_image_score(scores, r.purpose)
+
+        # Extract structured entities from VLM OCR text
+        ocr_mdsplus_paths: list[str] = []
+        ocr_tool_mentions: list[str] = []
+        ocr_imas_paths: list[str] = []
+        ocr_ppf_paths: list[str] = []
+        if r.ocr_text:
+            if _extractor:
+                ocr_entities = _extractor.extract(r.ocr_text)
+                ocr_mdsplus_paths = ocr_entities.mdsplus_paths
+                ocr_imas_paths = ocr_entities.imas_paths
+                ocr_ppf_paths = ocr_entities.ppf_paths
+                ocr_tool_mentions = ocr_entities.tool_mentions
+            else:
+                ocr_mdsplus_paths = extract_mdsplus_paths(r.ocr_text)
+                ocr_tool_mentions = extract_facility_tool_mentions(
+                    r.ocr_text, _facility_key_tools, _facility_code_patterns
+                )
+
+        results.append(
+            {
+                "id": r.id,
+                "mermaid_diagram": r.mermaid_diagram,
+                "ocr_text": r.ocr_text,
+                "ocr_mdsplus_paths": ocr_mdsplus_paths,
+                "ocr_imas_paths": ocr_imas_paths,
+                "ocr_ppf_paths": ocr_ppf_paths,
+                "ocr_tool_mentions": ocr_tool_mentions,
+                "purpose": r.purpose.value,
+                "description": r.description,
+                "score": combined_score,
+                "score_data_documentation": r.score_data_documentation,
+                "score_physics_content": r.score_physics_content,
+                "score_code_documentation": r.score_code_documentation,
+                "score_data_access": r.score_data_access,
+                "score_calibration": r.score_calibration,
+                "score_imas_relevance": r.score_imas_relevance,
+                "reasoning": r.reasoning,
+                "keywords": r.keywords[:5],
+                "physics_domain": r.physics_domain.value if r.physics_domain else None,
+                "should_ingest": r.should_ingest,
+                "skip_reason": r.skip_reason or None,
+                "score_cost": cost_per_image,
+            }
+        )
+
+    return results, total_cost

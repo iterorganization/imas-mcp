@@ -443,7 +443,7 @@ async def code_worker(
             for f in files:
                 await asyncio.to_thread(_mark_file_failed, f["id"], str(e)[:200])
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.1)
 
 
 # ============================================================================
@@ -529,7 +529,7 @@ async def docs_worker(
             for f in files:
                 await asyncio.to_thread(_mark_file_failed, f["id"], str(e)[:200])
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.1)
 
 
 # ============================================================================
@@ -814,4 +814,179 @@ async def image_worker(
                 ],
             )
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.1)
+
+
+# ============================================================================
+# Image Score Worker (VLM captioning + scoring)
+# ============================================================================
+
+
+async def image_score_worker(
+    state: FileDiscoveryState,
+    on_progress: Callable | None = None,
+    batch_size: int = 10,
+) -> None:
+    """Image score worker: VLM captioning + scoring in single pass.
+
+    Claims Image nodes with status='ingested' (created by image_worker),
+    fetches bytes on-demand from source_url via SSH cat (filesystem paths),
+    sends to VLM for caption + scoring.
+
+    Transitions: ingested → captioned
+    """
+    from imas_codex.discovery.base.image import (
+        claim_images_for_scoring,
+        downsample_image,
+        fetch_image_bytes,
+        mark_images_scored,
+        release_claimed_images,
+        score_images_batch,
+    )
+    from imas_codex.settings import get_model
+
+    worker_id = id(asyncio.current_task())
+    logger.info("image_score_worker started (task=%s)", worker_id)
+
+    # Load facility-specific data access patterns for VLM context
+    facility_access_patterns: dict[str, Any] | None = None
+    try:
+        from imas_codex.discovery.base.facility import get_facility
+
+        facility_config = get_facility(state.facility)
+        facility_access_patterns = facility_config.get("data_access_patterns")
+    except Exception as e:
+        logger.debug("image_score_worker: no data_access_patterns: %s", e)
+
+    consecutive_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 3
+
+    while not state.should_stop():
+        if state.scan_only or state.score_only:
+            break
+
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            logger.warning(
+                "image_score_worker %s: %d consecutive VLM failures, stopping",
+                worker_id,
+                consecutive_failures,
+            )
+            break
+
+        try:
+            images = await asyncio.to_thread(
+                claim_images_for_scoring, state.facility, batch_size
+            )
+        except Exception as e:
+            logger.warning("image_score_worker: claim failed: %s", e)
+            await asyncio.sleep(5.0)
+            continue
+
+        if not images:
+            state.image_score_phase.record_idle()
+            if on_progress:
+                on_progress("idle", state.image_score_stats, None)
+            await asyncio.sleep(2.0)
+            continue
+
+        state.image_score_phase.record_activity(len(images))
+
+        # Fetch image bytes on-demand from source_url
+        images_ready: list[dict[str, Any]] = []
+        images_unfetchable: list[str] = []
+
+        for img in images:
+            source_url = img.get("source_url")
+            stored_data = img.get("image_data")
+            if stored_data:
+                images_ready.append(img)
+                continue
+            if not source_url:
+                images_unfetchable.append(img["id"])
+                continue
+            try:
+                raw_bytes = await fetch_image_bytes(source_url, state.ssh_host)
+                if not raw_bytes or len(raw_bytes) < 512:
+                    images_unfetchable.append(img["id"])
+                    continue
+                result = downsample_image(raw_bytes)
+                if result is None:
+                    images_unfetchable.append(img["id"])
+                    continue
+                b64_data, _w, _h, _ow, _oh = result
+                img["image_data"] = b64_data
+                images_ready.append(img)
+            except Exception as e:
+                logger.debug(
+                    "image_score_worker: failed to fetch %s: %s", source_url, e
+                )
+                images_unfetchable.append(img["id"])
+
+        if images_unfetchable:
+            logger.info(
+                "image_score_worker: %d/%d images unfetchable, releasing",
+                len(images_unfetchable),
+                len(images),
+            )
+            await asyncio.to_thread(release_claimed_images, images_unfetchable)
+
+        if not images_ready:
+            continue
+
+        if on_progress:
+            on_progress(
+                f"scoring {len(images_ready)} images",
+                state.image_score_stats,
+                None,
+            )
+
+        try:
+            model = get_model("vision")
+            results, cost = await score_images_batch(
+                images_ready,
+                model,
+                state.focus,
+                facility_access_patterns,
+                facility_id=state.facility,
+            )
+
+            # Persist to graph
+            await asyncio.to_thread(
+                mark_images_scored,
+                state.facility,
+                results,
+                store_images=state.store_images,
+            )
+            state.image_score_stats.processed += len(results)
+            state.image_score_stats.cost += cost
+            consecutive_failures = 0
+
+            if on_progress:
+                on_progress(
+                    f"scored {len(results)} images (${cost:.3f})",
+                    state.image_score_stats,
+                    [
+                        {
+                            "path": r.get("source_url", r["id"]),
+                            "score": f"{r.get('score', 0):.2f}",
+                        }
+                        for r in results[:5]
+                    ],
+                )
+
+        except ValueError as e:
+            consecutive_failures += 1
+            logger.warning(
+                "VLM failed for batch of %d images: %s (failure %d/%d)",
+                len(images_ready),
+                e,
+                consecutive_failures,
+                MAX_CONSECUTIVE_FAILURES,
+            )
+            state.image_score_stats.errors += 1
+            await asyncio.to_thread(
+                release_claimed_images,
+                [img["id"] for img in images_ready],
+            )
+
+        await asyncio.sleep(0.1)

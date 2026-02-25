@@ -75,6 +75,12 @@ logger = logging.getLogger(__name__)
     help="Maximum runtime in minutes",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed progress")
+@click.option(
+    "--store-images",
+    is_flag=True,
+    default=False,
+    help="Keep image bytes in graph after VLM scoring (default: clear to save storage)",
+)
 def files(
     facility: str,
     min_score: float,
@@ -88,6 +94,7 @@ def files(
     score_only: bool,
     time_limit: int | None,
     verbose: bool,
+    store_images: bool,
 ) -> None:
     """Discover and ingest source files from scored facility paths.
 
@@ -175,6 +182,10 @@ def files(
             if msg != "idle":
                 file_logger.info("IMAGE: %s", msg)
 
+        def log_image_score(msg, stats, results=None):
+            if msg != "idle":
+                file_logger.info("VLM: %s", msg)
+
         if not use_rich:
             log_print(f"\n[bold]File Discovery: {facility}[/bold]")
             log_print(f"  SSH host: {ssh_host}")
@@ -198,6 +209,7 @@ def files(
                     num_docs_workers=1,
                     scan_only=scan_only,
                     score_only=score_only,
+                    store_images=store_images,
                     deadline=deadline,
                     on_scan_progress=log_scan,
                     on_score_progress=log_score,
@@ -205,6 +217,7 @@ def files(
                     on_code_progress=log_code,
                     on_docs_progress=log_docs,
                     on_image_progress=log_image,
+                    on_image_score_progress=log_image_score,
                 )
             )
         else:
@@ -282,6 +295,9 @@ def files(
                     def on_image(msg, stats, results=None):
                         display.update_image(msg, stats, results)
 
+                    def on_image_score(msg, stats, results=None):
+                        display.update_image_score(msg, stats, results)
+
                     def on_worker_status(worker_group):
                         display.update_worker_status(worker_group)
 
@@ -299,6 +315,7 @@ def files(
                             num_docs_workers=1,
                             scan_only=scan_only,
                             score_only=score_only,
+                            store_images=store_images,
                             deadline=deadline,
                             on_scan_progress=on_scan,
                             on_score_progress=on_score,
@@ -306,6 +323,7 @@ def files(
                             on_code_progress=on_code,
                             on_docs_progress=on_docs,
                             on_image_progress=on_image,
+                            on_image_score_progress=on_image_score,
                             on_worker_status=on_worker_status,
                         )
                     finally:
@@ -337,6 +355,7 @@ def files(
         code_ingested = result.get("code_ingested", 0)
         docs_ingested = result.get("docs_ingested", 0)
         images_ingested = result.get("images_ingested", 0)
+        images_scored = result.get("images_scored", 0)
         cost = result.get("cost", 0)
         elapsed = result.get("elapsed_seconds", 0)
 
@@ -344,7 +363,8 @@ def files(
             f"\n  [green]{scanned} scanned, {scored} scored, "
             f"{code_ingested} code ingested, "
             f"{docs_ingested} docs ingested, "
-            f"{images_ingested} images ingested[/green]"
+            f"{images_ingested} images ingested, "
+            f"{images_scored} images captioned[/green]"
         )
         log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
 

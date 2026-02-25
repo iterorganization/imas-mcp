@@ -33,6 +33,7 @@ from .workers import (
     code_worker,
     docs_worker,
     enrich_worker,
+    image_score_worker,
     image_worker,
     scan_worker,
     score_worker,
@@ -58,8 +59,10 @@ async def run_parallel_file_discovery(
     num_code_workers: int = 2,
     num_docs_workers: int = 1,
     num_image_workers: int = 1,
+    num_image_score_workers: int = 1,
     scan_only: bool = False,
     score_only: bool = False,
+    store_images: bool = False,
     deadline: float | None = None,
     on_scan_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
@@ -67,6 +70,7 @@ async def run_parallel_file_discovery(
     on_code_progress: Callable | None = None,
     on_docs_progress: Callable | None = None,
     on_image_progress: Callable | None = None,
+    on_image_score_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
 ) -> dict[str, Any]:
@@ -79,6 +83,7 @@ async def run_parallel_file_discovery(
     4. Code workers: Fetch, chunk, embed code files (ingestion)
     5. Docs workers: Ingest non-code files (documents, notebooks, configs)
     6. Image workers: Downsample and persist standalone image files
+    7. Image score workers: VLM captioning + scoring of ingested images
 
     Args:
         facility: Facility ID
@@ -92,8 +97,10 @@ async def run_parallel_file_discovery(
         num_enrich_workers: Number of parallel enrich workers
         num_code_workers: Number of parallel code workers
         num_docs_workers: Number of parallel docs workers
+        num_image_score_workers: Number of parallel VLM image scoring workers
         scan_only: Only scan, skip scoring and ingestion
         score_only: Only score, skip scanning and ingestion
+        store_images: Keep image bytes in graph after VLM scoring
         deadline: Absolute time (epoch) when discovery should stop
         on_scan_progress: Callback for scan worker progress
         on_score_progress: Callback for score worker progress
@@ -126,6 +133,7 @@ async def run_parallel_file_discovery(
         deadline=deadline,
         scan_only=scan_only,
         score_only=score_only,
+        store_images=store_images,
     )
 
     # Pre-warm SSH ControlMaster
@@ -260,15 +268,33 @@ async def run_parallel_file_discovery(
                     )
                 )
             )
+
+        # --- Image score workers (VLM captioning) ---
+        for i in range(num_image_score_workers):
+            worker_name = f"image_score_worker_{i}"
+            status = worker_group.create_status(worker_name, group="vlm")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        image_score_worker,
+                        worker_name,
+                        state,
+                        state.should_stop,
+                        on_progress=on_image_score_progress,
+                        status_tracker=status,
+                    )
+                )
+            )
     else:
         state.code_phase.mark_done()
         state.docs_phase.mark_done()
         state.enrich_phase.mark_done()
         state.image_phase.mark_done()
+        state.image_score_phase.mark_done()
 
     logger.info(
         "Started %d workers: scan=%d score=%d enrich=%d code=%d docs=%d "
-        "image=%d scan_only=%s score_only=%s",
+        "image=%d vlm=%d scan_only=%s score_only=%s",
         worker_group.get_active_count(),
         num_scan_workers if not score_only else 0,
         num_score_workers if not scan_only else 0,
@@ -276,6 +302,7 @@ async def run_parallel_file_discovery(
         num_code_workers if not (scan_only or score_only) else 0,
         num_docs_workers if not (scan_only or score_only) else 0,
         num_image_workers if not (scan_only or score_only) else 0,
+        num_image_score_workers if not (scan_only or score_only) else 0,
         scan_only,
         score_only,
     )
@@ -309,6 +336,7 @@ async def run_parallel_file_discovery(
         "code_ingested": state.code_stats.processed,
         "docs_ingested": state.docs_stats.processed,
         "images_ingested": state.image_stats.processed,
+        "images_scored": state.image_score_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_errors": state.scan_stats.errors,
@@ -316,6 +344,7 @@ async def run_parallel_file_discovery(
         "enrich_errors": state.enrich_stats.errors,
         "code_errors": state.code_stats.errors,
         "image_errors": state.image_stats.errors,
+        "image_score_errors": state.image_score_stats.errors,
     }
 
 

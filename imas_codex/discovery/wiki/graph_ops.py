@@ -1293,21 +1293,11 @@ def mark_artifact_deferred(artifact_id: str, reason: str) -> None:
 
 def has_pending_image_work(facility: str) -> bool:
     """Check if there are images pending scoring (status=ingested, not yet scored)."""
-    try:
-        with GraphClient() as gc:
-            result = gc.query(
-                """
-                MATCH (img:Image {facility_id: $facility})
-                WHERE img.status = 'ingested'
-                  AND img.description IS NULL
-                RETURN count(img) > 0 AS has_work
-                """,
-                facility=facility,
-            )
-            rows = list(result)
-            return rows[0]["has_work"] if rows else False
-    except Exception:
-        return False
+    from imas_codex.discovery.base.image import (
+        has_pending_image_work as _has_pending,
+    )
+
+    return _has_pending(facility)
 
 
 @retry_on_deadlock()
@@ -1320,60 +1310,11 @@ def claim_images_for_scoring(
     Images with status='ingested' and no description are ready for VLM processing.
     Uses same claim token pattern as page/artifact claiming.
     """
-    import uuid
+    from imas_codex.discovery.base.image import (
+        claim_images_for_scoring as _claim,
+    )
 
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
-    claim_token = str(uuid.uuid4())
-
-    with GraphClient() as gc:
-        gc.query(
-            """
-            MATCH (img:Image {facility_id: $facility})
-            WHERE img.status = 'ingested'
-              AND img.description IS NULL
-              AND (img.claimed_at IS NULL
-                   OR img.claimed_at < datetime() - duration($cutoff))
-            WITH img
-            ORDER BY rand()
-            LIMIT $limit
-            SET img.claimed_at = datetime(), img.claim_token = $token
-            """,
-            facility=facility,
-            cutoff=cutoff,
-            limit=limit,
-            token=claim_token,
-        )
-
-        result = gc.query(
-            """
-            MATCH (img:Image {facility_id: $facility, claim_token: $token})
-            OPTIONAL MATCH (sibling:Image {facility_id: $facility,
-                                           page_title: img.page_title})
-              WHERE img.page_title IS NOT NULL
-            WITH img, count(sibling) AS page_image_count
-            RETURN img.id AS id,
-                   img.source_url AS source_url,
-                   img.source_type AS source_type,
-                   img.image_format AS image_format,
-                   img.page_title AS page_title,
-                   img.section AS section,
-                   img.surrounding_text AS surrounding_text,
-                   img.alt_text AS alt_text,
-                   img.image_data AS image_data,
-                   page_image_count
-            """,
-            facility=facility,
-            token=claim_token,
-        )
-        claimed = list(result)
-
-        logger.debug(
-            "claim_images_for_scoring: requested %d, won %d (token=%s)",
-            limit,
-            len(claimed),
-            claim_token[:8],
-        )
-        return claimed
+    return _claim(facility, limit)
 
 
 @retry_on_deadlock()
@@ -1389,67 +1330,15 @@ def mark_images_scored(
     When store_images is False (default), clears image_data to free graph storage.
     Uses batched UNWIND for efficient graph updates.
     """
-    if not results:
-        return 0
-
-    clear_data = "" if store_images else ", img.image_data = null"
-
-    with GraphClient() as gc:
-        gc.query(
-            f"""
-            UNWIND $batch AS item
-            MATCH (img:Image {{id: item.id}})
-            SET img.status = 'captioned',
-                img.mermaid_diagram = item.mermaid_diagram,
-                img.ocr_text = item.ocr_text,
-                img.ocr_mdsplus_paths = item.ocr_mdsplus_paths,
-                img.ocr_imas_paths = item.ocr_imas_paths,
-                img.ocr_ppf_paths = item.ocr_ppf_paths,
-                img.ocr_tool_mentions = item.ocr_tool_mentions,
-                img.purpose = item.purpose,
-                img.description = item.description,
-                img.score = item.score,
-                img.score_data_documentation = item.score_data_documentation,
-                img.score_physics_content = item.score_physics_content,
-                img.score_code_documentation = item.score_code_documentation,
-                img.score_data_access = item.score_data_access,
-                img.score_calibration = item.score_calibration,
-                img.score_imas_relevance = item.score_imas_relevance,
-                img.reasoning = item.reasoning,
-                img.keywords = item.keywords,
-                img.physics_domain = item.physics_domain,
-                img.should_ingest = item.should_ingest,
-                img.skip_reason = item.skip_reason,
-                img.score_cost = item.score_cost,
-                img.scored_at = datetime(),
-                img.captioned_at = datetime(),
-                img.claimed_at = null
-                {clear_data}
-            """,
-            batch=results,
-        )
-
-    logger.info(
-        "mark_images_scored: updated %d images to captioned for %s",
-        len(results),
-        facility,
+    from imas_codex.discovery.base.image import (
+        mark_images_scored as _mark,
     )
-    return len(results)
+
+    return _mark(facility, results, store_images=store_images)
 
 
 def _release_claimed_images(image_ids: list[str]) -> None:
     """Release claimed images back to pool (e.g., on VLM failure)."""
-    if not image_ids:
-        return
-    try:
-        with GraphClient() as gc:
-            gc.query(
-                """
-                UNWIND $ids AS id
-                MATCH (img:Image {id: id})
-                SET img.claimed_at = null
-                """,
-                ids=image_ids,
-            )
-    except Exception as e:
-        logger.warning("Could not release %d claimed images: %s", len(image_ids), e)
+    from imas_codex.discovery.base.image import release_claimed_images
+
+    release_claimed_images(image_ids)

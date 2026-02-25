@@ -42,11 +42,13 @@ class FileDiscoveryState:
     code_stats: WorkerStats = field(default_factory=WorkerStats)
     docs_stats: WorkerStats = field(default_factory=WorkerStats)
     image_stats: WorkerStats = field(default_factory=WorkerStats)
+    image_score_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
     scan_only: bool = False
     score_only: bool = False
+    store_images: bool = False
 
     # Pipeline phases
     scan_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("scan"))
@@ -55,6 +57,9 @@ class FileDiscoveryState:
     code_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("code"))
     docs_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("docs"))
     image_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("image"))
+    image_score_phase: PipelinePhase = field(
+        default_factory=lambda: PipelinePhase("image_score")
+    )
 
     def should_stop(self) -> bool:
         """Check if discovery should stop."""
@@ -73,7 +78,7 @@ class FileDiscoveryState:
     @property
     def total_cost(self) -> float:
         """Total LLM cost across all workers."""
-        return self.score_stats.cost
+        return self.score_stats.cost + self.image_score_stats.cost
 
     @property
     def elapsed_seconds(self) -> float:
@@ -84,4 +89,5 @@ class FileDiscoveryState:
             self.code_stats.elapsed,
             self.docs_stats.elapsed,
             self.image_stats.elapsed,
+            self.image_score_stats.elapsed,
         )

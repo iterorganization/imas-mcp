@@ -1775,63 +1775,8 @@ async def _fetch_image_bytes(
 ) -> bytes | None:
     """Fetch image bytes from URL, optionally via SSH proxy or auth session.
 
-    Args:
-        url: Image URL
-        ssh_host: Optional SSH host for proxied fetching
-        timeout: Timeout in seconds
-        session: Optional authenticated requests.Session (bypasses SSH)
-
-    Returns:
-        Raw image bytes or None on failure
+    Delegates to shared implementation in discovery.base.image.
     """
-    import subprocess
+    from imas_codex.discovery.base.image import fetch_image_bytes
 
-    import httpx
-
-    if session:
-        # Use authenticated session (e.g. Confluence) with binary-friendly headers.
-        # Confluence sessions have Accept: application/json for REST API — override
-        # for binary downloads.
-        import requests as _req
-
-        dl_session = _req.Session()
-        dl_session.cookies.update(session.cookies)
-        dl_session.headers["Accept"] = "*/*"
-        try:
-            resp = await asyncio.to_thread(
-                dl_session.get, url, timeout=timeout, verify=False
-            )
-            if resp.status_code == 200:
-                return resp.content
-            return None
-        except Exception:
-            return None
-    elif ssh_host:
-        # Fetch via SSH proxy using curl
-        cmd = f'curl -sk --noproxy "*" -m {timeout} "{url}" 2>/dev/null'
-        try:
-            result = await asyncio.to_thread(
-                subprocess.run,
-                ["ssh", ssh_host, cmd],
-                capture_output=True,
-                timeout=timeout + 10,
-            )
-            if result.returncode == 0 and result.stdout:
-                return result.stdout
-            return None
-        except Exception:
-            return None
-    else:
-        # Direct HTTP fetch
-        try:
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(float(timeout)),
-                follow_redirects=True,
-                verify=False,
-            ) as client:
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    return resp.content
-                return None
-        except Exception:
-            return None
+    return await fetch_image_bytes(url, ssh_host, timeout=timeout, session=session)
