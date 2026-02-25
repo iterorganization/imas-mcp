@@ -2678,35 +2678,14 @@ def serve_status() -> None:
     Examples:
         imas-codex serve status
     """
+    from imas_codex.remote.locations import is_location_local
     from imas_codex.settings import (
         get_embed_remote_url,
         get_embed_scheduler,
         get_embedding_location,
+        get_graph_location,
         get_graph_scheduler,
     )
-
-    # ── Venv Check ────────────────────────────────────────────────────────
-    click.echo("Environment:")
-    _missing: list[str] = []
-    try:
-        import torch
-
-        _torch_cuda = torch.cuda.is_available()
-        _torch_label = f"torch={torch.__version__}"
-        if _torch_cuda:
-            _torch_label += " (CUDA)"
-        else:
-            _torch_label += " (CPU-only)"
-        click.echo(f"  {_torch_label}")
-    except ImportError:
-        _missing.append("torch (cpu/gpu extra)")
-        _torch_cuda = False
-    if _missing:
-        click.echo(f"  ✗ Missing: {', '.join(_missing)}")
-        click.echo("  Hint: uv sync --extra gpu  (or --extra cpu)")
-    else:
-        click.echo("  ✓ All serve dependencies available")
-    click.echo()
 
     # ── SLURM Allocation ─────────────────────────────────────────────────
     alloc = _get_allocation()
@@ -2771,24 +2750,28 @@ def serve_status() -> None:
         except subprocess.CalledProcessError:
             click.echo("  ✗ Status: not responding on compute node")
 
-        # Check tunnel accessibility
-        from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
-
-        tunnel_bolt = bolt_port + TUNNEL_OFFSET
-        tunnel_http = http_port + TUNNEL_OFFSET
-        bolt_ok = is_tunnel_active(tunnel_bolt)
-        http_ok = is_tunnel_active(tunnel_http)
-        if bolt_ok and http_ok:
-            click.echo(
-                f"  Tunnel: ✓ bolt://localhost:{tunnel_bolt}, "
-                f"http://localhost:{tunnel_http}"
-            )
+        # Access: direct when on-facility, tunnel when remote
+        graph_location = get_graph_location()
+        if is_location_local(graph_location):
+            click.echo("  Access: direct (on-facility)")
         else:
-            click.echo(
-                f"  Tunnel: ✗ bolt:{tunnel_bolt} "
-                f"{'✓' if bolt_ok else '✗'}, "
-                f"http:{tunnel_http} {'✓' if http_ok else '✗'}"
-            )
+            from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
+
+            tunnel_bolt = bolt_port + TUNNEL_OFFSET
+            tunnel_http = http_port + TUNNEL_OFFSET
+            bolt_ok = is_tunnel_active(tunnel_bolt)
+            http_ok = is_tunnel_active(tunnel_http)
+            if bolt_ok and http_ok:
+                click.echo(
+                    f"  Tunnel: ✓ bolt://localhost:{tunnel_bolt}, "
+                    f"http://localhost:{tunnel_http}"
+                )
+            else:
+                click.echo(
+                    f"  Tunnel: ✗ bolt:{tunnel_bolt} "
+                    f"{'✓' if bolt_ok else '✗'}, "
+                    f"http:{tunnel_http} {'✓' if http_ok else '✗'}"
+                )
     elif compute_node and not compute_services.get("neo4j"):
         click.echo(f"  ✗ Status: stopped (not running on {compute_node})")
         click.echo(f"  Scheduler: {scheduler}")
@@ -2849,13 +2832,16 @@ def serve_status() -> None:
         except subprocess.CalledProcessError:
             click.echo("  ✗ Status: not responding on compute node")
 
-        # Check tunnel / local port accessibility
-        from imas_codex.remote.tunnel import is_tunnel_active
-
-        if is_tunnel_active(port):
-            click.echo(f"  Tunnel: ✓ localhost:{port}")
+        # Access: direct when on-facility, tunnel when remote
+        if is_location_local(embed_location):
+            click.echo("  Access: direct (on-facility)")
         else:
-            click.echo(f"  Tunnel: ✗ localhost:{port} not reachable")
+            from imas_codex.remote.tunnel import is_tunnel_active
+
+            if is_tunnel_active(port):
+                click.echo(f"  Tunnel: ✓ localhost:{port}")
+            else:
+                click.echo(f"  Tunnel: ✗ localhost:{port} not reachable")
     elif compute_node and not compute_services.get("embed"):
         click.echo(f"  ✗ Status: stopped (not running on {compute_node})")
     else:
