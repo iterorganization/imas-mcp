@@ -126,7 +126,9 @@ def cocos_to_parameters(cocos: int) -> COCOSParameters:
 def cocos_from_dd_version(version: str) -> int:
     """Get COCOS from IMAS Data Dictionary version.
 
-    The IMAS DD changed from COCOS 11 to COCOS 17 at version 4.0.0.
+    First attempts to read the COCOS value from the DD XML directly.
+    Falls back to version-based heuristic: COCOS 11 for DD < 4.0.0,
+    COCOS 17 for DD >= 4.0.0.
 
     Args:
         version: DD version string (e.g., "3.39.0", "4.0.0")
@@ -134,6 +136,18 @@ def cocos_from_dd_version(version: str) -> int:
     Returns:
         COCOS value (11 for DD < 4.0.0, 17 for DD >= 4.0.0)
     """
+    try:
+        import imas.dd_zip
+
+        tree = imas.dd_zip.dd_etree(version)
+        root = tree.getroot() if hasattr(tree, "getroot") else tree
+        cocos_el = root.find("cocos")
+        if cocos_el is not None:
+            return int(cocos_el.text)
+    except Exception:
+        pass
+
+    # Fallback for versions without <cocos> in XML (pre-3.35.0)
     from packaging.version import Version
 
     v = Version(version)

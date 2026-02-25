@@ -830,6 +830,56 @@ def get_all_dd_versions() -> list[str]:
     return sorted(versions)
 
 
+def extract_cocos_for_version(version: str) -> tuple[int | None, int]:
+    """Extract COCOS value and labeled field count from DD XML.
+
+    Args:
+        version: DD version string (e.g., "3.42.0", "4.0.0")
+
+    Returns:
+        Tuple of (cocos_value, cocos_labeled_field_count).
+        cocos_value is None for versions that don't declare COCOS in XML.
+    """
+    tree = imas.dd_zip.dd_etree(version)
+    root = tree.getroot() if hasattr(tree, "getroot") else tree
+
+    cocos_el = root.find("cocos")
+    cocos_val = int(cocos_el.text) if cocos_el is not None else None
+
+    labeled_count = sum(
+        1 for f in root.iter("field") if f.get("cocos_label_transformation")
+    )
+
+    return cocos_val, labeled_count
+
+
+def extract_cocos_labels_for_version(version: str) -> dict[str, str]:
+    """Extract per-field cocos_label_transformation from DD XML.
+
+    Args:
+        version: DD version string
+
+    Returns:
+        Dict mapping field path to cocos_label_transformation value.
+        Only includes fields that have the attribute.
+    """
+    tree = imas.dd_zip.dd_etree(version)
+    root = tree.getroot() if hasattr(tree, "getroot") else tree
+
+    labels = {}
+    for ids_el in root.findall("IDS"):
+        ids_name = ids_el.get("name", "")
+        for field in ids_el.iter("field"):
+            cocos_label = field.get("cocos_label_transformation")
+            if cocos_label:
+                field_path = field.get("path", "")
+                if field_path and ids_name:
+                    full_path = f"{ids_name}/{field_path}"
+                    labels[full_path] = cocos_label
+
+    return labels
+
+
 def extract_paths_for_version(version: str, ids_filter: set[str] | None = None) -> dict:
     """
     Extract all paths from a DD version.
@@ -914,6 +964,11 @@ def _extract_paths_recursive(
             "maxoccur": child.maxoccur,
             "parent_path": f"{ids_name}/{prefix.rstrip('/')}" if prefix else ids_name,
         }
+
+        # COCOS label transformation (e.g., psi_like, ip_like, q_like)
+        cocos_label = getattr(child, "cocos_label_transformation", None)
+        if cocos_label:
+            path_info["cocos_label_transformation"] = str(cocos_label)
 
         # Handle structure types
         if child.data_type:
@@ -1345,17 +1400,20 @@ def build_dd_graph(
 
 
 def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
-    """Create DDVersion nodes with predecessor chain using batch operations."""
+    """Create DDVersion nodes with predecessor chain and COCOS metadata."""
     sorted_versions = sorted(versions)
 
-    # Build version data with predecessors
+    # Build version data with predecessors and COCOS info
     version_data = []
     for i, version in enumerate(sorted_versions):
+        cocos_val, cocos_labeled = extract_cocos_for_version(version)
         version_data.append(
             {
                 "id": version,
                 "predecessor": sorted_versions[i - 1] if i > 0 else None,
                 "is_current": version == current_dd_version,
+                "cocos": cocos_val,
+                "cocos_labeled_fields": cocos_labeled,
             }
         )
 
@@ -1365,6 +1423,8 @@ def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
         UNWIND $versions AS v
         MERGE (ver:DDVersion {id: v.id})
         SET ver.is_current = v.is_current,
+            ver.cocos = v.cocos,
+            ver.cocos_labeled_fields = v.cocos_labeled_fields,
             ver.created_at = datetime()
     """,
         versions=version_data,
@@ -1383,6 +1443,70 @@ def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
             versions=predecessors,
         )
 
+    # Create COCOS reference nodes and link to DDVersions
+    _create_cocos_nodes(client)
+
+    # Link DDVersion nodes to their COCOS nodes
+    versions_with_cocos = [v for v in version_data if v["cocos"] is not None]
+    if versions_with_cocos:
+        client.query(
+            """
+            UNWIND $versions AS v
+            MATCH (ver:DDVersion {id: v.id})
+            MATCH (cocos:COCOS {id: v.cocos})
+            MERGE (ver)-[:HAS_COCOS]->(cocos)
+        """,
+            versions=versions_with_cocos,
+        )
+
+
+def _create_cocos_nodes(client: GraphClient) -> None:
+    """Create all 16 COCOS reference nodes from the Sauter table.
+
+    COCOS nodes are shared reference data (like Unit nodes). Each encodes
+    the four parameters from Table I of Sauter & Medvedev, CPC 184 (2013).
+    """
+    from imas_codex.cocos.calculator import VALID_COCOS, cocos_to_parameters
+
+    cocos_data = []
+    for cocos_val in sorted(VALID_COCOS):
+        params = cocos_to_parameters(cocos_val)
+        psi_norm = "full ψ" if params.e_bp == 1 else "ψ/(2π)"
+        handedness_rpz = "right-handed" if params.sigma_r_phi_z == 1 else "left-handed"
+        handedness_rtp = (
+            "right-handed" if params.sigma_rho_theta_phi == 1 else "left-handed"
+        )
+        psi_dir = "increasing" if params.sigma_bp == 1 else "decreasing"
+
+        cocos_data.append(
+            {
+                "id": cocos_val,
+                "sigma_bp": params.sigma_bp,
+                "e_bp": params.e_bp,
+                "sigma_r_phi_z": params.sigma_r_phi_z,
+                "sigma_rho_theta_phi": params.sigma_rho_theta_phi,
+                "description": (
+                    f"COCOS {cocos_val}: ψ {psi_dir} outward, {psi_norm}, "
+                    f"(R,φ,Z) {handedness_rpz}, (ρ,θ,φ) {handedness_rtp}"
+                ),
+            }
+        )
+
+    client.query(
+        """
+        UNWIND $cocos_list AS c
+        MERGE (cocos:COCOS {id: c.id})
+        SET cocos.sigma_bp = c.sigma_bp,
+            cocos.e_bp = c.e_bp,
+            cocos.sigma_r_phi_z = c.sigma_r_phi_z,
+            cocos.sigma_rho_theta_phi = c.sigma_rho_theta_phi,
+            cocos.description = c.description
+    """,
+        cocos_list=cocos_data,
+    )
+
+    logger.debug("Created %d COCOS reference nodes", len(cocos_data))
+
 
 def _ensure_indexes(client: GraphClient) -> None:
     """Ensure required indexes exist for optimal query performance."""
@@ -1399,6 +1523,9 @@ def _ensure_indexes(client: GraphClient) -> None:
 
     # Unit.symbol - for unit relationship lookups
     client.query("CREATE INDEX unit_symbol IF NOT EXISTS FOR (u:Unit) ON (u.symbol)")
+
+    # COCOS.id - for COCOS reference lookups
+    client.query("CREATE INDEX cocos_id IF NOT EXISTS FOR (c:COCOS) ON (c.id)")
 
     # IMASSemanticCluster.id - for cluster lookups
     client.query(
@@ -1534,6 +1661,9 @@ def _batch_create_path_nodes(
                 "parent_path": path_info.get("parent_path"),
                 "units": path_info.get("units", ""),
                 "coordinates": path_info.get("coordinates", []),
+                "cocos_label_transformation": path_info.get(
+                    "cocos_label_transformation"
+                ),
             }
         )
 
@@ -1556,7 +1686,8 @@ def _batch_create_path_nodes(
                 path.node_type = p.node_type,
                 path.physics_domain = p.physics_domain,
                 path.maxoccur = p.maxoccur,
-                path.ids = p.ids_name
+                path.ids = p.ids_name,
+                path.cocos_label_transformation = p.cocos_label_transformation
         """,
             paths=batch,
         )

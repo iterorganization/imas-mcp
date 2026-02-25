@@ -98,6 +98,50 @@ enums:
       none:
         description: No time-variation character assigned
 
+  COCOSLabelTransformation:
+    description: >-
+      COCOS transformation labels from the DD XML cocos_label_transformation
+      attribute. Each label identifies a class of fields that transform
+      together under COCOS sign changes (e.g., all psi_like fields flip
+      sign between COCOS 11 and 17).
+    permissible_values:
+      psi_like:
+        description: Poloidal flux (ψ) and related quantities
+      dodpsi_like:
+        description: Derivatives with respect to ψ (dX/dψ)
+      ip_like:
+        description: Plasma current and related quantities
+      b0_like:
+        description: Toroidal magnetic field and related quantities
+      q_like:
+        description: Safety factor and related quantities
+      tor_angle_like:
+        description: Toroidal angle (φ) and related quantities
+      pol_angle_like:
+        description: Poloidal angle (θ) and related quantities
+      one_like:
+        description: Quantities with unit transformation factor
+      grid_type_dim1_like:
+        description: Grid dimension 1 coordinate
+      grid_type_dim2_like:
+        description: Grid dimension 2 coordinate
+      grid_type_dim1_dim1_like:
+        description: Grid dimension 1×1 tensor component
+      grid_type_dim1_dim2_like:
+        description: Grid dimension 1×2 tensor component
+      grid_type_dim1_dim3_like:
+        description: Grid dimension 1×3 tensor component
+      grid_type_dim2_dim2_like:
+        description: Grid dimension 2×2 tensor component
+      grid_type_dim2_dim3_like:
+        description: Grid dimension 2×3 tensor component
+      grid_type_dim3_dim3_like:
+        description: Grid dimension 3×3 tensor component
+      grid_type_tensor_covariant_like:
+        description: Covariant tensor component
+      grid_type_tensor_contravariant_like:
+        description: Contravariant tensor component
+
   PhysicsDomainDD:
     description: Physics domains for IMAS data paths
     permissible_values:
@@ -204,6 +248,26 @@ classes:
       clusters_count:
         description: Number of clusters for this version
         range: integer
+      cocos:
+        description: >-
+          COCOS convention for this DD version, extracted from the DD XML
+          root <cocos> element. Values: 11 for DD 3.x (from 3.35.0), 17
+          for DD 4.x. Null for versions before 3.35.0 where the XML did
+          not declare COCOS.
+        range: integer
+      cocos_labeled_fields:
+        description: >-
+          Number of fields in this DD version that have a
+          cocos_label_transformation attribute in the XML. Tracks the
+          growth of COCOS annotation coverage across versions.
+        range: integer
+      has_cocos:
+        description: >-
+          Link to the COCOS node for this DD version. Enables graph traversal
+          to find all entities sharing the same COCOS convention.
+        range: COCOS
+        annotations:
+          relationship_type: HAS_COCOS
       build_hash:
         description: >-
           SHA256 hash of build parameters (DD versions, flags) for idempotency.
@@ -305,6 +369,13 @@ classes:
       maxoccur:
         description: Maximum occurrences (for struct arrays)
         range: integer
+      cocos_label_transformation:
+        description: >-
+          COCOS transformation label from the DD XML. Identifies which class
+          of COCOS transformation applies to this field (e.g., psi_like fields
+          flip sign between COCOS 11 and 17). Null for fields without COCOS
+          sensitivity. Extracted from the cocos_label_transformation XML attribute.
+        range: COCOSLabelTransformation
       # Relationships
       parent_path:
         description: Parent path in hierarchy (null for IDS-level paths)

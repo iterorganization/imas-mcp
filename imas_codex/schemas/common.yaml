@@ -665,6 +665,58 @@ classes:
         description: Whether this is an SI base or derived unit
         range: boolean
 
+  COCOS:
+    description: >-
+      A COordinate COnvention for Specifying orientations in tokamak
+      equilibrium data. There are exactly 16 valid COCOS values (1-8 and
+      11-18), each encoding four parameters from Table I of Sauter &
+      Medvedev, CPC 184 (2013) 293-302.
+
+      COCOS nodes are shared reference data (like Unit nodes). Multiple
+      entities link to the same COCOS node:
+      - DDVersion -[:HAS_COCOS]-> COCOS (DD convention for that version)
+      - AnalysisCode -[:NATIVE_COCOS]-> COCOS (future)
+      - TreeNode -[:HAS_COCOS]-> COCOS (future facility data)
+
+      This enables graph queries like "find all entities using COCOS 11"
+      or "what COCOS does DD 3.42.0 use?" and facilitates mapping operations
+      between data sources with different conventions.
+    class_uri: common:COCOS
+    attributes:
+      id:
+        identifier: true
+        description: COCOS integer value (1-8 or 11-18)
+        required: true
+        range: integer
+      sigma_bp:
+        description: >-
+          Poloidal flux sign convention (+1 or -1).
+          +1 if ψ increases from axis to edge with positive Ip.
+        range: integer
+        required: true
+      e_bp:
+        description: >-
+          Whether ψ is divided by 2π (0) or full ψ (1).
+          COCOS 1-8 have e_bp=0, COCOS 11-18 have e_bp=1.
+        range: integer
+        required: true
+      sigma_r_phi_z:
+        description: >-
+          Cylindrical coordinate handedness.
+          +1 for (R,φ,Z) right-handed, -1 for (R,Z,φ) right-handed.
+        range: integer
+        required: true
+      sigma_rho_theta_phi:
+        description: >-
+          Poloidal coordinate handedness.
+          +1 for (ρ,θ,φ) right-handed, -1 otherwise.
+        range: integer
+        required: true
+      description:
+        description: >-
+          Human-readable summary (e.g., "COCOS 11: σBp=+1, eBp=1,
+          σRφZ=+1, σρθφ=+1 — ITER/IMAS DD v3.x convention")
+
   SignConvention:
     description: >-
       A physics sign/orientation convention extracted from wiki documentation.
