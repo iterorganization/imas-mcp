@@ -18,6 +18,8 @@ Requires a live Neo4j with a completed DD build.
 
 import pytest
 
+from imas_codex.graph.build_dd import _strip_dd_indices
+
 pytestmark = pytest.mark.graph
 
 
@@ -1013,3 +1015,116 @@ class TestURLMetadata:
         count = result[0]["cnt"] if result else 0
         # DD 4.1.1 has 618 fields with url
         assert count >= 500, f"Expected >=500 paths with url, got {count}"
+
+
+class TestStripDDIndices:
+    """Unit tests for _strip_dd_indices (no Neo4j required)."""
+
+    pytestmark = []  # Override module-level graph marker
+
+    def test_strips_itime(self):
+        assert _strip_dd_indices("time_slice(itime)/profiles_1d/psi") == (
+            "time_slice/profiles_1d/psi"
+        )
+
+    def test_strips_numbered_indices(self):
+        assert _strip_dd_indices("ggd(i1)/grid(i2)/space(i3)") == "ggd/grid/space"
+
+    def test_strips_colon(self):
+        assert _strip_dd_indices("profiles_1d(:)/psi") == "profiles_1d/psi"
+
+    def test_no_indices(self):
+        assert _strip_dd_indices("equilibrium/time") == "equilibrium/time"
+
+    def test_empty_string(self):
+        assert _strip_dd_indices("") == ""
+
+    def test_multiple_index_types(self):
+        assert _strip_dd_indices("time_slice(itime)/ggd(i1)/grid(i2)") == (
+            "time_slice/ggd/grid"
+        )
+
+
+class TestCoordinateSameAs:
+    """Verify coordinate_same_as properties and COORDINATE_SAME_AS relationships."""
+
+    def test_coordinate_same_as_properties_populated(self, graph_client, label_counts):
+        """At least some paths should have coordinate1_same_as property."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (p:IMASPath) "
+            "WHERE p.coordinate1_same_as IS NOT NULL "
+            "RETURN count(p) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        # DD has ~5,228 fields with coordinate1_same_as
+        assert count >= 1000, (
+            f"Expected >=1000 paths with coordinate1_same_as, got {count}"
+        )
+
+    def test_coordinate_same_as_relationships_exist(self, graph_client, label_counts):
+        """COORDINATE_SAME_AS relationships should link IMASPath nodes."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (:IMASPath)-[r:COORDINATE_SAME_AS]->(:IMASPath) "
+            "RETURN count(r) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        # Most coordinate_same_as refs should resolve
+        assert count >= 1000, (
+            f"Expected >=1000 COORDINATE_SAME_AS relationships, got {count}"
+        )
+
+    def test_coordinate_same_as_dimensions_valid(self, graph_client, label_counts):
+        """COORDINATE_SAME_AS dimension should be 1-6."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH ()-[r:COORDINATE_SAME_AS]->() "
+            "WHERE r.dimension IS NULL OR r.dimension < 1 OR r.dimension > 6 "
+            "RETURN count(r) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} COORDINATE_SAME_AS relationships with invalid dimension"
+        )
+
+    def test_coordinate_same_as_targets_are_imas_paths(
+        self, graph_client, label_counts
+    ):
+        """COORDINATE_SAME_AS should only point to IMASPath nodes."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (:IMASPath)-[r:COORDINATE_SAME_AS]->(target) "
+            "WHERE NOT target:IMASPath "
+            "RETURN count(r) AS cnt"
+        )
+        count = result[0]["cnt"] if result else 0
+        assert count == 0, (
+            f"{count} COORDINATE_SAME_AS relationships point to non-IMASPath nodes"
+        )
+
+    def test_higher_dimensions_have_fewer_refs(self, graph_client, label_counts):
+        """Higher coordinate dimensions should have progressively fewer refs."""
+        if not label_counts.get("IMASPath"):
+            pytest.skip("No IMASPath nodes in graph")
+
+        result = graph_client.query(
+            "MATCH ()-[r:COORDINATE_SAME_AS]->() "
+            "RETURN r.dimension AS dim, count(r) AS cnt "
+            "ORDER BY dim"
+        )
+        counts = {row["dim"]: row["cnt"] for row in result}
+        if not counts:
+            pytest.skip("No COORDINATE_SAME_AS relationships")
+        # dim 1 should have the most refs
+        assert counts.get(1, 0) >= counts.get(2, 0), (
+            f"dim1={counts.get(1, 0)} should be >= dim2={counts.get(2, 0)}"
+        )

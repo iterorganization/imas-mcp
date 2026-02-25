@@ -497,6 +497,38 @@ classes:
         range: IdentifierSchema
         annotations:
           relationship_type: HAS_IDENTIFIER_SCHEMA
+      # Coordinate same-as metadata (per-dimension properties + relationships)
+      coordinate_same_as:
+        description: >-
+          Paths sharing the same coordinate grid, linked via COORDINATE_SAME_AS
+          relationships with a dimension property. Declares that this field's
+          N-th array dimension is indexed by the same coordinate grid as the
+          target field. Target uses DD path_doc notation with (iN) indices.
+        multivalued: true
+        range: IMASPath
+        annotations:
+          relationship_type: COORDINATE_SAME_AS
+      coordinate1_same_as:
+        description: >-
+          Raw coordinate1_same_as value from DD XML. Intra-IDS relative path
+          with (iN) index notation (e.g., "time_slice(itime)/profiles_1d/psi").
+          Stored as-is for property-based discovery; also resolved to
+          COORDINATE_SAME_AS relationships.
+      coordinate2_same_as:
+        description: >-
+          Raw coordinate2_same_as value from DD XML for the second dimension.
+      coordinate3_same_as:
+        description: >-
+          Raw coordinate3_same_as value from DD XML for the third dimension.
+      coordinate4_same_as:
+        description: >-
+          Raw coordinate4_same_as value from DD XML for the fourth dimension.
+      coordinate5_same_as:
+        description: >-
+          Raw coordinate5_same_as value from DD XML for the fifth dimension.
+      coordinate6_same_as:
+        description: >-
+          Raw coordinate6_same_as value from DD XML for the sixth dimension.
       # Embedding fields for semantic search
       embedding_text:
         description: >-

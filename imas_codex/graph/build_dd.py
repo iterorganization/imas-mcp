@@ -42,6 +42,19 @@ from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
 
+_DD_INDEX_RE = re.compile(r"\([^)]*\)")
+
+
+def _strip_dd_indices(path: str) -> str:
+    """Strip DD index notation like (itime), (i1), (:) from a path.
+
+    Coordinate references and path_doc use (iN)/(itime)/(:) notation
+    for struct_array traversal. Our stored IMASPath IDs omit these.
+    Stripping is always unambiguous — no DD path has name collisions
+    requiring index variables for disambiguation.
+    """
+    return _DD_INDEX_RE.sub("", path)
+
 
 @contextmanager
 def suppress_third_party_logging(level: int = logging.WARNING):
@@ -963,6 +976,11 @@ def extract_paths_for_version(version: str, ids_filter: set[str] | None = None) 
                 doc_id = field_el.get("doc_identifier")
                 if doc_id:
                     meta["doc_identifier"] = doc_id
+                # Coordinate same-as references (per dimension)
+                for dim in range(1, 7):
+                    csa = field_el.get(f"coordinate{dim}_same_as")
+                    if csa:
+                        meta[f"coordinate{dim}_same_as"] = csa
                 if meta:
                     field_xml_meta[full_path] = meta
 
@@ -1061,6 +1079,12 @@ def _extract_paths_recursive(
                     "change_nbc_previous_name",
                     "url",
                     "doc_identifier",
+                    "coordinate1_same_as",
+                    "coordinate2_same_as",
+                    "coordinate3_same_as",
+                    "coordinate4_same_as",
+                    "coordinate5_same_as",
+                    "coordinate6_same_as",
                 ):
                     val = xml_meta.get(key)
                     if val:
@@ -1521,6 +1545,12 @@ def build_dd_graph(
                     "change_nbc_description",
                     "change_nbc_previous_name",
                     "url",
+                    "coordinate1_same_as",
+                    "coordinate2_same_as",
+                    "coordinate3_same_as",
+                    "coordinate4_same_as",
+                    "coordinate5_same_as",
+                    "coordinate6_same_as",
                 ):
                     val = info.get(key)
                     update[key] = val  # null clears stale values
@@ -1546,7 +1576,13 @@ def build_dd_graph(
                             path.change_nbc_version = p.change_nbc_version,
                             path.change_nbc_description = p.change_nbc_description,
                             path.change_nbc_previous_name = p.change_nbc_previous_name,
-                            path.url = p.url
+                            path.url = p.url,
+                            path.coordinate1_same_as = p.coordinate1_same_as,
+                            path.coordinate2_same_as = p.coordinate2_same_as,
+                            path.coordinate3_same_as = p.coordinate3_same_as,
+                            path.coordinate4_same_as = p.coordinate4_same_as,
+                            path.coordinate5_same_as = p.coordinate5_same_as,
+                            path.coordinate6_same_as = p.coordinate6_same_as
                         """,
                         paths=batch,
                     )
@@ -1569,6 +1605,40 @@ def build_dd_graph(
                 """,
                     rels=id_rels,
                 )
+
+            # Create COORDINATE_SAME_AS relationships for all paths
+            # (including those created in earlier versions)
+            csa_rels = []
+            for path, info in latest_paths.items():
+                ids_name = path.split("/", 1)[0]
+                for dim in range(1, 7):
+                    csa_raw = info.get(f"coordinate{dim}_same_as")
+                    if not csa_raw or " OR " in csa_raw:
+                        continue
+                    target_path = f"{ids_name}/{_strip_dd_indices(csa_raw)}"
+                    csa_rels.append(
+                        {
+                            "source_id": path,
+                            "target_id": target_path,
+                            "dimension": dim,
+                        }
+                    )
+            if csa_rels:
+                monitor.status(
+                    f"Linking {len(csa_rels)} COORDINATE_SAME_AS relationships..."
+                )
+                for i in range(0, len(csa_rels), 1000):
+                    batch = csa_rels[i : i + 1000]
+                    client.query(
+                        """
+                        UNWIND $rels AS r
+                        MATCH (path:IMASPath {id: r.source_id})
+                        MATCH (target:IMASPath {id: r.target_id})
+                        MERGE (path)-[rel:COORDINATE_SAME_AS]->(target)
+                        SET rel.dimension = r.dimension
+                    """,
+                        rels=batch,
+                    )
 
         # Phase 3: Embeddings
         if include_embeddings and not dry_run:
@@ -1971,6 +2041,12 @@ def _batch_create_path_nodes(
                 "change_nbc_previous_name": path_info.get("change_nbc_previous_name"),
                 "url": path_info.get("url"),
                 "identifier_enum_name": path_info.get("identifier_enum_name"),
+                "coordinate1_same_as": path_info.get("coordinate1_same_as"),
+                "coordinate2_same_as": path_info.get("coordinate2_same_as"),
+                "coordinate3_same_as": path_info.get("coordinate3_same_as"),
+                "coordinate4_same_as": path_info.get("coordinate4_same_as"),
+                "coordinate5_same_as": path_info.get("coordinate5_same_as"),
+                "coordinate6_same_as": path_info.get("coordinate6_same_as"),
             }
         )
 
@@ -2003,7 +2079,13 @@ def _batch_create_path_nodes(
                 path.change_nbc_version = p.change_nbc_version,
                 path.change_nbc_description = p.change_nbc_description,
                 path.change_nbc_previous_name = p.change_nbc_previous_name,
-                path.url = p.url
+                path.url = p.url,
+                path.coordinate1_same_as = p.coordinate1_same_as,
+                path.coordinate2_same_as = p.coordinate2_same_as,
+                path.coordinate3_same_as = p.coordinate3_same_as,
+                path.coordinate4_same_as = p.coordinate4_same_as,
+                path.coordinate5_same_as = p.coordinate5_same_as,
+                path.coordinate6_same_as = p.coordinate6_same_as
         """,
             paths=batch,
         )
@@ -2068,8 +2150,14 @@ def _batch_create_path_nodes(
                         }
                     )
                 else:
-                    # Path references are relative to IDS root
-                    target_path = f"{ids_name}/{coord_str}"
+                    # Path references are relative to IDS root.
+                    # Strip DD index notation (itime), (i1) etc. to match
+                    # our stored IMASPath IDs which omit indices.
+                    # Handle cross-IDS refs like "IDS:magnetics/flux_loop"
+                    if coord_str.startswith("IDS:"):
+                        target_path = coord_str[4:]  # strip "IDS:" prefix
+                    else:
+                        target_path = f"{ids_name}/{_strip_dd_indices(coord_str)}"
                     coord_rels.append(
                         {
                             "source_id": p["id"],
@@ -2133,6 +2221,36 @@ def _batch_create_path_nodes(
                 MERGE (path)-[:HAS_IDENTIFIER_SCHEMA]->(schema)
             """,
                 paths=id_schema_paths,
+            )
+
+        # Step 8: Create COORDINATE_SAME_AS relationships
+        # Links fields that share the same coordinate grid (per dimension)
+        csa_rels = []
+        for p in batch:
+            ids_name = p["ids_name"]
+            for dim in range(1, 7):
+                csa_raw = p.get(f"coordinate{dim}_same_as")
+                if not csa_raw or " OR " in csa_raw:
+                    # Skip edge cases like "frame(itime)/counts_n OR 1...1"
+                    continue
+                target_path = f"{ids_name}/{_strip_dd_indices(csa_raw)}"
+                csa_rels.append(
+                    {
+                        "source_id": p["id"],
+                        "target_id": target_path,
+                        "dimension": dim,
+                    }
+                )
+        if csa_rels:
+            client.query(
+                """
+                UNWIND $rels AS r
+                MATCH (path:IMASPath {id: r.source_id})
+                MATCH (target:IMASPath {id: r.target_id})
+                MERGE (path)-[rel:COORDINATE_SAME_AS]->(target)
+                SET rel.dimension = r.dimension
+            """,
+                rels=csa_rels,
             )
 
 
