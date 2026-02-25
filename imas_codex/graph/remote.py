@@ -246,7 +246,7 @@ def resolve_remote_service_name(graph_name: str, ssh_host: str) -> str:
 
     raise RuntimeError(
         f"No imas-codex-neo4j-* service found on {ssh_host}.\n"
-        f"Install one with: imas-codex graph service install"
+        f"Start Neo4j with: imas-codex graph start"
     )
 
 

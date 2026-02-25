@@ -196,9 +196,9 @@ class Neo4jOperation:
     def _stop_neo4j(self) -> None:
         # Try SLURM-based stop first (Neo4j on compute node)
         try:
-            from imas_codex.settings import get_graph_scheduler
+            from imas_codex.cli.serve import _is_graph_compute_target
 
-            if get_graph_scheduler() == "slurm":
+            if _is_graph_compute_target():
                 from imas_codex.cli.serve import (
                     _get_allocation,
                     _stop_service,
@@ -549,7 +549,7 @@ def _parse_dump_error(stderr: str) -> tuple[str, bool]:
     if "database is in use" in stderr.lower() or "filelockexception" in stderr.lower():
         return (
             "Neo4j database is currently in use by another process.\n"
-            "Stop Neo4j first: imas-codex serve neo4j stop",
+            "Stop Neo4j first: imas-codex graph stop",
             True,
         )
     # "Dump failed for databases: 'neo4j'" without detail usually means
@@ -557,7 +557,7 @@ def _parse_dump_error(stderr: str) -> tuple[str, bool]:
     if "dump failed for databases" in stderr.lower():
         return (
             "Neo4j database dump failed (likely locked by another process).\n"
-            "Stop Neo4j first: imas-codex serve neo4j stop",
+            "Stop Neo4j first: imas-codex graph stop",
             True,
         )
     # Generic failure — extract the first Caused-by or the CommandFailedException line
@@ -634,9 +634,9 @@ def _neo4j_process_info(profile: Neo4jProfile) -> str | None:
     # Check SLURM allocation (Neo4j may be on a compute node)
     slurm_node = None
     try:
-        from imas_codex.settings import get_graph_scheduler
+        from imas_codex.cli.serve import _is_graph_compute_target
 
-        if get_graph_scheduler() == "slurm":
+        if _is_graph_compute_target():
             result = subprocess.run(
                 [
                     "squeue",
@@ -722,7 +722,7 @@ def _run_neo4j_dump(
     if is_locked and is_verified:
         msg = (
             "Cannot dump: Neo4j database is locked by another process.\n"
-            "Stop Neo4j first: imas-codex serve neo4j stop"
+            "Stop Neo4j first: imas-codex graph stop"
         )
         if holder_info:
             msg += f"\n\nRunning processes:\n{holder_info}"
@@ -764,7 +764,7 @@ def _run_neo4j_dump(
         _, _, holder_info = _check_database_lock(profile)
         err_msg = (
             "Cannot dump: Neo4j database is locked by another process.\n"
-            "Stop Neo4j first: imas-codex serve neo4j stop"
+            "Stop Neo4j first: imas-codex graph stop"
         )
         if holder_info:
             err_msg += f"\n\nRunning processes:\n{holder_info}"
@@ -928,7 +928,6 @@ def graph() -> None:
       imas-codex graph start               Start Neo4j
       imas-codex graph stop                Stop Neo4j
       imas-codex graph shell               Interactive Cypher REPL
-      imas-codex graph service install     Install systemd service
 
     \b
     Archive & Registry:
@@ -964,13 +963,67 @@ def graph_start(
     password: str | None,
     foreground: bool,
 ) -> None:
-    """Start Neo4j server via Apptainer."""
+    """Start Neo4j server.
+
+    Automatically detects the deployment mode from the graph location:
+
+    - **SLURM compute** (e.g. ``titan``): ensures a SLURM allocation
+      and starts Neo4j on the compute node.
+    - **Remote**: starts via systemd on the remote host.
+    - **Local**: starts via Apptainer directly.
+    """
     import platform
 
-    from imas_codex.graph.profiles import resolve_neo4j
+    from imas_codex.graph.profiles import get_graph_location, resolve_neo4j
 
     profile = resolve_neo4j()
     password = password or profile.password
+
+    # ── SLURM compute dispatch ───────────────────────────────────────────
+    from imas_codex.remote.locations import resolve_location
+
+    location = get_graph_location()
+    loc_info = resolve_location(location)
+
+    if loc_info.is_compute:
+        from imas_codex.cli.serve import (
+            _clean_neo4j_locks,
+            _ensure_allocation,
+            _graph_http_port,
+            _graph_port,
+            _kill_neo4j_on_node,
+            _neo4j_pre_launch,
+            _neo4j_service_command,
+            _service_running,
+            _start_service,
+            _wait_for_health,
+        )
+
+        alloc = _ensure_allocation()
+        node = alloc["node"]
+        if _service_running(node, "neo4j"):
+            click.echo(
+                f"Neo4j [{profile.name}] already running on {node} "
+                f"(alloc {alloc['job_id']}, {alloc['gres']}, {alloc['time']})"
+            )
+            click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
+            click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
+            return
+
+        _kill_neo4j_on_node(node)
+        _clean_neo4j_locks(node)
+
+        click.echo(f"Starting Neo4j [{profile.name}] on {node}...")
+        _neo4j_pre_launch(node)
+        _start_service(node, "neo4j", _neo4j_service_command())
+
+        http_port = _graph_http_port()
+        _wait_for_health("Neo4j", f"curl -sf http://{node}:{http_port}/")
+
+        click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
+        click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
+        return
+    # ── End SLURM compute dispatch ───────────────────────────────────────
 
     # ── Remote dispatch ──────────────────────────────────────────────────
     from imas_codex.graph.remote import is_remote_location
@@ -1121,12 +1174,40 @@ def graph_start(
 @graph.command("stop")
 @click.option("--data-dir", envvar="NEO4J_DATA", default=None)
 def graph_stop(data_dir: str | None) -> None:
-    """Stop Neo4j server."""
+    """Stop Neo4j server.
+
+    Automatically detects the deployment mode from the graph location:
+
+    - **SLURM compute**: stops Neo4j on the compute node.
+    - **Remote**: stops via systemd on the remote host.
+    - **Local**: stops the local Apptainer process.
+    """
     import signal
 
-    from imas_codex.graph.profiles import resolve_neo4j
+    from imas_codex.graph.profiles import get_graph_location, resolve_neo4j
 
     profile = resolve_neo4j()
+
+    # ── SLURM compute dispatch ───────────────────────────────────────────
+    from imas_codex.remote.locations import resolve_location
+
+    location = get_graph_location()
+    loc_info = resolve_location(location)
+
+    if loc_info.is_compute:
+        from imas_codex.cli.serve import _get_allocation, _stop_service
+
+        alloc = _get_allocation()
+        if alloc and alloc["state"] == "RUNNING":
+            node = alloc["node"]
+            if _stop_service(node, "neo4j"):
+                click.echo(f"✓ Neo4j [{profile.name}] stopped on {node}")
+            else:
+                click.echo(f"Neo4j [{profile.name}] was not running on {node}")
+        else:
+            click.echo(f"Neo4j [{profile.name}] not running (no SLURM allocation)")
+        return
+    # ── End SLURM compute dispatch ───────────────────────────────────────
 
     # ── Remote dispatch ──────────────────────────────────────────────────
     from imas_codex.graph.remote import is_remote_location
@@ -1306,231 +1387,6 @@ def graph_profiles() -> None:
         for g in graphs:
             marker = "→" if g.active else " "
             click.echo(f"  {marker} {g.name}")
-
-
-@graph.group("service")
-def graph_service_group() -> None:
-    """Manage Neo4j systemd service.
-
-    \\b
-      imas-codex graph service install   Install systemd unit
-      imas-codex graph service start     Start service
-      imas-codex graph service stop      Stop service
-      imas-codex graph service status    Check service status
-    """
-    pass
-
-
-@graph_service_group.command("install")
-@click.option("--image", envvar="NEO4J_IMAGE", default=None)
-@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
-@click.option("--password", envvar="NEO4J_PASSWORD", default=None)
-@click.option(
-    "--minimal", is_flag=True, help="Use minimal service (no resource limits)"
-)
-def graph_service_install(
-    image: str | None,
-    data_dir: str | None,
-    password: str | None,
-    minimal: bool,
-) -> None:
-    """Install Neo4j as a systemd user service."""
-    import platform
-
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    profile = resolve_neo4j()
-    password = password or profile.password
-
-    # ── Remote dispatch ──────────────────────────────────────────────────
-    from imas_codex.graph.remote import is_remote_location
-
-    if is_remote_location(profile.host):
-        raise click.ClickException(
-            f"Service install must be run directly on {profile.host}.\n"
-            f"SSH in and run:\n"
-            f"  ssh {profile.host}\n"
-            f"  cd ~/Code/imas-codex && uv run imas-codex graph service install"
-        )
-    # ── End remote dispatch ──────────────────────────────────────────────
-
-    # ── SLURM guard ──────────────────────────────────────────────────────
-    # When graph runs on a compute node via SLURM, a systemd service on the
-    # login node would compete for GPFS locks and corrupt the database.
-    from imas_codex.settings import get_graph_scheduler
-
-    if get_graph_scheduler() == "slurm":
-        raise click.ClickException(
-            f"Graph scheduler is 'slurm' (location: {profile.location}).\n"
-            f"Neo4j runs on the compute node, not as a login-node systemd service.\n"
-            f"Use: imas-codex serve neo4j deploy"
-        )
-    # ── End SLURM guard ──────────────────────────────────────────────────
-
-    if platform.system() != "Linux":
-        raise click.ClickException("systemd services only supported on Linux")
-
-    if not shutil.which("systemctl"):
-        raise click.ClickException("systemctl not found")
-
-    require_apptainer()
-
-    service_dir = Path.home() / ".config" / "systemd" / "user"
-    service_name = f"imas-codex-neo4j-{profile.name}"
-    service_file = service_dir / f"{service_name}.service"
-    template_file = SERVICES_DIR / "imas-codex-db.service"
-    image_path = Path(image) if image else NEO4J_IMAGE
-    data_path = Path(data_dir) if data_dir else profile.data_dir
-    apptainer_path = shutil.which("apptainer")
-
-    from imas_codex.graph.profiles import check_graph_conflict
-
-    conflict = check_graph_conflict(profile.bolt_port)
-    if conflict:
-        raise click.ClickException(conflict)
-
-    if not image_path.exists():
-        from imas_codex.settings import get_neo4j_version
-
-        raise click.ClickException(
-            f"Neo4j image not found: {image_path}\n"
-            f"Pull: apptainer pull docker://neo4j:{get_neo4j_version()}"
-        )
-
-    service_dir.mkdir(parents=True, exist_ok=True)
-    for subdir in ["data", "logs", "conf", "import"]:
-        (data_path / subdir).mkdir(parents=True, exist_ok=True)
-
-    if minimal or not template_file.exists():
-        service_content = f"""[Unit]
-Description=Neo4j Graph Database - {profile.name} (IMAS Codex)
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={apptainer_path} exec \\
-    --bind {data_path}/data:/data \\
-    --bind {data_path}/logs:/logs \\
-    --bind {data_path}/import:/import \\
-    --writable-tmpfs \\
-    --env NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port} \\
-    --env NEO4J_server_http_listen__address=127.0.0.1:{profile.http_port} \\
-    {image_path} \\
-    neo4j console
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-"""
-        service_file.write_text(service_content)
-        click.echo(f"Installed minimal service for [{profile.name}]")
-    else:
-        shutil.copy(template_file, service_file)
-        click.echo(f"Installed from template: {template_file}")
-        click.echo("  Includes: cleanup, graceful shutdown, resource limits")
-
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    subprocess.run(["systemctl", "--user", "enable", service_name], check=True)
-    click.echo(f"\n✓ Service [{profile.name}] installed and enabled")
-    click.echo(
-        f"  Bolt: localhost:{profile.bolt_port}  HTTP: localhost:{profile.http_port}"
-    )
-    click.echo(f"  Start: systemctl --user start {service_name}")
-    click.echo("  Or:    imas-codex graph service start")
-
-
-@graph_service_group.command("start")
-def graph_service_start() -> None:
-    """Start Neo4j systemd service."""
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    profile = resolve_neo4j(auto_tunnel=False)
-    service_name = f"imas-codex-neo4j-{profile.name}"
-
-    from imas_codex.settings import get_graph_scheduler
-
-    if get_graph_scheduler() == "slurm":
-        raise click.ClickException(
-            f"Graph scheduler is 'slurm' (location: {profile.location}).\n"
-            f"Neo4j runs on the compute node, not as a login-node systemd service.\n"
-            f"Use: imas-codex serve neo4j deploy"
-        )
-
-    from imas_codex.graph.remote import is_remote_location
-
-    if is_remote_location(profile.host):
-        from imas_codex.graph.remote import (
-            remote_service_action,
-            resolve_remote_service_name,
-        )
-
-        service_name = resolve_remote_service_name(profile.name, profile.host)
-        remote_service_action("start", service_name, profile.host)
-        click.echo(f"Started {service_name} on {profile.host}")
-        return
-
-    result = subprocess.run(
-        ["systemctl", "--user", "start", service_name], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise click.ClickException(f"Failed to start service: {result.stderr}")
-    click.echo(f"Started {service_name}")
-
-
-@graph_service_group.command("stop")
-def graph_service_stop() -> None:
-    """Stop Neo4j systemd service."""
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    profile = resolve_neo4j(auto_tunnel=False)
-    service_name = f"imas-codex-neo4j-{profile.name}"
-
-    from imas_codex.graph.remote import is_remote_location
-
-    if is_remote_location(profile.host):
-        from imas_codex.graph.remote import (
-            remote_service_action,
-            resolve_remote_service_name,
-        )
-
-        service_name = resolve_remote_service_name(profile.name, profile.host)
-        remote_service_action("stop", service_name, profile.host)
-        click.echo(f"Stopped {service_name} on {profile.host}")
-        return
-
-    result = subprocess.run(
-        ["systemctl", "--user", "stop", service_name], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise click.ClickException(f"Failed to stop service: {result.stderr}")
-    click.echo(f"Stopped {service_name}")
-
-
-@graph_service_group.command("status")
-def graph_service_status() -> None:
-    """Check Neo4j systemd service status."""
-    from imas_codex.graph.profiles import resolve_neo4j
-
-    profile = resolve_neo4j(auto_tunnel=False)
-    service_name = f"imas-codex-neo4j-{profile.name}"
-
-    from imas_codex.graph.remote import is_remote_location
-
-    if is_remote_location(profile.host):
-        from imas_codex.graph.remote import resolve_remote_service_name
-        from imas_codex.remote.executor import run_command
-
-        service_name = resolve_remote_service_name(profile.name, profile.host)
-        output = run_command(
-            f"systemctl --user status {service_name}",
-            ssh_host=profile.host,
-            timeout=15,
-        )
-        click.echo(output)
-        return
-
-    subprocess.run(["systemctl", "--user", "status", service_name])
 
 
 # ============================================================================

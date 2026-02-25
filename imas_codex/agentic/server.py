@@ -103,7 +103,7 @@ def _neo4j_error_message(e: Exception) -> str:
     if "critical error" in msg.lower() or "needs to be restarted" in msg.lower():
         return (
             "Neo4j database has entered a critical error state and needs to be "
-            "restarted. Run: imas-codex serve neo4j stop && imas-codex serve neo4j deploy"
+            "restarted. Run: imas-codex graph stop && imas-codex graph start"
         )
     return msg
 

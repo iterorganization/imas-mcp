@@ -1237,10 +1237,14 @@ def _is_compute_target() -> bool:
 
 
 def _is_graph_compute_target() -> bool:
-    """True when graph scheduler is 'slurm' (deploy via SLURM)."""
-    from imas_codex.settings import get_graph_scheduler
+    """True when graph runs on a SLURM compute node."""
+    from imas_codex.graph.profiles import get_graph_location
+    from imas_codex.remote.locations import resolve_location
 
-    return get_graph_scheduler() == "slurm"
+    location = get_graph_location()
+    if location == "local":
+        return False
+    return resolve_location(location).is_compute
 
 
 # ── Facility compute config ─────────────────────────────────────────────
@@ -1918,7 +1922,8 @@ def _deploy_login_neo4j() -> None:
         click.echo("  Service started")
     except subprocess.CalledProcessError as exc:
         raise click.ClickException(
-            "Service not installed. Run: imas-codex graph service install"
+            "Neo4j systemd service not installed.\n"
+            "Install a systemd unit manually or use: imas-codex graph start"
         ) from exc
 
 
@@ -2135,199 +2140,6 @@ def embed_logs(follow: bool, lines: int) -> None:
     _tail_log(log_file, follow, lines)
 
 
-# ── Neo4j deploy/stop/status/logs commands ───────────────────────────────
-
-
-@serve.group("neo4j")
-def serve_neo4j_group() -> None:
-    """Manage Neo4j graph server deployment.
-
-    When ``[graph].scheduler = "slurm"``, Neo4j runs on a shared SLURM
-    allocation alongside the embedding server.  Each service has an
-    independent lifecycle — start/stop Neo4j without affecting embed.
-
-    When scheduler is not set, uses systemd on the login node.
-
-    \\b
-      imas-codex serve neo4j deploy     Deploy per config
-      imas-codex serve neo4j stop       Stop the server
-      imas-codex serve neo4j status     Check server status
-      imas-codex serve neo4j logs       View service logs
-    """
-    pass
-
-
-@serve_neo4j_group.command("deploy")
-@click.option(
-    "--gpus",
-    "-g",
-    default=_DEFAULT_GPUS,
-    type=int,
-    help=f"Number of GPUs for allocation (default: {_DEFAULT_GPUS})",
-)
-def neo4j_deploy(gpus: int) -> None:
-    """Deploy Neo4j graph server.
-
-    Ensures the SLURM allocation exists and starts Neo4j on the
-    compute node.  The allocation is shared with the embedding server.
-
-    Idempotent: no-op if already running.
-
-    \\b
-    Examples:
-        imas-codex serve neo4j deploy          # Deploy per config
-        imas-codex serve neo4j deploy -g 2     # With 2-GPU allocation
-    """
-    if _is_graph_compute_target():
-        alloc = _ensure_allocation(gpus)
-        node = alloc["node"]
-        if _service_running(node, "neo4j"):
-            click.echo(
-                f"Already running: neo4j on {node} "
-                f"(alloc {alloc['job_id']}, {alloc['gres']}, {alloc['time']})"
-            )
-            click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
-            click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
-            return
-
-        # Pre-deploy cleanup: kill orphaned processes, clear lock files
-        _kill_neo4j_on_node(node)
-        _clean_neo4j_locks(node)
-
-        click.echo(f"Starting Neo4j on {node}...")
-        _neo4j_pre_launch(node)
-        _start_service(node, "neo4j", _neo4j_service_command())
-
-        # Health check runs ON the compute node (Neo4j binds to localhost)
-        http_port = _graph_http_port()
-        _wait_for_health(
-            "Neo4j",
-            f"curl -sf http://{node}:{http_port}/",
-        )
-
-        click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
-        click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
-    else:
-        _deploy_login_neo4j()
-        click.echo(f"  Bolt: bolt://localhost:{_graph_port()}")
-        click.echo(f"  HTTP: http://localhost:{_graph_http_port()}")
-
-
-@serve_neo4j_group.command("stop")
-def neo4j_stop() -> None:
-    """Stop the Neo4j graph server.
-
-    Stops the Neo4j service on the compute node.  The SLURM allocation
-    and other services (e.g. embed) are not affected.
-
-    \\b
-    Examples:
-        imas-codex serve neo4j stop
-    """
-    stopped = False
-
-    alloc = _get_allocation()
-    if alloc and alloc["state"] == "RUNNING":
-        if _stop_service(alloc["node"], "neo4j"):
-            stopped = True
-
-    # Stop systemd service
-    try:
-        result = _run_remote(
-            "systemctl --user list-units 'imas-codex-neo4j-*' --no-pager "
-            "--plain --no-legend 2>/dev/null | awk '{print $1}' | head -1",
-            timeout=10,
-        )
-        service = result.strip()
-        if service and service != "(no output)":
-            _run_remote(f"systemctl --user stop {service}", timeout=15, check=True)
-            click.echo(f"  Stopped {service}")
-            stopped = True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pass
-
-    if not stopped:
-        click.echo("No active Neo4j server found")
-
-
-@serve_neo4j_group.command("status")
-def neo4j_status() -> None:
-    """Check Neo4j graph server status.
-
-    \\b
-    Examples:
-        imas-codex serve neo4j status
-    """
-    from imas_codex.graph.profiles import resolve_neo4j
-    from imas_codex.settings import get_graph_scheduler
-
-    profile = resolve_neo4j(auto_tunnel=False)
-    scheduler = get_graph_scheduler()
-
-    click.echo(f"Neo4j [{profile.name}]:")
-    click.echo(f"  Location: {profile.location}")
-    click.echo(f"  Scheduler: {scheduler}")
-    click.echo(f"  Bolt: {profile.bolt_port}, HTTP: {profile.http_port}")
-
-    if scheduler == "slurm":
-        alloc = _get_allocation()
-        if alloc:
-            click.echo(
-                f"  Allocation: {alloc['job_id']} {alloc['state']} on {alloc['node']} "
-                f"({alloc['gres']}, {alloc['time']})"
-            )
-            if alloc["state"] == "RUNNING":
-                running = _service_running(alloc["node"], "neo4j")
-                if running:
-                    # Health check
-                    try:
-                        result = _run_remote(
-                            f"curl -sf http://{alloc['node']}:{profile.http_port}/",
-                            timeout=10,
-                        )
-                        if result and result != "(no output)":
-                            click.echo("  Status: running, healthy")
-                        else:
-                            click.echo("  Status: running, not responding")
-                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                        click.echo("  Status: running, not responding")
-                else:
-                    click.echo("  Status: not started (allocation available)")
-        else:
-            click.echo("  Allocation: none")
-    else:
-        try:
-            from imas_codex.graph.health import check_graph_health
-
-            gh = check_graph_health()
-            icon = "healthy" if gh.status == "ok" else "unhealthy"
-            click.echo(f"  Status: {icon}")
-            if gh.neo4j_version:
-                click.echo(f"  Version: {gh.neo4j_version}")
-            if gh.error:
-                click.echo(f"  Error: {gh.error}")
-        except Exception as e:
-            click.echo(f"  Error: {e}")
-
-
-@serve_neo4j_group.command("logs")
-@click.option("--follow", "-f", is_flag=True, help="Follow log output (tail -f)")
-@click.option(
-    "--lines", "-n", default=50, type=int, help="Number of lines (default: 50)"
-)
-def neo4j_logs(follow: bool, lines: int) -> None:
-    """View Neo4j service logs.
-
-    \\b
-    Examples:
-        imas-codex serve neo4j logs            # Last 50 lines
-        imas-codex serve neo4j logs -f         # Follow live
-        imas-codex serve neo4j logs -n 100     # Last 100 lines
-    """
-    log_file = f"{_SERVICES_DIR}/neo4j.log"
-    _tail_log(log_file, follow, lines)
-
-
 # ── Allocation management command ────────────────────────────────────────
 
 
@@ -2357,7 +2169,7 @@ def alloc_status() -> None:
     if not alloc:
         click.echo("No allocation running")
         click.echo("  Create with: imas-codex serve embed deploy")
-        click.echo("           or: imas-codex serve neo4j deploy")
+        click.echo("           or: imas-codex graph start")
         return
 
     click.echo(f"Allocation: {alloc['job_id']} ({alloc['state']})")
@@ -2684,7 +2496,6 @@ def serve_status() -> None:
         get_embed_scheduler,
         get_embedding_location,
         get_graph_location,
-        get_graph_scheduler,
     )
 
     # ── SLURM Allocation ─────────────────────────────────────────────────
@@ -2707,7 +2518,7 @@ def serve_status() -> None:
 
     # ── Graph (Neo4j) ────────────────────────────────────────────────────
     click.echo("Neo4j Graph:")
-    scheduler = get_graph_scheduler()
+    graph_location = get_graph_location()
 
     if compute_node and compute_services.get("neo4j"):
         # SLURM: check health directly on the compute node
@@ -2715,7 +2526,7 @@ def serve_status() -> None:
         http_port = _graph_http_port()
         click.echo(f"  Bolt: bolt://{compute_node}:{bolt_port}")
         click.echo(f"  HTTP: http://{compute_node}:{http_port}")
-        click.echo(f"  Scheduler: {scheduler}")
+        click.echo(f"  Location: {graph_location}")
         try:
             result = _run_on_node(
                 compute_node,
@@ -2774,7 +2585,7 @@ def serve_status() -> None:
                 )
     elif compute_node and not compute_services.get("neo4j"):
         click.echo(f"  ✗ Status: stopped (not running on {compute_node})")
-        click.echo(f"  Scheduler: {scheduler}")
+        click.echo(f"  Location: {graph_location}")
     else:
         # Non-SLURM or no allocation: use profile-based health check
         try:
@@ -2789,7 +2600,7 @@ def serve_status() -> None:
                 click.echo(f"  Host: {gh.host}")
             click.echo(f"  Bolt URL: {gh.bolt_url}")
             click.echo(f"  HTTP URL: {gh.http_url}")
-            click.echo(f"  Scheduler: {scheduler}")
+            click.echo(f"  Location: {graph_location}")
             if gh.status == "ok":
                 if gh.neo4j_version:
                     click.echo(f"  Version: {gh.neo4j_version}")

@@ -23,7 +23,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 
 | Section | Purpose | Accessor |
 |---------|---------|----------|
-| `[graph]` | Neo4j connection, graph name/location, scheduler | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_graph()` |
+| `[graph]` | Neo4j connection, graph name/location | `get_graph_uri()`, `get_graph_username()`, `get_graph_password()`, `resolve_graph()` |
 | `[embedding]` | Embedding model, dimension, location, scheduler | `get_model("embedding")`, `get_embedding_location()` |
 | `[language]` | Structured output (scoring, discovery, labeling), batch-size | `get_model("language")` |
 | `[vision]` | Image/document tasks | `get_model("vision")` |
@@ -216,11 +216,11 @@ The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, an
 ### Neo4j Management
 
 ```bash
-uv run imas-codex serve neo4j status         # Check active graph status
-uv run imas-codex serve neo4j status -g tcv  # Check specific profile
-uv run imas-codex serve neo4j start -g tcv   # Start specific profile
-uv run imas-codex serve neo4j profiles       # List all profiles and ports
-uv run imas-codex serve neo4j shell          # Interactive Cypher (active profile)
+uv run imas-codex graph start                 # Start Neo4j (auto-detects mode)
+uv run imas-codex graph stop                  # Stop Neo4j
+uv run imas-codex graph status                # Check graph status
+uv run imas-codex graph profiles              # List all profiles and ports
+uv run imas-codex graph shell                 # Interactive Cypher (active profile)
 uv run imas-codex graph export               # Export graph to archive
 uv run imas-codex graph export -f tcv        # Per-facility export (filtered)
 uv run imas-codex graph load graph.tar.gz    # Load graph archive
@@ -516,8 +516,8 @@ Extended examples and edge cases for each domain: [agents/](agents/)
 ## Fallback: MCP Server Not Running
 
 ```bash
-uv run imas-codex serve neo4j status    # Graph operations
-uv run imas-codex serve neo4j shell     # Interactive Cypher
+uv run imas-codex graph status          # Graph operations
+uv run imas-codex graph shell           # Interactive Cypher
 uv run imas-codex ingest run tcv        # Ingestion
 uv run pytest                           # Testing
 ```

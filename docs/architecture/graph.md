@@ -97,14 +97,12 @@ os.environ["IMAS_CODEX_GRAPH"] = "tcv"
 ### Server Operations
 
 ```bash
-# Start/stop/status (under 'serve neo4j')
-imas-codex serve neo4j start           # Start active profile
-imas-codex serve neo4j start -g tcv    # Start specific profile
-imas-codex serve neo4j stop -g tcv
-imas-codex serve neo4j status -g tcv
-imas-codex serve neo4j profiles        # List all profiles
-imas-codex serve neo4j shell           # Interactive Cypher shell
-imas-codex serve neo4j service install # Install systemd service
+# Start/stop/status (under 'graph')
+imas-codex graph start                 # Start active profile
+imas-codex graph stop                  # Stop active profile
+imas-codex graph status                # Show graph status
+imas-codex graph profiles              # List all profiles
+imas-codex graph shell                 # Interactive Cypher shell
 ```
 
 ### Graph Lifecycle
@@ -165,7 +163,7 @@ imas-codex graph push --facility tcv --dev
 # End user pulls only their facility
 export IMAS_CODEX_GRAPH=tcv
 imas-codex graph pull --facility tcv
-imas-codex serve neo4j start
+imas-codex graph start
 ```
 
 ## GHCR Package Naming
