@@ -158,19 +158,19 @@ class EmbeddingResilience:
         """Attempt to restore connectivity (SSH tunnel + systemd)."""
         from imas_codex.embeddings.readiness import (
             _ensure_ssh_tunnel,
-            _is_on_iter,
-            _is_on_iter_login,
+            _is_on_facility,
+            _is_on_login_node,
             _try_start_service,
         )
         from imas_codex.settings import get_embed_server_port
 
         port = get_embed_server_port()
 
-        if not _is_on_iter():
-            # Off-ITER: re-establish SSH tunnel
+        if not _is_on_facility():
+            # Off-facility: re-establish SSH tunnel
             logger.debug("Attempting SSH tunnel reconnection (port %d)", port)
             _ensure_ssh_tunnel(port)
-        elif _is_on_iter_login():
+        elif _is_on_login_node():
             # On login node: restart systemd service
             logger.debug("Attempting systemd service restart")
             _try_start_service()

@@ -267,25 +267,23 @@ def get_embed_host() -> str | None:
 
 
 def _embed_host_from_facility() -> str | None:
-    """Read GPU node hostname from the embedding facility's compute config.
+    """Discover the compute node running the embedding server via SLURM.
 
     Resolves the facility from the embedding location (e.g. ``"titan"`` →
-    ``"iter"``), then looks for a ``GPUResource`` with
-    ``current_use == "embed_server"`` and returns its ``location``.
+    ``"iter"``), then uses ``squeue`` to find the active service job's
+    compute node.
     """
     try:
-        from imas_codex.discovery.base.facility import get_facility_infrastructure
         from imas_codex.remote.locations import resolve_location
+        from imas_codex.remote.tunnel import discover_compute_node_local
 
         location = get_embedding_location()
         info = resolve_location(location)
-        facility_id = info.facility
-        if facility_id == "local":
+        if info.facility == "local":
             return None
-        infra = get_facility_infrastructure(facility_id)
-        for gpu in infra.get("compute", {}).get("gpus", []):
-            if gpu.get("current_use") == "embed_server":
-                return gpu.get("location")
+        return discover_compute_node_local(
+            service_job_name=info.service_job_name,
+        )
     except Exception:
         pass
     return None
@@ -337,9 +335,12 @@ def _get_llm_proxy_host() -> str:
     """Resolve the host where the LLM proxy runs.
 
     For facility locations, the proxy runs on the login node.  If we are
-    on that facility (via ``is_local_host``), use the login node hostname
-    directly.  Otherwise return ``"127.0.0.1"`` for SSH tunnel access.
+    on that facility (via ``is_local_host``), use the current machine's
+    hostname directly.  Otherwise return ``"127.0.0.1"`` for SSH tunnel
+    access.
     """
+    import socket
+
     location = get_llm_location()
     if location == "local":
         return "127.0.0.1"
@@ -361,17 +362,9 @@ def _get_llm_proxy_host() -> str:
     except Exception:
         return "127.0.0.1"
 
-    # We're on the facility — resolve the login node hostname
-    try:
-        from imas_codex.discovery.base.facility import get_facility_infrastructure
-
-        infra = get_facility_infrastructure(info.facility)
-        hostname = infra.get("compute", {}).get("login_node", {}).get("hostname")
-        if hostname:
-            return hostname.split(".")[0]
-    except Exception:
-        pass
-    return "127.0.0.1"
+    # We're on the facility — use the current machine's hostname.
+    # The proxy runs on the login node we're currently logged into.
+    return socket.gethostname().split(".")[0]
 
 
 def get_llm_location() -> str:

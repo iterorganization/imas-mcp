@@ -237,20 +237,14 @@ def resolve_service_url(
 
 
 def _resolve_compute_host(info: LocationInfo) -> str | None:
-    """Get the configured compute host when squeue finds no running service job.
+    """Get the compute host for a SLURM location.
 
-    When a SLURM allocation has ended but services still run on the compute
-    node, falls back to the GPU entry's ``location`` from the facility's
-    private infrastructure config.
+    Called when ``squeue`` finds no running service job.  Returns None
+    since services require an active SLURM allocation.
     """
-    try:
-        from imas_codex.discovery.base.facility import get_facility_infrastructure
-
-        infra = get_facility_infrastructure(info.facility)
-    except Exception:
-        return None
-    for gpu in infra.get("compute", {}).get("gpus", []):
-        host = gpu.get("location")
-        if host and host != "login_node":
-            return host
+    logger.debug(
+        "No SLURM job '%s' found for %s — services require active allocation",
+        info.service_job_name,
+        info.name,
+    )
     return None

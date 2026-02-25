@@ -5,11 +5,11 @@ before starting long-running operations (wiki discovery, signal enrichment, etc.
 
 Architecture::
 
-    On ITER login node:
-      Client → localhost:18765 → embedding server (same machine, T4 GPU)
+    On facility login node:
+      Client → compute_node:18765 → embedding server (SLURM GPU node)
 
-    Off ITER (WSL/workstation):
-      Client → localhost:18765 → SSH tunnel → ITER login:18765 → server
+    Off facility (WSL/workstation):
+      Client → localhost:18765 → SSH tunnel → compute_node:18765 → server
 
 Usage::
 
@@ -23,8 +23,8 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
 import re
+import socket
 import subprocess
 import time
 
@@ -32,53 +32,56 @@ from imas_codex.remote.tunnel import ensure_tunnel
 
 logger = logging.getLogger(__name__)
 
-# ITER login node hostname — fallback when embed-host is not configured.
-ITER_LOGIN_HOST = "98dci4-srv-1003"
 
-
-def _get_embed_host() -> str:
+def _get_embed_host() -> str | None:
     """Get the hostname where the embed server runs.
 
-    Priority: settings embed-host → ITER login node fallback.
+    Delegates to settings which discovers the SLURM compute node.
+    Returns None when not resolvable.
     """
     from imas_codex.settings import get_embed_host
 
-    return get_embed_host() or ITER_LOGIN_HOST
+    return get_embed_host()
 
 
-def _is_on_iter() -> bool:
-    """Check if running on an ITER cluster node (login or compute)."""
-    return os.uname().nodename.startswith("98dci4-")
+def _is_on_facility() -> bool:
+    """Check if running on the embedding server's facility."""
+    from imas_codex.remote.locations import is_location_local
+    from imas_codex.settings import get_embedding_location
+
+    return is_location_local(get_embedding_location())
 
 
-def _is_on_iter_login() -> bool:
-    """Check if running on an ITER login node."""
-    return os.uname().nodename.startswith("98dci4-srv-")
-
-
-def _is_on_iter_compute() -> bool:
-    """Check if running on an ITER compute node.
-
-    Compute nodes have no systemd user session (no D-Bus) and cannot
-    run the embedding server locally.  Services are on the login node.
-    """
-    return os.uname().nodename.startswith("98dci4-clu-")
+def _is_on_login_node() -> bool:
+    """Check if running on a login node (has systemd user session)."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-system-running"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return result.returncode == 0 or "running" in result.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
 
 
 def _resolve_url_for_compute(url: str) -> str:
-    """On compute nodes, redirect localhost URLs to the embed server host.
+    """On facility nodes, redirect localhost URLs to the embed server host.
 
-    The embedding server may run on a compute node (e.g. Titan) or on
-    the login node.  When pyproject.toml or env vars specify localhost,
-    compute nodes need to reach the actual embed host instead.
+    The embedding server runs on a compute node (e.g. Titan).  When the
+    resolved URL contains localhost, replace it with the actual compute
+    host so facility nodes can reach it directly.
     """
-    if _is_on_iter_compute() and url:
-        embed_host = _get_embed_host()
-        resolved = re.sub(r"localhost|127\.0\.0\.1", embed_host, url)
-        if resolved != url:
-            logger.info("Compute node: redirecting %s → %s", url, resolved)
-        return resolved
-    return url
+    if not url:
+        return url
+    embed_host = _get_embed_host()
+    if not embed_host:
+        return url
+    resolved = re.sub(r"localhost|127\.0\.0\.1", embed_host, url)
+    if resolved != url:
+        logger.info("Redirecting %s → %s", url, resolved)
+    return resolved
 
 
 def _try_start_service() -> bool:
@@ -181,30 +184,29 @@ def ensure_embedding_ready(
 
     log("Embedding server not responding, checking connectivity...", "dim")
 
-    # Step 2: If off-ITER, ensure SSH tunnel
-    on_iter = _is_on_iter()
-    if not on_iter:
-        log("Setting up SSH tunnel to ITER...", "dim")
+    # Step 2: If off-facility, ensure SSH tunnel
+    on_facility = _is_on_facility()
+    if not on_facility:
+        log("Setting up SSH tunnel...", "dim")
         if not _ensure_ssh_tunnel(port):
             return False, (
-                "Cannot establish SSH tunnel to ITER.\n"
+                "Cannot establish SSH tunnel.\n"
                 "Start manually: ssh -f -N -L 18765:127.0.0.1:18765 iter\n"
                 "Or install autossh service: imas-codex serve tunnel service install"
             )
 
-    # Step 3: On ITER login node, try starting the systemd service.
-    # Skip on compute nodes — no D-Bus/systemd user session there.
-    # Also skip if embed server is on a separate host (e.g. Titan).
+    # Step 3: On login node, try starting the systemd service.
+    # Only if embed server runs on this node (not on a separate compute host).
     embed_host = _get_embed_host()
-    embed_on_login = embed_host == ITER_LOGIN_HOST or embed_host.startswith(
-        "98dci4-srv"
+    embed_on_this_node = (
+        embed_host is None or embed_host == socket.gethostname().split(".")[0]
     )
-    if on_iter and _is_on_iter_login() and embed_on_login:
+    if on_facility and _is_on_login_node() and embed_on_this_node:
         log("Trying to start embedding service...", "dim")
         _try_start_service()
-    elif on_iter and _is_on_iter_compute():
+    elif on_facility and embed_host:
         log(
-            f"On compute node — embedding server expected on {embed_host}",
+            f"Embedding server expected on {embed_host}",
             "dim",
         )
 
@@ -245,13 +247,7 @@ def _resolve_source_label(info) -> str:
     if not info:
         return "remote"
     hostname = getattr(info, "hostname", None)
-    if not hostname:
-        return "remote"
-    if hostname.startswith("98dci4-gpu"):
-        return f"iter-gpu ({hostname})"
-    if hostname.startswith("98dci4-srv"):
-        return f"iter-login ({hostname})"
-    return hostname
+    return hostname or "remote"
 
 
 __all__ = ["ensure_embedding_ready"]
