@@ -853,6 +853,41 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "cluster_label_schema": _provide_cluster_label_schema,
 }
 
+
+@lru_cache(maxsize=1)
+def _provide_file_score_dimensions() -> dict[str, Any]:
+    """Provide score dimensions for file scoring (all 9 dimensions)."""
+    dims = _provide_score_dimensions()["score_dimensions"]
+    # Files use all dimensions except data-only ones (modeling_data, experimental_data)
+    file_dims = {
+        "score_modeling_code",
+        "score_analysis_code",
+        "score_operations_code",
+        "score_data_access",
+        "score_workflow",
+        "score_visualization",
+        "score_documentation",
+        "score_imas",
+        "score_convention",
+    }
+    return {"score_dimensions": [d for d in dims if d["field"] in file_dims]}
+
+
+@lru_cache(maxsize=1)
+def _provide_file_scoring_schema() -> dict[str, Any]:
+    """Provide FileScoreBatch Pydantic schema for LLM prompts."""
+    from imas_codex.discovery.files.scorer import FileScoreBatch, FileScoreResult
+
+    return {
+        "file_scoring_schema_example": get_pydantic_schema_json(FileScoreBatch),
+        "file_scoring_schema_fields": get_pydantic_schema_description(FileScoreResult),
+    }
+
+
+# Register file scoring providers
+_SCHEMA_PROVIDERS["file_score_dimensions"] = _provide_file_score_dimensions
+_SCHEMA_PROVIDERS["file_scoring_schema"] = _provide_file_scoring_schema
+
 # Default schema needs per prompt (when not specified in frontmatter)
 # Only load what's actually used by each prompt
 _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
@@ -887,6 +922,12 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
     "wiki/image-captioner": [
         "image_caption_schema",
         "physics_domains",
+    ],
+    # File scoring
+    "discovery/file-scorer": [
+        "file_score_dimensions",
+        "file_scoring_schema",
+        "format_patterns",
     ],
 }
 

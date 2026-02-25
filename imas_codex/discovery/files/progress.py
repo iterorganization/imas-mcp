@@ -82,6 +82,14 @@ class DocsItem:
     file_type: str = ""  # document, notebook, config
 
 
+@dataclass
+class ImageItem:
+    """Current image ingestion activity."""
+
+    path: str
+    size: str = ""  # e.g. "768x512"
+
+
 # =============================================================================
 # Progress State
 # =============================================================================
@@ -115,13 +123,17 @@ class FileProgressState:
     # This run stats
     run_scanned: int = 0
     run_scored: int = 0
+    run_enriched: int = 0
     run_code_ingested: int = 0
     run_docs_ingested: int = 0
+    run_images_ingested: int = 0
     _run_score_cost: float = 0.0
     scan_rate: float | None = None
     score_rate: float | None = None
+    enrich_rate: float | None = None
     code_rate: float | None = None
     docs_rate: float | None = None
+    image_rate: float | None = None
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
@@ -131,10 +143,13 @@ class FileProgressState:
     current_score: ScoreItem | None = None
     current_code: CodeItem | None = None
     current_docs: DocsItem | None = None
+    current_image: ImageItem | None = None
     scan_processing: bool = False
     score_processing: bool = False
+    enrich_processing: bool = False
     code_processing: bool = False
     docs_processing: bool = False
+    image_processing: bool = False
 
     # Streaming queues
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
@@ -149,6 +164,11 @@ class FileProgressState:
         )
     )
     docs_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.5, max_rate=2.0, min_display_time=0.4
+        )
+    )
+    image_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.5, max_rate=2.0, min_display_time=0.4
         )
@@ -295,6 +315,10 @@ class FileProgressDisplay(BaseProgressDisplay):
         score_count, score_ann = self._count_group_workers("triage")
         code_count, code_ann = self._count_group_workers("code")
         docs_count, docs_ann = self._count_group_workers("docs")
+        image_count, image_ann = self._count_group_workers("image")
+
+        # IMAGE: image files ingested
+        image_total = max(self.state.run_images_ingested, 1)
 
         # --- Build activity data ---
 
@@ -302,12 +326,14 @@ class FileProgressDisplay(BaseProgressDisplay):
         score = self.state.current_score
         code = self.state.current_code
         docs = self.state.current_docs
+        image = self.state.current_image
 
         # Worker completion detection
         scan_complete = self._worker_complete("scan") and not scan
         score_complete = self._worker_complete("triage") and not score
         code_complete = self._worker_complete("code") and not code
         docs_complete = self._worker_complete("docs") and not docs
+        image_complete = self._worker_complete("image") and not image
 
         # SCAN activity
         scan_text = ""
@@ -355,6 +381,14 @@ class FileProgressDisplay(BaseProgressDisplay):
             docs_text = clip_path(docs.path, content_width - 10)
             if docs.file_type:
                 docs_detail = [(docs.file_type, "dim")]
+
+        # IMAGE activity
+        image_text = ""
+        image_detail: list[tuple[str, str]] | None = None
+        if image:
+            image_text = clip_path(image.path, content_width - 10)
+            if image.size:
+                image_detail = [(image.size, "cyan")]
 
         # --- Build pipeline rows ---
 
@@ -415,6 +449,20 @@ class FileProgressDisplay(BaseProgressDisplay):
                 is_complete=docs_complete,
                 worker_count=docs_count,
                 worker_annotation=docs_ann,
+            ),
+            PipelineRowConfig(
+                name="IMAGE",
+                style="bold white",
+                completed=self.state.run_images_ingested,
+                total=image_total,
+                rate=self.state.image_rate,
+                disabled=self.state.scan_only or self.state.score_only,
+                primary_text=image_text,
+                detail_parts=image_detail,
+                is_processing=self.state.image_processing,
+                is_complete=image_complete,
+                worker_count=image_count,
+                worker_annotation=image_ann,
             ),
         ]
         return build_pipeline_section(rows, self.bar_width)
@@ -536,6 +584,25 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
+    def update_enrich(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update enrich worker state."""
+        self.state.run_enriched = stats.processed
+        self.state.enrich_rate = stats.rate
+
+        if "waiting" in message.lower() or "idle" in message.lower():
+            self.state.enrich_processing = False
+        elif "enriching" in message.lower():
+            self.state.enrich_processing = True
+        else:
+            self.state.enrich_processing = False
+
+        self._refresh()
+
     def update_code(
         self,
         message: str,
@@ -603,6 +670,39 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
+    def update_image(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update image ingestion worker state."""
+        self.state.run_images_ingested = stats.processed
+        self.state.image_rate = stats.rate
+
+        if "idle" in message.lower():
+            self.state.image_processing = False
+            self._refresh()
+            return
+        elif "processing" in message.lower():
+            self.state.image_processing = True
+        else:
+            self.state.image_processing = False
+
+        if results:
+            items = [
+                ImageItem(
+                    path=r.get("path", ""),
+                    size=r.get("size", ""),
+                )
+                for r in results
+            ]
+            max_rate = 2.0
+            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
+            self.state.image_queue.add(items, display_rate)
+
+        self._refresh()
+
     def refresh_from_graph(self, facility: str) -> None:
         """Refresh totals from graph database."""
         from imas_codex.discovery.files.parallel import get_file_discovery_stats
@@ -657,6 +757,14 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.current_docs = None
             updated = True
 
+        next_image = self.state.image_queue.pop()
+        if next_image:
+            self.state.current_image = next_image
+            updated = True
+        elif self.state.image_queue.is_stale() and self.state.current_image is not None:
+            self.state.current_image = None
+            updated = True
+
         if updated:
             self._refresh()
 
@@ -703,6 +811,13 @@ class FileProgressDisplay(BaseProgressDisplay):
         summary.append(f"ingested={self.state.run_docs_ingested:,}", style="yellow")
         if self.state.docs_rate:
             summary.append(f"  {self.state.docs_rate:.1f}/s", style="dim")
+        summary.append("\n")
+
+        # IMAGE stats
+        summary.append("  IMAGE    ", style="bold white")
+        summary.append(f"ingested={self.state.run_images_ingested:,}", style="white")
+        if self.state.image_rate:
+            summary.append(f"  {self.state.image_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # USAGE stats

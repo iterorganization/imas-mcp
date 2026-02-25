@@ -1023,7 +1023,13 @@ def compute_version_changes(
         new_info = new_paths[path]
 
         changes = []
-        for field in ("units", "documentation", "data_type", "node_type"):
+        for field in (
+            "units",
+            "documentation",
+            "data_type",
+            "node_type",
+            "cocos_label_transformation",
+        ):
             old_val = old_info.get(field, "")
             new_val = new_info.get(field, "")
             if old_val != new_val:
@@ -1207,6 +1213,7 @@ def build_dd_graph(
         "embeddings_cached": 0,
         "error_relationships": 0,
         "paths_filtered": 0,
+        "cocos_labels_updated": 0,
         "skipped": False,
     }
 
@@ -1328,6 +1335,36 @@ def build_dd_graph(
             monitor.status("Creating RENAMED_TO relationships...")
             mappings = load_path_mappings(current_dd_version)
             _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
+
+        # Update cocos_label_transformation on existing IMASPath nodes
+        # Paths created in early versions lack COCOS labels added in later
+        # versions (3.28.1+). Apply the latest version's labels to all nodes.
+        if not dry_run and version_data:
+            latest_version = sorted(version_data.keys())[-1]
+            latest_data = version_data[latest_version]
+            cocos_updates = [
+                {
+                    "id": path,
+                    "cocos_label_transformation": info["cocos_label_transformation"],
+                }
+                for path, info in latest_data["paths"].items()
+                if info.get("cocos_label_transformation")
+            ]
+            if cocos_updates:
+                monitor.status(
+                    f"Updating {len(cocos_updates)} paths with COCOS labels..."
+                )
+                for i in range(0, len(cocos_updates), 1000):
+                    batch = cocos_updates[i : i + 1000]
+                    client.query(
+                        """
+                        UNWIND $paths AS p
+                        MATCH (path:IMASPath {id: p.id})
+                        SET path.cocos_label_transformation = p.cocos_label_transformation
+                        """,
+                        paths=batch,
+                    )
+                stats["cocos_labels_updated"] = len(cocos_updates)
 
         # Phase 3: Embeddings
         if include_embeddings and not dry_run:

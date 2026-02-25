@@ -38,8 +38,10 @@ class FileDiscoveryState:
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
     score_stats: WorkerStats = field(default_factory=WorkerStats)
+    enrich_stats: WorkerStats = field(default_factory=WorkerStats)
     code_stats: WorkerStats = field(default_factory=WorkerStats)
     docs_stats: WorkerStats = field(default_factory=WorkerStats)
+    image_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
@@ -49,8 +51,10 @@ class FileDiscoveryState:
     # Pipeline phases
     scan_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("scan"))
     score_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("score"))
+    enrich_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("enrich"))
     code_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("code"))
     docs_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("docs"))
+    image_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("image"))
 
     def should_stop(self) -> bool:
         """Check if discovery should stop."""
@@ -79,4 +83,5 @@ class FileDiscoveryState:
             self.score_stats.elapsed,
             self.code_stats.elapsed,
             self.docs_stats.elapsed,
+            self.image_stats.elapsed,
         )

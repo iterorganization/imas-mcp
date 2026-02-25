@@ -188,7 +188,7 @@ async def score_worker(
     """Score worker: LLM batch scoring of discovered SourceFiles.
 
     Claims SourceFiles with status='discovered' and no interest_score,
-    scores them via LLM, updates graph.
+    groups by parent FacilityPath, scores via LLM with enrichment context.
     """
     from imas_codex.discovery.base.llm import call_llm_structured
     from imas_codex.discovery.files.graph_ops import (
@@ -196,13 +196,18 @@ async def score_worker(
         release_file_score_claims,
     )
     from imas_codex.discovery.files.scorer import (
-        BatchScoreResult,
-        _apply_scores,
-        _build_scoring_prompt,
+        FileScoreBatch,
+        _build_system_prompt,
+        _build_user_prompt,
+        _group_files_by_parent,
+        apply_file_scores,
     )
     from imas_codex.settings import get_model
 
     model = get_model("language")
+
+    # Build system prompt once for prefix caching
+    system_prompt = _build_system_prompt(focus=state.focus)
 
     while not state.should_stop():
         if state.budget_exhausted:
@@ -210,7 +215,7 @@ async def score_worker(
                 on_progress("budget exhausted", state.score_stats, None)
             break
 
-        # Claim files
+        # Claim files (joined with parent FacilityPath enrichment data)
         files = await asyncio.to_thread(
             claim_files_for_scoring, state.facility, limit=batch_size
         )
@@ -227,22 +232,34 @@ async def score_worker(
         file_id_map = {f["path"]: f["id"] for f in files}
         batch_ids = [f["id"] for f in files]
 
-        if on_progress:
-            on_progress(f"scoring {len(files)} files", state.score_stats, None)
+        # Group by parent path for enrichment context
+        file_groups = _group_files_by_parent(files)
 
-        prompt = _build_scoring_prompt(files, state.facility, focus=state.focus)
+        if on_progress:
+            on_progress(
+                f"scoring {len(files)} files ({len(file_groups)} dirs)",
+                state.score_stats,
+                None,
+            )
+
+        user_prompt = _build_user_prompt(file_groups)
 
         try:
             parsed, cost, _tokens = await asyncio.to_thread(
                 call_llm_structured,
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
-                response_model=BatchScoreResult,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_model=FileScoreBatch,
                 temperature=0.1,
             )
             state.score_stats.cost += cost
 
-            result = await asyncio.to_thread(_apply_scores, parsed.scores, file_id_map)
+            result = await asyncio.to_thread(
+                apply_file_scores, parsed.results, file_id_map
+            )
             state.score_stats.processed += result.get("scored", 0)
 
             await asyncio.to_thread(release_file_score_claims, batch_ids)
@@ -254,7 +271,7 @@ async def score_worker(
                         "score": s.interest_score,
                         "category": s.file_category,
                     }
-                    for s in parsed.scores[:5]
+                    for s in parsed.results[:5]
                 ]
                 on_progress(
                     f"scored {result.get('scored', 0)} (${cost:.3f})",
@@ -511,5 +528,287 @@ async def docs_worker(
             state.docs_stats.errors += 1
             for f in files:
                 await asyncio.to_thread(_mark_file_failed, f["id"], str(e)[:200])
+
+        await asyncio.sleep(0.5)
+
+
+# ============================================================================
+# Enrich Worker (rg pattern matching on individual files)
+# ============================================================================
+
+
+async def enrich_worker(
+    state: FileDiscoveryState,
+    on_progress: Callable | None = None,
+    batch_size: int = 100,
+) -> None:
+    """Enrich worker: rg pattern matching on scored SourceFiles.
+
+    Claims scored SourceFiles that haven't been enriched yet, runs
+    batched rg pattern matching via SSH, stores per-file pattern
+    evidence on SourceFile nodes.
+
+    Runs AFTER scoring, in parallel with code/docs ingestion workers.
+    Enrichment data improves ingestion prioritization — files with
+    actual pattern evidence are ingested first.
+    """
+    from imas_codex.discovery.files.enrichment import (
+        enrich_files,
+        persist_file_enrichment,
+    )
+    from imas_codex.discovery.files.graph_ops import (
+        claim_files_for_enrichment,
+        release_file_enrich_claims,
+    )
+
+    while not state.should_stop():
+        if state.scan_only or state.score_only:
+            break
+
+        files = await asyncio.to_thread(
+            claim_files_for_enrichment,
+            state.facility,
+            limit=batch_size,
+        )
+
+        if not files:
+            state.enrich_phase.record_idle()
+            if on_progress:
+                on_progress("idle", state.enrich_stats, None)
+            await asyncio.sleep(2.0)
+            continue
+
+        state.enrich_phase.record_activity(len(files))
+        file_id_map = {f["path"]: f["id"] for f in files}
+        batch_ids = [f["id"] for f in files]
+        file_paths = [f["path"] for f in files]
+
+        if on_progress:
+            on_progress(
+                f"enriching {len(files)} files",
+                state.enrich_stats,
+                None,
+            )
+
+        try:
+            results = await enrich_files(
+                state.facility,
+                file_paths,
+            )
+
+            enriched = await asyncio.to_thread(
+                persist_file_enrichment, results, file_id_map
+            )
+
+            state.enrich_stats.processed += enriched
+
+            # Release claims
+            await asyncio.to_thread(release_file_enrich_claims, batch_ids)
+
+            if on_progress:
+                # Summarize pattern findings
+                files_with_patterns = sum(
+                    1 for r in results if r.get("total_pattern_matches", 0) > 0
+                )
+                on_progress(
+                    f"enriched {enriched} ({files_with_patterns} with patterns)",
+                    state.enrich_stats,
+                    [
+                        {
+                            "path": r["path"],
+                            "patterns": r.get("total_pattern_matches", 0),
+                        }
+                        for r in results[:5]
+                        if r.get("total_pattern_matches", 0) > 0
+                    ],
+                )
+
+        except Exception as e:
+            logger.error("File enrichment batch failed: %s", e)
+            state.enrich_stats.errors += 1
+            await asyncio.to_thread(release_file_enrich_claims, batch_ids)
+
+        await asyncio.sleep(0.1)
+
+
+# ============================================================================
+# Image Worker (standalone image files → Image nodes)
+# ============================================================================
+
+
+async def image_worker(
+    state: FileDiscoveryState,
+    on_progress: Callable | None = None,
+    batch_size: int = 10,
+) -> None:
+    """Image worker: Fetch, downsample, and persist standalone image files.
+
+    Claims scored SourceFiles with file_category='image', fetches image
+    bytes via SCP, downsamples to WebP, and creates Image nodes linked
+    to the SourceFile. Image nodes are then available for VLM captioning.
+
+    Transitions: discovered (scored) → ingested | failed
+    """
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    from imas_codex.discovery.base.image import (
+        downsample_image,
+        make_image_id,
+        persist_images,
+    )
+
+    while not state.should_stop():
+        if state.scan_only or state.score_only:
+            break
+
+        # Claim image files for processing
+        files = await asyncio.to_thread(
+            _claim_files_for_ingestion,
+            state.facility,
+            file_category="image",
+            limit=batch_size,
+        )
+
+        if not files:
+            state.image_phase.record_idle()
+            if on_progress:
+                on_progress("idle", state.image_stats, None)
+            await asyncio.sleep(3.0)
+            continue
+
+        state.image_phase.record_activity(len(files))
+
+        if on_progress:
+            on_progress(f"processing {len(files)} images", state.image_stats, None)
+
+        images_to_persist: list[dict[str, Any]] = []
+        ingested_ids: list[str] = []
+        failed_ids: list[tuple[str, str]] = []
+
+        # Batch-fetch images via tar (reuses SSH connection)
+        remote_paths = [f["path"] for f in files]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Fetch all image files in a single SSH tar
+            try:
+                tar_cmd = (
+                    "tar cf - "
+                    + " ".join(f"'{p}'" for p in remote_paths)
+                    + " 2>/dev/null"
+                )
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["ssh", state.ssh_host, tar_cmd],
+                    capture_output=True,
+                    timeout=60,
+                )
+
+                if result.returncode == 0 and result.stdout:
+                    import io
+                    import tarfile
+
+                    tar = tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:")
+                    tar.extractall(path=tmpdir, filter="data")
+                    tar.close()
+
+                    for f in files:
+                        remote_path = f["path"]
+                        sf_id = f["id"]
+                        # tar preserves full path
+                        local_path = Path(tmpdir) / remote_path.lstrip("/")
+
+                        if not local_path.exists():
+                            failed_ids.append((sf_id, "File not found in tar archive"))
+                            continue
+
+                        try:
+                            image_bytes = local_path.read_bytes()
+                        except Exception as e:
+                            failed_ids.append((sf_id, str(e)[:200]))
+                            continue
+
+                        if len(image_bytes) < 512:
+                            failed_ids.append((sf_id, "Image too small (<512 bytes)"))
+                            continue
+
+                        ds_result = downsample_image(image_bytes)
+                        if ds_result is None:
+                            failed_ids.append(
+                                (sf_id, "Downsample failed (too small or unreadable)")
+                            )
+                            continue
+
+                        b64_data, stored_w, stored_h, orig_w, orig_h = ds_result
+                        image_id = make_image_id(state.facility, remote_path)
+                        filename = Path(remote_path).name
+
+                        images_to_persist.append(
+                            {
+                                "id": image_id,
+                                "facility_id": state.facility,
+                                "source_url": remote_path,
+                                "source_type": "filesystem",
+                                "status": "ingested",
+                                "filename": filename,
+                                "image_format": "webp",
+                                "width": stored_w,
+                                "height": stored_h,
+                                "original_width": orig_w,
+                                "original_height": orig_h,
+                                "content_hash": None,
+                                "image_data": b64_data,
+                                "page_title": None,
+                                "section": None,
+                                "alt_text": None,
+                                "surrounding_text": None,
+                                "source_file_id": sf_id,
+                            }
+                        )
+                        ingested_ids.append(sf_id)
+                else:
+                    # tar failed — mark all as failed
+                    for f in files:
+                        failed_ids.append((f["id"], "SSH tar fetch failed"))
+
+            except Exception as e:
+                logger.error("Image batch fetch failed: %s", e)
+                state.image_stats.errors += 1
+                for f in files:
+                    await asyncio.to_thread(_mark_file_failed, f["id"], str(e)[:200])
+                continue
+
+        # Persist Image nodes
+        if images_to_persist:
+            await asyncio.to_thread(
+                persist_images,
+                images_to_persist,
+                parent_label="SourceFile",
+                parent_id_key="source_file_id",
+            )
+
+        # Mark SourceFiles as ingested
+        if ingested_ids:
+            await asyncio.to_thread(_mark_files_ingested, ingested_ids)
+
+        # Mark failures
+        for sf_id, error in failed_ids:
+            await asyncio.to_thread(_mark_file_failed, sf_id, error)
+
+        state.image_stats.processed += len(ingested_ids)
+
+        if on_progress:
+            on_progress(
+                f"processed {len(ingested_ids)} images ({len(failed_ids)} failed)",
+                state.image_stats,
+                [
+                    {
+                        "path": img["source_url"],
+                        "size": f"{img['width']}x{img['height']}",
+                    }
+                    for img in images_to_persist[:5]
+                ],
+            )
 
         await asyncio.sleep(0.5)

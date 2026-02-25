@@ -3,6 +3,7 @@
 Main entry point for file discovery with async workers. Orchestrates:
 - Scan: SSH file enumeration from scored FacilityPaths
 - Score: LLM batch scoring of discovered SourceFiles
+- Enrich: rg pattern matching on individual scored files
 - Code: Fetch, chunk, embed code files (replaces ``ingest run``)
 - Docs: Ingest non-code files (documents, notebooks, configs)
 
@@ -28,7 +29,14 @@ from imas_codex.graph import GraphClient
 
 from .graph_ops import reset_orphaned_file_claims
 from .state import FileDiscoveryState
-from .workers import code_worker, docs_worker, scan_worker, score_worker
+from .workers import (
+    code_worker,
+    docs_worker,
+    enrich_worker,
+    image_worker,
+    scan_worker,
+    score_worker,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -46,25 +54,31 @@ async def run_parallel_file_discovery(
     focus: str | None = None,
     num_scan_workers: int = 2,
     num_score_workers: int = 2,
+    num_enrich_workers: int = 1,
     num_code_workers: int = 2,
     num_docs_workers: int = 1,
+    num_image_workers: int = 1,
     scan_only: bool = False,
     score_only: bool = False,
     deadline: float | None = None,
     on_scan_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
+    on_enrich_progress: Callable | None = None,
     on_code_progress: Callable | None = None,
     on_docs_progress: Callable | None = None,
+    on_image_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
 ) -> dict[str, Any]:
     """Run parallel file discovery with async workers.
 
-    Orchestrates four worker types through the file discovery pipeline:
+    Orchestrates six worker types through the file discovery pipeline:
     1. Scan workers: SSH file enumeration from scored FacilityPaths
     2. Score workers: LLM batch scoring of discovered SourceFiles
-    3. Code workers: Fetch, chunk, embed code files (ingestion)
-    4. Docs workers: Ingest non-code files (documents, notebooks, configs)
+    3. Enrich workers: rg pattern matching on scored files
+    4. Code workers: Fetch, chunk, embed code files (ingestion)
+    5. Docs workers: Ingest non-code files (documents, notebooks, configs)
+    6. Image workers: Downsample and persist standalone image files
 
     Args:
         facility: Facility ID
@@ -75,6 +89,7 @@ async def run_parallel_file_discovery(
         focus: Natural language focus for scoring
         num_scan_workers: Number of parallel scan workers
         num_score_workers: Number of parallel score workers
+        num_enrich_workers: Number of parallel enrich workers
         num_code_workers: Number of parallel code workers
         num_docs_workers: Number of parallel docs workers
         scan_only: Only scan, skip scoring and ingestion
@@ -82,6 +97,7 @@ async def run_parallel_file_discovery(
         deadline: Absolute time (epoch) when discovery should stop
         on_scan_progress: Callback for scan worker progress
         on_score_progress: Callback for score worker progress
+        on_enrich_progress: Callback for enrich worker progress
         on_code_progress: Callback for code worker progress
         on_docs_progress: Callback for docs worker progress
         on_worker_status: Callback for worker status updates
@@ -178,6 +194,23 @@ async def run_parallel_file_discovery(
 
     # --- Code workers (skip in scan_only and score_only modes) ---
     if not scan_only and not score_only:
+        # --- Enrich workers ---
+        for i in range(num_enrich_workers):
+            worker_name = f"enrich_worker_{i}"
+            status = worker_group.create_status(worker_name, group="enrich")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        enrich_worker,
+                        worker_name,
+                        state,
+                        state.should_stop,
+                        on_progress=on_enrich_progress,
+                        status_tracker=status,
+                    )
+                )
+            )
+
         for i in range(num_code_workers):
             worker_name = f"code_worker_{i}"
             status = worker_group.create_status(worker_name, group="code")
@@ -210,18 +243,39 @@ async def run_parallel_file_discovery(
                     )
                 )
             )
+
+        # --- Image workers ---
+        for i in range(num_image_workers):
+            worker_name = f"image_worker_{i}"
+            status = worker_group.create_status(worker_name, group="image")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        image_worker,
+                        worker_name,
+                        state,
+                        state.should_stop,
+                        on_progress=on_image_progress,
+                        status_tracker=status,
+                    )
+                )
+            )
     else:
         state.code_phase.mark_done()
         state.docs_phase.mark_done()
+        state.enrich_phase.mark_done()
+        state.image_phase.mark_done()
 
     logger.info(
-        "Started %d workers: scan=%d score=%d code=%d docs=%d "
-        "scan_only=%s score_only=%s",
+        "Started %d workers: scan=%d score=%d enrich=%d code=%d docs=%d "
+        "image=%d scan_only=%s score_only=%s",
         worker_group.get_active_count(),
         num_scan_workers if not score_only else 0,
         num_score_workers if not scan_only else 0,
+        num_enrich_workers if not (scan_only or score_only) else 0,
         num_code_workers if not (scan_only or score_only) else 0,
         num_docs_workers if not (scan_only or score_only) else 0,
+        num_image_workers if not (scan_only or score_only) else 0,
         scan_only,
         score_only,
     )
@@ -251,13 +305,17 @@ async def run_parallel_file_discovery(
     return {
         "scanned": state.scan_stats.processed,
         "scored": state.score_stats.processed,
+        "enriched": state.enrich_stats.processed,
         "code_ingested": state.code_stats.processed,
         "docs_ingested": state.docs_stats.processed,
+        "images_ingested": state.image_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_errors": state.scan_stats.errors,
         "score_errors": state.score_stats.errors,
+        "enrich_errors": state.enrich_stats.errors,
         "code_errors": state.code_stats.errors,
+        "image_errors": state.image_stats.errors,
     }
 
 

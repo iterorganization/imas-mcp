@@ -253,13 +253,10 @@ def _persist_discovered_files(
     """
     from datetime import UTC, datetime
 
-    from imas_codex.discovery.files.scorer import compute_path_heuristic_score
-
     now = datetime.now(UTC).isoformat()
     items = []
     for f in files:
         file_id = f"{facility}:{f['path']}"
-        heuristic = compute_path_heuristic_score(f["path"])
         items.append(
             {
                 "id": file_id,
@@ -270,7 +267,6 @@ def _persist_discovered_files(
                 "status": "discovered",
                 "discovered_at": now,
                 "in_directory": source_path_id,
-                "path_heuristic_score": heuristic,
             }
         )
 
@@ -288,21 +284,35 @@ def _persist_discovered_files(
         for batch_start in range(0, len(items), BATCH_SIZE):
             batch = items[batch_start : batch_start + BATCH_SIZE]
 
-            # MERGE to skip already-discovered files
-            result = client.query(
-                """
-                UNWIND $items AS item
-                MERGE (sf:SourceFile {id: item.id})
-                ON CREATE SET sf += item
-                WITH sf, item
-                WHERE sf.status = 'discovered' AND sf.discovered_at = item.discovered_at
-                MATCH (f:Facility {id: item.facility_id})
-                MERGE (sf)-[:AT_FACILITY]->(f)
-                RETURN count(CASE WHEN sf.discovered_at = item.discovered_at THEN 1 END) AS discovered,
-                       count(CASE WHEN sf.discovered_at <> item.discovered_at THEN 1 END) AS skipped
-                """,
-                items=batch,
-            )
+            # MERGE to skip already-discovered files.
+            # Catch constraint violations from concurrent scan workers
+            # racing on the same file id.
+            try:
+                result = client.query(
+                    """
+                    UNWIND $items AS item
+                    MERGE (sf:SourceFile {id: item.id})
+                    ON CREATE SET sf += item
+                    WITH sf, item
+                    WHERE sf.status = 'discovered' AND sf.discovered_at = item.discovered_at
+                    MATCH (f:Facility {id: item.facility_id})
+                    MERGE (sf)-[:AT_FACILITY]->(f)
+                    RETURN count(CASE WHEN sf.discovered_at = item.discovered_at THEN 1 END) AS discovered,
+                           count(CASE WHEN sf.discovered_at <> item.discovered_at THEN 1 END) AS skipped
+                    """,
+                    items=batch,
+                )
+            except Exception as e:
+                if "ConstraintValidation" in str(
+                    type(e).__name__
+                ) or "ConstraintValidation" in str(e):
+                    logger.debug(
+                        "Constraint violation (concurrent scan), retrying individually: %s",
+                        e,
+                    )
+                    result = [{"discovered": 0, "skipped": len(batch)}]
+                else:
+                    raise
 
             counts = result[0] if result else {"discovered": 0, "skipped": 0}
             total_discovered += counts.get("discovered", len(batch))

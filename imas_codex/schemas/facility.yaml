@@ -2494,11 +2494,61 @@ classes:
         description: When this file was queued for ingestion
         range: datetime
       interest_score:
-        description: Priority score from scout (0.0-1.0, higher = more interesting)
+        description: >-
+          Composite interest score (0.0-1.0, max of per-dimension scores).
+          Replaces the legacy single-score approach with a computed maximum.
         range: float
+      # Per-dimension scores (LLM-assigned, 0.0-1.0 each)
+      # Aligned with FacilityPath score dimensions for cross-pipeline consistency
+      score_modeling_code:
+        description: Score for forward modeling/simulation code (CHEASE, ASTRA, JOREK)
+        range: float
+      score_analysis_code:
+        description: Score for experimental analysis code (diagnostic processing, LIUQE)
+        range: float
+      score_operations_code:
+        description: Score for real-time operations code (control systems, DAQ)
+        range: float
+      score_data_access:
+        description: Score for data access tools (IMAS wrappers, MDSplus readers)
+        range: float
+      score_workflow:
+        description: Score for orchestration and batch processing
+        range: float
+      score_visualization:
+        description: Score for plotting and rendering tools
+        range: float
+      score_documentation:
+        description: Score for documentation value (READMEs, tutorials, papers)
+        range: float
+      score_imas:
+        description: Score for IMAS relevance (IDS patterns, put_slice, etc.)
+        range: float
+      score_convention:
+        description: Score for sign/coordinate/COCOS convention handling
+        range: float
+      score_reason:
+        description: Brief LLM explanation for the assigned scores
       patterns_matched:
         description: Patterns that matched during discovery (e.g., "IMAS", "equilibrium")
         multivalued: true
+      # Enrichment fields (rg pattern matches on individual files)
+      is_enriched:
+        description: Whether this file has been enriched with rg pattern analysis
+        range: boolean
+      enriched_at:
+        description: When enrichment was completed
+        range: datetime
+      pattern_categories:
+        description: >-
+          JSON dict of pattern category match counts from rg
+          (e.g., {"mdsplus": 5, "imas_read": 2, "equilibrium": 1})
+      total_pattern_matches:
+        description: Total number of pattern matches across all categories
+        range: integer
+      line_count:
+        description: Number of lines in the file (from wc -l)
+        range: integer
       # Worker coordination
       claimed_at:
         description: >-

@@ -1358,8 +1358,8 @@ async def _persist_document_figures(
 ) -> int:
     """Persist images extracted from PDF/PPTX as Image nodes.
 
-    Creates Image nodes with source_type='document_figure' and links
-    them to the parent WikiArtifact via HAS_IMAGE.
+    Delegates to the shared ``persist_document_figures`` from base.image,
+    using WikiArtifact as the parent label.
 
     Args:
         extracted_images: List from pipeline._extract_pdf_images or _extract_pptx_images
@@ -1370,89 +1370,15 @@ async def _persist_document_figures(
     Returns:
         Number of Image nodes created
     """
-    import hashlib
+    from imas_codex.discovery.base.image import persist_document_figures
 
-    from imas_codex.discovery.wiki.image import downsample_image
-
-    images_to_persist: list[dict[str, Any]] = []
-
-    for img_data in extracted_images:
-        img_bytes = img_data.get("image_bytes")
-        if not img_bytes or len(img_bytes) < 2048:
-            continue
-
-        # Content-addressed ID from bytes hash
-        content_hash = hashlib.sha256(img_bytes).hexdigest()[:16]
-        image_id = f"{facility}:{content_hash}"
-
-        result = downsample_image(img_bytes)
-        if result is None:
-            continue
-
-        b64_data, stored_w, stored_h, orig_w, orig_h = result
-
-        # Build context from extraction metadata
-        page_num = img_data.get("page_num")
-        slide_num = img_data.get("slide_num")
-        name = img_data.get("name", "")
-        source_url = f"{artifact_url}#{'page' if page_num else 'slide'}{page_num or slide_num or 0}"
-
-        images_to_persist.append(
-            {
-                "id": image_id,
-                "facility_id": facility,
-                "source_url": source_url,
-                "source_type": "document_figure",
-                "status": "ingested",
-                "filename": name,
-                "image_format": "webp",
-                "width": stored_w,
-                "height": stored_h,
-                "original_width": orig_w,
-                "original_height": orig_h,
-                "content_hash": content_hash,
-                "artifact_id": artifact_id,
-                "image_data": b64_data,
-            }
-        )
-
-    if not images_to_persist:
-        return 0
-
-    with GraphClient() as gc:
-        gc.query(
-            """
-            UNWIND $images AS img
-            MERGE (i:Image {id: img.id})
-            ON CREATE SET i.facility_id = img.facility_id,
-                          i.source_url = img.source_url,
-                          i.source_type = img.source_type,
-                          i.status = img.status,
-                          i.filename = img.filename,
-                          i.image_format = img.image_format,
-                          i.width = img.width,
-                          i.height = img.height,
-                          i.original_width = img.original_width,
-                          i.original_height = img.original_height,
-                          i.content_hash = img.content_hash,
-                          i.image_data = img.image_data,
-                          i.ingested_at = datetime()
-            WITH i, img
-            MATCH (wa:WikiArtifact {id: img.artifact_id})
-            MERGE (wa)-[:HAS_IMAGE]->(i)
-            WITH i
-            MATCH (f:Facility {id: i.facility_id})
-            MERGE (i)-[:AT_FACILITY]->(f)
-            """,
-            images=images_to_persist,
-        )
-
-    logger.debug(
-        "Created %d document figure Image nodes from %s",
-        len(images_to_persist),
-        artifact_id,
+    return await asyncio.to_thread(
+        persist_document_figures,
+        extracted_images,
+        parent_id=artifact_id,
+        parent_label="WikiArtifact",
+        facility=facility,
     )
-    return len(images_to_persist)
 
 
 # =============================================================================

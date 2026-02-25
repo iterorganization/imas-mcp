@@ -315,6 +315,8 @@ async def ingest_files(
                 "code_example_id": example_id,
                 "_full_doc_text": content,
             },
+            excluded_llm_metadata_keys=["_full_doc_text"],
+            excluded_embed_metadata_keys=["_full_doc_text"],
         )
 
         if language not in docs_by_language:

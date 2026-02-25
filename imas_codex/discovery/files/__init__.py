@@ -18,9 +18,11 @@ for parallel-safe execution across CLI instances.
 from .graph_ops import reset_orphaned_file_claims
 from .parallel import get_file_discovery_stats, run_parallel_file_discovery
 from .scanner import scan_facility_files
-from .scorer import score_facility_files
+from .scorer import FileScoreBatch, FileScoreResult, score_facility_files
 
 __all__ = [
+    "FileScoreBatch",
+    "FileScoreResult",
     "get_file_discovery_stats",
     "reset_orphaned_file_claims",
     "run_parallel_file_discovery",

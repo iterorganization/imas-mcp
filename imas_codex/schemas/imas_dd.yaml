@@ -187,6 +187,8 @@ enums:
         description: Time-variation character (node type) changed
       data_type:
         description: Data type changed (e.g., FLT_1D to FLT_2D)
+      cocos_label_transformation:
+        description: COCOS transformation label changed (e.g., field gained or lost COCOS sensitivity)
 
   SemanticChangeType:
     description: Physics significance of documentation changes

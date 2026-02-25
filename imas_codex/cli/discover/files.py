@@ -167,6 +167,14 @@ def files(
             if msg != "idle":
                 file_logger.info("DOCS: %s", msg)
 
+        def log_enrich(msg, stats, results=None):
+            if msg != "idle":
+                file_logger.info("ENRICH: %s", msg)
+
+        def log_image(msg, stats, results=None):
+            if msg != "idle":
+                file_logger.info("IMAGE: %s", msg)
+
         if not use_rich:
             log_print(f"\n[bold]File Discovery: {facility}[/bold]")
             log_print(f"  SSH host: {ssh_host}")
@@ -193,8 +201,10 @@ def files(
                     deadline=deadline,
                     on_scan_progress=log_scan,
                     on_score_progress=log_score,
+                    on_enrich_progress=log_enrich,
                     on_code_progress=log_code,
                     on_docs_progress=log_docs,
+                    on_image_progress=log_image,
                 )
             )
         else:
@@ -266,6 +276,12 @@ def files(
                     def on_docs(msg, stats, results=None):
                         display.update_docs(msg, stats, results)
 
+                    def on_enrich(msg, stats, results=None):
+                        display.update_enrich(msg, stats, results)
+
+                    def on_image(msg, stats, results=None):
+                        display.update_image(msg, stats, results)
+
                     def on_worker_status(worker_group):
                         display.update_worker_status(worker_group)
 
@@ -286,8 +302,10 @@ def files(
                             deadline=deadline,
                             on_scan_progress=on_scan,
                             on_score_progress=on_score,
+                            on_enrich_progress=on_enrich,
                             on_code_progress=on_code,
                             on_docs_progress=on_docs,
+                            on_image_progress=on_image,
                             on_worker_status=on_worker_status,
                         )
                     finally:
@@ -318,13 +336,15 @@ def files(
         scored = result.get("scored", 0)
         code_ingested = result.get("code_ingested", 0)
         docs_ingested = result.get("docs_ingested", 0)
+        images_ingested = result.get("images_ingested", 0)
         cost = result.get("cost", 0)
         elapsed = result.get("elapsed_seconds", 0)
 
         log_print(
             f"\n  [green]{scanned} scanned, {scored} scored, "
             f"{code_ingested} code ingested, "
-            f"{docs_ingested} docs ingested[/green]"
+            f"{docs_ingested} docs ingested, "
+            f"{images_ingested} images ingested[/green]"
         )
         log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
 

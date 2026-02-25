@@ -97,6 +97,9 @@ def claim_paths_for_file_scan(
     linked to publicly-accessible software repos (INSTANCE_OF → SoftwareRepo
     with remote_url containing github/gitlab/bitbucket).
 
+    Prioritizes paths with high scores on mapping-valuable dimensions
+    (data_access, imas, convention, analysis, modeling).
+
     Args:
         facility: Facility ID
         min_score: Minimum path score to include
@@ -120,7 +123,15 @@ def claim_paths_for_file_scan(
                 MATCH (p)-[:INSTANCE_OF]->(r:SoftwareRepo)
                 WHERE r.source_type IN ['github', 'gitlab', 'bitbucket']
               }
-            WITH p ORDER BY p.score DESC LIMIT $limit
+            WITH p
+            ORDER BY (
+                coalesce(p.score_data_access, 0) * 3
+                + coalesce(p.score_imas, 0) * 3
+                + coalesce(p.score_convention, 0) * 2
+                + coalesce(p.score_analysis_code, 0)
+                + coalesce(p.score_modeling_code, 0)
+            ) DESC, p.score DESC
+            LIMIT $limit
             SET p.files_claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.score AS score,
                    p.purpose AS purpose,
@@ -210,22 +221,26 @@ def release_path_file_scan_claims_batch(path_ids: list[str]) -> int:
 
 def claim_files_for_scoring(
     facility: str,
-    limit: int = 100,
+    limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Atomically claim discovered SourceFiles for LLM scoring.
 
     Claims files with ``status='discovered'`` and no ``interest_score``.
     Uses ``claimed_at`` timeout for orphan recovery.
 
-    Files are ordered by ``path_heuristic_score`` descending so the
-    highest-value files (by path pattern matching) are scored first.
+    Joins through CONTAINS → FacilityPath to return parent directory
+    enrichment data (pattern matches, scores, description) so the
+    scorer can group files by parent and include enrichment context.
+
+    Files are ordered by parent path score descending so files from
+    the highest-value directories are scored first.
 
     Args:
         facility: Facility ID
         limit: Maximum files to claim
 
     Returns:
-        List of dicts with ``id``, ``path``, ``language``, ``file_category``
+        List of dicts with file info + parent enrichment fields
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
@@ -236,12 +251,29 @@ def claim_files_for_scoring(
               AND sf.interest_score IS NULL
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
-            WITH sf ORDER BY coalesce(sf.path_heuristic_score, 0) DESC,
-                             sf.discovered_at ASC
+            OPTIONAL MATCH (p:FacilityPath)-[:CONTAINS]->(sf)
+            WITH sf, p
+            ORDER BY coalesce(p.score, 0) DESC, sf.discovered_at ASC
             LIMIT $limit
             SET sf.claimed_at = datetime()
-            RETURN sf.id AS id, sf.path AS path, sf.language AS language,
-                   sf.file_category AS file_category
+            RETURN sf.id AS id, sf.path AS path,
+                   sf.language AS language, sf.file_category AS file_category,
+                   p.id AS parent_path_id, p.path AS parent_path,
+                   p.score AS parent_score, p.purpose AS parent_purpose,
+                   p.description AS parent_description,
+                   p.pattern_categories AS parent_patterns,
+                   p.read_matches AS parent_read_matches,
+                   p.write_matches AS parent_write_matches,
+                   p.is_multiformat AS parent_multiformat,
+                   p.score_data_access AS parent_score_data_access,
+                   p.score_imas AS parent_score_imas,
+                   p.score_convention AS parent_score_convention,
+                   p.score_analysis_code AS parent_score_analysis_code,
+                   p.score_modeling_code AS parent_score_modeling_code,
+                   p.score_operations_code AS parent_score_operations_code,
+                   p.score_workflow AS parent_score_workflow,
+                   p.score_visualization AS parent_score_visualization,
+                   p.score_documentation AS parent_score_documentation
             """,
             facility=facility,
             limit=limit,
@@ -267,10 +299,69 @@ def release_file_score_claims(file_ids: list[str]) -> None:
     release_claims_batch("SourceFile", file_ids)
 
 
+# ---------------------------------------------------------------------------
+# Enrich-phase claiming (SourceFile with claimed_at, scored + not enriched)
+# ---------------------------------------------------------------------------
+
+
+def claim_files_for_enrichment(
+    facility: str,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Atomically claim scored SourceFiles for rg pattern enrichment.
+
+    Claims files that have been scored (interest_score IS NOT NULL) but
+    not yet enriched (is_enriched IS NULL or false). Prioritizes files
+    with high composite scores.
+
+    Args:
+        facility: Facility ID
+        limit: Maximum files to claim
+
+    Returns:
+        List of dicts with id, path, language, interest_score
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'discovered'
+              AND sf.interest_score IS NOT NULL
+              AND coalesce(sf.is_enriched, false) = false
+              AND (sf.claimed_at IS NULL
+                   OR sf.claimed_at < datetime() - duration($cutoff))
+            WITH sf ORDER BY sf.interest_score DESC LIMIT $limit
+            SET sf.claimed_at = datetime()
+            RETURN sf.id AS id, sf.path AS path,
+                   sf.language AS language,
+                   sf.interest_score AS interest_score
+            """,
+            facility=facility,
+            limit=limit,
+            cutoff=cutoff,
+        )
+        files = list(result)
+        if files:
+            logger.debug(
+                "Claimed %d SourceFiles for enrichment (facility=%s)",
+                len(files),
+                facility,
+            )
+        return files
+
+
+def release_file_enrich_claims(file_ids: list[str]) -> None:
+    """Release enrichment claims on multiple SourceFiles."""
+    release_claims_batch("SourceFile", file_ids)
+
+
 __all__ = [
     "CLAIM_TIMEOUT_SECONDS",
+    "claim_files_for_enrichment",
     "claim_files_for_scoring",
     "claim_paths_for_file_scan",
+    "release_file_enrich_claims",
     "release_file_score_claim",
     "release_file_score_claims",
     "release_path_file_scan_claim",

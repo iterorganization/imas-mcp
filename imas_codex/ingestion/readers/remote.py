@@ -59,11 +59,39 @@ DOCUMENT_EXTENSIONS = {
     ".ipynb": "notebook",
 }
 
-# Languages that require text-based splitting (no tree-sitter grammar)
-TEXT_SPLITTER_LANGUAGES = {"tdi", "idl"}
+# Image extensions (not text — processed via VLM pipeline)
+IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".webp",
+}
 
-# All supported extensions
-ALL_SUPPORTED_EXTENSIONS = set(EXTENSION_TO_LANGUAGE) | set(DOCUMENT_EXTENSIONS)
+# Languages that require text-based splitting (no tree-sitter grammar).
+# Includes document types that have no tree-sitter parser.
+TEXT_SPLITTER_LANGUAGES = {
+    "tdi",
+    "idl",
+    "text",
+    "markdown",
+    "rst",
+    "html",
+    "pdf",
+    "docx",
+    "pptx",
+    "xlsx",
+    "notebook",
+}
+
+# All supported extensions (code + documents + images)
+ALL_SUPPORTED_EXTENSIONS = (
+    set(EXTENSION_TO_LANGUAGE) | set(DOCUMENT_EXTENSIONS) | IMAGE_EXTENSIONS
+)
 
 
 def detect_language(path: str) -> str:
@@ -117,6 +145,8 @@ def detect_file_category(path: str) -> str:
         ".txt",
     }:
         return "document"
+    if ext in IMAGE_EXTENSIONS:
+        return "image"
     if ext in {".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".json"}:
         return "config"
     if ext in {".csv", ".h5", ".hdf5", ".nc", ".mat"}:
