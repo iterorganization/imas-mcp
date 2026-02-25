@@ -105,7 +105,17 @@ def detect_file_category(path: str) -> str:
         return "code"
     if ext == ".ipynb":
         return "notebook"
-    if ext in {".pdf", ".docx", ".pptx", ".xlsx", ".html", ".htm", ".md", ".rst"}:
+    if ext in {
+        ".pdf",
+        ".docx",
+        ".pptx",
+        ".xlsx",
+        ".html",
+        ".htm",
+        ".md",
+        ".rst",
+        ".txt",
+    }:
         return "document"
     if ext in {".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".json"}:
         return "config"

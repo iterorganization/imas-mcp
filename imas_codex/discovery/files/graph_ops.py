@@ -113,7 +113,7 @@ def claim_paths_for_file_scan(
             WHERE p.status IN ['scored', 'explored']
               AND coalesce(p.score, 0) >= $min_score
               AND p.path IS NOT NULL
-              AND coalesce(p.files_scanned, 0) = 0
+              AND p.last_file_scan_at IS NULL
               AND (p.files_claimed_at IS NULL
                    OR p.files_claimed_at < datetime() - duration($cutoff))
               AND NOT EXISTS {

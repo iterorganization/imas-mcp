@@ -109,8 +109,18 @@ def scan_path_fd(
     for ext in extensions:
         ext_args.extend(["-e", ext])
 
-    # fd supports --max-filesize natively
-    size_args = ["--max-filesize", str(max_file_size)] if max_file_size > 0 else []
+    # fd --size requires human-readable units: -1m, -500k, etc.
+    # Convert bytes to a suitable unit string for fd
+    if max_file_size > 0:
+        if max_file_size >= 1024 * 1024 and max_file_size % (1024 * 1024) == 0:
+            size_str = f"-{max_file_size // (1024 * 1024)}m"
+        elif max_file_size >= 1024 and max_file_size % 1024 == 0:
+            size_str = f"-{max_file_size // 1024}k"
+        else:
+            size_str = f"-{max_file_size}b"
+        size_args = ["--size", size_str]
+    else:
+        size_args = []
 
     cmd = (
         ["fd", ".", "--type", "f", "--max-depth", str(max_depth)]

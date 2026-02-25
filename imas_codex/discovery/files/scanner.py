@@ -277,8 +277,10 @@ def _persist_discovered_files(
     if not items:
         return {"discovered": 0, "skipped": 0}
 
-    # Batch large writes to avoid overwhelming Neo4j
-    BATCH_SIZE = 500
+    # Batch large writes to avoid overwhelming Neo4j.
+    # Keep batches small (100) to reduce lock contention with concurrent
+    # score workers that claim SourceFile nodes.
+    BATCH_SIZE = 100
     total_discovered = 0
     total_skipped = 0
 
