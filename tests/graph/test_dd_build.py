@@ -411,11 +411,17 @@ class TestIMASPathChanges:
         assert classified > 0, "No documentation changes have semantic classification"
 
     def test_change_types_are_valid(self, graph_client, label_counts):
-        """change_type should only be documentation, units, data_type, or node_type."""
+        """change_type should only be known metadata fields."""
         if not label_counts.get("IMASPathChange"):
             pytest.skip("No IMASPathChange nodes in graph")
 
-        valid_types = {"documentation", "units", "data_type", "node_type"}
+        valid_types = {
+            "documentation",
+            "units",
+            "data_type",
+            "node_type",
+            "cocos_label_transformation",
+        }
         result = graph_client.query(
             "MATCH (pc:IMASPathChange) RETURN DISTINCT pc.change_type AS change_type"
         )
@@ -454,6 +460,60 @@ class TestIMASPathChanges:
         for h in history:
             assert h["version"] is not None
             assert h["change_type"] is not None
+
+
+class TestCOCOSCompleteness:
+    """Verify COCOS reference nodes and version linking."""
+
+    def test_cocos_reference_nodes(self, graph_client):
+        """All 16 valid COCOS reference nodes should exist."""
+        result = graph_client.query("MATCH (c:COCOS) RETURN count(c) AS cnt")
+        assert result[0]["cnt"] == 16
+
+    def test_cocos_nodes_have_parameters(self, graph_client):
+        """Each COCOS node should have all four Sauter parameters."""
+        result = graph_client.query(
+            "MATCH (c:COCOS) "
+            "WHERE c.sigma_bp IS NULL OR c.e_bp IS NULL "
+            "   OR c.sigma_r_phi_z IS NULL OR c.sigma_rho_theta_phi IS NULL "
+            "RETURN count(c) AS cnt"
+        )
+        assert result[0]["cnt"] == 0, "COCOS nodes missing Sauter parameters"
+
+    def test_dd_versions_linked_to_cocos(self, graph_client):
+        """DDVersions from 3.35.0+ should have HAS_COCOS relationships."""
+        result = graph_client.query(
+            "MATCH (v:DDVersion)-[:HAS_COCOS]->(c:COCOS) RETURN count(v) AS cnt"
+        )
+        assert result[0]["cnt"] >= 17, (
+            f"Expected >=17 DDVersions linked to COCOS, got {result[0]['cnt']}"
+        )
+
+    def test_cocos_label_transformation_on_paths(self, graph_client):
+        """Current-version paths with COCOS sensitivity should be labeled."""
+        result = graph_client.query(
+            "MATCH (p:IMASPath) "
+            "WHERE p.cocos_label_transformation IS NOT NULL "
+            "RETURN count(p) AS cnt"
+        )
+        assert result[0]["cnt"] >= 300, (
+            f"Expected >=300 paths with cocos_label_transformation, "
+            f"got {result[0]['cnt']}"
+        )
+
+    def test_cocos_changes_tracked(self, graph_client, label_counts):
+        """COCOS label changes across versions should be tracked."""
+        if not label_counts.get("IMASPathChange"):
+            pytest.skip("No IMASPathChange nodes in graph")
+
+        result = graph_client.query(
+            "MATCH (c:IMASPathChange) "
+            "WHERE c.change_type = 'cocos_label_transformation' "
+            "RETURN count(c) AS cnt"
+        )
+        assert result[0]["cnt"] > 0, (
+            "Expected IMASPathChange nodes for cocos_label_transformation"
+        )
 
 
 class TestClusterLabels:

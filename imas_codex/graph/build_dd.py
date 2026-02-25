@@ -1338,18 +1338,20 @@ def build_dd_graph(
 
         # Update cocos_label_transformation on existing IMASPath nodes
         # Paths created in early versions lack COCOS labels added in later
-        # versions (3.28.1+). Apply the latest version's labels to all nodes.
+        # versions (3.28.1+). Apply the latest version's labels to all nodes,
+        # and clear labels on paths that lost COCOS sensitivity in DD4.
         if not dry_run and version_data:
             latest_version = sorted(version_data.keys())[-1]
             latest_data = version_data[latest_version]
-            cocos_updates = [
-                {
-                    "id": path,
-                    "cocos_label_transformation": info["cocos_label_transformation"],
-                }
-                for path, info in latest_data["paths"].items()
-                if info.get("cocos_label_transformation")
-            ]
+            latest_labeled = set()
+            cocos_updates = []
+            for path, info in latest_data["paths"].items():
+                label = info.get("cocos_label_transformation")
+                if label:
+                    latest_labeled.add(path)
+                    cocos_updates.append(
+                        {"id": path, "cocos_label_transformation": label}
+                    )
             if cocos_updates:
                 monitor.status(
                     f"Updating {len(cocos_updates)} paths with COCOS labels..."
@@ -1365,6 +1367,18 @@ def build_dd_graph(
                         paths=batch,
                     )
                 stats["cocos_labels_updated"] = len(cocos_updates)
+
+            # Clear stale labels on paths that no longer have COCOS sensitivity
+            # (e.g., psi_like removed in DD4)
+            client.query(
+                """
+                MATCH (p:IMASPath)
+                WHERE p.cocos_label_transformation IS NOT NULL
+                AND NOT p.id IN $labeled_paths
+                SET p.cocos_label_transformation = null
+                """,
+                labeled_paths=list(latest_labeled),
+            )
 
         # Phase 3: Embeddings
         if include_embeddings and not dry_run:
