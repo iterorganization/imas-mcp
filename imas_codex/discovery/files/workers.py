@@ -644,8 +644,11 @@ async def image_worker(
     """Image worker: Fetch, downsample, and persist standalone image files.
 
     Claims scored SourceFiles with file_category='image', fetches image
-    bytes via SCP, downsamples to WebP, and creates Image nodes linked
-    to the SourceFile. Image nodes are then available for VLM captioning.
+    bytes via SCP, downsamples to extract dimensions, and creates Image
+    nodes linked to the SourceFile. Image bytes are NOT stored in the
+    graph — only metadata (path, dimensions, format) is persisted.
+    The source_url (remote path) enables on-demand fetching for VLM
+    captioning later.
 
     Transitions: discovered (scored) → ingested | failed
     """
@@ -758,7 +761,7 @@ async def image_worker(
                                 "original_width": orig_w,
                                 "original_height": orig_h,
                                 "content_hash": None,
-                                "image_data": b64_data,
+                                "image_data": None,
                                 "page_title": None,
                                 "section": None,
                                 "alt_text": None,
