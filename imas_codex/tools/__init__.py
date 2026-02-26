@@ -4,6 +4,11 @@ This package contains the Tools implementation split into focused modules.
 Each module handles a specific tool functionality with clean separation of concerns.
 """
 
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
 from fastmcp import FastMCP
 
 from imas_codex.providers import MCPProvider
@@ -11,11 +16,19 @@ from imas_codex.search.document_store import DocumentStore
 
 from .base import BaseTool
 from .clusters_tool import ClustersTool
+from .cypher_tool import CypherTool
 from .identifiers_tool import IdentifiersTool
 from .list_tool import ListTool
 from .overview_tool import OverviewTool
 from .path_tool import PathTool
+from .schema_tool import SchemaTool
 from .search_tool import SearchTool
+from .version_tool import VersionTool
+
+if TYPE_CHECKING:
+    from imas_codex.graph.client import GraphClient
+
+logger = logging.getLogger(__name__)
 
 
 class Tools(MCPProvider):
@@ -27,12 +40,15 @@ class Tools(MCPProvider):
     def __init__(
         self,
         ids_set: set[str] | None = None,
+        graph_client: GraphClient | None = None,
     ):
         """Initialize the IMAS tools provider.
 
         Args:
             ids_set: Optional set of IDS names to limit processing to.
                     If None, will process all available IDS.
+            graph_client: Optional GraphClient for graph-native tools.
+                    When provided, registers Cypher, schema, and version tools.
         """
         self.ids_set = ids_set
 
@@ -56,6 +72,20 @@ class Tools(MCPProvider):
             self.clusters_tool,
             self.identifiers_tool,
         ]
+
+        # Graph-native tools (registered when graph_client is available)
+        if graph_client is not None:
+            self.cypher_tool = CypherTool(graph_client)
+            self.schema_tool = SchemaTool()
+            self.version_tool = VersionTool(graph_client)
+            self._tool_instances.extend(
+                [
+                    self.cypher_tool,
+                    self.schema_tool,
+                    self.version_tool,
+                ]
+            )
+            logger.info("Graph-native tools registered (cypher, schema, version)")
 
     @property
     def name(self) -> str:
