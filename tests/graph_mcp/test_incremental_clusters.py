@@ -86,17 +86,18 @@ class TestContentHashDeterminism:
             "equilibrium/time_slice/profiles_1d/psi",
             "equilibrium/time_slice/profiles_1d/q",
         ]
-        h1 = _compute_cluster_content_hash(paths, "global")
-        h2 = _compute_cluster_content_hash(paths, "global")
+        h1 = _compute_cluster_content_hash(paths)
+        h2 = _compute_cluster_content_hash(paths)
         assert h1 == h2
 
-    def test_different_scope_different_hash(self):
+    def test_different_paths_different_hash(self):
         from imas_codex.graph.build_dd import _compute_cluster_content_hash
 
-        paths = ["equilibrium/time_slice/profiles_1d/psi"]
-        h_global = _compute_cluster_content_hash(paths, "global")
-        h_ids = _compute_cluster_content_hash(paths, "ids")
-        assert h_global != h_ids
+        paths_a = ["equilibrium/time_slice/profiles_1d/psi"]
+        paths_b = ["equilibrium/time_slice/profiles_1d/q"]
+        assert _compute_cluster_content_hash(paths_a) != _compute_cluster_content_hash(
+            paths_b
+        )
 
     def test_order_independent(self):
         from imas_codex.graph.build_dd import _compute_cluster_content_hash
@@ -104,14 +105,14 @@ class TestContentHashDeterminism:
         paths1 = ["a/b", "c/d"]
         paths2 = ["c/d", "a/b"]
         # Function expects sorted paths — caller must sort
-        h1 = _compute_cluster_content_hash(sorted(paths1), "global")
-        h2 = _compute_cluster_content_hash(sorted(paths2), "global")
+        h1 = _compute_cluster_content_hash(sorted(paths1))
+        h2 = _compute_cluster_content_hash(sorted(paths2))
         assert h1 == h2
 
     def test_hash_length(self):
         from imas_codex.graph.build_dd import _compute_cluster_content_hash
 
-        h = _compute_cluster_content_hash(["a/b"], "global")
+        h = _compute_cluster_content_hash(["a/b"])
         assert len(h) == 16
         assert all(c in "0123456789abcdef" for c in h)
 

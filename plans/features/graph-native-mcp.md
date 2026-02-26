@@ -250,14 +250,17 @@ Write tests first for each phase:
 
 ## Key Steps
 
-### Phase 0: Test Infrastructure
+### Phase 0: Test Infrastructure ✅
 
-Set up graph test fixtures and CI integration before starting the migration. This phase runs throughout and supports all subsequent phases.
+**Status: Complete.** Mock GraphClient with query routing, graph-only test fixtures.
 
-- Graph service container configuration for CI
-- Small fixture graphs for unit testing version queries and tool contracts
-- Equivalence test harness: run the same tool request against both file-backed and graph-backed implementations, assert matching results
-- Baseline coverage of existing tool responses to use as regression targets
+**What was built:**
+- `conftest.py` mock `GraphClient` with Cypher pattern-based query routing (IDS, DDVersion, IMASPath count, connectivity)
+- Integration tests rewritten for graph-only: `test_mcp_server.py`, `test_server_extended.py`, `test_health_endpoint.py`, `test_workflows.py`
+- Tool tests updated: `test_tools.py` checks graph-backed tool properties
+- Resource tests updated: old file-backed resource tests removed, `TestResourcesGraphOnly` added
+- Health endpoint tests use mock GraphClient, verify graph-only fields
+- 2286 tests passing (17 incremental cluster tests included)
 
 ### Phase 1: IMAS-Only Graph on GHCR ✅
 
@@ -280,44 +283,71 @@ Set up graph test fixtures and CI integration before starting the migration. Thi
 
 **DD node labels retained:** DDVersion, IDS, IMASPath, IMASCoordinateSpec, IMASSemanticCluster, IdentifierSchema, IMASPathChange, CoordinateRelationship, ClusterMembership, EmbeddingChange, Unit, PhysicsDomain, SignConvention
 
-### Phase 2: Tool Architecture
+### Phase 2: Tool Architecture ✅
 
-Add the read-only Cypher tool, DD graph schema tool, and version reporting — these can be built and tested against the current local Neo4j graph before the Docker embedding work.
+**Status: Complete.** All three tools operational and tested.
 
-- Read-only Cypher tool with mutation blocking and result truncation
-- DD graph schema tool exposing LinkML-derived schema for the IMAS DD portion of the graph
-- Version metadata reporting: query DDVersion nodes for range, current, and count
-- Update overview tool to report version range and available graph capabilities
+**What was built:**
+- `CypherTool` (`imas_codex/tools/cypher_tool.py`): read-only Cypher with mutation keyword blocking (regex strips comments/strings before checking), result truncation to 200 rows, embedding vector stripping from results
+- `SchemaTool` (`imas_codex/tools/schema_tool.py`): exposes DD-only LinkML schema (node types, properties, relationships, enums, vector indexes, version lifecycle notes) via `lru_cache`
+- `VersionTool` (`imas_codex/tools/version_tool.py`): queries `DDVersion` nodes for current version, version range, count, and full version list
+- Overview tool reports version range and lists all 10 MCP tools
 
-### Phase 3: Embedded Neo4j in Docker
+### Phase 3: Embedded Neo4j in Docker ✅
 
-Add Neo4j Community to the Docker image. Pull the IMAS-only graph during Docker build. The image must fail to build if the graph cannot be downloaded (no fallback to file-based data).
+**Status: Complete.** Multi-stage Dockerfile with embedded Neo4j fully operational.
 
-- Multi-stage build: copy Neo4j + JRE from official image
-- `oras pull` the IMAS-only graph archive from private GHCR (requires `GHCR_TOKEN` build secret)
-- `neo4j-admin database load` at build time
-- Process supervisor (shell entrypoint) to start Neo4j + MCP server at runtime
-- Internal bolt port only — not exposed externally
-- Health check verifies both Neo4j and MCP server
+**What was built:**
+- 5-stage Dockerfile: uv binary → Neo4j source → builder (Python + graph pull) → graph-loader (neo4j-admin load) → final runtime
+- ORAS CLI v1.2.0 pulls `imas-codex-graph-imas:latest` from private GHCR (requires `GHCR_TOKEN` build secret)
+- Build FAILS if graph cannot be downloaded — no fallback
+- `docker-entrypoint.sh`: starts Neo4j in background, waits for readiness, then starts MCP server; SIGTERM/SIGINT cleanup for both processes
+- Neo4j configured for embedded use: internal bolt only (`127.0.0.1:7687`), auth disabled, 256-512MB heap
+- HEALTHCHECK verifies both Neo4j (`7474`) and MCP server (`8000/health`)
+- `docker-compose.yml` with GHCR_TOKEN secret, optional standalone Neo4j service, nginx reverse proxy
 
-### Phase 4: Incremental Cluster Sync
+### Phase 4: Incremental Cluster Sync ✅
 
-Replace the delete-all-recreate pattern in `_import_clusters` with a diff-based merge. Labels and descriptions persist in graph — no more `labels.json`. This phase is independent and can be done at any point.
+**Status: Complete.** `_import_clusters` uses MERGE-based incremental sync.
 
-### Phase 5: Graph-Native Search
+**What was built:**
+- `_import_clusters` reads embeddings directly from graph (no file dependencies)
+- HDBSCAN clustering produces content-hash IDs via `_compute_cluster_content_hash`
+- `MERGE (n:IMASSemanticCluster {id: ...})` preserves existing labels/descriptions on unchanged clusters
+- Stale cluster detection: `existing_ids - new_cluster_ids` → targeted `DETACH DELETE` only
+- IN_CLUSTER relationships refreshed per-cluster (delete old → recreate)
+- Cluster centroid embeddings computed in Neo4j via Cypher aggregation
+- Cluster text embeddings (labels/descriptions) with per-cluster hash caching
+- `_sync_labels_to_graph` in CLI writes labels via batched `UNWIND`
+- No dependency on `labels.json` — labels persist in graph nodes
 
-Replace `DocumentStore`, `SemanticSearch`, and `ClusterSearcher` with `GraphClient` queries. Run the equivalence test harness to validate.
+### Phase 5: Graph-Native Search ✅
 
-- `GraphClient` singleton in `Server.__post_init__`
-- Vector index queries for semantic search (paths + clusters)
-- Neo4j full-text index for keyword search (replaces SQLite FTS5)
-- Cypher for path lookup, IDS listing, identifier schemas
-- Version-aware search defaults (current version for structured tools)
-- Enriched queries combining vector similarity with relationship traversal
+**Status: Complete.** All 7 structured tools backed by GraphClient.
 
-### Phase 6: Cleanup
+**What was built:**
+- `GraphSearchTool`: vector index search via `db.index.vector.queryNodes('imas_path_embedding', k, $embedding)` with optional IDS filter, unit/physics_domain traversal
+- `GraphPathTool`: check/fetch with `RENAMED_TO` migration chain detection, cluster membership, coordinate specs
+- `GraphListTool`: path listing with `leaf_only` filter (excludes STRUCTURE/STRUCT_ARRAY types), IDS existence verification
+- `GraphOverviewTool`: IDS listing from graph with physics domain aggregation, path count per IDS, version from DDVersion nodes
+- `GraphClustersTool`: dual-mode search — path lookup via `IN_CLUSTER` traversal, semantic search via `cluster_description_embedding` vector index
+- `GraphIdentifiersTool`: identifier schemas from graph
+- `Encoder` class retained for query-time embedding only
 
-Remove all file-based data paths from the server. Remove `build-schemas`, `build-embeddings`, `build-path-map`, and `clusters build` steps from the Dockerfile. Remove `DocumentStore`, pickle/numpy loaders, `labels.json`, and the `definitions/clusters/` directory from the Docker context. Remove `imas_codex.dd_version` as a module-level constant — version comes from the graph.
+### Phase 6: Cleanup ✅
+
+**Status: Complete.** Clean break — server is graph-only.
+
+**What was removed:**
+- `DocumentStore`, `SearchIndex`, `SemanticSearch`, `ClusterSearcher` removed from server initialization
+- All file-backed tool implementations removed from `Tools.__init__` and tool registration
+- `build-schemas`, `build-path-map`, `build-embeddings`, `clusters build` removed from Dockerfile
+- `IMAS_CODEX_GRAPH_NATIVE` env var toggle removed — no dual-mode
+- `imas_codex.dd_version` no longer used as version source — comes from DDVersion graph nodes
+- `ids://catalog`, `ids://structure/{ids_name}`, `ids://identifiers`, `ids://clusters` resources removed
+- Only `examples://resource-usage` resource remains
+- Health endpoint queries graph for stats (path count, IDS count)
+- Server name derived from `DDVersion {is_current: true}` node
 
 ## Risks and Mitigations
 
@@ -338,3 +368,156 @@ Remove all file-based data paths from the server. Remove `build-schemas`, `build
 - Supporting graph writes from the MCP server (read-only)
 - Backward compatibility with file-based deployments (clean break)
 - Adding version parameters to every existing tool (use Cypher tool for version-specific queries)
+
+## Remaining Gaps
+
+All six phases are complete. The following gaps remain between the plan's aspirations and the current implementation:
+
+### Minor Gaps (polish, not blocking)
+
+| Gap | Plan Expectation | Current State | Priority |
+|-----|------------------|---------------|----------|
+| Full-text index | Neo4j FTS index for keyword search (replaces SQLite FTS5) | `search_imas_paths` uses vector search only — no full-text index fallback for exact keyword matches | Low — vector search handles most cases; agents use `query_imas_graph` for exact STARTS WITH queries |
+| Health endpoint version detail | Plan specifies `dd_versions` (range), `dd_version_current`, `dd_version_count` as separate fields | Health returns `imas_dd_version` (derived from server name) + `ids_count` + `path_count` | Low — `get_dd_versions` tool provides full version metadata |
+| Read-only Neo4j user | Defense in depth: dedicated read-only Neo4j user | Auth disabled (`dbms.security.auth_enabled=false`) in embedded Docker config | Low — internal bolt only, Cypher mutation blocking is enforced at tool level |
+| CI graph service container | Graph testcontainer in CI for integration tests | Tests use mock GraphClient — no real Neo4j in CI | Medium — would enable data quality tests against real graph content |
+| `search_mode` parameter | Plan mentions `auto`, `semantic`, `lexical`, `hybrid` modes | Graph search always uses vector (semantic) — `lexical` and `hybrid` modes don't route to a full-text index | Low — vector search is the primary mode; `search_mode` parameter accepted but not differentiated |
+
+### Not Gaps (deliberate deviations)
+
+- **No `labels.json` in Docker**: Plan said to remove from Docker context. Done — labels persist in graph.
+- **No equivalence test harness**: Plan suggested running both file-backed and graph-backed tools side-by-side. Unnecessary after clean break — file-backed code is gone.
+- **No version parameters on structured tools**: Plan explicitly said to use Cypher tool for version-specific queries. Correct — `query_imas_graph` handles all version traversal.
+
+## Phase 7: Richer Content via Multi-Index Search + Graph Traversal
+
+With the graph-native foundation complete, the MCP tools can now exploit the full richness of the knowledge graph. The current tools perform single-index queries — one vector search or one Cypher traversal per request. The graph enables **compositional queries** that combine semantic similarity across multiple indexes with relationship traversal for context-rich responses.
+
+### Multi-Index Semantic Search
+
+The graph contains multiple vector indexes, each embedding different aspects of the data:
+
+| Index | Node Type | Property | Content Embedded |
+|-------|-----------|----------|-----------------|
+| `imas_path_embedding` | IMASPath | embedding | Path documentation (physics meaning) |
+| `cluster_description_embedding` | IMASSemanticCluster | description_embedding | Cluster description (thematic grouping) |
+| `imas_path_name_embedding` | IMASPath | name_embedding | Path name (structural/naming pattern) |
+
+**Proposed: `search_imas_deep`** — a new tool that fans out across multiple indexes and merges results:
+
+```python
+@mcp_tool("Deep semantic search across IMAS paths, clusters, and related data. ...")
+async def search_imas_deep(
+    self,
+    query: str,
+    include_clusters: bool = True,
+    include_version_context: bool = False,
+    max_results: int = 20,
+) -> DeepSearchResult:
+    """Fan-out search across path + cluster indexes, then enrich via traversal."""
+    embedding = self._embed_query(query)
+
+    # 1. Vector search on path embeddings (primary)
+    path_hits = self._gc.query("""
+        CALL db.index.vector.queryNodes('imas_path_embedding', $k, $embedding)
+        YIELD node AS path, score
+        OPTIONAL MATCH (path)-[:HAS_UNIT]->(u:Unit)
+        OPTIONAL MATCH (path)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
+        OPTIONAL MATCH (path)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
+        RETURN path.id, path.documentation, path.physics_domain,
+               u.id AS units, collect(DISTINCT c.label) AS clusters,
+               collect(DISTINCT coord.id) AS coordinates, score
+        ORDER BY score DESC LIMIT $k
+    """, embedding=embedding, k=max_results)
+
+    # 2. Vector search on cluster descriptions (discover related groups)
+    if include_clusters:
+        cluster_hits = self._gc.query("""
+            CALL db.index.vector.queryNodes('cluster_description_embedding', $k, $embedding)
+            YIELD node AS cluster, score
+            WHERE score > 0.7
+            OPTIONAL MATCH (p:IMASPath)-[:IN_CLUSTER]->(cluster)
+            RETURN cluster.label, cluster.description, cluster.scope,
+                   collect(p.id)[..10] AS sample_paths, score
+            ORDER BY score DESC LIMIT 5
+        """, embedding=embedding, k=10)
+
+    # 3. Version context enrichment (optional)
+    if include_version_context:
+        # For top hits, check version evolution
+        top_path_ids = [h['path.id'] for h in path_hits[:5]]
+        version_info = self._gc.query("""
+            UNWIND $paths AS pid
+            MATCH (p:IMASPath {id: pid})
+            OPTIONAL MATCH (p)-[:INTRODUCED_IN]->(intro:DDVersion)
+            OPTIONAL MATCH (p)-[:DEPRECATED_IN]->(dep:DDVersion)
+            OPTIONAL MATCH (change:IMASPathChange)-[:FOR_IMAS_PATH]->(p)
+            RETURN p.id, intro.id AS introduced_in, dep.id AS deprecated_in,
+                   count(change) AS change_count
+        """, paths=top_path_ids)
+```
+
+### Graph-Augmented Search Patterns
+
+Beyond multi-index search, the graph enables **traversal-based enrichment** that file-backed tools couldn't do:
+
+#### 1. Coordinate Cross-Referencing
+When a user asks about a measurement, show what coordinate systems it expects:
+```cypher
+CALL db.index.vector.queryNodes('imas_path_embedding', 5, $embedding)
+YIELD node AS path, score
+MATCH (path)-[:HAS_COORDINATE]->(coord:IMASCoordinateSpec)
+MATCH (coord)<-[:HAS_COORDINATE]-(sibling:IMASPath)
+WHERE sibling <> path AND sibling.ids = path.ids
+RETURN path.id, coord.id, collect(DISTINCT sibling.id) AS shared_coordinate_paths, score
+```
+
+#### 2. Cross-IDS Discovery
+Find paths in other IDS that share the same physics domain and coordinate space:
+```cypher
+CALL db.index.vector.queryNodes('imas_path_embedding', 5, $embedding)
+YIELD node AS path, score
+MATCH (path)-[:IN_CLUSTER]->(c:IMASSemanticCluster {cross_ids: true})
+MATCH (sibling)-[:IN_CLUSTER]->(c)
+WHERE sibling.ids <> path.ids
+RETURN path.id AS source, path.ids AS source_ids,
+       collect(DISTINCT {path: sibling.id, ids: sibling.ids})[..10] AS cross_ids_matches, score
+```
+
+#### 3. Version Evolution Enrichment
+For codegen workflows, show whether a path was recently introduced or has had sign convention changes:
+```cypher
+MATCH (p:IMASPath {id: $path})
+OPTIONAL MATCH (p)-[:INTRODUCED_IN]->(v:DDVersion)
+OPTIONAL MATCH (change:IMASPathChange)-[:FOR_IMAS_PATH]->(p)
+WHERE change.semantic_change_type IN ['sign_convention', 'coordinate_convention']
+RETURN p.id, v.id AS introduced_version,
+       collect({version: change.version, type: change.semantic_change_type, summary: change.summary}) AS breaking_changes
+```
+
+#### 4. Unit-Aware Search
+Group results by physical unit, useful for checking dimensional consistency:
+```cypher
+CALL db.index.vector.queryNodes('imas_path_embedding', 20, $embedding)
+YIELD node AS path, score
+MATCH (path)-[:HAS_UNIT]->(u:Unit)
+RETURN u.id AS unit, collect({path: path.id, score: score})[..5] AS paths
+ORDER BY size(paths) DESC
+```
+
+### Proposed New Tools
+
+| Tool | Purpose | Key Capability |
+|------|---------|---------------|
+| `search_imas_deep` | Multi-index fan-out search | Combines path + cluster vector search with traversal enrichment |
+| `compare_dd_versions` | Version diff between two DD versions | Surfaces new, removed, renamed, and semantically changed paths |
+| `get_imas_path_context` | Full context for a single path | Unit, coordinates, cluster membership, version history, related paths |
+| `search_imas_by_unit` | Unit-based path discovery | Find all paths with a given physical unit or dimensionality |
+
+### Implementation Notes
+
+- All new tools use the existing `CypherTool` patterns — read-only, graph-backed, result-limited
+- Multi-index queries should run in parallel where possible (fan out to multiple vector indexes, merge results)
+- `search_imas_deep` replaces `search_imas_paths` as the primary search entry point for agents that want rich context
+- `search_imas_paths` remains for lightweight, fast searches that return minimal metadata
+- The Cypher tool already enables all of these queries ad-hoc — the new tools **package common patterns** into ergonomic interfaces
