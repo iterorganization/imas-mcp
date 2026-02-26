@@ -463,6 +463,11 @@ classes:
           URL to documentation or reference material for this field, from the
           DD XML url attribute. May be a relative path to IMAS docs or an
           absolute URL.
+      units:
+        description: >-
+          Unit symbol string from the DD XML (e.g., 'Wb', 'T', 'eV').
+          Stored as a direct property for convenient access alongside
+          the HAS_UNIT relationship to Unit nodes.
       # Relationships
       parent_path:
         description: Parent path in hierarchy (null for IDS-level paths)
