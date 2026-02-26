@@ -113,6 +113,7 @@ IDS_NODES = [
         "lifecycle_status": "active",
         "ids_type": "constant_or_dynamic",
         "path_count": 5,
+        "physics_domain": "magnetics",
     },
     {
         "id": "core_profiles",
@@ -121,6 +122,7 @@ IDS_NODES = [
         "lifecycle_status": "active",
         "ids_type": "constant_or_dynamic",
         "path_count": 4,
+        "physics_domain": "transport",
     },
 ]
 
@@ -129,6 +131,7 @@ IMAS_PATHS = [
     {
         "id": "equilibrium/time_slice/profiles_1d/psi",
         "path": "equilibrium/time_slice/profiles_1d/psi",
+        "name": "psi",
         "ids_name": "equilibrium",
         "documentation": "Poloidal magnetic flux profile",
         "data_type": "FLT_1D",
@@ -140,6 +143,7 @@ IMAS_PATHS = [
     {
         "id": "equilibrium/time_slice/profiles_1d/pressure",
         "path": "equilibrium/time_slice/profiles_1d/pressure",
+        "name": "pressure",
         "ids_name": "equilibrium",
         "documentation": "Plasma pressure profile",
         "data_type": "FLT_1D",
@@ -151,6 +155,7 @@ IMAS_PATHS = [
     {
         "id": "equilibrium/time_slice/boundary/psi",
         "path": "equilibrium/time_slice/boundary/psi",
+        "name": "psi",
         "ids_name": "equilibrium",
         "documentation": "Poloidal flux at the boundary",
         "data_type": "FLT_0D",
@@ -162,6 +167,7 @@ IMAS_PATHS = [
     {
         "id": "equilibrium/time_slice/boundary/psi_norm",
         "path": "equilibrium/time_slice/boundary/psi_norm",
+        "name": "psi_norm",
         "ids_name": "equilibrium",
         "documentation": "Normalized poloidal flux at the boundary",
         "data_type": "FLT_0D",
@@ -173,6 +179,7 @@ IMAS_PATHS = [
     {
         "id": "equilibrium/time_slice/boundary/type",
         "path": "equilibrium/time_slice/boundary/type",
+        "name": "type",
         "ids_name": "equilibrium",
         "documentation": "Type of boundary (integer identifier)",
         "data_type": "INT_0D",
@@ -185,6 +192,7 @@ IMAS_PATHS = [
     {
         "id": "core_profiles/profiles_1d/electrons/temperature",
         "path": "core_profiles/profiles_1d/electrons/temperature",
+        "name": "temperature",
         "ids_name": "core_profiles",
         "documentation": "Electron temperature profile",
         "data_type": "FLT_1D",
@@ -196,6 +204,7 @@ IMAS_PATHS = [
     {
         "id": "core_profiles/profiles_1d/electrons/density",
         "path": "core_profiles/profiles_1d/electrons/density",
+        "name": "density",
         "ids_name": "core_profiles",
         "documentation": "Electron density profile",
         "data_type": "FLT_1D",
@@ -207,6 +216,7 @@ IMAS_PATHS = [
     {
         "id": "core_profiles/profiles_1d/electrons/pressure",
         "path": "core_profiles/profiles_1d/electrons/pressure",
+        "name": "pressure",
         "ids_name": "core_profiles",
         "documentation": "Electron pressure profile (derived from temperature * density)",
         "data_type": "FLT_1D",
@@ -218,6 +228,7 @@ IMAS_PATHS = [
     {
         "id": "core_profiles/profiles_1d/ion/temperature",
         "path": "core_profiles/profiles_1d/ion/temperature",
+        "name": "temperature",
         "ids_name": "core_profiles",
         "documentation": "Ion temperature profile",
         "data_type": "FLT_1D",
@@ -311,14 +322,15 @@ def _load_fixture_graph(client) -> None:
         client.query(
             "CREATE (i:IDS {id: $id, name: $name, documentation: $documentation, "
             "lifecycle_status: $lifecycle_status, ids_type: $ids_type, "
-            "path_count: $path_count})",
+            "path_count: $path_count, physics_domain: $physics_domain})",
             **ids,
         )
 
     # Create IMASPath nodes with relationships
     for p in IMAS_PATHS:
         client.query(
-            "CREATE (p:IMASPath {id: $id, path: $path, ids_name: $ids_name, "
+            "CREATE (p:IMASPath {id: $id, path: $path, ids: $ids_name, "
+            "name: $name, "
             "documentation: $documentation, data_type: $data_type, units: $units, "
             "node_type: $node_type, physics_domain: $physics_domain})",
             **p,
@@ -337,6 +349,15 @@ def _load_fixture_graph(client) -> None:
                 "CREATE (p)-[:INTRODUCED_IN]->(v)",
                 path_id=p["id"],
                 version=p["introduced_in"],
+            )
+        # Link to Unit
+        unit_id = p.get("units")
+        if unit_id and unit_id != "-":
+            client.query(
+                "MATCH (p:IMASPath {id: $path_id}), (u:Unit {id: $unit_id}) "
+                "CREATE (p)-[:HAS_UNIT]->(u)",
+                path_id=p["id"],
+                unit_id=unit_id,
             )
 
     # Create IMASSemanticCluster nodes

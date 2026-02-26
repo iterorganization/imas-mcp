@@ -73,7 +73,7 @@ class Server:
     mcp: FastMCP = field(init=False, repr=False)
     tools: Tools = field(init=False, repr=False)
     resources: Resources = field(init=False, repr=False)
-    embeddings: Embeddings = field(init=False, repr=False)
+    embeddings: Embeddings | None = field(init=False, repr=False, default=None)
     started_at: datetime = field(init=False, repr=False)
     _started_monotonic: float = field(init=False, repr=False)
 
@@ -83,26 +83,62 @@ class Server:
         server_name = f"imas-data-dictionary-{dd_version}"
         self.mcp = FastMCP(name=server_name)
 
-        # Validate schemas exist before initialization (fail fast)
-        self._validate_schemas_available()
+        # Attempt graph-native mode if Neo4j is available
+        graph_client = self._try_graph_client()
 
-        # Initialize components
-        self.tools = Tools(ids_set=self.ids_set)
-        self.resources = Resources(ids_set=self.ids_set)
-        # Compose embeddings manager
-        self.embeddings = Embeddings(
-            document_store=self.tools.document_store,
-            ids_set=self.ids_set,
-        )
+        if graph_client is not None:
+            # Graph-native mode: all data comes from Neo4j
+            self.tools = Tools(ids_set=self.ids_set, graph_client=graph_client)
+            self.resources = Resources(ids_set=self.ids_set)
+            # Embeddings are in the graph; skip document-level embedding init
+            self.embeddings = None
+            logger.info("Server initialized in graph-native mode")
+        else:
+            # File-backed mode: uses DocumentStore + JSON/SQLite
+            self._validate_schemas_available()
+            self.tools = Tools(ids_set=self.ids_set)
+            self.resources = Resources(ids_set=self.ids_set)
+            self.embeddings = Embeddings(
+                document_store=self.tools.document_store,
+                ids_set=self.ids_set,
+            )
+            logger.debug("Server initialized in file-backed mode")
 
         # Register components with MCP server
         self._register_components()
 
-        logger.debug("IMAS Codex Server initialized with tools and resources")
-
         # Capture start times (wall clock + monotonic for stable uptime)
         self.started_at = datetime.now(UTC)
         self._started_monotonic = time.monotonic()
+
+    def _try_graph_client(self):
+        """Attempt to create a GraphClient for graph-native mode.
+
+        Graph-native mode is activated when IMAS_CODEX_GRAPH_NATIVE=1 is set
+        in the environment. Returns GraphClient if Neo4j is reachable, None otherwise.
+        """
+        if os.environ.get("IMAS_CODEX_GRAPH_NATIVE", "").strip() not in ("1", "true"):
+            return None
+
+        neo4j_uri = os.environ.get("NEO4J_URI")
+        if not neo4j_uri:
+            return None
+
+        try:
+            from imas_codex.graph.client import GraphClient
+
+            gc = GraphClient(
+                uri=neo4j_uri,
+                username=os.environ.get("NEO4J_USERNAME", "neo4j"),
+                password=os.environ.get("NEO4J_PASSWORD", ""),
+            )
+            # Quick connectivity check
+            gc.query("RETURN 1")
+            logger.info(f"Connected to Neo4j at {neo4j_uri}")
+            return gc
+        except Exception as e:
+            logger.debug(f"Neo4j not available ({e}), falling back to file-backed mode")
+            return None
 
     # Context manager support
     async def __aenter__(self):
