@@ -1625,20 +1625,30 @@ def _start_service(node: str, name: str, command: str) -> None:
 def _stop_service(node: str, name: str) -> bool:
     """Stop a named service on the compute node. Returns True if stopped.
 
-    Sends SIGTERM first, waits briefly, then SIGKILL if needed.
-    Also kills child processes (process tree).
+    Sends SIGTERM to the top-level process first (Apptainer for Neo4j),
+    which propagates it to the JVM for a graceful checkpoint/shutdown.
+    Waits up to 90 seconds — Neo4j with a multi-GB database on GPFS
+    can need 60+ seconds to checkpoint.
+
+    Only escalates to SIGKILL as a last resort if the graceful window
+    expires.  SIGKILL skips checkpointing and leaves stale POSIX locks
+    on GPFS that require inode replacement (``_clean_neo4j_locks``).
     """
     stop = (
         f"pid=$(cat {_SERVICES_DIR}/{name}.pid 2>/dev/null) || exit 0\n"
         f'if kill -0 "$pid" 2>/dev/null; then\n'
-        f"    # Kill process tree (children first)\n"
-        f'    pkill -TERM -P "$pid" 2>/dev/null || true\n'
+        f"    # SIGTERM to top-level process — Apptainer forwards to JVM\n"
         f'    kill -TERM "$pid" 2>/dev/null || true\n'
-        f"    sleep 3\n"
+        f"    # Wait up to 90s for graceful checkpoint + shutdown\n"
+        f"    for i in $(seq 1 90); do\n"
+        f'        kill -0 "$pid" 2>/dev/null || break\n'
+        f"        sleep 1\n"
+        f"    done\n"
         f'    if kill -0 "$pid" 2>/dev/null; then\n'
+        f'        echo "Graceful shutdown timed out — escalating to SIGKILL"\n'
         f'        pkill -KILL -P "$pid" 2>/dev/null || true\n'
         f'        kill -KILL "$pid" 2>/dev/null || true\n'
-        f"        sleep 1\n"
+        f"        sleep 2\n"
         f"    fi\n"
         f'    echo "Stopped {name} (PID $pid)"\n'
         f"else\n"
@@ -1646,7 +1656,7 @@ def _stop_service(node: str, name: str) -> bool:
         f"fi\n"
         f"rm -f {_SERVICES_DIR}/{name}.pid {_SERVICES_DIR}/{name}.sh\n"
     )
-    result = _run_on_node(node, stop, timeout=30)
+    result = _run_on_node(node, stop, timeout=120)
     click.echo(f"  {result.strip()}")
     return "Stopped" in result
 
@@ -1716,18 +1726,38 @@ def _clean_neo4j_locks(node: str) -> None:
     GPFS can retain stale ``store_lock`` and ``database_lock`` files
     after process death, preventing startup.
 
-    **CRITICAL**: Only remove these two coordination locks.  Never
-    delete Lucene ``write.lock`` files (inside ``schema/index/``
+    Additionally, Java ``FileChannel.lock()`` POSIX locks on
+    ``neostore*`` files can become stale on GPFS after SIGKILL.
+    Neo4j locks all neostore files (``neostore``,
+    ``neostore.nodestore.db``, ``neostore.propertystore.db``, etc.)
+    — around 30 files per database.  Stale locks are cleared via
+    inode replacement: read with ``dd`` (which avoids lock syscalls
+    that ``cp`` uses and would hang on GPFS stale locks), write to
+    a ``.unlock`` file, then ``mv`` to atomically replace the inode.
+
+    **CRITICAL**: Only remove coordination locks (``store_lock``,
+    ``database_lock``) and replace inodes on ``neostore*`` files.
+    Never delete Lucene ``write.lock`` files (inside ``schema/index/``
     directories) — doing so corrupts vector indexes and can cause
     total data loss via checkpoint failure.
     """
     clean = (
-        "DATA=$HOME/.local/share/imas-codex/neo4j/data && "
+        "DATA=$HOME/.local/share/imas-codex/neo4j/data\n"
+        "# Remove coordination lock files\n"
         'rm -f "$DATA"/databases/store_lock "$DATA"/databases/*/database_lock '
-        "2>/dev/null; echo locks_cleaned\n"
+        "2>/dev/null\n"
+        "# Clear stale POSIX locks on neostore* via inode replacement.\n"
+        "# Use dd instead of cp — cp uses fstat/fadvise which interact\n"
+        "# with GPFS's distributed lock manager and hang on stale locks.\n"
+        'for ns in "$DATA"/databases/*/neostore*; do\n'
+        '    [ -f "$ns" ] || continue\n'
+        '    dd if="$ns" of="$ns.unlock" bs=4k 2>/dev/null '
+        '&& mv -f "$ns.unlock" "$ns"\n'
+        "done\n"
+        "echo locks_cleaned\n"
     )
     try:
-        _run_on_node(node, clean, timeout=15)
+        _run_on_node(node, clean, timeout=60)
     except subprocess.CalledProcessError:
         pass
 

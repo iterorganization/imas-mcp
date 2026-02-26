@@ -118,6 +118,28 @@ class Neo4jOperation:
             needs_stop = is_neo4j_running(self.profile.http_port) or (
                 is_locked and is_verified
             )
+
+            # GPFS doesn't propagate POSIX locks across nodes, so the
+            # check above misses Neo4j running on a SLURM compute node.
+            if not needs_stop:
+                try:
+                    from imas_codex.cli.serve import (
+                        _get_allocation,
+                        _is_graph_compute_target,
+                        _service_running,
+                    )
+
+                    if _is_graph_compute_target():
+                        alloc = _get_allocation()
+                        if (
+                            alloc
+                            and alloc["state"] == "RUNNING"
+                            and _service_running(alloc["node"], "neo4j")
+                        ):
+                            needs_stop = True
+                except Exception:
+                    pass
+
             if needs_stop:
                 self.was_running = True
                 click.echo(
@@ -127,17 +149,20 @@ class Neo4jOperation:
 
                 import time
 
-                for _ in range(30):
-                    _, still_verified, _ = _check_database_lock(self.profile)
-                    if not is_neo4j_running(self.profile.http_port) and (
-                        not still_verified
-                    ):
+                # _stop_neo4j already waits for process exit (up to 90s
+                # for SLURM) and cleans stale POSIX locks. Just confirm
+                # the HTTP endpoint is down. Don't call
+                # _check_database_lock here — fcntl.lockf hangs on GPFS
+                # stale locks, causing this loop to block indefinitely.
+                for _ in range(15):
+                    if not is_neo4j_running(self.profile.http_port):
                         break
                     time.sleep(1)
                 else:
                     self._release_lock()
                     raise click.ClickException(
-                        f"Failed to stop Neo4j [{self.profile.name}] within 30 seconds"
+                        f"Failed to stop Neo4j [{self.profile.name}] — "
+                        "still responding on HTTP port after shutdown"
                     )
 
         return self
@@ -200,6 +225,7 @@ class Neo4jOperation:
 
             if _is_graph_compute_target():
                 from imas_codex.cli.serve import (
+                    _clean_neo4j_locks,
                     _get_allocation,
                     _stop_service,
                 )
@@ -207,19 +233,18 @@ class Neo4jOperation:
                 alloc = _get_allocation()
                 if alloc and alloc["state"] == "RUNNING":
                     if _stop_service(alloc["node"], "neo4j"):
-                        return
+                        # Clean stale POSIX locks left by SIGKILL on GPFS
+                        _clean_neo4j_locks(alloc["node"])
         except Exception:
             pass
 
-        # Fall back to local stop methods
+        # Always kill local orphans — recovery cycles or manual starts
+        # can leave Neo4j processes running directly on the login node
         service_name = f"imas-codex-neo4j-{self.profile.name}"
-        result = subprocess.run(
+        subprocess.run(
             ["systemctl", "--user", "stop", service_name],
             capture_output=True,
         )
-        if result.returncode == 0:
-            return
-
         subprocess.run(
             ["pkill", "-15", "-f", "neo4j_.*community.sif"],
             capture_output=True,
@@ -231,6 +256,32 @@ class Neo4jOperation:
         subprocess.run(["pkill", "-15", "-f", "neo4j.*console"], capture_output=True)
 
     def _start_neo4j(self) -> None:
+        # Try SLURM-based start first (Neo4j on compute node)
+        try:
+            from imas_codex.cli.serve import _is_graph_compute_target
+
+            if _is_graph_compute_target():
+                from imas_codex.cli.serve import (
+                    _get_allocation,
+                    _neo4j_service_command,
+                    _start_service,
+                    _wait_for_health,
+                )
+
+                alloc = _get_allocation()
+                if alloc and alloc["state"] == "RUNNING":
+                    node = alloc["node"]
+                    _start_service(node, "neo4j", _neo4j_service_command())
+                    from imas_codex.cli.serve import _graph_http_port
+
+                    http_port = _graph_http_port()
+                    _wait_for_health("Neo4j", f"curl -sf http://{node}:{http_port}/")
+                    click.echo(f"  Neo4j [{self.profile.name}] ready on {node}")
+                    return
+        except Exception:
+            pass
+
+        # Fall back to systemd
         service_name = f"imas-codex-neo4j-{self.profile.name}"
         result = subprocess.run(
             ["systemctl", "--user", "start", service_name],
@@ -546,21 +597,33 @@ def _parse_dump_error(stderr: str) -> tuple[str, bool]:
     Returns (message, is_active_lock) where is_active_lock indicates
     another process holds the database lock (recovery won't help).
     """
-    if "database is in use" in stderr.lower() or "filelockexception" in stderr.lower():
+    lower = stderr.lower()
+
+    # Explicit lock / in-use signals
+    if "database is in use" in lower or "filelockexception" in lower:
         return (
             "Neo4j database is currently in use by another process.\n"
             "Stop Neo4j first: imas-codex graph stop",
             True,
         )
-    # "Dump failed for databases: 'neo4j'" without detail usually means
-    # the database lock couldn't be acquired (non-verbose mode).
-    if "dump failed for databases" in stderr.lower():
+
+    # Non-lock errors that also produce "dump failed for databases" —
+    # check these BEFORE the generic "dump failed" catch-all.
+    if "unable to find store id" in lower:
+        return "Unable to find store id (store format issue)", False
+    if "classformaterror" in lower or "incompatible magic value" in lower:
+        return "JVM class format error (Apptainer overlay issue)", False
+
+    # "Dump failed for databases: 'neo4j'" without a specific cause
+    # usually means the database lock couldn't be acquired.
+    if "dump failed for databases" in lower:
         return (
             "Neo4j database dump failed (likely locked by another process).\n"
             "Stop Neo4j first: imas-codex graph stop",
             True,
         )
-    # Generic failure — extract the first Caused-by or the CommandFailedException line
+
+    # Generic failure — extract the first Caused-by or CommandFailedException
     for line in stderr.splitlines():
         stripped = line.strip()
         if stripped.startswith("Caused by:") or "CommandFailedException" in stripped:
@@ -581,6 +644,10 @@ def _check_database_lock(
     On GPFS, POSIX locks survive across nodes, so a lock may appear
     held even after Neo4j on the compute node has exited (stale lock).
     We verify by checking for actual running processes.
+
+    **GPFS caveat**: ``fcntl.lockf`` with ``LOCK_NB`` can hang
+    indefinitely on stale cross-node locks despite being non-blocking.
+    A 5-second timeout via ``signal.alarm`` prevents deadlock.
     """
     if is_neo4j_running(profile.http_port):
         return True, True, "Neo4j responding on localhost"
@@ -593,14 +660,27 @@ def _check_database_lock(
     posix_locked = False
     if lock_file.exists():
         import fcntl
+        import signal
+
+        def _lock_timeout_handler(signum, frame):
+            raise TimeoutError("fcntl.lockf hung on GPFS stale lock")
 
         try:
             fd = os.open(str(lock_file), os.O_RDWR)
             try:
-                fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.lockf(fd, fcntl.LOCK_UN)
-            except OSError:
-                posix_locked = True
+                old_handler = signal.signal(signal.SIGALRM, _lock_timeout_handler)
+                signal.alarm(5)
+                try:
+                    fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.lockf(fd, fcntl.LOCK_UN)
+                except OSError:
+                    posix_locked = True
+                except TimeoutError:
+                    # fcntl hung — GPFS stale lock, treat as locked
+                    posix_locked = True
+                finally:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
             finally:
                 os.close(fd)
         except OSError:
@@ -733,6 +813,11 @@ def _run_neo4j_dump(
             "treating as stale lock, attempting dump..."
         )
 
+    # Bind logs dir so neo4j-admin can write crash reports without
+    # needing --writable-tmpfs (which corrupts the FUSE overlay on GPFS).
+    logs_dir = profile.data_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
     cmd = [
         "apptainer",
         "exec",
@@ -740,7 +825,8 @@ def _run_neo4j_dump(
         f"{profile.data_dir}/data:/data",
         "--bind",
         f"{dumps_dir}:/dumps",
-        "--writable-tmpfs",
+        "--bind",
+        f"{logs_dir}:/var/lib/neo4j/logs",
         str(NEO4J_IMAGE),
         "neo4j-admin",
         "database",
@@ -755,6 +841,15 @@ def _run_neo4j_dump(
 
     result = subprocess.run(cmd_verbose, capture_output=True, text=True)
     if result.returncode == 0:
+        return
+
+    # The dump may succeed but exit non-zero due to Apptainer cleanup
+    # errors (e.g. fuse-overlayfs ClassFormatError).  If the dump file
+    # exists and neo4j-admin reported completion, accept it.
+    dump_file = dumps_dir / "neo4j.dump"
+    if dump_file.exists() and "dump completed successfully" in result.stderr.lower():
+        if verbose:
+            click.echo("  Dump completed (ignoring non-zero exit from cleanup)")
         return
 
     message, is_active_lock = _parse_dump_error(result.stderr)
@@ -787,6 +882,8 @@ def _run_neo4j_dump(
         f"{profile.data_dir}/data:/data",
         "--bind",
         f"{logs_dir}:/logs",
+        "--bind",
+        f"{logs_dir}:/var/lib/neo4j/logs",
         "--writable-tmpfs",
         "--env",
         f"NEO4J_server_bolt_listen__address=127.0.0.1:{profile.bolt_port}",
@@ -817,10 +914,14 @@ def _run_neo4j_dump(
             "Run with --verbose for full error output."
         )
 
-    # Stop cleanly
+    # Stop cleanly — Neo4j may take time to checkpoint on GPFS
     click.echo("  Recovery start successful — stopping cleanly...")
     recovery_proc.terminate()
-    recovery_proc.wait(timeout=30)
+    try:
+        recovery_proc.wait(timeout=90)
+    except subprocess.TimeoutExpired:
+        recovery_proc.kill()
+        recovery_proc.wait(timeout=10)
 
     for _ in range(30):
         if not is_neo4j_running(profile.http_port):
