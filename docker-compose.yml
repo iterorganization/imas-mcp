@@ -1,6 +1,7 @@
 services:
-  # Neo4j knowledge graph database
-  # Alternative for systems without Docker: use Apptainer (see AGENTS.md)
+  # Neo4j knowledge graph database (standalone mode for development/graph administration)
+  # In production, Neo4j is embedded in the imas-codex container.
+  # Use this standalone service only for: graph shell, data import/export, debugging.
   neo4j:
     image: neo4j:2026.01.4-community
     ports:
@@ -33,8 +34,9 @@ services:
         - BUILDKIT_INLINE_CACHE=1
         - IDS_FILTER=${IDS_FILTER}
         - TRANSPORT=${TRANSPORT:-streamable-http}
+        - GRAPH_TAG=${GRAPH_TAG:-latest}
       secrets:
-        - openai_api_key
+        - ghcr_token
     ports:
       - "8000:8000"
     environment:
@@ -43,11 +45,11 @@ services:
       - OPENAI_BASE_URL=https://openrouter.ai/api/v1
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
   # Optional: Add nginx reverse proxy for production
   nginx:
@@ -62,9 +64,10 @@ services:
     restart: unless-stopped
     profiles:
       - production
+
 secrets:
-  openai_api_key:
-    environment: OPENAI_API_KEY
+  ghcr_token:
+    environment: GHCR_TOKEN
 
 volumes:
   neo4j_data:
