@@ -400,28 +400,6 @@ def get_llm_scheduler() -> str:
     return resolve_location(location).scheduler
 
 
-# ─── Graph scheduler settings ──────────────────────────────────────────────
-
-
-def get_graph_scheduler() -> str:
-    """Get the graph server job scheduler.
-
-    Derived from the graph location — compute locations (e.g. ``"titan"``)
-    automatically resolve to ``"slurm"``.
-
-    Priority: IMAS_CODEX_GRAPH_SCHEDULER env → location resolution → "none".
-    """
-    if env := os.getenv("IMAS_CODEX_GRAPH_SCHEDULER"):
-        return env.lower()
-    from imas_codex.graph.profiles import get_graph_location
-    from imas_codex.remote.locations import resolve_location
-
-    location = get_graph_location()
-    if location == "local":
-        return "none"
-    return resolve_location(location).scheduler
-
-
 # ─── Model accessors ───────────────────────────────────────────────────────
 # All callers should use get_model("language"), get_model("vision"), etc.
 # The embedding model is accessed via get_embedding_model() for consistency
