@@ -972,6 +972,17 @@ def extract_paths_for_version(version: str, ids_filter: set[str] | None = None) 
                     meta["change_nbc_previous_name"] = field_el.get(
                         "change_nbc_previous_name", ""
                     )
+                    nbc_prev_type = field_el.get("change_nbc_previous_type")
+                    if nbc_prev_type:
+                        meta["change_nbc_previous_type"] = nbc_prev_type
+                # COCOS transformation expression
+                cocos_expr = field_el.get("cocos_transformation_expression")
+                if cocos_expr:
+                    meta["cocos_transformation_expression"] = cocos_expr
+                # Alternative coordinate
+                alt_coord = field_el.get("alternative_coordinate1")
+                if alt_coord:
+                    meta["alternative_coordinate1"] = alt_coord
                 # URL
                 url = field_el.get("url")
                 if url:
@@ -1081,6 +1092,9 @@ def _extract_paths_recursive(
                     "change_nbc_version",
                     "change_nbc_description",
                     "change_nbc_previous_name",
+                    "change_nbc_previous_type",
+                    "cocos_transformation_expression",
+                    "alternative_coordinate1",
                     "url",
                     "doc_identifier",
                     "coordinate1_same_as",
@@ -1569,6 +1583,9 @@ def build_dd_graph(
                     "change_nbc_version",
                     "change_nbc_description",
                     "change_nbc_previous_name",
+                    "change_nbc_previous_type",
+                    "cocos_transformation_expression",
+                    "alternative_coordinate1",
                     "url",
                     "coordinate1_same_as",
                     "coordinate2_same_as",
@@ -1601,6 +1618,9 @@ def build_dd_graph(
                             path.change_nbc_version = p.change_nbc_version,
                             path.change_nbc_description = p.change_nbc_description,
                             path.change_nbc_previous_name = p.change_nbc_previous_name,
+                            path.change_nbc_previous_type = p.change_nbc_previous_type,
+                            path.cocos_transformation_expression = p.cocos_transformation_expression,
+                            path.alternative_coordinate1 = p.alternative_coordinate1,
                             path.url = p.url,
                             path.coordinate1_same_as = p.coordinate1_same_as,
                             path.coordinate2_same_as = p.coordinate2_same_as,
@@ -2066,6 +2086,11 @@ def _batch_create_path_nodes(
                 "change_nbc_version": path_info.get("change_nbc_version"),
                 "change_nbc_description": path_info.get("change_nbc_description"),
                 "change_nbc_previous_name": path_info.get("change_nbc_previous_name"),
+                "change_nbc_previous_type": path_info.get("change_nbc_previous_type"),
+                "cocos_transformation_expression": path_info.get(
+                    "cocos_transformation_expression"
+                ),
+                "alternative_coordinate1": path_info.get("alternative_coordinate1"),
                 "url": path_info.get("url"),
                 "identifier_enum_name": path_info.get("identifier_enum_name"),
                 "coordinate1_same_as": path_info.get("coordinate1_same_as"),
@@ -2106,6 +2131,9 @@ def _batch_create_path_nodes(
                 path.change_nbc_version = p.change_nbc_version,
                 path.change_nbc_description = p.change_nbc_description,
                 path.change_nbc_previous_name = p.change_nbc_previous_name,
+                path.change_nbc_previous_type = p.change_nbc_previous_type,
+                path.cocos_transformation_expression = p.cocos_transformation_expression,
+                path.alternative_coordinate1 = p.alternative_coordinate1,
                 path.url = p.url,
                 path.units = p.units,
                 path.coordinate1_same_as = p.coordinate1_same_as,

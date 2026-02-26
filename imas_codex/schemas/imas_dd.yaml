@@ -421,6 +421,12 @@ classes:
           flip sign between COCOS 11 and 17). Null for fields without COCOS
           sensitivity. Extracted from the cocos_label_transformation XML attribute.
         range: COCOSLabelTransformation
+      cocos_transformation_expression:
+        description: >-
+          Algebraic COCOS transformation expression from the DD XML (e.g.,
+          "- {psi_like}", "{ip_like} * {b0_like}"). Defines how this field
+          transforms under COCOS convention changes in terms of fundamental
+          COCOS-sensitive quantities. Null for fields without COCOS sensitivity.
       lifecycle_status:
         description: >-
           Lifecycle maturity status from the DD XML (alpha or obsolescent).
@@ -458,6 +464,11 @@ classes:
         description: >-
           Previous name of this field before a non-backward-compatible rename,
           from the DD XML change_nbc_previous_name attribute.
+      change_nbc_previous_type:
+        description: >-
+          Previous data type of this field before a non-backward-compatible
+          type change, from the DD XML change_nbc_previous_type attribute
+          (e.g., "FLT_1D" when a field changed from 1D to 2D).
       url:
         description: >-
           URL to documentation or reference material for this field, from the
@@ -468,6 +479,12 @@ classes:
           Unit symbol string from the DD XML (e.g., 'Wb', 'T', 'eV').
           Stored as a direct property for convenient access alongside
           the HAS_UNIT relationship to Unit nodes.
+      alternative_coordinate1:
+        description: >-
+          Alternative coordinate for the first dimension from the DD XML
+          alternative_coordinate1 attribute. Specifies an OR-alternative
+          coordinate axis that data access code may use instead of the
+          primary coordinate1.
       # Relationships
       parent_path:
         description: Parent path in hierarchy (null for IDS-level paths)
