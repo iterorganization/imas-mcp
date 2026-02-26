@@ -121,6 +121,10 @@ class FileProgressState:
     skipped: int = 0
     pending_score: int = 0
     pending_ingest: int = 0
+    scored_count: int = 0
+    enriched_count: int = 0
+    total_images: int = 0
+    scored_images: int = 0
     code_files: int = 0
     document_files: int = 0
     notebook_files: int = 0
@@ -323,25 +327,21 @@ class FileProgressDisplay(BaseProgressDisplay):
         # SCAN: files discovered / total from paths
         scan_total = max(self.state.total, 1)
 
-        # SCORE: files scored / total needing scoring
-        score_total = max(self.state.pending_score + self.state.run_scored, 1)
+        # SCORE: files scored (graph) / total needing scoring
+        score_completed = self.state.scored_count
+        score_total = max(self.state.total, 1)
 
-        # ENRICH: enriched this run
-        enrich_total = max(self.state.run_enriched, 1)
+        # ENRICH: enriched (graph) / scored (all scored files need enriching)
+        enrich_completed = self.state.enriched_count
+        enrich_total = max(self.state.scored_count, 1)
 
-        # INGEST: combined code + docs
-        ingest_total = max(
-            self.state.code_files
-            + self.state.document_files
-            + self.state.notebook_files
-            + self.state.config_files,
-            1,
-        )
+        # INGEST: ingested (graph) / total needing ingestion
+        ingest_completed = self.state.ingested
+        ingest_total = max(self.state.ingested + self.state.pending_ingest, 1)
 
-        # IMAGE: combined image ingest + VLM score
-        image_total = max(
-            self.state.run_images_ingested + self.state.run_images_scored, 1
-        )
+        # IMAGE: scored images (graph) / total images
+        image_completed = self.state.scored_images
+        image_total = max(self.state.total_images, 1)
 
         # Score cost for display
         score_cost = (
@@ -497,7 +497,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             PipelineRowConfig(
                 name="SCORE",
                 style="bold green",
-                completed=self.state.run_scored,
+                completed=score_completed,
                 total=score_total,
                 rate=self.state.score_rate,
                 cost=score_cost,
@@ -512,7 +512,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             PipelineRowConfig(
                 name="ENRICH",
                 style="bold white",
-                completed=self.state.run_enriched,
+                completed=enrich_completed,
                 total=enrich_total,
                 rate=self.state.enrich_rate,
                 disabled=self.state.scan_only or self.state.score_only,
@@ -526,7 +526,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             PipelineRowConfig(
                 name="INGEST",
                 style="bold magenta",
-                completed=self.state.run_ingest_total,
+                completed=ingest_completed,
                 total=ingest_total,
                 rate=self.state.ingest_rate,
                 disabled=self.state.scan_only or self.state.score_only,
@@ -540,7 +540,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             PipelineRowConfig(
                 name="IMAGE",
                 style="bold cyan",
-                completed=self.state.run_image_total,
+                completed=image_completed,
                 total=image_total,
                 rate=self.state.combined_image_rate,
                 cost=image_cost,
@@ -847,6 +847,10 @@ class FileProgressDisplay(BaseProgressDisplay):
         self.state.skipped = stats["skipped"]
         self.state.pending_score = stats["pending_score"]
         self.state.pending_ingest = stats["pending_ingest"]
+        self.state.scored_count = stats["scored_count"]
+        self.state.enriched_count = stats["enriched_count"]
+        self.state.total_images = stats["total_images"]
+        self.state.scored_images = stats["scored_images"]
         self.state.code_files = stats["code_files"]
         self.state.document_files = stats["document_files"]
         self.state.notebook_files = stats["notebook_files"]

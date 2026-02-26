@@ -346,6 +346,7 @@ def files(
                             on_image_progress=on_image,
                             on_image_score_progress=on_image_score,
                             on_worker_status=on_worker_status,
+                            service_monitor=service_monitor,
                         )
                     finally:
                         refresh_task.cancel()

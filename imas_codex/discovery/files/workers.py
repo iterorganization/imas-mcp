@@ -67,6 +67,8 @@ async def scan_worker(
 
         if not paths:
             state.scan_phase.record_idle()
+            if state.scan_phase.done:
+                break
             if on_progress:
                 on_progress("idle", state.scan_stats, None)
             await asyncio.sleep(2.0)
@@ -231,6 +233,8 @@ async def score_worker(
 
         if not files:
             state.score_phase.record_idle()
+            if state.score_phase.done:
+                break
             if on_progress:
                 on_progress("idle", state.score_stats, None)
             await asyncio.sleep(2.0)
@@ -410,6 +414,8 @@ async def code_worker(
 
         if not files:
             state.code_phase.record_idle()
+            if state.code_phase.done:
+                break
             if on_progress:
                 on_progress("idle", state.code_stats, None)
             await asyncio.sleep(3.0)
@@ -499,6 +505,8 @@ async def docs_worker(
 
         if not files:
             state.docs_phase.record_idle()
+            if state.docs_phase.done:
+                break
             if on_progress:
                 on_progress("idle", state.docs_stats, None)
             await asyncio.sleep(3.0)
@@ -593,6 +601,8 @@ async def enrich_worker(
 
         if not files:
             state.enrich_phase.record_idle()
+            if state.enrich_phase.done:
+                break
             if on_progress:
                 on_progress("idle", state.enrich_stats, None)
             await asyncio.sleep(2.0)
@@ -692,6 +702,8 @@ async def image_worker(
 
         if not files:
             state.image_phase.record_idle()
+            if state.image_phase.done:
+                break
             if on_progress:
                 on_progress("idle", state.image_stats, None)
             await asyncio.sleep(3.0)
@@ -900,6 +912,8 @@ async def image_score_worker(
 
         if not images:
             state.image_score_phase.record_idle()
+            if state.image_score_phase.done:
+                break
             if on_progress:
                 on_progress("idle", state.image_score_stats, None)
             await asyncio.sleep(2.0)

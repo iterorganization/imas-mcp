@@ -378,11 +378,144 @@ def release_file_enrich_claims(file_ids: list[str]) -> None:
     release_claims_batch("SourceFile", file_ids)
 
 
+# ---------------------------------------------------------------------------
+# Has-pending-work queries (used by PipelinePhase.has_work_fn)
+# ---------------------------------------------------------------------------
+
+
+def has_pending_scan_work(facility: str, min_score: float = 0.5) -> bool:
+    """Check if there are FacilityPaths remaining to scan for files."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath {facility_id: $facility})
+            OPTIONAL MATCH (f:Facility {id: $facility})
+            WHERE p.status IN ['scored', 'explored']
+              AND coalesce(p.score, 0) >= $min_score
+              AND p.path IS NOT NULL
+              AND (
+                p.last_file_scan_at IS NULL
+                OR (f.files_scan_after IS NOT NULL
+                    AND p.last_file_scan_at < f.files_scan_after)
+              )
+            RETURN count(p) > 0 AS has_work
+            """,
+            facility=facility,
+            min_score=min_score,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def has_pending_score_work(facility: str) -> bool:
+    """Check if there are SourceFiles needing LLM scoring."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'discovered'
+              AND sf.interest_score IS NULL
+            RETURN count(sf) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def has_pending_enrich_work(facility: str) -> bool:
+    """Check if there are scored SourceFiles needing rg enrichment."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'discovered'
+              AND sf.interest_score IS NOT NULL
+              AND coalesce(sf.is_enriched, false) = false
+            RETURN count(sf) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def has_pending_code_work(facility: str, min_score: float = 0.0) -> bool:
+    """Check if there are scored code files needing ingestion."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'discovered'
+              AND sf.interest_score IS NOT NULL
+              AND sf.interest_score >= $min_score
+              AND sf.file_category = 'code'
+            RETURN count(sf) > 0 AS has_work
+            """,
+            facility=facility,
+            min_score=min_score,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def has_pending_docs_work(facility: str, min_score: float = 0.0) -> bool:
+    """Check if there are scored document/notebook/config files needing ingestion."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'discovered'
+              AND sf.interest_score IS NOT NULL
+              AND sf.interest_score >= $min_score
+              AND sf.file_category IN ['document', 'notebook', 'config']
+            RETURN count(sf) > 0 AS has_work
+            """,
+            facility=facility,
+            min_score=min_score,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def has_pending_image_work(facility: str) -> bool:
+    """Check if there are image files needing ingestion."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'discovered'
+              AND sf.interest_score IS NOT NULL
+              AND sf.file_category = 'image'
+            RETURN count(sf) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def has_pending_image_score_work(facility: str) -> bool:
+    """Check if there are ingested images needing VLM scoring."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (img:Image {facility_id: $facility})
+            WHERE img.status = 'ingested'
+              AND img.description IS NULL
+            RETURN count(img) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return result[0]["has_work"] if result else False
+
+
 __all__ = [
     "CLAIM_TIMEOUT_SECONDS",
     "claim_files_for_enrichment",
     "claim_files_for_scoring",
     "claim_paths_for_file_scan",
+    "has_pending_code_work",
+    "has_pending_docs_work",
+    "has_pending_enrich_work",
+    "has_pending_image_score_work",
+    "has_pending_image_work",
+    "has_pending_scan_work",
+    "has_pending_score_work",
     "release_file_enrich_claims",
     "release_file_score_claim",
     "release_file_score_claims",

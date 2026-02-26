@@ -259,6 +259,16 @@ class PipelinePhase:
         except TimeoutError:
             return False
 
+    def set_has_work_fn(self, fn: Callable[[], bool]) -> None:
+        """Set or replace the graph work-check function.
+
+        Call this after construction when the function depends on
+        state that isn't available at init time (e.g., other phases,
+        facility config).  The function should return True if the
+        graph still has pending work for this phase.
+        """
+        self._has_work_fn = fn
+
     def reset(self) -> None:
         """Reset idle counter (e.g., when graph check finds new work)."""
         self._idle_count = 0
@@ -559,6 +569,15 @@ class SupervisedWorkerGroup:
 
         return summary
 
+    def all_tasks_done(self) -> bool:
+        """True when all supervised tasks have completed.
+
+        Used by :func:`run_supervised_loop` to auto-exit when every worker
+        has returned normally (phase done) or crashed.  An empty group is
+        not considered done.
+        """
+        return len(self._tasks) > 0 and all(t.done() for t in self._tasks)
+
     def get_active_count(self) -> int:
         """Count of workers that are active (not stopped/crashed)."""
         return sum(1 for s in self._workers.values() if s.is_active)
@@ -786,6 +805,14 @@ async def run_supervised_loop(
     try:
         while not should_stop():
             await asyncio.sleep(poll_interval)
+
+            # Auto-exit when all workers have naturally completed
+            if worker_group.all_tasks_done():
+                logger.info(
+                    "All %d workers completed — stopping supervised loop",
+                    len(worker_group._tasks),
+                )
+                break
 
             # Update worker status for display
             if on_worker_status and time.time() - last_status_update > status_interval:
