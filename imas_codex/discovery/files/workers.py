@@ -122,16 +122,25 @@ async def scan_worker(
 
                     if on_progress:
                         on_progress(
-                            f"found {persist_result.get('discovered', 0)} files in {path}",
+                            f"found {persist_result.get('discovered', 0)} files",
                             state.scan_stats,
-                            [{"path": f["path"]} for f in files[:5]],
+                            [
+                                {
+                                    "path": path,
+                                    "files_found": persist_result.get("discovered", 0),
+                                }
+                            ],
                         )
                 else:
                     # Mark path as scanned even with 0 files to prevent re-scanning
                     if path_id:
                         await asyncio.to_thread(mark_path_file_scanned, path_id, 0)
                     if on_progress:
-                        on_progress(f"no files in {path}", state.scan_stats, None)
+                        on_progress(
+                            "no files",
+                            state.scan_stats,
+                            [{"path": path, "files_found": 0}],
+                        )
 
                 # Release claim after processing
                 if path_id:
@@ -271,8 +280,9 @@ async def score_worker(
                         "score": s.interest_score,
                         "category": s.file_category,
                         "description": s.description,
+                        "skipped": s.skip,
                     }
-                    for s in parsed.results[:5]
+                    for s in parsed.results
                 ]
                 on_progress(
                     f"scored {result.get('scored', 0)} (${cost:.3f})",
@@ -428,12 +438,15 @@ async def code_worker(
 
             if on_progress:
                 on_progress(
-                    f"ingested {stats.get('files', 0)} "
-                    f"({stats.get('chunks', 0)} chunks)",
+                    f"ingested {stats.get('files', 0)} code files",
                     state.code_stats,
                     [
-                        {"path": p, "chunks": stats.get("chunks", 0)}
-                        for p in remote_paths[:3]
+                        {
+                            "path": f["path"],
+                            "language": f.get("language", ""),
+                            "file_type": "code",
+                        }
+                        for f in files
                     ],
                 )
 
@@ -521,7 +534,13 @@ async def docs_worker(
                 on_progress(
                     f"ingested {stats.get('files', 0)} {category} files",
                     state.docs_stats,
-                    [{"path": p, "category": category} for p in remote_paths[:3]],
+                    [
+                        {
+                            "path": f["path"],
+                            "file_type": f.get("file_category", category),
+                        }
+                        for f in files
+                    ],
                 )
 
         except Exception as e:
@@ -607,20 +626,16 @@ async def enrich_worker(
             await asyncio.to_thread(release_file_enrich_claims, batch_ids)
 
             if on_progress:
-                # Summarize pattern findings
-                files_with_patterns = sum(
-                    1 for r in results if r.get("total_pattern_matches", 0) > 0
-                )
+                # Stream all enriched files (with and without patterns)
                 on_progress(
-                    f"enriched {enriched} ({files_with_patterns} with patterns)",
+                    f"enriched {enriched}",
                     state.enrich_stats,
                     [
                         {
                             "path": r["path"],
                             "patterns": r.get("total_pattern_matches", 0),
                         }
-                        for r in results[:5]
-                        if r.get("total_pattern_matches", 0) > 0
+                        for r in results
                     ],
                 )
 

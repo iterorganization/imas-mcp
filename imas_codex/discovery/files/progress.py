@@ -67,6 +67,7 @@ class ScoreItem:
     score: float | None = None
     category: str = ""  # code, document, notebook, config
     description: str = ""  # LLM reasoning about what the file contains
+    skipped: bool = False  # LLM says skip this file
 
 
 @dataclass
@@ -82,7 +83,6 @@ class IngestItem:
     """Current ingestion activity (code or docs)."""
 
     path: str
-    chunks: int = 0
     language: str = ""
     file_type: str = ""  # code, document, notebook, config
 
@@ -129,6 +129,7 @@ class FileProgressState:
     # This run stats
     run_scanned: int = 0
     run_scored: int = 0
+    run_skipped: int = 0
     run_enriched: int = 0
     run_code_ingested: int = 0
     run_docs_ingested: int = 0
@@ -394,13 +395,25 @@ class FileProgressDisplay(BaseProgressDisplay):
             if scan.files_found > 0:
                 scan_detail = [(f"{scan.files_found} files found", "cyan")]
 
-        # SCORE activity (with description streaming like paths)
+        # SCORE activity (with [category] + description like paths shows purpose)
         score_text = ""
         score_detail: list[tuple[str, str]] | None = None
         if score:
             score_text = clip_path(score.path, content_width - 10)
             parts: list[tuple[str, str]] = []
-            if score.score is not None:
+            if score.skipped:
+                parts.append(("skip", "yellow"))
+                if score.category:
+                    parts.append((f"  [{score.category}]", "dim"))
+                if score.description:
+                    desc = clean_text(score.description)
+                    parts.append(
+                        (
+                            f"  {clip_text(desc, min(content_width - 20, 55))}",
+                            "italic dim",
+                        )
+                    )
+            elif score.score is not None:
                 style = (
                     "bold green"
                     if score.score >= 0.7
@@ -409,23 +422,20 @@ class FileProgressDisplay(BaseProgressDisplay):
                     else "red"
                 )
                 parts.append((f"{score.score:.2f}", style))
+                if score.category:
+                    parts.append((f"  [{score.category}]", "cyan dim"))
 
-                desc_width = content_width - 12
+                desc_width = content_width - 20
                 if score.description:
                     desc = clean_text(score.description)
-                elif score.category:
-                    desc = score.category
-                else:
-                    desc = ""
-                if desc:
                     parts.append(
                         (
-                            f"  {clip_text(desc, min(desc_width, 65))}",
+                            f"  {clip_text(desc, min(desc_width, 55))}",
                             "italic dim",
                         )
                     )
             elif score.category:
-                parts.append((f"  {score.category}", "dim"))
+                parts.append((f"[{score.category}]", "dim"))
             score_detail = parts or None
 
         # ENRICH activity
@@ -442,12 +452,10 @@ class FileProgressDisplay(BaseProgressDisplay):
         if ingest:
             ingest_text = clip_path(ingest.path, content_width - 10)
             parts = []
-            if ingest.chunks > 0:
-                parts.append((f"{ingest.chunks} chunks", "cyan"))
             if ingest.language:
-                parts.append((f"  [{ingest.language}]", "green dim"))
+                parts.append((f"[{ingest.language}]", "green dim"))
             elif ingest.file_type:
-                parts.append((f"  [{ingest.file_type}]", "dim"))
+                parts.append((f"[{ingest.file_type}]", "dim"))
             ingest_detail = parts or None
 
         # IMAGE activity (combined fetch + VLM)
@@ -656,9 +664,12 @@ class FileProgressDisplay(BaseProgressDisplay):
                     score=r.get("score"),
                     category=r.get("category", r.get("file_category", "")),
                     description=r.get("description", ""),
+                    skipped=r.get("skipped", False),
                 )
                 for r in results
             ]
+            # Track skipped files
+            self.state.run_skipped += sum(1 for r in results if r.get("skipped"))
             max_rate = 2.0
             display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
             self.state.score_queue.add(items, display_rate)
@@ -716,7 +727,6 @@ class FileProgressDisplay(BaseProgressDisplay):
             items = [
                 IngestItem(
                     path=r.get("path", ""),
-                    chunks=r.get("chunks", 0),
                     language=r.get("language", ""),
                     file_type="code",
                 )
@@ -920,6 +930,8 @@ class FileProgressDisplay(BaseProgressDisplay):
         # SCORE stats
         summary.append("  SCORE    ", style="bold green")
         summary.append(f"scored={self.state.run_scored:,}", style="green")
+        if self.state.run_skipped > 0:
+            summary.append(f"  skipped={self.state.run_skipped:,}", style="yellow")
         summary.append(f"  cost=${self.state._run_score_cost:.3f}", style="yellow")
         if self.state.score_rate:
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
