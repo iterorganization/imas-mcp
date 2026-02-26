@@ -127,6 +127,58 @@ def clusters_build(
         raise SystemExit(1) from e
 
 
+def _sync_labels_to_graph(label_cache, cluster_data: list[dict], click) -> None:
+    """Write cached labels directly to graph cluster nodes.
+
+    Matches clusters by content hash and updates label/description
+    on IMASSemanticCluster nodes. The graph is the source of truth
+    for labels — this replaces the old _sync_labels_from_cache flow.
+    """
+    from imas_codex.graph.build_dd import _compute_cluster_content_hash
+
+    try:
+        from imas_codex.graph.client import GraphClient
+
+        client = GraphClient()
+    except Exception as e:
+        logger.debug("Graph not available for label sync: %s", e)
+        click.echo("⚠ Graph not available — labels saved to cache only")
+        return
+
+    label_batch = []
+    for cluster in cluster_data:
+        paths = sorted(cluster.get("paths", []))
+        cached = label_cache.get_label(paths)
+        if not cached:
+            continue
+
+        scope = cluster.get("scope", "global")
+        cluster_id = _compute_cluster_content_hash(paths, scope)
+        label_batch.append(
+            {
+                "id": cluster_id,
+                "label": cached.label,
+                "description": cached.description,
+            }
+        )
+
+    if not label_batch:
+        return
+
+    for i in range(0, len(label_batch), 1000):
+        batch = label_batch[i : i + 1000]
+        client.query(
+            """
+            UNWIND $batch AS b
+            MATCH (c:IMASSemanticCluster {id: b.id})
+            SET c.label = b.label, c.description = b.description
+            """,
+            batch=batch,
+        )
+
+    click.echo(f"✓ Synced {len(label_batch)} labels to graph")
+
+
 @clusters.command("label")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress all logging except errors")
@@ -237,6 +289,9 @@ def clusters_label(
         ]
         stored = label_cache.set_many(label_tuples)
         click.echo(f"✓ Cached {stored} new labels")
+
+        # Write labels directly to graph nodes (graph is source of truth)
+        _sync_labels_to_graph(label_cache, cluster_data, click)
 
         # Export to JSON for version control
         if export:

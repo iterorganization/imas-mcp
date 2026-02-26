@@ -2664,10 +2664,9 @@ def _import_clusters(
                 len(clusters),
             )
 
-            # Step 9: Sync labels from label cache to graph clusters
-            _sync_labels_from_cache(client, cluster_paths_map)
-
-            # Step 10: Embed cluster labels/descriptions (with hash caching)
+            # Step 9: Embed cluster labels/descriptions (with hash caching)
+            # Labels persist in graph nodes via MERGE — no file-based sync
+            # needed. Run 'clusters label' to generate labels for new clusters.
             _embed_cluster_text(
                 client,
                 embedding_batch_size=256,
@@ -2675,7 +2674,7 @@ def _import_clusters(
                 no_hash=no_hash,
             )
 
-            # Step 11: Delete stale clusters no longer in the computation
+            # Step 10: Delete stale clusters no longer in the computation
             stale_ids = existing_ids - new_cluster_ids
             if stale_ids:
                 logger.info("Removing %d stale clusters...", len(stale_ids))
