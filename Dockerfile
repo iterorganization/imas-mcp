@@ -29,9 +29,6 @@ WORKDIR /app
 # Add build args for IDS filter and transport
 ARG IDS_FILTER=""
 ARG TRANSPORT="streamable-http"
-# IMAS_DD_VERSION: Optional. If empty, Python code reads default from pyproject.toml [tool.imas-codex.data-dictionary].version
-# This ensures a single source of truth. Pass explicitly only to override.
-ARG IMAS_DD_VERSION=""
 
 # Additional build-time metadata for cache busting & traceability
 ARG GIT_SHA=""
@@ -42,7 +39,6 @@ ARG GIT_REF=""
 ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
     TRANSPORT=${TRANSPORT} \
-    IMAS_DD_VERSION=${IMAS_DD_VERSION} \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
@@ -95,23 +91,12 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         echo "Repository clean; hatch-vcs should emit tag version"; \
     fi
 
-# Note: We do NOT copy pre-built resources from local filesystem.
-# The build scripts below generate all resources for the specific DD version.
-# This ensures consistency and avoids copying stale or multi-version data.
-# In CI, resources may be pre-generated as artifacts and copied separately.
-
 # Build generated Python models (graph models, physics domains)
 # These are normally built by hatch build hook, but HATCH_BUILD_NO_HOOKS=true
-# Must run BEFORE build-schemas which imports physics_domain.py
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building generated models..." && \
     uv run --no-dev build-models --force && \
     echo "✓ Generated models ready"
-
-# Cache bust: Explicit ARG ensures rebuild when DD version changes.
-# IDS_FILTER is tracked automatically via its use in RUN commands.
-# IMAS_DD_VERSION needs explicit tracking since it may be empty (default from pyproject.toml).
-ARG CACHE_BUST_DD="${IMAS_DD_VERSION}"
 
 # ── Graph-native data: pull IMAS-only graph from GHCR ──────────────────
 # Replaces build-schemas, build-path-map, build-embeddings, clusters build.
@@ -219,6 +204,7 @@ ARG IDS_FILTER=""
 
 # Set runtime environment variables
 # NEO4J_URI points to embedded Neo4j (internal, not exposed externally)
+# IMAS_CODEX_GRAPH_NATIVE=1 activates graph-native mode — all data from Neo4j
 ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -227,7 +213,8 @@ ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
     NEO4J_URI="bolt://127.0.0.1:7687" \
     NEO4J_USERNAME="neo4j" \
-    NEO4J_PASSWORD="neo4j"
+    NEO4J_PASSWORD="neo4j" \
+    IMAS_CODEX_GRAPH_NATIVE="1"
 
 # Expose MCP server port (Neo4j ports are internal only)
 EXPOSE 8000

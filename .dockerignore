@@ -14,6 +14,7 @@ venv/
 env/
 
 # Testing
+tests/
 .pytest_cache/
 .coverage
 htmlcov/
@@ -35,6 +36,18 @@ build/
 
 # Logs
 *.log
+
+# Documentation, plans, and tooling (not needed at runtime)
+docs/
+plans/
+agents/
+benchmarks/
+slurm/
+
+# File-based data artifacts (graph-native mode uses Neo4j)
+*.pkl
+*.npz
+*.dump
 
 # Git files - keep essential ones for dynamic versioning
 # .git/objects/  # Keep objects for setuptools-scm

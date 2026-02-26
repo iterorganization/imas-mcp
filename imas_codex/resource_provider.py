@@ -34,10 +34,14 @@ def mcp_resource(description: str, uri: str):
 class Resources(MCPProvider):
     """MCP resources serving existing JSON schema files with LLM-friendly descriptions."""
 
-    def __init__(self, ids_set: set[str] | None = None):
+    def __init__(self, ids_set: set[str] | None = None, graph_native: bool = False):
         self.ids_set = ids_set
-        path_accessor = ResourcePathAccessor(dd_version=dd_version)
-        self.schema_dir = path_accessor.schemas_dir
+        self.graph_native = graph_native
+        if not graph_native:
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            self.schema_dir = path_accessor.schemas_dir
+        else:
+            self.schema_dir = None
 
     @property
     def name(self) -> str:
@@ -46,11 +50,18 @@ class Resources(MCPProvider):
 
     def register(self, mcp: FastMCP):
         """Register all IMAS resources with the MCP server."""
+        # In graph-native mode, skip schema-file-dependent resources
+        # (tools provide all data from the graph)
+        skip_uris = {"ids://catalog", "ids://identifiers", "ids://clusters"}
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
             if hasattr(attr, "_mcp_resource") and attr._mcp_resource:
-                # Resources need URI and description
                 uri = attr._mcp_resource_uri
+                if self.graph_native and uri in skip_uris:
+                    continue
+                # Skip parameterized schema resources in graph-native mode
+                if self.graph_native and "{ids_name}" in uri:
+                    continue
                 description = attr._mcp_resource_description
                 mcp.resource(uri=uri, description=description)(attr)
 

@@ -79,22 +79,24 @@ class Server:
 
     def __post_init__(self):
         """Initialize the MCP server after dataclass initialization."""
-        # Include DD version in server name so clients/LLMs know which version they're using
-        server_name = f"imas-data-dictionary-{dd_version}"
-        self.mcp = FastMCP(name=server_name)
-
         # Attempt graph-native mode if Neo4j is available
         graph_client = self._try_graph_client()
 
         if graph_client is not None:
-            # Graph-native mode: all data comes from Neo4j
+            # Graph-native mode: version from DDVersion nodes in graph
+            server_name = self._graph_server_name(graph_client)
+            self.mcp = FastMCP(name=server_name)
+
             self.tools = Tools(ids_set=self.ids_set, graph_client=graph_client)
-            self.resources = Resources(ids_set=self.ids_set)
+            self.resources = Resources(ids_set=self.ids_set, graph_native=True)
             # Embeddings are in the graph; skip document-level embedding init
             self.embeddings = None
             logger.info("Server initialized in graph-native mode")
         else:
             # File-backed mode: uses DocumentStore + JSON/SQLite
+            server_name = f"imas-data-dictionary-{dd_version}"
+            self.mcp = FastMCP(name=server_name)
+
             self._validate_schemas_available()
             self.tools = Tools(ids_set=self.ids_set)
             self.resources = Resources(ids_set=self.ids_set)
@@ -139,6 +141,20 @@ class Server:
         except Exception as e:
             logger.debug(f"Neo4j not available ({e}), falling back to file-backed mode")
             return None
+
+    @staticmethod
+    def _graph_server_name(graph_client) -> str:
+        """Derive server name from DDVersion nodes in the graph."""
+        try:
+            result = graph_client.query(
+                "MATCH (v:DDVersion {is_current: true}) RETURN v.id"
+            )
+            if result:
+                current = result[0]["v.id"]
+                return f"imas-data-dictionary-{current}"
+        except Exception:
+            pass
+        return "imas-data-dictionary-graph"
 
     # Context manager support
     async def __aenter__(self):

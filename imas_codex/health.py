@@ -55,19 +55,27 @@ class HealthEndpoint:
         original = getattr(self.server.mcp, attr)
 
         async def health_handler(request=None):  # type: ignore[unused-argument]
-            ds = self.server.tools.document_store
-            meta = ds.get_index_metadata()
-            dd_version = meta.get("version") or "unknown"
-            if dd_version == "unknown":
-                # Use public accessor fallback if available
-                try:  # pragma: no cover - defensive
-                    dd_version = ds.get_dd_version()  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-            documents = meta.get("document_count") or 0
-            ids_count = meta.get("ids_count") or 0
+            ds = getattr(self.server.tools, "document_store", None)
             emb = self.server.embeddings
-            # Status without forcing build if deferred
+            graph_native = ds is None
+
+            if graph_native:
+                # Graph-native mode: version and stats from server name / graph
+                dd_version = self.server.mcp.name.removeprefix("imas-data-dictionary-")
+                documents = 0
+                ids_count = 0
+                model_name = "graph-native"
+            else:
+                meta = ds.get_index_metadata()
+                dd_version = meta.get("version") or "unknown"
+                if dd_version == "unknown":
+                    try:  # pragma: no cover - defensive
+                        dd_version = ds.get_dd_version()  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                documents = meta.get("document_count") or 0
+                ids_count = meta.get("ids_count") or 0
+                model_name = emb.model_name if emb else "unknown"
 
             # Get docs server health information
             docs_health = {}
@@ -106,19 +114,19 @@ class HealthEndpoint:
                     return f"{round(seconds, 3)}s"
 
             uptime_seconds = round(self.server.uptime_seconds(), 3)
-            return JSONResponse(
-                {
-                    "status": "ok",
-                    "imas_codex_version": self._get_version(),
-                    "imas_dd_version": dd_version,
-                    "ids_count": ids_count,
-                    "document_count": documents,
-                    "embedding_model_name": emb.model_name,
-                    "started_at": self.server.started_at.isoformat(),
-                    "uptime": _format_uptime(uptime_seconds),
-                    "docs_server_health": docs_health,
-                }
-            )
+            response = {
+                "status": "ok",
+                "imas_codex_version": self._get_version(),
+                "imas_dd_version": dd_version,
+                "ids_count": ids_count,
+                "document_count": documents,
+                "embedding_model_name": model_name,
+                "mode": "graph-native" if graph_native else "file-backed",
+                "started_at": self.server.started_at.isoformat(),
+                "uptime": _format_uptime(uptime_seconds),
+                "docs_server_health": docs_health,
+            }
+            return JSONResponse(response)
 
         def wrapped(*args, **kwargs):  # type: ignore[override]
             app = original(*args, **kwargs)

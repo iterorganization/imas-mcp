@@ -423,5 +423,38 @@ class TestResourcesEncodingFallback:
         assert "schemas" in parsed
 
 
+class TestResourcesGraphNativeMode:
+    """Tests for Resources in graph-native mode."""
+
+    def test_graph_native_skips_schema_dir(self):
+        """Graph-native mode does not set schema_dir."""
+        resources = Resources(graph_native=True)
+        assert resources.schema_dir is None
+        assert resources.graph_native is True
+
+    def test_graph_native_skips_schema_resources(self):
+        """Graph-native mode skips file-backed resources during registration."""
+        resources = Resources(graph_native=True)
+        mock_mcp = MagicMock()
+        resources.register(mock_mcp)
+
+        # Only non-schema resources should be registered (e.g., examples)
+        registered_uris = [
+            call.kwargs.get("uri", call.args[0] if call.args else None)
+            for call in mock_mcp.resource.call_args_list
+        ]
+        # Schema-dependent URIs should not be registered
+        for uri in registered_uris:
+            assert uri not in {"ids://catalog", "ids://identifiers", "ids://clusters"}
+            assert "{ids_name}" not in (uri or "")
+
+    def test_file_backed_registers_all_resources(self, resources):
+        """File-backed mode registers all resources including schemas."""
+        mock_mcp = MagicMock()
+        resources.register(mock_mcp)
+        # Should register schema resources
+        assert mock_mcp.resource.call_count >= 4
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
