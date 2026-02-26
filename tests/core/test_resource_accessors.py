@@ -4,7 +4,6 @@ Test suite for resource_path_accessor.py and resource_provider.py.
 This test suite validates resource path management and MCP resource registration.
 """
 
-import json
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -253,207 +252,28 @@ class TestResourcePathAccessorBaseDir:
             assert "resources" in str(result)
 
 
-class TestResources:
-    """Tests for Resources MCP provider."""
+class TestResourcesGraphOnly:
+    """Tests for Resources (graph-only, no schema files)."""
 
-    @pytest.fixture
-    def resources_provider(self):
-        """Create resources provider instance."""
-        return Resources()
+    def test_no_schema_dir(self):
+        """Resources does not have schema_dir."""
+        resources = Resources()
+        assert not hasattr(resources, "schema_dir")
 
-    def test_resources_name(self, resources_provider):
-        """Resources provider has correct name."""
-        assert resources_provider.name == "resources"
-
-    def test_resources_has_schema_dir(self, resources_provider):
-        """Resources has schema directory."""
-        assert hasattr(resources_provider, "schema_dir")
-        assert isinstance(resources_provider.schema_dir, Path)
-
-
-class TestResourcesMCPMethods:
-    """Tests for Resources MCP resource methods."""
-
-    @pytest.fixture
-    def resources_with_mock_schema(self, tmp_path):
-        """Create resources with mock schema directory."""
-        # Create schema directory structure
-        schema_dir = tmp_path / "imas_data_dictionary" / "4.0.0" / "schemas"
-        schema_dir.mkdir(parents=True)
-        detailed_dir = schema_dir / "detailed"
-        detailed_dir.mkdir()
-
-        # Create catalog file
-        catalog = {"ids_catalog": {"equilibrium": {"description": "Test"}}}
-        (schema_dir / "ids_catalog.json").write_text(json.dumps(catalog))
-
-        # Create identifier catalog
-        identifier_catalog = {"schemas": {"test_schema": {}}}
-        (schema_dir / "identifier_catalog.json").write_text(
-            json.dumps(identifier_catalog)
-        )
-
-        # Create detailed schema
-        equilibrium_schema = {"paths": ["time_slice/boundary/psi"]}
-        (detailed_dir / "equilibrium.json").write_text(json.dumps(equilibrium_schema))
-
-        # Create clusters file
-        clusters = {"clusters": []}
-        (schema_dir / "clusters.json").write_text(json.dumps(clusters))
-
-        with patch.object(
-            ResourcePathAccessor,
-            "_get_base_resources_dir",
-            return_value=tmp_path,
-        ):
-            resources = Resources()
-            resources.schema_dir = schema_dir
-            yield resources
-
-    @pytest.mark.asyncio
-    async def test_get_ids_catalog(self, resources_with_mock_schema):
-        """Get IDS catalog returns JSON content."""
-        result = await resources_with_mock_schema.get_ids_catalog()
-        parsed = json.loads(result)
-
-        assert "ids_catalog" in parsed
-        assert "equilibrium" in parsed["ids_catalog"]
-
-    @pytest.mark.asyncio
-    async def test_get_ids_structure_existing(self, resources_with_mock_schema):
-        """Get IDS structure returns schema for existing IDS."""
-        result = await resources_with_mock_schema.get_ids_structure("equilibrium")
-        parsed = json.loads(result)
-
-        assert "paths" in parsed
-
-    @pytest.mark.asyncio
-    async def test_get_ids_structure_nonexistent(self, resources_with_mock_schema):
-        """Get IDS structure returns error for non-existent IDS."""
-        result = await resources_with_mock_schema.get_ids_structure("nonexistent")
-        parsed = json.loads(result)
-
-        assert "error" in parsed
-
-    @pytest.mark.asyncio
-    async def test_get_identifier_catalog(self, resources_with_mock_schema):
-        """Get identifier catalog returns JSON content."""
-        result = await resources_with_mock_schema.get_identifier_catalog()
-        parsed = json.loads(result)
-
-        assert "schemas" in parsed
-
-    @pytest.mark.asyncio
-    async def test_get_resource_usage_examples(self, resources_with_mock_schema):
-        """Get resource usage examples returns example content."""
-        result = await resources_with_mock_schema.get_resource_usage_examples()
-        parsed = json.loads(result)
-
-        assert "workflow_patterns" in parsed
-        assert "resource_vs_tools" in parsed
-
-
-class TestResourcesRegistration:
-    """Tests for Resources MCP registration."""
-
-    def test_register_method(self, resources):
-        """Register method registers resources with MCP."""
-        mock_mcp = MagicMock()
-
-        resources.register(mock_mcp)
-
-        # Should have registered multiple resources
-        assert mock_mcp.resource.call_count > 0
-
-    def test_mcp_resource_decorator(self):
-        """MCP resource decorator sets attributes."""
-        from imas_codex.resource_provider import mcp_resource
-
-        @mcp_resource("Test description", "test://uri")
-        def test_func():
-            pass
-
-        assert test_func._mcp_resource is True
-        assert test_func._mcp_resource_uri == "test://uri"
-        assert test_func._mcp_resource_description == "Test description"
-
-
-class TestResourcesEncodingFallback:
-    """Tests for encoding fallback handling."""
-
-    @pytest.fixture
-    def resources_with_latin1(self, tmp_path):
-        """Create resources with latin-1 encoded file."""
-        schema_dir = tmp_path / "imas_data_dictionary" / "4.0.0" / "schemas"
-        schema_dir.mkdir(parents=True)
-        detailed_dir = schema_dir / "detailed"
-        detailed_dir.mkdir()
-
-        # Create catalog with latin-1 characters
-        catalog_content = '{"test": "café"}'
-        (schema_dir / "ids_catalog.json").write_text(
-            catalog_content, encoding="latin-1"
-        )
-
-        # Create identifier catalog
-        (schema_dir / "identifier_catalog.json").write_text(
-            '{"schemas": {}}', encoding="latin-1"
-        )
-
-        with patch.object(
-            ResourcePathAccessor,
-            "_get_base_resources_dir",
-            return_value=tmp_path,
-        ):
-            resources = Resources()
-            resources.schema_dir = schema_dir
-            yield resources
-
-    @pytest.mark.asyncio
-    async def test_catalog_latin1_fallback(self, resources_with_latin1):
-        """Catalog reading falls back to latin-1."""
-        result = await resources_with_latin1.get_ids_catalog()
-        assert "café" in result
-
-    @pytest.mark.asyncio
-    async def test_identifier_catalog_latin1_fallback(self, resources_with_latin1):
-        """Identifier catalog reading falls back to latin-1."""
-        result = await resources_with_latin1.get_identifier_catalog()
-        parsed = json.loads(result)
-        assert "schemas" in parsed
-
-
-class TestResourcesGraphNativeMode:
-    """Tests for Resources in graph-native mode."""
-
-    def test_graph_native_skips_schema_dir(self):
-        """Graph-native mode does not set schema_dir."""
-        resources = Resources(graph_native=True)
-        assert resources.schema_dir is None
-        assert resources.graph_native is True
-
-    def test_graph_native_skips_schema_resources(self):
-        """Graph-native mode skips file-backed resources during registration."""
-        resources = Resources(graph_native=True)
+    def test_registers_only_examples(self):
+        """Resources only registers examples resource."""
+        resources = Resources()
         mock_mcp = MagicMock()
         resources.register(mock_mcp)
 
-        # Only non-schema resources should be registered (e.g., examples)
         registered_uris = [
             call.kwargs.get("uri", call.args[0] if call.args else None)
             for call in mock_mcp.resource.call_args_list
         ]
-        # Schema-dependent URIs should not be registered
+        assert "examples://resource-usage" in registered_uris
         for uri in registered_uris:
             assert uri not in {"ids://catalog", "ids://identifiers", "ids://clusters"}
             assert "{ids_name}" not in (uri or "")
-
-    def test_file_backed_registers_all_resources(self, resources):
-        """File-backed mode registers all resources including schemas."""
-        mock_mcp = MagicMock()
-        resources.register(mock_mcp)
-        # Should register schema resources
-        assert mock_mcp.resource.call_count >= 4
 
 
 if __name__ == "__main__":

@@ -1,13 +1,7 @@
-"""Health endpoint integration for IMAS Codex server HTTP transports.
+"""Health endpoint for IMAS Codex MCP server HTTP transports.
 
-Provides a lightweight `/health` route exposing basic liveness plus
-data dictionary version and document count metrics without introducing
-an additional web framework dependency.
-
-The previous `/ready` endpoint has been removed since embeddings and
-documents are now initialized synchronously before the HTTP server binds.
-If future deferred initialization is reintroduced, a readiness endpoint
-can be restored using the historical pattern in version history.
+Provides a lightweight `/health` route exposing liveness and
+data dictionary metadata from the graph.
 """
 
 from __future__ import annotations
@@ -27,11 +21,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class HealthEndpoint:
-    """Attach a /health route to a FastMCP HTTP transport app.
-
-    Usage:
-        HealthEndpoint(server).attach("sse")
-    """
+    """Attach a /health route to a FastMCP HTTP transport app."""
 
     server: Server
 
@@ -42,12 +32,7 @@ class HealthEndpoint:
             return "unknown"
 
     def attach(self) -> None:
-        """Simple wrapper: replace the FastMCP factory once and inject /health.
-
-        Wrapping targets the HTTP app factory.
-        """
-
-        # Always wrap http_app so that /health exists on base HTTP server even for SSE
+        """Wrap the HTTP app factory to inject /health."""
         attr = "http_app"
         sentinel = "_health_wrapped_http"
         if getattr(self.server.mcp, sentinel, False):
@@ -55,45 +40,22 @@ class HealthEndpoint:
         original = getattr(self.server.mcp, attr)
 
         async def health_handler(request=None):  # type: ignore[unused-argument]
-            ds = getattr(self.server.tools, "document_store", None)
-            emb = self.server.embeddings
-            graph_native = ds is None
+            gc = self.server.graph_client
 
-            if graph_native:
-                # Graph-native mode: version and stats from server name / graph
-                dd_version = self.server.mcp.name.removeprefix("imas-data-dictionary-")
-                documents = 0
-                ids_count = 0
-                model_name = "graph-native"
-            else:
-                meta = ds.get_index_metadata()
-                dd_version = meta.get("version") or "unknown"
-                if dd_version == "unknown":
-                    try:  # pragma: no cover - defensive
-                        dd_version = ds.get_dd_version()  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-                documents = meta.get("document_count") or 0
-                ids_count = meta.get("ids_count") or 0
-                model_name = emb.model_name if emb else "unknown"
-
-            # Get docs server health information
-            docs_health = {}
+            # Query graph for version and stats
+            dd_version = self.server.mcp.name.removeprefix("imas-data-dictionary-")
             try:
-                if hasattr(self.server, "docs_manager"):
-                    docs_health = await self.server.docs_manager.health_check()
-            except Exception as e:
-                docs_health = {"status": "unhealthy", "error": str(e)}
+                stats = gc.query(
+                    "MATCH (p:IMASPath) RETURN count(p) AS paths, "
+                    "count(DISTINCT p.ids) AS ids_count"
+                )
+                ids_count = stats[0]["ids_count"] if stats else 0
+                path_count = stats[0]["paths"] if stats else 0
+            except Exception:
+                ids_count = 0
+                path_count = 0
 
             def _format_uptime(seconds: float) -> str:
-                """Return a compact human-readable uptime string.
-
-                Format: '<Xd> <Xh> <Xm> <Xs>' omitting leading zero units.
-                Examples:
-                    65 -> '1m 5s'
-                    3661 -> '1h 1m 1s'
-                    90061 -> '1d 1h 1m 1s'
-                """
                 try:
                     if seconds < 0:  # pragma: no cover - defensive
                         seconds = 0
@@ -119,12 +81,9 @@ class HealthEndpoint:
                 "imas_codex_version": self._get_version(),
                 "imas_dd_version": dd_version,
                 "ids_count": ids_count,
-                "document_count": documents,
-                "embedding_model_name": model_name,
-                "mode": "graph-native" if graph_native else "file-backed",
+                "path_count": path_count,
                 "started_at": self.server.started_at.isoformat(),
                 "uptime": _format_uptime(uptime_seconds),
-                "docs_server_health": docs_health,
             }
             return JSONResponse(response)
 
@@ -137,9 +96,9 @@ class HealthEndpoint:
                 if hasattr(app, "add_api_route"):
                     app.add_api_route(
                         "/health", health_handler, methods=["GET"], tags=["infra"]
-                    )  # type: ignore[attr-defined]
+                    )
                 else:
-                    app.add_route("/health", health_handler)  # type: ignore[attr-defined]
+                    app.add_route("/health", health_handler)
             return app
 
         setattr(self.server.mcp, attr, wrapped)

@@ -5,7 +5,7 @@ import pytest
 from imas_codex.core.exclusions import EXCLUSION_REASONS, ExclusionChecker
 from imas_codex.mappings import PathMap, PathMapping, RenameHistoryEntry
 from imas_codex.search.document_store import DocumentStore
-from imas_codex.tools import PathTool
+from imas_codex.tools.path_tool import PathTool
 
 # ============================================================================
 # Mock PathMap for testing

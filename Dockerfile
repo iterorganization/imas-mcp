@@ -204,7 +204,6 @@ ARG IDS_FILTER=""
 
 # Set runtime environment variables
 # NEO4J_URI points to embedded Neo4j (internal, not exposed externally)
-# IMAS_CODEX_GRAPH_NATIVE=1 activates graph-native mode — all data from Neo4j
 ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -213,8 +212,7 @@ ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
     NEO4J_URI="bolt://127.0.0.1:7687" \
     NEO4J_USERNAME="neo4j" \
-    NEO4J_PASSWORD="neo4j" \
-    IMAS_CODEX_GRAPH_NATIVE="1"
+    NEO4J_PASSWORD="neo4j"
 
 # Expose MCP server port (Neo4j ports are internal only)
 EXPOSE 8000

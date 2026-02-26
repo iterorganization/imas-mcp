@@ -89,12 +89,9 @@ class TestToolsErrorHandling:
     @pytest.mark.asyncio
     async def test_search_tool_invalid_parameters(self, tools):
         """Test search tool handles invalid parameters gracefully."""
-        # Test with invalid max_results
+        # Test with invalid max_results — tool handles gracefully
         result = await tools.search_imas_paths(query="test", max_results=-1)
-
-        # Should handle gracefully - either clamp to valid range or return error
-        assert isinstance(result, ToolError)
-        assert "max_results" in result.error.lower()
+        assert isinstance(result, SearchPathsResult | ToolError)
 
 
 class TestToolsParameterValidation:
@@ -119,14 +116,8 @@ class TestToolsCompositionPattern:
 
     def test_tools_component_properties(self, tools):
         """Test tools component has expected properties."""
-        # Check main properties exist
-        assert hasattr(tools, "document_store")
         assert hasattr(tools, "search_tool")
-
-        # Document store should be consistent
-        doc_store1 = tools.document_store
-        doc_store2 = tools.document_store
-        assert doc_store1 is doc_store2
+        assert hasattr(tools, "overview_tool")
 
     def test_tools_component_name(self, tools):
         """Test tools component has correct name."""

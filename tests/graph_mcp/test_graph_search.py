@@ -370,40 +370,40 @@ class TestToolsGraphMode:
 class TestServerGraphNative:
     """Tests for server behavior in graph-native mode."""
 
-    def test_graph_server_name_from_ddversion(self, graph_client):
+    def test_server_name_from_ddversion(self, graph_client):
         """Server name derives from DDVersion nodes in graph."""
-        from imas_codex.server import Server
+        from imas_codex.server import _server_name
 
-        name = Server._graph_server_name(graph_client)
-        # Fixture has DDVersion 4.0.0 with is_current: true
-        assert name == "imas-data-dictionary-4.0.0"
+        name = _server_name(graph_client)
+        # Fixture has DDVersion 4.1.0 with is_current: true
+        assert name == "imas-data-dictionary-4.1.0"
 
-    def test_graph_server_name_fallback(self):
+    def test_server_name_fallback(self):
         """Fallback name when graph query fails."""
         from unittest.mock import MagicMock
 
-        from imas_codex.server import Server
+        from imas_codex.server import _server_name
 
         mock_gc = MagicMock()
         mock_gc.query.side_effect = Exception("connection refused")
-        name = Server._graph_server_name(mock_gc)
-        assert name == "imas-data-dictionary-graph"
+        name = _server_name(mock_gc)
+        assert name == "imas-data-dictionary"
 
-    def test_resources_graph_native_skips_schemas(self):
-        """Resources in graph-native mode skip schema-dependent resources."""
+    def test_resources_only_examples(self):
+        """Resources only register examples resource."""
         from unittest.mock import MagicMock
 
         from imas_codex.resource_provider import Resources
 
-        resources = Resources(graph_native=True)
+        resources = Resources()
         mock_mcp = MagicMock()
         resources.register(mock_mcp)
 
-        # Schema-dependent URIs should not be registered
         registered_uris = set()
         for call in mock_mcp.resource.call_args_list:
             uri = call.kwargs.get("uri") or (call.args[0] if call.args else None)
             registered_uris.add(uri)
+        assert "examples://resource-usage" in registered_uris
         assert "ids://catalog" not in registered_uris
         assert "ids://identifiers" not in registered_uris
         assert "ids://clusters" not in registered_uris

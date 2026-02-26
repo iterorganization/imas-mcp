@@ -1,11 +1,9 @@
 """Extended tests for server.py module."""
 
-import asyncio
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 from imas_codex.server import Server
+from tests.conftest import _create_mock_graph_client
 
 
 class TestServerExtended:
@@ -46,9 +44,9 @@ class TestServerComponents:
         """Server has resources component."""
         assert server.resources is not None
 
-    def test_server_has_embeddings(self, server):
-        """Server has embeddings component."""
-        assert server.embeddings is not None
+    def test_server_has_graph_client(self, server):
+        """Server has graph_client."""
+        assert server.graph_client is not None
 
     def test_server_has_mcp(self, server):
         """Server has MCP instance."""
@@ -61,57 +59,21 @@ class TestServerComponents:
         assert server.started_at is not None
         assert isinstance(server.started_at, datetime)
 
-    @patch("imas_codex.server.Embeddings")
-    def test_server_with_ids_set(self, mock_embeddings):
+    def test_server_with_ids_set(self):
         """Server initializes with ids_set filter."""
-        server = Server(ids_set={"equilibrium", "core_profiles"})
+        mock_gc = _create_mock_graph_client()
+        server = Server(ids_set={"equilibrium", "core_profiles"}, graph_client=mock_gc)
 
         assert server.ids_set == {"equilibrium", "core_profiles"}
         assert server.tools is not None
 
-    @patch("imas_codex.server.Embeddings")
-    def test_server_initializes(self, mock_embeddings):
-        """Server initializes without use_rich parameter."""
-        server = Server()
+    def test_server_initializes(self):
+        """Server initializes with graph client."""
+        mock_gc = _create_mock_graph_client()
+        server = Server(graph_client=mock_gc)
 
         assert server.tools is not None
 
 
-class TestServerBuildSchemas:
-    """Tests for schema building and validation."""
-
-    def test_build_schemas_if_missing_returns_true_when_exists(self, server):
-        """_build_schemas_if_missing returns True when schemas exist."""
-        result = server._build_schemas_if_missing()
-
-        assert result is True
-
-    @patch("imas_codex.server.ResourcePathAccessor")
-    def test_build_schemas_if_missing_handles_exception(
-        self, mock_accessor_class, server
-    ):
-        """_build_schemas_if_missing handles build failures."""
-        mock_accessor = MagicMock()
-        mock_accessor.schemas_dir.exists.return_value = False
-        mock_accessor.schemas_dir.__truediv__ = MagicMock(return_value=MagicMock())
-        catalog_mock = MagicMock()
-        catalog_mock.exists.return_value = False
-        mock_accessor.schemas_dir.__truediv__.return_value = catalog_mock
-        mock_accessor_class.return_value = mock_accessor
-
-        with patch.object(server, "_build_schemas_if_missing", return_value=True):
-            result = server._build_schemas_if_missing()
-
-        assert result is True
-
-
-class TestServerValidation:
-    """Tests for server validation methods."""
-
-    def test_validate_schemas_available_succeeds(self, server):
-        """_validate_schemas_available succeeds when schemas exist."""
-        server._validate_schemas_available()
-
-    def test_register_components(self, server):
-        """_register_components registers tools and resources."""
-        server._register_components()
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

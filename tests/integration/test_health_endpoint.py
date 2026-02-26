@@ -5,6 +5,7 @@ import threading
 import time
 from contextlib import contextmanager
 from typing import Literal, cast
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -27,9 +28,9 @@ atexit.register(_cleanup_threads)
 
 @contextmanager
 def run_server(port: int, transport: str = "streamable-http"):
-    # Server now always manages asynchronous embedding initialization internally;
-    # legacy initialize_embeddings flag removed.
-    server = Server(ids_set=STANDARD_TEST_IDS_SET)
+    mock_gc = MagicMock()
+    mock_gc.query.return_value = [{"v.id": "4.0.0"}]
+    server = Server(ids_set=STANDARD_TEST_IDS_SET, graph_client=mock_gc)
 
     def _run():  # type: ignore
         try:
@@ -69,8 +70,6 @@ def test_health_basic(transport, monkeypatch):
                     assert data["status"] == "ok"
                     assert "imas_codex_version" in data
                     assert "imas_dd_version" in data
-                    assert "document_count" in data
-                    assert "embedding_model_name" in data
                     assert "started_at" in data
                     assert "ids_count" in data
                     assert "uptime" in data
@@ -83,7 +82,9 @@ def test_health_basic(transport, monkeypatch):
 
 def test_health_idempotent_wrapping(monkeypatch):
     port = 8902
-    server = Server(ids_set=STANDARD_TEST_IDS_SET)
+    mock_gc = MagicMock()
+    mock_gc.query.return_value = [{"v.id": "4.0.0"}]
+    server = Server(ids_set=STANDARD_TEST_IDS_SET, graph_client=mock_gc)
 
     # Ensure multiple calls to HealthEndpoint don't duplicate (implicit by running twice)
     def _run():  # mypy: ignore
@@ -102,7 +103,6 @@ def test_health_idempotent_wrapping(monkeypatch):
                 data = resp.json()
                 assert data["status"] == "ok"
                 assert "imas_codex_version" in data
-                assert "embedding_model_name" in data
                 assert "started_at" in data
                 assert "ids_count" in data
                 assert "uptime" in data

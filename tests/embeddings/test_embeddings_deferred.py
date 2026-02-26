@@ -51,29 +51,19 @@ def test_embeddings_lazy_build(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_health_endpoint_deferred(monkeypatch):
-    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_LOCATION", "local")
-
-    with patch(
-        "imas_codex.embeddings.embeddings.Encoder",
-        return_value=_mock_encoder(),
-    ):
-        from imas_codex.server import Server
-
-        srv = Server(ids_set=STANDARD_TEST_IDS_SET)
-        # Replace embeddings with deferred instance sharing same document store
-        srv.embeddings = Embeddings(
-            document_store=srv.tools.document_store, load_embeddings=False
-        )
+    """Health endpoint works with graph-only server."""
     from imas_codex.health import HealthEndpoint
+    from imas_codex.server import Server
+
+    mock_gc = MagicMock()
+    mock_gc.query.return_value = [{"v.id": "4.0.0"}]
+
+    srv = Server(ids_set=STANDARD_TEST_IDS_SET, graph_client=mock_gc)
 
     he = HealthEndpoint(srv)
     he.attach()
-    # Construct app and call handlers directly
     app = srv.mcp.http_app()
-    # Find /health route handler
     health_route = next(r for r in app.routes if getattr(r, "path", None) == "/health")
     response = await health_route.endpoint()  # type: ignore[attr-defined]
     data = response.body.decode()
-    # embedding_status field removed in synchronous embeddings refactor.
-    # Verify health endpoint still works with deferred embeddings and exposes model name.
-    assert "embedding_model_name" in data
+    assert "imas_codex_version" in data

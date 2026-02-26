@@ -1,20 +1,16 @@
 """IMAS Codex Tools Package.
 
-This package contains the Tools implementation split into focused modules.
-Each module handles a specific tool functionality with clean separation of concerns.
+All tools are backed by Neo4j via GraphClient.
 """
 
-from __future__ import annotations
-
 import logging
-from typing import TYPE_CHECKING
 
 from fastmcp import FastMCP
 
+from imas_codex.graph.client import GraphClient
 from imas_codex.providers import MCPProvider
 
 from .base import BaseTool
-from .clusters_tool import ClustersTool
 from .cypher_tool import CypherTool
 from .graph_search import (
     GraphClustersTool,
@@ -24,24 +20,15 @@ from .graph_search import (
     GraphPathTool,
     GraphSearchTool,
 )
-from .identifiers_tool import IdentifiersTool
-from .list_tool import ListTool
-from .overview_tool import OverviewTool
-from .path_tool import PathTool
 from .schema_tool import SchemaTool
-from .search_tool import SearchTool
 from .version_tool import VersionTool
-
-if TYPE_CHECKING:
-    from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
 
 
 class Tools(MCPProvider):
-    """Main Tools class that delegates to individual tool implementations."""
+    """MCP tools backed by Neo4j."""
 
-    # Class-level registry of tool instances for dynamic discovery
     _tool_instances: list = []
 
     def __init__(
@@ -49,63 +36,32 @@ class Tools(MCPProvider):
         ids_set: set[str] | None = None,
         graph_client: GraphClient | None = None,
     ):
-        """Initialize the IMAS tools provider.
+        if graph_client is None:
+            raise ValueError("GraphClient is required")
 
-        Args:
-            ids_set: Optional set of IDS names to limit processing to.
-                    If None, will process all available IDS.
-            graph_client: Optional GraphClient for graph-native tools.
-                    When provided, registers Cypher, schema, and version tools.
-        """
         self.ids_set = ids_set
 
-        if graph_client is not None:
-            # Graph-native mode: all tools backed by Neo4j
-            self.search_tool = GraphSearchTool(graph_client)
-            self.path_tool = GraphPathTool(graph_client)
-            self.list_tool = GraphListTool(graph_client)
-            self.overview_tool = GraphOverviewTool(graph_client)
-            self.clusters_tool = GraphClustersTool(graph_client)
-            self.identifiers_tool = GraphIdentifiersTool(graph_client)
+        self.search_tool = GraphSearchTool(graph_client)
+        self.path_tool = GraphPathTool(graph_client)
+        self.list_tool = GraphListTool(graph_client)
+        self.overview_tool = GraphOverviewTool(graph_client)
+        self.clusters_tool = GraphClustersTool(graph_client)
+        self.identifiers_tool = GraphIdentifiersTool(graph_client)
+        self.cypher_tool = CypherTool(graph_client)
+        self.schema_tool = SchemaTool()
+        self.version_tool = VersionTool(graph_client)
 
-            self.cypher_tool = CypherTool(graph_client)
-            self.schema_tool = SchemaTool()
-            self.version_tool = VersionTool(graph_client)
-
-            self._tool_instances = [
-                self.search_tool,
-                self.path_tool,
-                self.list_tool,
-                self.overview_tool,
-                self.clusters_tool,
-                self.identifiers_tool,
-                self.cypher_tool,
-                self.schema_tool,
-                self.version_tool,
-            ]
-            logger.info("All tools running in graph-native mode")
-        else:
-            # File-backed mode: uses DocumentStore + JSON/SQLite
-            from imas_codex.search.document_store import DocumentStore
-
-            self.document_store = DocumentStore(ids_set=ids_set)
-
-            self.search_tool = SearchTool(self.document_store)
-            self.path_tool = PathTool(self.document_store)
-            self.list_tool = ListTool(self.document_store)
-            self.overview_tool = OverviewTool(self.document_store)
-            self.clusters_tool = ClustersTool(self.document_store)
-            self.identifiers_tool = IdentifiersTool(self.document_store)
-
-            self._tool_instances = [
-                self.search_tool,
-                self.path_tool,
-                self.list_tool,
-                self.overview_tool,
-                self.clusters_tool,
-                self.identifiers_tool,
-            ]
-            logger.info("Tools running in file-backed mode")
+        self._tool_instances = [
+            self.search_tool,
+            self.path_tool,
+            self.list_tool,
+            self.overview_tool,
+            self.clusters_tool,
+            self.identifiers_tool,
+            self.cypher_tool,
+            self.schema_tool,
+            self.version_tool,
+        ]
 
     @property
     def name(self) -> str:
@@ -119,7 +75,7 @@ class Tools(MCPProvider):
                 if attr_name.startswith("_"):
                     continue
                 attr = getattr(tool, attr_name)
-                if hasattr(attr, "_mcp_tool") and attr._mcp_tool:
+                if getattr(attr, "_mcp_tool", None) is True:
                     mcp.tool(description=attr._mcp_description)(attr)
 
     def get_registered_tool_names(self) -> list[str]:
@@ -131,7 +87,7 @@ class Tools(MCPProvider):
                     continue
                 try:
                     attr = getattr(tool, attr_name)
-                    if hasattr(attr, "_mcp_tool") and attr._mcp_tool:
+                    if getattr(attr, "_mcp_tool", None) is True:
                         tool_names.append(attr_name)
                 except AttributeError:
                     continue
@@ -169,17 +125,14 @@ class Tools(MCPProvider):
 
 __all__ = [
     "BaseTool",
-    "SearchTool",
-    "PathTool",
-    "ListTool",
-    "OverviewTool",
-    "ClustersTool",
-    "IdentifiersTool",
     "GraphSearchTool",
     "GraphPathTool",
     "GraphListTool",
     "GraphOverviewTool",
     "GraphClustersTool",
     "GraphIdentifiersTool",
+    "CypherTool",
+    "SchemaTool",
+    "VersionTool",
     "Tools",
 ]

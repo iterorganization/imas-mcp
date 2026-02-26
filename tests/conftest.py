@@ -1,8 +1,8 @@
 """
-Test configuration and fixtures for the new MCP-based architecture.
+Test configuration and fixtures for the MCP-based architecture.
 
-This module provides test fixtures for the composition-based server architecture,
-focusing on MCP protocol testing and feature validation.
+The server fixture creates a graph-backed Server with a mock GraphClient
+that returns fixture data matching the graph_mcp test data structure.
 """
 
 import os
@@ -21,7 +21,6 @@ from imas_codex.search.engines.base_engine import MockSearchEngine
 from imas_codex.server import Server
 
 # Load .env file with override=True to ensure test environment uses .env values
-# This fixes issues where empty or stale shell environment variables persist
 load_dotenv(override=True)
 
 
@@ -191,19 +190,13 @@ def disable_caching():
 
 @pytest.fixture(scope="session", autouse=True)
 def mock_heavy_operations():
-    """Mock all heavy operations that slow down tests.
+    """Mock heavy operations that slow down tests.
 
-    Includes mocking Encoder._load_model to prevent HuggingFace model
-    downloads during non-slow tests. Tests that need real model loading
-    (marked @pytest.mark.slow) load models explicitly.
+    Mocks Encoder model loading, DocumentStore I/O, and search engines
+    for tests that directly use those classes (not via the MCP server).
     """
     mock_documents = create_mock_documents()
 
-    # Mock _import_sentence_transformers so _load_model never downloads a real
-    # model from HuggingFace. The mock SentenceTransformer class returns a mock
-    # model that responds to encode() with zero vectors. Tests that need to
-    # verify _load_model internals (e.g. truncate_dim) override this mock in
-    # their own patch context.
     mock_st_cls = MagicMock()
     mock_st_model = MagicMock()
     mock_st_model.device = "cpu"
@@ -216,16 +209,13 @@ def mock_heavy_operations():
         ),
         patch.multiple(
             DocumentStore,
-            # Mock document loading
             _ensure_loaded=MagicMock(),
             _ensure_ids_loaded=MagicMock(),
             _load_ids_documents=MagicMock(),
             _load_identifier_catalog_documents=MagicMock(),
             load_all_documents=MagicMock(),
-            # Mock index building
             _build_sqlite_fts_index=MagicMock(),
             _should_rebuild_fts_index=MagicMock(return_value=False),
-            # Mock data access with test data
             get_all_documents=MagicMock(return_value=mock_documents),
             get_document=MagicMock(
                 side_effect=lambda path_id: next(
@@ -240,12 +230,10 @@ def mock_heavy_operations():
             ),
             get_available_ids=MagicMock(return_value=list(STANDARD_TEST_IDS_SET)),
             __len__=MagicMock(return_value=len(mock_documents)),
-            # Mock search methods
             search_full_text=MagicMock(return_value=mock_documents[:2]),
             search_by_keywords=MagicMock(return_value=mock_documents[:2]),
             search_by_physics_domain=MagicMock(return_value=mock_documents[:2]),
             search_by_units=MagicMock(return_value=mock_documents[:2]),
-            # Mock statistics
             get_statistics=MagicMock(
                 return_value={
                     "total_documents": len(mock_documents),
@@ -257,78 +245,112 @@ def mock_heavy_operations():
                     "path_segments": 50,
                 }
             ),
-            # Mock identifier methods
             get_identifier_schemas=MagicMock(return_value=[]),
             get_identifier_paths=MagicMock(return_value=[]),
             get_identifier_schema_by_name=MagicMock(return_value=None),
         ),
     ):
-        # Mock semantic search initialization to prevent embedding generation
-        with patch("imas_codex.server.SemanticSearch") as mock_semantic:
-            mock_semantic_instance = MagicMock()
-            mock_semantic_instance._initialize.return_value = None
-            mock_semantic.return_value = mock_semantic_instance
+        mock_engine = MockSearchEngine()
+        with (
+            patch(
+                "imas_codex.search.engines.semantic_engine.SemanticSearchEngine.search",
+                side_effect=mock_engine.search,
+            ),
+            patch(
+                "imas_codex.search.engines.lexical_engine.LexicalSearchEngine.search",
+                side_effect=mock_engine.search,
+            ),
+            patch(
+                "imas_codex.search.engines.hybrid_engine.HybridSearchEngine.search",
+                side_effect=mock_engine.search,
+            ),
+        ):
+            mock_clusters = create_mock_clusters()
+            with patch("imas_codex.core.clusters.Clusters") as mock_clusters_class:
+                mock_clusters_instance = MagicMock()
+                mock_clusters_instance.is_available.return_value = True
+                mock_clusters_instance.get_clusters.return_value = mock_clusters
+                mock_clusters_class.return_value = mock_clusters_instance
 
-            # Mock search engine methods to prevent heavy execution
-            mock_engine = MockSearchEngine()
-            with (
-                patch(
-                    "imas_codex.search.engines.semantic_engine.SemanticSearchEngine.search",
-                    side_effect=mock_engine.search,
-                ),
-                patch(
-                    "imas_codex.search.engines.lexical_engine.LexicalSearchEngine.search",
-                    side_effect=mock_engine.search,
-                ),
-                patch(
-                    "imas_codex.search.engines.hybrid_engine.HybridSearchEngine.search",
-                    side_effect=mock_engine.search,
-                ),
-            ):
-                # Mock Clusters class to prevent loading cluster files
-                mock_clusters = create_mock_clusters()
-                with patch("imas_codex.core.clusters.Clusters") as mock_clusters_class:
-                    mock_clusters_instance = MagicMock()
-                    mock_clusters_instance.is_available.return_value = True
-                    mock_clusters_instance.get_clusters.return_value = mock_clusters
-                    mock_clusters_class.return_value = mock_clusters_instance
+                with patch(
+                    "imas_codex.tools.clusters_tool.Clusters"
+                ) as mock_clusters_tool:
+                    mock_clusters_tool.return_value = mock_clusters_instance
 
-                    # Also patch in the tools module where it's imported
                     with patch(
-                        "imas_codex.tools.clusters_tool.Clusters"
-                    ) as mock_clusters_tool:
-                        mock_clusters_tool.return_value = mock_clusters_instance
+                        "imas_codex.tools.clusters_tool.ClusterSearcher"
+                    ) as mock_searcher_class:
+                        mock_searcher = MagicMock()
+                        mock_searcher.search_by_path.return_value = (
+                            create_mock_cluster_search_results("path")
+                        )
+                        mock_searcher.search_by_text.return_value = (
+                            create_mock_cluster_search_results("text")
+                        )
+                        mock_searcher_class.return_value = mock_searcher
 
-                        # Mock ClusterSearcher to return mock results
                         with patch(
-                            "imas_codex.tools.clusters_tool.ClusterSearcher"
-                        ) as mock_searcher_class:
-                            mock_searcher = MagicMock()
-                            mock_searcher.search_by_path.return_value = (
-                                create_mock_cluster_search_results("path")
+                            "imas_codex.tools.clusters_tool.Encoder"
+                        ) as mock_encoder_class:
+                            mock_encoder = MagicMock()
+                            mock_encoder.encode.return_value = np.zeros(
+                                (1, 256), dtype=np.float32
                             )
-                            mock_searcher.search_by_text.return_value = (
-                                create_mock_cluster_search_results("text")
-                            )
-                            mock_searcher_class.return_value = mock_searcher
+                            mock_encoder_class.return_value = mock_encoder
 
-                            # Mock Encoder to prevent model loading
-                            with patch(
-                                "imas_codex.tools.clusters_tool.Encoder"
-                            ) as mock_encoder_class:
-                                mock_encoder = MagicMock()
-                                mock_encoder.encode.return_value = np.zeros(
-                                    (1, 256), dtype=np.float32
-                                )
-                                mock_encoder_class.return_value = mock_encoder
+                            yield
 
-                                yield
+
+def _create_mock_graph_client():
+    """Create a mock GraphClient for the server fixture.
+
+    Returns a MagicMock that responds to Cypher queries with fixture data
+    matching the standard test IDS set.
+    """
+    mock_gc = MagicMock()
+
+    # DDVersion query for server name
+    def _query(cypher, **kwargs):
+        # IDS nodes query for overview (match before IMASPath count check)
+        if "MATCH (i:IDS)" in cypher:
+            return [
+                {
+                    "name": "equilibrium",
+                    "description": "Equilibrium quantities",
+                    "physics_domain": "magnetics",
+                    "lifecycle_status": "active",
+                    "path_count": 5,
+                },
+                {
+                    "name": "core_profiles",
+                    "description": "Core plasma profiles",
+                    "physics_domain": "core_transport",
+                    "lifecycle_status": "active",
+                    "path_count": 4,
+                },
+            ]
+        if "DDVersion" in cypher and "is_current" in cypher:
+            # Overview tool aliases: "v.id AS version"
+            if "AS version" in cypher:
+                return [{"version": "4.0.0"}]
+            # Server name query: "RETURN v.id"
+            return [{"v.id": "4.0.0"}]
+        if "RETURN 1" in cypher:
+            return [{"1": 1}]
+        # Health endpoint stats query
+        if "IMASPath" in cypher and "count" in cypher.lower():
+            return [{"paths": 9, "ids_count": 2}]
+        return []
+
+    mock_gc.query = MagicMock(side_effect=_query)
+    return mock_gc
 
 
 @pytest.fixture(scope="session")
 def server() -> Server:
-    """Session-scoped server fixture for performance."""
-    return Server(ids_set=STANDARD_TEST_IDS_SET)
+    """Session-scoped server with mock GraphClient."""
+    mock_gc = _create_mock_graph_client()
+    return Server(ids_set=STANDARD_TEST_IDS_SET, graph_client=mock_gc)
 
 
 @pytest.fixture(scope="session")

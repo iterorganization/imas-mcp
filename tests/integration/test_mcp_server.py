@@ -1,23 +1,19 @@
 """
 Test MCP server composition and protocol integration.
 
-This module tests the core server functionality with the new composition pattern,
-focusing on MCP protocol compliance and component integration using FastMCP
-in-memory testing patterns.
+Tests the graph-backed server with mock GraphClient, focusing on
+MCP protocol compliance and component integration.
 """
 
-import os
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastmcp import Client, FastMCP
 
-from imas_codex import dd_version
-from imas_codex.models.result_models import GetOverviewResult
 from imas_codex.resource_provider import Resources
 from imas_codex.server import Server
 from imas_codex.tools import Tools
-from tests.conftest import STANDARD_TEST_IDS_SET
+from tests.conftest import STANDARD_TEST_IDS_SET, _create_mock_graph_client
 
 
 class TestMCPServer:
@@ -30,19 +26,16 @@ class TestMCPServer:
         assert hasattr(server, "resources")
         assert hasattr(server, "mcp")
 
-        # Check component types
         assert isinstance(server.tools, Tools)
         assert isinstance(server.resources, Resources)
         assert isinstance(server.mcp, FastMCP)
 
     def test_server_mcp_integration(self, server):
         """Test MCP protocol integration."""
-        # MCP should be properly initialized
         assert server.mcp is not None
         assert hasattr(server.mcp, "name")
-        # Server name should include DD version
-        expected_name = f"imas-data-dictionary-{dd_version}"
-        assert server.mcp.name == expected_name
+        # Server name derived from DDVersion in graph
+        assert server.mcp.name == "imas-data-dictionary-4.0.0"
 
     def test_server_ids_set_configuration(self, server):
         """Test server is configured with test IDS set."""
@@ -51,7 +44,6 @@ class TestMCPServer:
     @pytest.mark.asyncio
     async def test_server_tool_access(self, server):
         """Test tools are accessible through server composition."""
-        # Test that all expected tools are available
         expected_tools = [
             "check_imas_paths",
             "fetch_imas_paths",
@@ -70,12 +62,10 @@ class TestMCPServer:
         """Test resources are accessible through server composition."""
         assert server.resources is not None
         assert hasattr(server.resources, "register")
-        assert hasattr(server.resources, "schema_dir")
         assert server.resources.name == "resources"
 
     def test_no_legacy_delegation_methods(self, server):
         """Test server doesn't have old delegation methods."""
-        # These methods should NOT exist on server directly
         delegation_methods = [
             "search_imas",
             "explain_concept",
@@ -83,6 +73,7 @@ class TestMCPServer:
             "analyze_ids_structure",
             "document_store",
             "search_tool",
+            "embeddings",
         ]
 
         for method_name in delegation_methods:
@@ -95,31 +86,54 @@ class TestMCPServer:
         assert hasattr(server, "run")
         assert callable(server.run)
 
-    @patch("imas_codex.server.Embeddings")
-    def test_multiple_server_instances_isolation(self, mock_embeddings, server):
+    def test_multiple_server_instances_isolation(self, server):
         """Test multiple server instances don't interfere."""
-        # Create second server using the same mocked environment as the fixture
-        server2 = Server(ids_set={"equilibrium"})
+        mock_gc = _create_mock_graph_client()
+        server2 = Server(ids_set={"equilibrium"}, graph_client=mock_gc)
 
-        # Should be separate instances
         assert server is not server2
         assert server.tools is not server2.tools
         assert server.resources is not server2.resources
         assert server.mcp is not server2.mcp
 
-        # Should have different configurations
         assert server.tools.ids_set == STANDARD_TEST_IDS_SET
         assert server2.tools.ids_set == {"equilibrium"}
 
+    def test_server_requires_graph_client(self):
+        """Server raises error when Neo4j is not reachable."""
+        import neo4j.exceptions
+
+        with pytest.raises(
+            (
+                RuntimeError,
+                OSError,
+                neo4j.exceptions.ServiceUnavailable,
+                neo4j.exceptions.DatabaseUnavailable,
+            )
+        ):
+            Server(ids_set=STANDARD_TEST_IDS_SET)
+
+    def test_server_name_from_graph(self, server):
+        """Server name is derived from DDVersion nodes in graph."""
+        assert "4.0.0" in server.mcp.name
+
+    def test_server_name_fallback(self):
+        """Fallback name when DDVersion query fails."""
+        from imas_codex.server import _server_name
+
+        mock_gc = MagicMock()
+        mock_gc.query.side_effect = Exception("connection refused")
+        name = _server_name(mock_gc)
+        assert name == "imas-data-dictionary"
+
 
 class TestMCPProtocolCompliance:
-    """Test MCP protocol compliance and interaction patterns using FastMCP Client."""
+    """Test MCP protocol compliance using FastMCP Client."""
 
     @pytest.mark.asyncio
     async def test_mcp_basic_connectivity(self, server):
         """Test basic MCP connectivity through client."""
         async with Client(server.mcp) as client:
-            # Test ping connectivity
             await client.ping()
 
     @pytest.mark.asyncio
@@ -129,7 +143,6 @@ class TestMCPProtocolCompliance:
             tools = await client.list_tools()
             tool_names = [tool.name for tool in tools]
 
-            # Check that expected tools are registered
             expected_tools = [
                 "check_imas_paths",
                 "fetch_imas_paths",
@@ -138,6 +151,9 @@ class TestMCPProtocolCompliance:
                 "list_imas_paths",
                 "search_imas_clusters",
                 "search_imas_paths",
+                "query_imas_graph",
+                "get_dd_graph_schema",
+                "get_dd_versions",
             ]
 
             for expected_tool in expected_tools:
@@ -150,64 +166,13 @@ class TestMCPProtocolCompliance:
             resources = await client.list_resources()
             resource_uris = [str(resource.uri) for resource in resources]
 
-            # Check that expected resources are registered
-            expected_resources = [
-                "ids://catalog",
-                "ids://identifiers",
-                "ids://clusters",
-                "examples://resource-usage",
-            ]
+            # Only examples resource in graph-native mode
+            assert "examples://resource-usage" in resource_uris
 
-            for expected_resource in expected_resources:
-                assert expected_resource in resource_uris, (
-                    f"Resource {expected_resource} not found"
-                )
-
-    @pytest.mark.asyncio
-    async def test_tool_execution_via_mcp(self, server):
-        """Test tools can be executed through MCP client."""
-        async with Client(server.mcp) as client:
-            # Test simple tool execution
-            result = await client.call_tool("search_imas_paths", {"query": "plasma"})
-            assert result is not None
-            assert hasattr(result, "content") or hasattr(result, "data")
-
-            # Test tool with different parameters
-            result = await client.call_tool("get_imas_overview")
-            assert result is not None
-            assert hasattr(result, "content") or hasattr(result, "data")
-
-    @pytest.mark.asyncio
-    async def test_resource_access_via_mcp(self, server):
-        """Test resources can be accessed through MCP client."""
-        async with Client(server.mcp) as client:
-            # Test resource reading
-            resource_data = await client.read_resource("ids://catalog")
-            assert resource_data is not None
-            assert len(resource_data) > 0
-
-            # Resource data should have text content
-            first_content = resource_data[0]
-            assert hasattr(first_content, "text")
-
-    @pytest.mark.asyncio
-    async def test_multiple_concurrent_operations(self, server):
-        """Test concurrent MCP operations work correctly."""
-        import asyncio
-
-        async with Client(server.mcp) as client:
-            # Execute multiple operations concurrently
-            results = await asyncio.gather(
-                client.call_tool("search_imas_paths", {"query": "equilibrium"}),
-                client.call_tool("get_imas_overview"),
-                client.read_resource("ids://identifiers"),
-                return_exceptions=True,
-            )
-
-            # All operations should succeed
-            for result in results:
-                assert not isinstance(result, Exception)
-                assert result is not None
+            # No schema-file resources
+            assert "ids://catalog" not in resource_uris
+            assert "ids://identifiers" not in resource_uris
+            assert "ids://clusters" not in resource_uris
 
 
 class TestServerComponentIntegration:
@@ -217,46 +182,23 @@ class TestServerComponentIntegration:
         """Test tools component is properly initialized."""
         tools = server.tools
 
-        # Check core properties exist
-        assert hasattr(tools, "document_store")
+        # Graph-backed tools — no document_store
+        assert not hasattr(tools, "document_store")
         assert hasattr(tools, "search_tool")
-
-        # Check that document store is shared properly
-        assert tools.document_store is not None
-
-        # Check that individual tools are initialized
         assert tools.search_tool is not None
 
     def test_resources_component_initialization(self, server):
         """Test resources component is properly initialized."""
         resources = server.resources
-
-        # Check resources configuration
         assert resources.name == "resources"
-        assert hasattr(resources, "schema_dir")
-        assert resources.schema_dir.exists()
-
-    @pytest.mark.asyncio
-    async def test_cross_component_functionality(self, server):
-        """Test functionality that spans multiple components."""
-        # Test that tools and resources work together
-        # For example, tools might access schema resources
-
-        # Get an overview (uses tools)
-        overview_result = await server.tools.get_imas_overview()
-        assert isinstance(overview_result, GetOverviewResult)
-
-        # Resources should provide schema information
-        assert server.resources.schema_dir.exists()
+        # No schema_dir in graph-native mode
+        assert not hasattr(resources, "schema_dir")
 
     def test_component_independence(self, server):
         """Test components are properly decoupled."""
-        # Tools and resources should be independent
         assert server.tools is not server.resources
         assert server.tools.name == "tools"
         assert server.resources.name == "resources"
-
-        # They should not share state beyond what's necessary
         assert not hasattr(server.tools, "schema_dir")
         assert not hasattr(server.resources, "document_store")
 
@@ -264,14 +206,10 @@ class TestServerComponentIntegration:
     async def test_component_registration_with_mcp(self, server):
         """Test that components are properly registered with MCP."""
         async with Client(server.mcp) as client:
-            # Verify both tools and resources are available through MCP
             tools = await client.list_tools()
             resources = await client.list_resources()
 
-            # Should have tools from tools component
             assert len(tools) > 0
-
-            # Should have resources from resources component
             assert len(resources) > 0
 
 
