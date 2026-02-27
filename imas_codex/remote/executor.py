@@ -684,6 +684,12 @@ def run_command(
         if nice_level is not None and nice_level > 0:
             cmd = f"nice -n {nice_level} bash -c {shlex.quote(cmd)}"
 
+        # Wrap with remote-side timeout to prevent zombie processes.
+        # When the local subprocess.run() times out, it kills the SSH client
+        # but the remote process keeps running. The remote timeout acts as
+        # a safety net, killing the remote process independently.
+        cmd = f"timeout {timeout + 5} {cmd}"
+
         # Prepend PATH setup for non-interactive SSH shells
         remote_cmd = _prepend_path_setup(cmd)
 
@@ -771,6 +777,9 @@ def run_script_via_stdin(
         nice_level = _get_host_nice_level(ssh_host)
         if nice_level is not None and nice_level > 0:
             interp_cmd = ["nice", "-n", str(nice_level)] + interp_cmd
+
+        # Wrap with remote-side timeout to prevent zombie processes
+        interp_cmd = ["timeout", str(timeout + 5)] + interp_cmd
 
         # SSH execution via stdin - avoids bash -c overhead
         # Use 'interpreter [args]' to read script from stdin
@@ -872,6 +881,12 @@ def run_python_script(
         nice_level = _get_host_nice_level(ssh_host)
         if nice_level is not None and nice_level > 0:
             python_cmd = f"nice -n {nice_level} {python_cmd}"
+
+        # Wrap with remote-side timeout to prevent zombie processes.
+        # When the local subprocess.run() times out, it kills the SSH client
+        # but the remote process keeps running indefinitely. The remote
+        # timeout ensures the process self-terminates.
+        python_cmd = f"timeout {timeout + 5} {python_cmd}"
 
         parts = [_REMOTE_PATH_PREFIX]
         if setup_commands:
@@ -979,6 +994,9 @@ async def async_run_python_script(
         nice_level = _get_host_nice_level(ssh_host)
         if nice_level is not None and nice_level > 0:
             python_cmd = f"nice -n {nice_level} {python_cmd}"
+
+        # Wrap with remote-side timeout to prevent zombie processes
+        python_cmd = f"timeout {timeout + 5} {python_cmd}"
 
         parts = [_REMOTE_PATH_PREFIX]
         if setup_commands:

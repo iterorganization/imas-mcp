@@ -358,6 +358,10 @@ Install on any facility: `uv run imas-codex tools install <facility>`
 
 **Critical:** `fd` requires a path argument on large filesystems to avoid hanging: `fd -e py /path`
 
+**Remote Python:** Remote scripts run via `run_python_script()` use the imas-codex venv Python (3.12+), not the system Python. The `_REMOTE_PATH_PREFIX` in `executor.py` prepends `~/.local/share/imas-codex/venv/bin` to PATH so `python3` resolves to the venv. Remote scripts can use modern Python syntax (`X | Y` unions, `match`, `isinstance(x, int | float)`). If a remote script fails with a syntax or type error, verify the venv is installed: `uv run imas-codex tools status <facility>`.
+
+**Remote zombie prevention:** All remote SSH commands are wrapped with `timeout <seconds>` on the server side. When a local `subprocess.run()` times out, it kills the SSH client process but the remote process keeps running indefinitely as a zombie. The server-side `timeout` (set to local timeout + 5s) ensures the remote process self-terminates independently. This is enforced in `executor.py` for `run_command()`, `run_script_via_stdin()`, `run_python_script()`, and `async_run_python_script()`. Never bypass this by constructing raw SSH commands — always use the executor functions.
+
 ## Commit Workflow
 
 ```bash
