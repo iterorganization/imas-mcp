@@ -67,7 +67,6 @@ def extract_version(
         Dict with nodes list, node_count, tags mapping
     """
     import MDSplus
-    import numpy as np
 
     if exclude_names is None:
         exclude_names = set()
@@ -95,6 +94,11 @@ def extract_version(
     except Exception:
         pass
 
+    # Build reverse tag mapping: path -> list of tags
+    path_to_tags: dict[str, list[str]] = {}
+    for tag_name, tag_path in tags.items():
+        path_to_tags.setdefault(tag_path, []).append(tag_name)
+
     nodes = []
     for node in all_nodes:
         try:
@@ -115,29 +119,12 @@ def extract_version(
             }
             node_type = usage_map.get(usage, "STRUCTURE")
 
-            # Get units
-            try:
-                units = str(node.units).strip()
-                if not units or units == " ":
-                    units = ""
-            except Exception:
-                units = ""
+            # NOTE: node.units is NOT accessed here — it's extremely slow
+            # (~1ms per node × 48k nodes = 48s). Units can be fetched
+            # selectively during enrichment if needed.
 
-            # Get tags for this node
-            try:
-                node_tags = [str(t) for t in node.tags] if hasattr(node, "tags") else []
-            except Exception:
-                node_tags = []
-
-            # Get description from COMMENT child
-            description = ""
-            try:
-                comment_node = node.getNode(":COMMENT")
-                data = comment_node.data()
-                if data:
-                    description = str(data)[:500]
-            except Exception:
-                pass
+            # Get tags from pre-built reverse mapping (avoids per-node MDSplus lookups)
+            node_tags = path_to_tags.get(path, [])
 
             record: dict[str, Any] = {
                 "path": path,
@@ -145,15 +132,13 @@ def extract_version(
                 "node_type": node_type,
             }
 
-            if units:
-                record["units"] = units
             if node_tags:
                 record["tags"] = node_tags
-            if description:
-                record["description"] = description
 
             # Extract values if requested and node has data
             if extract_values and node_type in ("NUMERIC", "SIGNAL"):
+                import numpy as np
+
                 try:
                     has_data = node.getLength() > 0
                     if has_data:

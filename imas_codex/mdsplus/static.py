@@ -54,29 +54,25 @@ def get_static_tree_config(facility: str) -> list[dict[str, Any]]:
     return mdsplus.get("static_trees", [])
 
 
-def discover_static_tree(
+def _load_mdsplus_config(facility: str) -> dict[str, Any]:
+    """Load MDSplus config section from facility YAML."""
+    from imas_codex.discovery.base.facility import get_facility
+
+    config = get_facility(facility)
+    return config.get("data_sources", {}).get("mdsplus", {})
+
+
+def _resolve_versions(
     facility: str,
     tree_name: str,
-    versions: list[int] | None = None,
-    extract_values: bool = False,
-    timeout: int = 300,
-) -> dict[str, Any]:
-    """Extract static tree structure and values from a remote facility.
-
-    Runs a remote Python script via SSH that opens each version of the
-    static tree and extracts nodes, tags, and optionally numerical values.
-
-    Args:
-        facility: SSH host alias (e.g., "tcv")
-        tree_name: MDSplus tree name (e.g., "static")
-        versions: Version numbers to extract (default: all from config)
-        extract_values: Whether to extract numerical data (R/Z, matrices)
-        timeout: SSH timeout in seconds
+    versions: list[int] | None,
+) -> tuple[list[int], bool]:
+    """Resolve version list and extract_values from config if not provided.
 
     Returns:
-        Dict with version data, structural diffs, and tag mappings.
-        Structure: {"tree_name": str, "versions": {ver: {...}}, "diff": {...}}
+        (versions, extract_values) tuple.
     """
+    extract_values = False
     if versions is None:
         configs = get_static_tree_config(facility)
         for cfg in configs:
@@ -88,29 +84,47 @@ def discover_static_tree(
                 break
         if versions is None:
             versions = [1]
+    return versions, extract_values
 
-    # Get exclude_names from facility config
-    from imas_codex.discovery.base.facility import get_facility
 
-    config = get_facility(facility)
-    mdsplus = config.get("data_sources", {}).get("mdsplus", {})
+def discover_static_tree_version(
+    facility: str,
+    tree_name: str,
+    version: int,
+    extract_values: bool = False,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    """Extract a single version of a static tree from a remote facility.
+
+    Runs the remote script for one version only, keeping SSH sessions
+    short enough to avoid timeouts on large trees.
+
+    Args:
+        facility: SSH host alias (e.g., "tcv")
+        tree_name: MDSplus tree name (e.g., "static")
+        version: Version number to extract
+        extract_values: Whether to extract numerical data
+        timeout: SSH timeout in seconds
+
+    Returns:
+        Dict with version data: {"tree_name": str, "versions": {"N": {...}}, "diff": {}}
+    """
+    mdsplus = _load_mdsplus_config(facility)
     exclude_names = mdsplus.get("exclude_node_names", [])
-
-    # Get setup_commands from facility config
     setup_commands = mdsplus.get("setup_commands")
 
     input_data = {
         "tree_name": tree_name,
-        "versions": versions,
+        "versions": [version],
         "extract_values": extract_values,
         "exclude_names": exclude_names,
     }
 
     logger.info(
-        "Extracting static tree %s from %s (versions=%s, values=%s)",
+        "Extracting static tree %s v%d from %s (values=%s)",
         tree_name,
+        version,
         facility,
-        versions,
         extract_values,
     )
 
@@ -124,19 +138,116 @@ def discover_static_tree(
 
     data = json.loads(output)
 
-    # Log summary
-    for ver_str, ver_data in data.get("versions", {}).items():
-        if "error" in ver_data:
-            logger.warning("Version %s: %s", ver_str, ver_data["error"])
-        else:
-            logger.info(
-                "Version %s: %d nodes, %d tags",
-                ver_str,
-                ver_data.get("node_count", 0),
-                len(ver_data.get("tags", {})),
-            )
+    ver_str = str(version)
+    ver_data = data.get("versions", {}).get(ver_str, {})
+    if "error" in ver_data:
+        logger.warning("Version %d: %s", version, ver_data["error"])
+    else:
+        logger.info(
+            "Version %d: %d nodes, %d tags",
+            version,
+            ver_data.get("node_count", 0),
+            len(ver_data.get("tags", {})),
+        )
 
     return data
+
+
+def merge_version_results(
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Merge per-version extraction results into a single data dict.
+
+    Combines version data from multiple single-version extractions and
+    computes structural diffs across all versions.
+
+    Args:
+        results: List of dicts from discover_static_tree_version().
+
+    Returns:
+        Combined dict with all versions and cross-version diff.
+    """
+    if not results:
+        return {"tree_name": "", "versions": {}, "diff": {}}
+
+    tree_name = results[0].get("tree_name", "")
+    merged_versions: dict[str, dict] = {}
+
+    for r in results:
+        for ver_str, ver_data in r.get("versions", {}).items():
+            merged_versions[ver_str] = ver_data
+
+    # Recompute diff across all merged versions
+    diff = _compute_diff(merged_versions)
+
+    return {"tree_name": tree_name, "versions": merged_versions, "diff": diff}
+
+
+def _compute_diff(
+    version_data: dict[str, dict],
+) -> dict[str, dict[str, list[str]]]:
+    """Compute structural differences between consecutive versions."""
+    sorted_versions = sorted(version_data.keys(), key=int)
+    added: dict[str, list[str]] = {}
+    removed: dict[str, list[str]] = {}
+
+    prev_paths: set[str] | None = None
+    for ver in sorted_versions:
+        data = version_data[ver]
+        if "error" in data:
+            continue
+        current_paths = {n["path"] for n in data.get("nodes", [])}
+        if prev_paths is not None:
+            new_paths = sorted(current_paths - prev_paths)
+            gone_paths = sorted(prev_paths - current_paths)
+            if new_paths:
+                added[ver] = new_paths
+            if gone_paths:
+                removed[ver] = gone_paths
+        prev_paths = current_paths
+
+    return {"added": added, "removed": removed}
+
+
+def discover_static_tree(
+    facility: str,
+    tree_name: str,
+    versions: list[int] | None = None,
+    extract_values: bool = False,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    """Extract static tree structure and values from a remote facility.
+
+    Extracts each version individually to avoid SSH timeout on large trees,
+    then merges results and computes cross-version diffs.
+
+    Args:
+        facility: SSH host alias (e.g., "tcv")
+        tree_name: MDSplus tree name (e.g., "static")
+        versions: Version numbers to extract (default: all from config)
+        extract_values: Whether to extract numerical data (R/Z, matrices)
+        timeout: SSH timeout per version in seconds
+
+    Returns:
+        Dict with version data, structural diffs, and tag mappings.
+        Structure: {"tree_name": str, "versions": {ver: {...}}, "diff": {...}}
+    """
+    versions, extract_values_cfg = _resolve_versions(facility, tree_name, versions)
+    if not extract_values:
+        extract_values = extract_values_cfg
+
+    results = []
+    for ver in versions:
+        data = discover_static_tree_version(
+            facility=facility,
+            tree_name=tree_name,
+            version=ver,
+            extract_values=extract_values,
+            timeout=timeout,
+        )
+        results.append(data)
+
+    return merge_version_results(results)
 
 
 def ingest_static_tree(

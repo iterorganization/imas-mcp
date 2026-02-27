@@ -73,6 +73,9 @@ data_sources:
   mdsplus:
     connection_tree: tcv_shot  # Default tree for TDI context
     reference_shot: 85000
+    # Source MDSplus environment (sets PYTHONPATH for MDSplus Python bindings)
+    setup_commands:
+      - source /etc/profile.d/mdsplus.sh
     # Subtrees to scan for signal discovery.
     # Each is opened as a separate MDSplus tree.
     trees:
