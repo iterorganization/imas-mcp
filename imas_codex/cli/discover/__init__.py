@@ -5,7 +5,8 @@ Modular CLI package with domain commands as direct subcommands:
     imas-codex discover paths tcv          # Run paths discovery
     imas-codex discover wiki jt-60sa        # Run wiki discovery
     imas-codex discover signals tcv        # Run signals discovery
-    imas-codex discover files tcv          # Run files discovery
+    imas-codex discover code tcv           # Run code discovery
+    imas-codex discover images tcv         # Run image discovery
     imas-codex discover status tcv         # Status (all domains)
     imas-codex discover status tcv -d wiki # Status (wiki only)
     imas-codex discover clear tcv          # Clear (all domains)
@@ -28,7 +29,8 @@ def discover():
     \b
     Domain Commands (each runs discovery directly):
       paths              Directory structure discovery
-      files              Source file discovery from scored paths
+      code               Source code discovery from scored paths
+      images             Image discovery (fetch + VLM captioning)
       wiki               Wiki page discovery and ingestion
       signals            Facility signal discovery
       static             Static/machine-description tree discovery
@@ -44,6 +46,8 @@ def discover():
     Examples:
       imas-codex discover paths jet            # Run paths discovery
       imas-codex discover wiki jt-60sa          # Run wiki discovery
+      imas-codex discover code tcv             # Code discovery
+      imas-codex discover images tcv           # Image discovery
       imas-codex discover static tcv           # Static tree discovery
       imas-codex discover status jet           # All domains status
       imas-codex discover status jet -d wiki   # Wiki status only
@@ -101,13 +105,13 @@ def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
                 signal_stats = get_data_discovery_stats(facility)
                 output["signals"] = signal_stats
 
-            if domain is None or domain == "files":
+            if domain is None or domain == "code":
                 from imas_codex.discovery.files.scanner import (
                     get_file_discovery_stats,
                 )
 
                 file_stats = get_file_discovery_stats(facility)
-                output["files"] = file_stats
+                output["code"] = file_stats
 
             click.echo(json_module.dumps(output, indent=2))
         else:
@@ -139,7 +143,7 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
       imas-codex discover clear jet              # All domains
       imas-codex discover clear jet -d paths     # Paths only
       imas-codex discover clear jet -d wiki      # Wiki only
-      imas-codex discover clear jet -d files     # Files only
+      imas-codex discover clear jet -d code      # Code only
       imas-codex discover clear jet --force      # Skip confirmation
     """
     from imas_codex.discovery import clear_facility_paths, get_discovery_stats
@@ -192,8 +196,8 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
                     ("signals + epochs", signal_total, clear_facility_signals)
                 )
 
-        # Files domain
-        if domain is None or domain == "files":
+        # Files/Code domain
+        if domain is None or domain == "code":
             from imas_codex.discovery.files.scanner import (
                 clear_facility_files,
                 get_file_discovery_stats,
@@ -424,7 +428,8 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
 # Import and register domain commands as direct subcommands.
 # Each domain module exposes a single @click.command that runs its pipeline.
 # `discover paths tcv` runs paths discovery directly (no subgroup).
-from imas_codex.cli.discover.files import files  # noqa: E402
+from imas_codex.cli.discover.code import code  # noqa: E402
+from imas_codex.cli.discover.images import images  # noqa: E402
 from imas_codex.cli.discover.paths import paths  # noqa: E402
 from imas_codex.cli.discover.signals import signals  # noqa: E402
 from imas_codex.cli.discover.static import static  # noqa: E402
@@ -433,5 +438,6 @@ from imas_codex.cli.discover.wiki import wiki  # noqa: E402
 discover.add_command(paths)
 discover.add_command(wiki)
 discover.add_command(signals)
-discover.add_command(files)
+discover.add_command(code)
+discover.add_command(images)
 discover.add_command(static)

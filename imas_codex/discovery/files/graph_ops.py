@@ -1,7 +1,7 @@
 """Graph operations for file discovery claim coordination.
 
 Provides claim/release functions for both scan and score phases of
-file discovery, enabling safe parallel execution of ``discover files``.
+file discovery, enabling safe parallel execution of ``discover code``.
 
 Scan phase: Claims FacilityPath nodes via ``files_claimed_at`` (separate
 from the paths module's ``claimed_at``) to prevent duplicate SSH scans.

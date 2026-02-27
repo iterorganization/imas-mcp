@@ -21,7 +21,8 @@ from collections.abc import Callable
 
 from imas_codex.graph import GraphClient
 from imas_codex.ingestion.readers.remote import (
-    ALL_SUPPORTED_EXTENSIONS,
+    DOCUMENT_EXTENSIONS,
+    EXTENSION_TO_LANGUAGE,
     detect_file_category,
     detect_language,
 )
@@ -40,8 +41,12 @@ DEFAULT_MAX_FILES_PER_PATH = 500
 
 
 def _get_extensions_list() -> list[str]:
-    """Get sorted list of supported file extensions (without dots)."""
-    return sorted({e.lstrip(".").lower() for e in ALL_SUPPORTED_EXTENSIONS})
+    """Get sorted list of code + document file extensions (without dots).
+
+    Excludes image extensions — image discovery has its own pipeline.
+    """
+    code_and_doc_extensions = set(EXTENSION_TO_LANGUAGE) | set(DOCUMENT_EXTENSIONS)
+    return sorted({e.lstrip(".").lower() for e in code_and_doc_extensions})
 
 
 def _get_pattern_categories() -> dict[str, str]:

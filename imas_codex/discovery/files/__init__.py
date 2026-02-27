@@ -5,7 +5,7 @@ worker architecture (scan → triage → score → code/docs) following the
 same pattern as wiki discovery.
 
 Pipeline:
-    discover files <facility>
+    discover code <facility>
       1. SCAN: SSH enumerate files + rg pattern enrichment (depth=1)
       2. TRIAGE: Fast LLM pass to keep/skip files per directory
       3. SCORE: Detailed LLM scoring of kept files with pattern evidence

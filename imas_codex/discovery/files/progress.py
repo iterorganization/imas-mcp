@@ -14,7 +14,6 @@ Display layout: PIPELINE → RESOURCES
 - SCORE: LLM batch scoring of discovered SourceFiles
 - ENRICH: rg pattern matching on scored files
 - INGEST: Fetch, chunk, embed (code + docs combined)
-- IMAGE: Image download + VLM captioning/scoring
 
 Uses common pipeline infrastructure from base.progress module.
 """
@@ -87,15 +86,6 @@ class IngestItem:
     file_type: str = ""  # code, document, notebook, config
 
 
-@dataclass
-class ImageItem:
-    """Current image activity (fetch + VLM score)."""
-
-    path: str
-    size: str = ""  # e.g. "768x512"
-    score: str = ""  # VLM score e.g. "0.85"
-
-
 # =============================================================================
 # Progress State
 # =============================================================================
@@ -123,8 +113,6 @@ class FileProgressState:
     pending_ingest: int = 0
     scored_count: int = 0
     enriched_count: int = 0
-    total_images: int = 0
-    scored_images: int = 0
     code_files: int = 0
     document_files: int = 0
     notebook_files: int = 0
@@ -137,17 +125,12 @@ class FileProgressState:
     run_enriched: int = 0
     run_code_ingested: int = 0
     run_docs_ingested: int = 0
-    run_images_ingested: int = 0
-    run_images_scored: int = 0
     _run_score_cost: float = 0.0
-    _run_vlm_cost: float = 0.0
     scan_rate: float | None = None
     score_rate: float | None = None
     enrich_rate: float | None = None
     code_rate: float | None = None
     docs_rate: float | None = None
-    image_rate: float | None = None
-    image_score_rate: float | None = None
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
@@ -157,12 +140,10 @@ class FileProgressState:
     current_score: ScoreItem | None = None
     current_enrich: EnrichItem | None = None
     current_ingest: IngestItem | None = None
-    current_image: ImageItem | None = None
     scan_processing: bool = False
     score_processing: bool = False
     enrich_processing: bool = False
     ingest_processing: bool = False
-    image_processing: bool = False
 
     # Streaming queues
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
@@ -181,11 +162,6 @@ class FileProgressState:
             rate=0.5, max_rate=2.0, min_display_time=0.4
         )
     )
-    image_queue: StreamQueue = field(
-        default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=2.0, min_display_time=0.4
-        )
-    )
 
     # Tracking
     start_time: float = field(default_factory=time.time)
@@ -196,20 +172,9 @@ class FileProgressState:
         return self.run_code_ingested + self.run_docs_ingested
 
     @property
-    def run_image_total(self) -> int:
-        """Combined image ingested + scored this run."""
-        return self.run_images_ingested + self.run_images_scored
-
-    @property
     def ingest_rate(self) -> float | None:
         """Combined code + docs rate."""
         rates = [r for r in [self.code_rate, self.docs_rate] if r]
-        return sum(rates) if rates else None
-
-    @property
-    def combined_image_rate(self) -> float | None:
-        """Combined image + vlm rate."""
-        rates = [r for r in [self.image_rate, self.image_score_rate] if r]
         return sum(rates) if rates else None
 
     @property
@@ -218,7 +183,7 @@ class FileProgressState:
 
     @property
     def run_cost(self) -> float:
-        return self._run_score_cost + self._run_vlm_cost
+        return self._run_score_cost
 
     @property
     def cost_per_file(self) -> float | None:
@@ -318,7 +283,7 @@ class FileProgressDisplay(BaseProgressDisplay):
           Line 2:        /home/codes/liuqe/src
           Line 3:        45 files found
 
-        Stages: SCAN -> SCORE -> ENRICH -> INGEST -> IMAGE
+        Stages: SCAN -> SCORE -> ENRICH -> INGEST
         """
         content_width = self.width - 6
 
@@ -339,17 +304,10 @@ class FileProgressDisplay(BaseProgressDisplay):
         ingest_completed = self.state.ingested
         ingest_total = max(self.state.ingested + self.state.pending_ingest, 1)
 
-        # IMAGE: scored images (graph) / total images
-        image_completed = self.state.scored_images
-        image_total = max(self.state.total_images, 1)
-
         # Score cost for display
         score_cost = (
             self.state._run_score_cost if self.state._run_score_cost > 0 else None
         )
-
-        # Combined image cost (VLM)
-        image_cost = self.state._run_vlm_cost if self.state._run_vlm_cost > 0 else None
 
         # Worker counts per group
         scan_count, scan_ann = self._count_group_workers("scan")
@@ -360,11 +318,6 @@ class FileProgressDisplay(BaseProgressDisplay):
         docs_count, docs_ann = self._count_group_workers("docs")
         ingest_count = code_count + docs_count
         ingest_ann = code_ann or docs_ann
-        # Combine image + vlm workers
-        img_count, img_ann = self._count_group_workers("image")
-        vlm_count, vlm_ann = self._count_group_workers("vlm")
-        image_worker_count = img_count + vlm_count
-        image_worker_ann = img_ann or vlm_ann
 
         # --- Build activity data ---
 
@@ -372,7 +325,6 @@ class FileProgressDisplay(BaseProgressDisplay):
         score = self.state.current_score
         enrich = self.state.current_enrich
         ingest = self.state.current_ingest
-        image = self.state.current_image
 
         # Worker completion detection
         scan_complete = self._worker_complete("scan") and not scan
@@ -381,11 +333,6 @@ class FileProgressDisplay(BaseProgressDisplay):
         code_complete = self._worker_complete("code")
         docs_complete = self._worker_complete("docs")
         ingest_complete = code_complete and docs_complete and not ingest
-        image_complete = (
-            self._worker_complete("image")
-            and self._worker_complete("vlm")
-            and not image
-        )
 
         # SCAN activity
         scan_text = ""
@@ -458,25 +405,6 @@ class FileProgressDisplay(BaseProgressDisplay):
                 parts.append((f"[{ingest.file_type}]", "dim"))
             ingest_detail = parts or None
 
-        # IMAGE activity (combined fetch + VLM)
-        image_text = ""
-        image_detail: list[tuple[str, str]] | None = None
-        if image:
-            image_text = clip_path(image.path, content_width - 10)
-            parts = []
-            if image.score:
-                style = (
-                    "bold green"
-                    if float(image.score) >= 0.7
-                    else "yellow"
-                    if float(image.score) >= 0.4
-                    else "red"
-                )
-                parts.append((image.score, style))
-            if image.size:
-                parts.append((f"  {image.size}", "cyan"))
-            image_detail = parts or None
-
         # --- Build pipeline rows ---
 
         rows = [
@@ -536,21 +464,6 @@ class FileProgressDisplay(BaseProgressDisplay):
                 is_complete=ingest_complete,
                 worker_count=ingest_count,
                 worker_annotation=ingest_ann,
-            ),
-            PipelineRowConfig(
-                name="IMAGE",
-                style="bold cyan",
-                completed=image_completed,
-                total=image_total,
-                rate=self.state.combined_image_rate,
-                cost=image_cost,
-                disabled=self.state.scan_only or self.state.score_only,
-                primary_text=image_text,
-                detail_parts=image_detail,
-                is_processing=self.state.image_processing,
-                is_complete=image_complete,
-                worker_count=image_worker_count,
-                worker_annotation=image_worker_ann,
             ),
         ]
         return build_pipeline_section(rows, self.bar_width)
@@ -768,73 +681,6 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    def update_image(
-        self,
-        message: str,
-        stats: WorkerStats,
-        results: list[dict] | None = None,
-    ) -> None:
-        """Update image ingestion worker state (feeds into IMAGE row)."""
-        self.state.run_images_ingested = stats.processed
-        self.state.image_rate = stats.rate
-
-        if "idle" in message.lower():
-            self.state.image_processing = False
-            self._refresh()
-            return
-        elif "processing" in message.lower():
-            self.state.image_processing = True
-        else:
-            self.state.image_processing = False
-
-        if results:
-            items = [
-                ImageItem(
-                    path=r.get("path", ""),
-                    size=r.get("size", ""),
-                )
-                for r in results
-            ]
-            max_rate = 2.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.image_queue.add(items, display_rate)
-
-        self._refresh()
-
-    def update_image_score(
-        self,
-        message: str,
-        stats: WorkerStats,
-        results: list[dict] | None = None,
-    ) -> None:
-        """Update VLM image scoring worker state (feeds into IMAGE row)."""
-        self.state.run_images_scored = stats.processed
-        self.state.image_score_rate = stats.rate
-        self.state._run_vlm_cost = stats.cost
-
-        if "idle" in message.lower():
-            self.state.image_processing = False
-            self._refresh()
-            return
-        elif "scoring" in message.lower():
-            self.state.image_processing = True
-        else:
-            self.state.image_processing = False
-
-        if results:
-            items = [
-                ImageItem(
-                    path=r.get("path", ""),
-                    score=r.get("score", ""),
-                )
-                for r in results
-            ]
-            max_rate = 2.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.image_queue.add(items, display_rate)
-
-        self._refresh()
-
     def refresh_from_graph(self, facility: str) -> None:
         """Refresh totals from graph database."""
         from imas_codex.discovery.files.parallel import get_file_discovery_stats
@@ -849,8 +695,6 @@ class FileProgressDisplay(BaseProgressDisplay):
         self.state.pending_ingest = stats["pending_ingest"]
         self.state.scored_count = stats["scored_count"]
         self.state.enriched_count = stats["enriched_count"]
-        self.state.total_images = stats["total_images"]
-        self.state.scored_images = stats["scored_images"]
         self.state.code_files = stats["code_files"]
         self.state.document_files = stats["document_files"]
         self.state.notebook_files = stats["notebook_files"]
@@ -897,14 +741,6 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.current_ingest = None
             updated = True
 
-        next_image = self.state.image_queue.pop()
-        if next_image:
-            self.state.current_image = next_image
-            updated = True
-        elif self.state.image_queue.is_stale() and self.state.current_image is not None:
-            self.state.current_image = None
-            updated = True
-
         if updated:
             self._refresh()
 
@@ -914,7 +750,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         self.console.print(
             Panel(
                 self._build_summary(),
-                title=f"{self.state.facility.upper()} File Discovery Complete",
+                title=f"{self.state.facility.upper()} Code Discovery Complete",
                 border_style="green",
                 width=self.width,
             )
@@ -955,17 +791,6 @@ class FileProgressDisplay(BaseProgressDisplay):
         ingest_rate = self.state.ingest_rate
         if ingest_rate:
             summary.append(f"  {ingest_rate:.1f}/s", style="dim")
-        summary.append("\n")
-
-        # IMAGE stats (combined image + VLM)
-        summary.append("  IMAGE    ", style="bold cyan")
-        summary.append(f"ingested={self.state.run_images_ingested:,}", style="cyan")
-        summary.append(f"  scored={self.state.run_images_scored:,}", style="cyan")
-        if self.state._run_vlm_cost > 0:
-            summary.append(f"  cost=${self.state._run_vlm_cost:.3f}", style="yellow")
-        combined_rate = self.state.combined_image_rate
-        if combined_rate:
-            summary.append(f"  {combined_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # USAGE stats

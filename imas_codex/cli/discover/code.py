@@ -1,4 +1,4 @@
-"""Files discovery command: Parallel file scanning, scoring, and ingestion."""
+"""Code discovery command: Parallel code scanning, scoring, and ingestion."""
 
 from __future__ import annotations
 
@@ -18,19 +18,19 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--min-score",
     type=float,
-    default=0.5,
-    help="Minimum FacilityPath score to include (default: 0.5)",
+    default=0.7,
+    help="Minimum FacilityPath score to include (default: 0.7)",
 )
 @click.option(
     "--max-paths",
     type=int,
     default=100,
-    help="Maximum FacilityPaths to scan for files (default: 100)",
+    help="Maximum FacilityPaths to scan per batch (default: 100)",
 )
 @click.option(
     "--focus",
     "-f",
-    help="Focus on specific patterns",
+    help="Focus on specific patterns (e.g. 'equilibrium', 'transport')",
 )
 @click.option(
     "--cost-limit",
@@ -76,24 +76,12 @@ logger = logging.getLogger(__name__)
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed progress")
 @click.option(
-    "--store-images",
-    is_flag=True,
-    default=False,
-    help="Keep image bytes in graph after VLM scoring (default: clear to save storage)",
-)
-@click.option(
-    "--include-images",
-    is_flag=True,
-    default=False,
-    help="Enable image discovery workers (download + VLM captioning)",
-)
-@click.option(
     "--rescan",
     is_flag=True,
     default=False,
-    help="Rescan paths that were previously scanned (moves files_scan_after forward)",
+    help="Rescan paths that were previously scanned",
 )
-def files(
+def code(
     facility: str,
     min_score: float,
     max_paths: int,
@@ -106,39 +94,38 @@ def files(
     score_only: bool,
     time_limit: int | None,
     verbose: bool,
-    store_images: bool,
-    include_images: bool,
     rescan: bool,
 ) -> None:
-    """Discover and ingest source files from scored facility paths.
+    """Discover and ingest source code from scored facility paths.
 
-    Runs parallel workers through a multi-stage pipeline:
+    Scans for code files (Python, Fortran, MATLAB, Julia, C/C++, IDL, TDI)
+    using tree-sitter for chunking and embedding. Documents found alongside
+    code are also processed.
 
     \b
-    - SCAN: SSH to facility, enumerate files + rg pattern enrichment (depth=1)
-    - TRIAGE: Fast LLM pass to keep/skip files per directory
-    - SCORE: Detailed LLM scoring of kept files with pattern evidence
-    - INGEST: Fetch, chunk, embed code files and documents
-    - IMAGE: (opt-in) Download and VLM-caption image files
+    Pipeline stages:
+      SCAN:    SSH to facility, enumerate code files + rg pattern enrichment
+      TRIAGE:  Fast LLM pass to keep/skip files per directory
+      SCORE:   Detailed multi-dimensional LLM scoring with pattern evidence
+      INGEST:  Fetch, tree-sitter chunk, embed, extract IDS/MDSplus refs
 
-    Use --rescan to re-scan paths that were previously scanned. This sets
-    a facility-level timestamp so all prior scans become eligible for
-    re-processing without clearing any existing SourceFile data.
+    Paths are processed highest-value first using weighted dimension scores
+    (data_access, IMAS, convention, analysis, modeling).
 
     \b
     Examples:
-      imas-codex discover files tcv
-      imas-codex discover files tcv --min-score 0.7 --scan-only
-      imas-codex discover files tcv -c 2.0 --code-workers 4
-      imas-codex discover files tcv -f equilibrium --time 10
-      imas-codex discover files tcv --rescan
+      imas-codex discover code tcv
+      imas-codex discover code tcv --min-score 0.8 --scan-only
+      imas-codex discover code tcv -c 2.0 --code-workers 4
+      imas-codex discover code tcv -f equilibrium --time 10
+      imas-codex discover code tcv --rescan
     """
     from imas_codex.cli.logging import configure_cli_logging
     from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.discovery.base.facility import get_facility
 
     use_rich = should_use_rich()
-    configure_cli_logging("files", facility=facility, verbose=verbose)
+    configure_cli_logging("code", facility=facility, verbose=verbose)
 
     if use_rich:
         console = Console()
@@ -194,7 +181,7 @@ def files(
             if msg != "idle":
                 file_logger.info("SCORE: %s", msg)
 
-        def log_code(msg, stats, results=None):
+        def log_code_cb(msg, stats, results=None):
             if msg != "idle":
                 file_logger.info("CODE: %s", msg)
 
@@ -206,16 +193,8 @@ def files(
             if msg != "idle":
                 file_logger.info("ENRICH: %s", msg)
 
-        def log_image(msg, stats, results=None):
-            if msg != "idle":
-                file_logger.info("IMAGE: %s", msg)
-
-        def log_image_score(msg, stats, results=None):
-            if msg != "idle":
-                file_logger.info("VLM: %s", msg)
-
         if not use_rich:
-            log_print(f"\n[bold]File Discovery: {facility}[/bold]")
+            log_print(f"\n[bold]Code Discovery: {facility}[/bold]")
             log_print(f"  SSH host: {ssh_host}")
             log_print(f"  Min score: {min_score}")
             log_print(f"  Cost limit: ${cost_limit:.2f}")
@@ -235,18 +214,14 @@ def files(
                     num_score_workers=score_workers,
                     num_code_workers=code_workers,
                     num_docs_workers=1,
-                    include_images=include_images,
                     scan_only=scan_only,
                     score_only=score_only,
-                    store_images=store_images,
                     deadline=deadline,
                     on_scan_progress=log_scan,
                     on_score_progress=log_score,
                     on_enrich_progress=log_enrich,
-                    on_code_progress=log_code,
+                    on_code_progress=log_code_cb,
                     on_docs_progress=log_docs,
-                    on_image_progress=log_image,
-                    on_image_score_progress=log_image_score,
                 )
             )
         else:
@@ -321,12 +296,6 @@ def files(
                     def on_enrich(msg, stats, results=None):
                         display.update_enrich(msg, stats, results)
 
-                    def on_image(msg, stats, results=None):
-                        display.update_image(msg, stats, results)
-
-                    def on_image_score(msg, stats, results=None):
-                        display.update_image_score(msg, stats, results)
-
                     def on_worker_status(worker_group):
                         display.update_worker_status(worker_group)
 
@@ -342,18 +311,14 @@ def files(
                             num_score_workers=score_workers,
                             num_code_workers=code_workers,
                             num_docs_workers=1,
-                            include_images=include_images,
                             scan_only=scan_only,
                             score_only=score_only,
-                            store_images=store_images,
                             deadline=deadline,
                             on_scan_progress=on_scan,
                             on_score_progress=on_score,
                             on_enrich_progress=on_enrich,
                             on_code_progress=on_code,
                             on_docs_progress=on_docs,
-                            on_image_progress=on_image,
-                            on_image_score_progress=on_image_score,
                             on_worker_status=on_worker_status,
                             service_monitor=service_monitor,
                         )
@@ -385,17 +350,13 @@ def files(
         scored = result.get("scored", 0)
         code_ingested = result.get("code_ingested", 0)
         docs_ingested = result.get("docs_ingested", 0)
-        images_ingested = result.get("images_ingested", 0)
-        images_scored = result.get("images_scored", 0)
         cost = result.get("cost", 0)
         elapsed = result.get("elapsed_seconds", 0)
 
         log_print(
             f"\n  [green]{scanned} scanned, {scored} scored, "
             f"{code_ingested} code ingested, "
-            f"{docs_ingested} docs ingested, "
-            f"{images_ingested} images ingested, "
-            f"{images_scored} images captioned[/green]"
+            f"{docs_ingested} docs ingested[/green]"
         )
         log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
 
@@ -407,4 +368,4 @@ def files(
             traceback.print_exc()
         raise SystemExit(1) from e
 
-    log_print("\n[green]File discovery complete.[/green]")
+    log_print("\n[green]Code discovery complete.[/green]")

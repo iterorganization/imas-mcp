@@ -543,7 +543,7 @@ classes:
       files_scan_after:
         description: >-
           When set, FacilityPaths with last_file_scan_at before this timestamp
-          are eligible for re-scanning by discover files --rescan.
+          are eligible for re-scanning by discover code --rescan.
         range: datetime
 
       # === PRIVATE FIELDS (<facility>_private.yaml only, never graphed) ===

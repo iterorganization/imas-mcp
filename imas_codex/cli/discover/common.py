@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 # Valid discovery domains
-DISCOVERY_DOMAINS = ("paths", "wiki", "signals", "files")
+DISCOVERY_DOMAINS = ("paths", "wiki", "signals", "code")
 
 
 # =============================================================================

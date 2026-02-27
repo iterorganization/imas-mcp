@@ -1,11 +1,10 @@
-"""Parallel file discovery engine.
+"""Parallel code discovery engine.
 
-Main entry point for file discovery with async workers. Orchestrates:
-- Scan: SSH file enumeration + rg enrichment (depth=1 per scored FacilityPath)
+Main entry point for code discovery with async workers. Orchestrates:
+- Scan: SSH code file enumeration + rg enrichment (depth=1 per scored FacilityPath)
 - Score: Dual-pass LLM scoring (triage → detailed score)
-- Code: Fetch, chunk, embed code files (replaces ``ingest run``)
-- Docs: Ingest non-code files (documents, notebooks, configs)
-- Image: (opt-in) Downsample and VLM-caption image files
+- Code: Fetch, tree-sitter chunk, embed code files
+- Docs: Ingest documents found alongside code
 
 Enrichment now happens during scan via discover_files.py (combined fd + rg).
 The separate enrich_worker is kept for backwards compatibility.
@@ -34,8 +33,6 @@ from .graph_ops import (
     has_pending_code_work,
     has_pending_docs_work,
     has_pending_enrich_work,
-    has_pending_image_score_work,
-    has_pending_image_work,
     has_pending_scan_work,
     has_pending_score_work,
     reset_orphaned_file_claims,
@@ -45,8 +42,6 @@ from .workers import (
     code_worker,
     docs_worker,
     enrich_worker,
-    image_score_worker,
-    image_worker,
     scan_worker,
     score_worker,
 )
@@ -62,7 +57,7 @@ async def run_parallel_file_discovery(
     ssh_host: str,
     *,
     cost_limit: float = 5.0,
-    min_score: float = 0.5,
+    min_score: float = 0.7,
     max_paths: int = 100,
     focus: str | None = None,
     num_scan_workers: int = 2,
@@ -70,32 +65,25 @@ async def run_parallel_file_discovery(
     num_enrich_workers: int = 0,
     num_code_workers: int = 2,
     num_docs_workers: int = 1,
-    num_image_workers: int = 0,
-    num_image_score_workers: int = 0,
-    include_images: bool = False,
     scan_only: bool = False,
     score_only: bool = False,
-    store_images: bool = False,
     deadline: float | None = None,
     on_scan_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
     on_enrich_progress: Callable | None = None,
     on_code_progress: Callable | None = None,
     on_docs_progress: Callable | None = None,
-    on_image_progress: Callable | None = None,
-    on_image_score_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
+    **_kwargs: Any,
 ) -> dict[str, Any]:
-    """Run parallel file discovery with async workers.
+    """Run parallel code discovery with async workers.
 
-    Orchestrates workers through the file discovery pipeline:
-    1. Scan workers: SSH file enumeration + rg enrichment (depth=1)
+    Orchestrates workers through the code discovery pipeline:
+    1. Scan workers: SSH code file enumeration + rg enrichment (depth=1)
     2. Score workers: Dual-pass LLM scoring (triage → detailed score)
-    3. Code workers: Fetch, chunk, embed code files (ingestion)
-    4. Docs workers: Ingest non-code files (documents, notebooks, configs)
-    5. Image workers: (opt-in) Downsample and persist image files
-    6. Image score workers: (opt-in) VLM captioning + scoring
+    3. Code workers: Fetch, tree-sitter chunk, embed code files
+    4. Docs workers: Ingest documents found alongside code
 
     Args:
         facility: Facility ID
@@ -106,13 +94,11 @@ async def run_parallel_file_discovery(
         focus: Natural language focus for scoring
         num_scan_workers: Number of parallel scan workers
         num_score_workers: Number of parallel score workers
-        num_enrich_workers: Number of parallel enrich workers
+        num_enrich_workers: Number of parallel enrich workers (legacy)
         num_code_workers: Number of parallel code workers
         num_docs_workers: Number of parallel docs workers
-        num_image_score_workers: Number of parallel VLM image scoring workers
         scan_only: Only scan, skip scoring and ingestion
         score_only: Only score, skip scanning and ingestion
-        store_images: Keep image bytes in graph after VLM scoring
         deadline: Absolute time (epoch) when discovery should stop
         on_scan_progress: Callback for scan worker progress
         on_score_progress: Callback for score worker progress
@@ -145,7 +131,6 @@ async def run_parallel_file_discovery(
         deadline=deadline,
         scan_only=scan_only,
         score_only=score_only,
-        store_images=store_images,
     )
 
     # Wire up graph-backed has_work_fn on each phase.
@@ -168,19 +153,6 @@ async def run_parallel_file_discovery(
     )
     state.docs_phase.set_has_work_fn(
         lambda: has_pending_docs_work(facility) or not state.score_phase.done
-    )
-    # Image workers only active when include_images=True
-    state.image_phase.set_has_work_fn(
-        lambda: (
-            include_images
-            and (has_pending_image_work(facility) or not state.score_phase.done)
-        )
-    )
-    state.image_score_phase.set_has_work_fn(
-        lambda: (
-            include_images
-            and (has_pending_image_score_work(facility) or not state.image_phase.done)
-        )
     )
 
     # Pre-warm SSH ControlMaster
@@ -299,47 +271,6 @@ async def run_parallel_file_discovery(
                 )
             )
 
-        # --- Image workers (opt-in only) ---
-        if include_images:
-            _num_img = num_image_workers or 1
-            for i in range(_num_img):
-                worker_name = f"image_worker_{i}"
-                status = worker_group.create_status(worker_name, group="image")
-                worker_group.add_task(
-                    asyncio.create_task(
-                        supervised_worker(
-                            image_worker,
-                            worker_name,
-                            state,
-                            state.should_stop,
-                            on_progress=on_image_progress,
-                            status_tracker=status,
-                        )
-                    )
-                )
-
-            _num_vlm = num_image_score_workers or 1
-            for i in range(_num_vlm):
-                worker_name = f"image_score_worker_{i}"
-                status = worker_group.create_status(worker_name, group="vlm")
-                worker_group.add_task(
-                    asyncio.create_task(
-                        supervised_worker(
-                            image_score_worker,
-                            worker_name,
-                            state,
-                            state.should_stop,
-                            on_progress=on_image_score_progress,
-                            status_tracker=status,
-                        )
-                    )
-                )
-
-        # Mark image phases done if not included
-        if not include_images:
-            state.image_phase.mark_done()
-            state.image_score_phase.mark_done()
-
         # Mark enrich phase done if no enrich workers
         if num_enrich_workers == 0:
             state.enrich_phase.mark_done()
@@ -347,30 +278,16 @@ async def run_parallel_file_discovery(
         state.code_phase.mark_done()
         state.docs_phase.mark_done()
         state.enrich_phase.mark_done()
-        state.image_phase.mark_done()
-        state.image_score_phase.mark_done()
 
-    _num_img_actual = (
-        (num_image_workers or 1)
-        if include_images and not (scan_only or score_only)
-        else 0
-    )
-    _num_vlm_actual = (
-        (num_image_score_workers or 1)
-        if include_images and not (scan_only or score_only)
-        else 0
-    )
     logger.info(
         "Started %d workers: scan=%d score=%d enrich=%d code=%d docs=%d "
-        "image=%d vlm=%d scan_only=%s score_only=%s",
+        "scan_only=%s score_only=%s",
         worker_group.get_active_count(),
         num_scan_workers if not score_only else 0,
         num_score_workers if not scan_only else 0,
         num_enrich_workers if not (scan_only or score_only) else 0,
         num_code_workers if not (scan_only or score_only) else 0,
         num_docs_workers if not (scan_only or score_only) else 0,
-        _num_img_actual,
-        _num_vlm_actual,
         scan_only,
         score_only,
     )
@@ -403,16 +320,12 @@ async def run_parallel_file_discovery(
         "enriched": state.enrich_stats.processed,
         "code_ingested": state.code_stats.processed,
         "docs_ingested": state.docs_stats.processed,
-        "images_ingested": state.image_stats.processed,
-        "images_scored": state.image_score_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_errors": state.scan_stats.errors,
         "score_errors": state.score_stats.errors,
         "enrich_errors": state.enrich_stats.errors,
         "code_errors": state.code_stats.errors,
-        "image_errors": state.image_stats.errors,
-        "image_score_errors": state.image_score_stats.errors,
     }
 
 
