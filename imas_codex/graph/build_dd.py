@@ -1836,6 +1836,16 @@ def _create_cocos_nodes(client: GraphClient) -> None:
         )
         psi_dir = "increasing" if params.sigma_bp == 1 else "decreasing"
 
+        # Derived properties from Sauter Table I
+        phi_increasing_ccw = params.sigma_r_phi_z == 1
+        # θ direction from front depends on product σρθφ·σRφZ
+        theta_increasing_cw = (params.sigma_rho_theta_phi * params.sigma_r_phi_z) == 1
+        psi_increasing_outward = params.sigma_bp == 1
+        # sign(q) = σIp·σB0·σρθφ; for co-current (σIp·σB0>0): sign(q) = σρθφ
+        sign_q = params.sigma_rho_theta_phi
+        # sign(dp/dψ) = -σIp·σBp; for positive Ip: sign(dp/dψ) = -σBp
+        sign_dp_dpsi = -params.sigma_bp
+
         cocos_data.append(
             {
                 "id": cocos_val,
@@ -1843,6 +1853,11 @@ def _create_cocos_nodes(client: GraphClient) -> None:
                 "e_bp": params.e_bp,
                 "sigma_r_phi_z": params.sigma_r_phi_z,
                 "sigma_rho_theta_phi": params.sigma_rho_theta_phi,
+                "phi_increasing_ccw": phi_increasing_ccw,
+                "theta_increasing_cw": theta_increasing_cw,
+                "psi_increasing_outward": psi_increasing_outward,
+                "sign_q": sign_q,
+                "sign_dp_dpsi": sign_dp_dpsi,
                 "description": (
                     f"COCOS {cocos_val}: ψ {psi_dir} outward, {psi_norm}, "
                     f"(R,φ,Z) {handedness_rpz}, (ρ,θ,φ) {handedness_rtp}"
@@ -1858,6 +1873,11 @@ def _create_cocos_nodes(client: GraphClient) -> None:
             cocos.e_bp = c.e_bp,
             cocos.sigma_r_phi_z = c.sigma_r_phi_z,
             cocos.sigma_rho_theta_phi = c.sigma_rho_theta_phi,
+            cocos.phi_increasing_ccw = c.phi_increasing_ccw,
+            cocos.theta_increasing_cw = c.theta_increasing_cw,
+            cocos.psi_increasing_outward = c.psi_increasing_outward,
+            cocos.sign_q = c.sign_q,
+            cocos.sign_dp_dpsi = c.sign_dp_dpsi,
             cocos.description = c.description
     """,
         cocos_list=cocos_data,

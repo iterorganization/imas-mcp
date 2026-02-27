@@ -51,9 +51,9 @@ class TestCOCOSToParameters:
         assert params.sigma_rho_theta_phi == 1
 
     def test_cocos_3(self):
-        """COCOS 3: σBp=+1, eBp=0, σRφZ=+1, σρθφ=-1 (ORB5 convention)."""
+        """COCOS 3: σBp=-1, eBp=0, σRφZ=+1, σρθφ=-1 (ORB5 convention)."""
         params = cocos_to_parameters(3)
-        assert params.sigma_bp == 1
+        assert params.sigma_bp == -1
         assert params.e_bp == 0
         assert params.sigma_r_phi_z == 1
         assert params.sigma_rho_theta_phi == -1

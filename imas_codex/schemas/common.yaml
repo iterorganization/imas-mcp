@@ -716,6 +716,36 @@ classes:
         description: >-
           Human-readable summary (e.g., "COCOS 11: σBp=+1, eBp=1,
           σRφZ=+1, σρθφ=+1 — ITER/IMAS DD v3.x convention")
+      phi_increasing_ccw:
+        description: >-
+          Whether toroidal angle φ increases counter-clockwise when viewed
+          from above. Derived from σRφZ: true for σRφZ=+1, false for σRφZ=-1.
+        range: boolean
+      theta_increasing_cw:
+        description: >-
+          Whether poloidal angle θ increases clockwise when viewed from the
+          outboard side (looking inward). Derived from the product σρθφ·σRφZ:
+          true when they have the same sign (right-handed poloidal with CCW φ,
+          or left-handed poloidal with CW φ).
+        range: boolean
+      psi_increasing_outward:
+        description: >-
+          Whether poloidal flux ψ increases from magnetic axis to edge for
+          positive plasma current. Derived from σBp: true for σBp=+1,
+          false for σBp=-1.
+        range: boolean
+      sign_q:
+        description: >-
+          Sign of safety factor q for co-current toroidal field
+          (σIp·σB0 > 0). From Sauter Eq. 23: sign(q) = σIp·σB0·σρθφ,
+          so for co-current: sign(q) = σρθφ.
+        range: integer
+      sign_dp_dpsi:
+        description: >-
+          Sign of pressure gradient dp/dψ for positive plasma current.
+          From Sauter Eq. 23: sign(dp/dψ) = -σIp·σBp, so for positive
+          Ip: sign(dp/dψ) = -σBp.
+        range: integer
 
   SignConvention:
     description: >-

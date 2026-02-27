@@ -2188,6 +2188,17 @@ classes:
         range: float
       transformation:
         description: Complex transformation expression if scale is insufficient
+      cocos_source:
+        description: >-
+          COCOS convention of the source data (1-18). References the COCOS
+          node for the facility signal's coordinate convention.
+        range: integer
+      cocos_target:
+        description: >-
+          COCOS convention of the target IMAS path (1-18). Typically 17 for
+          IMAS DD v4.x, 11 for DD v3.x. When cocos_source != cocos_target,
+          the transformation must include COCOS conversion factors.
+        range: integer
       
       # Validation and provenance
       validated:
