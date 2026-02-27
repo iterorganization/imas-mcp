@@ -902,6 +902,8 @@ class MediaWikiAdapter(WikiAdapter):
         artifacts: list[DiscoveredArtifact],
         api_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
+        *,
+        max_retries: int = 3,
     ) -> None:
         """Enrich artifacts with page links via SSH using prop=fileusage API.
 
@@ -909,12 +911,17 @@ class MediaWikiAdapter(WikiAdapter):
         into prop=fileusage requests (50 files per batch). This is
         O(num_artifacts / 50) instead of O(all_pages * images_per_page).
 
+        Retries each batch up to max_retries times on transient failures
+        (SSH timeout, non-zero exit, invalid JSON).
+
         Args:
             artifacts: Discovered artifacts to enrich (modified in place)
             api_url: Working MediaWiki API URL
             on_progress: Optional progress callback
+            max_retries: Max retries per batch on transient failure
         """
         import json
+        import time
 
         # Build case-insensitive filename -> artifact lookup
         artifact_by_name: dict[str, list[DiscoveredArtifact]] = {}
@@ -931,7 +938,9 @@ class MediaWikiAdapter(WikiAdapter):
 
         linked_count = 0
         batch = 0
+        failed_batches = 0
         batch_size = 50  # MediaWiki titles limit per request
+        total_batches = (len(file_titles) + batch_size - 1) // batch_size
 
         for i in range(0, len(file_titles), batch_size):
             title_batch = file_titles[i : i + batch_size]
@@ -939,6 +948,7 @@ class MediaWikiAdapter(WikiAdapter):
 
             # Use prop=fileusage to find pages that embed these files
             continue_params: dict[str, str] = {}
+            batch_num = i // batch_size
 
             while True:
                 params = {
@@ -957,50 +967,69 @@ class MediaWikiAdapter(WikiAdapter):
                 url = f"{api_url}?{param_str}"
                 cmd = f'curl -sk "{url}"'
 
-                try:
-                    result = subprocess.run(
-                        ["ssh", self.ssh_host, cmd],
-                        capture_output=True,
-                        text=True,
-                        timeout=60,
-                    )
-                    if result.returncode != 0:
-                        logger.warning(
-                            "fileusage API failed (rc=%d, batch %d): %s",
-                            result.returncode,
-                            i // batch_size,
-                            result.stderr[:200] if result.stderr else "no stderr",
+                data = None
+                for attempt in range(max_retries):
+                    try:
+                        result = subprocess.run(
+                            ["ssh", self.ssh_host, cmd],
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
                         )
-                        break
+                        if result.returncode != 0:
+                            logger.warning(
+                                "fileusage API failed (rc=%d, batch %d, attempt %d): %s",
+                                result.returncode,
+                                batch_num,
+                                attempt + 1,
+                                result.stderr[:200] if result.stderr else "no stderr",
+                            )
+                            if attempt < max_retries - 1:
+                                time.sleep(2**attempt)
+                            continue
 
-                    stdout = result.stdout.strip()
-                    if stdout.startswith("<!") or stdout.startswith("<html"):
+                        stdout = result.stdout.strip()
+                        if stdout.startswith("<!") or stdout.startswith("<html"):
+                            logger.warning(
+                                "fileusage API returned HTML instead of JSON "
+                                "(batch %d, attempt %d, likely auth redirect)",
+                                batch_num,
+                                attempt + 1,
+                            )
+                            break  # HTML response won't change on retry
+
+                        data = json.loads(stdout)
+                        break  # Success
+                    except subprocess.TimeoutExpired:
                         logger.warning(
-                            "fileusage API returned HTML instead of JSON "
-                            "(batch %d, likely auth redirect). "
-                            "Artifact-page linking will be incomplete.",
-                            i // batch_size,
+                            "fileusage API timed out (batch %d, attempt %d)",
+                            batch_num,
+                            attempt + 1,
                         )
-                        break
+                        if attempt < max_retries - 1:
+                            time.sleep(2**attempt)
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            "fileusage API returned invalid JSON (batch %d, attempt %d): %s",
+                            batch_num,
+                            attempt + 1,
+                            e,
+                        )
+                        if attempt < max_retries - 1:
+                            time.sleep(2**attempt)
+                    except Exception as e:
+                        logger.warning(
+                            "fileusage API error (batch %d, attempt %d): %s",
+                            batch_num,
+                            attempt + 1,
+                            e,
+                        )
+                        if attempt < max_retries - 1:
+                            time.sleep(2**attempt)
 
-                    data = json.loads(stdout)
-                except subprocess.TimeoutExpired:
-                    logger.warning(
-                        "fileusage API timed out (batch %d)", i // batch_size
-                    )
-                    break
-                except json.JSONDecodeError as e:
-                    logger.warning(
-                        "fileusage API returned invalid JSON (batch %d): %s",
-                        i // batch_size,
-                        e,
-                    )
-                    break
-                except Exception as e:
-                    logger.warning(
-                        "fileusage API error (batch %d): %s", i // batch_size, e
-                    )
-                    break
+                if data is None:
+                    failed_batches += 1
+                    break  # All retries exhausted for this batch
 
                 pages = data.get("query", {}).get("pages", {})
                 for page_data in pages.values():
@@ -1023,18 +1052,27 @@ class MediaWikiAdapter(WikiAdapter):
                 else:
                     break
 
-            if on_progress and (i // batch_size) % 5 == 0:
+            if on_progress and batch_num % 5 == 0:
                 on_progress(
-                    f"enriching page links: batch {i // batch_size + 1}/"
-                    f"{(len(file_titles) + batch_size - 1) // batch_size}, "
+                    f"enriching page links: batch {batch_num + 1}/"
+                    f"{total_batches}, "
                     f"{linked_count} links",
                     None,
                 )
 
+        if failed_batches > 0:
+            logger.warning(
+                "Artifact-page linking incomplete: %d/%d batches failed "
+                "(re-run with --rescan-artifacts to retry)",
+                failed_batches,
+                total_batches,
+            )
+
         logger.info(
-            "Enriched %d artifact-page links across %d API batches",
+            "Enriched %d artifact-page links across %d API batches (%d failed)",
             linked_count,
             batch,
+            failed_batches,
         )
 
     def _enrich_artifact_page_links_http(

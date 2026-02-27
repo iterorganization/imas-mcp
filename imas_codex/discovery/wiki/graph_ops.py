@@ -754,16 +754,13 @@ def mark_pages_ingested(
     """Mark pages as ingested with chunk data.
 
     Uses batched UNWIND for O(1) graph operations instead of O(n) individual queries.
+    Does NOT overwrite chunk_count — the pipeline sets it when persisting chunks.
     """
     if not results:
         return 0
 
     # Prepare batch data
-    batch_data = [
-        {"id": r.get("id"), "chunks": r.get("chunk_count", 0)}
-        for r in results
-        if r.get("id")
-    ]
+    batch_data = [{"id": r.get("id")} for r in results if r.get("id")]
 
     if not batch_data:
         return 0
@@ -774,7 +771,6 @@ def mark_pages_ingested(
             UNWIND $batch AS item
             MATCH (wp:WikiPage {id: item.id})
             SET wp.status = $ingested,
-                wp.chunk_count = item.chunks,
                 wp.ingested_at = datetime(),
                 wp.claimed_at = null
             """,

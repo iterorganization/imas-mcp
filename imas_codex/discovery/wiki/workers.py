@@ -392,6 +392,17 @@ async def ingest_worker(
                     confluence_client=shared_confluence_client,
                     prefetch_cache=getattr(state, "_prefetch_cache", None),
                 )
+                if chunk_count == 0:
+                    logger.warning(
+                        "Page %s produced 0 chunks (empty or unfetchable)", page_id
+                    )
+                    await asyncio.to_thread(
+                        mark_page_failed,
+                        page_id,
+                        "No chunks produced (empty or unfetchable content)",
+                        WikiPageStatus.scored.value,
+                    )
+                    return None
                 return {
                     "id": page_id,
                     "chunk_count": chunk_count,
@@ -1248,7 +1259,7 @@ async def _ingest_page(
         return chunks
     except Exception as e:
         logger.warning("Failed to ingest %s: %s", page_id, e)
-        return 0
+        raise
 
 
 # =============================================================================
