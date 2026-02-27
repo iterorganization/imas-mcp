@@ -12,9 +12,8 @@ Design principles (matching paths, signals, wiki progress displays):
 Display layout: PIPELINE → RESOURCES
 - SCAN: SSH file enumeration from scored FacilityPaths
 - SCORE: LLM batch scoring of discovered SourceFiles
-- ENRICH: rg pattern matching on scored files
-- INGEST: Fetch, chunk, embed (code + docs combined)
-- IMAGE: Image download + VLM captioning/scoring
+- CODE: Fetch, chunk, embed high-scoring code files
+- DOCS: Ingest documents, notebooks, configs
 
 Uses common pipeline infrastructure from base.progress module.
 """
@@ -36,9 +35,7 @@ from imas_codex.discovery.base.progress import (
     StreamQueue,
     build_pipeline_section,
     build_resource_section,
-    clean_text,
     clip_path,
-    clip_text,
     format_time,
 )
 
@@ -66,34 +63,39 @@ class ScoreItem:
     path: str
     score: float | None = None
     category: str = ""  # code, document, notebook, config
-    description: str = ""  # LLM reasoning about what the file contains
-    skipped: bool = False  # LLM says skip this file
 
 
 @dataclass
-class EnrichItem:
-    """Current enrich activity."""
+class CodeItem:
+    """Current code ingestion activity."""
 
     path: str
-    patterns: int = 0  # total pattern matches
-
-
-@dataclass
-class IngestItem:
-    """Current ingestion activity (code or docs)."""
-
-    path: str
+    chunks: int = 0
     language: str = ""
-    file_type: str = ""  # code, document, notebook, config
+
+
+@dataclass
+class DocsItem:
+    """Current docs ingestion activity."""
+
+    path: str
+    file_type: str = ""  # document, notebook, config
 
 
 @dataclass
 class ImageItem:
-    """Current image activity (fetch + VLM score)."""
+    """Current image ingestion activity."""
 
     path: str
     size: str = ""  # e.g. "768x512"
-    score: str = ""  # VLM score e.g. "0.85"
+
+
+@dataclass
+class ImageScoreItem:
+    """Current VLM image scoring activity."""
+
+    path: str
+    score: str = ""  # e.g. "0.85"
 
 
 # =============================================================================
@@ -121,10 +123,6 @@ class FileProgressState:
     skipped: int = 0
     pending_score: int = 0
     pending_ingest: int = 0
-    scored_count: int = 0
-    enriched_count: int = 0
-    total_images: int = 0
-    scored_images: int = 0
     code_files: int = 0
     document_files: int = 0
     notebook_files: int = 0
@@ -133,7 +131,6 @@ class FileProgressState:
     # This run stats
     run_scanned: int = 0
     run_scored: int = 0
-    run_skipped: int = 0
     run_enriched: int = 0
     run_code_ingested: int = 0
     run_docs_ingested: int = 0
@@ -155,14 +152,17 @@ class FileProgressState:
     # Current items
     current_scan: ScanItem | None = None
     current_score: ScoreItem | None = None
-    current_enrich: EnrichItem | None = None
-    current_ingest: IngestItem | None = None
+    current_code: CodeItem | None = None
+    current_docs: DocsItem | None = None
     current_image: ImageItem | None = None
+    current_image_score: ImageScoreItem | None = None
     scan_processing: bool = False
     score_processing: bool = False
     enrich_processing: bool = False
-    ingest_processing: bool = False
+    code_processing: bool = False
+    docs_processing: bool = False
     image_processing: bool = False
+    image_score_processing: bool = False
 
     # Streaming queues
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
@@ -171,12 +171,12 @@ class FileProgressState:
             rate=0.5, max_rate=2.0, min_display_time=0.4
         )
     )
-    enrich_queue: StreamQueue = field(
+    code_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=2.5, min_display_time=0.4
+            rate=0.5, max_rate=2.0, min_display_time=0.4
         )
     )
-    ingest_queue: StreamQueue = field(
+    docs_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.5, max_rate=2.0, min_display_time=0.4
         )
@@ -186,31 +186,14 @@ class FileProgressState:
             rate=0.5, max_rate=2.0, min_display_time=0.4
         )
     )
+    image_score_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.5, max_rate=2.0, min_display_time=0.4
+        )
+    )
 
     # Tracking
     start_time: float = field(default_factory=time.time)
-
-    @property
-    def run_ingest_total(self) -> int:
-        """Combined code + docs ingested this run."""
-        return self.run_code_ingested + self.run_docs_ingested
-
-    @property
-    def run_image_total(self) -> int:
-        """Combined image ingested + scored this run."""
-        return self.run_images_ingested + self.run_images_scored
-
-    @property
-    def ingest_rate(self) -> float | None:
-        """Combined code + docs rate."""
-        rates = [r for r in [self.code_rate, self.docs_rate] if r]
-        return sum(rates) if rates else None
-
-    @property
-    def combined_image_rate(self) -> float | None:
-        """Combined image + vlm rate."""
-        rates = [r for r in [self.image_rate, self.image_score_rate] if r]
-        return sum(rates) if rates else None
 
     @property
     def elapsed(self) -> float:
@@ -257,10 +240,9 @@ class FileProgressState:
         if self.score_rate and self.score_rate > 0 and self.pending_score > 0:
             etas.append(self.pending_score / self.score_rate)
 
-        # Ingest pipeline ETA
-        ingest_rate = self.ingest_rate
-        if ingest_rate and ingest_rate > 0 and self.pending_ingest > 0:
-            etas.append(self.pending_ingest / ingest_rate)
+        # Code pipeline ETA
+        if self.code_rate and self.code_rate > 0 and self.pending_ingest > 0:
+            etas.append(self.pending_ingest / self.code_rate)
 
         return max(etas) if etas else None
 
@@ -274,8 +256,8 @@ class FileProgressDisplay(BaseProgressDisplay):
     """Clean progress display for parallel file discovery.
 
     Extends ``BaseProgressDisplay`` for the file discovery pipeline
-    (SCAN -> SCORE -> ENRICH -> INGEST -> IMAGE).  Inherits header, servers,
-    worker tracking, and live-display lifecycle from the base class.
+    (SCAN → SCORE → CODE → DOCS).  Inherits header, servers, worker
+    tracking, and live-display lifecycle from the base class.
     """
 
     def __init__(
@@ -318,7 +300,7 @@ class FileProgressDisplay(BaseProgressDisplay):
           Line 2:        /home/codes/liuqe/src
           Line 3:        45 files found
 
-        Stages: SCAN -> SCORE -> ENRICH -> INGEST -> IMAGE
+        Stages: SCAN → SCORE → CODE → DOCS
         """
         content_width = self.width - 6
 
@@ -327,65 +309,55 @@ class FileProgressDisplay(BaseProgressDisplay):
         # SCAN: files discovered / total from paths
         scan_total = max(self.state.total, 1)
 
-        # SCORE: files scored (graph) / total needing scoring
-        score_completed = self.state.scored_count
-        score_total = max(self.state.total, 1)
+        # SCORE: files scored / total needing scoring
+        score_total = max(self.state.pending_score + self.state.run_scored, 1)
 
-        # ENRICH: enriched (graph) / scored (all scored files need enriching)
-        enrich_completed = self.state.enriched_count
-        enrich_total = max(self.state.scored_count, 1)
+        # CODE: code files ingested / total code files
+        code_total = max(self.state.code_files, 1)
 
-        # INGEST: ingested (graph) / total needing ingestion
-        ingest_completed = self.state.ingested
-        ingest_total = max(self.state.ingested + self.state.pending_ingest, 1)
-
-        # IMAGE: scored images (graph) / total images
-        image_completed = self.state.scored_images
-        image_total = max(self.state.total_images, 1)
+        # DOCS: non-code files ingested
+        docs_total = max(
+            self.state.document_files
+            + self.state.notebook_files
+            + self.state.config_files,
+            1,
+        )
 
         # Score cost for display
         score_cost = (
             self.state._run_score_cost if self.state._run_score_cost > 0 else None
         )
 
-        # Combined image cost (VLM)
-        image_cost = self.state._run_vlm_cost if self.state._run_vlm_cost > 0 else None
-
         # Worker counts per group
         scan_count, scan_ann = self._count_group_workers("scan")
         score_count, score_ann = self._count_group_workers("triage")
-        enrich_count, enrich_ann = self._count_group_workers("enrich")
-        # Combine code + docs workers for ingest display
         code_count, code_ann = self._count_group_workers("code")
         docs_count, docs_ann = self._count_group_workers("docs")
-        ingest_count = code_count + docs_count
-        ingest_ann = code_ann or docs_ann
-        # Combine image + vlm workers
-        img_count, img_ann = self._count_group_workers("image")
+        image_count, image_ann = self._count_group_workers("image")
         vlm_count, vlm_ann = self._count_group_workers("vlm")
-        image_worker_count = img_count + vlm_count
-        image_worker_ann = img_ann or vlm_ann
+
+        # IMAGE: image files ingested
+        image_total = max(self.state.run_images_ingested, 1)
+
+        # VLM: images scored
+        vlm_total = max(self.state.run_images_scored, 1)
 
         # --- Build activity data ---
 
         scan = self.state.current_scan
         score = self.state.current_score
-        enrich = self.state.current_enrich
-        ingest = self.state.current_ingest
+        code = self.state.current_code
+        docs = self.state.current_docs
         image = self.state.current_image
+        image_score = self.state.current_image_score
 
         # Worker completion detection
         scan_complete = self._worker_complete("scan") and not scan
         score_complete = self._worker_complete("triage") and not score
-        enrich_complete = self._worker_complete("enrich") and not enrich
-        code_complete = self._worker_complete("code")
-        docs_complete = self._worker_complete("docs")
-        ingest_complete = code_complete and docs_complete and not ingest
-        image_complete = (
-            self._worker_complete("image")
-            and self._worker_complete("vlm")
-            and not image
-        )
+        code_complete = self._worker_complete("code") and not code
+        docs_complete = self._worker_complete("docs") and not docs
+        image_complete = self._worker_complete("image") and not image
+        vlm_complete = self._worker_complete("vlm") and not image_score
 
         # SCAN activity
         scan_text = ""
@@ -395,25 +367,13 @@ class FileProgressDisplay(BaseProgressDisplay):
             if scan.files_found > 0:
                 scan_detail = [(f"{scan.files_found} files found", "cyan")]
 
-        # SCORE activity (with [category] + description like paths shows purpose)
+        # SCORE activity
         score_text = ""
         score_detail: list[tuple[str, str]] | None = None
         if score:
             score_text = clip_path(score.path, content_width - 10)
             parts: list[tuple[str, str]] = []
-            if score.skipped:
-                parts.append(("skip", "yellow"))
-                if score.category:
-                    parts.append((f"  [{score.category}]", "dim"))
-                if score.description:
-                    desc = clean_text(score.description)
-                    parts.append(
-                        (
-                            f"  {clip_text(desc, min(content_width - 20, 55))}",
-                            "italic dim",
-                        )
-                    )
-            elif score.score is not None:
+            if score.score is not None:
                 style = (
                     "bold green"
                     if score.score >= 0.7
@@ -422,60 +382,55 @@ class FileProgressDisplay(BaseProgressDisplay):
                     else "red"
                 )
                 parts.append((f"{score.score:.2f}", style))
-                if score.category:
-                    parts.append((f"  [{score.category}]", "cyan dim"))
-
-                desc_width = content_width - 20
-                if score.description:
-                    desc = clean_text(score.description)
-                    parts.append(
-                        (
-                            f"  {clip_text(desc, min(desc_width, 55))}",
-                            "italic dim",
-                        )
-                    )
-            elif score.category:
-                parts.append((f"[{score.category}]", "dim"))
+            if score.category:
+                parts.append((f"  {score.category}", "dim"))
             score_detail = parts or None
 
-        # ENRICH activity
-        enrich_text = ""
-        enrich_detail: list[tuple[str, str]] | None = None
-        if enrich:
-            enrich_text = clip_path(enrich.path, content_width - 10)
-            if enrich.patterns > 0:
-                enrich_detail = [(f"{enrich.patterns} patterns", "cyan")]
-
-        # INGEST activity (combined code + docs)
-        ingest_text = ""
-        ingest_detail: list[tuple[str, str]] | None = None
-        if ingest:
-            ingest_text = clip_path(ingest.path, content_width - 10)
+        # CODE activity
+        code_text = ""
+        code_detail: list[tuple[str, str]] | None = None
+        if code:
+            code_text = clip_path(code.path, content_width - 10)
             parts = []
-            if ingest.language:
-                parts.append((f"[{ingest.language}]", "green dim"))
-            elif ingest.file_type:
-                parts.append((f"[{ingest.file_type}]", "dim"))
-            ingest_detail = parts or None
+            if code.chunks > 0:
+                parts.append((f"{code.chunks} chunks", "cyan"))
+            if code.language:
+                parts.append((f"  [{code.language}]", "green dim"))
+            code_detail = parts or None
 
-        # IMAGE activity (combined fetch + VLM)
+        # DOCS activity
+        docs_text = ""
+        docs_detail: list[tuple[str, str]] | None = None
+        if docs:
+            docs_text = clip_path(docs.path, content_width - 10)
+            if docs.file_type:
+                docs_detail = [(docs.file_type, "dim")]
+
+        # IMAGE activity
         image_text = ""
         image_detail: list[tuple[str, str]] | None = None
         if image:
             image_text = clip_path(image.path, content_width - 10)
-            parts = []
-            if image.score:
+            if image.size:
+                image_detail = [(image.size, "cyan")]
+
+        # VLM activity
+        vlm_text = ""
+        vlm_detail: list[tuple[str, str]] | None = None
+        if image_score:
+            vlm_text = clip_path(image_score.path, content_width - 10)
+            if image_score.score:
                 style = (
                     "bold green"
-                    if float(image.score) >= 0.7
+                    if float(image_score.score) >= 0.7
                     else "yellow"
-                    if float(image.score) >= 0.4
+                    if float(image_score.score) >= 0.4
                     else "red"
                 )
-                parts.append((image.score, style))
-            if image.size:
-                parts.append((f"  {image.size}", "cyan"))
-            image_detail = parts or None
+                vlm_detail = [(image_score.score, style)]
+
+        # VLM cost
+        vlm_cost = self.state._run_vlm_cost if self.state._run_vlm_cost > 0 else None
 
         # --- Build pipeline rows ---
 
@@ -497,7 +452,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             PipelineRowConfig(
                 name="SCORE",
                 style="bold green",
-                completed=score_completed,
+                completed=self.state.run_scored,
                 total=score_total,
                 rate=self.state.score_rate,
                 cost=score_cost,
@@ -510,47 +465,61 @@ class FileProgressDisplay(BaseProgressDisplay):
                 worker_annotation=score_ann,
             ),
             PipelineRowConfig(
-                name="ENRICH",
-                style="bold white",
-                completed=enrich_completed,
-                total=enrich_total,
-                rate=self.state.enrich_rate,
+                name="CODE",
+                style="bold magenta",
+                completed=self.state.run_code_ingested,
+                total=code_total,
+                rate=self.state.code_rate,
                 disabled=self.state.scan_only or self.state.score_only,
-                primary_text=enrich_text,
-                detail_parts=enrich_detail,
-                is_processing=self.state.enrich_processing,
-                is_complete=enrich_complete,
-                worker_count=enrich_count,
-                worker_annotation=enrich_ann,
+                primary_text=code_text,
+                detail_parts=code_detail,
+                is_processing=self.state.code_processing,
+                is_complete=code_complete,
+                worker_count=code_count,
+                worker_annotation=code_ann,
             ),
             PipelineRowConfig(
-                name="INGEST",
-                style="bold magenta",
-                completed=ingest_completed,
-                total=ingest_total,
-                rate=self.state.ingest_rate,
+                name="DOCS",
+                style="bold yellow",
+                completed=self.state.run_docs_ingested,
+                total=docs_total,
+                rate=self.state.docs_rate,
                 disabled=self.state.scan_only or self.state.score_only,
-                primary_text=ingest_text,
-                detail_parts=ingest_detail,
-                is_processing=self.state.ingest_processing,
-                is_complete=ingest_complete,
-                worker_count=ingest_count,
-                worker_annotation=ingest_ann,
+                primary_text=docs_text,
+                detail_parts=docs_detail,
+                is_processing=self.state.docs_processing,
+                is_complete=docs_complete,
+                worker_count=docs_count,
+                worker_annotation=docs_ann,
             ),
             PipelineRowConfig(
                 name="IMAGE",
-                style="bold cyan",
-                completed=image_completed,
+                style="bold white",
+                completed=self.state.run_images_ingested,
                 total=image_total,
-                rate=self.state.combined_image_rate,
-                cost=image_cost,
+                rate=self.state.image_rate,
                 disabled=self.state.scan_only or self.state.score_only,
                 primary_text=image_text,
                 detail_parts=image_detail,
                 is_processing=self.state.image_processing,
                 is_complete=image_complete,
-                worker_count=image_worker_count,
-                worker_annotation=image_worker_ann,
+                worker_count=image_count,
+                worker_annotation=image_ann,
+            ),
+            PipelineRowConfig(
+                name="VLM",
+                style="bold cyan",
+                completed=self.state.run_images_scored,
+                total=vlm_total,
+                rate=self.state.image_score_rate,
+                cost=vlm_cost,
+                disabled=self.state.scan_only or self.state.score_only,
+                primary_text=vlm_text,
+                detail_parts=vlm_detail,
+                is_processing=self.state.image_score_processing,
+                is_complete=vlm_complete,
+                worker_count=vlm_count,
+                worker_annotation=vlm_ann,
             ),
         ]
         return build_pipeline_section(rows, self.bar_width)
@@ -662,14 +631,10 @@ class FileProgressDisplay(BaseProgressDisplay):
                 ScoreItem(
                     path=r.get("path", ""),
                     score=r.get("score"),
-                    category=r.get("category", r.get("file_category", "")),
-                    description=r.get("description", ""),
-                    skipped=r.get("skipped", False),
+                    category=r.get("file_category", ""),
                 )
                 for r in results
             ]
-            # Track skipped files
-            self.state.run_skipped += sum(1 for r in results if r.get("skipped"))
             max_rate = 2.0
             display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
             self.state.score_queue.add(items, display_rate)
@@ -688,22 +653,10 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         if "waiting" in message.lower() or "idle" in message.lower():
             self.state.enrich_processing = False
-        elif "enriching" in message.lower() or "enriched" in message.lower():
+        elif "enriching" in message.lower():
             self.state.enrich_processing = True
         else:
             self.state.enrich_processing = False
-
-        if results:
-            items = [
-                EnrichItem(
-                    path=r.get("path", ""),
-                    patterns=r.get("patterns", 0),
-                )
-                for r in results
-            ]
-            max_rate = 2.5
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.enrich_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -713,28 +666,31 @@ class FileProgressDisplay(BaseProgressDisplay):
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update code ingestion worker state (feeds into INGEST row)."""
+        """Update code ingestion worker state."""
         self.state.run_code_ingested = stats.processed
         self.state.code_rate = stats.rate
 
         if "waiting" in message.lower():
+            self.state.code_processing = False
             self._refresh()
             return
         elif "ingesting" in message.lower() or "fetching" in message.lower():
-            self.state.ingest_processing = True
+            self.state.code_processing = True
+        else:
+            self.state.code_processing = False
 
         if results:
             items = [
-                IngestItem(
+                CodeItem(
                     path=r.get("path", ""),
+                    chunks=r.get("chunks", 0),
                     language=r.get("language", ""),
-                    file_type="code",
                 )
                 for r in results
             ]
             max_rate = 2.0
             display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.ingest_queue.add(items, display_rate)
+            self.state.code_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -744,27 +700,30 @@ class FileProgressDisplay(BaseProgressDisplay):
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update docs ingestion worker state (feeds into INGEST row)."""
+        """Update docs ingestion worker state."""
         self.state.run_docs_ingested = stats.processed
         self.state.docs_rate = stats.rate
 
         if "waiting" in message.lower():
+            self.state.docs_processing = False
             self._refresh()
             return
         elif "ingesting" in message.lower():
-            self.state.ingest_processing = True
+            self.state.docs_processing = True
+        else:
+            self.state.docs_processing = False
 
         if results:
             items = [
-                IngestItem(
+                DocsItem(
                     path=r.get("path", ""),
-                    file_type=r.get("file_type", "document"),
+                    file_type=r.get("file_type", ""),
                 )
                 for r in results
             ]
             max_rate = 2.0
             display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.ingest_queue.add(items, display_rate)
+            self.state.docs_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -774,7 +733,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update image ingestion worker state (feeds into IMAGE row)."""
+        """Update image ingestion worker state."""
         self.state.run_images_ingested = stats.processed
         self.state.image_rate = stats.rate
 
@@ -807,23 +766,23 @@ class FileProgressDisplay(BaseProgressDisplay):
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update VLM image scoring worker state (feeds into IMAGE row)."""
+        """Update VLM image scoring worker state."""
         self.state.run_images_scored = stats.processed
         self.state.image_score_rate = stats.rate
         self.state._run_vlm_cost = stats.cost
 
         if "idle" in message.lower():
-            self.state.image_processing = False
+            self.state.image_score_processing = False
             self._refresh()
             return
         elif "scoring" in message.lower():
-            self.state.image_processing = True
+            self.state.image_score_processing = True
         else:
-            self.state.image_processing = False
+            self.state.image_score_processing = False
 
         if results:
             items = [
-                ImageItem(
+                ImageScoreItem(
                     path=r.get("path", ""),
                     score=r.get("score", ""),
                 )
@@ -831,7 +790,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             ]
             max_rate = 2.0
             display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.image_queue.add(items, display_rate)
+            self.state.image_score_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -847,10 +806,6 @@ class FileProgressDisplay(BaseProgressDisplay):
         self.state.skipped = stats["skipped"]
         self.state.pending_score = stats["pending_score"]
         self.state.pending_ingest = stats["pending_ingest"]
-        self.state.scored_count = stats["scored_count"]
-        self.state.enriched_count = stats["enriched_count"]
-        self.state.total_images = stats["total_images"]
-        self.state.scored_images = stats["scored_images"]
         self.state.code_files = stats["code_files"]
         self.state.document_files = stats["document_files"]
         self.state.notebook_files = stats["notebook_files"]
@@ -877,24 +832,20 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.current_score = None
             updated = True
 
-        next_enrich = self.state.enrich_queue.pop()
-        if next_enrich:
-            self.state.current_enrich = next_enrich
+        next_code = self.state.code_queue.pop()
+        if next_code:
+            self.state.current_code = next_code
             updated = True
-        elif (
-            self.state.enrich_queue.is_stale() and self.state.current_enrich is not None
-        ):
-            self.state.current_enrich = None
+        elif self.state.code_queue.is_stale() and self.state.current_code is not None:
+            self.state.current_code = None
             updated = True
 
-        next_ingest = self.state.ingest_queue.pop()
-        if next_ingest:
-            self.state.current_ingest = next_ingest
+        next_docs = self.state.docs_queue.pop()
+        if next_docs:
+            self.state.current_docs = next_docs
             updated = True
-        elif (
-            self.state.ingest_queue.is_stale() and self.state.current_ingest is not None
-        ):
-            self.state.current_ingest = None
+        elif self.state.docs_queue.is_stale() and self.state.current_docs is not None:
+            self.state.current_docs = None
             updated = True
 
         next_image = self.state.image_queue.pop()
@@ -903,6 +854,17 @@ class FileProgressDisplay(BaseProgressDisplay):
             updated = True
         elif self.state.image_queue.is_stale() and self.state.current_image is not None:
             self.state.current_image = None
+            updated = True
+
+        next_vlm = self.state.image_score_queue.pop()
+        if next_vlm:
+            self.state.current_image_score = next_vlm
+            updated = True
+        elif (
+            self.state.image_score_queue.is_stale()
+            and self.state.current_image_score is not None
+        ):
+            self.state.current_image_score = None
             updated = True
 
         if updated:
@@ -934,38 +896,39 @@ class FileProgressDisplay(BaseProgressDisplay):
         # SCORE stats
         summary.append("  SCORE    ", style="bold green")
         summary.append(f"scored={self.state.run_scored:,}", style="green")
-        if self.state.run_skipped > 0:
-            summary.append(f"  skipped={self.state.run_skipped:,}", style="yellow")
-        summary.append(f"  cost=${self.state._run_score_cost:.3f}", style="yellow")
+        summary.append(f"  cost=${self.state.run_cost:.3f}", style="yellow")
         if self.state.score_rate:
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # ENRICH stats
-        summary.append("  ENRICH   ", style="bold white")
-        summary.append(f"enriched={self.state.run_enriched:,}", style="white")
-        if self.state.enrich_rate:
-            summary.append(f"  {self.state.enrich_rate:.1f}/s", style="dim")
+        # CODE stats
+        summary.append("  CODE     ", style="bold magenta")
+        summary.append(f"ingested={self.state.run_code_ingested:,}", style="magenta")
+        if self.state.code_rate:
+            summary.append(f"  {self.state.code_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # INGEST stats (combined code + docs)
-        summary.append("  INGEST   ", style="bold magenta")
-        summary.append(f"code={self.state.run_code_ingested:,}", style="magenta")
-        summary.append(f"  docs={self.state.run_docs_ingested:,}", style="yellow")
-        ingest_rate = self.state.ingest_rate
-        if ingest_rate:
-            summary.append(f"  {ingest_rate:.1f}/s", style="dim")
+        # DOCS stats
+        summary.append("  DOCS     ", style="bold yellow")
+        summary.append(f"ingested={self.state.run_docs_ingested:,}", style="yellow")
+        if self.state.docs_rate:
+            summary.append(f"  {self.state.docs_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # IMAGE stats (combined image + VLM)
-        summary.append("  IMAGE    ", style="bold cyan")
-        summary.append(f"ingested={self.state.run_images_ingested:,}", style="cyan")
-        summary.append(f"  scored={self.state.run_images_scored:,}", style="cyan")
+        # IMAGE stats
+        summary.append("  IMAGE    ", style="bold white")
+        summary.append(f"ingested={self.state.run_images_ingested:,}", style="white")
+        if self.state.image_rate:
+            summary.append(f"  {self.state.image_rate:.1f}/s", style="dim")
+        summary.append("\n")
+
+        # VLM stats
+        summary.append("  VLM      ", style="bold cyan")
+        summary.append(f"scored={self.state.run_images_scored:,}", style="cyan")
         if self.state._run_vlm_cost > 0:
             summary.append(f"  cost=${self.state._run_vlm_cost:.3f}", style="yellow")
-        combined_rate = self.state.combined_image_rate
-        if combined_rate:
-            summary.append(f"  {combined_rate:.1f}/s", style="dim")
+        if self.state.image_score_rate:
+            summary.append(f"  {self.state.image_score_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # USAGE stats
