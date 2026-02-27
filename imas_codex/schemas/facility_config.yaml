@@ -444,6 +444,16 @@ classes:
           Complete list of all available subtrees (scanned and unscanned).
           Documentary only — used for reference and exploration notes.
         multivalued: true
+      static_trees:
+        description: >-
+          Static/machine-description trees that contain time-invariant data:
+          vessel geometry, coil positions, tile contours, magnetic probe
+          positions, Green's functions, and other constructional parameters.
+          These trees are versioned by machine configuration (e.g., baffle
+          changes) rather than shot number. Each entry configures one static
+          tree with its version range and accessor function.
+        multivalued: true
+        range: StaticTreeConfig
       reference_shot:
         description: Shot number for tree introspection and signal validation
         range: integer
@@ -463,6 +473,88 @@ classes:
           MDSplus node usage types to include (e.g., SIGNAL, NUMERIC).
           Default is SIGNAL only. NUMERIC nodes are typically
           configuration parameters, AXIS nodes are time bases.
+        multivalued: true
+
+  StaticTreeConfig:
+    description: >-
+      Configuration for a static/machine-description MDSplus tree. Static trees
+      contain time-invariant constructional data (vessel geometry, coil positions,
+      tile contours, flux loop positions, Green's functions). They are versioned
+      by machine configuration changes (baffle installations, port modifications)
+      rather than shot number. Data is accessed via a TDI accessor function
+      (e.g., static("r_c")) that selects the correct version for a given shot.
+    class_uri: fc:StaticTreeConfig
+    attributes:
+      tree_name:
+        description: >-
+          MDSplus tree name (e.g., "static"). Opened with specific version
+          shot numbers rather than experimental shot numbers.
+        required: true
+      accessor_function:
+        description: >-
+          TDI function that abstracts version selection (e.g., "static").
+          Called as accessor("tag") to get data from the correct version
+          based on the currently open experimental shot.
+      versions:
+        description: >-
+          Known version numbers and their first applicable shot. List of
+          {version: N, first_shot: M, description: "..."} mappings.
+          Used to enumerate all versions for complete extraction.
+        multivalued: true
+        range: StaticTreeVersion
+      systems:
+        description: >-
+          Named subsystems within the static tree. Each system groups related
+          parameters (e.g., coils, vessel, tiles, flux loops, magnetic probes).
+          System symbols are used in tag construction: <parameter>_<system>.
+        multivalued: true
+        range: StaticTreeSystem
+      extract_values:
+        description: >-
+          Whether to extract actual numerical values (R/Z coordinates, matrices)
+          in addition to tree structure. Required for machine description
+          persistence. Default false (structure-only for regular signal trees).
+        range: boolean
+
+  StaticTreeVersion:
+    description: >-
+      A version of a static tree, corresponding to a machine configuration.
+    class_uri: fc:StaticTreeVersion
+    attributes:
+      version:
+        description: Version number (1-based)
+        required: true
+        range: integer
+      first_shot:
+        description: First shot where this version applies
+        range: integer
+      description:
+        description: Machine configuration description (e.g., "Belt limiter removed")
+
+  StaticTreeSystem:
+    description: >-
+      A named subsystem within a static tree. Groups related mechanical
+      or electromagnetic parameters.
+    class_uri: fc:StaticTreeSystem
+    attributes:
+      symbol:
+        description: >-
+          Short symbol used in tag construction (e.g., "C" for coils,
+          "V" for vessel, "M" for magnetic probes).
+        required: true
+      name:
+        description: Human-readable name (e.g., "Poloidal field coils")
+        required: true
+      description:
+        description: What this system contains
+      size:
+        description: Number of elements (e.g., 29 coils, 256 vessel filaments)
+        range: integer
+      parameters:
+        description: >-
+          Mechanical/geometric parameters available for this system.
+          Each is a tag prefix: R (radial), Z (vertical), ANG (angle),
+          PERIM (perimeter), W/H (width/height), N (count), etc.
         multivalued: true
 
   PPFConfig:

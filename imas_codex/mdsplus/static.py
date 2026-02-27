@@ -1,0 +1,522 @@
+"""Static/machine-description tree extraction and ingestion.
+
+Extracts time-invariant constructional data from MDSplus static trees:
+vessel geometry, coil positions, tile contours, magnetic probe positions,
+flux loop positions, Green's functions, and mesh grids.
+
+Static trees differ from shot-dependent signal trees:
+- Versioned by machine configuration, not by shot-to-shot changes
+- Opened by version number (shot=1..N), not experimental shot number
+- Contain geometry and parameters that change only during shutdowns
+
+Generic: works with any facility that has static_trees configured
+in its facility YAML.
+
+Usage:
+    from imas_codex.mdsplus.static import discover_static_tree, ingest_static_tree
+    from imas_codex.graph import GraphClient
+
+    # Extract from facility
+    data = discover_static_tree("tcv", "static", versions=[1,2,3,4,5,6,7,8])
+
+    # Ingest to Neo4j
+    with GraphClient() as client:
+        ingest_static_tree(client, "tcv", data)
+"""
+
+import json
+import logging
+from typing import TYPE_CHECKING, Any
+
+from imas_codex.mdsplus.ingestion import compute_canonical_path, normalize_mdsplus_path
+from imas_codex.remote.executor import run_python_script
+
+if TYPE_CHECKING:
+    from imas_codex.graph import GraphClient
+
+logger = logging.getLogger(__name__)
+
+
+def get_static_tree_config(facility: str) -> list[dict[str, Any]]:
+    """Load static_trees config from facility YAML.
+
+    Args:
+        facility: Facility identifier (e.g., "tcv")
+
+    Returns:
+        List of static tree config dicts, or empty list if none configured.
+    """
+    from imas_codex.discovery.base.facility import get_facility
+
+    config = get_facility(facility)
+    data_sources = config.get("data_sources", {})
+    mdsplus = data_sources.get("mdsplus", {})
+    return mdsplus.get("static_trees", [])
+
+
+def discover_static_tree(
+    facility: str,
+    tree_name: str,
+    versions: list[int] | None = None,
+    extract_values: bool = False,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    """Extract static tree structure and values from a remote facility.
+
+    Runs a remote Python script via SSH that opens each version of the
+    static tree and extracts nodes, tags, and optionally numerical values.
+
+    Args:
+        facility: SSH host alias (e.g., "tcv")
+        tree_name: MDSplus tree name (e.g., "static")
+        versions: Version numbers to extract (default: all from config)
+        extract_values: Whether to extract numerical data (R/Z, matrices)
+        timeout: SSH timeout in seconds
+
+    Returns:
+        Dict with version data, structural diffs, and tag mappings.
+        Structure: {"tree_name": str, "versions": {ver: {...}}, "diff": {...}}
+    """
+    if versions is None:
+        configs = get_static_tree_config(facility)
+        for cfg in configs:
+            if cfg.get("tree_name") == tree_name:
+                ver_list = cfg.get("versions", [])
+                versions = [v["version"] for v in ver_list]
+                if cfg.get("extract_values") is not None:
+                    extract_values = cfg["extract_values"]
+                break
+        if versions is None:
+            versions = [1]
+
+    # Get exclude_names from facility config
+    from imas_codex.discovery.base.facility import get_facility
+
+    config = get_facility(facility)
+    mdsplus = config.get("data_sources", {}).get("mdsplus", {})
+    exclude_names = mdsplus.get("exclude_node_names", [])
+
+    # Get setup_commands from facility config
+    setup_commands = mdsplus.get("setup_commands")
+
+    input_data = {
+        "tree_name": tree_name,
+        "versions": versions,
+        "extract_values": extract_values,
+        "exclude_names": exclude_names,
+    }
+
+    logger.info(
+        "Extracting static tree %s from %s (versions=%s, values=%s)",
+        tree_name,
+        facility,
+        versions,
+        extract_values,
+    )
+
+    output = run_python_script(
+        "extract_static_tree.py",
+        input_data=input_data,
+        ssh_host=facility,
+        timeout=timeout,
+        setup_commands=setup_commands,
+    )
+
+    data = json.loads(output)
+
+    # Log summary
+    for ver_str, ver_data in data.get("versions", {}).items():
+        if "error" in ver_data:
+            logger.warning("Version %s: %s", ver_str, ver_data["error"])
+        else:
+            logger.info(
+                "Version %s: %d nodes, %d tags",
+                ver_str,
+                ver_data.get("node_count", 0),
+                len(ver_data.get("tags", {})),
+            )
+
+    return data
+
+
+def ingest_static_tree(
+    client: "GraphClient",
+    facility: str,
+    data: dict[str, Any],
+    version_config: list[dict] | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Ingest static tree data into the Neo4j graph.
+
+    Creates:
+    - TreeModelVersion nodes for each static tree version
+    - TreeNode nodes with applicability ranges (first_shot/last_shot)
+    - INTRODUCED_IN / REMOVED_IN / AT_FACILITY relationships
+    - Tag metadata on TreeNodes
+
+    Args:
+        client: Neo4j GraphClient
+        facility: Facility identifier
+        data: Output from discover_static_tree()
+        version_config: Version configs with first_shot info (from facility YAML).
+            If None, loaded from facility config.
+        dry_run: If True, log but don't write
+
+    Returns:
+        Dict with counts: versions_created, nodes_created, values_stored
+    """
+    tree_name = data["tree_name"]
+    versions = data.get("versions", {})
+    diff = data.get("diff", {})
+
+    stats = {"versions_created": 0, "nodes_created": 0, "values_stored": 0}
+
+    if not versions:
+        logger.warning("No version data to ingest")
+        return stats
+
+    # Load version config for first_shot mapping
+    if version_config is None:
+        configs = get_static_tree_config(facility)
+        for cfg in configs:
+            if cfg.get("tree_name") == tree_name:
+                version_config = cfg.get("versions", [])
+                break
+    if version_config is None:
+        version_config = []
+
+    # Build first_shot lookup
+    first_shot_map: dict[int, int] = {}
+    description_map: dict[int, str] = {}
+    for vc in version_config:
+        ver = vc["version"]
+        if "first_shot" in vc:
+            first_shot_map[ver] = vc["first_shot"]
+        if "description" in vc:
+            description_map[ver] = vc["description"]
+
+    # Sort versions for last_shot computation
+    sorted_versions = sorted(first_shot_map.keys())
+
+    # Compute last_shot for each version (one before the next version starts)
+    last_shot_map: dict[int, int | None] = {}
+    for i, ver in enumerate(sorted_versions):
+        if i + 1 < len(sorted_versions):
+            next_first = first_shot_map[sorted_versions[i + 1]]
+            last_shot_map[ver] = next_first - 1
+        else:
+            last_shot_map[ver] = None  # Current version — no upper bound
+
+    # Phase 1: Create TreeModelVersion nodes
+    epoch_records = []
+    for ver_str, ver_data in versions.items():
+        if "error" in ver_data:
+            continue
+        ver_num = int(ver_str)
+        epoch_id = f"{facility}:{tree_name}:v{ver_num}"
+        first_shot = first_shot_map.get(ver_num, ver_num)  # Fallback to version number
+        last_shot = last_shot_map.get(ver_num)
+        desc = description_map.get(ver_num, "")
+
+        record = {
+            "id": epoch_id,
+            "facility_id": facility,
+            "tree_name": tree_name,
+            "version": ver_num,
+            "first_shot": first_shot,
+            "node_count": ver_data.get("node_count", 0),
+            "fingerprint": f"static_v{ver_num}",
+            "is_static": True,
+            "description": desc,
+        }
+        if last_shot is not None:
+            record["last_shot"] = last_shot
+
+        epoch_records.append(record)
+
+    if dry_run:
+        for rec in epoch_records:
+            logger.info(
+                "[DRY RUN] TreeModelVersion: %s (v%d, shots %d-%s) — %s",
+                rec["id"],
+                rec["version"],
+                rec["first_shot"],
+                rec.get("last_shot", "current"),
+                rec.get("description", ""),
+            )
+    else:
+        if epoch_records:
+            client.query(
+                """
+                UNWIND $epochs AS epoch
+                MERGE (v:TreeModelVersion {id: epoch.id})
+                SET v += epoch
+                WITH v, epoch
+                MATCH (f:Facility {id: epoch.facility_id})
+                MERGE (v)-[:AT_FACILITY]->(f)
+                """,
+                epochs=epoch_records,
+            )
+            # Create SUCCEEDS chain
+            for i in range(1, len(epoch_records)):
+                client.query(
+                    """
+                    MATCH (curr:TreeModelVersion {id: $curr_id})
+                    MATCH (prev:TreeModelVersion {id: $prev_id})
+                    MERGE (curr)-[:SUCCEEDS]->(prev)
+                    """,
+                    curr_id=epoch_records[i]["id"],
+                    prev_id=epoch_records[i - 1]["id"],
+                )
+
+    stats["versions_created"] = len(epoch_records)
+
+    # Phase 2: Build super tree — all nodes with applicability ranges
+    # Use the most complete version (last one) as the base
+    all_paths: dict[str, dict[str, Any]] = {}
+
+    for ver_str in sorted(versions.keys(), key=int):
+        ver_data = versions[ver_str]
+        if "error" in ver_data:
+            continue
+        ver_num = int(ver_str)
+        first_shot = first_shot_map.get(ver_num, ver_num)
+        epoch_id = f"{facility}:{tree_name}:v{ver_num}"
+
+        for node in ver_data.get("nodes", []):
+            path = node["path"]
+            if path not in all_paths:
+                all_paths[path] = {
+                    "first_seen_version": ver_num,
+                    "first_shot": first_shot,
+                    "introduced_version": epoch_id,
+                    "last_shot": None,
+                    "removed_version": None,
+                    "node": node,
+                }
+
+    # Mark removals from diff data
+    for ver_str, removed_paths in diff.get("removed", {}).items():
+        ver_num = int(ver_str)
+        epoch_id = f"{facility}:{tree_name}:v{ver_num}"
+        prev_first_shot = first_shot_map.get(ver_num, ver_num)
+        for path in removed_paths:
+            if path in all_paths and all_paths[path]["removed_version"] is None:
+                all_paths[path]["last_shot"] = prev_first_shot - 1
+                all_paths[path]["removed_version"] = epoch_id
+
+    # Build TreeNode records
+    node_records = []
+    value_records = []
+    for path, info in all_paths.items():
+        node = info["node"]
+        normalized = normalize_mdsplus_path(path)
+        canonical = compute_canonical_path(path)
+        node_id = f"{facility}:{tree_name}:{normalized}"
+
+        record: dict[str, Any] = {
+            "id": node_id,
+            "path": normalized,
+            "canonical_path": canonical,
+            "tree_name": tree_name,
+            "facility_id": facility,
+            "node_type": node.get("node_type", "STRUCTURE"),
+            "first_shot": info["first_shot"],
+            "introduced_version": info["introduced_version"],
+            "source": "static_tree_extraction",
+            "is_static": True,
+        }
+
+        if info["last_shot"] is not None:
+            record["last_shot"] = info["last_shot"]
+        if info["removed_version"] is not None:
+            record["removed_version"] = info["removed_version"]
+        if node.get("units"):
+            record["units"] = node["units"]
+        if node.get("description"):
+            record["description"] = node["description"]
+        if node.get("tags"):
+            record["tags"] = node["tags"]
+
+        # Parent path
+        parent = _compute_parent_path(normalized)
+        if parent:
+            record["parent_path"] = parent
+
+        node_records.append(record)
+
+        # Track values separately (don't store large arrays in Neo4j properties)
+        if node.get("value") is not None or node.get("value_summary") is not None:
+            val_record = {
+                "node_id": node_id,
+                "path": normalized,
+            }
+            if node.get("shape") is not None:
+                val_record["shape"] = node["shape"]
+            if node.get("dtype"):
+                val_record["dtype"] = node["dtype"]
+            if node.get("value") is not None:
+                val = node["value"]
+                # Store scalars and small arrays directly on the node
+                if isinstance(val, int | float):
+                    val_record["scalar_value"] = val
+                elif isinstance(val, list) and len(val) <= 100:
+                    val_record["array_value"] = val
+                # Large arrays: store shape/summary only
+            if node.get("value_summary"):
+                val_record["value_summary"] = node["value_summary"]
+            value_records.append(val_record)
+
+    if dry_run:
+        logger.info("[DRY RUN] Would create %d TreeNode records", len(node_records))
+        # Show samples by node type
+        by_type: dict[str, int] = {}
+        for r in node_records:
+            t = r.get("node_type", "STRUCTURE")
+            by_type[t] = by_type.get(t, 0) + 1
+        for t, count in sorted(by_type.items()):
+            logger.info("  %s: %d nodes", t, count)
+        if value_records:
+            logger.info("[DRY RUN] Would store values for %d nodes", len(value_records))
+    else:
+        # Batch insert TreeNodes
+        batch_size = 500
+        for i in range(0, len(node_records), batch_size):
+            batch = node_records[i : i + batch_size]
+            client.query(
+                """
+                UNWIND $nodes AS node
+                MERGE (n:TreeNode {path: node.path, facility_id: node.facility_id})
+                SET n.id = node.id,
+                    n.tree_name = node.tree_name,
+                    n.canonical_path = node.canonical_path,
+                    n.parent_path = node.parent_path,
+                    n.first_shot = node.first_shot,
+                    n.last_shot = node.last_shot,
+                    n.introduced_version = node.introduced_version,
+                    n.removed_version = node.removed_version,
+                    n.node_type = node.node_type,
+                    n.source = node.source,
+                    n.units = node.units,
+                    n.description = node.description,
+                    n.tags = node.tags,
+                    n.is_static = node.is_static
+                """,
+                nodes=batch,
+            )
+
+        # Store scalar values directly on nodes
+        scalar_batch = [v for v in value_records if "scalar_value" in v]
+        if scalar_batch:
+            client.query(
+                """
+                UNWIND $values AS val
+                MATCH (n:TreeNode {id: val.node_id})
+                SET n.scalar_value = val.scalar_value,
+                    n.shape = val.shape,
+                    n.dtype = val.dtype
+                """,
+                values=scalar_batch,
+            )
+
+        # Store small array values
+        array_batch = [v for v in value_records if "array_value" in v]
+        if array_batch:
+            client.query(
+                """
+                UNWIND $values AS val
+                MATCH (n:TreeNode {id: val.node_id})
+                SET n.array_value = val.array_value,
+                    n.shape = val.shape,
+                    n.dtype = val.dtype
+                """,
+                values=array_batch,
+            )
+
+        # Create relationships
+        client.query(
+            """
+            MATCH (n:TreeNode)
+            WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+              AND n.is_static = true
+            WITH n
+            MATCH (f:Facility {id: $facility})
+            MERGE (n)-[:AT_FACILITY]->(f)
+            """,
+            tree_name=tree_name,
+            facility=facility,
+        )
+
+        client.query(
+            """
+            MATCH (n:TreeNode)
+            WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+              AND n.is_static = true AND n.introduced_version IS NOT NULL
+            WITH n
+            MATCH (v:TreeModelVersion {id: n.introduced_version})
+            MERGE (n)-[:INTRODUCED_IN]->(v)
+            """,
+            tree_name=tree_name,
+            facility=facility,
+        )
+
+        client.query(
+            """
+            MATCH (n:TreeNode)
+            WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+              AND n.is_static = true AND n.removed_version IS NOT NULL
+            WITH n
+            MATCH (v:TreeModelVersion {id: n.removed_version})
+            MERGE (n)-[:REMOVED_IN]->(v)
+            """,
+            tree_name=tree_name,
+            facility=facility,
+        )
+
+        # Parent-child relationships
+        client.query(
+            """
+            MATCH (child:TreeNode)
+            WHERE child.tree_name = $tree_name AND child.facility_id = $facility
+              AND child.is_static = true AND child.parent_path IS NOT NULL
+            WITH child
+            MATCH (parent:TreeNode {path: child.parent_path, facility_id: $facility})
+            WHERE parent.tree_name = $tree_name
+            MERGE (parent)-[:HAS_NODE]->(child)
+            """,
+            tree_name=tree_name,
+            facility=facility,
+        )
+
+    stats["nodes_created"] = len(node_records)
+    stats["values_stored"] = len(value_records)
+
+    logger.info(
+        "Static tree %s:%s — %d versions, %d nodes, %d values",
+        facility,
+        tree_name,
+        stats["versions_created"],
+        stats["nodes_created"],
+        stats["values_stored"],
+    )
+
+    return stats
+
+
+def _compute_parent_path(path: str) -> str | None:
+    """Compute parent path for a tree node.
+
+    Examples:
+        \\STATIC::TOP.C.R -> \\STATIC::TOP.C
+        \\STATIC::TOP -> None
+    """
+    if "::" in path:
+        tree_part, node_part = path.split("::", 1)
+        if "." not in node_part:
+            return None
+        parent_node = ".".join(node_part.rsplit(".", 1)[:-1])
+        return f"{tree_part}::{parent_node}"
+    else:
+        if "." not in path:
+            return None
+        return ".".join(path.rsplit(".", 1)[:-1])

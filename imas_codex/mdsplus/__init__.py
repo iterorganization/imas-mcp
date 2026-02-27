@@ -56,6 +56,11 @@ from imas_codex.mdsplus.metadata import (
     enrich_graph_metadata,
     extract_metadata,
 )
+from imas_codex.mdsplus.static import (
+    discover_static_tree,
+    get_static_tree_config,
+    ingest_static_tree,
+)
 
 __all__ = [
     "BatchDiscovery",
@@ -66,11 +71,14 @@ __all__ = [
     "compute_canonical_path",
     "discover_epochs",
     "discover_epochs_optimized",
+    "discover_static_tree",
     "enrich_graph_metadata",
     "enrich_node_metadata",
     "extract_metadata",
+    "get_static_tree_config",
     "get_tree_structure",
     "ingest_epochs",
+    "ingest_static_tree",
     "ingest_super_tree",
     "merge_legacy_metadata",
     "normalize_mdsplus_path",

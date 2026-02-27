@@ -124,6 +124,89 @@ data_sources:
       - NODES_USED
       - TEST
       - TRIAL
+    # Static/machine-description trees containing time-invariant constructional data.
+    # These are separate MDSplus trees (not subtrees of tcv_shot) versioned by
+    # machine configuration changes. The STATIC tree was not discovered by signal
+    # discovery because it is not a subtree of tcv_shot — it is an independent
+    # tree opened by version number (shot=1..8), not by experimental shot number.
+    # Data is accessed via the TDI function static("tag")[$shot] which auto-selects
+    # the correct version based on the currently open experimental shot.
+    static_trees:
+      - tree_name: static
+        accessor_function: static
+        extract_values: true
+        versions:
+          - version: 1
+            first_shot: 1
+            description: Original configuration
+          - version: 2
+            first_shot: 13551
+            description: Belt limiter removed
+          - version: 3
+            first_shot: 49829
+            description: NBH ports added
+          - version: 4
+            first_shot: 63053
+            description: 1st-gen HFS baffle only (SI-NO)
+          - version: 5
+            first_shot: 63528
+            description: 1st-gen HFS and LFS baffles (SI-LO)
+          - version: 6
+            first_shot: 65794
+            description: Un-baffled (with port protection tiles)
+          - version: 7
+            first_shot: 70972
+            description: 1st-gen HFS and 2nd-gen LFS baffles (SI-SO)
+          - version: 8
+            first_shot: 74971
+            description: 2nd-gen HFS and 1st-gen LFS baffles (LI-LO)
+        systems:
+          - symbol: W
+            name: Individual coil turns
+            size: 830
+            parameters: [R, Z, W, H, A, NA, NB, NT, N, XSECT]
+          - symbol: C
+            name: Poloidal field coils
+            description: "Coils as groups: A,B1,B2,C1,C2,D1,D2,E's,F's,G's"
+            size: 29
+            parameters: [R, Z, W, H, DIM, ANG, INOM, UNOM]
+          - symbol: A
+            name: Coils as connected
+            description: "Connected coil groups: OH1,OH2,E's,F's,G"
+            size: 19
+            parameters: [R, Z, DIM]
+          - symbol: V
+            name: Vessel filaments
+            size: 256
+            parameters: [R, Z, ANG, RHO, PERIM, DIM]
+          - symbol: E
+            name: Vessel eigenmodes
+            size: 256
+            parameters: [TAU]
+          - symbol: E0
+            name: Symmetric vessel eigenmodes
+            size: 128
+          - symbol: F
+            name: Flux loops
+            description: 38 vessel flux loops + 23 coil flux loops
+            size: 61
+            parameters: [R, Z, ANG, DIM]
+          - symbol: M
+            name: Magnetic probes
+            size: 38
+            parameters: [R, Z, ANG, DIM]
+          - symbol: X
+            name: Fine poloidal mesh
+            size: 1885
+            parameters: [R, Z]
+          - symbol: XC
+            name: Coarse poloidal mesh
+            size: 495
+            parameters: [R, Z]
+          - symbol: T
+            name: Tile contour
+            size: 512
+            parameters: [R, Z, S, DIM]
 
 # Data access patterns discovered during facility exploration.
 # Informs wiki scoring, code ingestion, and signal discovery.
