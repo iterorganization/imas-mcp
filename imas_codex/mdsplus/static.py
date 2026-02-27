@@ -26,6 +26,7 @@ Usage:
 
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.mdsplus.ingestion import compute_canonical_path, normalize_mdsplus_path
@@ -248,6 +249,153 @@ def discover_static_tree(
         results.append(data)
 
     return merge_version_results(results)
+
+
+def extract_units_for_version(
+    facility: str,
+    tree_name: str,
+    version: int,
+    timeout: int = 180,
+    batch_size: int = 5000,
+    on_progress: Callable[[int, int, int], None] | None = None,
+) -> dict[str, str]:
+    """Extract units from data-bearing nodes in batches.
+
+    Runs multiple SSH jobs, each processing ``batch_size`` nodes.
+    This avoids a single long-running session that can timeout, provides
+    streamed progress updates, and preserves partial results on failure.
+
+    Each batch takes ~90s for 5000 nodes at ~18ms/node.
+
+    Args:
+        facility: SSH host alias (e.g., "tcv")
+        tree_name: MDSplus tree name (e.g., "static")
+        version: Version number to extract units from (typically the latest)
+        timeout: SSH timeout per batch in seconds (default: 120)
+        batch_size: Nodes per SSH call (default: 5000)
+        on_progress: Optional callback(checked, total, found) called after each batch
+
+    Returns:
+        Dict mapping path → unit string.
+        Partial results on batch failure (logged, not raised).
+    """
+    mdsplus = _load_mdsplus_config(facility)
+    setup_commands = mdsplus.get("setup_commands")
+
+    # First batch discovers total node count
+    all_units: dict[str, str] = {}
+    offset = 0
+    total_nodes = 0
+    total_checked = 0
+    batch_num = 0
+
+    logger.info(
+        "Extracting units from %s:%s v%d (batch_size=%d)...",
+        facility,
+        tree_name,
+        version,
+        batch_size,
+    )
+
+    while True:
+        batch_num += 1
+        input_data = {
+            "tree_name": tree_name,
+            "version": version,
+            "node_types": ["NUMERIC", "SIGNAL"],
+            "offset": offset,
+            "limit": batch_size,
+        }
+
+        try:
+            output = ""
+            output = run_python_script(
+                "extract_units.py",
+                input_data=input_data,
+                ssh_host=facility,
+                timeout=timeout,
+                setup_commands=setup_commands,
+            )
+            # Parse only the first line of output — MDSplus C library or
+            # Python cleanup may print extra lines after our JSON.
+            json_line = output.strip().split("\n")[0]
+            data = json.loads(json_line)
+        except Exception:
+            logger.exception(
+                "Units batch %d failed for %s:%s v%d (offset=%d)",
+                batch_num,
+                facility,
+                tree_name,
+                version,
+                offset,
+            )
+            if output:
+                logger.debug("Raw output (first 500 chars): %s", output[:500])
+            break
+
+        if "error" in data:
+            logger.warning(
+                "Units batch %d error v%d: %s", batch_num, version, data["error"]
+            )
+            break
+
+        batch_units = data.get("units", {})
+        all_units.update(batch_units)
+        total_nodes = data.get("total_nodes", 0)
+        batch_checked = data.get("batch_checked", 0)
+        total_checked += batch_checked
+
+        logger.info(
+            "  Batch %d: checked %d nodes (offset %d-%d), found %d units",
+            batch_num,
+            batch_checked,
+            offset,
+            offset + batch_checked,
+            len(batch_units),
+        )
+
+        if on_progress:
+            on_progress(total_checked, total_nodes, len(all_units))
+
+        offset += batch_size
+        if offset >= total_nodes:
+            break
+
+    logger.info(
+        "Units extraction complete: %d paths with units out of %d checked",
+        len(all_units),
+        total_checked,
+    )
+    return all_units
+
+
+def merge_units_into_data(
+    data: dict[str, Any],
+    units: dict[str, str],
+) -> int:
+    """Merge extracted units into tree data, updating nodes in-place.
+
+    Matches by exact path. Units from the latest version are applied
+    to all versions containing that path (units are constructional
+    and don't change between versions).
+
+    Args:
+        data: Tree data dict from merge_version_results()
+        units: Path → unit string mapping from extract_units_for_version()
+
+    Returns:
+        Number of nodes updated with units.
+    """
+    updated = 0
+    for ver_data in data.get("versions", {}).values():
+        if "error" in ver_data:
+            continue
+        for node in ver_data.get("nodes", []):
+            path = node.get("path", "")
+            if path in units:
+                node["units"] = units[path]
+                updated += 1
+    return updated
 
 
 def ingest_static_tree(

@@ -92,6 +92,35 @@ Per-facility YAML configs define discovery roots, wiki sites, data sources, and 
 - `imas_codex/config/facilities/<facility>.yaml` - Public config (git-tracked)
 - `imas_codex/config/facilities/<facility>_private.yaml` - Private config (gitignored)
 
+**CRITICAL: All facility-specific configuration MUST live in YAML files.** Never hardcode facility names, tree names, version numbers, setup commands, system descriptions, or any other facility-specific values in Python code. Scripts and CLI commands must be fully generic — they load all configuration from the facility YAML at runtime via `get_facility(facility)`.
+
+**What goes in public facility YAML** (`<facility>.yaml`):
+- `discovery_roots` — paths to scan for code/data
+- `data_sources.tdi.*` — TDI function directories, reference shots, exclude lists
+- `data_sources.mdsplus.*` — tree names, subtrees, node usages, setup commands
+- `data_sources.mdsplus.static_trees` — static tree versions, first_shot, descriptions, systems
+- `data_access_patterns` — primary method, naming conventions, key tools
+- `wiki_sites` — wiki URLs for scraping
+
+**What goes in private facility YAML** (`<facility>_private.yaml`, gitignored):
+- Hostnames, IPs, NFS mount points
+- OS versions, kernel info
+- Login node names, local host overrides
+- User-specific paths, tool locations
+
+**How to load config in Python:**
+
+```python
+from imas_codex.discovery.base.facility import get_facility
+
+config = get_facility(facility)  # Loads <facility>.yaml + <facility>_private.yaml
+mdsplus = config.get("data_sources", {}).get("mdsplus", {})
+setup_commands = mdsplus.get("setup_commands", [])
+static_trees = mdsplus.get("static_trees", [])
+```
+
+**When adding a new discovery pipeline or data source**, add the required config fields to the facility YAML schema (`imas_codex/schemas/facility_config.yaml`) and load them via `get_facility()`. The Python code should work unchanged across all facilities — only the YAML differs.
+
 **Editing configs:** Always use MCP tools rather than direct file editing:
 
 ```python

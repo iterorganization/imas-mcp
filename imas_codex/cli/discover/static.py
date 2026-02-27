@@ -53,6 +53,13 @@ class StaticProgressState:
     extract_activity: str = ""
     extract_description: str = ""
 
+    # UNITS phase (concurrent with enrich)
+    units_completed: int = 0
+    units_total: int = 0
+    units_found: int = 0
+    units_activity: str = ""
+    units_description: str = ""
+
     # ENRICH phase
     enrich_completed: int = 0
     enrich_total: int = 0
@@ -86,6 +93,7 @@ class StaticProgressDisplay(BaseProgressDisplay):
         self.enrich = enrich
         self.state = StaticProgressState()
         self.extract_queue = StreamQueue(rate=1.0, min_display_time=0.8)
+        self.units_queue = StreamQueue(rate=1.0, min_display_time=0.8)
         self.enrich_queue = StreamQueue(rate=1.5, min_display_time=0.5)
         self.ingest_queue = StreamQueue(rate=2.0, min_display_time=0.3)
         self._console = console or Console()
@@ -109,6 +117,17 @@ class StaticProgressDisplay(BaseProgressDisplay):
                 description=s.extract_description,
                 is_complete=s.extract_completed >= s.extract_total
                 and s.extract_total > 0,
+            ),
+            PipelineRowConfig(
+                name="UNITS",
+                style="bold cyan",
+                completed=s.units_completed,
+                total=max(s.units_total, 1),
+                primary_text=s.units_activity,
+                description=s.units_description,
+                is_complete=s.units_completed >= s.units_total and s.units_total > 0,
+                disabled=s.units_total == 0,
+                disabled_msg="waiting for extract",
             ),
         ]
         if self.enrich:
@@ -147,6 +166,7 @@ class StaticProgressDisplay(BaseProgressDisplay):
         s = self.state
         stats: list[tuple[str, str, str]] = [
             ("versions", str(s.extract_completed), "blue"),
+            ("units", str(s.units_found), "cyan"),
             ("enriched", str(s.enrich_completed), "magenta"),
             ("ingested", str(s.ingest_completed), "green"),
         ]
@@ -169,6 +189,14 @@ class StaticProgressDisplay(BaseProgressDisplay):
             self.state.extract_activity = ""
             self.state.extract_description = ""
 
+        item = self.units_queue.pop()
+        if item:
+            self.state.units_activity = item.get("activity", "")
+            self.state.units_description = item.get("description", "")
+        elif self.units_queue.is_stale():
+            self.state.units_activity = ""
+            self.state.units_description = ""
+
         item = self.enrich_queue.pop()
         if item:
             self.state.enrich_activity = item.get("activity", "")
@@ -190,6 +218,8 @@ class StaticProgressDisplay(BaseProgressDisplay):
         s = self.state
         summary = Text()
         summary.append(f"  {s.extract_completed} versions extracted", style="blue")
+        if s.units_found > 0:
+            summary.append(f", {s.units_found} nodes with units", style="cyan")
         if self.enrich:
             summary.append(f", {s.enrich_completed} nodes enriched", style="magenta")
         summary.append(f", {s.ingest_completed} nodes ingested", style="green")
@@ -382,9 +412,13 @@ def _run_plain(
     batch_size: int,
 ) -> None:
     """Run static discovery with plain logging output."""
+    from concurrent.futures import Future, ThreadPoolExecutor
+
     from imas_codex.mdsplus.static import (
         discover_static_tree_version,
+        extract_units_for_version,
         ingest_static_tree,
+        merge_units_into_data,
         merge_version_results,
     )
 
@@ -428,13 +462,50 @@ def _run_plain(
 
         _log_version_summary(data, facility, tname)
 
-        # Phase 2: Enrich
-        enrichment_results = []
-        enrich_cost = 0.0
-        if enrich and not dry_run:
-            enrichment_results, enrich_cost = _run_enrichment(
-                data, facility, tname, cfg, cost_limit, batch_size
+        # Phase 2: Units + Enrichment (concurrent)
+        # Units extraction runs in background thread with batched SSH calls.
+        # Each batch processes ~5000 nodes with its own timeout (~90s).
+        latest_version = max(
+            int(v) for v in data["versions"] if "error" not in data["versions"][v]
+        )
+
+        def _plain_progress(checked: int, total: int, found: int) -> None:
+            logger.info("  Units: %d/%d checked, %d found", checked, total, found)
+
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="units")
+        try:
+            units_future: Future[dict[str, str]] = executor.submit(
+                extract_units_for_version,
+                facility,
+                tname,
+                latest_version,
+                timeout=180,
+                batch_size=5000,
+                on_progress=_plain_progress,
             )
+            logger.info(
+                "  Units extraction started (v%d, batched, background)", latest_version
+            )
+
+            # LLM enrichment runs in main thread
+            enrichment_results = []
+            enrich_cost = 0.0
+            if enrich and not dry_run:
+                enrichment_results, enrich_cost = _run_enrichment(
+                    data, facility, tname, cfg, cost_limit, batch_size
+                )
+
+            # Collect units result — each batch has its own 120s timeout,
+            # so total wait = batches × 120s. 34k nodes / 5000 = 7 batches.
+            units = units_future.result(timeout=7 * 180 + 60)
+            if units:
+                updated = merge_units_into_data(data, units)
+                logger.info("  Merged units into %d nodes", updated)
+        except Exception:
+            logger.exception("  Units collection failed")
+            units = {}
+        finally:
+            executor.shutdown(wait=False)
 
         # Phase 3: Ingest
         if not dry_run:
@@ -478,9 +549,13 @@ def _run_with_progress(
     console: Console | None,
 ) -> None:
     """Run static discovery with rich progress display."""
+    from concurrent.futures import Future, ThreadPoolExecutor
+
     from imas_codex.mdsplus.static import (
         discover_static_tree_version,
+        extract_units_for_version,
         ingest_static_tree,
+        merge_units_into_data,
         merge_version_results,
     )
 
@@ -575,23 +650,97 @@ def _run_with_progress(
                 if "error" not in v
             )
 
-            # Phase 2: Enrich
-            enrichment_results = []
-            if enrich and not dry_run:
-                enrich_nodes = _collect_enrichable_nodes(data)
-                display.state.enrich_total = len(enrich_nodes)
+            # Phase 2: Units + Enrichment (concurrent)
+            # Units run in background thread with batched SSH calls (~5000 nodes each).
+            # LLM enrichment runs in main thread. Both are I/O-bound.
+            latest_version = max(
+                int(v) for v in data["versions"] if "error" not in data["versions"][v]
+            )
 
-                if enrich_nodes:
-                    enrichment_results, enrich_cost = _run_enrichment_with_progress(
-                        enrich_nodes,
-                        facility,
-                        tname,
-                        cfg,
-                        cost_limit,
-                        batch_size,
-                        display,
+            units_future: Future[dict[str, str]] | None = None
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="units")
+
+            try:
+                display.units_queue.add(
+                    [
+                        {
+                            "activity": f"v{latest_version} — extracting units...",
+                            "description": "batched, NUMERIC + SIGNAL nodes",
+                        }
+                    ]
+                )
+                display.tick()
+
+                def _rich_progress(checked: int, total: int, found: int) -> None:
+                    display.state.units_total = total
+                    display.state.units_completed = checked
+                    display.state.units_found = found
+                    display.units_queue.add(
+                        [
+                            {
+                                "activity": f"{checked:,}/{total:,} nodes checked",
+                                "description": f"{found} with units",
+                            }
+                        ]
                     )
-                    display.state.enrich_cost = enrich_cost
+
+                units_future = executor.submit(
+                    extract_units_for_version,
+                    facility,
+                    tname,
+                    latest_version,
+                    timeout=180,
+                    batch_size=5000,
+                    on_progress=_rich_progress,
+                )
+
+                # LLM enrichment in main thread (concurrent with units)
+                enrichment_results = []
+                if enrich and not dry_run:
+                    enrich_nodes = _collect_enrichable_nodes(data)
+                    display.state.enrich_total = len(enrich_nodes)
+
+                    if enrich_nodes:
+                        enrichment_results, enrich_cost = _run_enrichment_with_progress(
+                            enrich_nodes,
+                            facility,
+                            tname,
+                            cfg,
+                            cost_limit,
+                            batch_size,
+                            display,
+                        )
+                        display.state.enrich_cost = enrich_cost
+
+                # Collect units result — batched, so total wait = batches × timeout
+                units = units_future.result(timeout=7 * 180 + 60)
+                if units:
+                    updated = merge_units_into_data(data, units)
+                    display.state.units_completed = display.state.units_total
+                    display.state.units_found = len(units)
+                    display.units_queue.add(
+                        [
+                            {
+                                "activity": f"{len(units)} paths with units",
+                                "description": f"merged into {updated} nodes",
+                            }
+                        ]
+                    )
+                else:
+                    display.state.units_completed = max(display.state.units_total, 1)
+                    display.units_queue.add(
+                        [{"activity": "no units found", "description": ""}]
+                    )
+                display.tick()
+            except Exception:
+                logger.exception("Units collection failed")
+                display.state.units_completed = max(display.state.units_total, 1)
+                display.units_queue.add(
+                    [{"activity": "failed", "description": "partial results kept"}]
+                )
+                display.tick()
+            finally:
+                executor.shutdown(wait=False)
 
             # Phase 3: Ingest
             if not dry_run:
