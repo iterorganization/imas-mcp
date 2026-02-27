@@ -90,18 +90,21 @@ class TestEmbeddingQuality:
             pytest.skip(f"No {label} nodes in graph")
 
         # Sample and check L2 norm is close to 1.0
+        # Tolerance [0.99, 1.01] — properly normalized embeddings should be
+        # very close to unit length. Wider deviations indicate missing
+        # re-normalization after Matryoshka dimension truncation.
         result = graph_client.query(
             f"MATCH (n:{label}) WHERE n.embedding IS NOT NULL "
             f"WITH n, "
             f"  reduce(s = 0.0, x IN n.embedding | s + x * x) AS sq_sum "
             f"WITH sqrt(sq_sum) AS norm "
-            f"WHERE norm < 0.9 OR norm > 1.1 "
+            f"WHERE norm < 0.99 OR norm > 1.01 "
             f"RETURN count(*) AS cnt "
             f"LIMIT 200"
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
-            f"{count} {label} embeddings have L2 norm outside [0.9, 1.1]. "
+            f"{count} {label} embeddings have L2 norm outside [0.99, 1.01]. "
             f"Embeddings should be normalized to unit length."
         )
 

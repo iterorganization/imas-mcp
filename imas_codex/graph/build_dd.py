@@ -2683,6 +2683,7 @@ def _import_clusters(
                 )
 
             # Step 8: Compute cluster centroid embeddings in Neo4j
+            # Mean of unit vectors then L2-normalize to restore unit length
             centroid_result = client.query(
                 """
                 MATCH (p:IMASPath)-[:IN_CLUSTER]->(c:IMASSemanticCluster)
@@ -2694,7 +2695,13 @@ def _import_clusters(
                 WITH c, member_count, dim,
                      [i IN range(0, dim - 1) |
                         reduce(s = 0.0, emb IN embeddings | s + emb[i]) / member_count
-                     ] AS cluster_emb
+                     ] AS centroid_raw
+                WITH c, centroid_raw,
+                     sqrt(reduce(s = 0.0, x IN centroid_raw | s + x * x)) AS norm
+                WITH c, CASE WHEN norm > 0
+                     THEN [x IN centroid_raw | x / norm]
+                     ELSE centroid_raw
+                     END AS cluster_emb
                 SET c.embedding = cluster_emb
                 RETURN count(c) AS embeddings_set
                 """
