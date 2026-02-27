@@ -113,21 +113,20 @@ def claim_paths_for_file_scan(
         result = gc.query(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
-            OPTIONAL MATCH (f:Facility {id: $facility})
             WHERE p.status IN ['scored', 'explored']
               AND coalesce(p.score, 0) >= $min_score
               AND p.path IS NOT NULL
-              AND (
-                p.last_file_scan_at IS NULL
-                OR (f.files_scan_after IS NOT NULL
-                    AND p.last_file_scan_at < f.files_scan_after)
-              )
               AND (p.files_claimed_at IS NULL
                    OR p.files_claimed_at < datetime() - duration($cutoff))
               AND NOT EXISTS {
                 MATCH (p)-[:INSTANCE_OF]->(r:SoftwareRepo)
                 WHERE r.source_type IN ['github', 'gitlab', 'bitbucket']
               }
+            OPTIONAL MATCH (f:Facility {id: $facility})
+            WITH p, f
+            WHERE p.last_file_scan_at IS NULL
+               OR (f.files_scan_after IS NOT NULL
+                   AND p.last_file_scan_at < f.files_scan_after)
             WITH p
             ORDER BY (
                 coalesce(p.score_data_access, 0) * 3
@@ -280,6 +279,10 @@ def claim_files_for_scoring(
             SET sf.claimed_at = datetime()
             RETURN sf.id AS id, sf.path AS path,
                    sf.language AS language, sf.file_category AS file_category,
+                   sf.pattern_categories AS patterns_json,
+                   sf.total_pattern_matches AS total_matches,
+                   sf.line_count AS line_count,
+                   sf.is_enriched AS is_enriched,
                    p.id AS parent_path_id, p.path AS parent_path,
                    p.score AS parent_score, p.purpose AS parent_purpose,
                    p.description AS parent_description,
@@ -301,7 +304,23 @@ def claim_files_for_scoring(
             limit=limit,
             cutoff=cutoff,
         )
-        files = list(result)
+        files = []
+        for row in result:
+            f = dict(row)
+            # Parse per-file pattern_categories JSON into a dict
+            patterns_json = f.pop("patterns_json", None)
+            if patterns_json:
+                try:
+                    import json
+
+                    f["patterns"] = json.loads(patterns_json)
+                except (json.JSONDecodeError, TypeError):
+                    f["patterns"] = {}
+            else:
+                f["patterns"] = {}
+            f.setdefault("total_matches", 0)
+            f.setdefault("line_count", 0)
+            files.append(f)
         if files:
             logger.debug(
                 "Claimed %d SourceFiles for scoring (facility=%s)",
@@ -389,15 +408,14 @@ def has_pending_scan_work(facility: str, min_score: float = 0.5) -> bool:
         result = gc.query(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
-            OPTIONAL MATCH (f:Facility {id: $facility})
             WHERE p.status IN ['scored', 'explored']
               AND coalesce(p.score, 0) >= $min_score
               AND p.path IS NOT NULL
-              AND (
-                p.last_file_scan_at IS NULL
-                OR (f.files_scan_after IS NOT NULL
-                    AND p.last_file_scan_at < f.files_scan_after)
-              )
+            OPTIONAL MATCH (f:Facility {id: $facility})
+            WITH p, f
+            WHERE p.last_file_scan_at IS NULL
+               OR (f.files_scan_after IS NOT NULL
+                   AND p.last_file_scan_at < f.files_scan_after)
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,

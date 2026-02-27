@@ -1,10 +1,15 @@
 """File scanner for discovering source files in scored FacilityPaths.
 
 Enumerates files at remote facilities using SSH, filtering by supported
-extensions. Creates SourceFile nodes with status='discovered'.
+extensions. Uses depth=1 since the paths pipeline has already walked
+subdirectories — each FacilityPath is processed at its own level only.
 
-Uses a batched remote script (scan_files.py) to enumerate multiple paths
-in a single SSH connection, avoiding SSH connection flooding.
+Combines file enumeration with rg pattern matching in a single SSH call
+via the discover_files.py remote script, providing per-file enrichment
+evidence that feeds into dual-pass LLM scoring.
+
+Creates SourceFile nodes with status='discovered' and per-file enrichment
+data (pattern matches, line counts).
 """
 
 from __future__ import annotations
@@ -30,37 +35,55 @@ ProgressCallback = Callable[[int, int, str], None]
 # Machine data files, large caches, binaries are excluded.
 DEFAULT_MAX_FILE_SIZE = 1 * 1024 * 1024
 
+# Max files per path — much lower now that we scan at depth=1
+DEFAULT_MAX_FILES_PER_PATH = 500
+
 
 def _get_extensions_list() -> list[str]:
     """Get sorted list of supported file extensions (without dots)."""
     return sorted({e.lstrip(".").lower() for e in ALL_SUPPORTED_EXTENSIONS})
 
 
+def _get_pattern_categories() -> dict[str, str]:
+    """Get pattern categories from the paths enrichment PATTERN_REGISTRY.
+
+    Flattens into category → regex for rg execution on remote host.
+    """
+    from imas_codex.discovery.paths.enrichment import PATTERN_REGISTRY
+
+    flat: dict[str, str] = {}
+    for _category, (patterns_dict, _score_dim) in PATTERN_REGISTRY.items():
+        for name, regex in patterns_dict.items():
+            flat[name] = regex
+    return flat
+
+
 def _scan_remote_paths_batch(
     facility: str,
     remote_paths: list[str],
     ssh_host: str | None = None,
-    max_depth: int = 5,
+    max_depth: int = 1,
     timeout: int = 300,
-    max_files_per_path: int = 5000,
+    max_files_per_path: int = DEFAULT_MAX_FILES_PER_PATH,
     max_file_size: int = DEFAULT_MAX_FILE_SIZE,
 ) -> dict[str, list[dict]]:
-    """Scan multiple remote paths for supported files in a single SSH call.
+    """Scan multiple remote paths for files with enrichment in a single SSH call.
 
-    Uses the scan_files.py remote script via run_python_script() to batch
-    all path scans into one SSH connection, avoiding connection flooding.
+    Uses the discover_files.py remote script that combines file enumeration
+    (fd/find at depth=1) with rg pattern matching. Each file gets per-file
+    enrichment data (pattern matches, line counts).
 
     Args:
         facility: Facility ID
         remote_paths: Remote directory paths to scan
         ssh_host: SSH host alias (defaults to facility)
-        max_depth: Maximum directory depth to scan
+        max_depth: Maximum directory depth (default 1 = files at this level only)
         timeout: SSH command timeout in seconds
-        max_files_per_path: Maximum files per path before truncation
+        max_files_per_path: Maximum files per path
         max_file_size: Maximum file size in bytes (default 1 MB)
 
     Returns:
-        Dict mapping path -> list of file info dicts
+        Dict mapping path -> list of file info dicts with enrichment data
     """
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.remote.executor import run_python_script
@@ -82,11 +105,12 @@ def _scan_remote_paths_batch(
         "max_depth": max_depth,
         "max_files_per_path": max_files_per_path,
         "max_file_size": max_file_size,
+        "pattern_categories": _get_pattern_categories(),
     }
 
     try:
         output = run_python_script(
-            "scan_files.py",
+            "discover_files.py",
             input_data=input_data,
             ssh_host=host,
             timeout=timeout,
@@ -112,7 +136,7 @@ def _scan_remote_paths_batch(
         logger.warning("Failed to parse scan output for %s: %s", facility, e)
         return {p: [] for p in remote_paths}
 
-    # Convert to file info dicts
+    # Convert to file info dicts with enrichment data
     result_map: dict[str, list[dict]] = {}
     for entry in results_data:
         path = entry.get("path", "")
@@ -123,13 +147,29 @@ def _scan_remote_paths_batch(
             continue
 
         files = []
-        for file_path in entry.get("files", []):
+        for file_info in entry.get("files", []):
+            # file_info is now a dict with path, patterns, total_matches, line_count
+            if isinstance(file_info, str):
+                # Backwards compatibility with old scan_files.py format
+                file_path = file_info
+                patterns = {}
+                total_matches = 0
+                line_count = 0
+            else:
+                file_path = file_info.get("path", "")
+                patterns = file_info.get("patterns", {})
+                total_matches = file_info.get("total_matches", 0)
+                line_count = file_info.get("line_count", 0)
+
             files.append(
                 {
                     "path": file_path,
                     "language": detect_language(file_path),
                     "file_category": detect_file_category(file_path),
                     "facility_id": facility,
+                    "patterns": patterns,
+                    "total_matches": total_matches,
+                    "line_count": line_count,
                 }
             )
 
@@ -153,15 +193,12 @@ async def async_scan_remote_paths_batch(
     facility: str,
     remote_paths: list[str],
     ssh_host: str | None = None,
-    max_depth: int = 5,
+    max_depth: int = 1,
     timeout: int = 300,
-    max_files_per_path: int = 5000,
+    max_files_per_path: int = DEFAULT_MAX_FILES_PER_PATH,
     max_file_size: int = DEFAULT_MAX_FILE_SIZE,
 ) -> dict[str, list[dict]]:
-    """Async version of _scan_remote_paths_batch.
-
-    Runs the batched scan in a thread executor to avoid blocking the event loop.
-    """
+    """Async version of _scan_remote_paths_batch."""
     import asyncio
 
     return await asyncio.to_thread(
@@ -180,14 +217,13 @@ def _scan_remote_path(
     facility: str,
     remote_path: str,
     ssh_host: str | None = None,
-    max_depth: int = 5,
+    max_depth: int = 1,
     timeout: int = 60,
-    max_files_per_path: int = 5000,
+    max_files_per_path: int = DEFAULT_MAX_FILES_PER_PATH,
 ) -> list[dict]:
     """Scan a single remote path for supported files via SSH.
 
     Wraps _scan_remote_paths_batch for single-path convenience.
-    Prefer _scan_remote_paths_batch for multiple paths.
     """
     result_map = _scan_remote_paths_batch(
         facility,
@@ -238,14 +274,14 @@ def _persist_discovered_files(
     files: list[dict],
     source_path_id: str | None = None,
 ) -> dict[str, int]:
-    """Create SourceFile nodes from scanned files.
+    """Create SourceFile nodes from scanned files with enrichment data.
 
-    Computes a path-based heuristic score for each file to enable
-    priority ordering during LLM scoring (highest-value first).
+    Stores per-file enrichment data (pattern matches, line counts) from
+    the discover_files.py remote script so it's available for LLM scoring.
 
     Args:
         facility: Facility ID
-        files: List of file info dicts
+        files: List of file info dicts (with patterns, total_matches, line_count)
         source_path_id: FacilityPath ID that contained these files
 
     Returns:
@@ -257,18 +293,26 @@ def _persist_discovered_files(
     items = []
     for f in files:
         file_id = f"{facility}:{f['path']}"
-        items.append(
-            {
-                "id": file_id,
-                "facility_id": facility,
-                "path": f["path"],
-                "language": f.get("language", "python"),
-                "file_category": f.get("file_category", "code"),
-                "status": "discovered",
-                "discovered_at": now,
-                "in_directory": source_path_id,
-            }
-        )
+        item = {
+            "id": file_id,
+            "facility_id": facility,
+            "path": f["path"],
+            "language": f.get("language", "python"),
+            "file_category": f.get("file_category", "code"),
+            "status": "discovered",
+            "discovered_at": now,
+            "in_directory": source_path_id,
+        }
+        # Store per-file enrichment from discover_files.py
+        patterns = f.get("patterns")
+        if patterns:
+            item["pattern_categories"] = json.dumps(patterns)
+            item["total_pattern_matches"] = f.get("total_matches", 0)
+            item["is_enriched"] = True
+        line_count = f.get("line_count", 0)
+        if line_count:
+            item["line_count"] = line_count
+        items.append(item)
 
     if not items:
         return {"discovered": 0, "skipped": 0}

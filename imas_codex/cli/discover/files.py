@@ -82,6 +82,12 @@ logger = logging.getLogger(__name__)
     help="Keep image bytes in graph after VLM scoring (default: clear to save storage)",
 )
 @click.option(
+    "--include-images",
+    is_flag=True,
+    default=False,
+    help="Enable image discovery workers (download + VLM captioning)",
+)
+@click.option(
     "--rescan",
     is_flag=True,
     default=False,
@@ -101,6 +107,7 @@ def files(
     time_limit: int | None,
     verbose: bool,
     store_images: bool,
+    include_images: bool,
     rescan: bool,
 ) -> None:
     """Discover and ingest source files from scored facility paths.
@@ -108,11 +115,11 @@ def files(
     Runs parallel workers through a multi-stage pipeline:
 
     \b
-    - SCAN: SSH to facility, enumerate files in scored FacilityPaths
-    - SCORE: LLM batch-scores discovered files for relevance
-    - ENRICH: Pattern matching with rg for code signals
+    - SCAN: SSH to facility, enumerate files + rg pattern enrichment (depth=1)
+    - TRIAGE: Fast LLM pass to keep/skip files per directory
+    - SCORE: Detailed LLM scoring of kept files with pattern evidence
     - INGEST: Fetch, chunk, embed code files and documents
-    - IMAGE: Download and VLM-caption image files
+    - IMAGE: (opt-in) Download and VLM-caption image files
 
     Use --rescan to re-scan paths that were previously scanned. This sets
     a facility-level timestamp so all prior scans become eligible for
@@ -228,6 +235,7 @@ def files(
                     num_score_workers=score_workers,
                     num_code_workers=code_workers,
                     num_docs_workers=1,
+                    include_images=include_images,
                     scan_only=scan_only,
                     score_only=score_only,
                     store_images=store_images,
@@ -334,6 +342,7 @@ def files(
                             num_score_workers=score_workers,
                             num_code_workers=code_workers,
                             num_docs_workers=1,
+                            include_images=include_images,
                             scan_only=scan_only,
                             score_only=score_only,
                             store_images=store_images,

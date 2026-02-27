@@ -1,10 +1,14 @@
 """Async workers for parallel file discovery.
 
-Four supervised workers that process source files through the pipeline:
-- scan_worker: SSH file enumeration (discovered FacilityPaths → SourceFile nodes)
-- score_worker: LLM batch scoring (discovered → scored SourceFiles)
+Workers that process source files through the pipeline:
+- scan_worker: SSH file enumeration + rg enrichment (FacilityPaths → SourceFile nodes)
+- score_worker: Dual-pass LLM scoring (triage → score) of discovered SourceFiles
 - code_worker: Code ingestion — fetch, chunk, embed (scored → ingested)
 - docs_worker: Document/notebook/config ingestion (scored → ingested)
+
+Note: Enrichment now happens during scan (discover_files.py combines fd + rg).
+The separate enrich_worker is no longer needed for new pipelines but is kept
+for backwards compatibility with files that were scanned without enrichment.
 
 Workers coordinate through graph_ops claim/mark functions using claimed_at timestamps.
 """
@@ -196,10 +200,15 @@ async def score_worker(
     on_progress: Callable | None = None,
     batch_size: int = 50,
 ) -> None:
-    """Score worker: LLM batch scoring of discovered SourceFiles.
+    """Score worker: Dual-pass LLM scoring of discovered SourceFiles.
+
+    Pass 1 (Triage): Fast keep/skip classification from path + per-file
+    enrichment evidence (rg matches). Filters ~70-80% of noise.
+
+    Pass 2 (Score): Full multi-dimensional scoring for kept files.
 
     Claims SourceFiles with status='discovered' and no interest_score,
-    groups by parent FacilityPath, scores via LLM with enrichment context.
+    groups by parent FacilityPath for context.
     """
     from imas_codex.discovery.base.llm import call_llm_structured
     from imas_codex.discovery.files.graph_ops import (
@@ -208,17 +217,22 @@ async def score_worker(
     )
     from imas_codex.discovery.files.scorer import (
         FileScoreBatch,
+        FileTriageBatch,
         _build_system_prompt,
+        _build_triage_system_prompt,
+        _build_triage_user_prompt,
         _build_user_prompt,
         _group_files_by_parent,
         apply_file_scores,
+        apply_triage_results,
     )
     from imas_codex.settings import get_model
 
     model = get_model("language")
 
-    # Build system prompt once for prefix caching
-    system_prompt = _build_system_prompt(focus=state.focus)
+    # Build system prompts once for prefix caching
+    triage_system_prompt = _build_triage_system_prompt(focus=state.focus)
+    score_system_prompt = _build_system_prompt(focus=state.focus)
 
     while not state.should_stop():
         if state.budget_exhausted:
@@ -250,20 +264,87 @@ async def score_worker(
 
         if on_progress:
             on_progress(
-                f"scoring {len(files)} files ({len(file_groups)} dirs)",
+                f"triaging {len(files)} files ({len(file_groups)} dirs)",
                 state.score_stats,
                 None,
             )
 
-        user_prompt = _build_user_prompt(file_groups)
+        # --- Pass 1: Triage ---
+        try:
+            triage_user_prompt = _build_triage_user_prompt(file_groups)
+            triage_parsed, triage_cost, _ = await asyncio.to_thread(
+                call_llm_structured,
+                model=model,
+                messages=[
+                    {"role": "system", "content": triage_system_prompt},
+                    {"role": "user", "content": triage_user_prompt},
+                ],
+                response_model=FileTriageBatch,
+                temperature=0.1,
+            )
+            state.score_stats.cost += triage_cost
+
+            triage_applied = await asyncio.to_thread(
+                apply_triage_results, triage_parsed.results, file_id_map
+            )
+
+            kept_ids = set(triage_applied["kept_ids"])
+            skipped_count = triage_applied["skipped"]
+
+            if on_progress and skipped_count > 0:
+                on_progress(
+                    f"triage: kept {len(kept_ids)}, skipped {skipped_count} (${triage_cost:.3f})",
+                    state.score_stats,
+                    None,
+                )
+
+            if not kept_ids:
+                # All files triaged out
+                state.score_stats.processed += skipped_count
+                await asyncio.to_thread(release_file_score_claims, batch_ids)
+                if on_progress:
+                    on_progress(
+                        f"all {len(files)} files triaged out",
+                        state.score_stats,
+                        None,
+                    )
+                await asyncio.sleep(0.1)
+                continue
+
+        except Exception as e:
+            logger.error("Triage batch failed: %s — scoring all files", e)
+            state.score_stats.errors += 1
+            # Fail-open: score all files if triage fails
+            kept_ids = set(file_id_map.values())
+
+        # --- Pass 2: Score kept files ---
+        kept_groups = []
+        for group in file_groups:
+            kept_files = [f for f in group["files"] if f["id"] in kept_ids]
+            if kept_files:
+                kept_groups.append({**group, "files": kept_files})
+
+        if not kept_groups:
+            await asyncio.to_thread(release_file_score_claims, batch_ids)
+            await asyncio.sleep(0.1)
+            continue
+
+        if on_progress:
+            kept_count = sum(len(g["files"]) for g in kept_groups)
+            on_progress(
+                f"scoring {kept_count} kept files ({len(kept_groups)} dirs)",
+                state.score_stats,
+                None,
+            )
 
         try:
+            score_user_prompt = _build_user_prompt(kept_groups)
             parsed, cost, _tokens = await asyncio.to_thread(
                 call_llm_structured,
                 model=model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "system", "content": score_system_prompt},
+                    {"role": "user", "content": score_user_prompt},
                 ],
                 response_model=FileScoreBatch,
                 temperature=0.1,

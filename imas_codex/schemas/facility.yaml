@@ -2321,16 +2321,16 @@ classes:
         description: Total signals to process
         range: integer
       signals_processed:
-        description: Signals with mappings created
+        description: Signals with proposals created
         range: integer
-      mappings_created:
-        description: Number of IMASMapping nodes created
+      proposals_created:
+        description: Number of MappingProposal nodes created
         range: integer
-      mappings_validated:
-        description: Number of mappings that reached validated status
+      proposals_validated:
+        description: Number of proposals that reached validated status
         range: integer
-      mappings_rejected:
-        description: Number of mappings rejected
+      proposals_rejected:
+        description: Number of proposals rejected
         range: integer
       # Langfuse correlation
       langfuse_trace_id:
@@ -2489,6 +2489,8 @@ classes:
           Timestamp when a worker claimed this file for processing.
           Used for distributed worker coordination. Stale claims (>5min) are reclaimed.
         range: datetime
+      skip_reason:
+        description: One-line reason why this file was skipped during triage or scoring
       # Processing metadata
       started_at:
         description: When ingestion started (fetching state)

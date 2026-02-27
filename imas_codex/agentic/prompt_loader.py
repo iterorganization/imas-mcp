@@ -828,6 +828,19 @@ def _provide_cluster_label_schema() -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _provide_static_enrichment_schema() -> dict[str, Any]:
+    """Provide StaticNodeBatch Pydantic schema for LLM prompts."""
+    from imas_codex.mdsplus.enrichment import StaticNodeBatch, StaticNodeResult
+
+    return {
+        "static_enrichment_schema_example": get_pydantic_schema_json(StaticNodeBatch),
+        "static_enrichment_schema_fields": get_pydantic_schema_description(
+            StaticNodeResult
+        ),
+    }
+
+
 # Registry mapping schema_needs names to provider functions
 _SCHEMA_PROVIDERS: dict[str, Any] = {
     "path_purposes": _provide_path_purposes,
@@ -848,6 +861,8 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     # Signal enrichment
     "signal_enrichment_schema": _provide_signal_enrichment_schema,
     "diagnostic_categories": _provide_diagnostic_categories,
+    # Static tree enrichment
+    "static_enrichment_schema": _provide_static_enrichment_schema,
     # Cluster labeling
     "cluster_vocabularies": _provide_cluster_vocabularies,
     "cluster_label_schema": _provide_cluster_label_schema,
@@ -884,9 +899,21 @@ def _provide_file_scoring_schema() -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _provide_file_triage_schema() -> dict[str, Any]:
+    """Provide FileTriageBatch Pydantic schema for LLM prompts."""
+    from imas_codex.discovery.files.scorer import FileTriageBatch, FileTriageResult
+
+    return {
+        "file_triage_schema_example": get_pydantic_schema_json(FileTriageBatch),
+        "file_triage_schema_fields": get_pydantic_schema_description(FileTriageResult),
+    }
+
+
 # Register file scoring providers
 _SCHEMA_PROVIDERS["file_score_dimensions"] = _provide_file_score_dimensions
 _SCHEMA_PROVIDERS["file_scoring_schema"] = _provide_file_scoring_schema
+_SCHEMA_PROVIDERS["file_triage_schema"] = _provide_file_triage_schema
 
 # Default schema needs per prompt (when not specified in frontmatter)
 # Only load what's actually used by each prompt
@@ -905,6 +932,10 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "physics_domains",
         "signal_enrichment_schema",
         "diagnostic_categories",
+    ],
+    # Static tree enrichment
+    "discovery/static-enricher": [
+        "static_enrichment_schema",
     ],
     # Wiki prompts
     "wiki/scorer": [
@@ -928,6 +959,10 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "file_score_dimensions",
         "file_scoring_schema",
         "format_patterns",
+    ],
+    # File triage (pass 1)
+    "discovery/file-triage": [
+        "file_triage_schema",
     ],
 }
 

@@ -1,11 +1,14 @@
 """Parallel file discovery engine.
 
 Main entry point for file discovery with async workers. Orchestrates:
-- Scan: SSH file enumeration from scored FacilityPaths
-- Score: LLM batch scoring of discovered SourceFiles
-- Enrich: rg pattern matching on individual scored files
+- Scan: SSH file enumeration + rg enrichment (depth=1 per scored FacilityPath)
+- Score: Dual-pass LLM scoring (triage → detailed score)
 - Code: Fetch, chunk, embed code files (replaces ``ingest run``)
 - Docs: Ingest non-code files (documents, notebooks, configs)
+- Image: (opt-in) Downsample and VLM-caption image files
+
+Enrichment now happens during scan via discover_files.py (combined fd + rg).
+The separate enrich_worker is kept for backwards compatibility.
 
 Use ``run_parallel_file_discovery()`` as the main entry point.
 """
@@ -64,11 +67,12 @@ async def run_parallel_file_discovery(
     focus: str | None = None,
     num_scan_workers: int = 2,
     num_score_workers: int = 2,
-    num_enrich_workers: int = 1,
+    num_enrich_workers: int = 0,
     num_code_workers: int = 2,
     num_docs_workers: int = 1,
-    num_image_workers: int = 1,
-    num_image_score_workers: int = 1,
+    num_image_workers: int = 0,
+    num_image_score_workers: int = 0,
+    include_images: bool = False,
     scan_only: bool = False,
     score_only: bool = False,
     store_images: bool = False,
@@ -85,14 +89,13 @@ async def run_parallel_file_discovery(
 ) -> dict[str, Any]:
     """Run parallel file discovery with async workers.
 
-    Orchestrates six worker types through the file discovery pipeline:
-    1. Scan workers: SSH file enumeration from scored FacilityPaths
-    2. Score workers: LLM batch scoring of discovered SourceFiles
-    3. Enrich workers: rg pattern matching on scored files
-    4. Code workers: Fetch, chunk, embed code files (ingestion)
-    5. Docs workers: Ingest non-code files (documents, notebooks, configs)
-    6. Image workers: Downsample and persist standalone image files
-    7. Image score workers: VLM captioning + scoring of ingested images
+    Orchestrates workers through the file discovery pipeline:
+    1. Scan workers: SSH file enumeration + rg enrichment (depth=1)
+    2. Score workers: Dual-pass LLM scoring (triage → detailed score)
+    3. Code workers: Fetch, chunk, embed code files (ingestion)
+    4. Docs workers: Ingest non-code files (documents, notebooks, configs)
+    5. Image workers: (opt-in) Downsample and persist image files
+    6. Image score workers: (opt-in) VLM captioning + scoring
 
     Args:
         facility: Facility ID
@@ -146,26 +149,38 @@ async def run_parallel_file_discovery(
     )
 
     # Wire up graph-backed has_work_fn on each phase.
-    # Downstream phases also check if upstream is still producing work,
-    # preventing premature exit when upstream hasn't flushed yet.
+    # New pipeline: scan (with enrichment) → score (dual-pass) → code/docs
+    # Enrichment now happens during scan, so enrich phase is optional (legacy).
     state.scan_phase.set_has_work_fn(lambda: has_pending_scan_work(facility, min_score))
     state.score_phase.set_has_work_fn(
         lambda: has_pending_score_work(facility) or not state.scan_phase.done
     )
+    # Enrich phase only active if num_enrich_workers > 0 (legacy backfill)
     state.enrich_phase.set_has_work_fn(
-        lambda: has_pending_enrich_work(facility) or not state.score_phase.done
+        lambda: (
+            (num_enrich_workers > 0 and has_pending_enrich_work(facility))
+            or not state.score_phase.done
+        )
     )
+    # Code/docs depend on score phase (not enrich — enrichment is pre-score now)
     state.code_phase.set_has_work_fn(
-        lambda: has_pending_code_work(facility) or not state.enrich_phase.done
+        lambda: has_pending_code_work(facility) or not state.score_phase.done
     )
     state.docs_phase.set_has_work_fn(
-        lambda: has_pending_docs_work(facility) or not state.enrich_phase.done
+        lambda: has_pending_docs_work(facility) or not state.score_phase.done
     )
+    # Image workers only active when include_images=True
     state.image_phase.set_has_work_fn(
-        lambda: has_pending_image_work(facility) or not state.enrich_phase.done
+        lambda: (
+            include_images
+            and (has_pending_image_work(facility) or not state.score_phase.done)
+        )
     )
     state.image_score_phase.set_has_work_fn(
-        lambda: has_pending_image_score_work(facility) or not state.image_phase.done
+        lambda: (
+            include_images
+            and (has_pending_image_score_work(facility) or not state.image_phase.done)
+        )
     )
 
     # Pre-warm SSH ControlMaster
@@ -234,7 +249,7 @@ async def run_parallel_file_discovery(
 
     # --- Code workers (skip in scan_only and score_only modes) ---
     if not scan_only and not score_only:
-        # --- Enrich workers ---
+        # --- Enrich workers (legacy: only when explicitly requested) ---
         for i in range(num_enrich_workers):
             worker_name = f"enrich_worker_{i}"
             status = worker_group.create_status(worker_name, group="enrich")
@@ -284,39 +299,50 @@ async def run_parallel_file_discovery(
                 )
             )
 
-        # --- Image workers ---
-        for i in range(num_image_workers):
-            worker_name = f"image_worker_{i}"
-            status = worker_group.create_status(worker_name, group="image")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        image_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_image_progress,
-                        status_tracker=status,
+        # --- Image workers (opt-in only) ---
+        if include_images:
+            _num_img = num_image_workers or 1
+            for i in range(_num_img):
+                worker_name = f"image_worker_{i}"
+                status = worker_group.create_status(worker_name, group="image")
+                worker_group.add_task(
+                    asyncio.create_task(
+                        supervised_worker(
+                            image_worker,
+                            worker_name,
+                            state,
+                            state.should_stop,
+                            on_progress=on_image_progress,
+                            status_tracker=status,
+                        )
                     )
                 )
-            )
 
-        # --- Image score workers (VLM captioning) ---
-        for i in range(num_image_score_workers):
-            worker_name = f"image_score_worker_{i}"
-            status = worker_group.create_status(worker_name, group="vlm")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        image_score_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_image_score_progress,
-                        status_tracker=status,
+            _num_vlm = num_image_score_workers or 1
+            for i in range(_num_vlm):
+                worker_name = f"image_score_worker_{i}"
+                status = worker_group.create_status(worker_name, group="vlm")
+                worker_group.add_task(
+                    asyncio.create_task(
+                        supervised_worker(
+                            image_score_worker,
+                            worker_name,
+                            state,
+                            state.should_stop,
+                            on_progress=on_image_score_progress,
+                            status_tracker=status,
+                        )
                     )
                 )
-            )
+
+        # Mark image phases done if not included
+        if not include_images:
+            state.image_phase.mark_done()
+            state.image_score_phase.mark_done()
+
+        # Mark enrich phase done if no enrich workers
+        if num_enrich_workers == 0:
+            state.enrich_phase.mark_done()
     else:
         state.code_phase.mark_done()
         state.docs_phase.mark_done()
@@ -324,6 +350,16 @@ async def run_parallel_file_discovery(
         state.image_phase.mark_done()
         state.image_score_phase.mark_done()
 
+    _num_img_actual = (
+        (num_image_workers or 1)
+        if include_images and not (scan_only or score_only)
+        else 0
+    )
+    _num_vlm_actual = (
+        (num_image_score_workers or 1)
+        if include_images and not (scan_only or score_only)
+        else 0
+    )
     logger.info(
         "Started %d workers: scan=%d score=%d enrich=%d code=%d docs=%d "
         "image=%d vlm=%d scan_only=%s score_only=%s",
@@ -333,8 +369,8 @@ async def run_parallel_file_discovery(
         num_enrich_workers if not (scan_only or score_only) else 0,
         num_code_workers if not (scan_only or score_only) else 0,
         num_docs_workers if not (scan_only or score_only) else 0,
-        num_image_workers if not (scan_only or score_only) else 0,
-        num_image_score_workers if not (scan_only or score_only) else 0,
+        _num_img_actual,
+        _num_vlm_actual,
         scan_only,
         score_only,
     )

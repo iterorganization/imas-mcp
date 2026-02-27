@@ -29,9 +29,10 @@ logger = logging.getLogger(__name__)
 
 # PATH prefix applied to all remote SSH commands so that tools installed
 # by ``imas-codex tools install`` (uv, rg, fd, python via uv) are found.
-# This is a safety net — the tools CLI also configures ~/.bashrc directly,
-# but explicit PATH ensures correctness even before that setup runs.
-_REMOTE_PATH_PREFIX = 'export PATH="$HOME/bin:$HOME/.local/bin:$PATH"'
+# The imas-codex venv bin is first so ``python3`` resolves to our managed
+# Python (3.12+) rather than the system Python which may be too old for
+# modern syntax used in remote scripts.
+_REMOTE_PATH_PREFIX = 'export PATH="$HOME/.local/share/imas-codex/venv/bin:$HOME/bin:$HOME/.local/bin:$PATH"'
 
 
 # ============================================================================
