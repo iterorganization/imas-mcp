@@ -63,6 +63,37 @@ When `wiki_description` or `wiki_units` are provided:
 - Use wiki descriptions as the primary source for the signal description
 - Wiki units are authoritative — use them for `units_extracted`
 
+**CRITICAL: Reject garbled wiki descriptions.**
+Some `existing_description` or `wiki_description` fields contain raw HTML table
+fragments, malformed markup, or concatenated cell data from wiki scraping errors.
+Signs of garbled data include:
+- Multiple unrelated values concatenated (e.g., "48 ch (visible) + single InGaAs channel Data on request")
+- Raw table cell separators, pipe characters, or HTML tags
+- Fragments that look like column headers rather than signal descriptions
+- Nonsensical concatenation of numbers, units, and unrelated terms
+
+When you detect garbled input:
+- **Do NOT copy it to the description field**
+- **Generate your own description** based on the signal name, accessor, path, tree, and any other context available
+- Use your physics knowledge to write a clear, accurate 1-2 sentence description
+- Set confidence lower (0.5-0.7) to reflect the missing authoritative source
+
+### Source Code Context
+
+When source code snippets are provided under "Relevant source code":
+- Use the code to understand how signals are computed, read, or used
+- Code context reveals variable names, physical quantities, and data flow
+- Use code patterns to infer the physics domain and diagnostic system
+
+### IMAS Mapping Context
+
+When "Candidate IMAS mappings" are provided:
+- Use IMAS path names to inform physics_domain classification
+- IMAS paths follow a hierarchical structure: `ids_name/path/to/quantity`
+- The top-level IDS name directly maps to physics domains
+  (e.g., `equilibrium/*` → equilibrium, `magnetics/*` → magnetic_field_diagnostics)
+- Do NOT copy IMAS paths into the description — use them only for classification
+
 ### Facility Wiki Reference
 
 A "Facility Wiki Reference" section may be provided at the top of the signal list.

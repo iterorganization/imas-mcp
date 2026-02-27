@@ -1584,7 +1584,9 @@ async def enrich_worker(
         # Build a targeted query from the group context
         if group_key.startswith("tdi:"):
             func_name = group_key[4:]
-            signal_names = " ".join(s.get("name", "") for _, s in indexed_signals[:10])
+            signal_names = " ".join(
+                s.get("name") or "" for _, s in indexed_signals[:10]
+            )
             query = f"{func_name} TDI function {signal_names}"
         elif group_key.startswith("ppf:"):
             dda = group_key[4:]
@@ -1594,11 +1596,15 @@ async def enrich_worker(
             query = f"{cat} JT-60SA diagnostic data"
         elif group_key.startswith("tree:"):
             tree = group_key[5:]
-            signal_names = " ".join(s.get("name", "") for _, s in indexed_signals[:10])
+            signal_names = " ".join(
+                s.get("name") or "" for _, s in indexed_signals[:10]
+            )
             query = f"{tree} MDSplus tree {signal_names}"
         else:
             # Ungrouped — use first few signal names
-            signal_names = " ".join(s.get("name", "") for _, s in indexed_signals[:10])
+            signal_names = " ".join(
+                s.get("name") or "" for _, s in indexed_signals[:10]
+            )
             query = signal_names
 
         if not query.strip():
@@ -1610,6 +1616,194 @@ async def enrich_worker(
         )
         cache[group_key] = chunks
         return chunks
+
+    # Cache for code chunk and IMAS context queries
+    code_context_cache: dict[str, list[dict[str, str]]] = {}
+    imas_context_cache: dict[str, list[dict[str, str]]] = {}
+
+    async def _fetch_code_context(
+        group_key: str,
+        indexed_signals: list[tuple[int, dict]],
+    ) -> list[dict[str, str]]:
+        """Fetch relevant source code chunks for a signal group.
+
+        Uses the code_chunk_embedding vector index to find code that
+        references signals in this group, providing usage patterns and
+        computational context for the LLM.
+        """
+        if group_key in code_context_cache:
+            return code_context_cache[group_key]
+
+        from imas_codex.embeddings.config import EncoderConfig
+        from imas_codex.embeddings.encoder import Encoder
+
+        # Build query from group key and signal names
+        signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:10])
+        if group_key.startswith("tdi:"):
+            query_text = f"{group_key[4:]} {signal_names}"
+        elif group_key.startswith("tree:"):
+            query_text = f"{group_key[5:]} MDSplus {signal_names}"
+        else:
+            query_text = signal_names
+
+        if not query_text.strip():
+            code_context_cache[group_key] = []
+            return []
+
+        try:
+            config = EncoderConfig()
+            encoder = Encoder(config)
+            embedding = encoder.embed_texts([query_text])[0].tolist()
+        except Exception as e:
+            logger.debug("Could not embed for code context: %s", e)
+            code_context_cache[group_key] = []
+            return []
+
+        try:
+            with GraphClient() as gc:
+                results = gc.query(
+                    """
+                    CALL db.index.vector.queryNodes(
+                        'code_chunk_embedding', $k, $embedding
+                    )
+                    YIELD node, score
+                    WHERE score >= $min_score
+                    OPTIONAL MATCH (src)-[:HAS_CHUNK]->(node)
+                    WHERE src.facility_id = $facility
+                    RETURN node.content AS content,
+                           src.path AS source_path,
+                           node.chunk_type AS chunk_type,
+                           score
+                    ORDER BY score DESC
+                    """,
+                    k=3,
+                    embedding=embedding,
+                    min_score=0.45,
+                    facility=state.facility,
+                )
+                chunks = []
+                for row in results:
+                    content = row.get("content", "")
+                    if len(content) > 600:
+                        content = content[:600] + "..."
+                    chunks.append(
+                        {
+                            "content": content,
+                            "source_path": row.get("source_path", ""),
+                            "chunk_type": row.get("chunk_type", ""),
+                        }
+                    )
+                code_context_cache[group_key] = chunks
+                return chunks
+        except Exception as e:
+            logger.debug("Code context search failed: %s", e)
+            code_context_cache[group_key] = []
+            return []
+
+    async def _fetch_imas_context(
+        group_key: str,
+        indexed_signals: list[tuple[int, dict]],
+    ) -> list[dict[str, str]]:
+        """Fetch IMAS path and cluster context for a signal group.
+
+        Uses imas_path_embedding to suggest candidate IMAS mappings,
+        and cluster_label_embedding for semantic cluster context.
+        This helps the LLM classify physics domains more precisely.
+        """
+        if group_key in imas_context_cache:
+            return imas_context_cache[group_key]
+
+        from imas_codex.embeddings.config import EncoderConfig
+        from imas_codex.embeddings.encoder import Encoder
+
+        # Build query from signal names and group context
+        signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:5])
+        if group_key.startswith("tdi:"):
+            query_text = f"{group_key[4:]} {signal_names}"
+        elif group_key.startswith("tree:"):
+            query_text = f"{group_key[5:]} {signal_names}"
+        else:
+            query_text = signal_names
+
+        if not query_text.strip():
+            imas_context_cache[group_key] = []
+            return []
+
+        try:
+            config = EncoderConfig()
+            encoder = Encoder(config)
+            embedding = encoder.embed_texts([query_text])[0].tolist()
+        except Exception as e:
+            logger.debug("Could not embed for IMAS context: %s", e)
+            imas_context_cache[group_key] = []
+            return []
+
+        imas_results = []
+        try:
+            with GraphClient() as gc:
+                # Query IMAS paths
+                results = gc.query(
+                    """
+                    CALL db.index.vector.queryNodes(
+                        'imas_path_embedding', $k, $embedding
+                    )
+                    YIELD node, score
+                    WHERE score >= $min_score
+                    RETURN node.id AS path,
+                           node.documentation AS documentation,
+                           score
+                    ORDER BY score DESC
+                    """,
+                    k=5,
+                    embedding=embedding,
+                    min_score=0.4,
+                )
+                for row in results:
+                    doc = row.get("documentation", "") or ""
+                    if len(doc) > 200:
+                        doc = doc[:200] + "..."
+                    imas_results.append(
+                        {
+                            "imas_path": row.get("path", ""),
+                            "documentation": doc,
+                            "source": "imas_path",
+                        }
+                    )
+
+                # Query semantic clusters
+                results = gc.query(
+                    """
+                    CALL db.index.vector.queryNodes(
+                        'cluster_label_embedding', $k, $embedding
+                    )
+                    YIELD node, score
+                    WHERE score >= $min_score
+                    RETURN node.label AS label,
+                           node.description AS description,
+                           score
+                    ORDER BY score DESC
+                    """,
+                    k=3,
+                    embedding=embedding,
+                    min_score=0.4,
+                )
+                for row in results:
+                    desc = row.get("description", "") or ""
+                    if len(desc) > 200:
+                        desc = desc[:200] + "..."
+                    imas_results.append(
+                        {
+                            "imas_path": row.get("label", ""),
+                            "documentation": desc,
+                            "source": "cluster",
+                        }
+                    )
+
+        except Exception as e:
+            logger.debug("IMAS context search failed: %s", e)
+
+        imas_context_cache[group_key] = imas_results
+        return imas_results
 
     while not state.should_stop_enriching():
         # Claim batch of signals (sorted by tdi_function)

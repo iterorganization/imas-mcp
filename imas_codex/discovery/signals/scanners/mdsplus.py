@@ -183,7 +183,7 @@ class MDSplusScanner:
                     data_access=data_access_nodes.get(tree_name, ""),
                     tree_name=tree_name,
                     node_path=path,
-                    units=sig.get("units", ""),
+                    units=sig.get("units") or None,
                     discovery_source="tree_traversal",
                     example_shot=ref_shot,
                 )
