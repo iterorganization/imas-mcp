@@ -89,11 +89,11 @@ def persist_file_enrichment(
     results: list[dict[str, Any]],
     file_id_map: dict[str, str],
 ) -> int:
-    """Write enrichment results to SourceFile nodes in the graph.
+    """Write enrichment results to CodeFile nodes in the graph.
 
     Args:
         results: List of enrichment result dicts from enrich_files()
-        file_id_map: Mapping from file path to SourceFile node ID
+        file_id_map: Mapping from file path to CodeFile node ID
 
     Returns:
         Number of files enriched
@@ -123,7 +123,7 @@ def persist_file_enrichment(
         gc.query(
             """
             UNWIND $items AS item
-            MATCH (sf:SourceFile {id: item.id})
+            MATCH (sf:CodeFile {id: item.id})
             SET sf.is_enriched = item.is_enriched,
                 sf.enriched_at = datetime(),
                 sf.pattern_categories = item.pattern_categories,

@@ -123,17 +123,17 @@ class TestCodeHierarchy:
     """Source code hierarchy integrity."""
 
     def test_code_chunks_have_source_file(self, graph_client, label_counts):
-        """Every CodeChunk must belong to a SourceFile."""
+        """Every CodeChunk must belong to a CodeFile."""
         if not label_counts.get("CodeChunk"):
             pytest.skip("No CodeChunk nodes in graph")
 
         result = graph_client.query(
             "MATCH (c:CodeChunk) "
-            "WHERE NOT (:SourceFile)-[:HAS_CHUNK]->(c) "
+            "WHERE NOT (:CodeFile)-[:HAS_CHUNK]->(c) "
             "RETURN count(c) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} CodeChunk nodes without parent SourceFile"
+        assert count == 0, f"{count} CodeChunk nodes without parent CodeFile"
 
 
 class TestIMASLinks:

@@ -6,7 +6,7 @@ file discovery, enabling safe parallel execution of ``discover code``.
 Scan phase: Claims FacilityPath nodes via ``files_claimed_at`` (separate
 from the paths module's ``claimed_at``) to prevent duplicate SSH scans.
 
-Score phase: Claims SourceFile nodes via ``claimed_at`` to prevent
+Score phase: Claims CodeFile nodes via ``claimed_at`` to prevent
 duplicate LLM scoring calls.
 """
 
@@ -47,11 +47,11 @@ def reset_orphaned_file_claims(
         silent: Suppress logging
 
     Returns:
-        Dict with ``source_file_reset`` and ``facility_path_reset`` counts
+        Dict with ``code_file_reset`` and ``facility_path_reset`` counts
     """
-    # SourceFile claims (scoring phase)
+    # CodeFile claims (scoring phase)
     sf_reset = reset_stale_claims(
-        "SourceFile",
+        "CodeFile",
         facility,
         timeout_seconds=CLAIM_TIMEOUT_SECONDS,
         silent=silent,
@@ -69,13 +69,13 @@ def reset_orphaned_file_claims(
     total = sf_reset + fp_reset
     if total and not silent:
         logger.info(
-            "Released %d orphaned file claims (%d SourceFile, %d FacilityPath)",
+            "Released %d orphaned file claims (%d CodeFile, %d FacilityPath)",
             total,
             sf_reset,
             fp_reset,
         )
 
-    return {"source_file_reset": sf_reset, "facility_path_reset": fp_reset}
+    return {"code_file_reset": sf_reset, "facility_path_reset": fp_reset}
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +236,7 @@ def set_files_scan_after(facility: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Score-phase claiming (SourceFile with claimed_at)
+# Score-phase claiming (CodeFile with claimed_at)
 # ---------------------------------------------------------------------------
 
 
@@ -244,7 +244,7 @@ def claim_files_for_scoring(
     facility: str,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
-    """Atomically claim discovered SourceFiles for LLM scoring.
+    """Atomically claim discovered CodeFiles for LLM scoring.
 
     Claims files with ``status='discovered'`` and no ``interest_score``.
     Uses ``claimed_at`` timeout for orphan recovery.
@@ -267,7 +267,7 @@ def claim_files_for_scoring(
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NULL
               AND (sf.claimed_at IS NULL
@@ -278,7 +278,7 @@ def claim_files_for_scoring(
             LIMIT $limit
             SET sf.claimed_at = datetime()
             RETURN sf.id AS id, sf.path AS path,
-                   sf.language AS language, sf.file_category AS file_category,
+                   sf.language AS language,
                    sf.pattern_categories AS patterns_json,
                    sf.total_pattern_matches AS total_matches,
                    sf.line_count AS line_count,
@@ -323,7 +323,7 @@ def claim_files_for_scoring(
             files.append(f)
         if files:
             logger.debug(
-                "Claimed %d SourceFiles for scoring (facility=%s)",
+                "Claimed %d CodeFiles for scoring (facility=%s)",
                 len(files),
                 facility,
             )
@@ -331,17 +331,17 @@ def claim_files_for_scoring(
 
 
 def release_file_score_claim(file_id: str) -> None:
-    """Release scoring claim on a single SourceFile."""
-    release_claim("SourceFile", file_id)
+    """Release scoring claim on a single CodeFile."""
+    release_claim("CodeFile", file_id)
 
 
 def release_file_score_claims(file_ids: list[str]) -> None:
-    """Release scoring claims on multiple SourceFiles."""
-    release_claims_batch("SourceFile", file_ids)
+    """Release scoring claims on multiple CodeFiles."""
+    release_claims_batch("CodeFile", file_ids)
 
 
 # ---------------------------------------------------------------------------
-# Enrich-phase claiming (SourceFile with claimed_at, scored + not enriched)
+# Enrich-phase claiming (CodeFile with claimed_at, scored + not enriched)
 # ---------------------------------------------------------------------------
 
 
@@ -349,7 +349,7 @@ def claim_files_for_enrichment(
     facility: str,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    """Atomically claim scored SourceFiles for rg pattern enrichment.
+    """Atomically claim scored CodeFiles for rg pattern enrichment.
 
     Claims files that have been scored (interest_score IS NOT NULL) but
     not yet enriched (is_enriched IS NULL or false). Prioritizes files
@@ -366,7 +366,7 @@ def claim_files_for_enrichment(
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NOT NULL
               AND coalesce(sf.is_enriched, false) = false
@@ -385,7 +385,7 @@ def claim_files_for_enrichment(
         files = list(result)
         if files:
             logger.debug(
-                "Claimed %d SourceFiles for enrichment (facility=%s)",
+                "Claimed %d CodeFiles for enrichment (facility=%s)",
                 len(files),
                 facility,
             )
@@ -393,8 +393,8 @@ def claim_files_for_enrichment(
 
 
 def release_file_enrich_claims(file_ids: list[str]) -> None:
-    """Release enrichment claims on multiple SourceFiles."""
-    release_claims_batch("SourceFile", file_ids)
+    """Release enrichment claims on multiple CodeFiles."""
+    release_claims_batch("CodeFile", file_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -425,11 +425,11 @@ def has_pending_scan_work(facility: str, min_score: float = 0.5) -> bool:
 
 
 def has_pending_score_work(facility: str) -> bool:
-    """Check if there are SourceFiles needing LLM scoring."""
+    """Check if there are CodeFiles needing LLM scoring."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NULL
             RETURN count(sf) > 0 AS has_work
@@ -440,11 +440,11 @@ def has_pending_score_work(facility: str) -> bool:
 
 
 def has_pending_enrich_work(facility: str) -> bool:
-    """Check if there are scored SourceFiles needing rg enrichment."""
+    """Check if there are scored CodeFiles needing rg enrichment."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NOT NULL
               AND coalesce(sf.is_enriched, false) = false
@@ -460,64 +460,14 @@ def has_pending_code_work(facility: str, min_score: float = 0.0) -> bool:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NOT NULL
               AND sf.interest_score >= $min_score
-              AND sf.file_category = 'code'
             RETURN count(sf) > 0 AS has_work
             """,
             facility=facility,
             min_score=min_score,
-        )
-        return result[0]["has_work"] if result else False
-
-
-def has_pending_docs_work(facility: str, min_score: float = 0.0) -> bool:
-    """Check if there are scored document/notebook/config files needing ingestion."""
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE sf.status = 'discovered'
-              AND sf.interest_score IS NOT NULL
-              AND sf.interest_score >= $min_score
-              AND sf.file_category IN ['document', 'notebook', 'config']
-            RETURN count(sf) > 0 AS has_work
-            """,
-            facility=facility,
-            min_score=min_score,
-        )
-        return result[0]["has_work"] if result else False
-
-
-def has_pending_image_work(facility: str) -> bool:
-    """Check if there are image files needing ingestion."""
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE sf.status = 'discovered'
-              AND sf.interest_score IS NOT NULL
-              AND sf.file_category = 'image'
-            RETURN count(sf) > 0 AS has_work
-            """,
-            facility=facility,
-        )
-        return result[0]["has_work"] if result else False
-
-
-def has_pending_image_score_work(facility: str) -> bool:
-    """Check if there are ingested images needing VLM scoring."""
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (img:Image {facility_id: $facility})
-            WHERE img.status = 'ingested'
-              AND img.description IS NULL
-            RETURN count(img) > 0 AS has_work
-            """,
-            facility=facility,
         )
         return result[0]["has_work"] if result else False
 
@@ -528,10 +478,7 @@ __all__ = [
     "claim_files_for_scoring",
     "claim_paths_for_file_scan",
     "has_pending_code_work",
-    "has_pending_docs_work",
     "has_pending_enrich_work",
-    "has_pending_image_score_work",
-    "has_pending_image_work",
     "has_pending_scan_work",
     "has_pending_score_work",
     "release_file_enrich_claims",

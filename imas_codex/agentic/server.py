@@ -327,7 +327,7 @@ def _init_repl() -> dict[str, Any]:
         results = gc.query(
             'CALL db.index.vector.queryNodes("code_chunk_embedding", $k, $embedding) '
             "YIELD node, score "
-            "OPTIONAL MATCH (sf:SourceFile)-[:HAS_CHUNK]->(node) "
+            "OPTIONAL MATCH (sf:CodeFile)-[:HAS_CHUNK]->(node) "
             "RETURN [k IN keys(node) "
             "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
             "AS properties, labels(node) AS labels, score, "
@@ -1310,7 +1310,7 @@ class AgentsServer:
             For infrastructure data (paths, tools, OS), use update_infrastructure() instead.
 
             Special handling:
-            - SourceFile: Auto-deduplicates already discovered/ingested files
+            - CodeFile: Auto-deduplicates already discovered/ingested files
             - TreeNode: Auto-creates TREE_NAME and ACCESSOR_FUNCTION relationships
             - FacilityPath: Links to parent Facility
 
@@ -1325,7 +1325,7 @@ class AgentsServer:
 
             Examples:
                 # Queue source files for ingestion
-                add_to_graph("SourceFile", [
+                add_to_graph("CodeFile", [
                     {"id": "tcv:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
                      "facility_id": "tcv", "status": "discovered"}
                 ])
@@ -1392,12 +1392,12 @@ class AgentsServer:
                                 "errors": [str(gate_err)],
                             }
 
-                    # SourceFile deduplication
-                    if node_type == "SourceFile":
+                    # CodeFile deduplication
+                    if node_type == "CodeFile":
                         existing = client.query(
                             """
                             UNWIND $items AS item
-                            OPTIONAL MATCH (sf:SourceFile {id: item.id})
+                            OPTIONAL MATCH (sf:CodeFile {id: item.id})
                             OPTIONAL MATCH (ce:CodeExample {source_file: item.path, facility_id: item.facility_id})
                             RETURN item.id AS id, sf.status AS sf_status, ce.id AS ce_id
                             """,

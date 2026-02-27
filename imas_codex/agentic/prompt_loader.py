@@ -891,7 +891,7 @@ def _provide_file_score_dimensions() -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def _provide_file_scoring_schema() -> dict[str, Any]:
     """Provide FileScoreBatch Pydantic schema for LLM prompts."""
-    from imas_codex.discovery.files.scorer import FileScoreBatch, FileScoreResult
+    from imas_codex.discovery.code.scorer import FileScoreBatch, FileScoreResult
 
     return {
         "file_scoring_schema_example": get_pydantic_schema_json(FileScoreBatch),
@@ -902,7 +902,7 @@ def _provide_file_scoring_schema() -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def _provide_file_triage_schema() -> dict[str, Any]:
     """Provide FileTriageBatch Pydantic schema for LLM prompts."""
-    from imas_codex.discovery.files.scorer import FileTriageBatch, FileTriageResult
+    from imas_codex.discovery.code.scorer import FileTriageBatch, FileTriageResult
 
     return {
         "file_triage_schema_example": get_pydantic_schema_json(FileTriageBatch),

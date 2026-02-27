@@ -11,9 +11,9 @@ Design principles (matching paths, signals, wiki progress displays):
 
 Display layout: PIPELINE → RESOURCES
 - SCAN: SSH file enumeration from scored FacilityPaths
-- SCORE: LLM batch scoring of discovered SourceFiles
+- SCORE: LLM batch scoring of discovered CodeFiles
 - ENRICH: rg pattern matching on scored files
-- INGEST: Fetch, chunk, embed (code + docs combined)
+- INGEST: Fetch, tree-sitter chunk, embed code files
 
 Uses common pipeline infrastructure from base.progress module.
 """
@@ -114,9 +114,6 @@ class FileProgressState:
     scored_count: int = 0
     enriched_count: int = 0
     code_files: int = 0
-    document_files: int = 0
-    notebook_files: int = 0
-    config_files: int = 0
 
     # This run stats
     run_scanned: int = 0
@@ -124,13 +121,11 @@ class FileProgressState:
     run_skipped: int = 0
     run_enriched: int = 0
     run_code_ingested: int = 0
-    run_docs_ingested: int = 0
     _run_score_cost: float = 0.0
     scan_rate: float | None = None
     score_rate: float | None = None
     enrich_rate: float | None = None
     code_rate: float | None = None
-    docs_rate: float | None = None
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
@@ -168,14 +163,13 @@ class FileProgressState:
 
     @property
     def run_ingest_total(self) -> int:
-        """Combined code + docs ingested this run."""
-        return self.run_code_ingested + self.run_docs_ingested
+        """Code files ingested this run."""
+        return self.run_code_ingested
 
     @property
     def ingest_rate(self) -> float | None:
-        """Combined code + docs rate."""
-        rates = [r for r in [self.code_rate, self.docs_rate] if r]
-        return sum(rates) if rates else None
+        """Code ingestion rate."""
+        return self.code_rate
 
     @property
     def elapsed(self) -> float:
@@ -313,11 +307,9 @@ class FileProgressDisplay(BaseProgressDisplay):
         scan_count, scan_ann = self._count_group_workers("scan")
         score_count, score_ann = self._count_group_workers("triage")
         enrich_count, enrich_ann = self._count_group_workers("enrich")
-        # Combine code + docs workers for ingest display
         code_count, code_ann = self._count_group_workers("code")
-        docs_count, docs_ann = self._count_group_workers("docs")
-        ingest_count = code_count + docs_count
-        ingest_ann = code_ann or docs_ann
+        ingest_count = code_count
+        ingest_ann = code_ann
 
         # --- Build activity data ---
 
@@ -331,8 +323,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         score_complete = self._worker_complete("triage") and not score
         enrich_complete = self._worker_complete("enrich") and not enrich
         code_complete = self._worker_complete("code")
-        docs_complete = self._worker_complete("docs")
-        ingest_complete = code_complete and docs_complete and not ingest
+        ingest_complete = code_complete and not ingest
 
         # SCAN activity
         scan_text = ""
@@ -491,10 +482,6 @@ class FileProgressDisplay(BaseProgressDisplay):
         type_parts: list[tuple[str, str, str]] = []
         if self.state.code_files > 0:
             type_parts.append(("code", str(self.state.code_files), "cyan"))
-        if self.state.document_files > 0:
-            type_parts.append(("docs", str(self.state.document_files), "magenta"))
-        if self.state.notebook_files > 0:
-            type_parts.append(("notebooks", str(self.state.notebook_files), "yellow"))
 
         config = ResourceConfig(
             elapsed=self.state.elapsed,
@@ -575,7 +562,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 ScoreItem(
                     path=r.get("path", ""),
                     score=r.get("score"),
-                    category=r.get("category", r.get("file_category", "")),
+                    category=r.get("category", ""),
                     description=r.get("description", ""),
                     skipped=r.get("skipped", False),
                 )
@@ -651,41 +638,11 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    def update_docs(
-        self,
-        message: str,
-        stats: WorkerStats,
-        results: list[dict] | None = None,
-    ) -> None:
-        """Update docs ingestion worker state (feeds into INGEST row)."""
-        self.state.run_docs_ingested = stats.processed
-        self.state.docs_rate = stats.rate
-
-        if "waiting" in message.lower():
-            self._refresh()
-            return
-        elif "ingesting" in message.lower():
-            self.state.ingest_processing = True
-
-        if results:
-            items = [
-                IngestItem(
-                    path=r.get("path", ""),
-                    file_type=r.get("file_type", "document"),
-                )
-                for r in results
-            ]
-            max_rate = 2.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.ingest_queue.add(items, display_rate)
-
-        self._refresh()
-
     def refresh_from_graph(self, facility: str) -> None:
         """Refresh totals from graph database."""
-        from imas_codex.discovery.files.parallel import get_file_discovery_stats
+        from imas_codex.discovery.code.parallel import get_code_discovery_stats
 
-        stats = get_file_discovery_stats(facility)
+        stats = get_code_discovery_stats(facility)
         self.state.total = stats["total"]
         self.state.discovered = stats["discovered"]
         self.state.ingested = stats["ingested"]
@@ -695,10 +652,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         self.state.pending_ingest = stats["pending_ingest"]
         self.state.scored_count = stats["scored_count"]
         self.state.enriched_count = stats["enriched_count"]
-        self.state.code_files = stats["code_files"]
-        self.state.document_files = stats["document_files"]
-        self.state.notebook_files = stats["notebook_files"]
-        self.state.config_files = stats["config_files"]
+        self.state.code_files = stats["total"]
         self._refresh()
 
     def tick(self) -> None:
@@ -784,10 +738,9 @@ class FileProgressDisplay(BaseProgressDisplay):
             summary.append(f"  {self.state.enrich_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # INGEST stats (combined code + docs)
+        # INGEST stats
         summary.append("  INGEST   ", style="bold magenta")
         summary.append(f"code={self.state.run_code_ingested:,}", style="magenta")
-        summary.append(f"  docs={self.state.run_docs_ingested:,}", style="yellow")
         ingest_rate = self.state.ingest_rate
         if ingest_rate:
             summary.append(f"  {ingest_rate:.1f}/s", style="dim")

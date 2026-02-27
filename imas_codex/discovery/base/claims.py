@@ -20,10 +20,10 @@ Usage::
     )
 
     # Reset stale claims at startup
-    reset_stale_claims("SourceFile", facility, timeout_seconds=300)
+    reset_stale_claims("CodeFile", facility, timeout_seconds=300)
 
     # Release on error
-    release_claim("SourceFile", node_id)
+    release_claim("CodeFile", node_id)
     release_claims_batch("FacilityPath", [id1, id2])
 """
 
@@ -51,7 +51,7 @@ def reset_stale_claims(
     concurrently without wiping each other's active claims.
 
     Args:
-        label: Node label (e.g., ``"SourceFile"``, ``"FacilityPath"``)
+        label: Node label (e.g., ``"CodeFile"``, ``"FacilityPath"``)
         facility: Facility ID
         timeout_seconds: Age threshold for orphaned claims
         facility_field: Property containing facility ID
@@ -94,7 +94,7 @@ def release_claim(label: str, node_id: str) -> None:
     """Release claim on a single node by clearing ``claimed_at``.
 
     Args:
-        label: Node label (e.g., ``"SourceFile"``)
+        label: Node label (e.g., ``"CodeFile"``)
         node_id: Node ID to release
     """
     from imas_codex.graph import GraphClient
@@ -116,7 +116,7 @@ def release_claims_batch(label: str, node_ids: list[str]) -> int:
     """Release claims on multiple nodes by clearing ``claimed_at``.
 
     Args:
-        label: Node label (e.g., ``"SourceFile"``)
+        label: Node label (e.g., ``"CodeFile"``)
         node_ids: Node IDs to release
 
     Returns:

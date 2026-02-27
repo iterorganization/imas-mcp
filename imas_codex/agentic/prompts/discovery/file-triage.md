@@ -1,7 +1,7 @@
 ---
 name: discovery/file-triage
 description: Fast keep/skip triage for discovered files using path + enrichment evidence
-used_by: imas_codex.discovery.files.scorer
+used_by: imas_codex.discovery.code.scorer
 task: score
 dynamic: true
 ---

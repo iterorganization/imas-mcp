@@ -1,6 +1,6 @@
 """Unified ingestion pipeline for all content types.
 
-Graph-driven ingestion via SourceFile queue:
+Graph-driven ingestion via CodeFile queue:
 - Automatic deduplication (skips already-ingested files)
 - Per-file atomic commits (interrupt-safe)
 - Auto-updates FacilityPath status to 'explored'
@@ -197,12 +197,12 @@ async def ingest_files(
 
     Can be called in two modes:
     1. **Path list mode**: Provide remote_paths explicitly
-    2. **Graph-driven mode**: Omit remote_paths to process queued SourceFile nodes
+    2. **Graph-driven mode**: Omit remote_paths to process queued CodeFile nodes
 
     Features:
     - Deduplication: Skips files that are already ingested (unless force=True)
     - Interrupt-safe: Each file is committed atomically
-    - Auto status update: SourceFile nodes are marked 'ingested'
+    - Auto status update: CodeFile nodes are marked 'ingested'
     - MDSplus linking: Extracted paths are linked to TreeNode entities
 
     Args:

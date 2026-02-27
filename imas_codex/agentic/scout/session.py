@@ -281,10 +281,10 @@ class ScoutSession:
                         },
                         facility=self.config.facility,
                     )
-                elif node_type == "SourceFile":
+                elif node_type == "CodeFile":
                     client.query(
                         """
-                        MERGE (sf:SourceFile {id: $id})
+                        MERGE (sf:CodeFile {id: $id})
                         SET sf += $props
                         WITH sf
                         MATCH (f:Facility {id: $facility})
@@ -424,7 +424,7 @@ class ScoutSession:
 
         Args:
             path: The discovered path
-            node_type: FacilityPath or SourceFile
+            node_type: FacilityPath or CodeFile
             interest_score: Priority score 0.0-1.0
             status: Current status (discovered, listed, skipped, etc.)
             **extra: Additional fields to store
@@ -464,7 +464,7 @@ class ScoutSession:
             self.state.total_discoveries += 1
             if self.state.windows:
                 self.state.windows[-1].discoveries.append(discovery)
-            if node_type == "SourceFile":
+            if node_type == "CodeFile":
                 self.state.total_queued += 1
                 if self.state.windows:
                     self.state.windows[-1].queued_files.append(path)

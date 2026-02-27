@@ -1,4 +1,4 @@
-"""Dual-pass LLM file scoring for discovered SourceFiles.
+"""Dual-pass LLM file scoring for discovered CodeFiles.
 
 Pass 1 (Triage): Fast keep/skip classification from file path, language,
 and per-file enrichment evidence (rg pattern matches). Cheap and fast —
@@ -340,7 +340,7 @@ def apply_triage_results(
 
     Args:
         results: List of FileTriageResult from LLM
-        file_id_map: Mapping from file path to SourceFile node ID
+        file_id_map: Mapping from file path to CodeFile node ID
 
     Returns:
         Dict with kept_count, skipped_count, kept_ids (list)
@@ -363,7 +363,7 @@ def apply_triage_results(
             client.query(
                 """
                 UNWIND $items AS item
-                MATCH (sf:SourceFile {id: item.id})
+                MATCH (sf:CodeFile {id: item.id})
                 SET sf.status = 'skipped',
                     sf.skip_reason = item.reason,
                     sf.claimed_at = null
@@ -382,11 +382,11 @@ def apply_file_scores(
     results: list[FileScoreResult],
     file_id_map: dict[str, str],
 ) -> dict[str, int]:
-    """Apply multi-dimensional LLM scores to SourceFile nodes in graph.
+    """Apply multi-dimensional LLM scores to CodeFile nodes in graph.
 
     Args:
         results: List of FileScoreResult from LLM
-        file_id_map: Mapping from file path to SourceFile node ID
+        file_id_map: Mapping from file path to CodeFile node ID
 
     Returns:
         Dict with scored, skipped counts
@@ -406,7 +406,6 @@ def apply_file_scores(
                 {
                     "id": sf_id,
                     "interest_score": result.interest_score,
-                    "file_category": result.file_category,
                     "score_reason": result.description,
                     "score_modeling_code": result.score_modeling_code,
                     "score_analysis_code": result.score_analysis_code,
@@ -425,9 +424,8 @@ def apply_file_scores(
             client.query(
                 """
                 UNWIND $items AS item
-                MATCH (sf:SourceFile {id: item.id})
+                MATCH (sf:CodeFile {id: item.id})
                 SET sf.interest_score = item.interest_score,
-                    sf.file_category = item.file_category,
                     sf.score_reason = item.score_reason,
                     sf.score_modeling_code = item.score_modeling_code,
                     sf.score_analysis_code = item.score_analysis_code,
@@ -446,7 +444,7 @@ def apply_file_scores(
             client.query(
                 """
                 UNWIND $items AS item
-                MATCH (sf:SourceFile {id: item.id})
+                MATCH (sf:CodeFile {id: item.id})
                 SET sf.status = 'skipped',
                     sf.skip_reason = item.reason
                 """,
@@ -464,7 +462,7 @@ def score_facility_files(
     cost_limit: float = 5.0,
     progress_callback: ProgressCallback | None = None,
 ) -> dict[str, Any]:
-    """Score discovered SourceFiles using dual-pass LLM scoring.
+    """Score discovered CodeFiles using dual-pass LLM scoring.
 
     Pass 1: Triage — fast keep/skip from path + enrichment evidence.
     Pass 2: Score — full multi-dimensional scoring for kept files.
@@ -480,7 +478,7 @@ def score_facility_files(
     Returns:
         Dict with total_scored, total_skipped, cost, batches
     """
-    from imas_codex.discovery.files.graph_ops import (
+    from imas_codex.discovery.code.graph_ops import (
         claim_files_for_scoring,
         release_file_score_claims,
     )

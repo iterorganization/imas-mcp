@@ -243,18 +243,18 @@ class TestDescriptionQuality:
         )
 
 
-class TestSourceFilePaths:
-    """Verify source file path format."""
+class TestCodeFilePaths:
+    """Verify code file path format."""
 
-    def test_source_file_paths_absolute(self, graph_client, label_counts):
-        """SourceFile.path should be absolute (start with /)."""
-        if not label_counts.get("SourceFile"):
-            pytest.skip("No SourceFile nodes in graph")
+    def test_code_file_paths_absolute(self, graph_client, label_counts):
+        """CodeFile.path should be absolute (start with /)."""
+        if not label_counts.get("CodeFile"):
+            pytest.skip("No CodeFile nodes in graph")
 
         result = graph_client.query(
-            "MATCH (n:SourceFile) "
+            "MATCH (n:CodeFile) "
             "WHERE n.path IS NOT NULL AND NOT n.path STARTS WITH '/' "
             "RETURN count(n) AS cnt"
         )
         count = result[0]["cnt"] if result else 0
-        assert count == 0, f"{count} SourceFile nodes with non-absolute paths"
+        assert count == 0, f"{count} CodeFile nodes with non-absolute paths"

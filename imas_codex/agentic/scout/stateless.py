@@ -466,7 +466,7 @@ def queue_source_file(
 ) -> dict[str, Any]:
     """Queue a source file for ingestion.
 
-    Creates a SourceFile node with status='discovered'.
+    Creates a CodeFile node with status='discovered'.
     """
     file_id = f"{facility}:{path}"
     score = interest_score or compute_interest_score(path)
@@ -496,7 +496,7 @@ def queue_source_file(
             # Check if already exists
             existing = client.query(
                 """
-                MATCH (sf:SourceFile {id: $id})
+                MATCH (sf:CodeFile {id: $id})
                 RETURN sf.status AS status
                 UNION ALL
                 MATCH (ce:CodeExample {source_file: $path, facility_id: $facility})
@@ -515,7 +515,7 @@ def queue_source_file(
 
             client.query(
                 """
-                MERGE (sf:SourceFile {id: $id})
+                MERGE (sf:CodeFile {id: $id})
                 SET sf += $props
                 WITH sf
                 MATCH (f:Facility {id: $facility})
@@ -601,7 +601,7 @@ def get_exploration_summary(facility: str) -> dict[str, Any]:
             # File counts
             file_result = client.query(
                 """
-                MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+                MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 RETURN sf.status AS status, count(*) AS count
                 """,
                 facility=facility,

@@ -1,6 +1,6 @@
 """Source file queue management for the ingestion pipeline.
 
-Manages SourceFile node lifecycle in the graph:
+Manages CodeFile node lifecycle in the graph:
   discovered → ingested | failed | stale
 
 Scouts discover files via queue_source_files(). The CLI processes them.
@@ -32,7 +32,7 @@ class QueuedFile:
 
 
 def _generate_source_file_id(facility: str, path: str) -> str:
-    """Generate unique ID for a SourceFile node."""
+    """Generate unique ID for a CodeFile node."""
     return f"{facility}:{path}"
 
 
@@ -52,7 +52,7 @@ def queue_source_files(
 ) -> dict[str, int]:
     """Discover source files for ingestion.
 
-    Creates SourceFile nodes with status='discovered'. Files already in
+    Creates CodeFile nodes with status='discovered'. Files already in
     discovered/ingested status are skipped (idempotent).
 
     Args:
@@ -92,7 +92,7 @@ def queue_source_files(
             existing = client.query(
                 """
                 UNWIND $items AS item
-                OPTIONAL MATCH (sf:SourceFile {id: item.id})
+                OPTIONAL MATCH (sf:CodeFile {id: item.id})
                 OPTIONAL MATCH (ce:CodeExample {source_file: item.path, facility_id: item.facility_id})
                 RETURN item.id AS id,
                        sf.status AS sf_status,
@@ -116,7 +116,7 @@ def queue_source_files(
             client.query(
                 """
                 UNWIND $items AS item
-                MERGE (sf:SourceFile {id: item.id})
+                MERGE (sf:CodeFile {id: item.id})
                 SET sf += item
                 WITH sf, item
                 MATCH (f:Facility {id: item.facility_id})
@@ -128,7 +128,7 @@ def queue_source_files(
             if in_directory:
                 client.query(
                     """
-                    MATCH (sf:SourceFile)
+                    MATCH (sf:CodeFile)
                     WHERE sf.in_directory = $parent_id
                     MATCH (p:FacilityPath {id: $parent_id})
                     MERGE (p)-[:CONTAINS]->(sf)
@@ -157,7 +157,7 @@ def get_pending_files(
     limit: int = 100,
     min_interest_score: float = 0.0,
 ) -> list[dict]:
-    """Get pending SourceFile nodes for ingestion.
+    """Get pending CodeFile nodes for ingestion.
 
     Returns files with status 'discovered' or 'failed' (retry < 3).
     Ordered by interest_score descending.
@@ -168,12 +168,12 @@ def get_pending_files(
         min_interest_score: Minimum interest score threshold
 
     Returns:
-        List of SourceFile dicts with id, path, language, interest_score
+        List of CodeFile dicts with id, path, language, interest_score
     """
     with GraphClient() as client:
         result = client.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
                OR (sf.status = 'failed' AND coalesce(sf.retry_count, 0) < 3)
             AND coalesce(sf.interest_score, 0.5) >= $min_score
@@ -196,10 +196,10 @@ def update_source_file_status(
     code_example_id: str | None = None,
     error: str | None = None,
 ) -> None:
-    """Update the status of a SourceFile node.
+    """Update the status of a CodeFile node.
 
     Args:
-        source_file_id: SourceFile ID
+        source_file_id: CodeFile ID
         status: New status (discovered, ingested, failed, stale)
         code_example_id: CodeExample ID if status is 'ingested'
         error: Error message if status is 'failed'
@@ -210,7 +210,7 @@ def update_source_file_status(
         if status == "ingested" and code_example_id:
             client.query(
                 """
-                MATCH (sf:SourceFile {id: $id})
+                MATCH (sf:CodeFile {id: $id})
                 SET sf.status = $status,
                     sf.completed_at = $now,
                     sf.code_example_id = $code_example_id,
@@ -227,7 +227,7 @@ def update_source_file_status(
         elif status == "failed":
             client.query(
                 """
-                MATCH (sf:SourceFile {id: $id})
+                MATCH (sf:CodeFile {id: $id})
                 SET sf.status = $status,
                     sf.error = $error,
                     sf.retry_count = coalesce(sf.retry_count, 0) + 1
@@ -239,7 +239,7 @@ def update_source_file_status(
         else:
             client.query(
                 """
-                MATCH (sf:SourceFile {id: $id})
+                MATCH (sf:CodeFile {id: $id})
                 SET sf.status = $status
                 """,
                 id=source_file_id,
@@ -259,7 +259,7 @@ def get_queue_stats(facility: str) -> dict[str, int]:
     with GraphClient() as client:
         result = client.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             RETURN sf.status AS status, count(*) AS count
             """,
             facility=facility,

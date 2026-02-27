@@ -187,13 +187,13 @@ def persist_images(
     """Batch-persist Image nodes to the graph.
 
     Creates or merges Image nodes and links them to the parent facility.
-    Optionally links to a parent node (WikiPage, WikiArtifact, SourceFile, etc.)
+    Optionally links to a parent node (WikiPage, WikiArtifact, CodeFile, etc.)
     via HAS_IMAGE relationship.
 
     Args:
         images: List of image dicts. Required keys: id, facility_id, source_url,
             source_type, status. Optional: image_data, width, height, page_title, etc.
-        parent_label: Optional Neo4j label for the parent node (e.g., "SourceFile")
+        parent_label: Optional Neo4j label for the parent node (e.g., "CodeFile")
         parent_id_key: Key in image dict that holds the parent node's ID
             (e.g., "source_file_id"). Required when parent_label is set.
 
@@ -278,8 +278,8 @@ def persist_document_figures(
     Args:
         extracted_images: List from _extract_pdf_images or _extract_pptx_images.
             Each dict has: image_bytes, page_num or slide_num, name
-        parent_id: ID of the parent node (WikiArtifact or SourceFile)
-        parent_label: Neo4j label of parent ("WikiArtifact" or "SourceFile")
+        parent_id: ID of the parent node (WikiArtifact or CodeFile)
+        parent_label: Neo4j label of parent ("WikiArtifact" or "CodeFile")
         facility: Facility ID
 
     Returns:

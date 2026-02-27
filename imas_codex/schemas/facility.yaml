@@ -419,7 +419,8 @@ enums:
         description: Permanently disabled
 
   FileCategory:
-    description: Category of a discovered file
+    deprecated: Use CodeFile/Document node types instead of file_category property.
+    description: "[DEPRECATED] Category of a discovered file. Use node types instead."
     permissible_values:
       code:
         description: Source code file (Python, Fortran, etc.)
@@ -433,6 +434,32 @@ enums:
         description: Computational notebook (Jupyter, Mathematica)
       other:
         description: Other file types
+
+  DocumentType:
+    description: Type of non-code document or media file
+    permissible_values:
+      pdf:
+        description: PDF document
+      image:
+        description: Image file (PNG, JPG, SVG, etc.)
+      notebook:
+        description: Computational notebook (Jupyter)
+      markdown:
+        description: Markdown documentation
+      text:
+        description: Plain text file
+      html:
+        description: HTML document
+      spreadsheet:
+        description: Spreadsheet (Excel, CSV)
+      presentation:
+        description: Presentation (PowerPoint)
+      config:
+        description: Configuration file (YAML, JSON, TOML, INI)
+      data:
+        description: Data file (HDF5, NetCDF, MAT)
+      other:
+        description: Other document type
 
   # Legacy alias - will be removed in future version
   WikiSiteType:
@@ -2379,18 +2406,39 @@ classes:
         range: datetime
 
   SourceFile:
+    deprecated: >-
+      DEPRECATED: Use CodeFile for code or Document for documents/images.
+      Kept for schema compatibility during migration.
     description: >-
-      A source file queued for ingestion into the knowledge graph.
+      [DEPRECATED] Use CodeFile (code) or Document (documents, images).
+    class_uri: facility:SourceFile
+    attributes:
+      id:
+        identifier: true
+        required: true
+      facility_id:
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      path:
+        required: true
+      status:
+        range: SourceFileStatus
+
+  CodeFile:
+    description: >-
+      A source code file discovered at a facility and queued for ingestion.
       
-      Lifecycle: discovered -> ingested -> stale
+      Lifecycle: discovered -> ingested -> failed -> stale
       On failure: any state -> failed (check error field)
       On re-scan: ingested -> stale -> discovered (if changed)
       
-      SourceFile is the unit of work for the ingestion pipeline.
-      Handles all file types - code, documents, data, configs.
-      File category determines processing: code files get tree-sitter parsing,
-      documents get text extraction, data files get schema extraction.
-    class_uri: facility:SourceFile
+      CodeFile is the unit of work for the code ingestion pipeline.
+      Only source code files (Python, Fortran, MATLAB, Julia, C/C++, IDL, TDI)
+      — documents and images use the Document node type.
+      Code files are processed by tree-sitter for chunking, embedding,
+      and data reference extraction.
+    class_uri: facility:CodeFile
     attributes:
       id:
         identifier: true
@@ -2409,16 +2457,10 @@ classes:
         description: Current lifecycle status
         range: SourceFileStatus
         required: true
-      file_category:
-        description: Category of file (code, document, data, config, notebook)
-        range: FileCategory
-        required: true
       language:
-        description: Programming language (for code files, detected from extension)
+        description: Programming language (detected from extension)
         range: ProgrammingLanguage
-      artifact_type:
-        description: Artifact type (for document files)
-        range: ArtifactType
+        required: true
       in_directory:
         description: FacilityPath that contains this file
         range: FacilityPath
@@ -2430,21 +2472,19 @@ classes:
       interest_score:
         description: >-
           Composite interest score (0.0-1.0, max of per-dimension scores).
-          Replaces the legacy single-score approach with a computed maximum.
         range: float
       # Per-dimension scores (LLM-assigned, 0.0-1.0 each)
-      # Aligned with FacilityPath score dimensions for cross-pipeline consistency
       score_modeling_code:
-        description: Score for forward modeling/simulation code (CHEASE, ASTRA, JOREK)
+        description: Score for forward modeling/simulation code
         range: float
       score_analysis_code:
-        description: Score for experimental analysis code (diagnostic processing, LIUQE)
+        description: Score for experimental analysis code
         range: float
       score_operations_code:
-        description: Score for real-time operations code (control systems, DAQ)
+        description: Score for real-time operations code
         range: float
       score_data_access:
-        description: Score for data access tools (IMAS wrappers, MDSplus readers)
+        description: Score for data access tools
         range: float
       score_workflow:
         description: Score for orchestration and batch processing
@@ -2452,19 +2492,16 @@ classes:
       score_visualization:
         description: Score for plotting and rendering tools
         range: float
-      score_documentation:
-        description: Score for documentation value (READMEs, tutorials, papers)
-        range: float
       score_imas:
-        description: Score for IMAS relevance (IDS patterns, put_slice, etc.)
+        description: Score for IMAS relevance
         range: float
       score_convention:
-        description: Score for sign/coordinate/COCOS convention handling
+        description: Score for COCOS convention handling
         range: float
       score_reason:
         description: Brief LLM explanation for the assigned scores
       patterns_matched:
-        description: Patterns that matched during discovery (e.g., "IMAS", "equilibrium")
+        description: Patterns that matched during discovery
         multivalued: true
       # Enrichment fields (rg pattern matches on individual files)
       is_enriched:
@@ -2487,16 +2524,16 @@ classes:
       claimed_at:
         description: >-
           Timestamp when a worker claimed this file for processing.
-          Used for distributed worker coordination. Stale claims (>5min) are reclaimed.
+          Stale claims (>5min) are reclaimed by orphan recovery.
         range: datetime
       skip_reason:
         description: One-line reason why this file was skipped during triage or scoring
       # Processing metadata
       started_at:
-        description: When ingestion started (fetching state)
+        description: When ingestion started
         range: datetime
       completed_at:
-        description: When ingestion completed (ready state)
+        description: When ingestion completed
         range: datetime
       error:
         description: Error message if status is failed
@@ -2507,6 +2544,70 @@ classes:
       code_example_id:
         description: ID of created CodeExample (set when ready)
         range: CodeExample
+
+  Document:
+    description: >-
+      A non-code file discovered at a facility: documents, images, notebooks,
+      configs, and data files.
+      
+      Lifecycle: discovered -> ingested -> failed -> stale
+      
+      Document is the unit of work for the document/image pipeline.
+      Documents get text extraction and embedding. Images get VLM captioning.
+      Analogous to WikiPage for web content — Document handles facility files.
+    class_uri: facility:Document
+    attributes:
+      id:
+        identifier: true
+        description: Composite key as facility:path (e.g., tcv:/home/docs/manual.pdf)
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      path:
+        description: Absolute remote filesystem path
+        required: true
+      status:
+        description: Current lifecycle status
+        range: SourceFileStatus
+        required: true
+      document_type:
+        description: Type of document
+        range: DocumentType
+        required: true
+      in_directory:
+        description: FacilityPath that contains this file
+        range: FacilityPath
+      discovered_by:
+        description: Scout session or pattern that found this file
+      discovered_at:
+        description: When this file was discovered
+        range: datetime
+      interest_score:
+        description: Interest score (0.0-1.0)
+        range: float
+      claimed_at:
+        description: Worker coordination timestamp
+        range: datetime
+      skip_reason:
+        description: One-line reason why this file was skipped
+      started_at:
+        description: When processing started
+        range: datetime
+      completed_at:
+        description: When processing completed
+        range: datetime
+      error:
+        description: Error message if status is failed
+      retry_count:
+        description: Number of retry attempts
+        range: integer
+      artifact_type:
+        description: Artifact type (for formal documents)
+        range: ArtifactType
 
   CodeChunk:
     description: >-

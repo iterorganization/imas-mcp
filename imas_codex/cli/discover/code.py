@@ -99,8 +99,7 @@ def code(
     """Discover and ingest source code from scored facility paths.
 
     Scans for code files (Python, Fortran, MATLAB, Julia, C/C++, IDL, TDI)
-    using tree-sitter for chunking and embedding. Documents found alongside
-    code are also processed.
+    using tree-sitter for chunking and embedding.
 
     \b
     Pipeline stages:
@@ -137,7 +136,7 @@ def code(
             datefmt="%H:%M:%S",
         )
 
-    file_logger = logging.getLogger("imas_codex.discovery.files")
+    file_logger = logging.getLogger("imas_codex.discovery.code")
 
     def log_print(msg: str) -> None:
         clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
@@ -158,7 +157,7 @@ def code(
         raise SystemExit(1)
 
     if rescan:
-        from imas_codex.discovery.files.graph_ops import set_files_scan_after
+        from imas_codex.discovery.code.graph_ops import set_files_scan_after
 
         set_files_scan_after(facility)
         log_print(
@@ -170,7 +169,7 @@ def code(
         deadline = time.time() + (time_limit * 60)
 
     try:
-        from imas_codex.discovery.files.parallel import run_parallel_file_discovery
+        from imas_codex.discovery.code.parallel import run_parallel_code_discovery
 
         # Logging callbacks for non-rich mode
         def log_scan(msg, stats, results=None):
@@ -184,10 +183,6 @@ def code(
         def log_code_cb(msg, stats, results=None):
             if msg != "idle":
                 file_logger.info("CODE: %s", msg)
-
-        def log_docs(msg, stats, results=None):
-            if msg != "idle":
-                file_logger.info("DOCS: %s", msg)
 
         def log_enrich(msg, stats, results=None):
             if msg != "idle":
@@ -203,7 +198,7 @@ def code(
             log_print("")
 
             result = asyncio.run(
-                run_parallel_file_discovery(
+                run_parallel_code_discovery(
                     facility=facility,
                     ssh_host=ssh_host,
                     cost_limit=cost_limit,
@@ -213,7 +208,6 @@ def code(
                     num_scan_workers=scan_workers,
                     num_score_workers=score_workers,
                     num_code_workers=code_workers,
-                    num_docs_workers=1,
                     scan_only=scan_only,
                     score_only=score_only,
                     deadline=deadline,
@@ -221,13 +215,12 @@ def code(
                     on_score_progress=log_score,
                     on_enrich_progress=log_enrich,
                     on_code_progress=log_code_cb,
-                    on_docs_progress=log_docs,
                 )
             )
         else:
             # Rich progress display
             from imas_codex.cli.discover.common import create_discovery_monitor
-            from imas_codex.discovery.files.progress import FileProgressDisplay
+            from imas_codex.discovery.code.progress import FileProgressDisplay
 
             service_monitor = create_discovery_monitor(
                 config,
@@ -241,7 +234,7 @@ def code(
             # Suppress noisy INFO during rich display
             for mod in (
                 "imas_codex.embeddings",
-                "imas_codex.discovery.files",
+                "imas_codex.discovery.code",
             ):
                 logging.getLogger(mod).setLevel(logging.WARNING)
 
@@ -290,9 +283,6 @@ def code(
                     def on_code(msg, stats, results=None):
                         display.update_code(msg, stats, results)
 
-                    def on_docs(msg, stats, results=None):
-                        display.update_docs(msg, stats, results)
-
                     def on_enrich(msg, stats, results=None):
                         display.update_enrich(msg, stats, results)
 
@@ -300,7 +290,7 @@ def code(
                         display.update_worker_status(worker_group)
 
                     try:
-                        return await run_parallel_file_discovery(
+                        return await run_parallel_code_discovery(
                             facility=facility,
                             ssh_host=ssh_host,
                             cost_limit=cost_limit,
@@ -310,7 +300,6 @@ def code(
                             num_scan_workers=scan_workers,
                             num_score_workers=score_workers,
                             num_code_workers=code_workers,
-                            num_docs_workers=1,
                             scan_only=scan_only,
                             score_only=score_only,
                             deadline=deadline,
@@ -318,7 +307,6 @@ def code(
                             on_score_progress=on_score,
                             on_enrich_progress=on_enrich,
                             on_code_progress=on_code,
-                            on_docs_progress=on_docs,
                             on_worker_status=on_worker_status,
                             service_monitor=service_monitor,
                         )
@@ -349,14 +337,12 @@ def code(
         scanned = result.get("scanned", 0)
         scored = result.get("scored", 0)
         code_ingested = result.get("code_ingested", 0)
-        docs_ingested = result.get("docs_ingested", 0)
         cost = result.get("cost", 0)
         elapsed = result.get("elapsed_seconds", 0)
 
         log_print(
             f"\n  [green]{scanned} scanned, {scored} scored, "
-            f"{code_ingested} code ingested, "
-            f"{docs_ingested} docs ingested[/green]"
+            f"{code_ingested} code ingested[/green]"
         )
         log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
 

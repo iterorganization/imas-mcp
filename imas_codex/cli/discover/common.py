@@ -2,7 +2,7 @@
 
 This module provides reusable option decorators for discovery CLI commands,
 ensuring consistent behavior across all discovery domains (paths, wiki,
-signals, files).
+signals, code, documents).
 
 Usage:
     from imas_codex.cli.discover.common import (
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 # Valid discovery domains
-DISCOVERY_DOMAINS = ("paths", "wiki", "signals", "code")
+DISCOVERY_DOMAINS = ("paths", "wiki", "signals", "code", "documents")
 
 
 # =============================================================================

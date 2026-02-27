@@ -4,12 +4,8 @@ Main entry point for code discovery with async workers. Orchestrates:
 - Scan: SSH code file enumeration + rg enrichment (depth=1 per scored FacilityPath)
 - Score: Dual-pass LLM scoring (triage → detailed score)
 - Code: Fetch, tree-sitter chunk, embed code files
-- Docs: Ingest documents found alongside code
 
-Enrichment now happens during scan via discover_files.py (combined fd + rg).
-The separate enrich_worker is kept for backwards compatibility.
-
-Use ``run_parallel_file_discovery()`` as the main entry point.
+Use ``run_parallel_code_discovery()`` as the main entry point.
 """
 
 from __future__ import annotations
@@ -31,7 +27,6 @@ from imas_codex.graph import GraphClient
 
 from .graph_ops import (
     has_pending_code_work,
-    has_pending_docs_work,
     has_pending_enrich_work,
     has_pending_scan_work,
     has_pending_score_work,
@@ -40,7 +35,6 @@ from .graph_ops import (
 from .state import FileDiscoveryState
 from .workers import (
     code_worker,
-    docs_worker,
     enrich_worker,
     scan_worker,
     score_worker,
@@ -52,7 +46,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def run_parallel_file_discovery(
+async def run_parallel_code_discovery(
     facility: str,
     ssh_host: str,
     *,
@@ -64,7 +58,6 @@ async def run_parallel_file_discovery(
     num_score_workers: int = 2,
     num_enrich_workers: int = 0,
     num_code_workers: int = 2,
-    num_docs_workers: int = 1,
     scan_only: bool = False,
     score_only: bool = False,
     deadline: float | None = None,
@@ -72,7 +65,6 @@ async def run_parallel_file_discovery(
     on_score_progress: Callable | None = None,
     on_enrich_progress: Callable | None = None,
     on_code_progress: Callable | None = None,
-    on_docs_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
     **_kwargs: Any,
@@ -83,7 +75,6 @@ async def run_parallel_file_discovery(
     1. Scan workers: SSH code file enumeration + rg enrichment (depth=1)
     2. Score workers: Dual-pass LLM scoring (triage → detailed score)
     3. Code workers: Fetch, tree-sitter chunk, embed code files
-    4. Docs workers: Ingest documents found alongside code
 
     Args:
         facility: Facility ID
@@ -96,7 +87,6 @@ async def run_parallel_file_discovery(
         num_score_workers: Number of parallel score workers
         num_enrich_workers: Number of parallel enrich workers (legacy)
         num_code_workers: Number of parallel code workers
-        num_docs_workers: Number of parallel docs workers
         scan_only: Only scan, skip scoring and ingestion
         score_only: Only score, skip scanning and ingestion
         deadline: Absolute time (epoch) when discovery should stop
@@ -104,7 +94,6 @@ async def run_parallel_file_discovery(
         on_score_progress: Callback for score worker progress
         on_enrich_progress: Callback for enrich worker progress
         on_code_progress: Callback for code worker progress
-        on_docs_progress: Callback for docs worker progress
         on_worker_status: Callback for worker status updates
         service_monitor: ServiceMonitor for health monitoring
 
@@ -147,12 +136,9 @@ async def run_parallel_file_discovery(
             or not state.score_phase.done
         )
     )
-    # Code/docs depend on score phase (not enrich — enrichment is pre-score now)
+    # Code depends on score phase (not enrich — enrichment is pre-score now)
     state.code_phase.set_has_work_fn(
         lambda: has_pending_code_work(facility) or not state.score_phase.done
-    )
-    state.docs_phase.set_has_work_fn(
-        lambda: has_pending_docs_work(facility) or not state.score_phase.done
     )
 
     # Pre-warm SSH ControlMaster
@@ -254,40 +240,21 @@ async def run_parallel_file_discovery(
                 )
             )
 
-        # --- Docs workers ---
-        for i in range(num_docs_workers):
-            worker_name = f"docs_worker_{i}"
-            status = worker_group.create_status(worker_name, group="docs")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        docs_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_docs_progress,
-                        status_tracker=status,
-                    )
-                )
-            )
-
         # Mark enrich phase done if no enrich workers
         if num_enrich_workers == 0:
             state.enrich_phase.mark_done()
     else:
         state.code_phase.mark_done()
-        state.docs_phase.mark_done()
         state.enrich_phase.mark_done()
 
     logger.info(
-        "Started %d workers: scan=%d score=%d enrich=%d code=%d docs=%d "
+        "Started %d workers: scan=%d score=%d enrich=%d code=%d "
         "scan_only=%s score_only=%s",
         worker_group.get_active_count(),
         num_scan_workers if not score_only else 0,
         num_score_workers if not scan_only else 0,
         num_enrich_workers if not (scan_only or score_only) else 0,
         num_code_workers if not (scan_only or score_only) else 0,
-        num_docs_workers if not (scan_only or score_only) else 0,
         scan_only,
         score_only,
     )
@@ -296,7 +263,7 @@ async def run_parallel_file_discovery(
     orphan_tick = make_orphan_recovery_tick(
         facility,
         [
-            OrphanRecoverySpec("SourceFile"),
+            OrphanRecoverySpec("CodeFile"),
             OrphanRecoverySpec(
                 "FacilityPath",
                 timeout_seconds=300,
@@ -319,7 +286,6 @@ async def run_parallel_file_discovery(
         "scored": state.score_stats.processed,
         "enriched": state.enrich_stats.processed,
         "code_ingested": state.code_stats.processed,
-        "docs_ingested": state.docs_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_errors": state.scan_stats.errors,
@@ -329,15 +295,15 @@ async def run_parallel_file_discovery(
     }
 
 
-def get_file_discovery_stats(facility: str) -> dict[str, int | float]:
-    """Get file discovery statistics from graph for progress display."""
+def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
+    """Get code discovery statistics from graph for progress display."""
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WITH sf.status AS status, sf.file_category AS category,
-                 sf.interest_score AS score
-            RETURN status, category,
+            MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WITH cf.status AS status, cf.language AS language,
+                 cf.interest_score AS score
+            RETURN status, language,
                    count(*) AS count,
                    avg(score) AS avg_score
             """,
@@ -352,32 +318,27 @@ def get_file_discovery_stats(facility: str) -> dict[str, int | float]:
             "skipped": 0,
             "pending_score": 0,
             "pending_ingest": 0,
-            "code_files": 0,
-            "document_files": 0,
-            "notebook_files": 0,
-            "config_files": 0,
         }
 
         for r in result:
             status = r["status"]
-            category = r["category"] or "unknown"
             count = r["count"]
             stats["total"] += count
 
             if status in stats:
                 stats[status] += count
 
-            # Category counts
-            cat_key = f"{category}_files"
-            if cat_key in stats:
-                stats[cat_key] += count
+            # Language counts
+            lang = r["language"] or "unknown"
+            lang_key = f"{lang}_files"
+            stats[lang_key] = stats.get(lang_key, 0) + count
 
         # Pending score: discovered without interest_score
         score_result = gc.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE sf.status = 'discovered' AND sf.interest_score IS NULL
-            RETURN count(sf) AS pending
+            MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE cf.status = 'discovered' AND cf.interest_score IS NULL
+            RETURN count(cf) AS pending
             """,
             facility=facility,
         )
@@ -386,12 +347,11 @@ def get_file_discovery_stats(facility: str) -> dict[str, int | float]:
         # Pending ingest: scored code files not yet ingested
         ingest_result = gc.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE sf.status = 'discovered'
-              AND sf.interest_score IS NOT NULL
-              AND sf.interest_score >= 0.3
-              AND sf.file_category = 'code'
-            RETURN count(sf) AS pending
+            MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE cf.status = 'discovered'
+              AND cf.interest_score IS NOT NULL
+              AND cf.interest_score >= 0.3
+            RETURN count(cf) AS pending
             """,
             facility=facility,
         )
@@ -400,10 +360,10 @@ def get_file_discovery_stats(facility: str) -> dict[str, int | float]:
         # Scored and enriched counts for progress display
         enrich_result = gc.query(
             """
-            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE sf.interest_score IS NOT NULL
-            RETURN count(sf) AS scored,
-                   count(CASE WHEN coalesce(sf.is_enriched, false) = true
+            MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE cf.interest_score IS NOT NULL
+            RETURN count(cf) AS scored,
+                   count(CASE WHEN coalesce(cf.is_enriched, false) = true
                               THEN 1 END) AS enriched
             """,
             facility=facility,
@@ -414,22 +374,5 @@ def get_file_discovery_stats(facility: str) -> dict[str, int | float]:
         else:
             stats["scored_count"] = 0
             stats["enriched_count"] = 0
-
-        # Image counts for progress display
-        image_result = gc.query(
-            """
-            MATCH (img:Image {facility_id: $facility})
-            RETURN count(img) AS total_images,
-                   count(CASE WHEN img.description IS NOT NULL
-                              THEN 1 END) AS scored_images
-            """,
-            facility=facility,
-        )
-        if image_result:
-            stats["total_images"] = image_result[0]["total_images"]
-            stats["scored_images"] = image_result[0]["scored_images"]
-        else:
-            stats["total_images"] = 0
-            stats["scored_images"] = 0
 
         return stats

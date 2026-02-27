@@ -1427,7 +1427,7 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
                 break
 
         # Delete orphaned Image nodes — only those with no remaining
-        # HAS_IMAGE relationships from other domains (e.g. SourceFile).
+        # HAS_IMAGE relationships from other domains (e.g. CodeFile).
         # Wiki nodes (WikiPage, WikiArtifact) are already deleted above,
         # so any Image still linked via HAS_IMAGE belongs to another domain.
         while True:

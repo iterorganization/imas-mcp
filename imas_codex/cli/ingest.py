@@ -25,7 +25,7 @@ def ingest() -> None:
     """Ingest code examples from remote facilities.
 
     \b
-      imas-codex ingest run <facility>   Process discovered SourceFile nodes
+      imas-codex ingest run <facility>   Process discovered CodeFile nodes
       imas-codex ingest status <facility> Show queue statistics
       imas-codex ingest list <facility>   List discovered files
     """
@@ -64,7 +64,7 @@ def ingest_run(
     force: bool,
     dry_run: bool,
 ) -> None:
-    """Process discovered SourceFile nodes for a facility.
+    """Process discovered CodeFile nodes for a facility.
 
     Scouts discover files for ingestion using the queue_source_files MCP tool.
     This command fetches those files, generates embeddings, and creates
@@ -170,10 +170,10 @@ def ingest_status(facility: str) -> None:
     stats = get_queue_stats(facility)
 
     if not stats:
-        console.print(f"[yellow]No SourceFile nodes for {facility}[/yellow]")
+        console.print(f"[yellow]No CodeFile nodes for {facility}[/yellow]")
         return
 
-    table = Table(title=f"SourceFile Queue: {facility}")
+    table = Table(title=f"CodeFile Queue: {facility}")
     table.add_column("Status", style="cyan")
     table.add_column("Count", justify="right", style="green")
 
@@ -226,7 +226,7 @@ def ingest_queue(
     """Discover source files for ingestion.
 
     Accepts paths as arguments, from a file, or from stdin. Creates
-    SourceFile nodes with status='discovered'. Already-discovered or ingested
+    CodeFile nodes with status='discovered'. Already-discovered or ingested
     files are skipped automatically.
 
     Examples:
@@ -319,7 +319,7 @@ def ingest_queue(
     help="Maximum files to show (default: 50)",
 )
 def ingest_list(facility: str, status: str, limit: int) -> None:
-    """List SourceFile nodes for a facility.
+    """List CodeFile nodes for a facility.
 
     Examples:
         # List discovered files
@@ -337,7 +337,7 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
         if status == "all":
             result = client.query(
                 """
-                MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+                MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 RETURN sf.path AS path, sf.status AS status,
                        sf.interest_score AS score, sf.error AS error
                 ORDER BY sf.interest_score DESC
@@ -349,7 +349,7 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
         else:
             result = client.query(
                 """
-                MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+                MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WHERE sf.status = $status
                 RETURN sf.path AS path, sf.status AS status,
                        sf.interest_score AS score, sf.error AS error
@@ -362,10 +362,10 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
             )
 
     if not result:
-        console.print(f"[yellow]No SourceFile nodes with status '{status}'[/yellow]")
+        console.print(f"[yellow]No CodeFile nodes with status '{status}'[/yellow]")
         return
 
-    table = Table(title=f"SourceFiles ({status}): {facility}")
+    table = Table(title=f"CodeFiles ({status}): {facility}")
     table.add_column("Path", style="cyan", max_width=60)
     table.add_column("Status", style="green")
     table.add_column("Score", justify="right")

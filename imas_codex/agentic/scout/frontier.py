@@ -101,10 +101,10 @@ class FrontierManager:
                     stats.discovered + stats.scanned + stats.scored + stats.skipped
                 )
 
-                # Count SourceFile nodes
+                # Count CodeFile nodes
                 file_result = client.query(
                     """
-                    MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+                    MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                     RETURN sf.status AS status, count(*) AS count
                     """,
                     facility=self.facility,

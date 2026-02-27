@@ -1403,7 +1403,7 @@ def clear_facility_paths(facility: str, batch_size: int = 5000) -> dict[str, int
     """Delete all FacilityPath nodes and related data for a facility.
 
     Cascades to FacilityUser nodes and cleans up orphaned SoftwareRepo/Person
-    nodes. Does NOT delete SourceFile nodes — those belong to the files domain.
+    nodes. Does NOT delete CodeFile nodes — those belong to the code domain.
 
     Deletion order follows referential integrity:
     1. FacilityUser nodes by AT_FACILITY relationship

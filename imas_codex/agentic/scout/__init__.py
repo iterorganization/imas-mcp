@@ -8,7 +8,7 @@ This module implements a "moving frontier" approach to facility discovery:
 
 Uses existing node types:
 - FacilityPath: Discovered paths with status and interest_score
-- SourceFile: Files queued for ingestion
+- CodeFile: Files queued for ingestion
 
 Primary interface:
 - StatelessScout: Main exploration class
