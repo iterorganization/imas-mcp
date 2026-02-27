@@ -768,7 +768,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             if not docs_desc and artifact.artifact_type:
                 atype = artifact.artifact_type.lower()
                 if atype in ("png", "jpg", "jpeg", "gif", "svg", "bmp", "tiff"):
-                    docs_desc_fallback = f"scoring {atype.upper()} image with VLM"
+                    docs_desc_fallback = f"describing {atype.upper()} image with VLM"
                 elif atype in ("pdf",):
                     docs_desc_fallback = "extracting text from PDF"
                 else:
@@ -803,7 +803,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             images_domain = image.physics_domain or ""
             images_desc = image.description
             if not images_desc:
-                images_desc_fallback = "scoring image with VLM"
+                images_desc_fallback = "describing image with VLM"
 
         # --- Build pipeline rows ---
         #
@@ -1527,54 +1527,76 @@ class WikiProgressDisplay(BaseProgressDisplay):
         """Build final summary text."""
         summary = Text()
 
-        # SCAN stats (pages + artifacts combined)
+        # SCAN stats (pages)
         total_scored = self.state.pages_scored + self.state.pages_ingested
-        total_score_cost = self.state.total_score_cost
         summary.append(f"{'  SCAN':<{LABEL_WIDTH}}", style="bold blue")
-        summary.append(f"  scored={total_scored:,}", style="blue")
-        docs_scored = self.state.total_run_docs_scored
-        if docs_scored > 0:
-            summary.append(f"+{docs_scored:,}docs", style="blue dim")
+        summary.append(f"scored={total_scored:,}", style="blue")
         summary.append(f"  skipped={self.state.pages_skipped:,}", style="yellow")
         if self.state.pages_failed > 0:
             summary.append(f"  failed={self.state.pages_failed:,}", style="red")
-        summary.append(f"  cost=${total_score_cost:.3f}", style="yellow")
-        if self.state.score_rate:
-            summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
+        page_cost = self.state.accumulated_page_cost
+        if page_cost > 0:
+            summary.append(f"  cost=${page_cost:.2f}", style="yellow")
+        if self.state.score_rate or self.state._final_score_rate:
+            rate = self.state.score_rate or self.state._final_score_rate
+            summary.append(f"  {rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # PAGES stats
+        # PAGE stats
         total_ingested = self.state.pages_ingested
         summary.append(f"{'  PAGE':<{LABEL_WIDTH}}", style="bold magenta")
-        summary.append(f"  ingested={total_ingested:,}", style="magenta")
-        docs_ingested = self.state.total_run_docs
-        if docs_ingested > 0:
-            summary.append(f"+{docs_ingested:,}docs", style="magenta dim")
-        if self.state.ingest_rate:
-            summary.append(f"  {self.state.ingest_rate:.1f}/s", style="dim")
+        summary.append(f"ingested={total_ingested:,}", style="magenta")
+        if self.state.ingest_rate or self.state._final_ingest_rate:
+            rate = self.state.ingest_rate or self.state._final_ingest_rate
+            summary.append(f"  {rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # IMAGES stats — use graph total to match the main monitor
-        images_enriched = self.state.images_scored
-        if images_enriched > 0:
+        # DOC stats (artifacts)
+        art_total = self.state.total_artifacts
+        if art_total > 0:
+            art_ingested = self.state.docs_ingested
+            art_scored = self.state.docs_scored
+            art_failed = self.state.artifacts_failed
+            art_deferred = self.state.artifacts_deferred
+            summary.append(f"{'  DOC':<{LABEL_WIDTH}}", style="bold yellow")
+            summary.append(f"scored={art_scored:,}", style="yellow")
+            summary.append(f"  ingested={art_ingested:,}", style="yellow")
+            if art_failed > 0:
+                summary.append(f"  failed={art_failed:,}", style="red")
+            if art_deferred > 0:
+                summary.append(f"  deferred={art_deferred:,}", style="dim")
+            art_cost = self.state.accumulated_artifact_cost
+            if art_cost > 0:
+                summary.append(f"  cost=${art_cost:.2f}", style="yellow")
+            if self.state.docs_rate or self.state._final_docs_rate:
+                rate = self.state.docs_rate or self.state._final_docs_rate
+                summary.append(f"  {rate:.1f}/s", style="dim")
+            summary.append("\n")
+
+        # IMAGE stats — VLM describes images, producing metadata
+        images_described = self.state.images_scored
+        if images_described > 0:
             summary.append(f"{'  IMAGE':<{LABEL_WIDTH}}", style="bold green")
-            summary.append(f"  enriched={images_enriched:,}", style="green")
+            summary.append(f"described={images_described:,}", style="green")
             pending_img = self.state.pending_image_score
             if pending_img > 0:
                 summary.append(f"  pending={pending_img:,}", style="yellow")
-            if self.state.image_score_rate:
-                summary.append(f"  {self.state.image_score_rate:.1f}/s", style="dim")
+            img_cost = self.state.accumulated_image_cost
+            if img_cost > 0:
+                summary.append(f"  cost=${img_cost:.2f}", style="yellow")
+            if self.state.image_score_rate or self.state._final_image_rate:
+                rate = self.state.image_score_rate or self.state._final_image_rate
+                summary.append(f"  {rate:.1f}/s", style="dim")
             summary.append("\n")
 
-        # USAGE stats — session time + accumulated graph cost (all sessions)
-        summary.append(f"{'  USAGE':<{LABEL_WIDTH}}", style="bold white")
+        # TOTAL stats — accumulated time + cost from graph (all sessions)
+        summary.append(f"{'  TOTAL':<{LABEL_WIDTH}}", style="bold white")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
-        # Show accumulated cost from graph (all sessions) as the total
         accumulated = self.state.accumulated_cost
         if accumulated > 0:
-            summary.append(f"  total_cost=${accumulated:.2f}", style="yellow")
+            summary.append(f"  cost=${accumulated:.2f}", style="yellow")
         else:
-            summary.append(f"  total_cost=${self.state.run_cost:.2f}", style="yellow")
+            summary.append(f"  cost=${self.state.run_cost:.2f}", style="yellow")
         if self.state.total_sites > 1:
             summary.append(
                 f"  sites={self.state.current_site_index + 1}/{self.state.total_sites}",
@@ -1593,7 +1615,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         if self.state.provider_budget_exhausted:
             summary.append("\n")
             summary.append(
-                "  ⚠ API key budget exhausted (HTTP 402) — "
+                "  API key budget exhausted (HTTP 402) — "
                 "LLM workers stopped, I/O workers drained queues",
                 style="bold yellow",
             )

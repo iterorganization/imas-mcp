@@ -918,7 +918,10 @@ def wiki(
                                 ),
                                 total_artifacts=stats.get("total_artifacts", 0),
                                 docs_ingested=stats.get("docs_ingested", 0),
-                                artifacts_scored=stats.get("artifacts_scored", 0),
+                                docs_scored=stats.get("artifacts_scored", 0),
+                                artifacts_failed=stats.get("artifacts_failed", 0),
+                                artifacts_deferred=stats.get("artifacts_deferred", 0),
+                                artifacts_skipped=stats.get("artifacts_skipped", 0),
                                 images_scored=stats.get("images_scored", 0),
                                 pending_image_score=stats.get("pending_image_score", 0),
                             )
@@ -1144,7 +1147,10 @@ def wiki(
                             ),
                             total_artifacts=stats.get("total_artifacts", 0),
                             docs_ingested=stats.get("docs_ingested", 0),
-                            artifacts_scored=stats.get("artifacts_scored", 0),
+                            docs_scored=stats.get("artifacts_scored", 0),
+                            artifacts_failed=stats.get("artifacts_failed", 0),
+                            artifacts_deferred=stats.get("artifacts_deferred", 0),
+                            artifacts_skipped=stats.get("artifacts_skipped", 0),
                             images_scored=stats.get("images_scored", 0),
                             pending_image_score=stats.get("pending_image_score", 0),
                         )
