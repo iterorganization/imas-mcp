@@ -31,6 +31,7 @@ def discover():
       files              Source file discovery from scored paths
       wiki               Wiki page discovery and ingestion
       signals            Facility signal discovery
+      static             Static/machine-description tree discovery
 
     \b
     Management Commands:
@@ -43,6 +44,7 @@ def discover():
     Examples:
       imas-codex discover paths jet            # Run paths discovery
       imas-codex discover wiki jt-60sa          # Run wiki discovery
+      imas-codex discover static tcv           # Static tree discovery
       imas-codex discover status jet           # All domains status
       imas-codex discover status jet -d wiki   # Wiki status only
       imas-codex discover clear jet -d paths   # Clear paths only
@@ -425,9 +427,11 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
 from imas_codex.cli.discover.files import files  # noqa: E402
 from imas_codex.cli.discover.paths import paths  # noqa: E402
 from imas_codex.cli.discover.signals import signals  # noqa: E402
+from imas_codex.cli.discover.static import static  # noqa: E402
 from imas_codex.cli.discover.wiki import wiki  # noqa: E402
 
 discover.add_command(paths)
 discover.add_command(wiki)
 discover.add_command(signals)
 discover.add_command(files)
+discover.add_command(static)

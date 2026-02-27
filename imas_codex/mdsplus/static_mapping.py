@@ -18,6 +18,9 @@ Mapping table:
     X, XC (mesh)     → No direct IMAS mapping (computational grids)
     E (eigenmodes)   → No direct IMAS mapping (derived quantities)
 
+Mappings are persisted as IMASMapping nodes with status lifecycle:
+    proposed → endorsed → validated | rejected
+
 Generic: the mapping table is per-facility (different machines name their
 systems differently), but the IMAS targets are universal.
 """
@@ -367,15 +370,15 @@ def build_mapping_proposals(
     return result
 
 
-def persist_mapping_proposals(
+def persist_mappings(
     client: "GraphClient",
     result: MappingResult,
     dry_run: bool = False,
 ) -> int:
-    """Persist mapping proposals to the Neo4j graph.
+    """Persist IMAS mappings to the Neo4j graph.
 
-    Creates MappingProposal nodes with PROPOSES_SOURCE → TreeNode
-    and PROPOSES_TARGET → IMASPath relationships.
+    Creates IMASMapping nodes with status=proposed and links them to
+    source TreeNode and target IMASPath nodes.
 
     Args:
         client: Neo4j GraphClient
@@ -383,15 +386,15 @@ def persist_mapping_proposals(
         dry_run: If True, log but don't write
 
     Returns:
-        Number of proposals persisted
+        Number of mappings persisted
     """
     if not result.proposals:
-        logger.info("No proposals to persist")
+        logger.info("No mappings to persist")
         return 0
 
     if dry_run:
         logger.info(
-            "[DRY RUN] Would create %d MappingProposal nodes", len(result.proposals)
+            "[DRY RUN] Would create %d IMASMapping nodes", len(result.proposals)
         )
         for p in result.proposals[:10]:
             logger.info(
@@ -404,7 +407,7 @@ def persist_mapping_proposals(
             logger.info("  ... and %d more", len(result.proposals) - 10)
         return len(result.proposals)
 
-    # Batch create proposals
+    # Build IMASMapping records
     records = []
     for p in result.proposals:
         records.append(
@@ -412,47 +415,49 @@ def persist_mapping_proposals(
                 "id": p["id"],
                 "facility_id": p["facility_id"],
                 "source_path": p["source_path"],
-                "source_tag": p["source_tag"],
                 "target_path": p["target_path"],
-                "target_ids": p["target_ids"],
+                "driver": "mdsplus",
+                "driver_args": f'{{"tree": "{p.get("tree_name", "static")}", "tag": "{p["source_tag"]}"}}',
+                "units_in": p.get("units_source", ""),
+                "units_out": p.get("units_target", ""),
                 "confidence": p["confidence"],
-                "evidence_type": p["evidence_type"],
-                "description": p["description"],
                 "status": "proposed",
+                "notes": p.get("description", ""),
                 "is_static": True,
             }
         )
 
+    # Create IMASMapping nodes
     client.query(
         """
-        UNWIND $proposals AS prop
-        MERGE (mp:MappingProposal {id: prop.id})
-        SET mp += prop,
-            mp.proposed_at = datetime()
+        UNWIND $mappings AS m
+        MERGE (im:IMASMapping {id: m.id})
+        SET im += m,
+            im.proposed_at = datetime()
         """,
-        proposals=records,
+        mappings=records,
     )
 
     # Link to IMASPath targets
     client.query(
         """
-        UNWIND $proposals AS prop
-        MATCH (mp:MappingProposal {id: prop.id})
-        MATCH (t:IMASPath {id: prop.target_path})
-        MERGE (mp)-[:PROPOSES_TARGET]->(t)
+        UNWIND $mappings AS m
+        MATCH (im:IMASMapping {id: m.id})
+        MATCH (t:IMASPath {id: m.target_path})
+        MERGE (im)-[:MAPS_TO_TARGET]->(t)
         """,
-        proposals=records,
+        mappings=records,
     )
 
     # Link to TreeNode sources (if they exist in graph)
     client.query(
         """
-        UNWIND $proposals AS prop
-        MATCH (mp:MappingProposal {id: prop.id})
-        MATCH (n:TreeNode {id: prop.source_path})
-        MERGE (mp)-[:PROPOSES_SOURCE]->(n)
+        UNWIND $mappings AS m
+        MATCH (im:IMASMapping {id: m.id})
+        MATCH (n:TreeNode {id: m.source_path})
+        MERGE (im)-[:MAPS_TO_SOURCE]->(n)
         """,
-        proposals=records,
+        mappings=records,
     )
 
     # Link to facility
@@ -460,14 +465,14 @@ def persist_mapping_proposals(
     if facility_id:
         client.query(
             """
-            MATCH (mp:MappingProposal)
-            WHERE mp.facility_id = $facility AND mp.is_static = true
-            WITH mp
+            MATCH (im:IMASMapping)
+            WHERE im.facility_id = $facility AND im.is_static = true
+            WITH im
             MATCH (f:Facility {id: $facility})
-            MERGE (mp)-[:AT_FACILITY]->(f)
+            MERGE (im)-[:AT_FACILITY]->(f)
             """,
             facility=facility_id,
         )
 
-    logger.info("Persisted %d mapping proposals", len(records))
+    logger.info("Persisted %d IMASMapping nodes (status=proposed)", len(records))
     return len(records)
