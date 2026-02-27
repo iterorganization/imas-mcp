@@ -379,6 +379,14 @@ def bulk_discover_artifacts(
             gc, facility, batch_data, on_progress=on_progress
         )
 
+        # Create HAS_ARTIFACT links from page file references
+        # (extracted during page ingestion and stored on WikiPage nodes).
+        # This provides artifact-page linking even when the MediaWiki API
+        # doesn't support prop=fileusage (e.g. old MediaWiki, API disabled).
+        from imas_codex.discovery.wiki.graph_ops import link_artifacts_from_page_refs
+
+        link_artifacts_from_page_refs(gc, facility, on_progress)
+
     logger.info(f"Created/updated {created} artifact nodes in graph")
     if on_progress:
         on_progress(f"created {created} artifacts", None)

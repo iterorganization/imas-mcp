@@ -221,6 +221,60 @@ def _bulk_create_wiki_artifacts(
     return created
 
 
+def save_page_file_references(page_id: str, filenames: list[str]) -> None:
+    """Store file references on a WikiPage node for later HAS_ARTIFACT linking.
+
+    Called during page ingestion when HTML contains file/artifact references.
+    The DOC phase uses these references to create HAS_ARTIFACT relationships
+    after WikiArtifact nodes are created.
+    """
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (wp:WikiPage {id: $page_id})
+            SET wp.referenced_files = $filenames
+            """,
+            page_id=page_id,
+            filenames=filenames,
+        )
+
+
+def link_artifacts_from_page_refs(
+    gc: GraphClient,
+    facility: str,
+    on_progress: Callable | None = None,
+) -> int:
+    """Create HAS_ARTIFACT relationships from stored WikiPage file references.
+
+    After artifact discovery creates WikiArtifact nodes, this function
+    matches them against file references extracted during page ingestion
+    (stored in WikiPage.referenced_files). This provides artifact-page
+    linking that works regardless of whether the MediaWiki API supports
+    prop=fileusage.
+
+    Returns:
+        Number of HAS_ARTIFACT links created
+    """
+    result = gc.query(
+        """
+        MATCH (wp:WikiPage {facility_id: $facility})
+        WHERE wp.referenced_files IS NOT NULL
+        UNWIND wp.referenced_files AS fn
+        MATCH (wa:WikiArtifact {facility_id: $facility})
+        WHERE wa.filename = fn
+        MERGE (wp)-[:HAS_ARTIFACT]->(wa)
+        RETURN count(*) AS created
+        """,
+        facility=facility,
+    )
+    created = result[0]["created"] if result else 0
+    if created > 0:
+        logger.info("Created %d HAS_ARTIFACT links from page file references", created)
+    if on_progress:
+        on_progress(f"linked {created} artifacts from page refs", None)
+    return created
+
+
 # Retry configuration for Neo4j transient errors (deadlocks)
 MAX_RETRY_ATTEMPTS = 5
 RETRY_BASE_DELAY = 0.1  # seconds

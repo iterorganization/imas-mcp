@@ -723,7 +723,19 @@ class MediaWikiAdapter(WikiAdapter):
         logger.debug(
             "API unavailable, falling back to HTML scraping of Special:ListFiles"
         )
-        return self._discover_artifacts_via_html(facility, base_url, on_progress)
+        artifacts = self._discover_artifacts_via_html(facility, base_url, on_progress)
+
+        # Try API enrichment even though list=allimages failed — the API
+        # may partially work (e.g. prop=fileusage available on older wikis
+        # where list=allimages isn't). This is best-effort: the primary
+        # enrichment path is via page file references stored during ingestion.
+        if artifacts:
+            api_url = self._probe_api_url(base_url)
+            if api_url:
+                logger.info("API URL found after HTML fallback, attempting enrichment")
+                self._enrich_artifact_page_links_http(artifacts, api_url, on_progress)
+
+        return artifacts
 
     def _discover_artifacts_via_api(
         self,
@@ -876,6 +888,40 @@ class MediaWikiAdapter(WikiAdapter):
 
         return artifacts
 
+    def _probe_api_url(self, base_url: str) -> str | None:
+        """Find a working MediaWiki API URL using an authenticated session.
+
+        Tries standard candidate URLs with siteinfo probe. Returns the first
+        URL that returns valid JSON, or None if the API is unavailable.
+        """
+        session = self.session or (
+            self.wiki_client.session if self.wiki_client else None
+        )
+        if not session:
+            return None
+
+        parsed = urllib.parse.urlparse(base_url)
+        candidates = [f"{base_url}/api.php"]
+        root_api = f"{parsed.scheme}://{parsed.netloc}/api.php"
+        if root_api != candidates[0]:
+            candidates.append(root_api)
+
+        for candidate in candidates:
+            try:
+                probe = session.get(
+                    candidate,
+                    params={"action": "query", "meta": "siteinfo", "format": "json"},
+                    verify=False,
+                    timeout=15,
+                )
+                ct = probe.headers.get("content-type", "")
+                if probe.status_code == 200 and "json" in ct:
+                    logger.debug("Probed working API URL: %s", candidate)
+                    return candidate
+            except Exception:
+                continue
+        return None
+
     def _parse_image_info(self, img: dict, facility: str) -> DiscoveredArtifact | None:
         """Parse MediaWiki API image info into DiscoveredArtifact."""
         filename = img.get("name", "")
@@ -932,9 +978,18 @@ class MediaWikiAdapter(WikiAdapter):
         if not artifact_by_name:
             return
 
-        # Build list of File: titles to query
-        all_filenames = sorted(artifact_by_name.keys())
-        file_titles = [f"File:{fn}" for fn in all_filenames]
+        # Build list of File: titles using ORIGINAL case filenames.
+        # MediaWiki only normalizes the first letter of a title; the rest
+        # is case-sensitive.  Using lowercased filenames (e.g. File:ios_...)
+        # causes lookups to fail for files like "IOS_TCV_NBIs_ALD7.pdf".
+        seen_lower: set[str] = set()
+        file_titles: list[str] = []
+        for a in artifacts:
+            key = a.filename.lower()
+            if key not in seen_lower:
+                seen_lower.add(key)
+                file_titles.append(f"File:{a.filename}")
+        file_titles.sort()
 
         linked_count = 0
         batch = 0
@@ -1110,9 +1165,18 @@ class MediaWikiAdapter(WikiAdapter):
         if not artifact_by_name:
             return
 
-        # Build list of File: titles to query
-        all_filenames = sorted(artifact_by_name.keys())
-        file_titles = [f"File:{fn}" for fn in all_filenames]
+        # Build list of File: titles using ORIGINAL case filenames.
+        # MediaWiki only normalizes the first letter of a title; the rest
+        # is case-sensitive.  Using lowercased filenames (e.g. File:ios_...)
+        # causes lookups to fail for files like "IOS_TCV_NBIs_ALD7.pdf".
+        seen_lower: set[str] = set()
+        file_titles: list[str] = []
+        for a in artifacts:
+            key = a.filename.lower()
+            if key not in seen_lower:
+                seen_lower.add(key)
+                file_titles.append(f"File:{a.filename}")
+        file_titles.sort()
 
         linked_count = 0
         batch = 0

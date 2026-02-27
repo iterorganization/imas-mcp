@@ -1256,6 +1256,23 @@ async def _ingest_page(
             except Exception as img_err:
                 logger.debug("Image extraction failed for %s: %s", page_id, img_err)
 
+        # Extract file/artifact references from HTML for HAS_ARTIFACT linking.
+        # Stored on WikiPage node so DOC phase can create relationships after
+        # WikiArtifact nodes are created (DOC runs after INGEST).
+        if html and chunks > 0:
+            try:
+                file_refs = _extract_file_references(html)
+                if file_refs:
+                    from imas_codex.discovery.wiki.graph_ops import (
+                        save_page_file_references,
+                    )
+
+                    await asyncio.to_thread(
+                        save_page_file_references, page_id, file_refs
+                    )
+            except Exception as ref_err:
+                logger.debug("File ref extraction failed for %s: %s", page_id, ref_err)
+
         return chunks
     except Exception as e:
         logger.warning("Failed to ingest %s: %s", page_id, e)
@@ -1398,6 +1415,43 @@ async def _persist_document_figures(
 
 # Image file extensions worth processing
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg"}
+
+
+def _extract_file_references(html: str) -> list[str]:
+    """Extract filenames of all wiki files referenced in page HTML.
+
+    Captures both image and document references for HAS_ARTIFACT linking:
+    - MediaWiki: /wiki/images/X/XX/Filename.ext, File:Filename.ext
+    - Confluence: ri:filename="Filename.ext"
+
+    Returns:
+        List of unique filenames (URL-decoded, original case)
+    """
+    import re
+    from urllib.parse import unquote
+
+    filenames: set[str] = set()
+
+    # MediaWiki images directory: /wiki/images/X/XX/Filename.ext
+    for m in re.finditer(r"images/[a-f0-9]/[a-f0-9]{2}/([^\"'&\s<>]+)", html):
+        fn = unquote(m.group(1))
+        if fn and not fn.startswith("."):
+            filenames.add(fn)
+
+    # MediaWiki File: namespace links: href="...File:Filename.ext"
+    for m in re.finditer(r'(?:href|title)="[^"]*File:([^"&]+)"', html):
+        fn = unquote(m.group(1)).split("#")[0].split("?")[0]
+        if fn and not fn.startswith("."):
+            filenames.add(fn)
+
+    # Confluence attachment references: ri:filename="Filename.ext"
+    for m in re.finditer(r'ri:filename="([^"]+)"', html):
+        fn = unquote(m.group(1))
+        if fn:
+            filenames.add(fn)
+
+    return sorted(filenames)
+
 
 # Patterns in filenames/paths that indicate decorative/UI images (skip)
 _SKIP_PATTERNS = frozenset(
