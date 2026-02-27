@@ -27,7 +27,16 @@ from imas_codex.discovery.base.supervision import (
 )
 from imas_codex.graph import GraphClient
 
-from .graph_ops import reset_orphaned_file_claims
+from .graph_ops import (
+    has_pending_code_work,
+    has_pending_docs_work,
+    has_pending_enrich_work,
+    has_pending_image_score_work,
+    has_pending_image_work,
+    has_pending_scan_work,
+    has_pending_score_work,
+    reset_orphaned_file_claims,
+)
 from .state import FileDiscoveryState
 from .workers import (
     code_worker,
@@ -134,6 +143,29 @@ async def run_parallel_file_discovery(
         scan_only=scan_only,
         score_only=score_only,
         store_images=store_images,
+    )
+
+    # Wire up graph-backed has_work_fn on each phase.
+    # Downstream phases also check if upstream is still producing work,
+    # preventing premature exit when upstream hasn't flushed yet.
+    state.scan_phase.set_has_work_fn(lambda: has_pending_scan_work(facility, min_score))
+    state.score_phase.set_has_work_fn(
+        lambda: has_pending_score_work(facility) or not state.scan_phase.done
+    )
+    state.enrich_phase.set_has_work_fn(
+        lambda: has_pending_enrich_work(facility) or not state.score_phase.done
+    )
+    state.code_phase.set_has_work_fn(
+        lambda: has_pending_code_work(facility) or not state.enrich_phase.done
+    )
+    state.docs_phase.set_has_work_fn(
+        lambda: has_pending_docs_work(facility) or not state.enrich_phase.done
+    )
+    state.image_phase.set_has_work_fn(
+        lambda: has_pending_image_work(facility) or not state.enrich_phase.done
+    )
+    state.image_score_phase.set_has_work_fn(
+        lambda: has_pending_image_score_work(facility) or not state.image_phase.done
     )
 
     # Pre-warm SSH ControlMaster
@@ -415,5 +447,40 @@ def get_file_discovery_stats(facility: str) -> dict[str, int | float]:
             facility=facility,
         )
         stats["pending_ingest"] = ingest_result[0]["pending"] if ingest_result else 0
+
+        # Scored and enriched counts for progress display
+        enrich_result = gc.query(
+            """
+            MATCH (sf:SourceFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.interest_score IS NOT NULL
+            RETURN count(sf) AS scored,
+                   count(CASE WHEN coalesce(sf.is_enriched, false) = true
+                              THEN 1 END) AS enriched
+            """,
+            facility=facility,
+        )
+        if enrich_result:
+            stats["scored_count"] = enrich_result[0]["scored"]
+            stats["enriched_count"] = enrich_result[0]["enriched"]
+        else:
+            stats["scored_count"] = 0
+            stats["enriched_count"] = 0
+
+        # Image counts for progress display
+        image_result = gc.query(
+            """
+            MATCH (img:Image {facility_id: $facility})
+            RETURN count(img) AS total_images,
+                   count(CASE WHEN img.description IS NOT NULL
+                              THEN 1 END) AS scored_images
+            """,
+            facility=facility,
+        )
+        if image_result:
+            stats["total_images"] = image_result[0]["total_images"]
+            stats["scored_images"] = image_result[0]["scored_images"]
+        else:
+            stats["total_images"] = 0
+            stats["scored_images"] = 0
 
         return stats

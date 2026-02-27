@@ -81,6 +81,12 @@ logger = logging.getLogger(__name__)
     default=False,
     help="Keep image bytes in graph after VLM scoring (default: clear to save storage)",
 )
+@click.option(
+    "--rescan",
+    is_flag=True,
+    default=False,
+    help="Rescan paths that were previously scanned (moves files_scan_after forward)",
+)
 def files(
     facility: str,
     min_score: float,
@@ -95,6 +101,7 @@ def files(
     time_limit: int | None,
     verbose: bool,
     store_images: bool,
+    rescan: bool,
 ) -> None:
     """Discover and ingest source files from scored facility paths.
 
@@ -103,8 +110,13 @@ def files(
     \b
     - SCAN: SSH to facility, enumerate files in scored FacilityPaths
     - SCORE: LLM batch-scores discovered files for relevance
-    - CODE: Fetch, chunk, embed high-scoring code files
-    - DOCS: Ingest documents, notebooks, configs
+    - ENRICH: Pattern matching with rg for code signals
+    - INGEST: Fetch, chunk, embed code files and documents
+    - IMAGE: Download and VLM-caption image files
+
+    Use --rescan to re-scan paths that were previously scanned. This sets
+    a facility-level timestamp so all prior scans become eligible for
+    re-processing without clearing any existing SourceFile data.
 
     \b
     Examples:
@@ -112,6 +124,7 @@ def files(
       imas-codex discover files tcv --min-score 0.7 --scan-only
       imas-codex discover files tcv -c 2.0 --code-workers 4
       imas-codex discover files tcv -f equilibrium --time 10
+      imas-codex discover files tcv --rescan
     """
     from imas_codex.cli.logging import configure_cli_logging
     from imas_codex.cli.rich_output import should_use_rich
@@ -149,6 +162,14 @@ def files(
     if not ssh_host:
         log_print(f"[red]No SSH host configured for {facility}[/red]")
         raise SystemExit(1)
+
+    if rescan:
+        from imas_codex.discovery.files.graph_ops import set_files_scan_after
+
+        set_files_scan_after(facility)
+        log_print(
+            "[yellow]Rescan enabled — previously scanned paths will be re-processed[/yellow]"
+        )
 
     deadline: float | None = None
     if time_limit is not None:
@@ -325,6 +346,7 @@ def files(
                             on_image_progress=on_image,
                             on_image_score_progress=on_image_score,
                             on_worker_status=on_worker_status,
+                            service_monitor=service_monitor,
                         )
                     finally:
                         refresh_task.cancel()
