@@ -157,7 +157,6 @@ The agent teams infrastructure extends the knowledge graph with these types:
 
 | Type | Key Fields | Purpose |
 |------|-----------|---------|
-| `MappingProposal` | signal_id, imas_path_id, status, confidence | Agent-proposed mapping |
 | `MappingEvidence` | evidence_type, content, supports_mapping | Evidence for/against mapping |
 | `AgentSession` | facility_id, session_type, budget_used_usd | Team session tracking |
 
@@ -168,12 +167,11 @@ The agent teams infrastructure extends the knowledge graph with these types:
 ### Relationships
 
 ```
-(MappingProposal)-[:PROPOSES_SOURCE]->(FacilitySignal)
-(MappingProposal)-[:PROPOSES_TARGET]->(IMASPath)
-(MappingProposal)-[:HAS_EVIDENCE]->(MappingEvidence)
-(MappingProposal)-[:PROPOSED_BY]->(AgentSession)
-(MappingEvidence)-[:CREATED_BY]->(AgentSession)
+(IMASMapping)-[:MAPS_TO_SOURCE]->(FacilitySignal)
+(IMASMapping)-[:MAPS_TO_TARGET]->(IMASPath)
 (IMASMapping)-[:HAS_EVIDENCE]->(MappingEvidence)
+(IMASMapping)-[:PROPOSED_BY]->(AgentSession)
+(MappingEvidence)-[:CREATED_BY]->(AgentSession)
 (AgentSession)-[:AT_FACILITY]->(Facility)
 ```
 
@@ -186,11 +184,11 @@ The agent teams infrastructure extends the knowledge graph with these types:
 ```
 1. Enumerate    → FacilitySignals (checked, target domain)
 2. Discover     → Candidate IMASPaths via semantic search
-3. Propose      → MappingProposal nodes with initial confidence
+3. Propose      → IMASMapping nodes with status=proposed
 4. Evidence     → MappingEvidence from wiki, code, data tests
 5. Endorse      → Raise status when evidence agrees
 6. Validate     → Test against real shot data
-7. Persist      → Promote to IMASMapping
+7. Finalize     → Set status=validated
 ```
 
 ### Team Composition
@@ -237,7 +235,7 @@ Wait for all teammates to complete before synthesizing results.
 If a team is interrupted, query the graph for in-progress proposals:
 
 ```
-There are 23 MappingProposals for TCV with status "proposed" that need validation.
+There are 23 IMASMappings for TCV with status "proposed" that need validation.
 Create a team to validate these proposals and either endorse or reject them.
 ```
 
@@ -317,7 +315,7 @@ Start with TCV — smallest signal set, best SSH access, most wiki documentation
    ```
 4. Launch team with spawn prompt (see above)
 5. Monitor cost in Langfuse dashboard
-6. Review proposals: `MATCH (mp:MappingProposal {facility_id: $f}) RETURN mp.status, count(mp)`
+6. Review mappings: `MATCH (m:IMASMapping {facility_id: $f}) RETURN m.status, count(m)`
 7. Promote validated mappings to IMASMapping nodes
 
 ---

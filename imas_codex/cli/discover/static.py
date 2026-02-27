@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 )
 @click.option("--dry-run", is_flag=True, help="Preview without ingesting")
 @click.option("--timeout", type=int, default=300, help="SSH timeout in seconds")
-@click.option("--map-imas/--no-map-imas", default=True, help="Generate IMAS mappings")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output except errors")
 def static(
@@ -38,7 +37,6 @@ def static(
     extract_values: bool | None,
     dry_run: bool,
     timeout: int,
-    map_imas: bool,
     verbose: bool,
     quiet: bool,
 ) -> None:
@@ -63,10 +61,6 @@ def static(
         discover_static_tree,
         get_static_tree_config,
         ingest_static_tree,
-    )
-    from imas_codex.mdsplus.static_mapping import (
-        build_mapping_proposals,
-        persist_mappings,
     )
 
     # Set up logging
@@ -183,42 +177,9 @@ def static(
                     f"{stats['nodes_created']} nodes, "
                     f"{stats['values_stored']} values"
                 )
-
-                # Phase 3: IMAS mappings
-                if map_imas:
-                    console.print("  Building IMAS mappings...")
-                    result = build_mapping_proposals(facility, data)
-                    if result.proposals:
-                        count = persist_mappings(client, result, dry_run=False)
-                        console.print(
-                            f"  [green]✓[/green] {count} IMAS mappings "
-                            f"({result.stats.get('unmapped', 0)} unmapped nodes)"
-                        )
-                    else:
-                        console.print("  No mappable nodes found")
         else:
             stats = ingest_static_tree(None, facility, data, dry_run=True)
             console.print(
                 f"  [dim][DRY RUN][/dim] {stats['versions_created']} versions, "
                 f"{stats['nodes_created']} nodes"
             )
-
-            if map_imas:
-                result = build_mapping_proposals(facility, data)
-                if result.proposals:
-                    # Show mapping preview table
-                    m_table = Table(title="IMAS Mapping Preview")
-                    m_table.add_column("Source")
-                    m_table.add_column("IMAS Path")
-                    m_table.add_column("Conf.", justify="right")
-
-                    for p in result.proposals[:15]:
-                        m_table.add_row(
-                            p["source_tag"],
-                            p["target_path"],
-                            f"{p['confidence']:.2f}",
-                        )
-                    if len(result.proposals) > 15:
-                        m_table.add_row("...", f"({len(result.proposals)} total)", "")
-
-                    console.print(m_table)

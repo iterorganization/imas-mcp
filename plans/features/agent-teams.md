@@ -485,7 +485,7 @@ You are a knowledge graph specialist for the imas-codex fusion data graph.
 Your capabilities:
 - Execute Cypher queries via the codex MCP server
 - Perform semantic search across vector indexes
-- Create and update graph nodes (MappingProposal, IMASMapping, MappingEvidence)
+- Create and update graph nodes (IMASMapping, IMASMapping, MappingEvidence)
 - Look up IMAS Data Dictionary paths via the imas-ddv4 MCP server
 
 Always project specific properties in Cypher (RETURN n.id, n.name), never full nodes.
@@ -668,8 +668,8 @@ Add to `imas_codex/schemas/facility.yaml`:
       budget_used_usd:
         description: Actual spend recorded (updated from Langfuse)
         range: float
-      proposals_created:
-        description: Count of MappingProposals created
+      mappings_created:
+        description: Count of IMASMappings created
         range: integer
       proposals_validated:
         description: Count of proposals that reached validated status
@@ -781,7 +781,7 @@ Wait for all teammates to complete before synthesizing results.
 3. IMAS Expert claims Task 2:
    - semantic_search("plasma current", "imas_path_embedding", 10)
    - Identifies candidate paths: equilibrium.time_slice[:].global_quantities.ip
-   - Creates MappingProposal nodes
+   - Creates IMASMapping nodes
 
 4. Evidence Researcher claims Task 3:
    - semantic_search("equilibrium mapping", "wiki_chunk_embedding", 10)
@@ -862,7 +862,7 @@ Main cost driver is Opus output tokens ($75/M). If cost pressure builds, shift F
 5. **Resumability**: If a team is interrupted, the lead can query the graph for in-progress proposals and spawn a new team to continue:
 
 ```
-There are 23 MappingProposals for TCV with status "proposed" that need validation.
+There are 23 IMASMappings for TCV with status "proposed" that need validation.
 Create a team to validate these proposals and either endorse or reject them.
 ```
 

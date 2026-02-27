@@ -27,21 +27,21 @@ RETURN signal.id, signal.description, da.data_template,
 ORDER BY score DESC
 ```
 
-## Mapping Proposals
+## IMAS Mappings
 ```cypher
--- Create proposal
-MERGE (mp:MappingProposal {id: $id})
-SET mp += $props, mp.status = 'proposed', mp.proposed_at = datetime()
-WITH mp
+-- Create mapping (status lifecycle: proposed → endorsed → validated | rejected)
+MERGE (m:IMASMapping {id: $id})
+SET m += $props, m.status = 'proposed', m.proposed_at = datetime()
+WITH m
 MATCH (s:FacilitySignal {id: $signal_id})
 MATCH (t:IMASPath {id: $imas_path_id})
-MERGE (mp)-[:PROPOSES_SOURCE]->(s)
-MERGE (mp)-[:PROPOSES_TARGET]->(t)
+MERGE (m)-[:MAPS_TO_SOURCE]->(s)
+MERGE (m)-[:MAPS_TO_TARGET]->(t)
 
--- Find proposals needing validation
-MATCH (mp:MappingProposal {status: 'proposed', facility_id: $facility})
-RETURN mp.id, mp.confidence, mp.proposed_at
-ORDER BY mp.confidence DESC
+-- Find mappings needing validation
+MATCH (m:IMASMapping {status: 'proposed', facility_id: $facility})
+RETURN m.id, m.confidence, m.proposed_at
+ORDER BY m.confidence DESC
 ```
 
 ## Batch Writes (UNWIND)

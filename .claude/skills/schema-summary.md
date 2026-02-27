@@ -12,8 +12,7 @@ Condensed schema for the imas-codex Neo4j knowledge graph.
 | TreeNode | path, tree_name, node_type, description | MDSplus tree node |
 | TDIFunction | id, name, supported_quantities | TDI accessor function |
 | IMASPath | id (DD path), description, units | IMAS Data Dictionary path |
-| IMASMapping | id, source_path, target_path, driver | Facility→IMAS mapping |
-| MappingProposal | id, status, confidence | Agent-proposed mapping |
+| IMASMapping | id, source_path, target_path, driver, status | Facility→IMAS mapping |
 | MappingEvidence | id, evidence_type, content | Evidence supporting a mapping |
 | WikiPage | id, url, title, status, score | Wiki documentation page |
 | WikiChunk | id, content, embedding | Searchable wiki text chunk |
@@ -29,9 +28,9 @@ Condensed schema for the imas-codex Neo4j knowledge graph.
 | FacilitySignal | AT_FACILITY | Facility |
 | TreeNode | AT_FACILITY | Facility |
 | IMASMapping | AT_FACILITY | Facility |
-| MappingProposal | PROPOSES_SOURCE | FacilitySignal |
-| MappingProposal | PROPOSES_TARGET | IMASPath |
-| MappingProposal | HAS_EVIDENCE | MappingEvidence |
+| IMASMapping | MAPS_TO_SOURCE | TreeNode / FacilitySignal |
+| IMASMapping | MAPS_TO_TARGET | IMASPath |
+| IMASMapping | HAS_EVIDENCE | MappingEvidence |
 | WikiChunk | HAS_CHUNK ← | WikiPage |
 | WikiChunk | NEXT_CHUNK | WikiChunk |
 | CodeChunk | HAS_CHUNK ← | CodeExample |
@@ -42,8 +41,7 @@ Condensed schema for the imas-codex Neo4j knowledge graph.
 |------|--------|
 | FacilitySignal | discovered → enriched → checked / skipped / failed |
 | WikiPage | scanned → scored → ingested / skipped / failed |
-| IMASMapping | (validated boolean + confidence float) |
-| MappingProposal | proposed → endorsed / contested → validated / rejected |
+| IMASMapping | proposed → endorsed / contested → validated / rejected |
 | AgentSession | running → completed / failed |
 
 ## Physics Domains (PhysicsDomain enum)

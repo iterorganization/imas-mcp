@@ -2230,88 +2230,6 @@ classes:
       validated_by:
         description: AgentSession or user that validated this mapping
 
-  MappingProposal:
-    description: >-
-      A proposed mapping from an agent team, with status lifecycle and
-      evidence chain. Proposals track the full journey from initial
-      suggestion through endorsement/contestation to final validation.
-      Rejected proposals are preserved to prevent re-proposal.
-    mixins:
-      - LLMProvenance
-      - LLMOperation
-    class_uri: facility:MappingProposal
-    attributes:
-      id:
-        identifier: true
-        description: Unique proposal ID (e.g., "tcv-mp-plasma_current-001")
-        required: true
-      facility_id:
-        description: Target facility
-        required: true
-        range: Facility
-        annotations:
-          relationship_type: AT_FACILITY
-      signal_id:
-        description: Source FacilitySignal for this mapping
-        required: true
-        range: FacilitySignal
-        annotations:
-          relationship_type: PROPOSES_SOURCE
-      imas_path_id:
-        description: Target IMAS path
-        required: true
-        range: IMASPath
-        annotations:
-          relationship_type: PROPOSES_TARGET
-      status:
-        description: Proposal lifecycle status
-        range: MappingStatus
-        required: true
-      confidence:
-        description: Current confidence score (0.0-1.0, updated as evidence arrives)
-        range: float
-      proposed_by:
-        description: AgentSession that created this proposal
-        range: AgentSession
-        annotations:
-          relationship_type: PROPOSED_BY
-      proposed_at:
-        description: When the proposal was created
-        range: datetime
-      endorsed_at:
-        description: When the proposal was endorsed
-        range: datetime
-      validated_at:
-        description: When the proposal was validated
-        range: datetime
-      rejected_at:
-        description: When the proposal was rejected
-        range: datetime
-      rejection_reason:
-        description: Why this proposal was rejected
-      evidence:
-        description: Evidence nodes supporting or refuting this proposal
-        range: MappingEvidence
-        multivalued: true
-        inlined: false
-        annotations:
-          relationship_type: HAS_EVIDENCE
-      # Mapping details (promoted to IMASMapping on validation)
-      driver:
-        description: Proposed data access driver
-        range: DataSourceType
-      units_in:
-        description: Source data units
-      units_out:
-        description: Target IMAS units
-      scale:
-        description: Proposed scale factor
-        range: float
-      transformation:
-        description: Proposed transformation expression
-      notes:
-        description: Agent reasoning and notes
-
   MappingEvidence:
     description: >-
       Evidence supporting or refuting a mapping proposal. Created by
@@ -2403,16 +2321,16 @@ classes:
         description: Total signals to process
         range: integer
       signals_processed:
-        description: Signals with proposals created
+        description: Signals with mappings created
         range: integer
-      proposals_created:
-        description: Number of MappingProposal nodes created
+      mappings_created:
+        description: Number of IMASMapping nodes created
         range: integer
-      proposals_validated:
-        description: Number of proposals that reached validated status
+      mappings_validated:
+        description: Number of mappings that reached validated status
         range: integer
-      proposals_rejected:
-        description: Number of proposals rejected
+      mappings_rejected:
+        description: Number of mappings rejected
         range: integer
       # Langfuse correlation
       langfuse_trace_id:

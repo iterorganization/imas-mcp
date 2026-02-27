@@ -1,11 +1,13 @@
 # IMAS Mapping Workflow
 
-How agent teams discover, propose, validate, and persist IMAS mappings.
+How agents discover, propose, validate, and persist IMAS mappings.
 
 ## Lifecycle
 
+IMASMapping nodes carry the full status lifecycle — no separate proposal node.
+
 ```
-FacilitySignal → MappingProposal → MappingEvidence → validation → IMASMapping
+FacilitySignal/TreeNode → IMASMapping(proposed) → MappingEvidence → IMASMapping(validated)
 ```
 
 ### 1. Signal Selection
@@ -28,17 +30,22 @@ Cross-reference with structured DD lookup:
 search_imas("equilibrium/time_slice/global_quantities/ip")
 ```
 
-### 3. Proposal Creation
-Create MappingProposal with initial confidence:
+### 3. Mapping Creation
+Create IMASMapping with status=proposed:
 ```cypher
-MERGE (mp:MappingProposal {id: $id})
-SET mp.status = 'proposed',
-    mp.facility_id = $facility,
-    mp.signal_id = $signal_id,
-    mp.imas_path_id = $imas_path,
-    mp.confidence = $initial_confidence,
-    mp.proposed_by = $session_id,
-    mp.proposed_at = datetime()
+MERGE (m:IMASMapping {id: $id})
+SET m.status = 'proposed',
+    m.facility_id = $facility,
+    m.source_path = $signal_id,
+    m.target_path = $imas_path,
+    m.driver = $driver,
+    m.confidence = $initial_confidence,
+    m.proposed_at = datetime()
+WITH m
+MATCH (s:FacilitySignal {id: $signal_id})
+MATCH (t:IMASPath {id: $imas_path})
+MERGE (m)-[:MAPS_TO_SOURCE]->(s)
+MERGE (m)-[:MAPS_TO_TARGET]->(t)
 ```
 
 ### 4. Evidence Collection
@@ -52,7 +59,7 @@ Gather evidence from multiple sources:
 | unit_analysis | IMAS DD + signal | Compare units_in vs units_out |
 | expert_knowledge | Agent reasoning | Domain expertise on physics equivalence |
 
-Each evidence item becomes a MappingEvidence node linked to the proposal.
+Each evidence item becomes a MappingEvidence node linked to the mapping.
 
 ### 5. Validation Testing
 Write Python scripts to test the mapping against real data:
@@ -66,30 +73,20 @@ print(f"Shape: {data.shape}, Units: A, Range: [{data.min():.1f}, {data.max():.1f
 ```
 
 ### 6. Status Progression
-- **proposed**: Initial proposal with evidence
+- **proposed**: Initial mapping from LLM with evidence
 - **endorsed**: Multiple evidence sources agree, tests pass
 - **contested**: Conflicting evidence or failed tests
 - **validated**: Human or lead agent approved
 - **rejected**: Incorrect mapping (persisted with rejection reason)
 
-### 7. Persistence
-Validated mappings become IMASMapping nodes:
+### 7. Finalization
+Update mapping status when validated:
 ```cypher
-MATCH (mp:MappingProposal {id: $id, status: 'validated'})
-MATCH (s:FacilitySignal {id: mp.signal_id})
-MATCH (t:IMASPath {id: mp.imas_path_id})
-MERGE (m:IMASMapping {id: $mapping_id})
-SET m.source_path = s.id,
-    m.target_path = t.id,
-    m.facility_id = mp.facility_id,
-    m.driver = $driver,
-    m.units_in = $units_in,
-    m.units_out = $units_out,
-    m.scale = $scale,
-    m.confidence = mp.confidence,
+MATCH (m:IMASMapping {id: $id})
+SET m.status = 'validated',
     m.validated = true,
+    m.validated_at = datetime(),
     m.validated_shot = $shot
-MERGE (m)-[:FROM_PROPOSAL]->(mp)
 ```
 
 ## Key Checks
