@@ -196,39 +196,58 @@ class StaticProgressDisplay(BaseProgressDisplay):
         )
         return build_resource_section(config, self.gauge_width)
 
+    def _phase_complete(self, completed: int, total: int) -> bool:
+        """Check if a phase has finished all its work."""
+        return completed >= total and total > 0
+
     def tick(self) -> None:
-        """Drain streaming queues into display state."""
+        """Drain streaming queues into display state.
+
+        Only clears text on stale when the phase is complete — during
+        active SSH calls the last message stays visible instead of
+        flashing to idle after 3 seconds.
+        """
+        s = self.state
+
         item = self.extract_queue.pop()
         if item:
-            self.state.extract_version = item.get("version", "")
-            self.state.extract_detail = item.get("detail", "")
-        elif self.extract_queue.is_stale():
-            self.state.extract_version = ""
-            self.state.extract_detail = ""
+            s.extract_version = item.get("version", "")
+            s.extract_detail = item.get("detail", "")
+        elif self.extract_queue.is_stale() and self._phase_complete(
+            s.extract_completed, s.extract_total
+        ):
+            s.extract_version = ""
+            s.extract_detail = ""
 
         item = self.units_queue.pop()
         if item:
-            self.state.units_path = item.get("path", "")
-            self.state.units_detail = item.get("detail", "")
-        elif self.units_queue.is_stale():
-            self.state.units_path = ""
-            self.state.units_detail = ""
+            s.units_path = item.get("path", "")
+            s.units_detail = item.get("detail", "")
+        elif self.units_queue.is_stale() and self._phase_complete(
+            s.units_completed, s.units_total
+        ):
+            s.units_path = ""
+            s.units_detail = ""
 
         item = self.enrich_queue.pop()
         if item:
-            self.state.enrich_path = item.get("path", "")
-            self.state.enrich_description = item.get("description", "")
-        elif self.enrich_queue.is_stale():
-            self.state.enrich_path = ""
-            self.state.enrich_description = ""
+            s.enrich_path = item.get("path", "")
+            s.enrich_description = item.get("description", "")
+        elif self.enrich_queue.is_stale() and self._phase_complete(
+            s.enrich_completed, s.enrich_total
+        ):
+            s.enrich_path = ""
+            s.enrich_description = ""
 
         item = self.ingest_queue.pop()
         if item:
-            self.state.ingest_label = item.get("label", "")
-            self.state.ingest_detail = item.get("detail", "")
-        elif self.ingest_queue.is_stale():
-            self.state.ingest_label = ""
-            self.state.ingest_detail = ""
+            s.ingest_label = item.get("label", "")
+            s.ingest_detail = item.get("detail", "")
+        elif self.ingest_queue.is_stale() and self._phase_complete(
+            s.ingest_completed, s.ingest_total
+        ):
+            s.ingest_label = ""
+            s.ingest_detail = ""
 
         self._refresh()
 
@@ -601,6 +620,7 @@ def _run_pipeline(
     )
 
     display._extract_start = time.time()
+    display.state.extract_total = len(ver_list)
 
     # Phase 1: Extract — one version at a time
     version_results = []
