@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
@@ -608,12 +607,53 @@ def _run_pipeline(
     enrich: bool,
     batch_size: int,
 ) -> None:
-    """Execute the 3-phase static discovery pipeline inside a live display."""
-    from concurrent.futures import Future, ThreadPoolExecutor
+    """Execute the async static discovery pipeline inside a live display."""
+    import asyncio
+
+    asyncio.run(
+        _async_pipeline(
+            display=display,
+            facility=facility,
+            cfg=cfg,
+            tname=tname,
+            ver_list=ver_list,
+            do_extract=do_extract,
+            dry_run=dry_run,
+            timeout=timeout,
+            cost_limit=cost_limit,
+            enrich=enrich,
+            batch_size=batch_size,
+        )
+    )
+
+
+async def _async_pipeline(
+    *,
+    display: StaticProgressDisplay,
+    facility: str,
+    cfg: dict,
+    tname: str,
+    ver_list: list[int],
+    do_extract: bool,
+    dry_run: bool,
+    timeout: int,
+    cost_limit: float,
+    enrich: bool,
+    batch_size: int,
+) -> None:
+    """Async pipeline with concurrent extract/units/enrich workers.
+
+    Architecture:
+    - EXTRACT workers run concurrently (one async task per version)
+    - UNITS worker starts as soon as the latest version finishes
+    - ENRICH worker starts as soon as any version yields enrichable nodes
+    - INGEST runs after all extract + units + enrich complete
+    """
+    import asyncio
 
     from imas_codex.mdsplus.static import (
-        discover_static_tree_version,
-        extract_units_for_version,
+        async_discover_static_tree_version,
+        async_extract_units_for_version,
         ingest_static_tree,
         merge_units_into_data,
         merge_version_results,
@@ -622,9 +662,18 @@ def _run_pipeline(
     display._extract_start = time.time()
     display.state.extract_total = len(ver_list)
 
-    # Phase 1: Extract — one version at a time
-    version_results = []
-    for ver in ver_list:
+    # Shared state between async workers
+    version_results: list[dict] = []
+    enrichable_nodes: list[dict] = []
+    enrichable_lock = asyncio.Lock()
+    enrichment_results: list = []
+    enrichment_cost = 0.0
+    units: dict[str, str] = {}
+    latest_version = max(ver_list)
+    latest_version_event = asyncio.Event()  # Set when max version is extracted
+
+    # ── EXTRACT worker (one task per version) ─────────────────────────
+    async def extract_version(ver: int) -> dict | None:
         display.extract_queue.add(
             [
                 {
@@ -635,7 +684,7 @@ def _run_pipeline(
         )
 
         try:
-            data = discover_static_tree_version(
+            data = await async_discover_static_tree_version(
                 facility=facility,
                 tree_name=tname,
                 version=ver,
@@ -668,8 +717,25 @@ def _run_pipeline(
                         }
                     ]
                 )
+
+                # Feed enrichable nodes as they arrive
+                async with enrichable_lock:
+                    new_nodes = _collect_enrichable_nodes(data)
+                    seen = {n["path"] for n in enrichable_nodes}
+                    for n in new_nodes:
+                        if n["path"] not in seen:
+                            enrichable_nodes.append(n)
+                            seen.add(n["path"])
+
             display.state.extract_completed += 1
             display._update_rate("extract")
+
+            # Signal units worker when the latest version completes
+            if ver == latest_version:
+                latest_version_event.set()
+
+            return data
+
         except Exception:
             logger.exception("Extraction failed for %s:%s v%d", facility, tname, ver)
             display.extract_queue.add(
@@ -683,27 +749,19 @@ def _run_pipeline(
             display.state.extract_completed += 1
             display._update_rate("extract")
 
-    # Merge per-version results
-    data = merge_version_results(version_results)
-    if not data.get("versions"):
-        display.print_summary()
-        return
+            # If this was the latest version, still signal so units doesn't hang
+            if ver == latest_version:
+                latest_version_event.set()
 
-    total_nodes = sum(
-        v.get("node_count", 0) for v in data["versions"].values() if "error" not in v
-    )
+            return None
 
-    # Phase 2: Units + Enrichment (concurrent)
-    # Units run in background thread with batched SSH calls (~5000 nodes each).
-    # LLM enrichment runs in main thread. Both are I/O-bound.
-    latest_version = max(
-        int(v) for v in data["versions"] if "error" not in data["versions"][v]
-    )
+    # ── UNITS worker ──────────────────────────────────────────────────
+    async def units_worker() -> None:
+        nonlocal units
 
-    units_future: Future[dict[str, str]] | None = None
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="units")
+        # Wait for the latest version to be extracted
+        await latest_version_event.wait()
 
-    try:
         display._units_start = time.time()
         display.units_queue.add(
             [
@@ -714,7 +772,7 @@ def _run_pipeline(
             ]
         )
 
-        def _rich_progress(
+        def _on_progress(
             checked: int,
             total: int,
             found: int,
@@ -735,59 +793,111 @@ def _run_pipeline(
                 ]
             )
 
-        units_future = executor.submit(
-            extract_units_for_version,
-            facility,
-            tname,
-            latest_version,
-            timeout=180,
-            batch_size=5000,
-            on_progress=_rich_progress,
+        try:
+            units = await async_extract_units_for_version(
+                facility,
+                tname,
+                latest_version,
+                timeout=180,
+                batch_size=5000,
+                on_progress=_on_progress,
+            )
+            if units:
+                display.state.units_completed = display.state.units_total
+                display.state.units_found = len(units)
+                display.units_queue.add(
+                    [
+                        {
+                            "path": f"{len(units)} paths with units",
+                            "detail": "complete",
+                        }
+                    ]
+                )
+            else:
+                display.state.units_completed = max(display.state.units_total, 1)
+                display.units_queue.add([{"path": "no units found", "detail": ""}])
+        except Exception:
+            logger.exception("Units extraction failed")
+            display.state.units_completed = max(display.state.units_total, 1)
+            display.units_queue.add(
+                [{"path": "failed", "detail": "partial results kept"}]
+            )
+
+    # ── ENRICH worker ─────────────────────────────────────────────────
+    async def enrich_worker() -> None:
+        nonlocal enrichment_results, enrichment_cost
+
+        if not enrich or dry_run:
+            return
+
+        # Wait for at least one version to produce enrichable nodes
+        while not enrichable_nodes:
+            if display.state.extract_completed >= len(ver_list):
+                return  # All done, nothing to enrich
+            await asyncio.sleep(0.5)
+
+        # Snapshot current enrichable nodes
+        async with enrichable_lock:
+            nodes_to_enrich = list(enrichable_nodes)
+
+        display.state.enrich_total = len(nodes_to_enrich)
+
+        if nodes_to_enrich:
+            enrichment_results, enrichment_cost = _run_enrichment_with_progress(
+                nodes_to_enrich,
+                facility,
+                tname,
+                cfg,
+                cost_limit,
+                batch_size,
+                display,
+            )
+            display.state.enrich_cost = enrichment_cost
+
+    # ── Async ticker (replaces the threading ticker) ─────────────────
+    async def _ticker() -> None:
+        while True:
+            display.tick()
+            await asyncio.sleep(0.25)
+
+    # ── Run all workers concurrently ──────────────────────────────────
+    ticker_task = asyncio.create_task(_ticker())
+
+    # Start extract tasks + units worker + enrich worker concurrently
+    extract_tasks = [extract_version(ver) for ver in ver_list]
+    all_tasks = [
+        asyncio.gather(*extract_tasks, return_exceptions=True),
+        units_worker(),
+        enrich_worker(),
+    ]
+
+    try:
+        await asyncio.gather(*all_tasks, return_exceptions=True)
+    finally:
+        ticker_task.cancel()
+        try:
+            await ticker_task
+        except asyncio.CancelledError:
+            pass
+
+    # Merge all version results
+    data = merge_version_results(version_results)
+    if not data.get("versions"):
+        display.print_summary()
+        return
+
+    total_nodes = sum(
+        v.get("node_count", 0) for v in data["versions"].values() if "error" not in v
+    )
+
+    # Merge units into data
+    if units:
+        updated = merge_units_into_data(data, units)
+        display.units_queue.add(
+            [{"path": f"merged into {updated} nodes", "detail": "complete"}]
         )
 
-        # LLM enrichment in main thread (concurrent with units)
-        enrichment_results = []
-        if enrich and not dry_run:
-            enrich_nodes = _collect_enrichable_nodes(data)
-            display.state.enrich_total = len(enrich_nodes)
-
-            if enrich_nodes:
-                enrichment_results, enrich_cost = _run_enrichment_with_progress(
-                    enrich_nodes,
-                    facility,
-                    tname,
-                    cfg,
-                    cost_limit,
-                    batch_size,
-                    display,
-                )
-                display.state.enrich_cost = enrich_cost
-
-        # Collect units result — batched, so total wait = batches × timeout
-        units = units_future.result(timeout=7 * 180 + 60)
-        if units:
-            updated = merge_units_into_data(data, units)
-            display.state.units_completed = display.state.units_total
-            display.state.units_found = len(units)
-            display.units_queue.add(
-                [
-                    {
-                        "path": f"{len(units)} paths with units",
-                        "detail": f"merged into {updated} nodes",
-                    }
-                ]
-            )
-        else:
-            display.state.units_completed = max(display.state.units_total, 1)
-            display.units_queue.add([{"path": "no units found", "detail": ""}])
-    except Exception:
-        logger.exception("Units collection failed")
-        display.state.units_completed = max(display.state.units_total, 1)
-        display.units_queue.add([{"path": "failed", "detail": "partial results kept"}])
-    finally:
-        executor.shutdown(wait=False)
-
-    # Phase 3: Ingest
+    # ── Phase 4: INGEST ───────────────────────────────────────────────
     if not dry_run:
         from imas_codex.graph import GraphClient
 
@@ -865,42 +975,20 @@ def _run_with_progress(
             enrich=enrich,
         )
 
-        # Background ticker thread — keeps display refreshing during blocking
-        # SSH calls. Other CLIs use asyncio tasks; static CLI is synchronous
-        # so we use a daemon thread instead.
-        ticker_stop = threading.Event()
-
-        def _ticker(
-            _stop: threading.Event = ticker_stop,
-            _display: StaticProgressDisplay = display,
-        ) -> None:
-            while not _stop.is_set():
-                _display.tick()
-                _stop.wait(0.25)
-
-        ticker_thread = threading.Thread(
-            target=_ticker, daemon=True, name="static-ticker"
-        )
-
         with display:
-            ticker_thread.start()
-            try:
-                _run_pipeline(
-                    display=display,
-                    facility=facility,
-                    cfg=cfg,
-                    tname=tname,
-                    ver_list=ver_list,
-                    do_extract=do_extract,
-                    dry_run=dry_run,
-                    timeout=timeout,
-                    cost_limit=cost_limit,
-                    enrich=enrich,
-                    batch_size=batch_size,
-                )
-            finally:
-                ticker_stop.set()
-                ticker_thread.join(timeout=2)
+            _run_pipeline(
+                display=display,
+                facility=facility,
+                cfg=cfg,
+                tname=tname,
+                ver_list=ver_list,
+                do_extract=do_extract,
+                dry_run=dry_run,
+                timeout=timeout,
+                cost_limit=cost_limit,
+                enrich=enrich,
+                batch_size=batch_size,
+            )
 
 
 # =============================================================================

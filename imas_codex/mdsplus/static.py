@@ -30,7 +30,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.mdsplus.ingestion import compute_canonical_path, normalize_mdsplus_path
-from imas_codex.remote.executor import run_python_script
+from imas_codex.remote.executor import async_run_python_script, run_python_script
 
 if TYPE_CHECKING:
     from imas_codex.graph import GraphClient
@@ -152,6 +152,161 @@ def discover_static_tree_version(
         )
 
     return data
+
+
+async def async_discover_static_tree_version(
+    facility: str,
+    tree_name: str,
+    version: int,
+    extract_values: bool = False,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    """Async version of discover_static_tree_version.
+
+    Uses async_run_python_script for non-blocking SSH calls,
+    allowing concurrent version extraction.
+    """
+    mdsplus = _load_mdsplus_config(facility)
+    exclude_names = mdsplus.get("exclude_node_names", [])
+    setup_commands = mdsplus.get("setup_commands")
+
+    input_data = {
+        "tree_name": tree_name,
+        "versions": [version],
+        "extract_values": extract_values,
+        "exclude_names": exclude_names,
+    }
+
+    logger.info(
+        "Extracting static tree %s v%d from %s (values=%s)",
+        tree_name,
+        version,
+        facility,
+        extract_values,
+    )
+
+    output = await async_run_python_script(
+        "extract_static_tree.py",
+        input_data=input_data,
+        ssh_host=facility,
+        timeout=timeout,
+        setup_commands=setup_commands,
+    )
+
+    data = json.loads(output)
+
+    ver_str = str(version)
+    ver_data = data.get("versions", {}).get(ver_str, {})
+    if "error" in ver_data:
+        logger.warning("Version %d: %s", version, ver_data["error"])
+    else:
+        logger.info(
+            "Version %d: %d nodes, %d tags",
+            version,
+            ver_data.get("node_count", 0),
+            len(ver_data.get("tags", {})),
+        )
+
+    return data
+
+
+async def async_extract_units_for_version(
+    facility: str,
+    tree_name: str,
+    version: int,
+    timeout: int = 180,
+    batch_size: int = 5000,
+    on_progress: Callable[[int, int, int], None] | None = None,
+) -> dict[str, str]:
+    """Async version of extract_units_for_version.
+
+    Uses async_run_python_script for non-blocking SSH calls.
+    """
+    mdsplus = _load_mdsplus_config(facility)
+    setup_commands = mdsplus.get("setup_commands")
+
+    all_units: dict[str, str] = {}
+    offset = 0
+    total_nodes = 0
+    total_checked = 0
+    batch_num = 0
+
+    logger.info(
+        "Extracting units from %s:%s v%d (batch_size=%d)...",
+        facility,
+        tree_name,
+        version,
+        batch_size,
+    )
+
+    while True:
+        batch_num += 1
+        input_data = {
+            "tree_name": tree_name,
+            "version": version,
+            "node_types": ["NUMERIC", "SIGNAL"],
+            "offset": offset,
+            "limit": batch_size,
+        }
+
+        try:
+            output = ""
+            output = await async_run_python_script(
+                "extract_units.py",
+                input_data=input_data,
+                ssh_host=facility,
+                timeout=timeout,
+                setup_commands=setup_commands,
+            )
+            json_line = output.strip().split("\n")[0]
+            data = json.loads(json_line)
+        except Exception:
+            logger.exception(
+                "Units batch %d failed for %s:%s v%d (offset=%d)",
+                batch_num,
+                facility,
+                tree_name,
+                version,
+                offset,
+            )
+            if output:
+                logger.debug("Raw output (first 500 chars): %s", output[:500])
+            break
+
+        if "error" in data:
+            logger.warning(
+                "Units batch %d error v%d: %s", batch_num, version, data["error"]
+            )
+            break
+
+        batch_units = data.get("units", {})
+        all_units.update(batch_units)
+        total_nodes = data.get("total_nodes", 0)
+        batch_checked = data.get("batch_checked", 0)
+        total_checked += batch_checked
+
+        logger.info(
+            "  Batch %d: checked %d nodes (offset %d-%d), found %d units",
+            batch_num,
+            batch_checked,
+            offset,
+            offset + batch_checked,
+            len(batch_units),
+        )
+
+        if on_progress:
+            on_progress(total_checked, total_nodes, len(all_units))
+
+        offset += batch_size
+        if offset >= total_nodes:
+            break
+
+    logger.info(
+        "Units extraction complete: %d paths with units out of %d checked",
+        len(all_units),
+        total_checked,
+    )
+    return all_units
 
 
 def merge_version_results(
