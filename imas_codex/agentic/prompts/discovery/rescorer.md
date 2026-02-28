@@ -1,38 +1,82 @@
 ---
 name: discovery/rescorer
-description: Score refinement using pattern match evidence from enrichment
+description: Full re-evaluation of directory classification using enrichment evidence
 used_by: imas_codex.discovery.parallel.rescore_worker
 task: score
 dynamic: true
 ---
 
-You are refining directory scores using **pattern match evidence** from deep filesystem analysis. The initial scorer only saw file names and directory structure. Now you have concrete evidence: regex pattern matches that prove what code actually exists.
+You are re-evaluating directories at a fusion research facility using **concrete filesystem evidence** from deep analysis. The initial scorer only saw file names and directory structure. Now you have ground-truth data: regex pattern matches proving what code exists, lines of code by language, disk usage, and format conversion detection.
+
+**Your output replaces the initial scoring entirely.** You produce all fields — description, classification, scores, keywords, physics domain — not just score adjustments. Use the enrichment evidence to write better descriptions, correct misclassifications, and assign accurate scores.
+
+## Goal
+
+We are building a knowledge graph of **unique, facility-specific code** that reveals how data is accessed, processed, and analyzed at this facility. We want to discover:
+
+- Custom analysis scripts written by researchers (data access, equilibrium reconstruction, transport analysis)
+- Data access wrappers and tools specific to this facility's data systems (MDSplus, shotfiles, PPF)
+- IMAS integration code (IDS put/get, data mapping, IMAS-based workflows)
+- Facility-specific modeling tools and workflows
+
+We do **NOT** want to catalog:
+- Clones of well-known open-source codes (JINTRAC, JOREK, ASTRA, ETS, SOLPS, EDGE2D, EIRENE, etc.)
+- System packages, compilers, libraries
+- Build artifacts, caches, logs, temporary files
+- Raw experimental data directories
 
 ## Task
 
-For each directory, compare the initial scores to the pattern match evidence. **Adjust scores aggressively** when evidence contradicts or strongly supports the initial classification — this is not fine-tuning, this is correction.
+For each directory, you receive the initial scorer's assessment AND enrichment evidence. Use both to produce a complete, improved classification:
+
+1. **Description** — Rewrite using enrichment evidence. Mention specific data systems, languages, and patterns found.
+2. **Classification** — Confirm or correct `path_purpose` based on evidence
+3. **Scores** — Set each dimension 0.0-1.0 based on both structure and evidence
+4. **Keywords** — Include evidence-based terms (data systems found, languages, frameworks)
+5. **Physics domain** — Confirm or correct based on pattern evidence
+
+{% include "schema/path-purposes.md" %}
+
+{% include "schema/physics-domains.md" %}
+
+## Scoring Dimensions
+
+Each dimension represents a distinct value category. Score dimensions independently (0.0-1.0):
+
+{% for dim in score_dimensions %}
+- **{{ dim.field }}**: {{ dim.description }}
+{% endfor %}
 
 ## Evidence Available
 
 Each path comes with:
 
-### Pattern Match Results
-- **pattern_categories**: Dict mapping category → match count (e.g., `{"mdsplus": 15, "imas_write": 3, "equilibrium": 8}`). Empty dict means rg was unavailable or path was skipped for pattern matching.
-- **read_matches**: Total data read pattern matches
-- **write_matches**: Total data write pattern matches
+### Filesystem Structure (from initial scan)
+- **path**: Full directory path (naming conventions reveal purpose)
+- **depth**: Position in filesystem hierarchy
+- **file counts**: Total files and directories
+- **file types**: Extension breakdown (`.py`, `.f90`, `.m`, etc.)
+- **quality indicators**: README, Makefile, VCS presence
+- **contents**: Child file/directory names (tree structure or flat list)
+- **parent/sibling context**: How neighboring directories were classified
+
+### Initial Scorer Assessment
+- **description**: Initial interpretation (may be inaccurate — you improve this)
+- **path_purpose**: Initial classification (may need correction)
+- **keywords**: Initial keyword guess
+- **physics_domain**: Initial domain assignment
+- **dimension scores**: Initial scores to refine
+
+### Enrichment Evidence (ground truth)
+- **pattern_categories**: Dict mapping category → match count (e.g., `{"mdsplus": 15, "imas_write": 3}`). Empty dict `{}` means rg was unavailable — treat as unknown, NOT as absence.
+- **read_matches / write_matches**: Total data format pattern matches
 - **is_multiformat**: True if directory reads AND writes data (format conversion code)
-
-### Initial Scorer Context
-- **description**: The initial scorer's interpretation of directory purpose
-- **path_purpose**: Initial classification
-- **Initial dimension scores**: The scores to adjust
-
-### Other Metrics
 - **total_lines**: Lines of code (excludes comments). 0 may mean tokei was unavailable.
-- **language_breakdown**: Language → line count
-- **enrich_warnings**: Any timeout or failure warnings (e.g., "du_timeout", "tokei_timeout"). When present, treat the affected metric as unknown rather than zero.
+- **language_breakdown**: Language → line count (e.g., `{"Python": 2500, "Fortran": 800}`)
+- **total_bytes**: Total directory size
+- **enrich_warnings**: Timeout/failure warnings. When present, treat affected metrics as unknown rather than zero.
 
-## Patterns → Score Dimensions
+## Pattern Categories → Score Dimensions
 
 Pattern categories map directly to score dimensions:
 
@@ -40,50 +84,59 @@ Pattern categories map directly to score dimensions:
 
 ## Scoring Rules
 
-**Pattern matches are ground truth.** If pattern_categories shows `mdsplus: 20`, the directory definitely accesses MDSplus. The initial score was a guess; this is proof.
+### Pattern Matches Are Ground Truth
 
-**Missing pattern_categories is NOT evidence of absence.** If pattern_categories is empty `{}`, it means rg was unavailable or the path was skipped — do NOT reduce scores based on empty patterns. Only reduce when pattern_categories has data but a specific category is missing (e.g., categories present for mdsplus but none for imas means IMAS is genuinely absent).
+If `pattern_categories` shows `mdsplus: 20`, the directory **definitely** accesses MDSplus. The initial score was a guess based on names; enrichment is proof.
 
-### Strong Adjustments (±0.3 to ±0.5)
+**Missing pattern_categories is NOT evidence of absence.** If pattern_categories is empty `{}`, it means `rg` was unavailable — do NOT reduce scores. Only reduce when pattern_categories has data but a specific category is absent.
 
-**Boost strongly when evidence confirms:**
-- Pattern count ≥ 10 for any category → boost that dimension to 0.7+
-- Pattern count ≥ 25 → boost to 0.85+
-- `is_multiformat=true` → set `score_data_access` ≥ 0.8
+### Evidence-Based Score Calibration
 
-**Reduce strongly when evidence contradicts (only with non-empty pattern_categories):**
-- Dimension scored ≥ 0.5 but has 0 matches in relevant categories → reduce by 0.3+
-- Path looked like data access code but no mdsplus/ppf/hdf5 matches → reduce `score_data_access`
-- Path looked like IMAS code but no imas_read/imas_write matches → reduce `score_imas`
+| Evidence | Action |
+|----------|--------|
+| Pattern count ≥ 25 for a category | Score that dimension 0.85+ |
+| Pattern count 10-24 | Score that dimension 0.7+ |
+| Pattern count 1-9 | Boost dimension by 0.1-0.2 vs initial |
+| `is_multiformat=true` | `score_data_access` ≥ 0.8 |
+| Dimension scored ≥ 0.5 but 0 matches (non-empty patterns) | Reduce by 0.3+ |
+| Pattern categories empty `{}` | Keep initial scores (no evidence) |
+| `enrich_warnings` present for a metric | Treat that metric as unknown |
 
-### Moderate Adjustments (±0.1 to ±0.2)
+### Description Improvement Rules
 
-- Pattern count 1-9 confirms relevance → boost by 0.1-0.2
-- Mixed evidence (some patterns but not the expected ones) → adjust classification
+**Always improve the description** using enrichment evidence:
+- Mention specific data systems found (e.g., "MDSplus access with 15 pattern matches")
+- Include primary language and LOC (e.g., "2,500 lines of Python")
+- Note multiformat capability if detected
+- Reference specific pattern categories found (e.g., "equilibrium reconstruction patterns, EQDSK I/O")
+- Keep it concise: 1-2 sentences maximum
 
-### No Adjustment
+### Keyword Rules
 
-- Pattern counts align with initial scores
-- Dimension scored low and has 0 pattern matches (expected)
-- Pattern categories is empty `{}` (no evidence to act on — keep original scores)
-- Enrichment warnings indicate timeouts for relevant metrics
+Include keywords derived from:
+- Pattern categories with matches (e.g., "mdsplus", "imas", "equilibrium")
+- Primary programming languages found
+- Data formats detected (e.g., "hdf5", "netcdf", "eqdsk")
+- Maximum 8 keywords
 
-## Combined Score
+### Combined Score
 
-The new combined score should reflect the evidence:
-- Use maximum of adjusted dimension scores (combined = max of all dimensions)
-- All dimension scores must be 0.0-1.0
-- `is_multiformat=true` with high pattern counts → combined score near 1.0
+`new_score` = maximum of all dimension scores. All dimensions must be 0.0-1.0.
 
-## Evidence Tracking
+### Evidence Tracking
 
-**You must report what influenced your decision:**
+You must report what influenced your decision:
+1. **primary_evidence**: Pattern categories that most influenced changes (e.g., `["mdsplus", "imas_write"]`)
+2. **evidence_summary**: Brief match count summary (e.g., "15 mdsplus, 3 imas_write, 2500 LOC Python")
+3. **adjustment_reason**: One-line explanation of the main change
 
-1. **primary_evidence**: List the pattern categories that most influenced the adjustment (e.g., `["mdsplus", "imas_write"]`). Use `[]` if no pattern evidence available.
-2. **evidence_summary**: Brief summary of match counts (e.g., "15 mdsplus, 3 imas_write, is_multiformat"). Use "no pattern data" if empty.
-3. **adjustment_reason**: One-line explanation of the score change
+{% if focus %}
+## Focus Area
 
-This evidence is persisted to the graph for traceability.
+Prioritize paths related to: **{{ focus }}**
+
+Boost scores by ~0.15 for paths matching this focus.
+{% endif %}
 
 {% if dimension_calibration %}
 {% include "schema/dimension-calibration.md" %}

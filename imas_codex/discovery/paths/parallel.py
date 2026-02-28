@@ -633,6 +633,16 @@ def claim_paths_for_rescoring(
                    p.write_matches AS write_matches,
                    p.path_purpose AS path_purpose,
                    p.description AS description,
+                   p.keywords AS keywords,
+                   p.physics_domain AS physics_domain,
+                   p.child_names AS child_names,
+                   p.total_files AS total_files,
+                   p.total_dirs AS total_dirs,
+                   p.file_type_counts AS file_type_counts,
+                   p.has_readme AS has_readme,
+                   p.has_makefile AS has_makefile,
+                   p.vcs_type AS vcs_type,
+                   p.expansion_reason AS expansion_reason,
                    p.enrich_warnings AS enrich_warnings
             """,
             facility=facility,
@@ -777,6 +787,11 @@ def mark_rescore_complete(
                     dim_set_clauses
                 )
 
+            # Serialize keywords to JSON for graph storage
+            keywords = result.get("keywords", [])
+            if isinstance(keywords, list):
+                keywords = json.dumps(keywords)
+
             gc.query(
                 f"""
                 MATCH (p:FacilityPath {{id: $id}})
@@ -786,6 +801,10 @@ def mark_rescore_complete(
                     p.rescore_reason = $adjustment_reason,
                     p.primary_evidence = $primary_evidence,
                     p.evidence_summary = $evidence_summary,
+                    p.description = $description,
+                    p.keywords = $keywords,
+                    p.path_purpose = $path_purpose,
+                    p.physics_domain = $physics_domain,
                     p.claimed_at = null{extra_set}
                 """,
                 id=path_id,
@@ -795,6 +814,10 @@ def mark_rescore_complete(
                 adjustment_reason=result.get("adjustment_reason", ""),
                 primary_evidence=primary_evidence,
                 evidence_summary=result.get("evidence_summary", ""),
+                description=result.get("description", ""),
+                keywords=keywords,
+                path_purpose=result.get("path_purpose"),
+                physics_domain=result.get("physics_domain"),
                 **dim_params,
             )
             updated += 1
@@ -1446,7 +1469,9 @@ async def rescore_worker(
         try:
             # LLM rescoring uses enrichment data for intelligent score refinement
             # Pass facility for cross-facility example injection
-            llm_results, cost = await _async_rescore_with_llm(paths, state.facility)
+            llm_results, cost = await _async_rescore_with_llm(
+                paths, state.facility, focus=state.focus
+            )
 
             # Add should_expand from original data and cost tracking
             rescore_results = []
@@ -1462,6 +1487,10 @@ async def rescore_worker(
                     "adjustment_reason": llm_r.get("adjustment_reason", ""),
                     "primary_evidence": llm_r.get("primary_evidence", []),
                     "evidence_summary": llm_r.get("evidence_summary", ""),
+                    "description": llm_r.get("description", ""),
+                    "keywords": llm_r.get("keywords", []),
+                    "path_purpose": llm_r.get("path_purpose"),
+                    "physics_domain": llm_r.get("physics_domain"),
                 }
                 # Copy per-dimension scores from LLM results
                 for dim in [
@@ -1508,6 +1537,7 @@ async def rescore_worker(
 def _rescore_with_llm(
     paths: list[dict],
     facility: str | None = None,
+    focus: str | None = None,
 ) -> tuple[list[dict], float]:
     """Rescore paths using LLM with enrichment data.
 
@@ -1517,6 +1547,7 @@ def _rescore_with_llm(
     Args:
         paths: List of path dicts with enrichment data
         facility: Current facility for preferring same-facility examples
+        focus: Optional focus string for scoring
 
     Returns:
         Tuple of (rescore_results, cost)
@@ -1540,6 +1571,8 @@ def _rescore_with_llm(
     has_examples = any(enriched_examples.get(cat) for cat in enriched_examples)
     if has_examples:
         context["enriched_examples"] = enriched_examples
+    if focus:
+        context["focus"] = focus
 
     # Render prompt with examples
     system_prompt = render_prompt("discovery/rescorer", context)
@@ -1556,9 +1589,12 @@ def _rescore_with_llm(
                 lang = {}
 
         lines.append(f"\n## Path: {p['path']}")
+        lines.append(f"Depth: {p.get('depth', 0)}")
 
         # Initial scoring context (what the scorer saw and decided)
         lines.append(f"Purpose: {p.get('path_purpose', 'unknown')}")
+        if p.get("physics_domain"):
+            lines.append(f"Physics domain: {p['physics_domain']}")
         if p.get("description"):
             lines.append(f"Description: {p['description']}")
         if p.get("keywords"):
@@ -1568,6 +1604,22 @@ def _rescore_with_llm(
             lines.append(f"Keywords: {keywords}")
         if p.get("expansion_reason"):
             lines.append(f"Expansion reason: {p['expansion_reason']}")
+
+        # Filesystem structure
+        total_files = p.get("total_files")
+        total_dirs = p.get("total_dirs")
+        if total_files is not None or total_dirs is not None:
+            lines.append(f"Files: {total_files or 0}, Dirs: {total_dirs or 0}")
+        file_types = p.get("file_type_counts")
+        if file_types:
+            if isinstance(file_types, str):
+                lines.append(f"File types: {file_types}")
+            else:
+                lines.append(f"File types: {file_types}")
+        for indicator in ["has_readme", "has_makefile", "vcs_type"]:
+            val = p.get(indicator)
+            if val:
+                lines.append(f"  {indicator}: {val}")
 
         # Child contents (truncated) - helps understand what's in the directory
         child_names = p.get("child_names")
@@ -1654,7 +1706,7 @@ def _rescore_with_llm(
                 {"role": "user", "content": user_prompt},
             ],
             response_model=RescoreBatch,
-            max_tokens=8000,
+            max_tokens=12000,
         )
     except ValueError:
         # All retries exhausted — return original scores as fallback
@@ -1678,6 +1730,14 @@ def _rescore_with_llm(
                 "path": p["path"],
                 "score": max(0.0, min(1.0, r.new_score)),
                 "adjustment_reason": (r.adjustment_reason[:80] or ""),
+                "primary_evidence": r.primary_evidence or [],
+                "evidence_summary": (r.evidence_summary or "")[:200],
+                "description": r.description or p.get("description", ""),
+                "keywords": r.keywords or p.get("keywords", []),
+                "path_purpose": (r.path_purpose.value if r.path_purpose else None)
+                or p.get("path_purpose"),
+                "physics_domain": (r.physics_domain.value if r.physics_domain else None)
+                or p.get("physics_domain"),
             }
 
             # Add per-dimension scores (use original if LLM returned None)
@@ -1718,6 +1778,7 @@ def _rescore_with_llm(
 async def _async_rescore_with_llm(
     paths: list[dict],
     facility: str | None = None,
+    focus: str | None = None,
 ) -> tuple[list[dict], float]:
     """Rescore paths using LLM with enrichment data (async/cancellable).
 
@@ -1730,6 +1791,7 @@ async def _async_rescore_with_llm(
     Args:
         paths: List of path dicts with enrichment data
         facility: Current facility for preferring same-facility examples
+        focus: Optional focus string for scoring
 
     Returns:
         Tuple of (rescore_results, cost)
@@ -1753,6 +1815,8 @@ async def _async_rescore_with_llm(
     has_examples = any(enriched_examples.get(cat) for cat in enriched_examples)
     if has_examples:
         context["enriched_examples"] = enriched_examples
+    if focus:
+        context["focus"] = focus
 
     # Render prompt with examples
     system_prompt = render_prompt("discovery/rescorer", context)
@@ -1769,9 +1833,12 @@ async def _async_rescore_with_llm(
                 lang = {}
 
         lines_prompt.append(f"\n## Path: {p['path']}")
+        lines_prompt.append(f"Depth: {p.get('depth', 0)}")
 
         # Initial scoring context (what the scorer saw and decided)
         lines_prompt.append(f"Purpose: {p.get('path_purpose', 'unknown')}")
+        if p.get("physics_domain"):
+            lines_prompt.append(f"Physics domain: {p['physics_domain']}")
         if p.get("description"):
             lines_prompt.append(f"Description: {p['description']}")
         if p.get("keywords"):
@@ -1781,6 +1848,22 @@ async def _async_rescore_with_llm(
             lines_prompt.append(f"Keywords: {keywords}")
         if p.get("expansion_reason"):
             lines_prompt.append(f"Expansion reason: {p['expansion_reason']}")
+
+        # Filesystem structure
+        total_files = p.get("total_files")
+        total_dirs = p.get("total_dirs")
+        if total_files is not None or total_dirs is not None:
+            lines_prompt.append(f"Files: {total_files or 0}, Dirs: {total_dirs or 0}")
+        file_types = p.get("file_type_counts")
+        if file_types:
+            if isinstance(file_types, str):
+                lines_prompt.append(f"File types: {file_types}")
+            else:
+                lines_prompt.append(f"File types: {file_types}")
+        for indicator in ["has_readme", "has_makefile", "vcs_type"]:
+            val = p.get(indicator)
+            if val:
+                lines_prompt.append(f"  {indicator}: {val}")
 
         # Child contents (truncated) - helps understand what's in the directory
         child_names = p.get("child_names")
@@ -1871,7 +1954,7 @@ async def _async_rescore_with_llm(
                 {"role": "user", "content": user_prompt},
             ],
             response_model=RescoreBatch,
-            max_tokens=8000,
+            max_tokens=12000,
         )
     except ValueError:
         # All retries exhausted — return original scores as fallback
@@ -1895,6 +1978,14 @@ async def _async_rescore_with_llm(
                 "path": p["path"],
                 "score": max(0.0, min(1.0, r.new_score)),
                 "adjustment_reason": (r.adjustment_reason[:80] or ""),
+                "primary_evidence": r.primary_evidence or [],
+                "evidence_summary": (r.evidence_summary or "")[:200],
+                "description": r.description or p.get("description", ""),
+                "keywords": r.keywords or p.get("keywords", []),
+                "path_purpose": (r.path_purpose.value if r.path_purpose else None)
+                or p.get("path_purpose"),
+                "physics_domain": (r.physics_domain.value if r.physics_domain else None)
+                or p.get("physics_domain"),
             }
 
             # Add per-dimension scores (use original if LLM returned None)

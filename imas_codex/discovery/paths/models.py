@@ -185,53 +185,75 @@ class ScoreBatch(BaseModel):
 class RescoreResult(BaseModel):
     """LLM rescoring result for a single directory.
 
-    Used after enrichment to refine per-dimension scores with concrete
-    metrics (pattern matches, language breakdown, multiformat detection).
-
-    Each dimension can be independently adjusted based on enrichment evidence.
-    Pattern match evidence is persisted to the graph for traceability.
+    Full re-evaluation using enrichment evidence (pattern matches, language
+    breakdown, LOC, multiformat detection). Produces all fields from the
+    original ScoreResult plus evidence tracking, allowing the rescorer to
+    improve descriptions, reclassify purposes, and update keywords based
+    on concrete filesystem evidence.
     """
 
     path: str = Field(description="The directory path (echo from input)")
 
-    # Per-dimension rescored values (0.0-1.0+, or None to keep original)
-    score_modeling_code: float | None = Field(
-        default=None, description="Adjusted modeling code score"
-    )
-    score_analysis_code: float | None = Field(
-        default=None, description="Adjusted analysis code score"
-    )
-    score_operations_code: float | None = Field(
-        default=None, description="Adjusted operations code score"
-    )
-    score_modeling_data: float | None = Field(
-        default=None, description="Adjusted modeling data score"
-    )
-    score_experimental_data: float | None = Field(
-        default=None, description="Adjusted experimental data score"
-    )
-    score_data_access: float | None = Field(
-        default=None, description="Adjusted data access score"
-    )
-    score_workflow: float | None = Field(
-        default=None, description="Adjusted workflow score"
-    )
-    score_visualization: float | None = Field(
-        default=None, description="Adjusted visualization score"
-    )
-    score_documentation: float | None = Field(
-        default=None, description="Adjusted documentation score"
-    )
-    score_imas: float | None = Field(
-        default=None, description="Adjusted IMAS relevance score"
-    )
-    score_convention: float | None = Field(
-        default=None, description="Adjusted convention handling score"
+    # Classification — can be reclassified based on enrichment evidence
+    path_purpose: ResourcePurpose = Field(
+        description="Classification (may be updated from initial based on evidence)"
     )
 
-    # Combined score (computed from dimension scores)
+    # Description — improved using enrichment evidence
+    description: str = Field(
+        description="Improved description incorporating enrichment evidence (1-2 sentences)"
+    )
+
+    # Per-dimension rescored values (0.0-1.0, required)
+    score_modeling_code: float = Field(
+        default=0.0, description="Adjusted modeling code score (0.0-1.0)"
+    )
+    score_analysis_code: float = Field(
+        default=0.0, description="Adjusted analysis code score (0.0-1.0)"
+    )
+    score_operations_code: float = Field(
+        default=0.0, description="Adjusted operations code score (0.0-1.0)"
+    )
+    score_modeling_data: float = Field(
+        default=0.0, description="Adjusted modeling data score (0.0-1.0)"
+    )
+    score_experimental_data: float = Field(
+        default=0.0, description="Adjusted experimental data score (0.0-1.0)"
+    )
+    score_data_access: float = Field(
+        default=0.0, description="Adjusted data access score (0.0-1.0)"
+    )
+    score_workflow: float = Field(
+        default=0.0, description="Adjusted workflow score (0.0-1.0)"
+    )
+    score_visualization: float = Field(
+        default=0.0, description="Adjusted visualization score (0.0-1.0)"
+    )
+    score_documentation: float = Field(
+        default=0.0, description="Adjusted documentation score (0.0-1.0)"
+    )
+    score_imas: float = Field(
+        default=0.0, description="Adjusted IMAS relevance score (0.0-1.0)"
+    )
+    score_convention: float = Field(
+        default=0.0, description="Adjusted convention handling score (0.0-1.0)"
+    )
+
+    # Combined score (max of dimension scores)
     new_score: float = Field(
-        description="Adjusted combined score (0.0-1.5, allows boosting)"
+        description="Combined score = max of all dimension scores (0.0-1.0)"
+    )
+
+    # Updated keywords based on enrichment evidence
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Searchable keywords including pattern evidence (max 8)",
+    )
+
+    # Physics domain — can be updated based on pattern evidence
+    physics_domain: PhysicsDomain = Field(
+        default=PhysicsDomain.GENERAL,
+        description="Primary physics domain (updated from evidence if applicable)",
     )
 
     # Evidence for score adjustments (persisted to graph)

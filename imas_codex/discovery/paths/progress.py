@@ -120,6 +120,10 @@ class ProgressState:
     pending_enrich: int = 0  # scored + should_enrich + not enriched
     pending_rescore: int = 0  # enriched + not rescored
 
+    # Graph-persistent totals (from get_discovery_stats)
+    enriched: int = 0  # Total enriched paths in graph
+    rescored: int = 0  # Total rescored paths in graph
+
     # This run stats
     run_scanned: int = 0
     run_scored: int = 0
@@ -387,8 +391,8 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         scored_paths = self.state.scored
         score_total = max(self.state.pending_score + self.state.scored, 1)
 
-        # ENRICH: enriched / total needing enrichment
-        enrich_total = max(self.state.pending_enrich + self.state.run_enriched, 1)
+        # ENRICH: enriched / total needing enrichment (graph-persistent)
+        enrich_total = max(self.state.pending_enrich + self.state.enriched, 1)
 
         # Combined rates
         scan_rate = (
@@ -572,7 +576,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             PipelineRowConfig(
                 name="ENRICH",
                 style="bold magenta",
-                completed=self.state.run_enriched,
+                completed=self.state.enriched,
                 total=enrich_total,
                 rate=self.state.enrich_rate,
                 disabled=self.state.scan_only,
@@ -993,6 +997,8 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.pending_score = stats.get("scanned", 0) + scoring
         self.state.pending_expand = stats.get("expansion_ready", 0)
         self.state.pending_enrich = stats.get("enrichment_ready", 0)
+        self.state.enriched = stats.get("enriched", 0)
+        self.state.rescored = stats.get("rescored", 0)
 
 
 def print_discovery_status(

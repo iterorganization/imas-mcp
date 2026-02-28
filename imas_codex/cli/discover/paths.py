@@ -88,6 +88,12 @@ logger = logging.getLogger(__name__)
     help="Auto-enrich paths scoring >= threshold (e.g., 0.75)",
 )
 @click.option(
+    "--rerescore",
+    is_flag=True,
+    default=False,
+    help="Reset all rescored paths so they get re-rescored with current prompt",
+)
+@click.option(
     "--time",
     "time_limit",
     type=int,
@@ -107,6 +113,7 @@ def paths(
     score_only: bool,
     add_roots: bool,
     enrich_threshold: float | None,
+    rerescore: bool,
     time_limit: int | None,
 ) -> None:
     """Discover and score directory structure at a facility.
@@ -149,6 +156,7 @@ def paths(
         root_filter=root_filter,
         add_roots=add_roots,
         enrich_threshold=enrich_threshold,
+        rerescore=rerescore,
         timeout_minutes=time_limit,
     )
 
@@ -171,6 +179,7 @@ def _run_iterative_discovery(
     root_filter: list[str] | None = None,
     add_roots: bool = False,
     enrich_threshold: float | None = None,
+    rerescore: bool = False,
     timeout_minutes: int | None = None,
 ) -> None:
     """Run parallel scan/score discovery."""
@@ -232,6 +241,19 @@ def _run_iterative_discovery(
             log_print(f"[green]Added {seeded} new root path(s) from config[/green]")
         else:
             log_print("[dim]All discovery_roots already in graph[/dim]")
+        stats = get_discovery_stats(facility)
+
+    # Handle --rerescore flag
+    if rerescore:
+        from imas_codex.discovery.paths.frontier import reset_rescored_paths
+
+        reset_count = reset_rescored_paths(facility)
+        if reset_count > 0:
+            log_print(
+                f"[green]Reset {reset_count} rescored path(s) for re-rescoring[/green]"
+            )
+        else:
+            log_print("[dim]No rescored paths to reset[/dim]")
         stats = get_discovery_stats(facility)
 
     # Handle targeted deep dive with --root

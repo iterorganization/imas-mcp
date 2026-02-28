@@ -279,6 +279,8 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.claimed_at IS NOT NULL THEN 1 ELSE 0 END) AS claimed,
                 sum(CASE WHEN p.status = $scored AND p.should_expand = true AND p.expanded_at IS NULL THEN 1 ELSE 0 END) AS expansion_ready,
                 sum(CASE WHEN p.status = $scored AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
+                sum(CASE WHEN p.is_enriched = true THEN 1 ELSE 0 END) AS enriched,
+                sum(CASE WHEN p.rescored_at IS NOT NULL THEN 1 ELSE 0 END) AS rescored,
                 max(coalesce(p.depth, 0)) AS max_depth
             """,
             facility=facility,
@@ -300,6 +302,8 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 "claimed": result[0]["claimed"],
                 "expansion_ready": result[0]["expansion_ready"],
                 "enrichment_ready": result[0]["enrichment_ready"],
+                "enriched": result[0]["enriched"],
+                "rescored": result[0]["rescored"],
                 "max_depth": result[0]["max_depth"] or 0,
             }
 
@@ -313,6 +317,8 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             "claimed": 0,
             "expansion_ready": 0,
             "enrichment_ready": 0,
+            "enriched": 0,
+            "rescored": 0,
             "max_depth": 0,
         }
 
@@ -2422,6 +2428,38 @@ def sample_paths_by_dimension(
             ]
 
     return samples
+
+
+def reset_rescored_paths(facility: str) -> int:
+    """Reset all rescored paths so they get picked up for rescoring again.
+
+    Clears rescored_at, rescore_reason, primary_evidence, and evidence_summary
+    on all enriched paths for the facility. This allows re-rescoring with an
+    improved prompt without re-running enrichment.
+
+    Args:
+        facility: Facility ID
+
+    Returns:
+        Number of paths reset
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE p.is_enriched = true AND p.rescored_at IS NOT NULL
+            SET p.rescored_at = null,
+                p.rescore_reason = null,
+                p.primary_evidence = null,
+                p.evidence_summary = null
+            RETURN count(p) AS reset_count
+            """,
+            facility=facility,
+        )
+        rows = list(result)
+        return rows[0]["reset_count"] if rows else 0
 
 
 def sample_enriched_paths(

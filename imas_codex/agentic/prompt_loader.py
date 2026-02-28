@@ -925,7 +925,13 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "format_patterns",
         "physics_domains",
     ],
-    "discovery/rescorer": ["rescore_schema", "format_patterns"],
+    "discovery/rescorer": [
+        "rescore_schema",
+        "format_patterns",
+        "path_purposes",
+        "score_dimensions",
+        "physics_domains",
+    ],
     "discovery/roots": ["discovery_categories"],
     "discovery/data_access": ["data_access_fields"],
     "discovery/signal-enrichment": [
