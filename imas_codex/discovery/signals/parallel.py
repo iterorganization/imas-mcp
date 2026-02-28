@@ -554,6 +554,7 @@ def mark_signals_enriched(
     - diagnostic: diagnostic system name (optional)
     - analysis_code: analysis code name (optional)
     - keywords: searchable keywords (optional)
+    - sign_convention: sign convention description (optional)
 
     Args:
         signals: List of signal enrichment results
@@ -581,6 +582,8 @@ def mark_signals_enriched(
                                            THEN sig.analysis_code ELSE s.analysis_code END,
                     s.keywords = CASE WHEN sig.keywords IS NOT NULL
                                       THEN sig.keywords ELSE s.keywords END,
+                    s.sign_convention = CASE WHEN sig.sign_convention IS NOT NULL AND sig.sign_convention <> ''
+                                             THEN sig.sign_convention ELSE s.sign_convention END,
                     s.llm_cost = $per_signal_cost,
                     s.enriched_at = datetime(),
                     s.claimed_at = null
@@ -1617,9 +1620,8 @@ async def enrich_worker(
         cache[group_key] = chunks
         return chunks
 
-    # Cache for code chunk and IMAS context queries
+    # Cache for code chunk context queries
     code_context_cache: dict[str, list[dict[str, str]]] = {}
-    imas_context_cache: dict[str, list[dict[str, str]]] = {}
 
     async def _fetch_code_context(
         group_key: str,
@@ -1699,111 +1701,6 @@ async def enrich_worker(
             logger.debug("Code context search failed: %s", e)
             code_context_cache[group_key] = []
             return []
-
-    async def _fetch_imas_context(
-        group_key: str,
-        indexed_signals: list[tuple[int, dict]],
-    ) -> list[dict[str, str]]:
-        """Fetch IMAS path and cluster context for a signal group.
-
-        Uses imas_path_embedding to suggest candidate IMAS mappings,
-        and cluster_label_embedding for semantic cluster context.
-        This helps the LLM classify physics domains more precisely.
-        """
-        if group_key in imas_context_cache:
-            return imas_context_cache[group_key]
-
-        from imas_codex.embeddings.config import EncoderConfig
-        from imas_codex.embeddings.encoder import Encoder
-
-        # Build query from signal names and group context
-        signal_names = " ".join(s.get("name") or "" for _, s in indexed_signals[:5])
-        if group_key.startswith("tdi:"):
-            query_text = f"{group_key[4:]} {signal_names}"
-        elif group_key.startswith("tree:"):
-            query_text = f"{group_key[5:]} {signal_names}"
-        else:
-            query_text = signal_names
-
-        if not query_text.strip():
-            imas_context_cache[group_key] = []
-            return []
-
-        try:
-            config = EncoderConfig()
-            encoder = Encoder(config)
-            embedding = encoder.embed_texts([query_text])[0].tolist()
-        except Exception as e:
-            logger.debug("Could not embed for IMAS context: %s", e)
-            imas_context_cache[group_key] = []
-            return []
-
-        imas_results = []
-        try:
-            with GraphClient() as gc:
-                # Query IMAS paths
-                results = gc.query(
-                    """
-                    CALL db.index.vector.queryNodes(
-                        'imas_path_embedding', $k, $embedding
-                    )
-                    YIELD node, score
-                    WHERE score >= $min_score
-                    RETURN node.id AS path,
-                           node.documentation AS documentation,
-                           score
-                    ORDER BY score DESC
-                    """,
-                    k=5,
-                    embedding=embedding,
-                    min_score=0.4,
-                )
-                for row in results:
-                    doc = row.get("documentation", "") or ""
-                    if len(doc) > 200:
-                        doc = doc[:200] + "..."
-                    imas_results.append(
-                        {
-                            "imas_path": row.get("path", ""),
-                            "documentation": doc,
-                            "source": "imas_path",
-                        }
-                    )
-
-                # Query semantic clusters
-                results = gc.query(
-                    """
-                    CALL db.index.vector.queryNodes(
-                        'cluster_label_embedding', $k, $embedding
-                    )
-                    YIELD node, score
-                    WHERE score >= $min_score
-                    RETURN node.label AS label,
-                           node.description AS description,
-                           score
-                    ORDER BY score DESC
-                    """,
-                    k=3,
-                    embedding=embedding,
-                    min_score=0.4,
-                )
-                for row in results:
-                    desc = row.get("description", "") or ""
-                    if len(desc) > 200:
-                        desc = desc[:200] + "..."
-                    imas_results.append(
-                        {
-                            "imas_path": row.get("label", ""),
-                            "documentation": desc,
-                            "source": "cluster",
-                        }
-                    )
-
-        except Exception as e:
-            logger.debug("IMAS context search failed: %s", e)
-
-        imas_context_cache[group_key] = imas_results
-        return imas_results
 
     while not state.should_stop_enriching():
         # Claim batch of signals (sorted by tdi_function)
@@ -1909,6 +1806,18 @@ async def enrich_worker(
                 for chunk in group_wiki:
                     user_lines.append(f"- [{chunk['page_title']}] {chunk['content']}")
 
+            # Fetch relevant source code chunks via code_chunk_embedding
+            code_chunks = await _fetch_code_context(group_key, indexed_signals)
+            if code_chunks:
+                user_lines.append("\n**Relevant source code:**")
+                for chunk in code_chunks:
+                    path = chunk.get("source_path", "unknown")
+                    ctype = chunk.get("chunk_type", "")
+                    label = f"{path} ({ctype})" if ctype else path
+                    user_lines.append(f"\n```python  # {label}")
+                    user_lines.append(chunk["content"])
+                    user_lines.append("```")
+
             # Add individual signal entries
             for _, signal in indexed_signals:
                 signal_index += 1
@@ -1997,6 +1906,7 @@ async def enrich_worker(
                         "diagnostic": result.diagnostic,
                         "analysis_code": result.analysis_code,
                         "keywords": result.keywords,
+                        "sign_convention": result.sign_convention,
                     }
                 )
 

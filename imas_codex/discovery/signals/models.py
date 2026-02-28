@@ -106,6 +106,14 @@ class SignalEnrichmentResult(BaseModel):
         "Do NOT infer or guess units - copy from input or leave empty.",
     )
 
+    # Sign convention — only from code or wiki context
+    sign_convention: str = Field(
+        default="",
+        description="Sign convention if discoverable from source code or wiki documentation. "
+        "E.g., 'positive direction = co-current', 'positive = outward flux'. "
+        "Leave empty if not explicitly stated in the provided context.",
+    )
+
     # Classification confidence
     confidence: float = Field(
         default=0.8,

@@ -56,8 +56,7 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
 |----------|-----------|--------------|-------------------|
 | `discover code` | `discover paths` | Scored FacilityPath nodes (≥0.7) | No paths to scan for files |
 | `discover signals` (enrich) | `discover wiki` | WikiChunk nodes, `wiki_chunk_embedding` index | No wiki descriptions/units injected into signal enrichment prompts → more LLM hallucination |
-| `discover signals` (enrich) | `discover code` | `code_chunk_embedding` index | No source code usage patterns in prompts (functions defined but **not yet invoked**) |
-| `discover signals` (enrich) | `imas build` | `imas_path_embedding`, `cluster_label_embedding` | No IMAS mapping suggestions in prompts (functions defined but **not yet invoked**) |
+| `discover signals` (enrich) | `discover code` | `code_chunk_embedding` index | No source code usage patterns in enrichment prompts |
 | `discover documents` | `discover paths` | Scored FacilityPath nodes (≥0.5) | No paths to scan for documents/images |
 | `enrich nodes` | `discover code` + graph | CodeChunk, TreeNode siblings | Less context for TreeNode physics descriptions |
 
@@ -268,20 +267,20 @@ imas-codex discover code tcv -f equilibrium     # Focus on equilibrium code
 
 #### Dynamic Context Injection
 
-The signal enrichment worker injects **four levels of context** into each LLM call:
+The signal enrichment worker injects **five levels of context** into each LLM call:
 
 | Level | Source | Vector Index | Description |
 |-------|--------|-------------|-------------|
 | **Facility wiki** | `wiki_chunk_embedding` | Semantic search | Sign conventions, coordinate systems, COCOS — cached per facility |
 | **Group wiki** | `wiki_chunk_embedding` | Semantic search | Diagnostic/tree-specific wiki content — per signal group |
 | **Per-signal wiki** | `state.wiki_context` | Direct path match | Exact MDSplus/PPF path → description/units from wiki chunks |
+| **Code context** | `code_chunk_embedding` | Semantic search | Source code patterns, sign conventions, units — per signal group |
 | **TDI source** | TDIFunction graph nodes | Direct fetch | Full TDI function source code for TCV signals |
 
-**Defined but not yet invoked:**
-- `_fetch_code_context()` — Would query `code_chunk_embedding` for code usage patterns
-- `_fetch_imas_context()` — Would query `imas_path_embedding` + `cluster_label_embedding` for IMAS mapping suggestions
+**Dynamic context injection:**
+- `_fetch_code_context()` — Queries `code_chunk_embedding` for source code patterns related to each signal group. Used to extract sign conventions, units, and implementation details.
 
-These functions are fully implemented and cached but not called in the user prompt construction. Activating them would further improve signal enrichment quality when code and IMAS DD data are available.
+IMAS mapping context is intentionally excluded from signal enrichment — signal description and IMAS mapping are separate concerns. Signals should be accurately described before being mapped to IMAS paths.
 
 ```bash
 imas-codex discover signals tcv                            # Full pipeline

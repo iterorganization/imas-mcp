@@ -21,6 +21,7 @@ For each signal, provide:
 4. **diagnostic** - Diagnostic system name if identifiable
 5. **analysis_code** - Analysis code name if applicable
 6. **keywords** - Searchable terms (max 5)
+7. **sign_convention** - Sign convention if explicitly stated in provided context
 
 {% include "schema/physics-domains.md" %}
 
@@ -84,15 +85,10 @@ When source code snippets are provided under "Relevant source code":
 - Use the code to understand how signals are computed, read, or used
 - Code context reveals variable names, physical quantities, and data flow
 - Use code patterns to infer the physics domain and diagnostic system
-
-### IMAS Mapping Context
-
-When "Candidate IMAS mappings" are provided:
-- Use IMAS path names to inform physics_domain classification
-- IMAS paths follow a hierarchical structure: `ids_name/path/to/quantity`
-- The top-level IDS name directly maps to physics domains
-  (e.g., `equilibrium/*` → equilibrium, `magnetics/*` → magnetic_field_diagnostics)
-- Do NOT copy IMAS paths into the description — use them only for classification
+- **Look for sign conventions** — code comments, variable naming (e.g., `sign_ip`, `cocos`),
+  conditional sign flips, and multiplication by -1 all reveal sign conventions
+- **Look for units** — code that converts units or applies scaling factors reveals physical units
+- Note coordinate system usage (R, Z, phi, psi) and handedness conventions
 
 ### Facility Wiki Reference
 
@@ -104,13 +100,18 @@ This contains semantically-retrieved content from the facility's wiki covering:
 
 Use this grounded context to:
 - Accurately describe what signals measure and their physical meaning
-- Reference the correct sign conventions in descriptions when relevant
+- **Extract sign conventions** into the `sign_convention` field when explicitly documented
 - Identify coordinate systems and conventions used by the facility
 - Extract units when mentioned in wiki documentation
 
 Group-level wiki context may also appear as "Relevant wiki documentation" under
 each signal group header. This is targeted documentation about the specific
 diagnostic, analysis code, or MDSplus tree being classified.
+
+**Source code context** may appear as "Relevant source code" under signal group
+headers. These are semantically-matched code chunks from ingested facility source
+code. Use them to understand how signals are computed, what variables they map to,
+and what sign conventions or coordinate systems they use.
 
 ### MDSplus Tree Nodes
 
@@ -191,6 +192,24 @@ The MDSplus path structure reveals signal purpose:
 - NEVER guess units based on signal name (e.g., don't assume plasma current is in Amperes)
 
 Units will be validated separately from authoritative sources.
+
+### Sign Convention Extraction
+
+Populate `sign_convention` **only** when explicitly stated in the provided context
+(wiki documentation or source code). Do NOT infer conventions from physics intuition.
+
+**Sources (ordered by reliability):**
+1. **Wiki documentation** — "positive Ip direction is counter-clockwise when viewed from above"
+2. **Source code** — `sign_ip = -1`, `# COCOS 11: Bphi > 0`, `ip *= -1  # convention fix`
+3. **TDI function code** — sign flips, conditional negation, COCOS references
+
+**Format examples:**
+- `"positive Ip = counter-clockwise from above"`
+- `"positive Bt = counter-clockwise (COCOS 2)"`
+- `"positive flux = outward"`
+- `"sign flipped from raw signal (multiplied by -1)"`
+
+Leave empty if no explicit convention is documented in the provided context.
 
 ## Batch Processing
 
