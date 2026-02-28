@@ -23,7 +23,7 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
     │  (parallel)  │   │  (parallel)  │   │  (parallel)  │
     │ scan→score→  │   │ scan→score→  │   │ extract→     │
     │ enrich→      │   │ ingest→      │   │ enrich       │
-    │ rescore      │   │ artifacts→   │   │              │
+    │ refine       │   │ artifacts→   │   │              │
     │              │   │ images       │   │              │
     └──────┬───────┘   └──────┬───────┘   └──────────────┘
            │                  │
@@ -115,7 +115,7 @@ imas-codex enrich nodes             # Benefits from code chunks in graph
 
 **Purpose:** Walk remote filesystem to discover and classify directories.
 
-**Internal pipeline:** `scan → score → expand → enrich → rescore`
+**Internal pipeline:** `scan → score → expand → enrich → refine`
 
 | Phase | Worker | Method | Description |
 |-------|--------|--------|-------------|
@@ -123,9 +123,9 @@ imas-codex enrich nodes             # Benefits from code chunks in graph
 | Score | LLM | `discovery/scorer` prompt | Multi-dimensional scoring + expansion decision |
 | Expand | SSH | `scan_directories.py` | Recursively scan children of expanded paths |
 | Enrich | SSH | `rg` pattern matching | Deep analysis: pattern categories, LOC, language breakdown |
-| Rescore | LLM | `discovery/rescorer` prompt | Refine scores using enrichment evidence |
+| Refine | LLM | `discovery/refiner` prompt | Refine scores using enrichment evidence |
 
-**State machine:** `discovered → scanned → scored → (expand?) → (enrich?) → rescored`
+**State machine:** `discovered → scanned → scored → (expand?) → (enrich?) → refined`
 
 **Graph coordination:** Workers claim paths atomically via `claimed_at` timestamp. The graph acts as a thread-safe work queue — no two workers can claim the same path. Orphan recovery via 10-minute timeout.
 
@@ -140,12 +140,12 @@ imas-codex enrich nodes             # Benefits from code chunks in graph
 - `dimension_calibration` — Sampled examples at 5 score levels per dimension from existing scored paths (cross-facility calibration)
 - `focus` — Optional natural language focus from `--focus` flag
 
-**Rescore prompt:** `discovery/rescorer` receives enrichment evidence (pattern match counts, LOC, language breakdown) to correct initial scores.
+**Refine prompt:` `discovery/refiner` receives enrichment evidence (pattern match counts, LOC, language breakdown) to correct initial scores.
 
 ```bash
 imas-codex discover paths tcv                    # Full pipeline
 imas-codex discover paths tcv --scan-only        # SSH only, no LLM cost
-imas-codex discover paths tcv --score-only       # Rescore from graph
+imas-codex discover paths tcv --score-only       # Refine from graph
 imas-codex discover paths tcv -f "equilibrium"   # Focus scoring
 imas-codex discover paths tcv --enrich-threshold 0.75  # Auto-enrich high-value
 ```
@@ -319,7 +319,7 @@ All prompts live in `imas_codex/agentic/prompts/` as markdown files with YAML fr
 
 | Directory | Prompts | Used By |
 |-----------|---------|---------|
-| `discovery/` | `scorer`, `rescorer`, `enricher`, `roots`, `file-triage`, `file-scorer`, `static-enricher`, `signal-enrichment`, `data_access` | Discovery pipelines |
+| `discovery/` | `scorer`, `refiner`, `enricher`, `roots`, `file-triage`, `file-scorer`, `static-enricher`, `signal-enrichment`, `data_access` | Discovery pipelines |
 | `wiki/` | `scout`, `scorer`, `artifact-scorer`, `image-captioner` | Wiki pipeline |
 | `exploration/` | `facility` | Interactive exploration agent |
 | `clusters/` | `labeler` | IMAS DD cluster labeling |
@@ -340,7 +340,7 @@ Each prompt declares `schema_needs` in YAML frontmatter (or uses defaults from `
 | `path_purposes` | PathPurpose enum from LinkML | `discovery/scorer` |
 | `score_dimensions` | `score_*` fields from FacilityPath schema | `discovery/scorer` |
 | `scoring_schema` | ScoreBatch Pydantic model | `discovery/scorer` |
-| `rescore_schema` | RescoreBatch Pydantic model | `discovery/rescorer` |
+| `refine_schema` | RefineBatch Pydantic model | `discovery/refiner` |
 | `physics_domains` | PhysicsDomain enum from LinkML | scorer, wiki, signals, images |
 | `wiki_page_purposes` | WikiPagePurpose enum | `wiki/scorer`, `wiki/artifact-scorer` |
 | `wiki_score_dimensions` | Wiki score fields | `wiki/scorer`, `wiki/artifact-scorer` |
@@ -355,7 +355,7 @@ Each prompt declares `schema_needs` in YAML frontmatter (or uses defaults from `
 | `file_score_dimensions` | 9 code scoring dimensions | `discovery/file-scorer` |
 | `file_scoring_schema` | FileScoreBatch model | `discovery/file-scorer` |
 | `file_triage_schema` | FileTriageBatch model | `discovery/file-triage` |
-| `format_patterns` | Enrichment pattern categories | scorer, rescorer, file-scorer |
+| `format_patterns` | Enrichment pattern categories | scorer, refiner, file-scorer |
 | `discovery_categories` | DiscoveryRootCategory enum | `discovery/roots` |
 | `data_access_fields` | DataAccess schema fields | `discovery/data_access` |
 
@@ -366,8 +366,8 @@ Beyond schema providers, workers inject runtime context into prompts:
 | Context | Injected By | Source | Description |
 |---------|-------------|--------|-------------|
 | `dimension_calibration` | `score_worker` | Graph query | Sampled scored paths at 5 levels per dimension |
-| `enriched_examples` | `rescore_worker` | Graph query | Example enriched paths, cross-facility |
-| `enrichment_patterns` | `rescore_worker` | `PATTERN_REGISTRY` | Pattern→dimension mapping text |
+| `enriched_examples` | `refine_worker` | Graph query | Example enriched paths, cross-facility |
+| `enrichment_patterns` | `refine_worker` | `PATTERN_REGISTRY` | Pattern→dimension mapping text |
 | `wiki_context` | `enrich_worker` (signals) | WikiChunk graph query | Path-matched descriptions/units from wiki |
 | `facility_wiki_context` | `enrich_worker` (signals) | `wiki_chunk_embedding` search | Sign conventions, coordinate systems |
 | `group_wiki_context` | `enrich_worker` (signals) | `wiki_chunk_embedding` search | Diagnostic-specific wiki documentation |

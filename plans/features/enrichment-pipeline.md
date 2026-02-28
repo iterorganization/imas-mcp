@@ -5,28 +5,28 @@ Priority: High — directly impacts discovery quality and paths→files handoff
 
 ## Summary
 
-Improvements to the enrichment/rescore pipeline addressing data flow gaps,
+Improvements to the enrichment/refine pipeline addressing data flow gaps,
 concurrent execution, pattern matching expansion, and pipeline continuity
 into file discovery.
 
 ## Changes Implemented
 
-### 1. Pattern Evidence Now Reaches the Rescorer
+### 1. Pattern Evidence Now Reaches the Refiner
 
-**Problem:** The rescore prompt described `pattern_categories` as key evidence,
-but `_rescore_with_llm()` never included pattern_categories, read_matches, or
+**Problem:** The refine prompt described `pattern_categories` as key evidence,
+but `_refine_with_llm()` never included pattern_categories, read_matches, or
 write_matches in the user message. The LLM was told to use evidence it never
 received — likely the root cause of the 14.5% parse error rate and high "no
 change" rate.
 
-**Fix:** Both `_rescore_with_llm()` and `_async_rescore_with_llm()` now include:
+**Fix:** Both `_refine_with_llm()` and `_async_refine_with_llm()` now include:
 - `pattern_categories` (JSON-decoded from graph property)
 - `read_matches` / `write_matches` counts
 - `enrich_warnings` (sync version was missing this; async already had it)
 
 The data flow is now: `enrich_directories.py` → `mark_enrichment_complete()` →
-graph → `claim_paths_for_rescoring()` → `_rescore_with_llm()` user prompt →
-rescorer LLM.
+graph → `claim_paths_for_refining()` → `_refine_with_llm()` user prompt →
+refiner LLM.
 
 ### 2. Standalone persist_enrichment() Fixed
 
@@ -38,7 +38,7 @@ rescorer LLM.
 matching what `mark_enrichment_complete()` in `parallel.py` already does.
 Dicts are JSON-serialized and warnings are comma-joined for Neo4j storage.
 
-### 3. Rescore Prompt Improved
+### 3. Refine Prompt Improved
 
 **Problem:** The prompt didn't distinguish between "rg unavailable" (empty
 pattern_categories `{}`) and "rg found no matches" (categories present but
@@ -155,7 +155,7 @@ discover paths <facility>        discover files <facility>        ingest run <fa
 │ 1. Scan dirs (SSH)  │          │ 1. Query scored paths│         │ 1. Queue files  │
 │ 2. Score dirs (LLM) │──────>   │ 2. List files (SSH)  │──────>  │ 2. Parse code   │
 │ 3. Enrich (du/rg)   │  score≥N │ 3. Score files (LLM) │  score  │ 3. Extract meta │
-│ 4. Rescore (LLM)    │          │ 4. Create SourceFile │  ≥ 0.5  │ 4. Embed chunks │
+│ 4. Refine (LLM)    │          │ 4. Create SourceFile │  ≥ 0.5  │ 4. Embed chunks │
 └─────────────────────┘          └──────────────────────┘         └─────────────────┘
      FacilityPath                     SourceFile                    CodeChunk
      (status: scored)                 (status: discovered)          TreeNode
@@ -164,7 +164,7 @@ discover paths <facility>        discover files <facility>        ingest run <fa
 ### How Enrichment Feeds File Discovery
 
 1. **Score filtering:** `discover files` queries paths with `score ≥ min_score`.
-   Enrichment+rescore refines these scores, ensuring only genuinely valuable
+   Enrichment+refine refines these scores, ensuring only genuinely valuable
    directories get file-scanned.
 
 2. **Pattern-informed file scoring:** The file scorer prompt could receive

@@ -693,10 +693,10 @@ classes:
       2. Score: listed -> scoring -> scored (LLM evaluates, sets score/expand/enrich)
       3. Expand: scored + should_expand -> children created as discovered
       4. Enrich: scored + should_enrich -> enriched (du/tokei/patterns)
-      5. Rescore: enriched -> rescored (optional refinement with enrichment data)
+      5. Refine: enriched -> refined (LLM re-evaluation with enrichment evidence)
       
       Expand and Enrich run in PARALLEL as independent workers.
-      Rescore runs after enrichment for high-value paths.
+      Refine runs after enrichment for high-value paths.
       
       Terminal states:
       - scored: Has LLM score, ready for ingestion if high-value
@@ -917,8 +917,8 @@ classes:
       scored_at:
         description: When this path was scored
         range: datetime
-      rescored_at:
-        description: When this path was rescored with enrichment data (null if not rescored)
+      refined_at:
+        description: When this path was refined with enrichment evidence (null if not refined)
         range: datetime
       session_id:
         description: Scout session that discovered/processed this path
@@ -1007,9 +1007,9 @@ classes:
       write_matches:
         description: Total count of data-write pattern matches across all categories
         range: integer
-      # Rescoring properties (set during LLM rescore with enrichment evidence)
-      rescore_reason:
-        description: Brief explanation of main score adjustment during rescoring
+      # Refinement properties (set during LLM refinement with enrichment evidence)
+      refine_reason:
+        description: Brief explanation of main score adjustment during refinement
       primary_evidence:
         description: JSON-encoded list of key pattern categories informing score adjustment
       evidence_summary:

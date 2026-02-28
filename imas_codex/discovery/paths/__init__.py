@@ -4,14 +4,14 @@ Provides parallel discovery workers for scanning, scoring, and enriching
 directory structures at fusion facilities.
 
 Pipeline:
-    seed → scan → score → enrich → rescore
+    seed → scan → score → enrich → refine
 
 Workers:
     - scan_worker: SSH directory enumeration
     - expand_worker: Create child paths from scan results
     - score_worker: LLM classification and scoring
     - enrich_worker: Deep analysis (du, tokei, patterns)
-    - rescore_worker: Refinement with enrichment data
+    - refine_worker: Refinement with enrichment data
 """
 
 from imas_codex.discovery.paths.frontier import (

@@ -45,9 +45,9 @@ class TestProgressStateProperties:
         time.sleep(0.01)
         assert state.elapsed > 0
 
-    def test_run_cost_combines_score_and_rescore(self):
-        """Run cost sums score and rescore costs."""
-        state = self._state(_run_score_cost=1.50, _run_rescore_cost=0.30)
+    def test_run_cost_combines_score_and_refine(self):
+        """Run cost sums score and refine costs."""
+        state = self._state(_run_score_cost=1.50, _run_refine_cost=0.30)
         assert abs(state.run_cost - 1.80) < 1e-10
 
     def test_cost_per_path_none_when_no_scores(self):
@@ -599,8 +599,8 @@ class TestCountGroupWorkers:
             "score_worker_0": WorkerStatus(
                 name="score_worker_0", group="score", state=WorkerState.running
             ),
-            "rescore_worker_0": WorkerStatus(
-                name="rescore_worker_0", group="score", state=WorkerState.idle
+            "refine_worker_0": WorkerStatus(
+                name="refine_worker_0", group="score", state=WorkerState.idle
             ),
             "enrich_worker_0": WorkerStatus(
                 name="enrich_worker_0", group="enrich", state=WorkerState.running

@@ -1,7 +1,7 @@
 ---
-name: discovery/rescorer
+name: discovery/refiner
 description: Full re-evaluation of directory classification using enrichment evidence
-used_by: imas_codex.discovery.parallel.rescore_worker
+used_by: imas_codex.discovery.parallel.refine_worker
 task: score
 dynamic: true
 ---
@@ -142,4 +142,4 @@ Boost scores by ~0.15 for paths matching this focus.
 {% include "schema/dimension-calibration.md" %}
 {% endif %}
 
-{% include "schema/rescore-output.md" %}
+{% include "schema/refine-output.md" %}

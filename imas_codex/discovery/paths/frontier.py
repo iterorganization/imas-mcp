@@ -9,7 +9,7 @@ State machine:
     discovered → scanning → scanned → scoring → scored
 
     Transient states (scanning, scoring) auto-recover to previous state on timeout.
-    Paths with score >= 0.75 are rescored after enrichment (is_enriched=true).
+    Paths with score >= 0.75 are refined after enrichment (is_enriched=true).
 
 Key concepts:
     - Frontier: Paths awaiting work (discovered → scan, scanned → score)
@@ -226,7 +226,7 @@ class DiscoveryStats:
     total: int = 0
     discovered: int = 0  # Awaiting scan
     scanned: int = 0  # Awaiting score
-    scored: int = 0  # Scored (including rescored)
+    scored: int = 0  # Scored (including refined)
     skipped: int = 0  # Low value or dead-end
     excluded: int = 0  # Matched exclusion pattern
     max_depth: int = 0  # Maximum depth in tree
@@ -280,7 +280,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.status = $scored AND p.should_expand = true AND p.expanded_at IS NULL THEN 1 ELSE 0 END) AS expansion_ready,
                 sum(CASE WHEN p.status = $scored AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 sum(CASE WHEN p.is_enriched = true THEN 1 ELSE 0 END) AS enriched,
-                sum(CASE WHEN p.rescored_at IS NOT NULL THEN 1 ELSE 0 END) AS rescored,
+                sum(CASE WHEN p.refined_at IS NOT NULL THEN 1 ELSE 0 END) AS refined,
                 max(coalesce(p.depth, 0)) AS max_depth
             """,
             facility=facility,
@@ -303,7 +303,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 "expansion_ready": result[0]["expansion_ready"],
                 "enrichment_ready": result[0]["enrichment_ready"],
                 "enriched": result[0]["enriched"],
-                "rescored": result[0]["rescored"],
+                "refined": result[0]["refined"],
                 "max_depth": result[0]["max_depth"] or 0,
             }
 
@@ -318,7 +318,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             "expansion_ready": 0,
             "enrichment_ready": 0,
             "enriched": 0,
-            "rescored": 0,
+            "refined": 0,
             "max_depth": 0,
         }
 
@@ -348,30 +348,30 @@ def get_purpose_distribution(facility: str) -> dict[str, int]:
 def get_frontier(
     facility: str,
     limit: int = 100,
-    include_rescore: bool = True,
+    include_refine: bool = True,
 ) -> list[dict[str, Any]]:
-    """Get paths in the frontier (awaiting scan or rescore).
+    """Get paths in the frontier (awaiting scan or refinement).
 
     Frontier includes:
     1. Paths with status='discovered' (awaiting initial scan)
     2. Paths with status='scored', is_enriched=true, score >= 0.75,
-       rescore_count < 1 (awaiting rescore)
+       refine_count < 1 (awaiting refinement)
 
     Args:
         facility: Facility ID
         limit: Maximum paths to return
-        include_rescore: Include paths marked for rescore
+        include_refine: Include paths marked for refinement
 
     Returns:
         List of dicts with path info: id, path, depth, status, in_directory
     """
     from imas_codex.graph import GraphClient
 
-    if include_rescore:
+    if include_refine:
         where_clause = (
             f"p.status = '{PathStatus.discovered.value}' OR "
             f"(p.status = '{PathStatus.scored.value}' AND p.is_enriched = true AND "
-            f"p.score >= 0.75 AND coalesce(p.rescore_count, 0) < 1)"
+            f"p.score >= 0.75 AND coalesce(p.refine_count, 0) < 1)"
         )
     else:
         where_clause = f"p.status = '{PathStatus.discovered.value}'"
@@ -2430,11 +2430,11 @@ def sample_paths_by_dimension(
     return samples
 
 
-def reset_rescored_paths(facility: str) -> int:
-    """Reset all rescored paths so they get picked up for rescoring again.
+def reset_refined_paths(facility: str) -> int:
+    """Reset all refined paths so they get picked up for refinement again.
 
-    Clears rescored_at, rescore_reason, primary_evidence, and evidence_summary
-    on all enriched paths for the facility. This allows re-rescoring with an
+    Clears refined_at, refine_reason, primary_evidence, and evidence_summary
+    on all enriched paths for the facility. This allows re-refinement with an
     improved prompt without re-running enrichment.
 
     Args:
@@ -2449,9 +2449,9 @@ def reset_rescored_paths(facility: str) -> int:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.is_enriched = true AND p.rescored_at IS NOT NULL
-            SET p.rescored_at = null,
-                p.rescore_reason = null,
+            WHERE p.is_enriched = true AND p.refined_at IS NOT NULL
+            SET p.refined_at = null,
+                p.refine_reason = null,
                 p.primary_evidence = null,
                 p.evidence_summary = null
             RETURN count(p) AS reset_count
@@ -2467,11 +2467,11 @@ def sample_enriched_paths(
     per_category: int = 2,
     cross_facility: bool = True,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Sample paths with enrichment data for rescore calibration.
+    """Sample paths with enrichment data for refine calibration.
 
     Returns examples that show how enrichment data (LOC, languages,
     multiformat) correlates with scores, AND examples from different
-    score ranges to help the rescorer understand score distribution.
+    score ranges to help the refiner understand score distribution.
 
     Args:
         facility: Current facility (for preferring same-facility examples)
@@ -2772,14 +2772,14 @@ def mark_enrichment_complete(
     return updated
 
 
-def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, Any]]:
-    """Claim enriched paths ready for rescoring with full context.
+def claim_paths_for_refining(facility: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Claim enriched paths ready for refinement with full context.
 
-    Paths ready for rescoring:
+    Paths ready for refinement:
     - status = 'scored' (base scoring complete)
     - is_enriched = true (deep analysis done)
-    - score >= 0.5 (only bother rescoring potentially valuable paths)
-    - rescored_at IS NULL (not yet rescored)
+    - score >= 0.5 (only bother refining potentially valuable paths)
+    - refined_at IS NULL (not yet refined)
 
     Uses claimed_at for worker coordination.
 
@@ -2803,7 +2803,7 @@ def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, 
             WHERE p.status = $scored
               AND p.is_enriched = true
               AND p.score >= 0.5
-              AND p.rescored_at IS NULL
+              AND p.refined_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime($cutoff))
             WITH p
             ORDER BY p.score DESC
@@ -2946,16 +2946,16 @@ def sample_dimension_calibration_examples(
     return samples
 
 
-def mark_rescore_complete(
+def mark_refine_complete(
     facility: str,
     results: list[dict[str, Any]],
 ) -> int:
-    """Mark paths as rescored with refined per-dimension scores.
+    """Mark paths as refined with updated per-dimension scores.
 
     Updates paths with:
     - Combined score and individual dimension scores (refined based on enrichment)
-    - rescore_reason: explanation of why scores changed
-    - rescored_at = current timestamp
+    - refine_reason: explanation of why scores changed
+    - refined_at = current timestamp
     - Augments score_cost (doesn't replace)
     - Clears claimed_at
 
@@ -2964,8 +2964,8 @@ def mark_rescore_complete(
         results: List of dicts with:
             - path: Path string
             - score: New combined score
-            - score_cost: LLM cost for rescoring (added to existing)
-            - adjustment_reason: Why scores changed (stored as rescore_reason)
+            - score_cost: LLM cost for refinement (added to existing)
+            - adjustment_reason: Why scores changed (stored as refine_reason)
             - score_modeling_code, score_analysis_code, etc. (optional per-dimension)
 
     Returns:
@@ -2998,7 +2998,7 @@ def mark_rescore_complete(
             # Build SET clause dynamically based on which dimensions are present
             set_parts = [
                 "p.score = $score",
-                "p.rescored_at = $now",
+                "p.refined_at = $now",
                 "p.claimed_at = null",
                 "p.score_cost = coalesce(p.score_cost, 0) + $cost",
             ]
@@ -3009,10 +3009,10 @@ def mark_rescore_complete(
                 "cost": result.get("score_cost", 0.0),
             }
 
-            # Store rescore reason
+            # Store refine reason
             if result.get("adjustment_reason"):
-                set_parts.append("p.rescore_reason = $rescore_reason")
-                params["rescore_reason"] = result["adjustment_reason"][:200]
+                set_parts.append("p.refine_reason = $refine_reason")
+                params["refine_reason"] = result["adjustment_reason"][:200]
 
             # Add each dimension that has a value
             for dim in dimensions:

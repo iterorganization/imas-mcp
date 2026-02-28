@@ -102,7 +102,7 @@ class TestDiscoveryState:
         state.expand_idle_count = 3
         state.score_idle_count = 3
         state.enrich_idle_count = 3
-        state.rescore_idle_count = 3
+        state.refine_idle_count = 3
         assert state.should_stop()
 
     @patch("imas_codex.discovery.paths.parallel.has_pending_work", return_value=True)
@@ -119,7 +119,7 @@ class TestDiscoveryState:
         state.expand_idle_count = 3
         state.score_idle_count = 3
         state.enrich_idle_count = 3
-        state.rescore_idle_count = 3
+        state.refine_idle_count = 3
         assert not state.should_stop()
         # Idle counts should have been reset
         assert state.scan_idle_count == 0

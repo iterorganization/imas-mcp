@@ -118,26 +118,26 @@ class ProgressState:
     pending_score: int = 0  # scanned + scoring
     pending_expand: int = 0  # scored + should_expand + not expanded
     pending_enrich: int = 0  # scored + should_enrich + not enriched
-    pending_rescore: int = 0  # enriched + not rescored
+    pending_refine: int = 0  # enriched + not refined
 
     # Graph-persistent totals (from get_discovery_stats)
     enriched: int = 0  # Total enriched paths in graph
-    rescored: int = 0  # Total rescored paths in graph
+    refined: int = 0  # Total refined paths in graph
 
     # This run stats
     run_scanned: int = 0
     run_scored: int = 0
     run_expanded: int = 0
     run_enriched: int = 0
-    run_rescored: int = 0
-    # Track score and rescore costs separately to avoid double-counting
+    run_refined: int = 0
+    # Track score and refine costs separately to avoid double-counting
     _run_score_cost: float = 0.0
-    _run_rescore_cost: float = 0.0
+    _run_refine_cost: float = 0.0
     scan_rate: float | None = None
     score_rate: float | None = None
     expand_rate: float | None = None
     enrich_rate: float | None = None
-    rescore_rate: float | None = None
+    refine_rate: float | None = None
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
@@ -189,7 +189,7 @@ class ProgressState:
 
     @property
     def cost_per_path(self) -> float | None:
-        """Average LLM cost per initially scored path (excludes rescore cost)."""
+        """Average LLM cost per initially scored path (excludes refine cost)."""
         if self.run_scored > 0:
             return self._run_score_cost / self.run_scored
         return None
@@ -200,7 +200,7 @@ class ProgressState:
 
         Predicts cost for all remaining LLM work:
         - pending_score paths at cost_per_path rate (initial scoring)
-        - pending_rescore paths at rescore cost rate
+        - pending_refine paths at refine cost rate
         """
         cpp = self.cost_per_path
         if cpp is None:
@@ -208,18 +208,18 @@ class ProgressState:
 
         remaining_score_cost = (self.pending_scan + self.pending_score) * cpp
 
-        # Rescore cost rate (separate from initial scoring)
-        remaining_rescore_cost = 0.0
-        if self.run_rescored > 0 and self._run_rescore_cost > 0:
-            cost_per_rescore = self._run_rescore_cost / self.run_rescored
-            remaining_rescore_cost = self.pending_rescore * cost_per_rescore
+        # Refine cost rate (separate from initial scoring)
+        remaining_refine_cost = 0.0
+        if self.run_refined > 0 and self._run_refine_cost > 0:
+            cost_per_refine = self._run_refine_cost / self.run_refined
+            remaining_refine_cost = self.pending_refine * cost_per_refine
 
-        return self.run_cost + remaining_score_cost + remaining_rescore_cost
+        return self.run_cost + remaining_score_cost + remaining_refine_cost
 
     @property
     def run_cost(self) -> float:
-        """Total cost for this run (score + rescore)."""
-        return self._run_score_cost + self._run_rescore_cost
+        """Total cost for this run (score + refine)."""
+        return self._run_score_cost + self._run_refine_cost
 
     @property
     def coverage(self) -> float:
@@ -291,8 +291,8 @@ class ProgressState:
         if self.pending_scan > 0 and combined_scan_rate > 0:
             worker_etas.append(self.pending_scan / combined_scan_rate)
 
-        # Score pipeline: pending_score paths at combined score+rescore rate
-        combined_score_rate = sum(r for r in [self.score_rate, self.rescore_rate] if r)
+        # Score pipeline: pending_score paths at combined score+refine rate
+        combined_score_rate = sum(r for r in [self.score_rate, self.refine_rate] if r)
         if self.pending_score > 0 and combined_score_rate > 0:
             worker_etas.append(self.pending_score / combined_score_rate)
 
@@ -304,9 +304,9 @@ class ProgressState:
         if self.pending_enrich > 0 and self.enrich_rate and self.enrich_rate > 0:
             worker_etas.append(self.pending_enrich / self.enrich_rate)
 
-        # Rescore pipeline: pending_rescore at rescore rate
-        if self.pending_rescore > 0 and self.rescore_rate and self.rescore_rate > 0:
-            worker_etas.append(self.pending_rescore / self.rescore_rate)
+        # Refine pipeline: pending_refine at refine rate
+        if self.pending_refine > 0 and self.refine_rate and self.refine_rate > 0:
+            worker_etas.append(self.pending_refine / self.refine_rate)
 
         if worker_etas:
             return max(worker_etas)
@@ -399,14 +399,13 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             sum(r for r in [self.state.scan_rate, self.state.expand_rate] if r) or None
         )
         score_rate = (
-            sum(r for r in [self.state.score_rate, self.state.rescore_rate] if r)
-            or None
+            sum(r for r in [self.state.score_rate, self.state.refine_rate] if r) or None
         )
 
         # Score cost for display
         score_cost = (
-            self.state._run_score_cost + self.state._run_rescore_cost
-            if self.state._run_score_cost > 0 or self.state._run_rescore_cost > 0
+            self.state._run_score_cost + self.state._run_refine_cost
+            if self.state._run_score_cost > 0 or self.state._run_refine_cost > 0
             else None
         )
 
@@ -600,9 +599,9 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         if cpp and cpp > 0:
             pending = self.state.pending_scan + self.state.pending_score
             etc += pending * cpp
-        if self.state.run_rescored > 0 and self.state._run_rescore_cost > 0:
-            cost_per_rescore = self.state._run_rescore_cost / self.state.run_rescored
-            etc += self.state.pending_rescore * cost_per_rescore
+        if self.state.run_refined > 0 and self.state._run_refine_cost > 0:
+            cost_per_refine = self.state._run_refine_cost / self.state.run_refined
+            etc += self.state.pending_refine * cost_per_refine
 
         # Build stats
         stats: list[tuple[str, str, str]] = [
@@ -630,7 +629,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 ("scan", self.state.pending_scan),
                 ("expand", self.state.pending_expand),
                 ("enrich", self.state.pending_enrich),
-                ("rescore", self.state.pending_rescore),
+                ("refine", self.state.pending_refine),
             ],
         )
         return build_resource_section(config, self.gauge_width)
@@ -867,34 +866,34 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    def update_rescore(
+    def update_refine(
         self,
         message: str,
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update rescore worker state.
+        """Update refine worker state.
 
-        Rescore results are added to the score queue since they update scores.
+        Refine results are added to the score queue since they update scores.
         """
-        self.state.run_rescored = stats.processed
-        self.state.rescore_rate = stats.rate
-        # Track rescore cost separately (cumulative from rescore worker)
-        self.state._run_rescore_cost = stats.cost
+        self.state.run_refined = stats.processed
+        self.state.refine_rate = stats.rate
+        # Track refine cost separately (cumulative from refine worker)
+        self.state._run_refine_cost = stats.cost
 
-        # Queue rescore results to score stream
+        # Queue refine results to score stream
         if results:
             items = []
             for r in results:
                 path = r.get("path", "")
-                # Use adjustment_reason for display, falling back to "rescored"
-                reason = r.get("adjustment_reason", "rescored")
+                # Use adjustment_reason for display, falling back to "refined"
+                reason = r.get("adjustment_reason", "refined")
                 items.append(
                     ScoreItem(
                         path=path,
                         score=r.get("score"),
-                        purpose="rescored",
-                        description=reason if reason != "rescored" else "",
+                        purpose="refined",
+                        description=reason if reason != "refined" else "",
                         skipped=False,
                         skip_reason="",
                         should_expand=r.get("should_expand", True),
@@ -998,7 +997,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.pending_expand = stats.get("expansion_ready", 0)
         self.state.pending_enrich = stats.get("enrichment_ready", 0)
         self.state.enriched = stats.get("enriched", 0)
-        self.state.rescored = stats.get("rescored", 0)
+        self.state.refined = stats.get("refined", 0)
 
 
 def print_discovery_status(

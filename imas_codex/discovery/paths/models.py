@@ -9,7 +9,7 @@ Note: DirectoryEvidence, ScoredDirectory, ScoredBatch are transient runtime
 structures for the scorer, NOT graph node types. They are converted to
 graph updates via frontier.mark_paths_scored().
 
-The Pydantic models (ScoreResult, ScoreBatch, RescoreResult, RescoreBatch)
+The Pydantic models (ScoreResult, ScoreBatch, RefineResult, RefineBatch)
 are used for LLM structured output - LiteLLM parses responses directly into these.
 """
 
@@ -34,8 +34,8 @@ __all__ = [
     "ScoredBatch",
     "ScoreResult",
     "ScoreBatch",
-    "RescoreResult",
-    "RescoreBatch",
+    "RefineResult",
+    "RefineBatch",
 ]
 
 
@@ -178,16 +178,16 @@ class ScoreBatch(BaseModel):
 
 
 # ============================================================================
-# LLM Rescoring Models
+# LLM Refinement Models
 # ============================================================================
 
 
-class RescoreResult(BaseModel):
-    """LLM rescoring result for a single directory.
+class RefineResult(BaseModel):
+    """LLM refinement result for a single directory.
 
     Full re-evaluation using enrichment evidence (pattern matches, language
     breakdown, LOC, multiformat detection). Produces all fields from the
-    original ScoreResult plus evidence tracking, allowing the rescorer to
+    original ScoreResult plus evidence tracking, allowing the refiner to
     improve descriptions, reclassify purposes, and update keywords based
     on concrete filesystem evidence.
     """
@@ -204,39 +204,39 @@ class RescoreResult(BaseModel):
         description="Improved description incorporating enrichment evidence (1-2 sentences)"
     )
 
-    # Per-dimension rescored values (0.0-1.0, required)
+    # Per-dimension refined values (0.0-1.0, required)
     score_modeling_code: float = Field(
-        default=0.0, description="Adjusted modeling code score (0.0-1.0)"
+        default=0.0, description="Refined modeling code score (0.0-1.0)"
     )
     score_analysis_code: float = Field(
-        default=0.0, description="Adjusted analysis code score (0.0-1.0)"
+        default=0.0, description="Refined analysis code score (0.0-1.0)"
     )
     score_operations_code: float = Field(
-        default=0.0, description="Adjusted operations code score (0.0-1.0)"
+        default=0.0, description="Refined operations code score (0.0-1.0)"
     )
     score_modeling_data: float = Field(
-        default=0.0, description="Adjusted modeling data score (0.0-1.0)"
+        default=0.0, description="Refined modeling data score (0.0-1.0)"
     )
     score_experimental_data: float = Field(
-        default=0.0, description="Adjusted experimental data score (0.0-1.0)"
+        default=0.0, description="Refined experimental data score (0.0-1.0)"
     )
     score_data_access: float = Field(
-        default=0.0, description="Adjusted data access score (0.0-1.0)"
+        default=0.0, description="Refined data access score (0.0-1.0)"
     )
     score_workflow: float = Field(
-        default=0.0, description="Adjusted workflow score (0.0-1.0)"
+        default=0.0, description="Refined workflow score (0.0-1.0)"
     )
     score_visualization: float = Field(
-        default=0.0, description="Adjusted visualization score (0.0-1.0)"
+        default=0.0, description="Refined visualization score (0.0-1.0)"
     )
     score_documentation: float = Field(
-        default=0.0, description="Adjusted documentation score (0.0-1.0)"
+        default=0.0, description="Refined documentation score (0.0-1.0)"
     )
     score_imas: float = Field(
-        default=0.0, description="Adjusted IMAS relevance score (0.0-1.0)"
+        default=0.0, description="Refined IMAS relevance score (0.0-1.0)"
     )
     score_convention: float = Field(
-        default=0.0, description="Adjusted convention handling score (0.0-1.0)"
+        default=0.0, description="Refined convention handling score (0.0-1.0)"
     )
 
     # Combined score (max of dimension scores)
@@ -272,11 +272,11 @@ class RescoreResult(BaseModel):
     )
 
 
-class RescoreBatch(BaseModel):
-    """Batch of rescoring results from LLM."""
+class RefineBatch(BaseModel):
+    """Batch of refinement results from LLM."""
 
-    results: list[RescoreResult] = Field(
-        description="List of rescoring results, one per input directory"
+    results: list[RefineResult] = Field(
+        description="List of refinement results, one per input directory"
     )
 
 

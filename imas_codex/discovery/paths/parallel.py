@@ -60,7 +60,7 @@ class DiscoveryState:
     expand_stats: WorkerStats = field(default_factory=WorkerStats)
     score_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
-    rescore_stats: WorkerStats = field(default_factory=WorkerStats)
+    refine_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
@@ -70,14 +70,14 @@ class DiscoveryState:
     expand_phase: PipelinePhase = field(init=False)
     score_phase: PipelinePhase = field(init=False)
     enrich_phase: PipelinePhase = field(init=False)
-    rescore_phase: PipelinePhase = field(init=False)
+    refine_phase: PipelinePhase = field(init=False)
 
     def __post_init__(self) -> None:
         self.scan_phase = PipelinePhase("scan")
         self.expand_phase = PipelinePhase("expand")
         self.score_phase = PipelinePhase("score")
         self.enrich_phase = PipelinePhase("enrich")
-        self.rescore_phase = PipelinePhase("rescore")
+        self.refine_phase = PipelinePhase("refine")
 
     # Backwards-compat idle count properties for progress display
     @property
@@ -116,12 +116,12 @@ class DiscoveryState:
         self.enrich_phase._idle_count = value
 
     @property
-    def rescore_idle_count(self) -> int:
-        return self.rescore_phase.idle_count
+    def refine_idle_count(self) -> int:
+        return self.refine_phase.idle_count
 
-    @rescore_idle_count.setter
-    def rescore_idle_count(self, value: int) -> None:
-        self.rescore_phase._idle_count = value
+    @refine_idle_count.setter
+    def refine_idle_count(self, value: int) -> None:
+        self.refine_phase._idle_count = value
 
     # SSH retry tracking for exponential backoff
     ssh_retry_count: int = 0
@@ -133,7 +133,7 @@ class DiscoveryState:
 
     @property
     def total_cost(self) -> float:
-        return self.score_stats.cost + self.rescore_stats.cost
+        return self.score_stats.cost + self.refine_stats.cost
 
     @property
     def total_processed(self) -> int:
@@ -215,7 +215,7 @@ class DiscoveryState:
             and self.expand_phase.done
             and self.score_phase.done
             and self.enrich_phase.done
-            and self.rescore_phase.done
+            and self.refine_phase.done
         )
         if all_done:
             # Final confirmation: no pending work at all
@@ -225,7 +225,7 @@ class DiscoveryState:
                 self.expand_phase.reset()
                 self.score_phase.reset()
                 self.enrich_phase.reset()
-                self.rescore_phase.reset()
+                self.refine_phase.reset()
                 return False
             logger.debug(
                 f"Terminating: all phases done, no pending work "
@@ -247,7 +247,7 @@ def has_pending_work(facility: str) -> bool:
     - Scanned paths awaiting scoring (including actively claimed)
     - Scored paths with should_expand=true that haven't been expanded yet
     - Scored paths with should_enrich=true that haven't been enriched yet
-    - Enriched paths that haven't been rescored yet
+    - Enriched paths that haven't been refined yet
 
     Note: Unlike claim functions, this does NOT filter out claimed paths.
     Claimed paths represent active work in progress and must count as
@@ -270,8 +270,8 @@ def has_pending_work(facility: str) -> bool:
                  CASE WHEN p.status = $scored AND p.should_enrich = true
                       AND (p.is_enriched IS NULL OR p.is_enriched = false)
                       THEN 'enrich' ELSE null END AS enr,
-                 CASE WHEN p.is_enriched = true AND p.rescored_at IS NULL
-                      THEN 'rescore' ELSE null END AS rsc
+                 CASE WHEN p.is_enriched = true AND p.refined_at IS NULL
+                      THEN 'refine' ELSE null END AS rsc
             WHERE disc IS NOT NULL OR scn IS NOT NULL OR exp IS NOT NULL
                   OR enr IS NOT NULL OR rsc IS NOT NULL
             RETURN count(p) AS pending,
@@ -279,7 +279,7 @@ def has_pending_work(facility: str) -> bool:
                    count(scn) AS pending_scanned,
                    count(exp) AS pending_expand,
                    count(enr) AS pending_enrich,
-                   count(rsc) AS pending_rescore
+                   count(rsc) AS pending_refine
             """,
             facility=facility,
             discovered=PathStatus.discovered.value,
@@ -294,7 +294,7 @@ def has_pending_work(facility: str) -> bool:
                     f"scanned={result[0]['pending_scanned']}, "
                     f"expand={result[0]['pending_expand']}, "
                     f"enrich={result[0]['pending_enrich']}, "
-                    f"rescore={result[0]['pending_rescore']}"
+                    f"refine={result[0]['pending_refine']}"
                 )
             return pending > 0
         return False
@@ -575,14 +575,14 @@ def claim_paths_for_enriching(
         return list(result)
 
 
-def claim_paths_for_rescoring(
+def claim_paths_for_refining(
     facility: str, limit: int = 10, root_filter: list[str] | None = None
 ) -> list[dict[str, Any]]:
     """Atomically claim enriched paths for rescoring.
 
     Claims paths where:
     - is_enriched = true
-    - rescored_at is null
+    - refined_at is null
 
     Rescoring uses enrichment data (total_bytes, total_lines, language_breakdown)
     to refine the score.
@@ -607,7 +607,7 @@ def claim_paths_for_rescoring(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
-              AND p.rescored_at IS NULL
+              AND p.refined_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
             WITH p ORDER BY p.score DESC LIMIT $limit
@@ -739,9 +739,9 @@ def mark_enrichment_complete(
     return updated
 
 
-def mark_rescore_complete(
+def mark_refine_complete(
     facility: str,
-    rescore_results: list[dict[str, Any]],
+    refine_results: list[dict[str, Any]],
 ) -> int:
     """Mark paths with refined scores after rescoring.
 
@@ -749,7 +749,7 @@ def mark_rescore_complete(
 
     Args:
         facility: Facility ID
-        rescore_results: List of dicts with path, new scores, and evidence
+        refine_results: List of dicts with path, new scores, and evidence
 
     Returns:
         Number of paths updated
@@ -763,7 +763,7 @@ def mark_rescore_complete(
     updated = 0
 
     with GraphClient() as gc:
-        for result in rescore_results:
+        for result in refine_results:
             path_id = f"{facility}:{result['path']}"
 
             # Serialize evidence lists to JSON
@@ -795,10 +795,10 @@ def mark_rescore_complete(
             gc.query(
                 f"""
                 MATCH (p:FacilityPath {{id: $id}})
-                SET p.rescored_at = $now,
+                SET p.refined_at = $now,
                     p.score = $score,
                     p.score_cost = coalesce(p.score_cost, 0) + $score_cost,
-                    p.rescore_reason = $adjustment_reason,
+                    p.refine_reason = $adjustment_reason,
                     p.primary_evidence = $primary_evidence,
                     p.evidence_summary = $evidence_summary,
                     p.description = $description,
@@ -897,7 +897,7 @@ async def scan_worker(
                     f"Scan worker stopping (other workers continue)."
                 )
                 # Only stop this scan worker — don't kill all workers.
-                # Enrich, rescore, and embed workers may still have work.
+                # Enrich, refine, and embed workers may still have work.
                 state.scan_phase.mark_done()  # Mark as done so should_stop can evaluate
                 if on_progress:
                     on_progress(
@@ -1418,23 +1418,23 @@ async def enrich_worker(
         await asyncio.sleep(0.1)
 
 
-async def rescore_worker(
+async def refine_worker(
     state: DiscoveryState,
     on_progress: Callable[[str, WorkerStats, list[dict] | None], None] | None = None,
     batch_size: int = 10,
 ) -> None:
-    """Async rescore worker.
+    """Async refine worker.
 
-    Continuously claims enriched paths, rescores using enrichment data
+    Continuously claims enriched paths, refines using enrichment data
     (total_bytes, total_lines, language_breakdown) for refined scoring.
     Cheaper LLM call since we use a simpler prompt with concrete metrics.
 
     Args:
         state: Shared discovery state
         on_progress: Progress callback
-        batch_size: Paths per rescore operation (default 10)
+        batch_size: Paths per refine operation (default 10)
     """
-    # Use local claim_paths_for_rescoring and mark_rescore_complete
+    # Use local claim_paths_for_refining and mark_refine_complete
     # (defined above in this module with root_filter support)
 
     loop = asyncio.get_running_loop()
@@ -1443,38 +1443,38 @@ async def rescore_worker(
         # Check budget before claiming work
         if state.budget_exhausted:
             if on_progress:
-                on_progress("budget exhausted", state.rescore_stats, None)
+                on_progress("budget exhausted", state.refine_stats, None)
             break
 
         # Claim work from graph
-        paths = claim_paths_for_rescoring(
+        paths = claim_paths_for_refining(
             state.facility, limit=batch_size, root_filter=state.root_filter
         )
 
         if not paths:
-            state.rescore_phase.record_idle()
+            state.refine_phase.record_idle()
             if on_progress:
-                on_progress("waiting for enriched paths", state.rescore_stats, None)
+                on_progress("waiting for enriched paths", state.refine_stats, None)
             # Wait before polling again
             await asyncio.sleep(2.0)
             continue
 
-        state.rescore_phase.record_activity(len(paths))
+        state.refine_phase.record_activity(len(paths))
 
         if on_progress:
-            on_progress(f"rescoring {len(paths)} paths", state.rescore_stats, None)
+            on_progress(f"rescoring {len(paths)} paths", state.refine_stats, None)
 
         # Run LLM-based rescoring in thread pool
         start = time.time()
         try:
             # LLM rescoring uses enrichment data for intelligent score refinement
             # Pass facility for cross-facility example injection
-            llm_results, cost = await _async_rescore_with_llm(
+            llm_results, cost = await _async_refine_with_llm(
                 paths, state.facility, focus=state.focus
             )
 
             # Add should_expand from original data and cost tracking
-            rescore_results = []
+            refine_results = []
             cost_per_path = cost / len(paths) if paths else 0.0
             for llm_r in llm_results:
                 # Find original path data for should_expand
@@ -1508,38 +1508,36 @@ async def rescore_worker(
                 ]:
                     if dim in llm_r:
                         result[dim] = llm_r[dim]
-                rescore_results.append(result)
+                refine_results.append(result)
 
-            state.rescore_stats.last_batch_time = time.time() - start
-            state.rescore_stats.cost += cost
+            state.refine_stats.last_batch_time = time.time() - start
+            state.refine_stats.cost += cost
 
             # Persist results
-            rescored = await loop.run_in_executor(
+            refined = await loop.run_in_executor(
                 None,
-                lambda rr=rescore_results: mark_rescore_complete(state.facility, rr),
+                lambda rr=refine_results: mark_refine_complete(state.facility, rr),
             )
 
-            state.rescore_stats.processed += rescored
+            state.refine_stats.processed += refined
 
             if on_progress:
-                on_progress(
-                    f"rescored {rescored}", state.rescore_stats, rescore_results
-                )
+                on_progress(f"refined {refined}", state.refine_stats, refine_results)
 
         except Exception as e:
-            logger.exception(f"Rescore error: {e}")
-            state.rescore_stats.errors += len(paths)
+            logger.exception(f"Refine error: {e}")
+            state.refine_stats.errors += len(paths)
 
         # Brief yield
         await asyncio.sleep(0.1)
 
 
-def _rescore_with_llm(
+def _refine_with_llm(
     paths: list[dict],
     facility: str | None = None,
     focus: str | None = None,
 ) -> tuple[list[dict], float]:
-    """Rescore paths using LLM with enrichment data.
+    """Refine paths using LLM with enrichment data.
 
     Injects cross-facility enriched examples into the prompt for
     consistent scoring calibration across facilities.
@@ -1550,13 +1548,13 @@ def _rescore_with_llm(
         focus: Optional focus string for scoring
 
     Returns:
-        Tuple of (rescore_results, cost)
+        Tuple of (refine_results, cost)
     """
     import json
 
     from imas_codex.agentic.prompt_loader import render_prompt
     from imas_codex.discovery.paths.frontier import sample_enriched_paths
-    from imas_codex.discovery.paths.models import RescoreBatch
+    from imas_codex.discovery.paths.models import RefineBatch
     from imas_codex.settings import get_model
 
     # Build prompt context with enriched examples
@@ -1575,10 +1573,10 @@ def _rescore_with_llm(
         context["focus"] = focus
 
     # Render prompt with examples
-    system_prompt = render_prompt("discovery/rescorer", context)
+    system_prompt = render_prompt("discovery/refiner", context)
 
     # Build user prompt with FULL context: initial scoring + enrichment data
-    lines = ["Rescore these directories using their enrichment metrics:\n"]
+    lines = ["Refine these directories using their enrichment metrics:\n"]
     for p in paths:
         # Parse language breakdown if it's a JSON string
         lang = p.get("language_breakdown")
@@ -1695,7 +1693,7 @@ def _rescore_with_llm(
 
     # Call LLM with shared retry+parse loop — retries on both API errors
     # and JSON/validation errors (same resilience as wiki pipeline).
-    # Rescore uses smaller max_tokens since output is compact per-path adjustments.
+    # Refine uses smaller max_tokens since output is compact per-path refinements.
     from imas_codex.discovery.base.llm import call_llm_structured
 
     try:
@@ -1705,7 +1703,7 @@ def _rescore_with_llm(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_model=RescoreBatch,
+            response_model=RefineBatch,
             max_tokens=12000,
         )
     except ValueError:
@@ -1775,14 +1773,14 @@ def _rescore_with_llm(
     return results, cost
 
 
-async def _async_rescore_with_llm(
+async def _async_refine_with_llm(
     paths: list[dict],
     facility: str | None = None,
     focus: str | None = None,
 ) -> tuple[list[dict], float]:
-    """Rescore paths using LLM with enrichment data (async/cancellable).
+    """Refine paths using LLM with enrichment data (async/cancellable).
 
-    Async version of _rescore_with_llm using acall_llm_structured for
+    Async version of _refine_with_llm using acall_llm_structured for
     native async LLM calls that respond to asyncio.cancel().
 
     Injects cross-facility enriched examples into the prompt for
@@ -1794,13 +1792,13 @@ async def _async_rescore_with_llm(
         focus: Optional focus string for scoring
 
     Returns:
-        Tuple of (rescore_results, cost)
+        Tuple of (refine_results, cost)
     """
     import json
 
     from imas_codex.agentic.prompt_loader import render_prompt
     from imas_codex.discovery.paths.frontier import sample_enriched_paths
-    from imas_codex.discovery.paths.models import RescoreBatch
+    from imas_codex.discovery.paths.models import RefineBatch
     from imas_codex.settings import get_model
 
     # Build prompt context with enriched examples
@@ -1819,10 +1817,10 @@ async def _async_rescore_with_llm(
         context["focus"] = focus
 
     # Render prompt with examples
-    system_prompt = render_prompt("discovery/rescorer", context)
+    system_prompt = render_prompt("discovery/refiner", context)
 
     # Build user prompt with FULL context: initial scoring + enrichment data
-    lines_prompt = ["Rescore these directories using their enrichment metrics:\n"]
+    lines_prompt = ["Refine these directories using their enrichment metrics:\n"]
     for p in paths:
         # Parse language breakdown if it's a JSON string
         lang = p.get("language_breakdown")
@@ -1943,7 +1941,7 @@ async def _async_rescore_with_llm(
 
     # Call LLM with shared retry+parse loop — retries on both API errors
     # and JSON/validation errors (same resilience as wiki pipeline).
-    # Rescore uses smaller max_tokens since output is compact per-path adjustments.
+    # Refine uses smaller max_tokens since output is compact per-path refinements.
     from imas_codex.discovery.base.llm import acall_llm_structured
 
     try:
@@ -1953,7 +1951,7 @@ async def _async_rescore_with_llm(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_model=RescoreBatch,
+            response_model=RefineBatch,
             max_tokens=12000,
         )
     except ValueError:
@@ -2075,14 +2073,14 @@ async def run_parallel_discovery(
     auto_enrich_threshold: float | None = None,
     num_scan_workers: int = 1,
     num_expand_workers: int = 1,
-    num_score_workers: int = 1,  # Single scorer: rescore also uses LLM (total=2)
+    num_score_workers: int = 1,  # Single scorer: refine also uses LLM (total=2)
     num_enrich_workers: int = 2,  # Two enrichment workers for parallel SSH
-    num_rescore_workers: int = 1,  # Enabled by default for score refinement
+    num_refine_workers: int = 1,  # Enabled by default for score refinement
     scan_batch_size: int = 50,
     expand_batch_size: int = 50,
     score_batch_size: int = 50,  # Increased: more work per API call
     enrich_batch_size: int = 10,  # Smaller: heavy SSH operations (du/tokei)
-    rescore_batch_size: int = 50,  # Increased: lightweight heuristic rescore
+    refine_batch_size: int = 50,  # Increased: lightweight heuristic refine
     on_scan_progress: Callable[
         [str, WorkerStats, list[str] | None, list[dict] | None], None
     ]
@@ -2095,7 +2093,7 @@ async def run_parallel_discovery(
     | None = None,
     on_enrich_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
-    on_rescore_progress: Callable[[str, WorkerStats, list[dict] | None], None]
+    on_refine_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     graceful_shutdown_timeout: float = 5.0,
@@ -2108,7 +2106,7 @@ async def run_parallel_discovery(
     - expand: Expands scored high-value paths (should_expand=true)
     - score: LLM-based scoring with should_expand/should_enrich decisions
     - enrich: Deep analysis (du/tokei/patterns) for should_enrich=true paths
-    - rescore: Refines scores using enrichment data (optional)
+    - refine: Refines scores using enrichment data (optional)
 
     All workers run in PARALLEL - expand/enrich do not wait for each other.
 
@@ -2123,17 +2121,17 @@ async def run_parallel_discovery(
         num_expand_workers: Number of concurrent expand workers (default: 1)
         num_score_workers: Number of concurrent score workers (default: 2)
         num_enrich_workers: Number of concurrent enrich workers (default: 1)
-        num_rescore_workers: Number of concurrent rescore workers (default: 1)
+        num_refine_workers: Number of concurrent refine workers (default: 1)
         scan_batch_size: Paths per SSH call (default: 50)
         expand_batch_size: Paths per expand SSH call (default: 50)
         score_batch_size: Paths per LLM call (default: 50)
         enrich_batch_size: Paths per SSH call (default: 10)
-        rescore_batch_size: Paths per rescore (default: 50)
+        refine_batch_size: Paths per refine (default: 50)
         on_scan_progress: Callback for scan progress
         on_expand_progress: Callback for expand progress
         on_score_progress: Callback for score progress
         on_enrich_progress: Callback for enrich progress
-        on_rescore_progress: Callback for rescore progress
+        on_refine_progress: Callback for refine progress
         on_worker_status: Callback for worker status changes. Called with
             SupervisedWorkerGroup for display integration.
         graceful_shutdown_timeout: Seconds to wait for workers to finish after
@@ -2147,7 +2145,7 @@ async def run_parallel_discovery(
     - All workers idle (no more work)
 
     Returns:
-        Summary dict with scanned, expanded, scored, enriched, rescored, cost, elapsed, rates
+        Summary dict with scanned, expanded, scored, enriched, refined, cost, elapsed, rates
     """
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
@@ -2189,8 +2187,8 @@ async def run_parallel_discovery(
         state.score_phase.mark_done()
     if num_enrich_workers == 0:
         state.enrich_phase.mark_done()
-    if num_rescore_workers == 0:
-        state.rescore_phase.mark_done()
+    if num_refine_workers == 0:
+        state.refine_phase.mark_done()
 
     # Capture initial terminal count for session-based --limit tracking
     state.initial_terminal_count = state.terminal_count
@@ -2270,19 +2268,19 @@ async def run_parallel_discovery(
             )
         )
 
-    # Rescore workers (group="score" — same pipeline stage)
-    for i in range(num_rescore_workers):
-        worker_name = f"rescore_worker_{i}"
+    # Refine workers (group="score" — same pipeline stage)
+    for i in range(num_refine_workers):
+        worker_name = f"refine_worker_{i}"
         status = worker_group.create_status(worker_name, group="score")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
-                    rescore_worker,
+                    refine_worker,
                     worker_name,
                     state,
                     state.should_stop,
-                    on_progress=on_rescore_progress,
-                    batch_size=rescore_batch_size,
+                    on_progress=on_refine_progress,
+                    batch_size=refine_batch_size,
                     status_tracker=status,
                 )
             )
@@ -2309,7 +2307,7 @@ async def run_parallel_discovery(
         f"Started {worker_group.get_active_count()} supervised workers: "
         f"scan={num_scan_workers}, expand={num_expand_workers}, "
         f"score={num_score_workers}, enrich={num_enrich_workers}, "
-        f"rescore={num_rescore_workers}, embed=1"
+        f"refine={num_refine_workers}, embed=1"
     )
 
     # Periodic orphan recovery during discovery (every 60s)
@@ -2363,7 +2361,7 @@ async def run_parallel_discovery(
         state.expand_stats.elapsed,
         state.score_stats.elapsed,
         state.enrich_stats.elapsed,
-        state.rescore_stats.elapsed,
+        state.refine_stats.elapsed,
     )
 
     return {
@@ -2371,17 +2369,17 @@ async def run_parallel_discovery(
         "expanded": state.expand_stats.processed,
         "scored": state.score_stats.processed,
         "enriched": state.enrich_stats.processed,
-        "rescored": state.rescore_stats.processed,
+        "refined": state.refine_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_rate": state.scan_stats.rate,
         "expand_rate": state.expand_stats.rate,
         "score_rate": state.score_stats.rate,
         "enrich_rate": state.enrich_stats.rate,
-        "rescore_rate": state.rescore_stats.rate,
+        "refine_rate": state.refine_stats.rate,
         "scan_errors": state.scan_stats.errors,
         "expand_errors": state.expand_stats.errors,
         "score_errors": state.score_stats.errors,
         "enrich_errors": state.enrich_stats.errors,
-        "rescore_errors": state.rescore_stats.errors,
+        "refine_errors": state.refine_stats.errors,
     }

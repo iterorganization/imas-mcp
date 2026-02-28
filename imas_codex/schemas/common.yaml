@@ -70,7 +70,7 @@ enums:
       scanned:
         description: Enumerated (file_count, dir_count set), awaiting LLM score
       scored:
-        description: LLM scored (may have been rescored if high-value)
+        description: LLM scored (may have been refined if high-value)
       skipped:
         description: Intentionally not processed (low-score, excluded, empty)
       failed:

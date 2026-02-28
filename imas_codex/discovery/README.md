@@ -405,7 +405,7 @@ Schema context is loaded lazily via `get_schema_for_prompt()`:
 ```python
 from imas_codex.agentic.prompt_loader import render_prompt
 
-# Only loads what the prompt needs (9 keys for scorer, 2 for rescorer)
+# Only loads what the prompt needs (9 keys for scorer, 5 for refiner)
 prompt = render_prompt("discovery/scorer", {"facility": "tcv", "paths": paths})
 ```
 
@@ -433,7 +433,7 @@ batch = DirectoryScoringBatch.model_validate_json(response.content)
    ```python
    _DEFAULT_SCHEMA_NEEDS = {
        "discovery/scorer": ["path_purposes", "score_dimensions", "scoring_schema"],
-       "discovery/rescorer": ["rescore_schema"],
+       "discovery/refiner": ["refine_schema"],
        "discovery/your_new_prompt": ["your_schema_needs"],
    }
    ```

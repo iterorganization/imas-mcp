@@ -19,7 +19,7 @@ Schema Provider Architecture:
     - discovery_categories: DiscoveryRootCategory enum values
     - score_dimensions: score_* fields from FacilityPath schema
     - scoring_schema: ScoreBatch Pydantic schema
-    - rescore_schema: RescoreBatch Pydantic schema
+    - refine_schema: RefineBatch Pydantic schema
     - data_access_fields: DataAccess schema fields
     - data_access_graph: Existing DataAccess nodes from graph
 
@@ -37,7 +37,7 @@ Directory structure:
     ├── discovery/        # Discovery pipeline prompts
     │   ├── roots.md      # Seed discovery frontier
     │   ├── scorer.md     # Score directories
-    │   ├── rescorer.md   # Rescore with enrichment
+    │   ├── refiner.md    # Refine with enrichment evidence
     │   └── enricher.md   # Extract metadata
     ├── exploration/      # Interactive exploration
     │   └── facility.md   # Facility exploration agent
@@ -470,13 +470,13 @@ def _provide_scoring_schema() -> dict[str, Any]:
 
 
 @lru_cache(maxsize=1)
-def _provide_rescore_schema() -> dict[str, Any]:
-    """Provide RescoreBatch Pydantic schema for LLM prompts."""
-    from imas_codex.discovery.paths.models import RescoreBatch, RescoreResult
+def _provide_refine_schema() -> dict[str, Any]:
+    """Provide RefineBatch Pydantic schema for LLM prompts."""
+    from imas_codex.discovery.paths.models import RefineBatch, RefineResult
 
     return {
-        "rescore_schema_example": get_pydantic_schema_json(RescoreBatch),
-        "rescore_schema_fields": get_pydantic_schema_description(RescoreResult),
+        "refine_schema_example": get_pydantic_schema_json(RefineBatch),
+        "refine_schema_fields": get_pydantic_schema_description(RefineResult),
     }
 
 
@@ -848,7 +848,7 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "score_dimensions": _provide_score_dimensions,
     "scoring_schema": _provide_scoring_schema,
     "physics_domains": _provide_physics_domains,
-    "rescore_schema": _provide_rescore_schema,
+    "refine_schema": _provide_refine_schema,
     "data_access_fields": _provide_data_access_fields,
     "format_patterns": _provide_format_patterns,
     # Wiki providers
@@ -925,8 +925,8 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "format_patterns",
         "physics_domains",
     ],
-    "discovery/rescorer": [
-        "rescore_schema",
+    "discovery/refiner": [
+        "refine_schema",
         "format_patterns",
         "path_purposes",
         "score_dimensions",

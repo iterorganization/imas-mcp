@@ -88,10 +88,10 @@ logger = logging.getLogger(__name__)
     help="Auto-enrich paths scoring >= threshold (e.g., 0.75)",
 )
 @click.option(
-    "--rerescore",
+    "--reset-refined",
     is_flag=True,
     default=False,
-    help="Reset all rescored paths so they get re-rescored with current prompt",
+    help="Reset all refined paths so they get re-refined with current prompt",
 )
 @click.option(
     "--time",
@@ -113,7 +113,7 @@ def paths(
     score_only: bool,
     add_roots: bool,
     enrich_threshold: float | None,
-    rerescore: bool,
+    reset_refined: bool,
     time_limit: int | None,
 ) -> None:
     """Discover and score directory structure at a facility.
@@ -156,7 +156,7 @@ def paths(
         root_filter=root_filter,
         add_roots=add_roots,
         enrich_threshold=enrich_threshold,
-        rerescore=rerescore,
+        reset_refined=reset_refined,
         timeout_minutes=time_limit,
     )
 
@@ -179,7 +179,7 @@ def _run_iterative_discovery(
     root_filter: list[str] | None = None,
     add_roots: bool = False,
     enrich_threshold: float | None = None,
-    rerescore: bool = False,
+    reset_refined: bool = False,
     timeout_minutes: int | None = None,
 ) -> None:
     """Run parallel scan/score discovery."""
@@ -243,17 +243,17 @@ def _run_iterative_discovery(
             log_print("[dim]All discovery_roots already in graph[/dim]")
         stats = get_discovery_stats(facility)
 
-    # Handle --rerescore flag
-    if rerescore:
-        from imas_codex.discovery.paths.frontier import reset_rescored_paths
+    # Handle --reset-refined flag
+    if reset_refined:
+        from imas_codex.discovery.paths.frontier import reset_refined_paths
 
-        reset_count = reset_rescored_paths(facility)
+        reset_count = reset_refined_paths(facility)
         if reset_count > 0:
             log_print(
-                f"[green]Reset {reset_count} rescored path(s) for re-rescoring[/green]"
+                f"[green]Reset {reset_count} refined path(s) for re-refinement[/green]"
             )
         else:
-            log_print("[dim]No rescored paths to reset[/dim]")
+            log_print("[dim]No refined paths to reset[/dim]")
         stats = get_discovery_stats(facility)
 
     # Handle targeted deep dive with --root
@@ -321,7 +321,7 @@ def _run_iterative_discovery(
         worker_parts.append(f"{effective_score_workers} score")
     if not scan_only:
         worker_parts.append("1 enrich")
-        worker_parts.append("1 rescore")
+        worker_parts.append("1 refine")
     log_print(f"Workers: {', '.join(worker_parts)}")
     if focus and not scan_only:
         log_print(f"Focus: {focus}")
@@ -434,10 +434,10 @@ def _print_discovery_summary(
     if not scan_only:
         scored = result["scored"]
         cost = result.get("cost", 0.0)
-        rescored = result.get("rescored", 0)
+        refined = result.get("refined", 0)
         summary.append("  SCORE ", style="bold green")
         summary.append(f"scored={scored:,}", style="white")
-        summary.append(f"  rescored={rescored:,}", style="white")
+        summary.append(f"  refined={refined:,}", style="white")
         summary.append(f"  cost=${cost:.3f}", style="yellow")
         if score_rate:
             summary.append(f"  {score_rate:.1f}/s", style="dim")
@@ -697,8 +697,8 @@ async def _async_discovery_loop(
             def on_enrich(msg, stats, results=None):
                 display.update_enrich(msg, stats, results=results)
 
-            def on_rescore(msg, stats, results=None):
-                display.update_rescore(msg, stats, results=results)
+            def on_refine(msg, stats, results=None):
+                display.update_refine(msg, stats, results=results)
 
             def on_worker_status(worker_group):
                 display.update_worker_status(worker_group)
@@ -718,7 +718,7 @@ async def _async_discovery_loop(
                     on_expand_progress=on_expand,
                     on_score_progress=on_score,
                     on_enrich_progress=on_enrich,
-                    on_rescore_progress=on_rescore,
+                    on_refine_progress=on_refine,
                     on_worker_status=on_worker_status,
                     deadline=deadline,
                 )
@@ -781,7 +781,7 @@ async def _async_discovery_loop(
             "scored": result["scored"],
             "expanded": result.get("expanded", 0),
             "enriched": result.get("enriched", 0),
-            "rescored": result.get("rescored", 0),
+            "refined": result.get("refined", 0),
             "cost": result["cost"],
             "elapsed_seconds": result["elapsed_seconds"],
             "scan_rate": result.get("scan_rate"),
