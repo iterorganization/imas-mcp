@@ -1,7 +1,8 @@
 """Static tree discovery: extract and ingest machine-description MDSplus trees.
 
-Three-phase pipeline:
+Four-phase pipeline:
   EXTRACT → SSH to facility, walk MDSplus static tree versions
+  UNITS   → Batched unit extraction for NUMERIC/SIGNAL nodes
   ENRICH  → LLM batch descriptions of tree node physics
   INGEST  → Write TreeModelVersion + TreeNode to Neo4j
 """
@@ -12,7 +13,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import click
 from rich.console import Console
@@ -50,28 +51,32 @@ class StaticProgressState:
     # EXTRACT phase
     extract_completed: int = 0
     extract_total: int = 1
-    extract_activity: str = ""
-    extract_description: str = ""
+    extract_rate: float | None = None
+    extract_version: str = ""  # e.g. "v3 tcv:static"
+    extract_detail: str = ""  # e.g. "47,976 nodes, 312 tags"
 
-    # UNITS phase (concurrent with enrich)
+    # UNITS phase
     units_completed: int = 0
     units_total: int = 0
     units_found: int = 0
-    units_activity: str = ""
-    units_description: str = ""
+    units_rate: float | None = None
+    units_path: str = ""  # current node path being checked
+    units_detail: str = ""  # e.g. "NUMERIC nodes, batch 3/7"
 
     # ENRICH phase
     enrich_completed: int = 0
     enrich_total: int = 0
-    enrich_activity: str = ""
-    enrich_description: str = ""
+    enrich_rate: float | None = None
+    enrich_path: str = ""  # current node path
+    enrich_description: str = ""  # LLM-generated description
     enrich_cost: float = 0.0
 
     # INGEST phase
     ingest_completed: int = 0
     ingest_total: int = 0
-    ingest_activity: str = ""
-    ingest_description: str = ""
+    ingest_rate: float | None = None
+    ingest_label: str = ""  # e.g. "v3 — TreeModelVersion + 47,976 TreeNodes"
+    ingest_detail: str = ""  # e.g. "MERGE batch 2/5"
 
     @property
     def elapsed(self) -> float:
@@ -79,7 +84,14 @@ class StaticProgressState:
 
 
 class StaticProgressDisplay(BaseProgressDisplay):
-    """Rich progress display for static tree discovery."""
+    """Rich progress display for static tree discovery.
+
+    Shows four pipeline phases with streaming per-item activity:
+      EXTRACT  version name, node count, tags
+      UNITS    batch progress, nodes with units found
+      ENRICH   node path, LLM description, cost
+      INGEST   batch writes, versions + nodes created
+    """
 
     def __init__(
         self,
@@ -92,11 +104,15 @@ class StaticProgressDisplay(BaseProgressDisplay):
         self.cost_limit = cost_limit
         self.enrich = enrich
         self.state = StaticProgressState()
-        self.extract_queue = StreamQueue(rate=1.0, min_display_time=0.8)
-        self.units_queue = StreamQueue(rate=1.0, min_display_time=0.8)
-        self.enrich_queue = StreamQueue(rate=1.5, min_display_time=0.5)
-        self.ingest_queue = StreamQueue(rate=2.0, min_display_time=0.3)
+        self.extract_queue = StreamQueue(rate=0.5, max_rate=1.5, min_display_time=1.0)
+        self.units_queue = StreamQueue(rate=1.0, max_rate=3.0, min_display_time=0.5)
+        self.enrich_queue = StreamQueue(rate=0.5, max_rate=2.0, min_display_time=0.5)
+        self.ingest_queue = StreamQueue(rate=1.0, max_rate=3.0, min_display_time=0.4)
         self._console = console or Console()
+        self._extract_start: float | None = None
+        self._units_start: float | None = None
+        self._enrich_start: float | None = None
+        self._ingest_start: float | None = None
 
         super().__init__(
             facility=facility,
@@ -107,14 +123,16 @@ class StaticProgressDisplay(BaseProgressDisplay):
 
     def _build_pipeline_section(self) -> Text:
         s = self.state
+
         rows = [
             PipelineRowConfig(
                 name="EXTRACT",
                 style="bold blue",
                 completed=s.extract_completed,
                 total=max(s.extract_total, 1),
-                primary_text=s.extract_activity,
-                description=s.extract_description,
+                rate=s.extract_rate,
+                primary_text=s.extract_version,
+                description=s.extract_detail,
                 is_complete=s.extract_completed >= s.extract_total
                 and s.extract_total > 0,
             ),
@@ -123,10 +141,11 @@ class StaticProgressDisplay(BaseProgressDisplay):
                 style="bold cyan",
                 completed=s.units_completed,
                 total=max(s.units_total, 1),
-                primary_text=s.units_activity,
-                description=s.units_description,
+                rate=s.units_rate,
+                primary_text=s.units_path,
+                description=s.units_detail,
                 is_complete=s.units_completed >= s.units_total and s.units_total > 0,
-                disabled=s.units_total == 0,
+                disabled=s.units_total == 0 and s.extract_completed < s.extract_total,
                 disabled_msg="waiting for extract",
             ),
         ]
@@ -138,7 +157,8 @@ class StaticProgressDisplay(BaseProgressDisplay):
                     completed=s.enrich_completed,
                     total=max(s.enrich_total, 1),
                     cost=s.enrich_cost if s.enrich_cost > 0 else None,
-                    primary_text=s.enrich_activity,
+                    rate=s.enrich_rate,
+                    primary_text=s.enrich_path,
                     description=s.enrich_description,
                     is_complete=s.enrich_completed >= s.enrich_total
                     and s.enrich_total > 0,
@@ -153,8 +173,9 @@ class StaticProgressDisplay(BaseProgressDisplay):
                 style="bold green",
                 completed=s.ingest_completed,
                 total=max(s.ingest_total, 1),
-                primary_text=s.ingest_activity,
-                description=s.ingest_description,
+                rate=s.ingest_rate,
+                primary_text=s.ingest_label,
+                description=s.ingest_detail,
                 is_complete=s.ingest_completed >= s.ingest_total and s.ingest_total > 0,
                 disabled=s.ingest_total == 0,
                 disabled_msg="waiting",
@@ -165,11 +186,13 @@ class StaticProgressDisplay(BaseProgressDisplay):
     def _build_resources_section(self) -> Text:
         s = self.state
         stats: list[tuple[str, str, str]] = [
-            ("versions", str(s.extract_completed), "blue"),
+            ("versions", f"{s.extract_completed}/{s.extract_total}", "blue"),
             ("units", str(s.units_found), "cyan"),
-            ("enriched", str(s.enrich_completed), "magenta"),
-            ("ingested", str(s.ingest_completed), "green"),
         ]
+        if self.enrich:
+            stats.append(("enriched", str(s.enrich_completed), "magenta"))
+        stats.append(("ingested", f"{s.ingest_completed:,}", "green"))
+
         config = ResourceConfig(
             elapsed=s.elapsed,
             run_cost=s.enrich_cost if self.enrich else None,
@@ -183,35 +206,56 @@ class StaticProgressDisplay(BaseProgressDisplay):
         """Drain streaming queues into display state."""
         item = self.extract_queue.pop()
         if item:
-            self.state.extract_activity = item.get("activity", "")
-            self.state.extract_description = item.get("description", "")
+            self.state.extract_version = item.get("version", "")
+            self.state.extract_detail = item.get("detail", "")
         elif self.extract_queue.is_stale():
-            self.state.extract_activity = ""
-            self.state.extract_description = ""
+            self.state.extract_version = ""
+            self.state.extract_detail = ""
 
         item = self.units_queue.pop()
         if item:
-            self.state.units_activity = item.get("activity", "")
-            self.state.units_description = item.get("description", "")
+            self.state.units_path = item.get("path", "")
+            self.state.units_detail = item.get("detail", "")
         elif self.units_queue.is_stale():
-            self.state.units_activity = ""
-            self.state.units_description = ""
+            self.state.units_path = ""
+            self.state.units_detail = ""
 
         item = self.enrich_queue.pop()
         if item:
-            self.state.enrich_activity = item.get("activity", "")
+            self.state.enrich_path = item.get("path", "")
             self.state.enrich_description = item.get("description", "")
         elif self.enrich_queue.is_stale():
-            self.state.enrich_activity = ""
+            self.state.enrich_path = ""
             self.state.enrich_description = ""
 
         item = self.ingest_queue.pop()
         if item:
-            self.state.ingest_activity = item.get("activity", "")
-            self.state.ingest_description = item.get("description", "")
+            self.state.ingest_label = item.get("label", "")
+            self.state.ingest_detail = item.get("detail", "")
         elif self.ingest_queue.is_stale():
-            self.state.ingest_activity = ""
-            self.state.ingest_description = ""
+            self.state.ingest_label = ""
+            self.state.ingest_detail = ""
+
+    def _update_rate(self, phase: str) -> None:
+        """Update rate for a phase based on elapsed time."""
+        s = self.state
+        now = time.time()
+        if phase == "extract" and self._extract_start:
+            dt = now - self._extract_start
+            if dt > 0 and s.extract_completed > 0:
+                s.extract_rate = s.extract_completed / dt
+        elif phase == "units" and self._units_start:
+            dt = now - self._units_start
+            if dt > 0 and s.units_completed > 0:
+                s.units_rate = s.units_completed / dt
+        elif phase == "enrich" and self._enrich_start:
+            dt = now - self._enrich_start
+            if dt > 0 and s.enrich_completed > 0:
+                s.enrich_rate = s.enrich_completed / dt
+        elif phase == "ingest" and self._ingest_start:
+            dt = now - self._ingest_start
+            if dt > 0 and s.ingest_completed > 0:
+                s.ingest_rate = s.ingest_completed / dt
 
     def print_summary(self) -> None:
         """Print final summary after pipeline completes."""
@@ -222,7 +266,7 @@ class StaticProgressDisplay(BaseProgressDisplay):
             summary.append(f", {s.units_found} nodes with units", style="cyan")
         if self.enrich:
             summary.append(f", {s.enrich_completed} nodes enriched", style="magenta")
-        summary.append(f", {s.ingest_completed} nodes ingested", style="green")
+        summary.append(f", {s.ingest_completed:,} nodes ingested", style="green")
         summary.append(f"\n  Time: {format_time(s.elapsed)}", style="dim")
         if self.enrich and s.enrich_cost > 0:
             summary.append(f", Cost: ${s.enrich_cost:.2f}", style="dim")
@@ -570,13 +614,15 @@ def _run_with_progress(
         if not ver_list:
             ver_list = [1]
 
-        with StaticProgressDisplay(
+        display = StaticProgressDisplay(
             facility=facility,
             cost_limit=cost_limit,
             console=console,
             enrich=enrich,
-        ) as display:
+        )
+        with display:
             display.state.extract_total = len(ver_list)
+            display._extract_start = time.time()
 
             # Phase 1: Extract — one version at a time
             version_results = []
@@ -584,8 +630,8 @@ def _run_with_progress(
                 display.extract_queue.add(
                     [
                         {
-                            "activity": f"v{ver} — extracting...",
-                            "description": f"{facility}:{tname}",
+                            "version": f"v{ver} {facility}:{tname}",
+                            "detail": "connecting via SSH, walking MDSplus tree...",
                         }
                     ]
                 )
@@ -606,22 +652,27 @@ def _run_with_progress(
                         display.extract_queue.add(
                             [
                                 {
-                                    "activity": f"v{ver} — error",
-                                    "description": ver_data["error"][:60],
+                                    "version": f"v{ver} — error",
+                                    "detail": ver_data["error"][:60],
                                 }
                             ]
                         )
                     else:
                         nc = ver_data.get("node_count", 0)
+                        tags = len(ver_data.get("tags", {}))
+                        detail_parts = [f"{nc:,} nodes"]
+                        if tags:
+                            detail_parts.append(f"{tags} tags")
                         display.extract_queue.add(
                             [
                                 {
-                                    "activity": f"v{ver} — {nc:,} nodes",
-                                    "description": "done",
+                                    "version": f"v{ver} — {nc:,} nodes",
+                                    "detail": ", ".join(detail_parts),
                                 }
                             ]
                         )
                     display.state.extract_completed += 1
+                    display._update_rate("extract")
                 except Exception:
                     logger.exception(
                         "Extraction failed for %s:%s v%d", facility, tname, ver
@@ -629,12 +680,13 @@ def _run_with_progress(
                     display.extract_queue.add(
                         [
                             {
-                                "activity": f"v{ver} — FAILED",
-                                "description": "extraction error",
+                                "version": f"v{ver} — FAILED",
+                                "detail": "extraction error, see log",
                             }
                         ]
                     )
                     display.state.extract_completed += 1
+                    display._update_rate("extract")
 
                 display.tick()
 
@@ -661,25 +713,34 @@ def _run_with_progress(
             executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="units")
 
             try:
+                display._units_start = time.time()
                 display.units_queue.add(
                     [
                         {
-                            "activity": f"v{latest_version} — extracting units...",
-                            "description": "batched, NUMERIC + SIGNAL nodes",
+                            "path": f"v{latest_version} — batched extraction",
+                            "detail": "NUMERIC + SIGNAL nodes",
                         }
                     ]
                 )
                 display.tick()
 
-                def _rich_progress(checked: int, total: int, found: int) -> None:
-                    display.state.units_total = total
-                    display.state.units_completed = checked
-                    display.state.units_found = found
-                    display.units_queue.add(
+                def _rich_progress(
+                    checked: int,
+                    total: int,
+                    found: int,
+                    _display: StaticProgressDisplay = display,
+                ) -> None:
+                    _display.state.units_total = total
+                    _display.state.units_completed = checked
+                    _display.state.units_found = found
+                    _display._update_rate("units")
+                    batch_num = (checked // 5000) + 1
+                    total_batches = (total + 4999) // 5000
+                    _display.units_queue.add(
                         [
                             {
-                                "activity": f"{checked:,}/{total:,} nodes checked",
-                                "description": f"{found} with units",
+                                "path": f"{checked:,}/{total:,} nodes checked",
+                                "detail": f"batch {batch_num}/{total_batches}, {found} with units",
                             }
                         ]
                     )
@@ -721,22 +782,20 @@ def _run_with_progress(
                     display.units_queue.add(
                         [
                             {
-                                "activity": f"{len(units)} paths with units",
-                                "description": f"merged into {updated} nodes",
+                                "path": f"{len(units)} paths with units",
+                                "detail": f"merged into {updated} nodes",
                             }
                         ]
                     )
                 else:
                     display.state.units_completed = max(display.state.units_total, 1)
-                    display.units_queue.add(
-                        [{"activity": "no units found", "description": ""}]
-                    )
+                    display.units_queue.add([{"path": "no units found", "detail": ""}])
                 display.tick()
             except Exception:
                 logger.exception("Units collection failed")
                 display.state.units_completed = max(display.state.units_total, 1)
                 display.units_queue.add(
-                    [{"activity": "failed", "description": "partial results kept"}]
+                    [{"path": "failed", "detail": "partial results kept"}]
                 )
                 display.tick()
             finally:
@@ -746,9 +805,15 @@ def _run_with_progress(
             if not dry_run:
                 from imas_codex.graph import GraphClient
 
-                display.state.ingest_total = total_nodes + len(data["versions"])
+                n_versions = len(data["versions"])
+                display.state.ingest_total = total_nodes + n_versions
                 display.ingest_queue.add(
-                    [{"activity": "Writing to Neo4j...", "description": ""}]
+                    [
+                        {
+                            "label": f"{n_versions} TreeModelVersions + {total_nodes:,} TreeNodes",
+                            "detail": "writing to Neo4j...",
+                        }
+                    ]
                 )
                 display.tick()
 
@@ -762,11 +827,8 @@ def _run_with_progress(
                     display.ingest_queue.add(
                         [
                             {
-                                "activity": "Complete",
-                                "description": (
-                                    f"{stats['versions_created']} versions, "
-                                    f"{stats['nodes_created']} nodes"
-                                ),
+                                "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
+                                "detail": "complete",
                             }
                         ]
                     )
@@ -778,11 +840,8 @@ def _run_with_progress(
                 display.ingest_queue.add(
                     [
                         {
-                            "activity": "[DRY RUN]",
-                            "description": (
-                                f"{stats['versions_created']} versions, "
-                                f"{stats['nodes_created']} nodes"
-                            ),
+                            "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
+                            "detail": "DRY RUN — no writes",
                         }
                     ]
                 )
@@ -922,6 +981,7 @@ def _run_enrichment_with_progress(
     version_descs = _build_version_descriptions(cfg)
     all_results = []
     total_cost = 0.0
+    display._enrich_start = time.time()
 
     for i in range(0, len(nodes), batch_size):
         if total_cost >= cost_limit:
@@ -937,8 +997,8 @@ def _run_enrichment_with_progress(
         display.enrich_queue.add(
             [
                 {
-                    "activity": clip_text(first_path, 50),
-                    "description": f"batch {batch_num}/{total_batches} ({len(batch)} nodes)",
+                    "path": clip_text(first_path, 50),
+                    "description": f"batch {batch_num}/{total_batches}, {len(batch)} nodes",
                 }
             ]
         )
@@ -951,15 +1011,29 @@ def _run_enrichment_with_progress(
         ]
 
         try:
-            parsed, cost, _tokens = call_llm_structured(
+            result, cost, _tokens = call_llm_structured(
                 model=model,
                 messages=messages,
                 response_model=StaticNodeBatch,
             )
+            parsed = cast(StaticNodeBatch, result)
             all_results.extend(parsed.results)
             total_cost += cost
             display.state.enrich_completed += len(parsed.results)
             display.state.enrich_cost = total_cost
+            display._update_rate("enrich")
+            # Stream individual results for per-node visibility
+            for r in parsed.results:
+                display.enrich_queue.add(
+                    [
+                        {
+                            "path": clip_text(r.path, 50),
+                            "description": clip_text(r.description, 60)
+                            if r.description
+                            else "",
+                        }
+                    ]
+                )
         except Exception:
             logger.exception("Failed to enrich batch %d", batch_num)
 

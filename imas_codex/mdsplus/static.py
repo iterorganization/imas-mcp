@@ -399,7 +399,7 @@ def merge_units_into_data(
 
 
 def ingest_static_tree(
-    client: "GraphClient",
+    client: "GraphClient | None",
     facility: str,
     data: dict[str, Any],
     version_config: list[dict] | None = None,
