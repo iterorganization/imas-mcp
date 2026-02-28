@@ -1475,8 +1475,13 @@ async def refine_worker(
 
             # Add should_expand from original data and cost tracking
             refine_results = []
+            failed_count = 0
             cost_per_path = cost / len(paths) if paths else 0.0
             for llm_r in llm_results:
+                # Skip failed results — don't corrupt graph with stale scores
+                if llm_r.get("_failed"):
+                    failed_count += 1
+                    continue
                 # Find original path data for should_expand
                 orig = next((p for p in paths if p["path"] == llm_r["path"]), {})
                 result: dict = {
@@ -1510,14 +1515,24 @@ async def refine_worker(
                         result[dim] = llm_r[dim]
                 refine_results.append(result)
 
+            if failed_count:
+                logger.warning(
+                    "Skipped %d/%d failed refinements (not written to graph)",
+                    failed_count,
+                    len(llm_results),
+                )
+                state.refine_stats.errors += failed_count
+
             state.refine_stats.last_batch_time = time.time() - start
             state.refine_stats.cost += cost
 
-            # Persist results
-            refined = await loop.run_in_executor(
-                None,
-                lambda rr=refine_results: mark_refine_complete(state.facility, rr),
-            )
+            # Persist only successful results
+            refined = 0
+            if refine_results:
+                refined = await loop.run_in_executor(
+                    None,
+                    lambda rr=refine_results: mark_refine_complete(state.facility, rr),
+                )
 
             state.refine_stats.processed += refined
 
@@ -1693,7 +1708,6 @@ def _refine_with_llm(
 
     # Call LLM with shared retry+parse loop — retries on both API errors
     # and JSON/validation errors (same resilience as wiki pipeline).
-    # Refine uses smaller max_tokens since output is compact per-path refinements.
     from imas_codex.discovery.base.llm import call_llm_structured
 
     try:
@@ -1704,15 +1718,15 @@ def _refine_with_llm(
                 {"role": "user", "content": user_prompt},
             ],
             response_model=RefineBatch,
-            max_tokens=12000,
         )
     except ValueError:
-        # All retries exhausted — return original scores as fallback
+        # All retries exhausted — mark all as failed so they're skipped
         return [
             {
                 "path": p["path"],
                 "score": p.get("score", 0.5),
                 "adjustment_reason": "parse error",
+                "_failed": True,
             }
             for p in paths
         ], 0.0
@@ -1761,12 +1775,13 @@ def _refine_with_llm(
 
             results.append(result)
         else:
-            # Path not in response, keep original
+            # Path not in response — mark as failed so it's skipped
             results.append(
                 {
                     "path": p["path"],
                     "score": p.get("score", 0.5),
                     "adjustment_reason": "not in response",
+                    "_failed": True,
                 }
             )
 
@@ -1941,7 +1956,6 @@ async def _async_refine_with_llm(
 
     # Call LLM with shared retry+parse loop — retries on both API errors
     # and JSON/validation errors (same resilience as wiki pipeline).
-    # Refine uses smaller max_tokens since output is compact per-path refinements.
     from imas_codex.discovery.base.llm import acall_llm_structured
 
     try:
@@ -1952,15 +1966,15 @@ async def _async_refine_with_llm(
                 {"role": "user", "content": user_prompt},
             ],
             response_model=RefineBatch,
-            max_tokens=12000,
         )
     except ValueError:
-        # All retries exhausted — return original scores as fallback
+        # All retries exhausted — mark all as failed so they're skipped
         return [
             {
                 "path": p["path"],
                 "score": p.get("score", 0.5),
                 "adjustment_reason": "parse error",
+                "_failed": True,
             }
             for p in paths
         ], 0.0
@@ -2009,12 +2023,13 @@ async def _async_refine_with_llm(
 
             results.append(result)
         else:
-            # Path not in response, keep original
+            # Path not in response — mark as failed so it's skipped
             results.append(
                 {
                     "path": p["path"],
                     "score": p.get("score", 0.5),
                     "adjustment_reason": "not in response",
+                    "_failed": True,
                 }
             )
 
@@ -2080,7 +2095,7 @@ async def run_parallel_discovery(
     expand_batch_size: int = 50,
     score_batch_size: int = 50,  # Increased: more work per API call
     enrich_batch_size: int = 10,  # Smaller: heavy SSH operations (du/tokei)
-    refine_batch_size: int = 50,  # Increased: lightweight heuristic refine
+    refine_batch_size: int = 10,  # Smaller batches: 20+ fields per path in structured output
     on_scan_progress: Callable[
         [str, WorkerStats, list[str] | None, list[dict] | None], None
     ]
