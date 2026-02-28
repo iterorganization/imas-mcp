@@ -765,15 +765,21 @@ def ingest_static_tree(
 def _compute_parent_path(path: str) -> str | None:
     """Compute parent path for a tree node.
 
+    Handles both `.` and `:` hierarchy separators used by MDSplus.
+
     Examples:
         \\STATIC::TOP.C.R -> \\STATIC::TOP.C
+        \\STATIC::VESSEL:VAL:R -> \\STATIC::VESSEL:VAL
         \\STATIC::TOP -> None
     """
     if "::" in path:
         tree_part, node_part = path.split("::", 1)
-        if "." not in node_part:
+        last_dot = node_part.rfind(".")
+        last_colon = node_part.rfind(":")
+        last_sep = max(last_dot, last_colon)
+        if last_sep < 0:
             return None
-        parent_node = ".".join(node_part.rsplit(".", 1)[:-1])
+        parent_node = node_part[:last_sep]
         return f"{tree_part}::{parent_node}"
     else:
         if "." not in path:

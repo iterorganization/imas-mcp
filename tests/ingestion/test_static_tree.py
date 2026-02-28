@@ -25,6 +25,18 @@ class TestComputeParentPath:
     def test_single_node(self):
         assert _compute_parent_path("\\TOP") is None
 
+    def test_colon_separator(self):
+        assert _compute_parent_path("\\STATIC::VESSEL:VAL:R") == "\\STATIC::VESSEL:VAL"
+
+    def test_colon_separator_single(self):
+        assert _compute_parent_path("\\STATIC::VESSEL:VAL") == "\\STATIC::VESSEL"
+
+    def test_colon_separator_root(self):
+        assert _compute_parent_path("\\STATIC::VESSEL") is None
+
+    def test_mixed_separators(self):
+        assert _compute_parent_path("\\STATIC::TOP.C:R") == "\\STATIC::TOP.C"
+
 
 class TestGetStaticTreeConfig:
     def test_tcv_has_static_trees(self):

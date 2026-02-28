@@ -309,22 +309,26 @@ def ingest_super_tree(
 def _compute_parent_path(path: str) -> str | None:
     """Compute the parent path for a TreeNode.
 
+    Handles both `.` and `:` hierarchy separators used by MDSplus.
+
     Examples:
         \\TOP.SUB.LEAF -> \\TOP.SUB
         \\RESULTS::TOP.DIAGNOSTICS.SOFT_X -> \\RESULTS::TOP.DIAGNOSTICS
+        \\RESULTS::VESSEL:VAL:R -> \\RESULTS::VESSEL:VAL
         \\RESULTS::TOP -> None (top-level)
     """
     if "::" in path:
-        # Has subtree: \\RESULTS::TOP.SUB.LEAF
         tree_part, node_part = path.split("::", 1)
-        if "." not in node_part:
-            return None  # Top-level node
-        parent_node = ".".join(node_part.rsplit(".", 1)[:-1])
+        last_dot = node_part.rfind(".")
+        last_colon = node_part.rfind(":")
+        last_sep = max(last_dot, last_colon)
+        if last_sep < 0:
+            return None
+        parent_node = node_part[:last_sep]
         return f"{tree_part}::{parent_node}"
     else:
-        # No subtree: \\TOP.SUB.LEAF
         if "." not in path:
-            return None  # Top-level
+            return None
         return ".".join(path.rsplit(".", 1)[:-1])
 
 

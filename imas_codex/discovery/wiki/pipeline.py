@@ -374,6 +374,10 @@ class MediaWikiExtractor(HTMLParser):
         self._heading_text = ""
         self._in_table = False
         self._table_row: list[str] = []
+        self._table_header_emitted = False
+        self._current_row_is_header = False
+        self._in_cell = False
+        self._cell_text: list[str] = []
         self._in_pre = False
         self._skipping_div = 0  # Track divs we're skipping
 
@@ -429,8 +433,15 @@ class MediaWikiExtractor(HTMLParser):
             self._heading_text = ""
         elif tag == "table":
             self._in_table = True
+            self._table_header_emitted = False
         elif tag == "tr":
             self._table_row = []
+            self._current_row_is_header = False
+        elif tag in ("td", "th"):
+            self._in_cell = True
+            self._cell_text = []
+            if tag == "th":
+                self._current_row_is_header = True
         elif tag == "pre":
             self._in_pre = True
             self.text_parts.append("\n```\n")
@@ -466,10 +477,20 @@ class MediaWikiExtractor(HTMLParser):
             self.text_parts.append("\n")
         elif tag == "tr":
             if self._table_row:
-                self.text_parts.append(" | ".join(self._table_row) + "\n")
+                row_text = "| " + " | ".join(self._table_row) + " |"
+                self.text_parts.append(row_text + "\n")
+                # Emit markdown separator after first header row
+                if self._current_row_is_header and not self._table_header_emitted:
+                    separator = "| " + " | ".join("---" for _ in self._table_row) + " |"
+                    self.text_parts.append(separator + "\n")
+                    self._table_header_emitted = True
             self._table_row = []
         elif tag in ("td", "th"):
-            pass  # Cell content already added
+            # Finalize cell text and add to row
+            cell_content = " ".join(self._cell_text).strip()
+            self._table_row.append(cell_content)
+            self._in_cell = False
+            self._cell_text = []
         elif tag in ("p", "div", "li"):
             self.text_parts.append("\n")
         elif tag == "br":
@@ -490,10 +511,9 @@ class MediaWikiExtractor(HTMLParser):
 
         if self._in_heading:
             self._heading_text += text
-        elif self._in_table and self._table_row is not None:
-            # Collect table cell content
-            self._table_row.append(text)
-            self.text_parts.append(text + " ")
+        elif self._in_cell:
+            # Collect cell text — only emitted when the cell/row closes
+            self._cell_text.append(text)
         else:
             self.text_parts.append(text)
 
@@ -517,6 +537,9 @@ def html_to_text(html: str) -> tuple[str, dict[str, str]]:
     - MediaWiki: bodyContent or mw-parser-output div
     - TWiki: patternTopic div (live TWiki rendered pages)
     - Fallback: full HTML with tag stripping
+
+    Tables are converted to markdown format with proper column separation
+    to preserve structured data (signal tables, diagnostic lists, etc.).
 
     Args:
         html: Raw HTML content from wiki page
@@ -543,8 +566,6 @@ def html_to_text(html: str) -> tuple[str, dict[str, str]]:
             if footer_start > body_start:
                 content_html = html[body_start:footer_start]
             else:
-                # No printfooter, try to find end of bodyContent div
-                # This is harder, so just take everything after bodyContent start
                 content_html = html[body_start:]
         else:
             # Try modern MediaWiki structure (class="mw-parser-output")
@@ -557,53 +578,34 @@ def html_to_text(html: str) -> tuple[str, dict[str, str]]:
             if content_match:
                 content_html = content_match.group(1)
 
-    # Use simple tag stripping instead of complex parser
-    # Remove script and style tags with their content
-    content_html = re.sub(
-        r"<script[^>]*>.*?</script>", " ", content_html, flags=re.DOTALL | re.IGNORECASE
-    )
-    content_html = re.sub(
-        r"<style[^>]*>.*?</style>", " ", content_html, flags=re.DOTALL | re.IGNORECASE
-    )
+    # Use MediaWikiExtractor for proper table-aware HTML parsing
+    extractor = MediaWikiExtractor()
+    try:
+        extractor.feed(content_html)
+    except Exception:
+        # Fallback to simple tag stripping if parser fails on malformed HTML
+        import html as html_module
 
-    # Remove HTML comments
-    content_html = re.sub(r"<!--.*?-->", " ", content_html, flags=re.DOTALL)
+        content_html = re.sub(
+            r"<script[^>]*>.*?</script>",
+            " ",
+            content_html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        content_html = re.sub(
+            r"<style[^>]*>.*?</style>",
+            " ",
+            content_html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        content_html = re.sub(r"<!--.*?-->", " ", content_html, flags=re.DOTALL)
+        text = re.sub(r"<[^>]+>", " ", content_html)
+        text = html_module.unescape(text)
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip(), {}
 
-    # Remove all HTML tags
-    text = re.sub(r"<[^>]+>", " ", content_html)
-
-    # Decode HTML entities
-    import html as html_module
-
-    text = html_module.unescape(text)
-
-    # Clean up whitespace
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = text.strip()
-
-    # Extract sections (simple heading detection)
-    sections: dict[str, str] = {}
-    lines = text.split("\n")
-    current_section = ""
-    current_text: list[str] = []
-
-    for line in lines:
-        # Detect headings (lines that look like section titles)
-        if len(line) < 100 and line.strip() and not line.strip().startswith("("):
-            # Could be a heading - save previous section
-            if current_section and current_text:
-                sections[current_section] = "\n".join(current_text).strip()
-            current_section = line.strip()
-            current_text = []
-        else:
-            current_text.append(line)
-
-    # Save final section
-    if current_section and current_text:
-        sections[current_section] = "\n".join(current_text).strip()
-
-    return text, sections
+    return extractor.get_result()
 
 
 def twiki_markup_to_html(markup: str) -> str:

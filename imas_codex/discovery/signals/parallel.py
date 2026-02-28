@@ -2064,6 +2064,21 @@ async def check_worker(
     facility_config = get_facility(state.facility)
     data_sources = facility_config.get("data_sources", {})
 
+    # Build fallback shots from static tree epochs (operational phases)
+    # These provide representative shots from different machine configurations
+    fallback_shots: list[int] = []
+    mdsplus_config = data_sources.get("mdsplus", {})
+    if isinstance(mdsplus_config, dict):
+        static_trees = mdsplus_config.get("static_trees", [])
+        for st in static_trees:
+            if isinstance(st, dict):
+                for v in st.get("versions", []):
+                    first_shot = v.get("first_shot")
+                    if first_shot and first_shot != state.reference_shot:
+                        fallback_shots.append(first_shot)
+        # Sort descending so we try newest shots first
+        fallback_shots.sort(reverse=True)
+
     # Large batch size - signals are grouped by tree/shot on the remote side
     BATCH_SIZE = 100
 
@@ -2212,6 +2227,9 @@ async def check_worker(
                         "accessor": signal["accessor"],
                         "tree_name": tree_name or "tcv_shot",
                         "shot": shot,
+                        **(
+                            {"fallback_shots": fallback_shots} if fallback_shots else {}
+                        ),
                     }
                 )
 
@@ -2264,22 +2282,27 @@ async def check_worker(
                                 stats = response.get("stats", {})
 
                                 if stats:
+                                    retry_count = stats.get("retry_success", 0)
                                     logger.debug(
                                         "Check batch: %d signals in %d groups, "
-                                        "%d success, %d failed",
+                                        "%d success, %d failed, %d via fallback",
                                         stats.get("total", 0),
                                         stats.get("groups", 0),
                                         stats.get("success", 0),
                                         stats.get("failed", 0),
+                                        retry_count,
                                     )
 
                                 for result in results:
                                     signal_id = result.get("id")
-                                    shot = None
-                                    for bi in batch_input:
-                                        if bi["id"] == signal_id:
-                                            shot = bi.get("shot")
-                                            break
+                                    # Use checked_shot from remote (may differ
+                                    # from primary if fallback succeeded)
+                                    shot = result.get("checked_shot")
+                                    if not shot:
+                                        for bi in batch_input:
+                                            if bi["id"] == signal_id:
+                                                shot = bi.get("shot")
+                                                break
                                     success = bool(result.get("success"))
                                     entry = {
                                         "id": signal_id,

@@ -17,17 +17,25 @@ Input (JSON on stdin):
     {
         "signals": [
             {"id": "tcv:results:/ip", "accessor": "\\ip", "tree_name": "results", "shot": 80000},
-            {"id": "tcv:results:/ne", "accessor": "\\ne", "tree_name": "results", "shot": 80000},
+            {"id": "tcv:results:/ne", "accessor": "\\ne", "tree_name": "results", "shot": 80000,
+             "fallback_shots": [70000, 50000]},
             ...
         ],
         "timeout_per_group": 30
     }
 
+    Each signal has a primary ``shot`` and optional ``fallback_shots``.
+    If the primary shot fails with a shot-dependent error (NODATA, NNF,
+    KEYNOTFOU), the signal is retried on each fallback shot in order.
+    Errors like MISS_ARG or UNKNOWN_VAR are structural and not retried.
+
 Output (JSON on stdout):
     {
         "results": [
-            {"id": "tcv:results:/ip", "success": true, "shape": [1000], "dtype": "float64"},
-            {"id": "tcv:results:/ne", "success": false, "error": "TreeNNF: Node not found"},
+            {"id": "tcv:results:/ip", "success": true, "shape": [1000], "dtype": "float64",
+             "checked_shot": 80000},
+            {"id": "tcv:results:/ne", "success": true, "shape": [500], "dtype": "float64",
+             "checked_shot": 70000, "failed_shots": [80000]},
             ...
         ],
         "stats": {
@@ -49,6 +57,29 @@ from typing import Any
 def timeout_handler(signum: int, frame: Any) -> None:
     """Handle signal timeout."""
     raise TimeoutError("Group processing timed out")
+
+
+# Errors that are shot-dependent and worth retrying on fallback shots
+_SHOT_DEPENDENT_ERRORS = (
+    "NODATA",  # No data for this shot
+    "NNF",  # Node not found (may exist in other tree version)
+    "KEYNOTFOU",  # Key not found (shot-dependent lookup)
+    "TreeNOT_OPEN",  # Tree not available for this shot
+)
+
+# Errors that are structural and never resolve by changing shots
+_STRUCTURAL_ERRORS = (
+    "MISS_ARG",  # Function signature error
+    "UNKNOWN_VAR",  # Undefined variable
+    "INVCLADSC",  # Invalid class descriptor
+    "INVDTYDSC",  # Invalid data type descriptor
+    "SYNTAX",  # TDI syntax error
+)
+
+
+def _is_shot_dependent_error(error: str) -> bool:
+    """Check if an error might resolve on a different shot."""
+    return any(tag in error for tag in _SHOT_DEPENDENT_ERRORS)
 
 
 def check_signal_group(
@@ -199,11 +230,16 @@ def main() -> None:
 
     # Group signals by (tree_name, shot) for efficient batch processing
     groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    # Track fallback shots per signal for retry
+    signal_fallbacks: dict[str, list[int]] = {}
     for sig in signals:
         tree_name = sig.get("tree_name", "results")
         shot = sig.get("shot")
         if shot is not None:
             groups[(tree_name, int(shot))].append(sig)
+            fallbacks = sig.get("fallback_shots", [])
+            if fallbacks:
+                signal_fallbacks[sig["id"]] = [int(s) for s in fallbacks]
         else:
             # No shot - immediate failure
             pass
@@ -217,19 +253,76 @@ def main() -> None:
             group_signals,
             timeout=timeout_per_group,
         )
+        # Tag results with the shot that was checked
+        for r in group_results:
+            r["checked_shot"] = shot
         all_results.extend(group_results)
 
+    # Retry failed signals on fallback shots (shot-dependent errors only)
+    retry_groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    final_results: list[dict] = []
+    failed_for_retry: dict[str, dict] = {}  # signal_id -> original result
+
+    for result in all_results:
+        sig_id = result["id"]
+        if result.get("success"):
+            final_results.append(result)
+        elif sig_id in signal_fallbacks and _is_shot_dependent_error(
+            result.get("error", "")
+        ):
+            # Queue for retry on fallback shots
+            failed_for_retry[sig_id] = result
+            # Find original signal data
+            orig_sig = None
+            for sig in signals:
+                if sig["id"] == sig_id:
+                    orig_sig = sig
+                    break
+            if orig_sig:
+                tree_name = orig_sig.get("tree_name", "results")
+                for fallback_shot in signal_fallbacks[sig_id]:
+                    retry_groups[(tree_name, fallback_shot)].append(orig_sig)
+        else:
+            final_results.append(result)
+
+    # Process retry groups
+    if retry_groups:
+        # Track which signals have already succeeded during retries
+        succeeded: set[str] = set()
+        for (tree_name, shot), group_signals in retry_groups.items():
+            # Skip signals that already succeeded on an earlier fallback
+            pending = [s for s in group_signals if s["id"] not in succeeded]
+            if not pending:
+                continue
+            group_results = check_signal_group(
+                tree_name, shot, pending, timeout=timeout_per_group
+            )
+            for r in group_results:
+                sig_id = r["id"]
+                if r.get("success") and sig_id not in succeeded:
+                    succeeded.add(sig_id)
+                    r["checked_shot"] = shot
+                    r["failed_shots"] = [failed_for_retry[sig_id]["checked_shot"]]
+                    final_results.append(r)
+
+        # Add remaining failures (never succeeded on any shot)
+        for sig_id, orig_result in failed_for_retry.items():
+            if sig_id not in succeeded:
+                final_results.append(orig_result)
+
     # Compute stats
-    success_count = sum(1 for r in all_results if r.get("success"))
-    failed_count = len(all_results) - success_count
+    success_count = sum(1 for r in final_results if r.get("success"))
+    failed_count = len(final_results) - success_count
+    retry_success = sum(1 for r in final_results if r.get("failed_shots"))
 
     output = {
-        "results": all_results,
+        "results": final_results,
         "stats": {
             "total": len(signals),
             "groups": len(groups),
             "success": success_count,
             "failed": failed_count,
+            "retry_success": retry_success,
         },
     }
     print(json.dumps(output))
