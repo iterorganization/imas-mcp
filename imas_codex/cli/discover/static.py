@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
@@ -145,28 +146,23 @@ class StaticProgressDisplay(BaseProgressDisplay):
                 primary_text=s.units_path,
                 description=s.units_detail,
                 is_complete=s.units_completed >= s.units_total and s.units_total > 0,
-                disabled=s.units_total == 0 and s.extract_completed < s.extract_total,
-                disabled_msg="waiting for extract",
             ),
         ]
-        if self.enrich:
-            rows.append(
-                PipelineRowConfig(
-                    name="ENRICH",
-                    style="bold magenta",
-                    completed=s.enrich_completed,
-                    total=max(s.enrich_total, 1),
-                    cost=s.enrich_cost if s.enrich_cost > 0 else None,
-                    rate=s.enrich_rate,
-                    primary_text=s.enrich_path,
-                    description=s.enrich_description,
-                    is_complete=s.enrich_completed >= s.enrich_total
-                    and s.enrich_total > 0,
-                    disabled=s.enrich_total == 0
-                    and s.extract_completed < s.extract_total,
-                    disabled_msg="waiting for extract",
-                )
+        rows.append(
+            PipelineRowConfig(
+                name="ENRICH",
+                style="bold magenta",
+                completed=s.enrich_completed,
+                total=max(s.enrich_total, 1),
+                cost=s.enrich_cost if s.enrich_cost > 0 else None,
+                rate=s.enrich_rate,
+                primary_text=s.enrich_path,
+                description=s.enrich_description,
+                is_complete=s.enrich_completed >= s.enrich_total and s.enrich_total > 0,
+                disabled=not self.enrich,
+                disabled_msg="--no-enrich",
             )
+        )
         rows.append(
             PipelineRowConfig(
                 name="INGEST",
@@ -177,8 +173,6 @@ class StaticProgressDisplay(BaseProgressDisplay):
                 primary_text=s.ingest_label,
                 description=s.ingest_detail,
                 is_complete=s.ingest_completed >= s.ingest_total and s.ingest_total > 0,
-                disabled=s.ingest_total == 0,
-                disabled_msg="waiting",
             ),
         )
         return build_pipeline_section(rows, self.bar_width)
@@ -235,6 +229,8 @@ class StaticProgressDisplay(BaseProgressDisplay):
         elif self.ingest_queue.is_stale():
             self.state.ingest_label = ""
             self.state.ingest_detail = ""
+
+        self._refresh()
 
     def _update_rate(self, phase: str) -> None:
         """Update rate for a phase based on elapsed time."""
@@ -579,6 +575,244 @@ def _run_plain(
 # =============================================================================
 
 
+def _run_pipeline(
+    *,
+    display: StaticProgressDisplay,
+    facility: str,
+    cfg: dict,
+    tname: str,
+    ver_list: list[int],
+    do_extract: bool,
+    dry_run: bool,
+    timeout: int,
+    cost_limit: float,
+    enrich: bool,
+    batch_size: int,
+) -> None:
+    """Execute the 3-phase static discovery pipeline inside a live display."""
+    from concurrent.futures import Future, ThreadPoolExecutor
+
+    from imas_codex.mdsplus.static import (
+        discover_static_tree_version,
+        extract_units_for_version,
+        ingest_static_tree,
+        merge_units_into_data,
+        merge_version_results,
+    )
+
+    display._extract_start = time.time()
+
+    # Phase 1: Extract — one version at a time
+    version_results = []
+    for ver in ver_list:
+        display.extract_queue.add(
+            [
+                {
+                    "version": f"v{ver} {facility}:{tname}",
+                    "detail": "connecting via SSH, walking MDSplus tree...",
+                }
+            ]
+        )
+
+        try:
+            data = discover_static_tree_version(
+                facility=facility,
+                tree_name=tname,
+                version=ver,
+                extract_values=do_extract,
+                timeout=timeout,
+            )
+            version_results.append(data)
+
+            ver_data = data.get("versions", {}).get(str(ver), {})
+            if "error" in ver_data:
+                display.extract_queue.add(
+                    [
+                        {
+                            "version": f"v{ver} — error",
+                            "detail": ver_data["error"][:60],
+                        }
+                    ]
+                )
+            else:
+                nc = ver_data.get("node_count", 0)
+                tags = len(ver_data.get("tags", {}))
+                detail_parts = [f"{nc:,} nodes"]
+                if tags:
+                    detail_parts.append(f"{tags} tags")
+                display.extract_queue.add(
+                    [
+                        {
+                            "version": f"v{ver} — {nc:,} nodes",
+                            "detail": ", ".join(detail_parts),
+                        }
+                    ]
+                )
+            display.state.extract_completed += 1
+            display._update_rate("extract")
+        except Exception:
+            logger.exception("Extraction failed for %s:%s v%d", facility, tname, ver)
+            display.extract_queue.add(
+                [
+                    {
+                        "version": f"v{ver} — FAILED",
+                        "detail": "extraction error, see log",
+                    }
+                ]
+            )
+            display.state.extract_completed += 1
+            display._update_rate("extract")
+
+    # Merge per-version results
+    data = merge_version_results(version_results)
+    if not data.get("versions"):
+        display.print_summary()
+        return
+
+    total_nodes = sum(
+        v.get("node_count", 0) for v in data["versions"].values() if "error" not in v
+    )
+
+    # Phase 2: Units + Enrichment (concurrent)
+    # Units run in background thread with batched SSH calls (~5000 nodes each).
+    # LLM enrichment runs in main thread. Both are I/O-bound.
+    latest_version = max(
+        int(v) for v in data["versions"] if "error" not in data["versions"][v]
+    )
+
+    units_future: Future[dict[str, str]] | None = None
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="units")
+
+    try:
+        display._units_start = time.time()
+        display.units_queue.add(
+            [
+                {
+                    "path": f"v{latest_version} — batched extraction",
+                    "detail": "NUMERIC + SIGNAL nodes",
+                }
+            ]
+        )
+
+        def _rich_progress(
+            checked: int,
+            total: int,
+            found: int,
+            _display: StaticProgressDisplay = display,
+        ) -> None:
+            _display.state.units_total = total
+            _display.state.units_completed = checked
+            _display.state.units_found = found
+            _display._update_rate("units")
+            batch_num = (checked // 5000) + 1
+            total_batches = (total + 4999) // 5000
+            _display.units_queue.add(
+                [
+                    {
+                        "path": f"{checked:,}/{total:,} nodes checked",
+                        "detail": f"batch {batch_num}/{total_batches}, {found} with units",
+                    }
+                ]
+            )
+
+        units_future = executor.submit(
+            extract_units_for_version,
+            facility,
+            tname,
+            latest_version,
+            timeout=180,
+            batch_size=5000,
+            on_progress=_rich_progress,
+        )
+
+        # LLM enrichment in main thread (concurrent with units)
+        enrichment_results = []
+        if enrich and not dry_run:
+            enrich_nodes = _collect_enrichable_nodes(data)
+            display.state.enrich_total = len(enrich_nodes)
+
+            if enrich_nodes:
+                enrichment_results, enrich_cost = _run_enrichment_with_progress(
+                    enrich_nodes,
+                    facility,
+                    tname,
+                    cfg,
+                    cost_limit,
+                    batch_size,
+                    display,
+                )
+                display.state.enrich_cost = enrich_cost
+
+        # Collect units result — batched, so total wait = batches × timeout
+        units = units_future.result(timeout=7 * 180 + 60)
+        if units:
+            updated = merge_units_into_data(data, units)
+            display.state.units_completed = display.state.units_total
+            display.state.units_found = len(units)
+            display.units_queue.add(
+                [
+                    {
+                        "path": f"{len(units)} paths with units",
+                        "detail": f"merged into {updated} nodes",
+                    }
+                ]
+            )
+        else:
+            display.state.units_completed = max(display.state.units_total, 1)
+            display.units_queue.add([{"path": "no units found", "detail": ""}])
+    except Exception:
+        logger.exception("Units collection failed")
+        display.state.units_completed = max(display.state.units_total, 1)
+        display.units_queue.add([{"path": "failed", "detail": "partial results kept"}])
+    finally:
+        executor.shutdown(wait=False)
+
+    # Phase 3: Ingest
+    if not dry_run:
+        from imas_codex.graph import GraphClient
+
+        n_versions = len(data["versions"])
+        display.state.ingest_total = total_nodes + n_versions
+        display.ingest_queue.add(
+            [
+                {
+                    "label": f"{n_versions} TreeModelVersions + {total_nodes:,} TreeNodes",
+                    "detail": "writing to Neo4j...",
+                }
+            ]
+        )
+
+        with GraphClient() as client:
+            stats = ingest_static_tree(client, facility, data, dry_run=False)
+            display.state.ingest_completed = (
+                stats["versions_created"] + stats["nodes_created"]
+            )
+            if enrichment_results:
+                _apply_enrichment(client, facility, tname, enrichment_results)
+            display.ingest_queue.add(
+                [
+                    {
+                        "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
+                        "detail": "complete",
+                    }
+                ]
+            )
+    else:
+        stats = ingest_static_tree(None, facility, data, dry_run=True)
+        display.state.ingest_total = 1
+        display.state.ingest_completed = 1
+        display.ingest_queue.add(
+            [
+                {
+                    "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
+                    "detail": "DRY RUN — no writes",
+                }
+            ]
+        )
+
+    display.print_summary()
+
+
 def _run_with_progress(
     *,
     facility: str,
@@ -593,16 +827,6 @@ def _run_with_progress(
     console: Console | None,
 ) -> None:
     """Run static discovery with rich progress display."""
-    from concurrent.futures import Future, ThreadPoolExecutor
-
-    from imas_codex.mdsplus.static import (
-        discover_static_tree_version,
-        extract_units_for_version,
-        ingest_static_tree,
-        merge_units_into_data,
-        merge_version_results,
-    )
-
     for cfg in configs:
         tname = cfg["tree_name"]
         ver_list = _parse_versions(versions, cfg)
@@ -620,234 +844,43 @@ def _run_with_progress(
             console=console,
             enrich=enrich,
         )
+
+        # Background ticker thread — keeps display refreshing during blocking
+        # SSH calls. Other CLIs use asyncio tasks; static CLI is synchronous
+        # so we use a daemon thread instead.
+        ticker_stop = threading.Event()
+
+        def _ticker(
+            _stop: threading.Event = ticker_stop,
+            _display: StaticProgressDisplay = display,
+        ) -> None:
+            while not _stop.is_set():
+                _display.tick()
+                _stop.wait(0.25)
+
+        ticker_thread = threading.Thread(
+            target=_ticker, daemon=True, name="static-ticker"
+        )
+
         with display:
-            display.state.extract_total = len(ver_list)
-            display._extract_start = time.time()
-
-            # Phase 1: Extract — one version at a time
-            version_results = []
-            for ver in ver_list:
-                display.extract_queue.add(
-                    [
-                        {
-                            "version": f"v{ver} {facility}:{tname}",
-                            "detail": "connecting via SSH, walking MDSplus tree...",
-                        }
-                    ]
-                )
-                display.tick()
-
-                try:
-                    data = discover_static_tree_version(
-                        facility=facility,
-                        tree_name=tname,
-                        version=ver,
-                        extract_values=do_extract,
-                        timeout=timeout,
-                    )
-                    version_results.append(data)
-
-                    ver_data = data.get("versions", {}).get(str(ver), {})
-                    if "error" in ver_data:
-                        display.extract_queue.add(
-                            [
-                                {
-                                    "version": f"v{ver} — error",
-                                    "detail": ver_data["error"][:60],
-                                }
-                            ]
-                        )
-                    else:
-                        nc = ver_data.get("node_count", 0)
-                        tags = len(ver_data.get("tags", {}))
-                        detail_parts = [f"{nc:,} nodes"]
-                        if tags:
-                            detail_parts.append(f"{tags} tags")
-                        display.extract_queue.add(
-                            [
-                                {
-                                    "version": f"v{ver} — {nc:,} nodes",
-                                    "detail": ", ".join(detail_parts),
-                                }
-                            ]
-                        )
-                    display.state.extract_completed += 1
-                    display._update_rate("extract")
-                except Exception:
-                    logger.exception(
-                        "Extraction failed for %s:%s v%d", facility, tname, ver
-                    )
-                    display.extract_queue.add(
-                        [
-                            {
-                                "version": f"v{ver} — FAILED",
-                                "detail": "extraction error, see log",
-                            }
-                        ]
-                    )
-                    display.state.extract_completed += 1
-                    display._update_rate("extract")
-
-                display.tick()
-
-            # Merge per-version results
-            data = merge_version_results(version_results)
-            if not data.get("versions"):
-                display.print_summary()
-                continue
-
-            total_nodes = sum(
-                v.get("node_count", 0)
-                for v in data["versions"].values()
-                if "error" not in v
-            )
-
-            # Phase 2: Units + Enrichment (concurrent)
-            # Units run in background thread with batched SSH calls (~5000 nodes each).
-            # LLM enrichment runs in main thread. Both are I/O-bound.
-            latest_version = max(
-                int(v) for v in data["versions"] if "error" not in data["versions"][v]
-            )
-
-            units_future: Future[dict[str, str]] | None = None
-            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="units")
-
+            ticker_thread.start()
             try:
-                display._units_start = time.time()
-                display.units_queue.add(
-                    [
-                        {
-                            "path": f"v{latest_version} — batched extraction",
-                            "detail": "NUMERIC + SIGNAL nodes",
-                        }
-                    ]
+                _run_pipeline(
+                    display=display,
+                    facility=facility,
+                    cfg=cfg,
+                    tname=tname,
+                    ver_list=ver_list,
+                    do_extract=do_extract,
+                    dry_run=dry_run,
+                    timeout=timeout,
+                    cost_limit=cost_limit,
+                    enrich=enrich,
+                    batch_size=batch_size,
                 )
-                display.tick()
-
-                def _rich_progress(
-                    checked: int,
-                    total: int,
-                    found: int,
-                    _display: StaticProgressDisplay = display,
-                ) -> None:
-                    _display.state.units_total = total
-                    _display.state.units_completed = checked
-                    _display.state.units_found = found
-                    _display._update_rate("units")
-                    batch_num = (checked // 5000) + 1
-                    total_batches = (total + 4999) // 5000
-                    _display.units_queue.add(
-                        [
-                            {
-                                "path": f"{checked:,}/{total:,} nodes checked",
-                                "detail": f"batch {batch_num}/{total_batches}, {found} with units",
-                            }
-                        ]
-                    )
-
-                units_future = executor.submit(
-                    extract_units_for_version,
-                    facility,
-                    tname,
-                    latest_version,
-                    timeout=180,
-                    batch_size=5000,
-                    on_progress=_rich_progress,
-                )
-
-                # LLM enrichment in main thread (concurrent with units)
-                enrichment_results = []
-                if enrich and not dry_run:
-                    enrich_nodes = _collect_enrichable_nodes(data)
-                    display.state.enrich_total = len(enrich_nodes)
-
-                    if enrich_nodes:
-                        enrichment_results, enrich_cost = _run_enrichment_with_progress(
-                            enrich_nodes,
-                            facility,
-                            tname,
-                            cfg,
-                            cost_limit,
-                            batch_size,
-                            display,
-                        )
-                        display.state.enrich_cost = enrich_cost
-
-                # Collect units result — batched, so total wait = batches × timeout
-                units = units_future.result(timeout=7 * 180 + 60)
-                if units:
-                    updated = merge_units_into_data(data, units)
-                    display.state.units_completed = display.state.units_total
-                    display.state.units_found = len(units)
-                    display.units_queue.add(
-                        [
-                            {
-                                "path": f"{len(units)} paths with units",
-                                "detail": f"merged into {updated} nodes",
-                            }
-                        ]
-                    )
-                else:
-                    display.state.units_completed = max(display.state.units_total, 1)
-                    display.units_queue.add([{"path": "no units found", "detail": ""}])
-                display.tick()
-            except Exception:
-                logger.exception("Units collection failed")
-                display.state.units_completed = max(display.state.units_total, 1)
-                display.units_queue.add(
-                    [{"path": "failed", "detail": "partial results kept"}]
-                )
-                display.tick()
             finally:
-                executor.shutdown(wait=False)
-
-            # Phase 3: Ingest
-            if not dry_run:
-                from imas_codex.graph import GraphClient
-
-                n_versions = len(data["versions"])
-                display.state.ingest_total = total_nodes + n_versions
-                display.ingest_queue.add(
-                    [
-                        {
-                            "label": f"{n_versions} TreeModelVersions + {total_nodes:,} TreeNodes",
-                            "detail": "writing to Neo4j...",
-                        }
-                    ]
-                )
-                display.tick()
-
-                with GraphClient() as client:
-                    stats = ingest_static_tree(client, facility, data, dry_run=False)
-                    display.state.ingest_completed = (
-                        stats["versions_created"] + stats["nodes_created"]
-                    )
-                    if enrichment_results:
-                        _apply_enrichment(client, facility, tname, enrichment_results)
-                    display.ingest_queue.add(
-                        [
-                            {
-                                "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
-                                "detail": "complete",
-                            }
-                        ]
-                    )
-                    display.tick()
-            else:
-                stats = ingest_static_tree(None, facility, data, dry_run=True)
-                display.state.ingest_total = 1
-                display.state.ingest_completed = 1
-                display.ingest_queue.add(
-                    [
-                        {
-                            "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
-                            "detail": "DRY RUN — no writes",
-                        }
-                    ]
-                )
-                display.tick()
-
-            display.print_summary()
+                ticker_stop.set()
+                ticker_thread.join(timeout=2)
 
 
 # =============================================================================
