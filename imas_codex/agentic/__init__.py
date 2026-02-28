@@ -20,11 +20,9 @@ from imas_codex.agentic.agents import (
     AgentConfig,
     create_agent,
     create_litellm_model,
-    create_orchestrator,
     get_agent_monitor,
     get_enrichment_agent,
     get_model_id,
-    get_scout_agent,
 )
 
 # Enrichment
@@ -82,10 +80,8 @@ __all__ = [
     "AgentConfig",
     "create_agent",
     "create_litellm_model",
-    "create_orchestrator",
     "get_agent_monitor",
     "get_enrichment_agent",
-    "get_scout_agent",
     "get_model_id",
     "PRESETS",
     # Enrichment
