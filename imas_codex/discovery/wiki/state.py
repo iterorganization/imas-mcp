@@ -179,7 +179,7 @@ class WikiDiscoveryState:
         """
         if self._http_fetch_semaphore is None:
             self._http_fetch_semaphore = asyncio.Semaphore(self.max_wiki_connections)
-            logger.info(
+            logger.warning(
                 "Wiki HTTP semaphore initialized: max_connections=%d",
                 self.max_wiki_connections,
             )
@@ -242,7 +242,7 @@ class WikiDiscoveryState:
                 )
         else:
             if not self._wiki_healthy:
-                logger.info(
+                logger.warning(
                     "Wiki recovered: batch success rate %.0f%% (%d/%d). "
                     "Resuming normal operation.",
                     (successful / total) * 100,
@@ -279,7 +279,7 @@ class WikiDiscoveryState:
         to check if the wiki has recovered.
         """
         backoff = self.wiki_backoff_seconds
-        logger.info(
+        logger.warning(
             "Wiki overwhelmed — backing off %.0fs before retrying "
             "(consecutive failures: %d)",
             backoff,
@@ -291,7 +291,7 @@ class WikiDiscoveryState:
         try:
             probe_ok = await self._probe_wiki()
             if probe_ok:
-                logger.info("Wiki probe succeeded — marking as recovered")
+                logger.warning("Wiki probe succeeded \u2014 resuming operations")
                 self._consecutive_failed_batches = 0
                 self._wiki_healthy = True
             else:

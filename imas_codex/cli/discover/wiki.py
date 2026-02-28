@@ -101,7 +101,7 @@ def wiki(
     - SCAN: Enumerate all pages per site (runs once, cached in graph)
     - SCORE: LLM relevance evaluation with content fetch
     - INGEST: Chunk and embed high-score pages
-    - ARTIFACTS: Score and embed wiki attachments (PDFs, images, etc.)
+    - DOC: Score and embed wiki attachments (PDFs, images, etc.)
 
     Page scanning runs automatically on first invocation. Use --rescan
     to re-enumerate pages (adds new pages, keeps existing).
@@ -853,10 +853,16 @@ def wiki(
                 check_model=not _scan_only,
             )
 
-            # Suppress noisy INFO logs during rich display
+            # Suppress noisy INFO logs during rich display.
+            # Note: discovery.wiki.state is NOT suppressed — its WARNING-level
+            # messages about wiki overwhelm, backoff and recovery are critical.
             for mod in (
                 "imas_codex.embeddings",
-                "imas_codex.discovery.wiki",
+                "imas_codex.discovery.wiki.adapters",
+                "imas_codex.discovery.wiki.mediawiki",
+                "imas_codex.discovery.wiki.pipeline",
+                "imas_codex.discovery.wiki.scoring",
+                "imas_codex.discovery.wiki.prefetch",
             ):
                 logging.getLogger(mod).setLevel(logging.WARNING)
 
@@ -926,6 +932,8 @@ def wiki(
                                 artifacts_skipped=stats.get("artifacts_skipped", 0),
                                 images_scored=stats.get("images_scored", 0),
                                 pending_image_score=stats.get("pending_image_score", 0),
+                                historic_score_rate=stats.get("historic_score_rate"),
+                                historic_ingest_rate=stats.get("historic_ingest_rate"),
                             )
                         except asyncio.CancelledError:
                             raise
@@ -1156,6 +1164,8 @@ def wiki(
                             artifacts_skipped=stats.get("artifacts_skipped", 0),
                             images_scored=stats.get("images_scored", 0),
                             pending_image_score=stats.get("pending_image_score", 0),
+                            historic_score_rate=stats.get("historic_score_rate"),
+                            historic_ingest_rate=stats.get("historic_ingest_rate"),
                         )
                         display.tick()
                     except Exception:

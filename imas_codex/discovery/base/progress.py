@@ -605,7 +605,10 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     total = max(config.total, 1)
     ratio = min(config.completed / total, 1.0)
     pct = ratio * 100
-    row.append(make_bar(ratio, bar_width), style=config.style.split()[-1])
+    # When displayed percentage rounds to 100%, fill the bar completely
+    # to avoid a visual gap between "100%" text and a 99.x% bar
+    bar_ratio = 1.0 if round(pct) >= 100 else ratio
+    row.append(make_bar(bar_ratio, bar_width), style=config.style.split()[-1])
 
     # Right: count + pct only
     count_s = f" {config.completed:>6,}"
@@ -624,8 +627,6 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     rate_s = ""
     if config.rate and config.rate > 0:
         rate_s = f"{config.rate:.2f}/s"
-    elif config.is_complete:
-        rate_s = "--/s"
     rate_reserve = (len(rate_s) + 4) if rate_s else 0  # 4-char gap
 
     if config.has_content and config.has_structured_detail:

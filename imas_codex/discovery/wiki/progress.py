@@ -11,10 +11,10 @@ Design principles (matching paths parallel_progress.py):
 - Live embedding source indicator (shows remote/openrouter/local)
 
 Display layout: SERVERS → PIPELINE → RESOURCES
-  SCAN:   Content-aware LLM scoring (fetches content, scores with LLM)
-  PAGES:  Chunk and embed high-value pages (score >= 0.5)
+  SCORE:  Content-aware LLM scoring (fetches content, scores with LLM)
+  INGEST: Chunk and embed high-value pages (score >= 0.5)
   DOC:    Artifact scoring and ingestion pipeline
-  IMAGES: VLM captioning and scoring of wiki images
+  IMAGE:  VLM captioning and scoring of wiki images
 
 Progress is tracked against total pages in graph, not just this session.
 ETA/ETC metrics calculated like paths discovery.
@@ -205,6 +205,10 @@ class ProgressState:
     _final_ingest_rate: float | None = None
     _final_docs_rate: float | None = None
     _final_image_rate: float | None = None
+
+    # Historic rates from graph timestamps (fallback when no live rate)
+    _historic_score_rate: float | None = None
+    _historic_ingest_rate: float | None = None
 
     # Multi-site tracking (for facilities with multiple wiki instances)
     current_site_name: str = ""
@@ -457,10 +461,10 @@ class WikiProgressDisplay(BaseProgressDisplay):
     Layout: HEADER → SERVERS → PIPELINE → RESOURCES
 
     Pipeline stages (unified progress + activity per stage):
-    - SCAN: Content-aware LLM scoring (scanned → scored)
-    - PAGES: Chunk and embed high-value pages (scored → ingested)
+    - SCORE: Content-aware LLM scoring (scanned → scored)
+    - INGEST: Chunk and embed high-value pages (scored → ingested)
     - DOC: Score and ingest wiki artifacts (PDFs, CSVs, etc.)
-    - IMAGES: VLM captioning + scoring (ingested → captioned)
+    - IMAGE: VLM captioning + scoring (ingested → captioned)
 
     Each stage shows a 3-line block:
       Line 1: progress bar + count + pct
@@ -618,11 +622,11 @@ class WikiProgressDisplay(BaseProgressDisplay):
         """Build the unified pipeline section (progress + activity merged).
 
         Each pipeline stage gets a 3-line block:
-          Line 1: SCANx4  ━━━━━━━━━━━━━━━━━━    2,238  29%
+          Line 1: SCOREx4 ━━━━━━━━━━━━━━━━━━    2,238  29%
           Line 2:         0.00  general  Mailinglists            0.23/s
           Line 3:         Information regarding SPC...           $8.30
 
-        Stages: SCAN → PAGES → DOC → IMAGES
+        Stages: SCORE → INGEST → DOC → IMAGE
         """
         content_width = self.width - 6
         monitor = self.service_monitor
@@ -813,17 +817,23 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
         scan_only = self.state.scan_only
 
-        # SCAN rate/cost: prefer live rate, use accumulated graph cost
-        # (persists across sessions — graph is source of truth for cost)
-        scan_rate = self.state.score_rate or self.state._final_score_rate
+        # Rate priority: live EMA → final session snapshot → graph historic
+        scan_rate = (
+            self.state.score_rate
+            or self.state._final_score_rate
+            or self.state._historic_score_rate
+        )
         scan_cost: float | None = (
             self.state.accumulated_page_cost
             if self.state.accumulated_page_cost > 0
             else None
         )
 
-        # PAGE rate: prefer live, fall back to final snapshot
-        page_rate = self.state.ingest_rate or self.state._final_ingest_rate
+        page_rate = (
+            self.state.ingest_rate
+            or self.state._final_ingest_rate
+            or self.state._historic_ingest_rate
+        )
 
         # DOC rate/cost: prefer live rate, use accumulated graph cost
         docs_display_rate = art_rate or self.state._final_docs_rate
@@ -845,7 +855,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
         rows = [
             PipelineRowConfig(
-                name="SCAN",
+                name="SCORE",
                 style="bold blue",
                 completed=scored_pages,
                 total=score_total,
@@ -872,7 +882,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 ),
             ),
             PipelineRowConfig(
-                name="PAGE",
+                name="INGEST",
                 style="bold magenta",
                 completed=self.state.pages_ingested,
                 total=ingest_total,
@@ -957,7 +967,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             ),
         ]
 
-        # Embedding source indicator appended to PAGES row
+        # Embedding source indicator appended to INGEST row
         embed_indicator = self._get_embed_indicator()
         if embed_indicator and pages_count > 0 and pages_ann:
             pages_ann_with_embed = (
@@ -1005,20 +1015,39 @@ class WikiProgressDisplay(BaseProgressDisplay):
         if cpi and cpi > 0 and self.state.pending_image_score > 0:
             etc += self.state.pending_image_score * cpi
 
-        # Build stats
+        # Build stats — show pipeline outcome counts.
+        # The SCORE progress bar already shows total scored, so STATS
+        # focuses on what happened after scoring.
+        scored_total = (
+            self.state.pages_scored
+            + self.state.pages_ingested
+            + self.state.pages_skipped
+            + self.state.pages_failed
+        )
         stats: list[tuple[str, str, str]] = [
-            (
-                "scored",
-                str(self.state.pages_scored + self.state.pages_ingested),
-                "blue",
-            ),
-            ("ingested", str(self.state.pages_ingested), "magenta"),
-            ("skipped", str(self.state.pages_skipped), "yellow"),
+            ("scored", f"{scored_total:,}", "blue"),
+            ("ingested", f"{self.state.pages_ingested:,}", "magenta"),
+            ("skipped", f"{self.state.pages_skipped:,}", "yellow"),
         ]
 
-        # Pending work
-        pending_score = self.state.pending_score + self.state.pending_artifact_score
-        pending_ingest = self.state.pending_ingest + self.state.pending_artifact_ingest
+        # Pending work — only show categories with active workers
+        pending_parts: list[tuple[str, int]] = []
+        if self.state.pending_score > 0 or self.state.pending_artifact_score > 0:
+            pending_parts.append(
+                (
+                    "score",
+                    self.state.pending_score + self.state.pending_artifact_score,
+                )
+            )
+        if self.state.pending_ingest > 0 or self.state.pending_artifact_ingest > 0:
+            pending_parts.append(
+                (
+                    "ingest",
+                    self.state.pending_ingest + self.state.pending_artifact_ingest,
+                )
+            )
+        if self.state.pending_image_score > 0:
+            pending_parts.append(("image", self.state.pending_image_score))
 
         # Determine limit reason
         limit_reason = self.state.limit_reason
@@ -1033,11 +1062,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             scan_only=self.state.scan_only,
             limit_reason=limit_reason,
             stats=stats,
-            pending=[
-                ("score", pending_score),
-                ("ingest", pending_ingest),
-                ("image", self.state.pending_image_score),
-            ],
+            pending=pending_parts,
         )
         return build_resource_section(config, self.gauge_width)
 
@@ -1428,6 +1453,11 @@ class WikiProgressDisplay(BaseProgressDisplay):
             self.state.images_scored = kwargs["images_scored"]
         if "pending_image_score" in kwargs:
             self.state.pending_image_score = kwargs["pending_image_score"]
+        # Historic rates from graph timestamps (fallback for done workers)
+        if "historic_score_rate" in kwargs:
+            self.state._historic_score_rate = kwargs["historic_score_rate"]
+        if "historic_ingest_rate" in kwargs:
+            self.state._historic_ingest_rate = kwargs["historic_ingest_rate"]
         self._refresh()
 
     def set_site_info(self, site_name: str, site_index: int, total_sites: int) -> None:
@@ -1527,9 +1557,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
         """Build final summary text."""
         summary = Text()
 
-        # SCAN stats (pages)
+        # SCORE stats (pages)
         total_scored = self.state.pages_scored + self.state.pages_ingested
-        summary.append(f"{'  SCAN':<{LABEL_WIDTH}}", style="bold blue")
+        summary.append(f"{'  SCORE':<{LABEL_WIDTH}}", style="bold blue")
         summary.append(f"scored={total_scored:,}", style="blue")
         summary.append(f"  skipped={self.state.pages_skipped:,}", style="yellow")
         if self.state.pages_failed > 0:
@@ -1542,9 +1572,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
             summary.append(f"  {rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # PAGE stats
+        # INGEST stats
         total_ingested = self.state.pages_ingested
-        summary.append(f"{'  PAGE':<{LABEL_WIDTH}}", style="bold magenta")
+        summary.append(f"{'  INGEST':<{LABEL_WIDTH}}", style="bold magenta")
         summary.append(f"ingested={total_ingested:,}", style="magenta")
         if self.state.ingest_rate or self.state._final_ingest_rate:
             rate = self.state.ingest_rate or self.state._final_ingest_rate

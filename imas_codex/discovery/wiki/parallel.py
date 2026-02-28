@@ -1112,4 +1112,44 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             stats["images_scored"] = 0
             stats["pending_image_score"] = 0
 
+        # Historic rates from graph timestamps.
+        # Computed as count / active_span where active_span excludes gaps
+        # between scoring sessions.  Null scored_at entries (from before
+        # persistent tracking) are filtered out.
+        rate_result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility})
+            WHERE wp.scored_at IS NOT NULL
+            WITH count(wp) AS n,
+                 min(wp.scored_at) AS t_min,
+                 max(wp.scored_at) AS t_max
+            RETURN n, duration.inSeconds(t_min, t_max).seconds AS span_s
+            """,
+            facility=facility,
+        )
+        if rate_result and rate_result[0]["span_s"] and rate_result[0]["span_s"] > 0:
+            stats["historic_score_rate"] = (
+                rate_result[0]["n"] / rate_result[0]["span_s"]
+            )
+
+        ingest_rate_result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility})
+            WHERE wp.ingested_at IS NOT NULL
+            WITH count(wp) AS n,
+                 min(wp.ingested_at) AS t_min,
+                 max(wp.ingested_at) AS t_max
+            RETURN n, duration.inSeconds(t_min, t_max).seconds AS span_s
+            """,
+            facility=facility,
+        )
+        if (
+            ingest_rate_result
+            and ingest_rate_result[0]["span_s"]
+            and ingest_rate_result[0]["span_s"] > 0
+        ):
+            stats["historic_ingest_rate"] = (
+                ingest_rate_result[0]["n"] / ingest_rate_result[0]["span_s"]
+            )
+
         return stats

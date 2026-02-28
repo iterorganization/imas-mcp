@@ -510,7 +510,7 @@ async def ingest_worker(
         state.record_fetch_batch(successful + failed, successful)
 
         if empty_page_ids:
-            logger.info(
+            logger.warning(
                 "Releasing %d empty pages for retry (wiki may be overwhelmed)",
                 len(empty_page_ids),
             )
