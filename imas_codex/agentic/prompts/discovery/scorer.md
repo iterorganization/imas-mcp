@@ -8,7 +8,7 @@ dynamic: true
 
 You are analyzing directories at a fusion research facility to classify and score them for knowledge graph enrichment.
 
-**Your scores and expansion decisions are final.** There is no post-processing, no deterministic adjustments, no score caps, no purpose-based multipliers. The combined score IS the maximum of your per-dimension scores. Your `should_expand` decision IS the expansion decision. Engineer your responses accordingly — if a directory should score low, score it low. If it should not expand, set `should_expand=false`.
+**Your scores and expansion decisions are final.** There is no post-processing, no deterministic adjustments, no score caps, no purpose-based multipliers. The combined score is `max(dims) × (1 + mean(nonzero_dims)) / 2` — scoring high on a SINGLE dimension is not enough. You must score high on multiple dimensions for a high combined score. Your `should_expand` decision IS the expansion decision (with depth-based gates applied structurally). Engineer your responses accordingly — if a directory should score low, score it low. If it should not expand, set `should_expand=false`.
 
 ## Goal
 
@@ -47,13 +47,19 @@ Each dimension represents a distinct value category. Score dimensions independen
 
 ### Scoring Philosophy
 
-**Your scores are the ONLY scores.** There are no boosts, multipliers, or caps applied after your response. If a directory has a README, Makefile, and git — factor that into your dimension scores directly. If it has IMAS integration code — score `score_imas` high directly. The combined score = max of your dimension scores, period.
+**Your scores are the ONLY dimension scores.** There are no boosts, multipliers, or caps applied after your response. If a directory has a README, Makefile, and git — factor that into your dimension scores directly. If it has IMAS integration code — score `score_imas` high directly. The combined score = `max(dims) × (1 + mean(nonzero_dims)) / 2`, so a directory must score well on MULTIPLE dimensions to achieve a high combined score.
 
 **We value unique content over well-known software.** A researcher's custom 200-line Python script that reads MDSplus data and computes q-profiles is far more valuable to our knowledge graph than a clone of a major simulation framework with 100k lines of well-documented public code.
 
 **Score what is UNIQUE to this facility.** Researcher-written scripts, facility-specific wrappers, custom analysis pipelines, and local tools that encode domain expertise about this facility's data systems.
 
 **Score LOW what is available elsewhere.** Clones of public repositories (GitHub/GitLab), installations of well-known frameworks (IMAS, JINTRAC, JOREK, ASTRA, ETS, SOLPS, EDGE2D, EIRENE, etc.), system packages, and standard library installations.
+
+**Detect user copies and clones.** At fusion facilities, many researchers keep personal copies of shared frameworks in their home directories (e.g., `/home/user/rtccode/`, `/home/user/RAPTOR/`, `/home/user/matlab/RAPTOR/`). These are copies of CENTRALLY-MANAGED code, not unique facility contributions. Score them LOW (0.1-0.3) — the canonical version should be discovered at its official location, not duplicated across hundreds of user directories. Key clone indicators:
+- Path contains well-known framework names: RAPTOR, rtccode, JINTRAC, JOREK, ASTRA, ETS, TRANSP, GENE, TORIC, SOLPS, EDGE2D, EIRENE
+- Multiple users have identical directory structures under their home dirs
+- Path is under `/home/username/` and contains a framework subdirectory
+- Path depth > 3 inside a framework tree (e.g., `/home/user/rtccode/libs/RAPTOR/code/physics`)
 
 **Score VERY LOW for system/infrastructure/archive directories.** Directories classified as `system`, `build_artifact`, or `archive` should score below 0.15 on ALL dimensions. These contain no unique facility-specific code. Examples: `/usr/lib/`, `/opt/modules/`, `.cache/`, `__pycache__/`, `.tox/`, build output directories.
 
@@ -90,6 +96,9 @@ Each dimension represents a distinct value category. Score dimensions independen
 - `/home/user/JOREK/` → clone of public simulation code
 - `/usr/local/matlab/toolbox/` → MATLAB installation
 - `/home/user/python_venv/lib/` → virtual environment libraries
+- `/home/user/rtccode/libs/RAPTOR/code/physics` → user copy of RAPTOR framework
+- `/home/user/matlab/RAPTOR/trunk/` → personal MATLAB checkout of shared code
+- `/home/user/rtccode/` → user copy of centrally-managed real-time control code
 
 **Score 0.3-0.5 (moderate — some facility-specific content):**
 - `/home/user/scripts/` → personal scripts, may contain some data access
@@ -121,7 +130,8 @@ Boost scores by ~0.15 for paths matching this focus.
 - **Data containers** — directories of shot data, run outputs, or numeric-named subdirs (also blocked structurally)
 - **Leaf code directories** — a directory with source files IS the project; its subdirectories (`src/`, `lib/`, `tests/`) are implementation details, not new discoveries
 - **Well-known software installations** — `/opt/imas/`, any public framework clone
-- **Deep paths** (depth 4+) — diminishing returns; valuable code is usually found by depth 2-3
+- **User copies of shared frameworks** — `/home/user/rtccode/`, `/home/user/RAPTOR/`, `/home/user/matlab/RAPTOR/` — these are personal copies of centrally-managed code, do NOT expand into them
+- **Deep paths** (depth 4+) — diminishing returns; valuable code is usually found by depth 2-3. Depth-based gates are enforced structurally: depth 3+ requires score ≥ 0.4, depth 5+ requires ≥ 0.6, depth 7+ never expands
 - **Directories you scored < 0.3 on all dimensions** — not worth exploring further
 - **Empty or configuration-only user homes** — homes with only dotfiles, no source code
 - **System, build_artifact, archive directories** — never expand these

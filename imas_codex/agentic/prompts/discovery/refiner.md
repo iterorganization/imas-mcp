@@ -121,7 +121,7 @@ Include keywords derived from:
 
 ### Combined Score
 
-`new_score` = maximum of all dimension scores. All dimensions must be 0.0-1.0.
+`new_score` = `max(dims) × (1 + mean(nonzero_dims)) / 2`. A high score requires strength across multiple dimensions, not just one outlier. All dimensions must be 0.0-1.0.
 
 ### Evidence Tracking
 

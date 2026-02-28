@@ -17,7 +17,7 @@ class TestGroundedScore:
     """Tests for the combined_score() function."""
 
     def test_max_of_dimensions(self):
-        """Score is max of all dimension scores."""
+        """Score uses breadth-weighted formula: max × (1 + mean_nonzero) / 2."""
         scores = {
             "score_modeling_code": 0.0,
             "score_analysis_code": 0.8,
@@ -31,7 +31,8 @@ class TestGroundedScore:
             "score_imas": 0.0,
         }
         result = combined_score(scores, {}, ResourcePurpose.analysis_code)
-        assert result == pytest.approx(0.8, abs=0.01)
+        # Single-dim: 0.8 × (1 + 0.8) / 2 = 0.72
+        assert result == pytest.approx(0.72, abs=0.01)
 
     def test_container_with_zero_scores(self):
         """Container with all-zero scores gets 0.0."""
@@ -57,11 +58,11 @@ class TestGroundedScore:
         """System directories get no penalty — LLM scores them low via prompt."""
         scores = {"score_modeling_code": 0.5}
         result = combined_score(scores, {}, ResourcePurpose.system)
-        # No multiplier — score is just max(scores)
-        assert result == pytest.approx(0.5, abs=0.01)
+        # Single-dim: 0.5 × (1 + 0.5) / 2 = 0.375
+        assert result == pytest.approx(0.375, abs=0.01)
 
-    def test_score_is_max_of_dimensions(self):
-        """Score is simply max of dimension scores, no boosts or caps."""
+    def test_score_rewards_breadth(self):
+        """Score rewards paths that excel across multiple dimensions."""
         scores = {
             "score_modeling_code": 0.95,
             "score_imas": 0.5,
@@ -72,8 +73,20 @@ class TestGroundedScore:
             "has_git": True,
         }
         result = combined_score(scores, input_data, ResourcePurpose.modeling_code)
-        # No boosts — score is just max(0.95, 0.5) = 0.95
-        assert result == pytest.approx(0.95, abs=0.01)
+        # Multi-dim: 0.95 × (1 + 0.725) / 2 = 0.819
+        assert result == pytest.approx(0.819, abs=0.01)
+
+    def test_single_outlier_reduced(self):
+        """A single high dimension with all others zero is significantly reduced."""
+        scores = {
+            "score_modeling_code": 0.9,
+            "score_analysis_code": 0.0,
+            "score_data_access": 0.0,
+        }
+        result = combined_score(scores, {}, ResourcePurpose.modeling_code)
+        # 0.9 × (1 + 0.9) / 2 = 0.855 (less than pure max of 0.9)
+        assert result == pytest.approx(0.855, abs=0.01)
+        assert result < 0.9  # Must be less than the pure max
 
 
 class TestContainerExpansion:
