@@ -13,7 +13,7 @@ Design principles (matching paths parallel_progress.py):
 Display layout: SERVERS → PIPELINE → RESOURCES
   SCORE:  Content-aware LLM scoring (fetches content, scores with LLM)
   INGEST: Chunk and embed high-value pages (score >= 0.5)
-  DOC:    Artifact scoring and ingestion pipeline
+  FILE:   Score and embed wiki file attachments (PDFs, CSVs, etc.)
   IMAGE:  VLM captioning and scoring of wiki images
 
 Progress is tracked against total pages in graph, not just this session.
@@ -463,7 +463,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
     Pipeline stages (unified progress + activity per stage):
     - SCORE: Content-aware LLM scoring (scanned → scored)
     - INGEST: Chunk and embed high-value pages (scored → ingested)
-    - DOC: Score and ingest wiki artifacts (PDFs, CSVs, etc.)
+    - FILE: Score and embed wiki file attachments (PDFs, CSVs, etc.)
     - IMAGE: VLM captioning + scoring (ingested → captioned)
 
     Each stage shows a 3-line block:
@@ -626,7 +626,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
           Line 2:         0.00  general  Mailinglists            0.23/s
           Line 3:         Information regarding SPC...           $8.30
 
-        Stages: SCORE → INGEST → DOC → IMAGE
+        Stages: SCORE → INGEST → FILE → IMAGE
         """
         content_width = self.width - 6
         monitor = self.service_monitor
@@ -906,7 +906,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 ),
             ),
             PipelineRowConfig(
-                name="DOC",
+                name="FILE",
                 style="bold yellow",
                 completed=art_completed,
                 total=max(art_total, 1),
@@ -1581,14 +1581,14 @@ class WikiProgressDisplay(BaseProgressDisplay):
             summary.append(f"  {rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # DOC stats (artifacts)
+        # FILE stats (artifacts)
         art_total = self.state.total_artifacts
         if art_total > 0:
             art_ingested = self.state.docs_ingested
             art_scored = self.state.docs_scored
             art_failed = self.state.artifacts_failed
             art_deferred = self.state.artifacts_deferred
-            summary.append(f"{'  DOC':<{LABEL_WIDTH}}", style="bold yellow")
+            summary.append(f"{'  FILE':<{LABEL_WIDTH}}", style="bold yellow")
             summary.append(f"scored={art_scored:,}", style="yellow")
             summary.append(f"  ingested={art_ingested:,}", style="yellow")
             if art_failed > 0:

@@ -101,7 +101,7 @@ def wiki(
     - SCAN: Enumerate all pages per site (runs once, cached in graph)
     - SCORE: LLM relevance evaluation with content fetch
     - INGEST: Chunk and embed high-score pages
-    - DOC: Score and embed wiki attachments (PDFs, images, etc.)
+    - FILE: Score and embed wiki file attachments (PDFs, CSVs, etc.)
 
     Page scanning runs automatically on first invocation. Use --rescan
     to re-enumerate pages (adds new pages, keeps existing).
