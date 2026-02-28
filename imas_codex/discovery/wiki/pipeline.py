@@ -368,7 +368,9 @@ class MediaWikiExtractor(HTMLParser):
         self.text_parts: list[str] = []
         self.current_section: str = ""
         self.sections: dict[str, str] = {}
+        self._section_start: int = 0  # Index into text_parts for current section
         self._skip_depth = 0
+        self._skip_inline: list[str] = []  # Non-div tags skipped by id/class
         self._content_depth = 0
         self._in_heading = False
         self._heading_text = ""
@@ -408,6 +410,8 @@ class MediaWikiExtractor(HTMLParser):
             self._skip_depth += 1
             if tag == "div":
                 self._skipping_div += 1
+            else:
+                self._skip_inline.append(tag)
             return
 
         # Skip by ID patterns (common MediaWiki navigation)
@@ -421,6 +425,8 @@ class MediaWikiExtractor(HTMLParser):
                     self._skip_depth += 1
                     if tag == "div":
                         self._skipping_div += 1
+                    else:
+                        self._skip_inline.append(tag)
                     return
 
         # Track when we enter content area
@@ -451,6 +457,12 @@ class MediaWikiExtractor(HTMLParser):
             self._skip_depth = max(0, self._skip_depth - 1)
             return
 
+        # Handle end of non-div tags that were skipped by id/class
+        if self._skip_inline and tag == self._skip_inline[-1]:
+            self._skip_inline.pop()
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+
         # Track end of skipped divs
         if tag == "div" and self._skipping_div > 0:
             self._skipping_div -= 1
@@ -467,10 +479,12 @@ class MediaWikiExtractor(HTMLParser):
             self._in_heading = False
             if self._heading_text.strip():
                 # Save previous section
-                if self.current_section and self.text_parts:
-                    self.sections[self.current_section] = " ".join(self.text_parts)
+                if self.current_section:
+                    section_text = " ".join(self.text_parts[self._section_start :])
+                    if section_text.strip():
+                        self.sections[self.current_section] = section_text
                 self.current_section = self._heading_text.strip()
-                self.text_parts = []
+                self._section_start = len(self.text_parts)
                 self.text_parts.append(f"\n## {self._heading_text.strip()}\n")
         elif tag == "table":
             self._in_table = False
@@ -501,7 +515,7 @@ class MediaWikiExtractor(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         # Skip if we're in a skipped section
-        if self._skip_depth > 0:
+        if self._skip_depth > 0 or self._skip_inline:
             return
 
         text = data.strip() if not self._in_pre else data
@@ -520,8 +534,10 @@ class MediaWikiExtractor(HTMLParser):
     def get_result(self) -> tuple[str, dict[str, str]]:
         """Get extracted text and sections dict."""
         # Save final section
-        if self.current_section and self.text_parts:
-            self.sections[self.current_section] = " ".join(self.text_parts)
+        if self.current_section:
+            section_text = " ".join(self.text_parts[self._section_start :])
+            if section_text.strip():
+                self.sections[self.current_section] = section_text
 
         full_text = " ".join(self.text_parts)
         # Clean up whitespace (but preserve code blocks)
