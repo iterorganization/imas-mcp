@@ -349,6 +349,14 @@ classes:
       ssh_available:
         description: Whether SSH tunnel is available as fallback
         range: boolean
+      max_wiki_connections:
+        description: >-
+          Maximum concurrent HTTP connections to this wiki.
+          Controls the shared semaphore across all workers.
+          Lower values are safer for older MediaWiki installations
+          (e.g. MediaWiki 1.16 + MariaDB 5.5). Default 10.
+        range: integer
+        ifabsent: int(10)
 
   DataSourceBase:
     description: >-

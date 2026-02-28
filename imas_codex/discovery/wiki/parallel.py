@@ -436,6 +436,7 @@ async def run_parallel_wiki_discovery(
     on_image_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
+    max_wiki_connections: int = 10,
 ) -> dict[str, Any]:
     """Run parallel wiki discovery with async workers.
 
@@ -493,6 +494,7 @@ async def run_parallel_wiki_discovery(
         score_only=score_only,
         store_images=store_images,
         deadline=deadline,
+        max_wiki_connections=max_wiki_connections,
     )
 
     # Pre-warm SSH ControlMaster if using SSH transport.

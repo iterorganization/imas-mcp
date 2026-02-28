@@ -703,6 +703,7 @@ def wiki(
                 "auth_type": auth_type,
                 "credential_service": credential_service,
                 "short_name": short_name,
+                "max_wiki_connections": site.get("max_wiki_connections", 10),
             }
         )
 
@@ -822,6 +823,7 @@ def wiki(
                             on_scan_progress=log_on_scan,
                             on_score_progress=log_on_score,
                             on_ingest_progress=log_on_ingest,
+                            max_wiki_connections=sc.get("max_wiki_connections", 10),
                         )
                     except Exception as e:
                         wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
@@ -1089,6 +1091,7 @@ def wiki(
                                 on_image_progress=on_image,
                                 on_worker_status=on_worker_status,
                                 service_monitor=service_monitor,
+                                max_wiki_connections=sc.get("max_wiki_connections", 10),
                             )
                         except Exception as e:
                             wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)

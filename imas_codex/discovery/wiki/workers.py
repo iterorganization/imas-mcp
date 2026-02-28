@@ -152,6 +152,14 @@ async def score_worker(
                 }
 
     while not state.should_stop_scoring():
+        # Gate on wiki health — backoff when wiki is overwhelmed
+        if state.wiki_overwhelmed:
+            if on_progress:
+                on_progress("wiki overwhelmed — backing off", state.score_stats)
+            await state.await_wiki_recovery()
+            if state.should_stop_scoring():
+                break
+
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
             if on_progress:
@@ -229,6 +237,9 @@ async def score_worker(
         pages_with_content = [p for p in fetched_pages if p.get("preview_text")]
         pages_no_content = [p for p in fetched_pages if not p.get("preview_text")]
 
+        # Track fetch outcomes for wiki overwhelm detection
+        state.record_fetch_batch(len(fetched_pages), len(pages_with_content))
+
         if pages_no_content:
             logger.info(
                 "score_worker %s: %d/%d pages had no content (fetch failed), "
@@ -245,10 +256,14 @@ async def score_worker(
             logger.debug(
                 f"score_worker {worker_id}: no pages with content, skipping LLM"
             )
-            # All fetches failed — likely a connectivity issue.
-            # Re-check service health before claiming more work so we
-            # don't flood with timeout errors.
-            if state.service_monitor and not state.service_monitor.all_healthy:
+            # All fetches failed — wiki may be overwhelmed or connectivity down.
+            # Check wiki overwhelm first (exponential backoff + probe), then
+            # fall back to service monitor for infrastructure-level issues.
+            if state.wiki_overwhelmed:
+                if on_progress:
+                    on_progress("wiki overwhelmed — backing off", state.score_stats)
+                await state.await_wiki_recovery()
+            elif state.service_monitor and not state.service_monitor.all_healthy:
                 if on_progress:
                     on_progress("paused", state.score_stats)
                 await state.service_monitor.await_services_ready()
@@ -367,9 +382,12 @@ async def ingest_worker(
     )
 
     # Use effective semaphore: SSH semaphore (4) for SSH-based sites,
-    # HTTP semaphore (30) for direct HTTP. Prevents overwhelming remote
-    # hosts with concurrent SSH subprocess calls.
+    # HTTP semaphore (max_wiki_connections) for direct HTTP.
     http_semaphore = state.effective_fetch_semaphore
+
+    # Track pages that returned 0 chunks so we can release them as a batch
+    # for retry instead of permanently marking them failed.
+    empty_page_ids: list[str] = []
 
     async def process_single_page(page: dict) -> dict | None:
         """Process a single page with semaphore-limited concurrency."""
@@ -396,12 +414,12 @@ async def ingest_worker(
                     logger.warning(
                         "Page %s produced 0 chunks (empty or unfetchable)", page_id
                     )
-                    await asyncio.to_thread(
-                        mark_page_failed,
-                        page_id,
-                        "No chunks produced (empty or unfetchable content)",
-                        WikiPageStatus.scored.value,
-                    )
+                    # Release for retry instead of permanent failure.
+                    # The page was previously scored (had content then), so
+                    # 0 chunks likely means a transient fetch failure.
+                    # _release_claimed_pages tracks fetch_retries and will
+                    # mark as failed after max retries to prevent infinite loops.
+                    empty_page_ids.append(page_id)
                     return None
                 return {
                     "id": page_id,
@@ -419,6 +437,14 @@ async def ingest_worker(
                 return None
 
     while not state.should_stop_ingesting():
+        # Gate on wiki health — backoff when wiki is overwhelmed
+        if state.wiki_overwhelmed:
+            if on_progress:
+                on_progress("wiki overwhelmed — backing off", state.ingest_stats)
+            await state.await_wiki_recovery()
+            if state.should_stop_ingesting():
+                break
+
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
             if on_progress:
@@ -475,6 +501,21 @@ async def ingest_worker(
 
         # Filter out None results (failed pages)
         results = [r for r in results_raw if r is not None]
+
+        # Track fetch outcomes for wiki overwhelm detection.
+        # Pages that produced 0 chunks (empty_page_ids) are transient
+        # failures — release them for retry instead of permanent failure.
+        successful = len(results)
+        failed = len(empty_page_ids)
+        state.record_fetch_batch(successful + failed, successful)
+
+        if empty_page_ids:
+            logger.info(
+                "Releasing %d empty pages for retry (wiki may be overwhelmed)",
+                len(empty_page_ids),
+            )
+            await asyncio.to_thread(_release_claimed_pages, empty_page_ids)
+            empty_page_ids.clear()
 
         # Run blocking Neo4j call in thread pool
         await asyncio.to_thread(mark_pages_ingested, state.facility, results)

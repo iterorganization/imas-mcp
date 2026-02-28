@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -61,9 +62,14 @@ class WikiDiscoveryState:
     _confluence_client: Any = field(default=None, repr=False)
     _confluence_client_lock: Any = field(default=None, repr=False)
 
+    # Maximum concurrent wiki HTTP connections.  Configurable per-facility
+    # via ``wiki_sites[].max_connections`` in the facility YAML.  The default
+    # of 10 is conservative for older MediaWiki installs (e.g. TCV's 1.16.5
+    # + MariaDB 5.5).  Increase for modern wikis that can handle more load.
+    max_wiki_connections: int = 10
+
     # Shared HTTP fetch semaphore — bounds total concurrent wiki HTTP requests
-    # across ALL workers (score + ingest) to prevent httpx PoolTimeout.
-    # Default 30 keeps us well under httpx pool max_connections=50.
+    # across ALL workers (score + ingest) to prevent overwhelming the wiki.
     _http_fetch_semaphore: Any = field(default=None, repr=False)
 
     # SSH fetch semaphore — bounds concurrent SSH subprocess calls.
@@ -71,6 +77,11 @@ class WikiDiscoveryState:
     # processes can race during master establishment or create load.
     # Default 4 keeps footprint low on remote hosts.
     _ssh_fetch_semaphore: Any = field(default=None, repr=False)
+
+    # Fetch health tracking — detects when the wiki is overwhelmed and
+    # should be given time to recover before we claim more work.
+    _consecutive_failed_batches: int = 0
+    _wiki_healthy: bool = True
 
     # Limits
     cost_limit: float = 10.0
@@ -163,10 +174,15 @@ class WikiDiscoveryState:
 
         Lazily initialized because asyncio.Semaphore needs a running event loop.
         Shared across ALL score and ingest workers so total concurrency stays
-        within the httpx connection pool capacity.
+        within the wiki's capacity.  Uses ``max_wiki_connections`` which
+        defaults to 10 and can be overridden per-facility.
         """
         if self._http_fetch_semaphore is None:
-            self._http_fetch_semaphore = asyncio.Semaphore(30)
+            self._http_fetch_semaphore = asyncio.Semaphore(self.max_wiki_connections)
+            logger.info(
+                "Wiki HTTP semaphore initialized: max_connections=%d",
+                self.max_wiki_connections,
+            )
         return self._http_fetch_semaphore
 
     @property
@@ -183,10 +199,141 @@ class WikiDiscoveryState:
 
     @property
     def effective_fetch_semaphore(self) -> asyncio.Semaphore:
-        """Return SSH semaphore for SSH-based sites, HTTP semaphore otherwise."""
+        """Return the appropriate fetch semaphore.
+
+        SSH semaphore (4) for sites that use SSH subprocess curl as the
+        fetch mechanism (ssh_host set, no web auth).  HTTP semaphore
+        (max_wiki_connections) for sites using native async HTTP — this
+        includes Tequila, Keycloak, Basic auth, and direct access.
+        """
         if self.ssh_host and self.auth_type in (None, "none"):
             return self.ssh_fetch_semaphore
         return self.http_fetch_semaphore
+
+    # ------------------------------------------------------------------
+    # Fetch health tracking
+    # ------------------------------------------------------------------
+
+    def record_fetch_batch(self, total: int, successful: int) -> None:
+        """Record the outcome of a fetch batch for overwhelm detection.
+
+        When most pages in a batch fail to return content, the wiki is
+        likely overwhelmed.  After several consecutive bad batches, the
+        ``wiki_overwhelmed`` property becomes True and workers should
+        pause before claiming more work.
+
+        Args:
+            total: Total pages in the batch
+            successful: Pages that returned usable content
+        """
+        if total == 0:
+            return
+        failure_rate = 1.0 - (successful / total)
+        if failure_rate >= 0.5:
+            self._consecutive_failed_batches += 1
+            if self._wiki_healthy and self._consecutive_failed_batches >= 3:
+                self._wiki_healthy = False
+                logger.warning(
+                    "Wiki overwhelmed: %d consecutive batches with >50%% fetch "
+                    "failures (last batch: %d/%d failed). Workers will pause.",
+                    self._consecutive_failed_batches,
+                    total - successful,
+                    total,
+                )
+        else:
+            if not self._wiki_healthy:
+                logger.info(
+                    "Wiki recovered: batch success rate %.0f%% (%d/%d). "
+                    "Resuming normal operation.",
+                    (successful / total) * 100,
+                    successful,
+                    total,
+                )
+            self._consecutive_failed_batches = 0
+            self._wiki_healthy = True
+
+    @property
+    def wiki_overwhelmed(self) -> bool:
+        """True when the wiki is not responding to most requests.
+
+        Workers should pause and backoff before claiming more work.
+        """
+        return not self._wiki_healthy
+
+    @property
+    def wiki_backoff_seconds(self) -> float:
+        """Exponential backoff interval when wiki is overwhelmed.
+
+        Starts at 15s, doubles each consecutive bad batch, caps at 120s.
+        """
+        if self._wiki_healthy:
+            return 0.0
+        exponent = min(self._consecutive_failed_batches - 2, 4)  # 2^0..2^4
+        return min(15.0 * math.pow(2, exponent), 120.0)
+
+    async def await_wiki_recovery(self) -> None:
+        """Pause for backoff period and then probe wiki health.
+
+        Called by workers when ``wiki_overwhelmed`` is True.  Sleeps for
+        the current backoff interval, then makes a single probe request
+        to check if the wiki has recovered.
+        """
+        backoff = self.wiki_backoff_seconds
+        logger.info(
+            "Wiki overwhelmed — backing off %.0fs before retrying "
+            "(consecutive failures: %d)",
+            backoff,
+            self._consecutive_failed_batches,
+        )
+        await asyncio.sleep(backoff)
+
+        # Probe wiki health with a single lightweight request
+        try:
+            probe_ok = await self._probe_wiki()
+            if probe_ok:
+                logger.info("Wiki probe succeeded — marking as recovered")
+                self._consecutive_failed_batches = 0
+                self._wiki_healthy = True
+            else:
+                self._consecutive_failed_batches += 1
+                logger.warning(
+                    "Wiki probe failed — still overwhelmed (consecutive failures: %d)",
+                    self._consecutive_failed_batches,
+                )
+        except Exception as e:
+            self._consecutive_failed_batches += 1
+            logger.warning("Wiki probe error: %s", e)
+
+    async def _probe_wiki(self) -> bool:
+        """Make a single lightweight request to check wiki responsiveness."""
+        import subprocess
+
+        if self.ssh_host:
+            cmd = (
+                f'curl -sk --noproxy "*" -o /dev/null '
+                f'-w "%{{http_code}}" "{self.base_url}" 2>/dev/null'
+            )
+            try:
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    ["ssh", self.ssh_host, cmd],
+                    capture_output=True,
+                    timeout=15,
+                )
+                code = result.stdout.decode().strip()
+                return code.isdigit() and int(code) >= 200 and int(code) < 500
+            except Exception:
+                return False
+        else:
+            # Direct HTTP probe
+            import urllib.request
+
+            try:
+                req = urllib.request.Request(self.base_url, method="HEAD")
+                with urllib.request.urlopen(req, timeout=10):
+                    return True
+            except Exception:
+                return False
 
     @property
     def total_cost(self) -> float:
