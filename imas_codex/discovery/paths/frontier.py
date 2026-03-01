@@ -1071,6 +1071,8 @@ def apply_expansion_overrides(
     1. VCS accessibility — if the repo's remote is accessible elsewhere
        (config patterns or scanner probe), block expansion and enrichment.
     2. Data containers — modeling_data/experimental_data never expand.
+    3. Large containers — shallow dirs with many subdirs (e.g. /home, /usr)
+       where du/rg would timeout.
 
     Mutates the score dicts directly before they are persisted.
 
@@ -1084,41 +1086,48 @@ def apply_expansion_overrides(
     path_ids = [f"{facility}:{s['path']}" for s in scores]
 
     with GraphClient() as gc:
-        # Batch-fetch VCS data for all paths in one query
-        vcs_rows = gc.query(
+        # Batch-fetch VCS + structural data for all paths in one query
+        path_rows = gc.query(
             """
             UNWIND $ids AS pid
             MATCH (p:FacilityPath {id: pid})
             RETURN p.id AS id, p.vcs_type AS vcs_type, p.has_git AS has_git,
                    p.vcs_remote_url AS vcs_remote_url,
-                   p.vcs_remote_accessible AS vcs_remote_accessible
+                   p.vcs_remote_accessible AS vcs_remote_accessible,
+                   p.depth AS depth, p.total_dirs AS total_dirs,
+                   p.total_files AS total_files
             """,
             ids=path_ids,
         )
 
-    vcs_by_id = {r["id"]: r for r in (vcs_rows or [])}
+    info_by_id = {r["id"]: r for r in (path_rows or [])}
 
     data_purposes = {"modeling_data", "experimental_data"}
 
+    # Thresholds for enrichment guards — du/rg timeout on large trees
+    max_dirs_for_enrich = 500
+    max_dirs_shallow = 50  # stricter limit for depth <= 1
+
     for score_data in scores:
         path_id = f"{facility}:{score_data['path']}"
-        vcs_row = vcs_by_id.get(path_id)
+        path_info = info_by_id.get(path_id, {})
 
         # VCS accessibility override
-        if vcs_row:
-            has_vcs = vcs_row["vcs_type"] is not None or vcs_row.get("has_git") is True
-            if has_vcs and is_repo_accessible_elsewhere(
-                remote_url=vcs_row.get("vcs_remote_url"),
-                scanner_accessible=vcs_row.get("vcs_remote_accessible"),
-                facility=facility,
-            ):
-                score_data["should_expand"] = False
-                score_data["should_enrich"] = False
-                vcs_label = vcs_row["vcs_type"] or "git"
-                score_data.setdefault(
-                    "enrich_skip_reason",
-                    f"{vcs_label} repo accessible elsewhere",
-                )
+        has_vcs = (
+            path_info.get("vcs_type") is not None or path_info.get("has_git") is True
+        )
+        if has_vcs and is_repo_accessible_elsewhere(
+            remote_url=path_info.get("vcs_remote_url"),
+            scanner_accessible=path_info.get("vcs_remote_accessible"),
+            facility=facility,
+        ):
+            score_data["should_expand"] = False
+            score_data["should_enrich"] = False
+            vcs_label = path_info.get("vcs_type") or "git"
+            score_data.setdefault(
+                "enrich_skip_reason",
+                f"{vcs_label} repo accessible elsewhere",
+            )
 
         # Data container override
         if score_data.get("path_purpose") in data_purposes:
@@ -1127,6 +1136,28 @@ def apply_expansion_overrides(
             score_data.setdefault(
                 "enrich_skip_reason", "data container - too many files"
             )
+
+        # Large container guard — prevent du/rg timeouts
+        if score_data.get("should_enrich"):
+            depth = path_info.get("depth")
+            total_dirs = path_info.get("total_dirs") or 0
+
+            # Shallow paths (depth 0-1) with many subdirs are containers
+            # like /home, /usr, /opt — du and rg will timeout
+            if depth is not None and depth <= 1 and total_dirs > max_dirs_shallow:
+                score_data["should_enrich"] = False
+                score_data.setdefault(
+                    "enrich_skip_reason",
+                    f"shallow container (depth={depth}, {total_dirs} subdirs)",
+                )
+
+            # Any path with excessive subdirectories will timeout du/rg
+            elif total_dirs > max_dirs_for_enrich:
+                score_data["should_enrich"] = False
+                score_data.setdefault(
+                    "enrich_skip_reason",
+                    f"too many subdirs ({total_dirs}) for du/rg",
+                )
 
 
 def mark_paths_scored(
@@ -2679,6 +2710,7 @@ def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, 
               AND p.should_enrich = true
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime($cutoff))
+              AND (p.total_dirs IS NULL OR p.total_dirs <= 500)
             WITH p
             ORDER BY p.score DESC, p.depth ASC
             LIMIT $limit

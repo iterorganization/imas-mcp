@@ -559,6 +559,7 @@ def claim_paths_for_enriching(
               AND {enrich_clause}
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
+              AND (p.total_dirs IS NULL OR p.total_dirs <= 500)
             {root_clause}
             WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
             SET p.claimed_at = datetime()
@@ -1171,14 +1172,26 @@ async def score_worker(
         state.score_phase.record_activity(len(paths))
         logger.debug(f"Score worker claimed {len(paths)} paths")
 
-        # Split paths into empty (auto-skip) and non-empty (need LLM)
+        # Split paths into auto-skip categories and paths needing LLM
         empty_paths = []
+        accessible_vcs_paths = []
         paths_to_score = []
+
+        from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
+
         for p in paths:
             total_files = p.get("total_files", 0) or 0
             total_dirs = p.get("total_dirs", 0) or 0
             if total_files == 0 and total_dirs == 0:
                 empty_paths.append(p)
+            elif (
+                p.get("has_git") or p.get("vcs_type")
+            ) and is_repo_accessible_elsewhere(
+                remote_url=p.get("vcs_remote_url") or p.get("git_remote_url"),
+                scanner_accessible=p.get("vcs_remote_accessible"),
+                facility=state.facility,
+            ):
+                accessible_vcs_paths.append(p)
             else:
                 paths_to_score.append(p)
 
@@ -1233,6 +1246,79 @@ async def score_worker(
                 # Only skipped paths, show progress
                 on_progress(
                     f"skipped {len(empty_paths)} empty",
+                    state.score_stats,
+                    skipped_results,
+                )
+                if not accessible_vcs_paths and not paths_to_score:
+                    continue
+
+        # Auto-skip VCS repos with accessible remotes (no LLM needed)
+        if accessible_vcs_paths:
+            vcs_skip_data = [
+                {
+                    "path": p["path"],
+                    "score": 0.15,
+                    "path_purpose": "software_project",
+                    "description": (
+                        f"VCS repository accessible elsewhere"
+                        f" ({p.get('vcs_remote_url') or p.get('git_remote_url', '')})"
+                    ),
+                    "score_modeling_code": 0.1,
+                    "score_analysis_code": 0.1,
+                    "score_operations_code": 0.0,
+                    "score_modeling_data": 0.0,
+                    "score_experimental_data": 0.0,
+                    "score_data_access": 0.1,
+                    "score_workflow": 0.0,
+                    "score_visualization": 0.0,
+                    "score_documentation": 0.0,
+                    "score_imas": 0.0,
+                    "score_convention": 0.0,
+                    "should_expand": False,
+                    "should_enrich": False,
+                    "skip_reason": (
+                        f"{p.get('vcs_type') or 'git'} repo accessible elsewhere"
+                    ),
+                    "enrich_skip_reason": (
+                        f"{p.get('vcs_type') or 'git'} repo accessible elsewhere"
+                    ),
+                }
+                for p in accessible_vcs_paths
+            ]
+            await loop.run_in_executor(
+                None,
+                lambda sd=vcs_skip_data: mark_score_complete(state.facility, sd),
+            )
+            state.score_stats.processed += len(accessible_vcs_paths)
+
+            vcs_results = [
+                {
+                    "path": p["path"],
+                    "score": 0.15,
+                    "label": "software_project",
+                    "path_purpose": "software_project",
+                    "description": (
+                        f"VCS repository accessible elsewhere"
+                        f" ({p.get('vcs_remote_url') or p.get('git_remote_url', '')})"
+                    ),
+                    "score_imas": 0.0,
+                    "score_convention": 0.0,
+                    "skip_reason": (
+                        f"{p.get('vcs_type') or 'git'} repo accessible elsewhere"
+                    ),
+                    "should_expand": False,
+                    "total_files": p.get("total_files", 0),
+                }
+                for p in accessible_vcs_paths
+            ]
+            skipped_results.extend(vcs_results)
+
+            if on_progress and not paths_to_score:
+                skipped_msg = (
+                    f"skipped {len(empty_paths)} empty, " if empty_paths else "skipped "
+                )
+                on_progress(
+                    f"{skipped_msg}{len(accessible_vcs_paths)} accessible VCS repos",
                     state.score_stats,
                     skipped_results,
                 )

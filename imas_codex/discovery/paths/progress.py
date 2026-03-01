@@ -85,6 +85,18 @@ class EnrichItem:
     warnings: list[str] = field(default_factory=list)  # e.g., ["tokei_timeout"]
 
 
+@dataclass
+class RefineItem:
+    """Current refine activity."""
+
+    path: str
+    score: float | None = None
+    previous_score: float | None = None
+    purpose: str = ""
+    description: str = ""
+    adjustment_reason: str = ""
+
+
 # ============================================================================
 # Progress State
 # ============================================================================
@@ -158,6 +170,15 @@ class ProgressState:
             rate=0.5, max_rate=2.5, min_display_time=0.4
         )
     )
+    refine_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.5, max_rate=2.0, min_display_time=0.5
+        )
+    )
+
+    # Current refine item (for streaming display)
+    current_refine: RefineItem | None = None
+    refine_processing: bool = False
 
     # Tracking
     scored_paths: set[str] = field(default_factory=set)
@@ -529,6 +550,51 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     )
             enrich_detail = parts
 
+        # REFINE activity
+        refine_count, refine_ann = self._count_group_workers("refine")
+        refine = self.state.current_refine
+        refine_complete = self._worker_complete("refine") and not refine
+
+        refine_text = ""
+        refine_detail: list[tuple[str, str]] | None = None
+        refine_queue_empty = self.state.refine_queue.is_empty()
+        if refine and (not refine_queue_empty or self.state.refine_processing):
+            refine_text = clip_path(refine.path, content_width - LABEL_WIDTH - 14)
+            parts = []
+            if refine.score is not None:
+                from imas_codex.settings import get_discovery_threshold
+
+                _threshold = get_discovery_threshold()
+                style = (
+                    "bold green"
+                    if refine.score >= _threshold
+                    else "yellow"
+                    if refine.score >= 0.4
+                    else "red"
+                )
+                parts.append((f"{refine.score:.2f}", style))
+                if refine.previous_score is not None:
+                    delta = refine.score - refine.previous_score
+                    delta_str = f"{delta:+.2f}"
+                    delta_style = (
+                        "green" if delta > 0 else "red" if delta < 0 else "dim"
+                    )
+                    parts.append((f" ({delta_str})", delta_style))
+                if refine.adjustment_reason:
+                    reason = clean_text(refine.adjustment_reason)
+                    parts.append(
+                        (f"  {clip_text(reason, content_width - 24)}", "italic dim")
+                    )
+            refine_detail = parts or None
+
+        # REFINE totals
+        refine_total = max(self.state.pending_refine + self.state.refined, 1)
+
+        # Refine cost for display
+        refine_cost = (
+            self.state._run_refine_cost if self.state._run_refine_cost > 0 else None
+        )
+
         # --- Build pipeline rows ---
 
         rows = [
@@ -588,6 +654,21 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 is_complete=enrich_complete,
                 worker_count=enrich_count,
                 worker_annotation=enrich_ann,
+            ),
+            PipelineRowConfig(
+                name="REFINE",
+                style="bold cyan",
+                completed=self.state.refined,
+                total=refine_total,
+                rate=self.state.refine_rate,
+                cost=refine_cost,
+                disabled=self.state.scan_only,
+                primary_text=refine_text,
+                detail_parts=refine_detail,
+                is_processing=self.state.refine_processing,
+                is_complete=refine_complete,
+                worker_count=refine_count,
+                worker_annotation=refine_ann,
             ),
         ]
         return build_pipeline_section(rows, self.bar_width)
@@ -875,34 +956,40 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update refine worker state.
-
-        Refine results are added to the score queue since they update scores.
-        """
+        """Update refine worker state with own display row."""
         self.state.run_refined = stats.processed
         self.state.refine_rate = stats.rate
         # Track refine cost separately (cumulative from refine worker)
         self.state._run_refine_cost = stats.cost
 
-        # Queue refine results to score stream
+        # Track processing state for display
+        if "waiting" in message.lower():
+            self.state.refine_processing = False
+            self._refresh()
+            return
+        elif "rescoring" in message.lower():
+            self.state.refine_processing = True
+        else:
+            self.state.refine_processing = False
+
+        # Queue refine results to refine stream (own display row)
         if results:
             items = []
             for r in results:
                 path = r.get("path", "")
-                # Use adjustment_reason for display, falling back to "refined"
-                reason = r.get("adjustment_reason", "refined")
+                reason = r.get("adjustment_reason", "")
                 items.append(
-                    ScoreItem(
+                    RefineItem(
                         path=path,
                         score=r.get("score"),
-                        purpose="refined",
-                        description=reason if reason != "refined" else "",
-                        skipped=False,
-                        skip_reason="",
-                        should_expand=r.get("should_expand", True),
+                        previous_score=r.get("previous_score"),
+                        purpose=r.get("path_purpose", ""),
+                        description=r.get("description", ""),
+                        adjustment_reason=reason,
                     )
                 )
-            self.state.score_queue.add(items, stats.rate if stats.rate else 1.0)
+            display_rate = min(stats.rate, 2.0) if stats.rate else 1.0
+            self.state.refine_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -964,6 +1051,16 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             self.state.current_enrich = None
             updated = True
 
+        next_refine = self.state.refine_queue.pop()
+        if next_refine:
+            self.state.current_refine = next_refine
+            updated = True
+        elif (
+            self.state.refine_queue.is_stale() and self.state.current_refine is not None
+        ):
+            self.state.current_refine = None
+            updated = True
+
         if updated:
             self._refresh()
 
@@ -999,6 +1096,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.pending_score = stats.get("scanned", 0) + scoring
         self.state.pending_expand = stats.get("expansion_ready", 0)
         self.state.pending_enrich = stats.get("enrichment_ready", 0)
+        self.state.pending_refine = stats.get("refine_ready", 0)
         self.state.enriched = stats.get("enriched", 0)
         self.state.refined = stats.get("refined", 0)
 
