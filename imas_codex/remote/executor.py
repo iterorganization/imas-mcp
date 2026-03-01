@@ -257,8 +257,20 @@ def check_ssh_socket(ssh_host: str, timeout: int = 5) -> bool:
             timeout=timeout,
         )
         # Exit code 0 means master is running and healthy
-        # Exit code 255 means no master (also fine - will create new one)
-        return result.returncode in (0, 255)
+        if result.returncode == 0:
+            return True
+        # Exit code 255 can mean:
+        # - "No ControlPath" / "No such file" → no master, fine
+        # - "Connection refused" → stale socket file exists, master dead
+        if result.returncode == 255:
+            stderr = result.stderr.lower()
+            if "connection refused" in stderr:
+                logger.warning(
+                    f"Stale SSH control socket for {ssh_host}: {result.stderr.strip()}"
+                )
+                return False
+            return True
+        return result.returncode == 0
     except subprocess.TimeoutExpired:
         # Timeout usually means stale socket
         logger.warning(f"SSH socket check timed out for {ssh_host}")
@@ -295,16 +307,23 @@ def cleanup_stale_socket(ssh_host: str) -> bool:
     except Exception:
         pass
 
-    # Find and remove socket files matching this host
+    # Find and remove socket files matching this host.
+    # The socket name uses the resolved HostName (e.g., mcintosh@lac5.epfl.ch-22)
+    # not the SSH alias (e.g., tcv), so also try the resolved hostname.
     if socket_dir.exists():
-        for socket_file in socket_dir.glob(f"*{ssh_host}*"):
-            if socket_file.is_socket():
-                try:
-                    socket_file.unlink()
-                    logger.info(f"Removed stale socket: {socket_file}")
-                    return True
-                except Exception as e:
-                    logger.warning(f"Failed to remove socket {socket_file}: {e}")
+        resolved_host, _ = _parse_ssh_config_host(ssh_host)
+        candidates = {ssh_host}
+        if resolved_host:
+            candidates.add(resolved_host)
+        for candidate in candidates:
+            for socket_file in socket_dir.glob(f"*{candidate}*"):
+                if socket_file.is_socket():
+                    try:
+                        socket_file.unlink()
+                        logger.info(f"Removed stale socket: {socket_file}")
+                        return True
+                    except Exception as e:
+                        logger.warning(f"Failed to remove socket {socket_file}: {e}")
 
     return False
 
@@ -1052,7 +1071,17 @@ async def async_run_python_script(
     except TimeoutError:
         proc.kill()
         await proc.wait()
-        raise subprocess.TimeoutExpired(cmd, timeout) from None
+        # Capture partial stdout from killed process.
+        # With JSONL-streaming scripts, completed lines are recoverable.
+        partial = b""
+        try:
+            if proc.stdout:
+                partial = await asyncio.wait_for(proc.stdout.read(), timeout=2)
+        except Exception:
+            pass
+        exc = subprocess.TimeoutExpired(cmd, timeout)
+        exc.output = partial.decode(errors="replace")
+        raise exc from None
     except asyncio.CancelledError:
         proc.kill()
         await proc.wait()

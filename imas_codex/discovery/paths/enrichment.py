@@ -254,71 +254,28 @@ def enrich_paths(
             ssh_host=ssh_host,
             timeout=timeout,
         )
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Enrichment timed out for {facility}")
-        return [EnrichmentResult(path=p, error="timeout") for p in paths]
+    except subprocess.TimeoutExpired as e:
+        # Recover partial results from JSONL lines that completed before timeout
+        partial_output = getattr(e, "output", None) or ""
+        if partial_output:
+            logger.warning(
+                f"Enrichment SSH timed out after {timeout}s for {facility}, "
+                f"recovering partial output ({len(partial_output)} bytes)"
+            )
+            return _parse_enrich_output(
+                partial_output,
+                paths,
+                fill_missing_error=f"ssh_timeout({timeout}s)",
+            )
+        logger.warning(f"Enrichment SSH timed out after {timeout}s for {facility}")
+        return [
+            EnrichmentResult(path=p, error=f"ssh_timeout({timeout}s)") for p in paths
+        ]
     except Exception as e:
         logger.warning(f"Enrichment failed for {facility}: {e}")
         return [EnrichmentResult(path=p, error=str(e)[:100]) for p in paths]
 
-    # Parse results - handle stderr mixed in
-    try:
-        if "[stderr]:" in output:
-            output = output.split("[stderr]:")[0].strip()
-        results_data = json.loads(output)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse enrichment output: {e}")
-        return [EnrichmentResult(path=p, error="parse error") for p in paths]
-
-    results = []
-    for data in results_data:
-        path = data.get("path", "")
-        result = EnrichmentResult(path=path)
-
-        if data.get("error"):
-            result.error = data.get("error")
-            results.append(result)
-            continue
-
-        # Extract pattern matches
-        read_matches = data.get("read_matches", 0)
-        write_matches = data.get("write_matches", 0)
-
-        # Store raw counts for display
-        result.read_matches = read_matches
-        result.write_matches = write_matches
-
-        # Determine if multi-format (has both reads and writes)
-        result.is_multiformat = read_matches > 0 and write_matches > 0
-
-        # Storage
-        result.total_bytes = data.get("total_bytes")
-
-        # Lines of code
-        result.total_lines = data.get("total_lines")
-        lang_breakdown = data.get("language_breakdown", {})
-        if lang_breakdown:
-            result.language_breakdown = lang_breakdown
-
-        # Pattern categories (mdsplus, hdf5, imas, etc.)
-        pattern_cats = data.get("pattern_categories", {})
-        if pattern_cats:
-            result.pattern_categories = pattern_cats
-
-        # Warnings (e.g., tokei_timeout)
-        warnings = data.get("warnings", [])
-        if warnings:
-            result.warnings = warnings
-
-        results.append(result)
-
-    # Fill missing paths
-    result_paths = {r.path for r in results}
-    for p in paths:
-        if p not in result_paths:
-            results.append(EnrichmentResult(path=p, error="missing"))
-
-    return results
+    return _parse_enrich_output(output, paths)
 
 
 def _build_enrich_patterns() -> dict[str, str]:
@@ -373,54 +330,89 @@ def _build_enrich_input(
     return ssh_host, input_data
 
 
+def _parse_single_enrich_result(data: dict) -> EnrichmentResult:
+    """Parse a single enrichment result dict into an EnrichmentResult."""
+    path = data.get("path", "")
+    result = EnrichmentResult(path=path)
+
+    if data.get("error"):
+        result.error = data.get("error")
+        return result
+
+    read_matches = data.get("read_matches", 0)
+    write_matches = data.get("write_matches", 0)
+    result.read_matches = read_matches
+    result.write_matches = write_matches
+    result.is_multiformat = read_matches > 0 and write_matches > 0
+    result.total_bytes = data.get("total_bytes")
+    result.total_lines = data.get("total_lines")
+    lang_breakdown = data.get("language_breakdown", {})
+    if lang_breakdown:
+        result.language_breakdown = lang_breakdown
+    pattern_cats = data.get("pattern_categories", {})
+    if pattern_cats:
+        result.pattern_categories = pattern_cats
+    warnings = data.get("warnings", [])
+    if warnings:
+        result.warnings = warnings
+
+    return result
+
+
 def _parse_enrich_output(
     output: str,
     paths: list[str],
+    fill_missing_error: str = "missing",
 ) -> list[EnrichmentResult]:
-    """Parse JSON output from enrich_directories.py.
+    """Parse JSON/JSONL output from enrich_directories.py.
+
+    Handles two formats:
+    - JSONL: One JSON object per line (streaming format, preferred)
+    - JSON array: Single JSON array (legacy format)
+
+    Gracefully handles partial output (e.g., from SSH timeout) by parsing
+    whatever complete JSONL lines are available.
 
     Shared between sync and async enrich_paths.
     """
-    try:
-        if "[stderr]:" in output:
-            output = output.split("[stderr]:")[0].strip()
-        results_data = json.loads(output)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse enrichment output: {e}")
-        return [EnrichmentResult(path=p, error="parse error") for p in paths]
+    if "[stderr]:" in output:
+        output = output.split("[stderr]:")[0].strip()
 
-    results = []
-    for data in results_data:
-        path = data.get("path", "")
-        result = EnrichmentResult(path=path)
+    if not output.strip():
+        return [EnrichmentResult(path=p, error=fill_missing_error) for p in paths]
 
-        if data.get("error"):
-            result.error = data.get("error")
-            results.append(result)
+    results: list[EnrichmentResult] = []
+
+    # Try JSON array first (single-line legacy format)
+    stripped = output.strip()
+    if stripped.startswith("["):
+        try:
+            results_data = json.loads(stripped)
+            results = [_parse_single_enrich_result(d) for d in results_data]
+            result_paths = {r.path for r in results}
+            for p in paths:
+                if p not in result_paths:
+                    results.append(EnrichmentResult(path=p, error=fill_missing_error))
+            return results
+        except json.JSONDecodeError:
+            pass  # Fall through to JSONL parsing
+
+    # Parse as JSONL (one JSON object per line, streaming format)
+    for line in stripped.split("\n"):
+        line = line.strip()
+        if not line:
             continue
+        try:
+            data = json.loads(line)
+            results.append(_parse_single_enrich_result(data))
+        except json.JSONDecodeError:
+            continue  # Skip incomplete/corrupt lines (e.g., truncated by timeout)
 
-        read_matches = data.get("read_matches", 0)
-        write_matches = data.get("write_matches", 0)
-        result.read_matches = read_matches
-        result.write_matches = write_matches
-        result.is_multiformat = read_matches > 0 and write_matches > 0
-        result.total_bytes = data.get("total_bytes")
-        result.total_lines = data.get("total_lines")
-        lang_breakdown = data.get("language_breakdown", {})
-        if lang_breakdown:
-            result.language_breakdown = lang_breakdown
-        pattern_cats = data.get("pattern_categories", {})
-        if pattern_cats:
-            result.pattern_categories = pattern_cats
-        warnings = data.get("warnings", [])
-        if warnings:
-            result.warnings = warnings
-        results.append(result)
-
+    # Fill missing paths
     result_paths = {r.path for r in results}
     for p in paths:
         if p not in result_paths:
-            results.append(EnrichmentResult(path=p, error="missing"))
+            results.append(EnrichmentResult(path=p, error=fill_missing_error))
 
     return results
 
@@ -450,9 +442,23 @@ async def async_enrich_paths(
             ssh_host=ssh_host,
             timeout=timeout,
         )
-    except subprocess.TimeoutExpired:
-        logger.warning(f"Enrichment timed out for {facility}")
-        return [EnrichmentResult(path=p, error="timeout") for p in paths]
+    except subprocess.TimeoutExpired as e:
+        # Recover partial results from JSONL lines that completed before timeout
+        partial_output = getattr(e, "output", None) or ""
+        if partial_output:
+            logger.warning(
+                f"Enrichment SSH timed out after {timeout}s for {facility}, "
+                f"recovering partial output ({len(partial_output)} bytes)"
+            )
+            return _parse_enrich_output(
+                partial_output,
+                paths,
+                fill_missing_error=f"ssh_timeout({timeout}s)",
+            )
+        logger.warning(f"Enrichment SSH timed out after {timeout}s for {facility}")
+        return [
+            EnrichmentResult(path=p, error=f"ssh_timeout({timeout}s)") for p in paths
+        ]
     except asyncio.CancelledError:
         raise
     except Exception as e:

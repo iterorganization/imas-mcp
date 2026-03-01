@@ -197,29 +197,58 @@ def enrich_directory(
     # tokei runs after du because its timeout scales by total_bytes.
 
     def _run_du() -> tuple:
-        """Run du -sb and return (total_bytes, timed_out).
+        """Run du -sb and return (total_bytes, timed_out, failed).
 
         Parse stdout regardless of return code: du returns non-zero
         when it encounters permission-denied subdirectories (common on
         NFS/GPFS) but still writes the valid total to stdout.
+
+        Falls back to ``find -printf '%s'`` if du times out — this can
+        succeed on slow NFS mounts where du hangs waiting for recursive
+        inode stat operations.
         """
+        du_timeout = 30
         try:
             proc = subprocess.run(
                 ["du", "-sb", path],
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=du_timeout,
             )
             if proc.stdout.strip():
                 try:
-                    return int(proc.stdout.split()[0]), False
+                    return int(proc.stdout.split()[0]), False, False
                 except (ValueError, IndexError):
-                    pass
+                    return 0, False, True
+            # du ran but produced no stdout (permission denied everywhere)
+            return 0, False, True
         except subprocess.TimeoutExpired:
-            return 0, True
-        except Exception:
             pass
-        return 0, False
+        except Exception:
+            return 0, False, True
+
+        # Fallback: find -printf '%s' sums file sizes without recursive
+        # directory stat. Faster on NFS when du hangs on inode lookups.
+        try:
+            proc = subprocess.run(
+                ["find", path, "-type", "f", "-printf", "%s\n"],
+                capture_output=True,
+                text=True,
+                timeout=du_timeout,
+            )
+            if proc.stdout.strip():
+                total = sum(
+                    int(line)
+                    for line in proc.stdout.strip().split("\n")
+                    if line.strip().isdigit()
+                )
+                if total > 0:
+                    # du_fallback means the value is approximate (file sizes
+                    # only, no directory overhead)
+                    return total, False, False
+        except (subprocess.TimeoutExpired, Exception):
+            pass
+        return 0, True, False
 
     def _run_rg() -> tuple:
         """Run rg pattern matching and return (matched_categories, read_matches, write_matches)."""
@@ -253,11 +282,13 @@ def enrich_directory(
         du_future: Future = executor.submit(_run_du)
         rg_future: Future = executor.submit(_run_rg)
 
-        total_bytes, du_timed_out = du_future.result()
+        total_bytes, du_timed_out, du_failed = du_future.result()
         matched_categories, read_matches, write_matches = rg_future.result()
 
     if du_timed_out:
         warnings.append("du_timeout")
+    elif du_failed:
+        warnings.append("du_failed")
 
     result["pattern_categories"] = matched_categories
     result["read_matches"] = read_matches
@@ -327,20 +358,33 @@ def main() -> None:
     has_rg = has_command("rg")
     has_tokei = has_command("tokei")
 
-    # Enrich all paths with their purpose (for targeted pattern selection)
-    results = [
-        enrich_directory(
-            p,
-            has_rg,
-            has_tokei,
-            purpose=path_purposes.get(p),
-            pattern_categories=pattern_categories,
-        )
-        for p in paths
-    ]
+    # Process paths in parallel and stream results as JSONL.
+    # Each result is printed immediately as it completes so that:
+    # 1) One slow du/tokei doesn't block other paths
+    # 2) Partial results survive SSH timeout
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    # Output JSON (handles all escaping correctly)
-    print(json.dumps(results))
+    max_workers = min(4, len(paths)) if paths else 1
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                enrich_directory,
+                p,
+                has_rg,
+                has_tokei,
+                purpose=path_purposes.get(p),
+                pattern_categories=pattern_categories,
+            ): p
+            for p in paths
+        }
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+            except Exception as exc:
+                path = futures[future]
+                result = {"path": sanitize_str(path), "error": str(exc)[:200]}
+            # Stream each result as a JSONL line (one JSON object per line)
+            print(json.dumps(result), flush=True)
 
 
 if __name__ == "__main__":
