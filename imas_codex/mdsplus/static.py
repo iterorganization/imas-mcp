@@ -559,6 +559,7 @@ def ingest_static_tree(
     data: dict[str, Any],
     version_config: list[dict] | None = None,
     dry_run: bool = False,
+    on_progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, int]:
     """Ingest static tree data into the Neo4j graph.
 
@@ -575,6 +576,8 @@ def ingest_static_tree(
         version_config: Version configs with first_shot info (from facility YAML).
             If None, loaded from facility config.
         dry_run: If True, log but don't write
+        on_progress: Callback(written, total, detail) called after each
+            batch write to report ingestion progress.
 
     Returns:
         Dict with counts: versions_created, nodes_created, values_stored
@@ -795,7 +798,9 @@ def ingest_static_tree(
     else:
         # Batch insert TreeNodes
         batch_size = 500
-        for i in range(0, len(node_records), batch_size):
+        total_records = len(node_records)
+        written = 0
+        for i in range(0, total_records, batch_size):
             batch = node_records[i : i + batch_size]
             client.query(
                 """
@@ -818,6 +823,15 @@ def ingest_static_tree(
                 """,
                 nodes=batch,
             )
+            written += len(batch)
+            if on_progress:
+                batch_num = i // batch_size + 1
+                total_batches = (total_records + batch_size - 1) // batch_size
+                on_progress(
+                    written,
+                    total_records,
+                    f"MERGE batch {batch_num}/{total_batches}",
+                )
 
         # Store scalar values directly on nodes
         scalar_batch = [v for v in value_records if "scalar_value" in v]
@@ -848,6 +862,8 @@ def ingest_static_tree(
             )
 
         # Create relationships
+        if on_progress:
+            on_progress(written, total_records, "creating relationships...")
         client.query(
             """
             MATCH (n:TreeNode)

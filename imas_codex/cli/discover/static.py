@@ -48,10 +48,12 @@ class StaticProgressState:
 
     start_time: float = field(default_factory=time.time)
 
-    # EXTRACT phase
-    extract_completed: int = 0
-    extract_total: int = 1
-    extract_rate: float | None = None
+    # EXTRACT phase — progress tracks nodes across all versions
+    extract_versions_done: int = 0
+    extract_versions_total: int = 1
+    extract_nodes: int = 0  # cumulative nodes extracted
+    extract_nodes_total: int = 0  # estimated total (grows as versions complete)
+    extract_rate: float | None = None  # nodes/s
     extract_version: str = ""  # e.g. "v3 tcv:static"
     extract_detail: str = ""  # e.g. "47,976 nodes, 312 tags"
 
@@ -104,10 +106,10 @@ class StaticProgressDisplay(BaseProgressDisplay):
         self.cost_limit = cost_limit
         self.enrich = enrich
         self.state = StaticProgressState()
-        self.extract_queue = StreamQueue(rate=0.5, max_rate=1.5, min_display_time=1.0)
+        self.extract_queue = StreamQueue(rate=1.0, max_rate=2.0, min_display_time=0.8)
         self.units_queue = StreamQueue(rate=1.0, max_rate=3.0, min_display_time=0.5)
         self.enrich_queue = StreamQueue(rate=0.5, max_rate=2.0, min_display_time=0.5)
-        self.ingest_queue = StreamQueue(rate=1.0, max_rate=3.0, min_display_time=0.4)
+        self.ingest_queue = StreamQueue(rate=2.0, max_rate=4.0, min_display_time=0.3)
         self._console = console or Console()
         self._extract_start: float | None = None
         self._units_start: float | None = None
@@ -128,13 +130,13 @@ class StaticProgressDisplay(BaseProgressDisplay):
             PipelineRowConfig(
                 name="EXTRACT",
                 style="bold blue",
-                completed=s.extract_completed,
-                total=max(s.extract_total, 1),
+                completed=s.extract_nodes,
+                total=max(s.extract_nodes_total, 1),
                 rate=s.extract_rate,
                 primary_text=s.extract_version,
                 description=s.extract_detail,
-                is_complete=s.extract_completed >= s.extract_total
-                and s.extract_total > 0,
+                is_complete=s.extract_versions_done >= s.extract_versions_total
+                and s.extract_versions_total > 0,
             ),
             PipelineRowConfig(
                 name="UNITS",
@@ -179,7 +181,12 @@ class StaticProgressDisplay(BaseProgressDisplay):
     def _build_resources_section(self) -> Text:
         s = self.state
         stats: list[tuple[str, str, str]] = [
-            ("versions", f"{s.extract_completed}/{s.extract_total}", "blue"),
+            (
+                "versions",
+                f"{s.extract_versions_done}/{s.extract_versions_total}",
+                "blue",
+            ),
+            ("nodes", f"{s.extract_nodes:,}", "blue"),
             ("units", str(s.units_found), "cyan"),
         ]
         if self.enrich:
@@ -213,7 +220,7 @@ class StaticProgressDisplay(BaseProgressDisplay):
             s.extract_version = item.get("version", "")
             s.extract_detail = item.get("detail", "")
         elif self.extract_queue.is_stale() and self._phase_complete(
-            s.extract_completed, s.extract_total
+            s.extract_versions_done, s.extract_versions_total
         ):
             s.extract_version = ""
             s.extract_detail = ""
@@ -256,8 +263,8 @@ class StaticProgressDisplay(BaseProgressDisplay):
         now = time.time()
         if phase == "extract" and self._extract_start:
             dt = now - self._extract_start
-            if dt > 0 and s.extract_completed > 0:
-                s.extract_rate = s.extract_completed / dt
+            if dt > 0 and s.extract_nodes > 0:
+                s.extract_rate = s.extract_nodes / dt
         elif phase == "units" and self._units_start:
             dt = now - self._units_start
             if dt > 0 and s.units_completed > 0:
@@ -275,7 +282,10 @@ class StaticProgressDisplay(BaseProgressDisplay):
         """Print final summary after pipeline completes."""
         s = self.state
         summary = Text()
-        summary.append(f"  {s.extract_completed} versions extracted", style="blue")
+        summary.append(
+            f"  {s.extract_versions_done} versions, {s.extract_nodes:,} nodes extracted",
+            style="blue",
+        )
         if s.units_found > 0:
             summary.append(f", {s.units_found} nodes with units", style="cyan")
         if self.enrich:
@@ -641,10 +651,10 @@ async def _async_pipeline(
     enrich: bool,
     batch_size: int,
 ) -> None:
-    """Async pipeline with concurrent extract/units/enrich workers.
+    """Async pipeline with sequential extract and concurrent workers.
 
     Architecture:
-    - EXTRACT workers run concurrently (one async task per version)
+    - EXTRACT runs versions sequentially for clear incremental progress
     - UNITS worker starts as soon as the latest version finishes
     - ENRICH worker starts as soon as any version yields enrichable nodes
     - INGEST runs after all extract + units + enrich complete
@@ -660,7 +670,7 @@ async def _async_pipeline(
     )
 
     display._extract_start = time.time()
-    display.state.extract_total = len(ver_list)
+    display.state.extract_versions_total = len(ver_list)
 
     # Shared state between async workers
     version_results: list[dict] = []
@@ -674,10 +684,11 @@ async def _async_pipeline(
 
     # ── EXTRACT worker (one task per version) ─────────────────────────
     async def extract_version(ver: int) -> dict | None:
+        ver_idx = ver_list.index(ver) + 1
         display.extract_queue.add(
             [
                 {
-                    "version": f"v{ver} {facility}:{tname}",
+                    "version": f"v{ver} {facility}:{tname} ({ver_idx}/{len(ver_list)})",
                     "detail": "connecting via SSH, walking MDSplus tree...",
                 }
             ]
@@ -712,10 +723,21 @@ async def _async_pipeline(
                 display.extract_queue.add(
                     [
                         {
-                            "version": f"v{ver} — {nc:,} nodes",
-                            "detail": ", ".join(detail_parts),
+                            "version": f"v{ver} done — {nc:,} nodes, {tags} tags",
+                            "detail": f"version {ver_idx}/{len(ver_list)} complete",
                         }
                     ]
+                )
+
+                # Update node counts for progress bar
+                display.state.extract_nodes += nc
+                # Estimate total based on avg nodes per version
+                avg = display.state.extract_nodes / (
+                    display.state.extract_versions_done + 1
+                )
+                remaining = len(ver_list) - display.state.extract_versions_done - 1
+                display.state.extract_nodes_total = int(
+                    display.state.extract_nodes + avg * remaining
                 )
 
                 # Feed enrichable nodes as they arrive
@@ -727,7 +749,7 @@ async def _async_pipeline(
                             enrichable_nodes.append(n)
                             seen.add(n["path"])
 
-            display.state.extract_completed += 1
+            display.state.extract_versions_done += 1
             display._update_rate("extract")
 
             # Signal units worker when the latest version completes
@@ -746,7 +768,7 @@ async def _async_pipeline(
                     }
                 ]
             )
-            display.state.extract_completed += 1
+            display.state.extract_versions_done += 1
             display._update_rate("extract")
 
             # If this was the latest version, still signal so units doesn't hang
@@ -832,7 +854,7 @@ async def _async_pipeline(
 
         # Wait for at least one version to produce enrichable nodes
         while not enrichable_nodes:
-            if display.state.extract_completed >= len(ver_list):
+            if display.state.extract_versions_done >= len(ver_list):
                 return  # All done, nothing to enrich
             await asyncio.sleep(0.5)
 
@@ -843,7 +865,9 @@ async def _async_pipeline(
         display.state.enrich_total = len(nodes_to_enrich)
 
         if nodes_to_enrich:
-            enrichment_results, enrichment_cost = _run_enrichment_with_progress(
+            # Run in thread to avoid blocking the event loop (LLM calls are sync)
+            enrichment_results, enrichment_cost = await asyncio.to_thread(
+                _run_enrichment_with_progress,
                 nodes_to_enrich,
                 facility,
                 tname,
@@ -860,65 +884,99 @@ async def _async_pipeline(
             display.tick()
             await asyncio.sleep(0.25)
 
+    # ── EXTRACT sequencer ────────────────────────────────────────────
+    async def sequential_extract() -> None:
+        """Extract versions one at a time for clear incremental progress.
+
+        Running all versions concurrently via SSH causes them to finish
+        at roughly the same time (SSH multiplexing + MDSplus locking
+        serialise them anyway), so the progress bar sits at 0% the
+        whole time.  Sequential extraction lets the bar advance after
+        each version and lets ENRICH start processing nodes from early
+        versions while later ones are still extracting.
+        """
+        for ver in ver_list:
+            await extract_version(ver)
+        # Pin total to actual count so bar reaches 100%
+        display.state.extract_nodes_total = display.state.extract_nodes
+
     # ── Run all workers concurrently ──────────────────────────────────
     ticker_task = asyncio.create_task(_ticker())
 
-    # Start extract tasks + units worker + enrich worker concurrently
-    extract_tasks = [extract_version(ver) for ver in ver_list]
     all_tasks = [
-        asyncio.gather(*extract_tasks, return_exceptions=True),
+        sequential_extract(),
         units_worker(),
         enrich_worker(),
     ]
 
     try:
         await asyncio.gather(*all_tasks, return_exceptions=True)
-    finally:
-        ticker_task.cancel()
-        try:
-            await ticker_task
-        except asyncio.CancelledError:
-            pass
 
-    # Merge all version results
-    data = merge_version_results(version_results)
-    if not data.get("versions"):
-        display.print_summary()
-        return
+        # Merge all version results
+        data = merge_version_results(version_results)
+        if not data.get("versions"):
+            display.print_summary()
+            return
 
-    total_nodes = sum(
-        v.get("node_count", 0) for v in data["versions"].values() if "error" not in v
-    )
-
-    # Merge units into data
-    if units:
-        updated = merge_units_into_data(data, units)
-        display.units_queue.add(
-            [{"path": f"merged into {updated} nodes", "detail": "complete"}]
+        total_nodes = sum(
+            v.get("node_count", 0)
+            for v in data["versions"].values()
+            if "error" not in v
         )
 
-    # ── Phase 4: INGEST ───────────────────────────────────────────────
-    if not dry_run:
-        from imas_codex.graph import GraphClient
+        # Merge units into data
+        if units:
+            updated = merge_units_into_data(data, units)
+            display.units_queue.add(
+                [{"path": f"merged into {updated} nodes", "detail": "complete"}]
+            )
 
-        n_versions = len(data["versions"])
-        display.state.ingest_total = total_nodes + n_versions
-        display.ingest_queue.add(
-            [
-                {
-                    "label": f"{n_versions} TreeModelVersions + {total_nodes:,} TreeNodes",
-                    "detail": "writing to Neo4j...",
-                }
-            ]
-        )
+        # ── Phase 4: INGEST (runs while ticker is alive) ─────────────
+        if not dry_run:
+            from imas_codex.graph import GraphClient
 
-        with GraphClient() as client:
-            stats = ingest_static_tree(client, facility, data, dry_run=False)
+            n_versions = len(data["versions"])
+            display.state.ingest_total = total_nodes + n_versions
+            display._ingest_start = time.time()
+            display.ingest_queue.add(
+                [
+                    {
+                        "label": f"{n_versions} TreeModelVersions + {total_nodes:,} TreeNodes",
+                        "detail": "writing to Neo4j...",
+                    }
+                ]
+            )
+
+            def _on_ingest_progress(written: int, total: int, detail: str) -> None:
+                display.state.ingest_completed = n_versions + written
+                display._update_rate("ingest")
+                display.ingest_queue.add(
+                    [
+                        {
+                            "label": f"{written:,}/{total:,} TreeNodes",
+                            "detail": detail,
+                        }
+                    ]
+                )
+
+            # Run ingest in thread so ticker keeps refreshing the display
+            def _do_ingest() -> dict[str, int]:
+                with GraphClient() as client:
+                    stats = ingest_static_tree(
+                        client,
+                        facility,
+                        data,
+                        dry_run=False,
+                        on_progress=_on_ingest_progress,
+                    )
+                    if enrichment_results:
+                        _apply_enrichment(client, facility, tname, enrichment_results)
+                    return stats
+
+            stats = await asyncio.to_thread(_do_ingest)
             display.state.ingest_completed = (
                 stats["versions_created"] + stats["nodes_created"]
             )
-            if enrichment_results:
-                _apply_enrichment(client, facility, tname, enrichment_results)
             display.ingest_queue.add(
                 [
                     {
@@ -927,20 +985,27 @@ async def _async_pipeline(
                     }
                 ]
             )
-    else:
-        stats = ingest_static_tree(None, facility, data, dry_run=True)
-        display.state.ingest_total = 1
-        display.state.ingest_completed = 1
-        display.ingest_queue.add(
-            [
-                {
-                    "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
-                    "detail": "DRY RUN — no writes",
-                }
-            ]
-        )
+        else:
+            stats = ingest_static_tree(None, facility, data, dry_run=True)
+            display.state.ingest_total = 1
+            display.state.ingest_completed = 1
+            display.ingest_queue.add(
+                [
+                    {
+                        "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
+                        "detail": "DRY RUN — no writes",
+                    }
+                ]
+            )
 
-    display.print_summary()
+        display.print_summary()
+
+    finally:
+        ticker_task.cancel()
+        try:
+            await ticker_task
+        except asyncio.CancelledError:
+            pass
 
 
 def _run_with_progress(
@@ -1143,7 +1208,6 @@ def _run_enrichment_with_progress(
                 }
             ]
         )
-        display.tick()
 
         user_prompt = _build_user_prompt(batch, version_descs)
         messages = [
