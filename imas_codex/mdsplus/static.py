@@ -756,7 +756,7 @@ def ingest_static_tree(
                     """
                     MATCH (curr:TreeModelVersion {id: $curr_id})
                     MATCH (prev:TreeModelVersion {id: $prev_id})
-                    MERGE (curr)-[:PREDECESSOR]->(prev)
+                    MERGE (curr)-[:HAS_PREDECESSOR]->(prev)
                     """,
                     curr_id=epoch_records[i]["id"],
                     prev_id=epoch_records[i - 1]["id"],

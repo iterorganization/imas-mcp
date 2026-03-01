@@ -384,7 +384,7 @@ def _persist_code_files(
                     UNWIND $items AS item
                     MATCH (sf:CodeFile {id: item.id})
                     MATCH (p:FacilityPath {id: $parent_id})
-                    MERGE (p)-[:CONTAINS]->(sf)
+                    MERGE (sf)-[:IN_DIRECTORY]->(p)
                     """,
                     items=batch,
                     parent_id=source_path_id,

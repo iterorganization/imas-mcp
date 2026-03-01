@@ -862,7 +862,7 @@ def ingest_epochs(
                 WITH ep WHERE ep.predecessor IS NOT NULL
                 MATCH (v:TreeModelVersion {id: ep.id})
                 MATCH (pred:TreeModelVersion {id: ep.predecessor})
-                MERGE (v)-[:PREDECESSOR]->(pred)
+                MERGE (v)-[:HAS_PREDECESSOR]->(pred)
                 """,
                 epochs=clean_epochs,
             )

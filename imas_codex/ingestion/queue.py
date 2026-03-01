@@ -131,7 +131,7 @@ def queue_source_files(
                     MATCH (sf:CodeFile)
                     WHERE sf.in_directory = $parent_id
                     MATCH (p:FacilityPath {id: $parent_id})
-                    MERGE (p)-[:CONTAINS]->(sf)
+                    MERGE (sf)-[:IN_DIRECTORY]->(p)
                     """,
                     parent_id=in_directory,
                 )

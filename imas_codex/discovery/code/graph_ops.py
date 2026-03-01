@@ -272,7 +272,7 @@ def claim_files_for_scoring(
               AND sf.interest_score IS NULL
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
-            OPTIONAL MATCH (p:FacilityPath)-[:CONTAINS]->(sf)
+            OPTIONAL MATCH (sf)-[:IN_DIRECTORY]->(p:FacilityPath)
             WITH sf, p
             ORDER BY coalesce(p.score, 0) DESC, sf.discovered_at ASC
             LIMIT $limit

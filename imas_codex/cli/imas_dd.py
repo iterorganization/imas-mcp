@@ -274,7 +274,7 @@ def imas_status(version_filter: str | None) -> None:
         # Get version summary
         versions = gc.query("""
             MATCH (v:DDVersion)
-            OPTIONAL MATCH (v)-[:PREDECESSOR]->(prev:DDVersion)
+            OPTIONAL MATCH (v)-[:HAS_PREDECESSOR]->(prev:DDVersion)
             RETURN v.id AS version, v.is_current AS is_current, prev.id AS predecessor
             ORDER BY v.id
         """)

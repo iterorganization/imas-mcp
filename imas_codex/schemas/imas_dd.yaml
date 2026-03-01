@@ -260,6 +260,8 @@ classes:
       predecessor:
         description: Previous DD version
         range: DDVersion
+        annotations:
+          relationship_type: HAS_PREDECESSOR
       # Embedding generation metadata
       embeddings_built_at:
         description: Timestamp when embeddings were generated for this version

@@ -138,7 +138,7 @@ def ingest_epochs(
         WHERE v.predecessor IS NOT NULL
         WITH v
         MATCH (pred:TreeModelVersion {id: v.predecessor})
-        MERGE (v)-[:PREDECESSOR]->(pred)
+        MERGE (v)-[:HAS_PREDECESSOR]->(pred)
     """)
 
     logger.info(f"Ingested {len(epochs)} TreeModelVersion nodes")

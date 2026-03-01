@@ -1359,7 +1359,7 @@ classes:
         description: Previous structure version
         range: TreeModelVersion
         annotations:
-          relationship_type: PREDECESSOR
+          relationship_type: HAS_PREDECESSOR
       status:
         description: >-
           Lifecycle status for this tree model version.

@@ -143,7 +143,7 @@ def _persist_document_files(
                     UNWIND $items AS item
                     MATCH (d:Document {id: item.id})
                     MATCH (p:FacilityPath {id: $parent_id})
-                    MERGE (p)-[:CONTAINS]->(d)
+                    MERGE (d)-[:IN_DIRECTORY]->(p)
                     """,
                     items=batch,
                     parent_id=source_path_id,
