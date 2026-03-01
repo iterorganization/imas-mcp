@@ -366,6 +366,9 @@ def _build_scan_input(
     paths: list[str],
     enable_rg: bool,
     enable_size: bool,
+    enable_git_metadata: bool = False,
+    enable_tree: bool = False,
+    enable_vcs_remote_check: bool = False,
 ) -> tuple[str, dict]:
     """Build SSH host and input data for scan.
 
@@ -384,7 +387,9 @@ def _build_scan_input(
         "rg_patterns": rg_patterns,
         "enable_rg": enable_rg,
         "enable_size": enable_size,
-        "enable_vcs_remote_check": True,
+        "enable_git_metadata": enable_git_metadata,
+        "enable_tree": enable_tree,
+        "enable_vcs_remote_check": enable_vcs_remote_check,
     }
     return ssh_host, input_data
 
@@ -512,6 +517,9 @@ async def async_scan_paths(
     timeout: int = 300,
     enable_rg: bool = True,
     enable_size: bool = False,
+    enable_git_metadata: bool = False,
+    enable_tree: bool = False,
+    enable_vcs_remote_check: bool = False,
 ) -> list[ScanResult]:
     """Async version of scan_paths using asyncio subprocesses.
 
@@ -523,7 +531,15 @@ async def async_scan_paths(
     if not paths:
         return []
 
-    ssh_host, input_data = _build_scan_input(facility, paths, enable_rg, enable_size)
+    ssh_host, input_data = _build_scan_input(
+        facility,
+        paths,
+        enable_rg,
+        enable_size,
+        enable_git_metadata=enable_git_metadata,
+        enable_tree=enable_tree,
+        enable_vcs_remote_check=enable_vcs_remote_check,
+    )
 
     try:
         output = await async_run_python_script(

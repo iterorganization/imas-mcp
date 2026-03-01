@@ -73,6 +73,8 @@ def scan_directory(
     enable_size: bool,
     has_rg: bool,
     enable_vcs_remote_check: bool = False,
+    enable_git_metadata: bool = False,
+    enable_tree: bool = False,
 ) -> Dict[str, Any]:
     """Scan a single directory and return results dict.
 
@@ -84,6 +86,10 @@ def scan_directory(
         has_rg: Whether rg command is available
         enable_vcs_remote_check: Whether to check VCS remote accessibility
                                  (network calls, slow — disabled by default)
+        enable_git_metadata: Whether to extract git/svn/hg metadata
+                             (subprocess calls — disabled by default)
+        enable_tree: Whether to run eza/tree for hierarchical context
+                     (subprocess calls — disabled by default)
 
     Returns:
         Dict with path, stats, child_dirs, child_names, and optional error
@@ -200,8 +206,9 @@ def scan_directory(
     numeric_dir_ratio = numeric_dir_count / len(dirs) if dirs else 0.0
 
     # Tree context for hierarchical view (eza preferred, tree fallback)
+    # Only when enable_tree=True — subprocess calls are slow for batch scans
     tree_context: Optional[str] = None
-    if len(dirs) > 5:
+    if enable_tree and len(dirs) > 5:
         # Prefer eza --tree (remote tool), fall back to tree if unavailable
         if has_command("eza"):
             try:
@@ -315,12 +322,13 @@ def scan_directory(
             pass
 
     # Git metadata extraction (if .git directory exists)
+    # Only when enable_git_metadata=True — subprocess calls are slow for batch scans
     git_remote_url: Optional[str] = None
     git_head_commit: Optional[str] = None
     git_branch: Optional[str] = None
     git_root_commit: Optional[str] = None
 
-    if has_git:
+    if enable_git_metadata and has_git:
         git_dir = os.path.join(path, ".git")
         if os.path.isdir(git_dir):
             # Common git args to bypass ownership checks (scanning other users' repos)
@@ -385,9 +393,9 @@ def scan_directory(
             except (subprocess.TimeoutExpired, Exception):
                 pass
 
-    # SVN remote URL extraction
+    # SVN/Hg remote URL extraction — only when enable_git_metadata=True
     vcs_remote_url: Optional[str] = None
-    if vcs_type == "svn":
+    if enable_git_metadata and vcs_type == "svn":
         try:
             proc = subprocess.run(
                 [
@@ -406,7 +414,7 @@ def scan_directory(
                 vcs_remote_url = sanitize_str(proc.stdout.strip())
         except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
             pass
-    elif vcs_type == "hg":
+    elif enable_git_metadata and vcs_type == "hg":
         try:
             proc = subprocess.run(
                 ["hg", "paths", "default", "-R", path],
@@ -512,6 +520,8 @@ def main() -> None:
     enable_rg: bool = config.get("enable_rg", False)
     enable_size: bool = config.get("enable_size", False)
     enable_vcs_remote_check: bool = config.get("enable_vcs_remote_check", False)
+    enable_git_metadata: bool = config.get("enable_git_metadata", False)
+    enable_tree: bool = config.get("enable_tree", False)
 
     # Check for tools once
     has_rg = has_command("rg")
@@ -525,6 +535,8 @@ def main() -> None:
             enable_size,
             has_rg,
             enable_vcs_remote_check,
+            enable_git_metadata,
+            enable_tree,
         )
         for p in paths
     ]
