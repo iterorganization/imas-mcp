@@ -768,7 +768,6 @@ def get_static_discovery_stats(
             MATCH (n:TreeNode)
             WHERE n.facility_id = $facility AND n.tree_name = $tree_name
               AND n.is_static = true
-            OPTIONAL MATCH (n)-[fp:FOLLOWS_PATTERN]->(:TreeNodePattern)
             RETURN
                 count(n) AS total,
                 sum(CASE WHEN n.description IS NOT NULL AND n.description <> ''
@@ -777,7 +776,7 @@ def get_static_discovery_stats(
                     THEN 1 ELSE 0 END) AS enrichable,
                 sum(CASE WHEN n.node_type IN $node_types
                          AND (n.description IS NULL OR n.description = '')
-                         AND fp IS NULL
+                         AND NOT EXISTS { (n)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
                     THEN 1 ELSE 0 END) AS pending_enrich
             """,
             facility=facility,

@@ -200,6 +200,8 @@ async def units_worker(
             break
         if state.extract_stats.processed > 0:
             break
+        if on_progress:
+            on_progress("awaiting extract", state.units_stats, None)
         await asyncio.sleep(1.0)
 
     if state.should_stop():
@@ -338,6 +340,8 @@ async def enrich_worker(
     while not state.should_stop():
         if state.extract_phase.done:
             break
+        if on_progress:
+            on_progress("awaiting extract", state.enrich_stats, None)
         await asyncio.sleep(1.0)
 
     if state.should_stop():

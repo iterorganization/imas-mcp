@@ -525,3 +525,72 @@ class TestStaticProgressDisplay:
         assert "COST" in text
         assert "STATS" in text
         assert "versions" in text
+
+    def test_refresh_from_graph_gates_enrich_on_extraction(self):
+        """Enrichment totals should not update until extraction is complete."""
+        from rich.console import Console
+
+        from imas_codex.cli.discover.static import StaticProgressDisplay
+
+        console = Console(width=120, force_terminal=True)
+        display = StaticProgressDisplay(
+            facility="test", cost_limit=2.0, console=console
+        )
+
+        # During extraction (3/8 versions done), enrich totals should stay at 0
+        mock_stats = {
+            "versions_total": 8,
+            "versions_ingested": 3,
+            "nodes_total": 100000,
+            "nodes_enrichable": 34000,
+            "nodes_enriched": 0,
+        }
+        with patch(
+            "imas_codex.discovery.static.graph_ops.get_static_discovery_stats",
+            return_value=mock_stats,
+        ):
+            display.refresh_from_graph("test", "test_tree")
+
+        assert display.state.enrich_total == 0, (
+            "enrich_total should be 0 during extraction"
+        )
+
+        # After all versions extracted, enrich totals should update
+        mock_stats["versions_ingested"] = 8
+        with patch(
+            "imas_codex.discovery.static.graph_ops.get_static_discovery_stats",
+            return_value=mock_stats,
+        ):
+            display.refresh_from_graph("test", "test_tree")
+
+        assert display.state.enrich_total == 34000
+
+    def test_update_units_with_msg_only(self):
+        """Units callback with msg but no results should push to queue."""
+        from rich.console import Console
+
+        from imas_codex.cli.discover.static import StaticProgressDisplay
+        from imas_codex.discovery.base.progress import WorkerStats
+
+        console = Console(width=120, force_terminal=True)
+        display = StaticProgressDisplay(
+            facility="test", cost_limit=2.0, console=console
+        )
+        stats = WorkerStats()
+        display.update_units("awaiting extract", stats, None)
+        assert len(display.units_queue) > 0
+
+    def test_update_enrich_with_msg_only(self):
+        """Enrich callback with msg but no results should push to queue."""
+        from rich.console import Console
+
+        from imas_codex.cli.discover.static import StaticProgressDisplay
+        from imas_codex.discovery.base.progress import WorkerStats
+
+        console = Console(width=120, force_terminal=True)
+        display = StaticProgressDisplay(
+            facility="test", cost_limit=2.0, console=console
+        )
+        stats = WorkerStats()
+        display.update_enrich("awaiting extract", stats, None)
+        assert len(display.enrich_queue) > 0

@@ -326,6 +326,8 @@ class StaticProgressDisplay(BaseProgressDisplay):
                         }
                     ]
                 )
+        elif msg:
+            self.units_queue.add([{"path": msg, "detail": ""}])
 
     def update_enrich(self, msg: str, stats: WorkerStats, results: Any) -> None:
         """Callback from enrich worker."""
@@ -343,6 +345,8 @@ class StaticProgressDisplay(BaseProgressDisplay):
                         }
                     ]
                 )
+        elif msg:
+            self.enrich_queue.add([{"path": msg, "description": ""}])
 
     def refresh_from_graph(self, facility: str, tree_name: str) -> None:
         """Refresh display state from graph statistics."""
@@ -357,8 +361,14 @@ class StaticProgressDisplay(BaseProgressDisplay):
         # Pin node total when all versions are ingested
         if s.extract_completed >= s.extract_total and s.extract_total > 0:
             s.extract_nodes_total = s.extract_nodes
-        s.enrich_total = stats.get("nodes_enrichable", s.enrich_total)
-        s.enrich_completed = stats.get("nodes_enriched", s.enrich_completed)
+        # Only update enrichment totals after extraction is complete.
+        # Before that, patterns haven't been detected so the raw
+        # enrichable count is misleading (shows all NUMERIC/SIGNAL nodes
+        # as pending instead of the smaller post-pattern work set).
+        all_extracted = s.extract_completed >= s.extract_total and s.extract_total > 0
+        if all_extracted:
+            s.enrich_total = stats.get("nodes_enrichable", s.enrich_total)
+            s.enrich_completed = stats.get("nodes_enriched", s.enrich_completed)
 
     def print_summary(self) -> None:
         """Print final summary."""
