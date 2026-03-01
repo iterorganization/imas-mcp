@@ -1,10 +1,13 @@
 """Tests for static tree extraction."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from imas_codex.mdsplus.static import (
     _compute_parent_path,
     get_static_tree_config,
+    get_static_tree_graph_state,
     merge_units_into_data,
 )
 
@@ -139,3 +142,69 @@ class TestMergeUnitsIntoData:
         }
         updated = merge_units_into_data(data, {"\\STATIC::TOP.C.R": "m"})
         assert updated == 0
+
+
+class TestGetStaticTreeGraphState:
+    def test_no_versions_in_graph(self):
+        client = MagicMock()
+        client.query.side_effect = [
+            # Version query — no matching versions
+            [
+                {"eid": "tcv:static:v1", "version": None, "node_count": None},
+                {"eid": "tcv:static:v2", "version": None, "node_count": None},
+            ],
+            # Node stats query
+            [{"total": 0, "enriched": 0}],
+            # Unenriched query
+            [],
+        ]
+        state = get_static_tree_graph_state(client, "tcv", "static", [1, 2])
+        assert state["ingested_versions"] == set()
+        assert state["total_nodes"] == 0
+        assert state["enriched_nodes"] == 0
+        assert state["unenriched_paths"] == []
+
+    def test_some_versions_ingested(self):
+        client = MagicMock()
+        client.query.side_effect = [
+            # Version query — v1 and v3 exist
+            [
+                {"eid": "tcv:static:v1", "version": 1, "node_count": 5000},
+                {"eid": "tcv:static:v2", "version": None, "node_count": None},
+                {"eid": "tcv:static:v3", "version": 3, "node_count": 6000},
+            ],
+            # Node stats
+            [{"total": 8000, "enriched": 3000}],
+            # Unenriched
+            [
+                {
+                    "path": "\\STATIC::TOP.C.R",
+                    "node_type": "NUMERIC",
+                    "tags": None,
+                    "units": "m",
+                },
+            ],
+        ]
+        state = get_static_tree_graph_state(client, "tcv", "static", [1, 2, 3])
+        assert state["ingested_versions"] == {1, 3}
+        assert state["version_node_counts"] == {1: 5000, 3: 6000}
+        assert state["total_nodes"] == 8000
+        assert state["enriched_nodes"] == 3000
+        assert len(state["unenriched_paths"]) == 1
+        assert state["unenriched_paths"][0]["path"] == "\\STATIC::TOP.C.R"
+
+    def test_all_versions_ingested(self):
+        client = MagicMock()
+        client.query.side_effect = [
+            [
+                {"eid": "tcv:static:v1", "version": 1, "node_count": 5000},
+                {"eid": "tcv:static:v2", "version": 2, "node_count": 5000},
+            ],
+            [{"total": 7000, "enriched": 7000}],
+            [],
+        ]
+        state = get_static_tree_graph_state(client, "tcv", "static", [1, 2])
+        assert state["ingested_versions"] == {1, 2}
+        assert state["total_nodes"] == 7000
+        assert state["enriched_nodes"] == 7000
+        assert state["unenriched_paths"] == []

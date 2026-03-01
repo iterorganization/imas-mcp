@@ -55,6 +55,97 @@ def get_static_tree_config(facility: str) -> list[dict[str, Any]]:
     return mdsplus.get("static_trees", [])
 
 
+def get_static_tree_graph_state(
+    client: "GraphClient",
+    facility: str,
+    tree_name: str,
+    ver_list: list[int],
+) -> dict[str, Any]:
+    """Query graph for existing static tree state.
+
+    Returns information about which versions are already extracted,
+    which nodes exist, and which have been enriched.
+
+    Args:
+        client: Neo4j GraphClient
+        facility: Facility identifier
+        tree_name: Static tree name
+        ver_list: Version numbers to check
+
+    Returns:
+        Dict with:
+          - ingested_versions: set of version ints already in graph
+          - version_node_counts: {version_int: node_count} from graph
+          - total_nodes: total TreeNode count for this tree
+          - enriched_nodes: count of TreeNodes with descriptions
+          - unenriched_paths: list of paths needing enrichment
+    """
+    # Check which TreeModelVersions exist
+    epoch_ids = [f"{facility}:{tree_name}:v{v}" for v in ver_list]
+    result = client.query(
+        """
+        UNWIND $ids AS eid
+        OPTIONAL MATCH (v:TreeModelVersion {id: eid})
+        RETURN eid, v.version AS version, v.node_count AS node_count
+        """,
+        ids=epoch_ids,
+    )
+
+    ingested_versions: set[int] = set()
+    version_node_counts: dict[int, int] = {}
+    for row in result:
+        if row["version"] is not None:
+            ver = int(row["version"])
+            ingested_versions.add(ver)
+            version_node_counts[ver] = int(row["node_count"] or 0)
+
+    # Count TreeNodes and enrichment state
+    node_stats = client.query(
+        """
+        MATCH (n:TreeNode)
+        WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+          AND n.is_static = true
+        RETURN
+            count(n) AS total,
+            sum(CASE WHEN n.description IS NOT NULL AND n.description <> ''
+                THEN 1 ELSE 0 END) AS enriched
+        """,
+        tree_name=tree_name,
+        facility=facility,
+    )
+
+    total_nodes = 0
+    enriched_nodes = 0
+    if node_stats:
+        total_nodes = int(node_stats[0].get("total", 0))
+        enriched_nodes = int(node_stats[0].get("enriched", 0))
+
+    # Get paths that need enrichment (data-bearing nodes without descriptions)
+    unenriched = client.query(
+        """
+        MATCH (n:TreeNode)
+        WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+          AND n.is_static = true
+          AND n.node_type IN ['NUMERIC', 'SIGNAL', 'AXIS', 'TEXT']
+          AND (n.description IS NULL OR n.description = '')
+        RETURN n.path AS path, n.node_type AS node_type,
+               n.tags AS tags, n.units AS units
+        """,
+        tree_name=tree_name,
+        facility=facility,
+    )
+
+    unenriched_paths = [dict(r) for r in unenriched]
+
+    return {
+        "ingested_versions": ingested_versions,
+        "version_node_counts": version_node_counts,
+        "total_nodes": total_nodes,
+        "enriched_nodes": enriched_nodes,
+        "unenriched_paths": unenriched_paths,
+    }
+
+
 def _load_mdsplus_config(facility: str) -> dict[str, Any]:
     """Load MDSplus config section from facility YAML."""
     from imas_codex.discovery.base.facility import get_facility

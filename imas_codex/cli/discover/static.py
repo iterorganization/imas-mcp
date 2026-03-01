@@ -334,6 +334,9 @@ class StaticProgressDisplay(BaseProgressDisplay):
     default=40,
     help="Nodes per LLM enrichment batch",
 )
+@click.option(
+    "--force", is_flag=True, help="Re-extract all versions even if already in graph"
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output except errors")
 def static(
@@ -345,6 +348,7 @@ def static(
     cost_limit: float,
     enrich: bool,
     batch_size: int,
+    force: bool,
     verbose: bool,
     quiet: bool,
 ) -> None:
@@ -436,6 +440,7 @@ def static(
             cost_limit=cost_limit,
             enrich=enrich,
             batch_size=batch_size,
+            force=force,
             console=console,
         )
     else:
@@ -448,6 +453,7 @@ def static(
             cost_limit=cost_limit,
             enrich=enrich,
             batch_size=batch_size,
+            force=force,
         )
 
 
@@ -466,6 +472,7 @@ def _run_plain(
     cost_limit: float,
     enrich: bool,
     batch_size: int,
+    force: bool = False,
 ) -> None:
     """Run static discovery with plain logging output."""
     from concurrent.futures import Future, ThreadPoolExecutor
@@ -473,6 +480,7 @@ def _run_plain(
     from imas_codex.mdsplus.static import (
         discover_static_tree_version,
         extract_units_for_version,
+        get_static_tree_graph_state,
         ingest_static_tree,
         merge_units_into_data,
         merge_version_results,
@@ -488,9 +496,37 @@ def _run_plain(
 
         logger.info("  Versions: %s", ver_list)
 
-        # Phase 1: Extract — one version at a time
+        # Query graph state to skip already-completed work
+        graph_state: dict | None = None
+        versions_to_extract = list(ver_list)
+
+        if not dry_run and not force:
+            from imas_codex.graph import GraphClient
+
+            try:
+                with GraphClient() as client:
+                    graph_state = get_static_tree_graph_state(
+                        client, facility, tname, ver_list
+                    )
+                ingested = graph_state["ingested_versions"]
+                if ingested:
+                    versions_to_extract = [v for v in ver_list if v not in ingested]
+                    logger.info(
+                        "  Graph: %d/%d versions already ingested, %d to extract",
+                        len(ingested),
+                        len(ver_list),
+                        len(versions_to_extract),
+                    )
+            except Exception:
+                logger.debug("Could not query graph state, will extract all versions")
+        elif force:
+            logger.info("  --force: re-extracting all versions")
+
+        # Phase 1: Extract — one version at a time (skip already-ingested)
         version_results = []
-        for ver in ver_list:
+        if not versions_to_extract:
+            logger.info("  All versions already in graph, skipping extraction")
+        for ver in versions_to_extract:
             logger.info("  Extracting v%d...", ver)
             try:
                 data = discover_static_tree_version(
@@ -506,77 +542,102 @@ def _run_plain(
                 )
 
         data = merge_version_results(version_results)
-        if not data.get("versions"):
-            logger.warning("No versions extracted for %s:%s", facility, tname)
-            continue
+        has_new_versions = bool(data.get("versions"))
 
-        _log_version_summary(data, facility, tname)
+        if has_new_versions:
+            _log_version_summary(data, facility, tname)
 
         # Phase 2: Units + Enrichment (concurrent)
-        # Units extraction runs in background thread with batched SSH calls.
-        # Each batch processes ~5000 nodes with its own timeout (~90s).
-        latest_version = max(
-            int(v) for v in data["versions"] if "error" not in data["versions"][v]
-        )
+        enrichment_results: list = []
+        enrich_cost = 0.0
+        units: dict[str, str] = {}
 
-        def _plain_progress(checked: int, total: int, found: int) -> None:
-            logger.info("  Units: %d/%d checked, %d found", checked, total, found)
-
-        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="units")
-        try:
-            units_future: Future[dict[str, str]] = executor.submit(
-                extract_units_for_version,
-                facility,
-                tname,
-                latest_version,
-                timeout=180,
-                batch_size=5000,
-                on_progress=_plain_progress,
-            )
-            logger.info(
-                "  Units extraction started (v%d, batched, background)", latest_version
+        if has_new_versions:
+            # Units extraction runs in background thread with batched SSH calls.
+            # Each batch processes ~5000 nodes with its own timeout (~90s).
+            latest_version = max(
+                int(v) for v in data["versions"] if "error" not in data["versions"][v]
             )
 
-            # LLM enrichment runs in main thread
-            enrichment_results = []
-            enrich_cost = 0.0
-            if enrich and not dry_run:
-                enrichment_results, enrich_cost = _run_enrichment(
-                    data, facility, tname, cfg, cost_limit, batch_size
+            def _plain_progress(checked: int, total: int, found: int) -> None:
+                logger.info("  Units: %d/%d checked, %d found", checked, total, found)
+
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="units")
+            try:
+                units_future: Future[dict[str, str]] = executor.submit(
+                    extract_units_for_version,
+                    facility,
+                    tname,
+                    latest_version,
+                    timeout=180,
+                    batch_size=5000,
+                    on_progress=_plain_progress,
+                )
+                logger.info(
+                    "  Units extraction started (v%d, batched, background)",
+                    latest_version,
                 )
 
-            # Collect units result — each batch has its own 120s timeout,
-            # so total wait = batches × 120s. 34k nodes / 5000 = 7 batches.
-            units = units_future.result(timeout=7 * 180 + 60)
-            if units:
-                updated = merge_units_into_data(data, units)
-                logger.info("  Merged units into %d nodes", updated)
-        except Exception:
-            logger.exception("  Units collection failed")
-            units = {}
-        finally:
-            executor.shutdown(wait=False)
+                # LLM enrichment runs in main thread
+                if enrich and not dry_run:
+                    enrichment_results, enrich_cost = _run_enrichment(
+                        data, facility, tname, cfg, cost_limit, batch_size
+                    )
+
+                # Collect units result
+                units = units_future.result(timeout=7 * 180 + 60)
+                if units:
+                    updated = merge_units_into_data(data, units)
+                    logger.info("  Merged units into %d nodes", updated)
+            except Exception:
+                logger.exception("  Units collection failed")
+            finally:
+                executor.shutdown(wait=False)
+        elif enrich and not dry_run and graph_state:
+            # No new extraction but may need enrichment for existing nodes
+            unenriched = graph_state.get("unenriched_paths", [])
+            if unenriched:
+                logger.info("  %d nodes need enrichment in graph", len(unenriched))
+                # Build minimal data for enrichment
+                enrich_data = {
+                    "tree_name": tname,
+                    "versions": {
+                        "graph": {"nodes": unenriched, "node_count": len(unenriched)}
+                    },
+                }
+                enrichment_results, enrich_cost = _run_enrichment(
+                    enrich_data, facility, tname, cfg, cost_limit, batch_size
+                )
 
         # Phase 3: Ingest
-        if not dry_run:
-            from imas_codex.graph import GraphClient
+        if has_new_versions:
+            if not dry_run:
+                from imas_codex.graph import GraphClient
 
-            with GraphClient() as client:
-                stats = ingest_static_tree(client, facility, data, dry_run=False)
-                if enrichment_results:
-                    _apply_enrichment(client, facility, tname, enrichment_results)
+                with GraphClient() as client:
+                    stats = ingest_static_tree(client, facility, data, dry_run=False)
+                    if enrichment_results:
+                        _apply_enrichment(client, facility, tname, enrichment_results)
+                    logger.info(
+                        "Ingested: %d versions, %d nodes",
+                        stats["versions_created"],
+                        stats["nodes_created"],
+                    )
+            else:
+                stats = ingest_static_tree(None, facility, data, dry_run=True)
                 logger.info(
-                    "Ingested: %d versions, %d nodes",
+                    "[DRY RUN] Would create: %d versions, %d nodes",
                     stats["versions_created"],
                     stats["nodes_created"],
                 )
+        elif enrichment_results and not dry_run:
+            from imas_codex.graph import GraphClient
+
+            with GraphClient() as client:
+                _apply_enrichment(client, facility, tname, enrichment_results)
+                logger.info("Applied enrichment to %d nodes", len(enrichment_results))
         else:
-            stats = ingest_static_tree(None, facility, data, dry_run=True)
-            logger.info(
-                "[DRY RUN] Would create: %d versions, %d nodes",
-                stats["versions_created"],
-                stats["nodes_created"],
-            )
+            logger.info("  All data already in graph, nothing to do")
 
 
 # =============================================================================
@@ -596,6 +657,7 @@ def _run_pipeline(
     cost_limit: float,
     enrich: bool,
     batch_size: int,
+    force: bool = False,
 ) -> None:
     """Execute the async static discovery pipeline inside a live display."""
     import asyncio
@@ -612,6 +674,7 @@ def _run_pipeline(
             cost_limit=cost_limit,
             enrich=enrich,
             batch_size=batch_size,
+            force=force,
         )
     )
 
@@ -628,10 +691,12 @@ async def _async_pipeline(
     cost_limit: float,
     enrich: bool,
     batch_size: int,
+    force: bool = False,
 ) -> None:
     """Async pipeline with sequential extract and concurrent workers.
 
     Architecture:
+    - Graph state is queried to skip already-completed work
     - EXTRACT runs versions sequentially for clear incremental progress
     - UNITS worker starts as soon as the latest version finishes
     - ENRICH worker starts as soon as any version yields enrichable nodes
@@ -642,13 +707,67 @@ async def _async_pipeline(
     from imas_codex.mdsplus.static import (
         async_discover_static_tree_version,
         async_extract_units_for_version,
+        get_static_tree_graph_state,
         ingest_static_tree,
         merge_units_into_data,
         merge_version_results,
     )
 
+    # ── Query graph state to skip already-completed work ─────────────
+    graph_state: dict | None = None
+    versions_to_extract = list(ver_list)
+    unenriched_from_graph: list[dict] = []
+
+    if not dry_run and not force:
+        from imas_codex.graph import GraphClient
+
+        try:
+            with GraphClient() as client:
+                graph_state = get_static_tree_graph_state(
+                    client, facility, tname, ver_list
+                )
+
+            ingested = graph_state["ingested_versions"]
+            if ingested:
+                versions_to_extract = [v for v in ver_list if v not in ingested]
+                logger.info(
+                    "Graph state: %d/%d versions already ingested (%s), "
+                    "%d to extract, %d nodes (%d enriched)",
+                    len(ingested),
+                    len(ver_list),
+                    ", ".join(f"v{v}" for v in sorted(ingested)),
+                    len(versions_to_extract),
+                    graph_state["total_nodes"],
+                    graph_state["enriched_nodes"],
+                )
+            unenriched_from_graph = graph_state.get("unenriched_paths", [])
+        except Exception:
+            logger.debug("Could not query graph state, will extract all versions")
+    elif force:
+        logger.info("--force: re-extracting all versions")
+
     display._extract_start = time.time()
     display.state.extract_versions_total = len(ver_list)
+
+    # Account for already-ingested versions in progress display
+    already_done = len(ver_list) - len(versions_to_extract)
+    if already_done > 0 and graph_state:
+        already_nodes = sum(
+            graph_state["version_node_counts"].get(v, 0)
+            for v in ver_list
+            if v not in versions_to_extract
+        )
+        display.state.extract_versions_done = already_done
+        display.state.extract_nodes = already_nodes
+        display.state.extract_nodes_total = already_nodes
+        display.extract_queue.add(
+            [
+                {
+                    "version": f"{already_done} versions already in graph",
+                    "detail": f"{already_nodes:,} nodes, skipping re-extraction",
+                }
+            ]
+        )
 
     # Shared state between async workers
     version_results: list[dict] = []
@@ -659,6 +778,10 @@ async def _async_pipeline(
     units: dict[str, str] = {}
     latest_version = max(ver_list)
     latest_version_event = asyncio.Event()  # Set when max version is extracted
+
+    # If latest version is already ingested, signal units worker immediately
+    if latest_version not in versions_to_extract:
+        latest_version_event.set()
 
     # ── EXTRACT worker (one task per version) ─────────────────────────
     async def extract_version(ver: int) -> dict | None:
@@ -853,15 +976,30 @@ async def _async_pipeline(
         if not enrich or dry_run:
             return
 
-        # Wait for at least one version to produce enrichable nodes
-        while not enrichable_nodes:
-            if display.state.extract_versions_done >= len(ver_list):
-                return  # All done, nothing to enrich
-            await asyncio.sleep(0.5)
+        # If we have unenriched nodes from graph state, use those directly
+        if unenriched_from_graph and not versions_to_extract:
+            nodes_to_enrich = unenriched_from_graph
+        else:
+            # Wait for at least one version to produce enrichable nodes
+            while not enrichable_nodes:
+                if display.state.extract_versions_done >= len(ver_list):
+                    break
+                await asyncio.sleep(0.5)
 
-        # Snapshot current enrichable nodes
-        async with enrichable_lock:
-            nodes_to_enrich = list(enrichable_nodes)
+            # Merge freshly-extracted enrichable nodes with graph unenriched
+            async with enrichable_lock:
+                nodes_to_enrich = list(enrichable_nodes)
+
+            # If graph already has unenriched nodes, add those too (deduplicated)
+            if unenriched_from_graph:
+                seen = {n["path"] for n in nodes_to_enrich}
+                for n in unenriched_from_graph:
+                    if n["path"] not in seen:
+                        nodes_to_enrich.append(n)
+                        seen.add(n["path"])
+
+        if not nodes_to_enrich:
+            return
 
         display.state.enrich_total = len(nodes_to_enrich)
 
@@ -889,14 +1027,17 @@ async def _async_pipeline(
     async def sequential_extract() -> None:
         """Extract versions one at a time for clear incremental progress.
 
-        Running all versions concurrently via SSH causes them to finish
-        at roughly the same time (SSH multiplexing + MDSplus locking
-        serialise them anyway), so the progress bar sits at 0% the
-        whole time.  Sequential extraction lets the bar advance after
-        each version and lets ENRICH start processing nodes from early
-        versions while later ones are still extracting.
+        Skips versions already in the graph. Running all versions
+        concurrently via SSH causes them to finish at roughly the same
+        time (SSH multiplexing + MDSplus locking serialise them anyway),
+        so sequential extraction lets the bar advance after each version
+        and lets ENRICH start processing nodes from early versions while
+        later ones are still extracting.
         """
-        for ver in ver_list:
+        if not versions_to_extract:
+            logger.info("All versions already in graph, skipping extraction")
+            return
+        for ver in versions_to_extract:
             await extract_version(ver)
         # Pin total to actual count so bar reaches 100%
         display.state.extract_nodes_total = display.state.extract_nodes
@@ -915,89 +1056,132 @@ async def _async_pipeline(
 
         # Merge all version results
         data = merge_version_results(version_results)
-        if not data.get("versions"):
-            display.print_summary()
-            return
 
-        total_nodes = sum(
-            v.get("node_count", 0)
-            for v in data["versions"].values()
-            if "error" not in v
-        )
+        has_new_versions = bool(data.get("versions"))
 
-        # Merge units into data
-        if units:
-            updated = merge_units_into_data(data, units)
-            display.units_queue.add(
-                [{"path": f"merged into {updated} nodes", "detail": "complete"}]
+        if has_new_versions:
+            total_nodes = sum(
+                v.get("node_count", 0)
+                for v in data["versions"].values()
+                if "error" not in v
             )
 
-        # ── Phase 4: INGEST (runs while ticker is alive) ─────────────
-        if not dry_run:
-            from imas_codex.graph import GraphClient
+            # Merge units into data
+            if units:
+                updated = merge_units_into_data(data, units)
+                display.units_queue.add(
+                    [{"path": f"merged into {updated} nodes", "detail": "complete"}]
+                )
 
-            n_versions = len(data["versions"])
-            display.state.ingest_total = total_nodes + n_versions
-            display._ingest_start = time.time()
-            display.ingest_queue.add(
-                [
-                    {
-                        "label": f"{n_versions} TreeModelVersions + {total_nodes:,} TreeNodes",
-                        "detail": "writing to Neo4j...",
-                    }
-                ]
-            )
+            # ── Phase 4: INGEST (runs while ticker is alive) ─────────
+            if not dry_run:
+                from imas_codex.graph import GraphClient
 
-            def _on_ingest_progress(written: int, total: int, detail: str) -> None:
-                display.state.ingest_completed = n_versions + written
-                display._update_rate("ingest")
+                n_versions = len(data["versions"])
+                display.state.ingest_total = total_nodes + n_versions
+                display._ingest_start = time.time()
                 display.ingest_queue.add(
                     [
                         {
-                            "label": f"{written:,}/{total:,} TreeNodes",
-                            "detail": detail,
+                            "label": f"{n_versions} TreeModelVersions + {total_nodes:,} TreeNodes",
+                            "detail": "writing to Neo4j...",
                         }
                     ]
                 )
 
-            # Run ingest in thread so ticker keeps refreshing the display
-            def _do_ingest() -> dict[str, int]:
-                with GraphClient() as client:
-                    stats = ingest_static_tree(
-                        client,
-                        facility,
-                        data,
-                        dry_run=False,
-                        on_progress=_on_ingest_progress,
+                def _on_ingest_progress(written: int, total: int, detail: str) -> None:
+                    display.state.ingest_completed = n_versions + written
+                    display._update_rate("ingest")
+                    display.ingest_queue.add(
+                        [
+                            {
+                                "label": f"{written:,}/{total:,} TreeNodes",
+                                "detail": detail,
+                            }
+                        ]
                     )
-                    if enrichment_results:
-                        _apply_enrichment(client, facility, tname, enrichment_results)
-                    return stats
 
-            stats = await asyncio.to_thread(_do_ingest)
-            display.state.ingest_completed = (
-                stats["versions_created"] + stats["nodes_created"]
-            )
-            display.ingest_queue.add(
-                [
-                    {
-                        "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
-                        "detail": "complete",
-                    }
-                ]
-            )
+                # Run ingest in thread so ticker keeps refreshing the display
+                def _do_ingest() -> dict[str, int]:
+                    with GraphClient() as client:
+                        stats = ingest_static_tree(
+                            client,
+                            facility,
+                            data,
+                            dry_run=False,
+                            on_progress=_on_ingest_progress,
+                        )
+                        if enrichment_results:
+                            _apply_enrichment(
+                                client, facility, tname, enrichment_results
+                            )
+                        return stats
+
+                stats = await asyncio.to_thread(_do_ingest)
+                display.state.ingest_completed = (
+                    stats["versions_created"] + stats["nodes_created"]
+                )
+                display.ingest_queue.add(
+                    [
+                        {
+                            "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
+                            "detail": "complete",
+                        }
+                    ]
+                )
+            else:
+                stats = ingest_static_tree(None, facility, data, dry_run=True)
+                display.state.ingest_total = 1
+                display.state.ingest_completed = 1
+                display.ingest_queue.add(
+                    [
+                        {
+                            "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
+                            "detail": "DRY RUN — no writes",
+                        }
+                    ]
+                )
         else:
-            stats = ingest_static_tree(None, facility, data, dry_run=True)
-            display.state.ingest_total = 1
-            display.state.ingest_completed = 1
-            display.ingest_queue.add(
-                [
-                    {
-                        "label": f"{stats['versions_created']} versions, {stats['nodes_created']:,} nodes",
-                        "detail": "DRY RUN — no writes",
-                    }
-                ]
-            )
+            # No new versions extracted — apply enrichment only if needed
+            if enrichment_results and not dry_run:
+                from imas_codex.graph import GraphClient
+
+                display.state.ingest_total = len(enrichment_results)
+                display._ingest_start = time.time()
+                display.ingest_queue.add(
+                    [
+                        {
+                            "label": f"applying {len(enrichment_results)} enrichments",
+                            "detail": "writing descriptions to Neo4j...",
+                        }
+                    ]
+                )
+
+                def _do_enrich_only() -> None:
+                    with GraphClient() as client:
+                        _apply_enrichment(client, facility, tname, enrichment_results)
+
+                await asyncio.to_thread(_do_enrich_only)
+                display.state.ingest_completed = len(enrichment_results)
+                display.ingest_queue.add(
+                    [
+                        {
+                            "label": f"{len(enrichment_results)} descriptions applied",
+                            "detail": "complete",
+                        }
+                    ]
+                )
+            else:
+                display.state.ingest_total = 1
+                display.state.ingest_completed = 1
+                display.ingest_queue.add(
+                    [
+                        {
+                            "label": "all data already in graph",
+                            "detail": "nothing to ingest",
+                        }
+                    ]
+                )
 
         display.print_summary()
 
@@ -1019,6 +1203,7 @@ def _run_with_progress(
     cost_limit: float,
     enrich: bool,
     batch_size: int,
+    force: bool = False,
     console: Console | None,
 ) -> None:
     """Run static discovery with rich progress display."""
@@ -1047,6 +1232,7 @@ def _run_with_progress(
                 cost_limit=cost_limit,
                 enrich=enrich,
                 batch_size=batch_size,
+                force=force,
             )
 
 
