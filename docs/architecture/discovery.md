@@ -429,7 +429,7 @@ SourceFile -[:HAS_CHUNK]-> CodeChunk
 FacilitySignal -[:AT_FACILITY]-> Facility
 FacilitySignal -[:DATA_ACCESS]-> DataAccess
 FacilitySignal -[:MAPS_TO_IMAS]-> IMASPath
-TreeNode -[:CHILD_OF]-> TreeNode
+TreeNode -[:HAS_NODE]-> TreeNode
 TreeNode -[:IN_VERSION]-> TreeModelVersion
 ```
 

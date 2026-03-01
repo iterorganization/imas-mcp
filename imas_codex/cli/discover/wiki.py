@@ -318,7 +318,7 @@ def wiki(
             # Per-site artifact counts
             _art_rows = _gc.query(
                 """
-                MATCH (wa:WikiArtifact {facility_id: $f})-[:FROM_PAGE]->(wp:WikiPage)
+                MATCH (wa:WikiArtifact {facility_id: $f})<-[:HAS_ARTIFACT]-(wp:WikiPage)
                 WITH wp.url AS url, count(wa) AS cnt
                 RETURN url, cnt
                 """,
