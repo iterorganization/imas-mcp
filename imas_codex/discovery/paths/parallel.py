@@ -844,7 +844,7 @@ async def scan_worker(
     state: DiscoveryState,
     on_progress: Callable[[str, WorkerStats, list[str] | None, list[dict] | None], None]
     | None = None,
-    batch_size: int = 50,
+    batch_size: int = 5,
 ) -> None:
     """Async scanner worker.
 
@@ -854,7 +854,7 @@ async def scan_worker(
     Args:
         state: Shared discovery state
         on_progress: Progress callback
-        batch_size: Paths per SSH call (default 50)
+        batch_size: Paths per SSH call (default 5)
     """
     from imas_codex.discovery.paths.scanner import async_scan_paths
 
@@ -1007,7 +1007,7 @@ async def expand_worker(
     state: DiscoveryState,
     on_progress: Callable[[str, WorkerStats, list[str] | None, list[dict] | None], None]
     | None = None,
-    batch_size: int = 50,
+    batch_size: int = 10,
 ) -> None:
     """Async expansion worker.
 
@@ -1017,7 +1017,7 @@ async def expand_worker(
     Args:
         state: Shared discovery state
         on_progress: Progress callback
-        batch_size: Paths per SSH call (default 50)
+        batch_size: Paths per SSH call (default 10)
     """
     from imas_codex.discovery.paths.scanner import async_scan_paths
 
@@ -2103,8 +2103,8 @@ async def run_parallel_discovery(
     num_score_workers: int = 1,  # Single scorer: refine also uses LLM (total=2)
     num_enrich_workers: int = 2,  # Two enrichment workers for parallel SSH
     num_refine_workers: int = 1,  # Enabled by default for score refinement
-    scan_batch_size: int = 50,
-    expand_batch_size: int = 50,
+    scan_batch_size: int = 5,
+    expand_batch_size: int = 10,
     score_batch_size: int = 50,  # Increased: more work per API call
     enrich_batch_size: int = 10,  # Smaller: heavy SSH operations (du/tokei)
     refine_batch_size: int = 10,  # Smaller batches: 20+ fields per path in structured output
@@ -2149,8 +2149,8 @@ async def run_parallel_discovery(
         num_score_workers: Number of concurrent score workers (default: 2)
         num_enrich_workers: Number of concurrent enrich workers (default: 1)
         num_refine_workers: Number of concurrent refine workers (default: 1)
-        scan_batch_size: Paths per SSH call (default: 50)
-        expand_batch_size: Paths per expand SSH call (default: 50)
+        scan_batch_size: Paths per SSH call (default: 5)
+        expand_batch_size: Paths per expand SSH call (default: 10)
         score_batch_size: Paths per LLM call (default: 50)
         enrich_batch_size: Paths per SSH call (default: 10)
         refine_batch_size: Paths per refine (default: 50)

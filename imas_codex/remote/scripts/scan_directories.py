@@ -72,6 +72,7 @@ def scan_directory(
     enable_rg: bool,
     enable_size: bool,
     has_rg: bool,
+    enable_vcs_remote_check: bool = False,
 ) -> Dict[str, Any]:
     """Scan a single directory and return results dict.
 
@@ -81,6 +82,8 @@ def scan_directory(
         enable_rg: Whether to run rg pattern matching
         enable_size: Whether to calculate directory size
         has_rg: Whether rg command is available
+        enable_vcs_remote_check: Whether to check VCS remote accessibility
+                                 (network calls, slow — disabled by default)
 
     Returns:
         Dict with path, stats, child_dirs, child_names, and optional error
@@ -404,9 +407,12 @@ def scan_directory(
             pass
 
     # Check VCS remote accessibility (can the code be obtained from the remote?)
+    # Skipped by default — network calls (git ls-remote, svn info, hg identify)
+    # can each take 10s+ per repo, causing SSH timeouts when scanning many paths.
+    # Deferred to enrichment phase where paths are processed individually.
     vcs_remote_accessible: Optional[bool] = None
     effective_remote = vcs_remote_url or git_remote_url
-    if effective_remote:
+    if enable_vcs_remote_check and effective_remote:
         if has_git:
             try:
                 proc = subprocess.run(
@@ -488,13 +494,22 @@ def main() -> None:
     rg_patterns: Dict[str, str] = config.get("rg_patterns", {})
     enable_rg: bool = config.get("enable_rg", False)
     enable_size: bool = config.get("enable_size", False)
+    enable_vcs_remote_check: bool = config.get("enable_vcs_remote_check", False)
 
     # Check for tools once
     has_rg = has_command("rg")
 
     # Scan all paths
     results = [
-        scan_directory(p, rg_patterns, enable_rg, enable_size, has_rg) for p in paths
+        scan_directory(
+            p,
+            rg_patterns,
+            enable_rg,
+            enable_size,
+            has_rg,
+            enable_vcs_remote_check,
+        )
+        for p in paths
     ]
 
     # Output JSON (handles all escaping correctly)
