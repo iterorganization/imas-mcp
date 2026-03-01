@@ -78,6 +78,8 @@ System symbols indicate the physical component:
 - Node types: STRUCTURE nodes are containers, NUMERIC/SIGNAL hold data
 - Tags provide the human-readable short name for the node
 - If a numeric value is provided, use it to inform the description
+- Use **parent** context to understand which system/component this node belongs to
+- Use **sibling** context to understand related quantities and disambiguate meaning
   (e.g., a scalar value of 61 for flux loops means 61 individual loops)
 
 {{ static_enrichment_schema_fields }}

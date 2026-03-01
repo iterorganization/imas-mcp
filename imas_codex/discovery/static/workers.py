@@ -319,6 +319,7 @@ async def enrich_worker(
 
     from .graph_ops import (
         claim_nodes_for_enrichment,
+        fetch_enrichment_context,
         mark_nodes_enriched,
         release_node_claims,
     )
@@ -327,10 +328,9 @@ async def enrich_worker(
         state.enrich_phase.mark_done()
         return
 
-    # Wait for some data to be available in the graph
+    # Wait for ALL extraction to complete so sibling/parent context is
+    # available in the graph before we start enriching value nodes.
     while not state.should_stop():
-        if state.extract_stats.processed > 0:
-            break
         if state.extract_phase.done:
             break
         await asyncio.sleep(1.0)
@@ -373,6 +373,15 @@ async def enrich_worker(
         state.enrich_phase.record_activity(len(nodes))
         node_ids = [n["id"] for n in nodes]
 
+        # Fetch tree hierarchy context (parents, siblings) from graph
+        node_paths = [n["path"] for n in nodes]
+        tree_context = await asyncio.to_thread(
+            fetch_enrichment_context,
+            state.facility,
+            state.tree_name,
+            node_paths,
+        )
+
         # Build prompt batch
         batch_nodes = []
         for n in nodes:
@@ -394,7 +403,9 @@ async def enrich_worker(
             )
 
         try:
-            user_prompt = _build_user_prompt(batch_nodes, version_descs)
+            user_prompt = _build_user_prompt(
+                batch_nodes, version_descs, tree_context=tree_context
+            )
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

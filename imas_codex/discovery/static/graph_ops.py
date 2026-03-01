@@ -169,6 +169,79 @@ def release_version_claim(version_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Enrichment context — tree hierarchy for LLM prompts
+# ---------------------------------------------------------------------------
+
+
+def fetch_enrichment_context(
+    facility: str,
+    tree_name: str,
+    node_paths: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Fetch tree hierarchy context for nodes being enriched.
+
+    For each node, queries the graph for its parent STRUCTURE node
+    and sibling value nodes. This context is injected into the LLM
+    prompt so descriptions are informed by the surrounding tree.
+
+    Args:
+        facility: Facility identifier
+        tree_name: Static tree name
+        node_paths: Paths of nodes being enriched
+
+    Returns:
+        Dict mapping node path to context dict with:
+        - parent_path: Parent STRUCTURE node path
+        - parent_tags: Tags on the parent node
+        - siblings: List of sibling dicts (path, node_type, tags, units)
+    """
+    if not node_paths:
+        return {}
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $paths AS node_path
+            MATCH (n:TreeNode {path: node_path, facility_id: $facility})
+            WHERE n.tree_name = $tree_name AND n.is_static = true
+            OPTIONAL MATCH (parent:TreeNode {
+                path: n.parent_path, facility_id: $facility
+            })
+            WHERE parent.tree_name = $tree_name
+            OPTIONAL MATCH (parent)-[:HAS_NODE]->(sibling:TreeNode)
+            WHERE sibling.tree_name = $tree_name
+              AND sibling.path <> n.path
+              AND sibling.node_type IN ['NUMERIC', 'SIGNAL', 'AXIS', 'TEXT']
+            WITH n, parent, collect(DISTINCT {
+                path: sibling.path,
+                node_type: sibling.node_type,
+                tags: sibling.tags,
+                units: sibling.units
+            })[0..20] AS siblings
+            RETURN n.path AS path,
+                   parent.path AS parent_path,
+                   parent.tags AS parent_tags,
+                   parent.node_type AS parent_type,
+                   siblings
+            """,
+            paths=node_paths,
+            facility=facility,
+            tree_name=tree_name,
+        )
+        context: dict[str, dict[str, Any]] = {}
+        for r in result:
+            # Filter out null-path siblings from OPTIONAL MATCH
+            siblings = [s for s in (r["siblings"] or []) if s.get("path") is not None]
+            context[r["path"]] = {
+                "parent_path": r["parent_path"],
+                "parent_tags": r["parent_tags"],
+                "parent_type": r["parent_type"],
+                "siblings": siblings,
+            }
+        return context
+
+
+# ---------------------------------------------------------------------------
 # Enrichment claiming — TreeNode nodes
 # ---------------------------------------------------------------------------
 

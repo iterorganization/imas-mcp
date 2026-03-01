@@ -66,8 +66,16 @@ def _build_system_prompt(facility: str, tree_name: str) -> str:
 def _build_user_prompt(
     nodes: list[dict[str, Any]],
     version_descriptions: dict[int, str] | None = None,
+    tree_context: dict[str, dict[str, Any]] | None = None,
 ) -> str:
-    """Build user prompt with a batch of nodes to describe."""
+    """Build user prompt with a batch of nodes to describe.
+
+    Args:
+        nodes: List of node dicts with path, node_type, tags, units.
+        version_descriptions: Optional map of version number to description.
+        tree_context: Optional dict mapping node path to hierarchy context
+            from ``fetch_enrichment_context`` (parent info, sibling nodes).
+    """
     lines = []
     if version_descriptions:
         lines.append("## Version Context")
@@ -93,6 +101,38 @@ def _build_user_prompt(
             lines.append(f"shape: {node['shape']}")
         if node.get("scalar_value") is not None:
             lines.append(f"value: {node['scalar_value']}")
+
+        # Inject tree hierarchy context
+        ctx = (tree_context or {}).get(node["path"])
+        if ctx:
+            if ctx.get("parent_path"):
+                parent_label = ctx["parent_path"]
+                if ctx.get("parent_tags"):
+                    ptags = ctx["parent_tags"]
+                    if isinstance(ptags, list):
+                        parent_label += f" (tags: {', '.join(ptags)})"
+                    else:
+                        parent_label += f" (tag: {ptags})"
+                lines.append(f"parent: {parent_label}")
+            siblings = ctx.get("siblings", [])
+            if siblings:
+                sib_parts = []
+                for s in siblings:
+                    sib_str = s["path"].rsplit(".", 1)[-1]
+                    extras = []
+                    if s.get("units"):
+                        extras.append(s["units"])
+                    if s.get("tags"):
+                        t = s["tags"]
+                        if isinstance(t, list):
+                            extras.append(", ".join(t))
+                        else:
+                            extras.append(str(t))
+                    if extras:
+                        sib_str += f" [{'; '.join(extras)}]"
+                    sib_parts.append(sib_str)
+                lines.append(f"siblings: {', '.join(sib_parts)}")
+
         lines.append("")
 
     return "\n".join(lines)
