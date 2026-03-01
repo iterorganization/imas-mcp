@@ -108,8 +108,22 @@ def has_command(cmd: str) -> bool:
     return False
 
 
+def git_base_cmd(repo_path: str) -> List[str]:
+    """Build git command with safe.directory bypass.
+
+    Scanning other users' repos triggers git's dubious ownership check.
+    ``safe.directory=*`` bypasses this for read-only operations.
+    Requires git >= 2.35.2.
+    """
+    return ["git", "-c", "safe.directory=*", "-C", repo_path]
+
+
 def count_pattern_matches(path: str, pattern: str, timeout: int = 30) -> int:
-    """Count matches for a pattern using rg.
+    """Count matches for a pattern using rg at current directory level.
+
+    Only searches files directly in ``path`` (--max-depth 1), not in
+    subdirectories.  Subdirectories get their own enrichment pass if
+    they are expanded by the scorer.
 
     Args:
         path: Directory to search
@@ -121,7 +135,7 @@ def count_pattern_matches(path: str, pattern: str, timeout: int = 30) -> int:
     """
     try:
         proc = subprocess.run(
-            ["rg", "-c", "--no-messages", "--max-depth", "3", "-e", pattern, path],
+            ["rg", "-c", "--no-messages", "--max-depth", "1", "-e", pattern, path],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -197,41 +211,19 @@ def enrich_directory(
     # tokei runs after du because its timeout scales by total_bytes.
 
     def _run_du() -> tuple:
-        """Run du -sb and return (total_bytes, timed_out, failed).
+        """Sum file sizes at current directory level only.
 
-        Parse stdout regardless of return code: du returns non-zero
-        when it encounters permission-denied subdirectories (common on
-        NFS/GPFS) but still writes the valid total to stdout.
+        Uses ``find -maxdepth 1`` to sum sizes of files directly in the
+        directory, avoiding recursive inode traversal that hangs on
+        NFS/GPFS mounts.  Subdirectories are enriched separately if
+        the scorer expands into them.
 
-        Falls back to ``find -printf '%s'`` if du times out — this can
-        succeed on slow NFS mounts where du hangs waiting for recursive
-        inode stat operations.
+        Returns (total_bytes, timed_out, failed).
         """
-        du_timeout = 30
+        du_timeout = 15
         try:
             proc = subprocess.run(
-                ["du", "-sb", path],
-                capture_output=True,
-                text=True,
-                timeout=du_timeout,
-            )
-            if proc.stdout.strip():
-                try:
-                    return int(proc.stdout.split()[0]), False, False
-                except (ValueError, IndexError):
-                    return 0, False, True
-            # du ran but produced no stdout (permission denied everywhere)
-            return 0, False, True
-        except subprocess.TimeoutExpired:
-            pass
-        except Exception:
-            return 0, False, True
-
-        # Fallback: find -printf '%s' sums file sizes without recursive
-        # directory stat. Faster on NFS when du hangs on inode lookups.
-        try:
-            proc = subprocess.run(
-                ["find", path, "-type", "f", "-printf", "%s\n"],
+                ["find", path, "-maxdepth", "1", "-type", "f", "-printf", "%s\n"],
                 capture_output=True,
                 text=True,
                 timeout=du_timeout,
@@ -242,13 +234,12 @@ def enrich_directory(
                     for line in proc.stdout.strip().split("\n")
                     if line.strip().isdigit()
                 )
-                if total > 0:
-                    # du_fallback means the value is approximate (file sizes
-                    # only, no directory overhead)
-                    return total, False, False
-        except (subprocess.TimeoutExpired, Exception):
-            pass
-        return 0, True, False
+                return total, False, False
+            return 0, False, False
+        except subprocess.TimeoutExpired:
+            return 0, True, False
+        except Exception:
+            return 0, False, True
 
     def _run_rg() -> tuple:
         """Run rg pattern matching and return (matched_categories, read_matches, write_matches)."""
@@ -300,34 +291,43 @@ def enrich_directory(
     language_breakdown: Dict[str, int] = {}
 
     if has_tokei and not skip_loc and not skip_patterns:
-        tokei_timeout = (
-            30 + int(total_bytes / 1_000_000_000) * 15 if total_bytes > 0 else 60
-        )
-        tokei_timeout = min(tokei_timeout, 120)
+        # List files at current level for tokei (avoid recursive traversal)
         try:
-            proc = subprocess.run(
-                ["tokei", path, "-o", "json"],
-                capture_output=True,
-                text=True,
-                timeout=tokei_timeout,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                try:
-                    tokei_data = json.loads(proc.stdout)
-                    for lang, stats in tokei_data.items():
-                        if lang == "Total":
-                            continue
-                        if isinstance(stats, dict):
-                            code = stats.get("code", 0)
-                            if code > 0:
-                                language_breakdown[lang] = code
-                                total_lines += code
-                except json.JSONDecodeError:
-                    pass
-        except subprocess.TimeoutExpired:
-            warnings.append(f"tokei_timeout({total_bytes}B)")
-        except Exception:
-            pass
+            entries = os.listdir(path)
+        except OSError:
+            entries = []
+        current_files = [
+            os.path.join(path, e)
+            for e in entries
+            if os.path.isfile(os.path.join(path, e))
+        ]
+
+        tokei_timeout = 30
+        if current_files:
+            try:
+                proc = subprocess.run(
+                    ["tokei", "-o", "json"] + current_files,
+                    capture_output=True,
+                    text=True,
+                    timeout=tokei_timeout,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    try:
+                        tokei_data = json.loads(proc.stdout)
+                        for lang, stats in tokei_data.items():
+                            if lang == "Total":
+                                continue
+                            if isinstance(stats, dict):
+                                code = stats.get("code", 0)
+                                if code > 0:
+                                    language_breakdown[lang] = code
+                                    total_lines += code
+                    except json.JSONDecodeError:
+                        pass
+            except subprocess.TimeoutExpired:
+                warnings.append(f"tokei_timeout({total_bytes}B)")
+            except Exception:
+                pass
 
     result["total_lines"] = total_lines
     result["language_breakdown"] = language_breakdown

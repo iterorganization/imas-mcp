@@ -71,10 +71,12 @@ Each path comes with:
 - **pattern_categories**: Dict mapping category → match count (e.g., `{"mdsplus": 15, "imas_write": 3}`). Empty dict `{}` means rg was unavailable — treat as unknown, NOT as absence.
 - **read_matches / write_matches**: Total data format pattern matches
 - **is_multiformat**: True if directory reads AND writes data (format conversion code)
-- **total_lines**: Lines of code (excludes comments). 0 may mean tokei was unavailable.
-- **language_breakdown**: Language → line count (e.g., `{"Python": 2500, "Fortran": 800}`)
-- **total_bytes**: Total directory size
+- **total_lines**: Lines of code in current-level files only (excludes comments). 0 may mean tokei was unavailable.
+- **language_breakdown**: Language → line count for current-level files (e.g., `{"Python": 2500, "Fortran": 800}`)
+- **total_bytes**: Size of files directly in this directory (not recursive into subdirectories). Each child directory is enriched independently.
 - **enrich_warnings**: Timeout/failure warnings. When present, treat affected metrics as unknown rather than zero.
+
+All enrichment metrics cover only files at the current directory level. Pattern matching, line counts, and size measurements do not recurse into subdirectories — child directories get their own enrichment when discovered.
 
 ## Pattern Categories → Score Dimensions
 

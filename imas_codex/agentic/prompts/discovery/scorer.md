@@ -154,6 +154,8 @@ A directory containing Python/Fortran source files is typically a **leaf** — i
 
 Set `should_enrich=true` for directories worth running deep pattern analysis (regex, line counts, disk usage). Paths scoring above the discovery threshold are auto-enriched regardless, so `should_enrich` is mainly useful for paths below that threshold where enrichment could confirm or deny initial suspicions.
 
+**Current-level analysis:** Enrichment operates on files directly inside the directory, not recursively into subdirectories. Size (`total_bytes`) counts only files at the current level. Pattern matching (`rg`) and line counts (`tokei`) also cover only current-level files. Each directory node in the graph gets its own independent enrichment — child directories are enriched separately when they are discovered and scored.
+
 **Patterns searched (by score dimension):**
 {{ enrichment_patterns }}
 
