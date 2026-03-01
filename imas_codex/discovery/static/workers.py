@@ -306,8 +306,9 @@ async def enrich_worker(
 ) -> None:
     """Enrich worker: LLM batch descriptions of tree nodes.
 
-    Claims TreeNodes needing enrichment, sends batches to LLM,
-    persists descriptions and metadata back to graph.
+    After extraction completes, detects indexed parameter patterns and
+    enriches them first (one LLM call per pattern covers hundreds of
+    nodes). Then enriches remaining non-pattern nodes individually.
     """
     from imas_codex.discovery.base.llm import call_llm_structured
     from imas_codex.mdsplus.enrichment import (
@@ -319,9 +320,13 @@ async def enrich_worker(
 
     from .graph_ops import (
         claim_nodes_for_enrichment,
+        claim_patterns_for_enrichment,
+        detect_and_create_patterns,
         fetch_enrichment_context,
         mark_nodes_enriched,
+        mark_patterns_enriched,
         release_node_claims,
+        release_pattern_claims,
     )
 
     if not state.enrich:
@@ -338,6 +343,22 @@ async def enrich_worker(
     if state.should_stop():
         return
 
+    # Detect and create patterns from indexed parameter groups
+    if on_progress:
+        on_progress("detecting patterns", state.enrich_stats, None)
+
+    patterns_created = await asyncio.to_thread(
+        detect_and_create_patterns,
+        state.facility,
+        state.tree_name,
+    )
+    if patterns_created and on_progress:
+        on_progress(
+            f"found {patterns_created} parameter patterns",
+            state.enrich_stats,
+            [{"patterns_created": patterns_created}],
+        )
+
     model = get_model("language")
     system_prompt = _build_system_prompt(state.facility, state.tree_name)
 
@@ -347,6 +368,114 @@ async def enrich_worker(
         if "description" in vc:
             version_descs[vc["version"]] = vc["description"]
 
+    # --- Phase 1: Enrich patterns (one representative per group) ---
+    while not state.should_stop() and not state.budget_exhausted:
+        patterns = await asyncio.to_thread(
+            claim_patterns_for_enrichment,
+            state.facility,
+            state.tree_name,
+            limit=state.batch_size,
+        )
+        if not patterns:
+            break
+
+        state.enrich_phase.record_activity(len(patterns))
+        pattern_ids = [p["id"] for p in patterns]
+
+        # Build prompt from representative nodes
+        batch_nodes = []
+        for p in patterns:
+            batch_nodes.append(
+                {
+                    "path": p["representative_path"],
+                    "node_type": p["node_type"],
+                    "tags": p.get("tags"),
+                    "units": p.get("units"),
+                    # Add pattern context for the LLM
+                    "_pattern_leaf": p["leaf_name"],
+                    "_pattern_grandparent": p["grandparent_path"],
+                    "_pattern_count": p["index_count"],
+                }
+            )
+
+        # Fetch tree context for the representative nodes
+        rep_paths = [p["representative_path"] for p in patterns]
+        tree_context = await asyncio.to_thread(
+            fetch_enrichment_context,
+            state.facility,
+            state.tree_name,
+            rep_paths,
+        )
+
+        if on_progress:
+            on_progress(
+                f"enriching {len(patterns)} patterns",
+                state.enrich_stats,
+                [{"pattern_count": len(patterns)}],
+            )
+
+        try:
+            user_prompt = _build_user_prompt(
+                batch_nodes, version_descs, tree_context=tree_context
+            )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            parsed, cost, _tokens = await asyncio.to_thread(
+                call_llm_structured,
+                model=model,
+                messages=messages,
+                response_model=StaticNodeBatch,
+            )
+            state.enrich_stats.cost += cost
+
+            # Match results to patterns by representative path
+            descriptions: dict[str, str] = {}
+            metadata: dict[str, dict] = {}
+            for r in parsed.results:
+                for p in patterns:
+                    if p["representative_path"] == r.path:
+                        descriptions[p["id"]] = r.description or ""
+                        if r.keywords or r.category:
+                            metadata[p["id"]] = {
+                                "keywords": r.keywords,
+                                "category": r.category,
+                            }
+                        break
+
+            propagated = await asyncio.to_thread(
+                mark_patterns_enriched,
+                pattern_ids,
+                descriptions,
+                metadata,
+            )
+
+            state.enrich_stats.processed += len(patterns)
+            state.enrich_stats.record_batch(len(patterns))
+
+            if on_progress:
+                on_progress(
+                    f"{len(patterns)} patterns → {propagated} nodes propagated",
+                    state.enrich_stats,
+                    [
+                        {
+                            "patterns": len(patterns),
+                            "propagated": propagated,
+                            "cost": cost,
+                        }
+                    ],
+                )
+
+        except Exception as e:
+            logger.error("Pattern enrich batch failed: %s", e)
+            state.enrich_stats.errors += 1
+            await asyncio.to_thread(release_pattern_claims, pattern_ids)
+
+        await asyncio.sleep(0.1)
+
+    # --- Phase 2: Enrich remaining non-pattern nodes ---
     while not state.should_stop():
         if state.budget_exhausted:
             if on_progress:

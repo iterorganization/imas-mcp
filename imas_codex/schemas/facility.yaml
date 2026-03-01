@@ -769,6 +769,8 @@ classes:
       in_directory:
         description: Parent directory containing this path (null for root paths)
         range: FacilityPath
+        annotations:
+          relationship_type: IN_DIRECTORY
       depth:
         description: Distance from root path (0 = root like /home/codes)
         range: integer
@@ -1356,6 +1358,8 @@ classes:
       predecessor:
         description: Previous structure version
         range: TreeModelVersion
+        annotations:
+          relationship_type: PREDECESSOR
       status:
         description: >-
           Lifecycle status for this tree model version.
@@ -1498,6 +1502,24 @@ classes:
           E.g., ["time", "rho"], ["R", "Z", "time"], ["channel", "time"].
           Critical for IMAS mapping where dimension semantics matter.
         multivalued: true
+      children:
+        description: >-
+          Child TreeNodes in the MDSplus hierarchy.
+          Parent STRUCTURE nodes link to their children via HAS_NODE.
+        multivalued: true
+        inlined: false
+        range: TreeNode
+        annotations:
+          relationship_type: HAS_NODE
+      appears_in_chunks:
+        description: >-
+          CodeChunks that reference this TreeNode via data references.
+          Shortcut relationship for efficient code context queries.
+        multivalued: true
+        inlined: false
+        range: CodeChunk
+        annotations:
+          relationship_type: APPEARS_IN
       error_nodes:
         description: >-
           Associated error/uncertainty TreeNodes linked via HAS_ERROR relationship.
@@ -1505,6 +1527,8 @@ classes:
           like \\RESULTS::THOMSON:NE:ERROR_BAR or \\RESULTS::THOMSON:NE:ERROR_UPPER.
         multivalued: true
         range: TreeNode
+        annotations:
+          relationship_type: HAS_ERROR
       enrichment_source:
         description: Source of enrichment (llm_agent, manual, wiki, mdsplus)
       enrichment_confidence:
@@ -1520,6 +1544,68 @@ classes:
         range: EnrichmentStatus
       enrichment_notes:
         description: Agent reasoning or notes about the enrichment
+      follows_pattern:
+        description: >-
+          Pattern this node follows for indexed repetitions.
+          When many nodes share the same leaf name under indexed parents
+          (e.g., R under W001-W830), enrichment is stored once on the
+          pattern and propagated to all followers.
+        range: TreeNodePattern
+        annotations:
+          relationship_type: FOLLOWS_PATTERN
+
+  TreeNodePattern:
+    description: >-
+      A parameter pattern shared by indexed TreeNode groups. When multiple
+      STRUCTURE nodes under the same grandparent each contain children with
+      identical leaf names (e.g., R, Z under W001-W830), a pattern captures
+      the shared physics meaning once. Enrichment is stored on the pattern
+      and propagated to all followers via FOLLOWS_PATTERN relationships.
+    class_uri: facility:TreeNodePattern
+    attributes:
+      id:
+        identifier: true
+        description: "Pattern ID: {facility}:{tree}:{grandparent_path}:{leaf_name}"
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+        annotations:
+          relationship_type: AT_FACILITY
+      tree_name:
+        description: Parent tree name
+        required: true
+      grandparent_path:
+        description: >-
+          Path of the common grandparent STRUCTURE node.
+          E.g., \\MAGNETICS::TOP.W for coils W001-W830.
+        required: true
+      leaf_name:
+        description: >-
+          Shared leaf parameter name across all indexed parents.
+          E.g., R, Z, TAU, INOM.
+        required: true
+      index_count:
+        description: Number of indexed instances following this pattern
+        range: integer
+      node_type:
+        description: MDSplus node type of the leaf nodes (NUMERIC or SIGNAL)
+        range: TreeNodeType
+      representative_path:
+        description: Path of one representative TreeNode for prompt context
+      description:
+        description: Physics description shared by all instances
+      keywords:
+        description: Searchable keywords for this pattern
+        multivalued: true
+      category:
+        description: Physical category
+      enrichment_status:
+        description: >-
+          Lifecycle status: pending until enriched, then enriched.
+          Propagated to all followers on enrichment.
+        range: EnrichmentStatus
 
   TDIFunction:
     description: >-
@@ -2413,6 +2499,11 @@ classes:
       related_ids:
         description: IDS names this code interacts with (coarse linking)
         multivalued: true
+      from_file:
+        description: Source CodeFile that produced this CodeExample during ingestion
+        range: CodeFile
+        annotations:
+          relationship_type: FROM_FILE
       ingested_at:
         description: Timestamp when this was ingested
         range: datetime
@@ -2476,6 +2567,8 @@ classes:
       in_directory:
         description: FacilityPath that contains this file
         range: FacilityPath
+        annotations:
+          relationship_type: IN_DIRECTORY
       discovered_by:
         description: Scout session or pattern that found this file
       discovered_at:
@@ -2556,6 +2649,8 @@ classes:
       code_example_id:
         description: ID of created CodeExample (set when ready)
         range: CodeExample
+        annotations:
+          relationship_type: PRODUCED
 
   Document:
     description: >-
@@ -2593,6 +2688,8 @@ classes:
       in_directory:
         description: FacilityPath that contains this file
         range: FacilityPath
+        annotations:
+          relationship_type: IN_DIRECTORY
       discovered_by:
         description: Scout session or pattern that found this file
       discovered_at:
@@ -2657,6 +2754,20 @@ classes:
       ref_count:
         description: Count of DataReference nodes linked to this chunk
         range: integer
+      data_references:
+        description: DataReference nodes extracted from this code chunk
+        multivalued: true
+        inlined: false
+        range: DataReference
+        annotations:
+          relationship_type: CONTAINS_REF
+      references_imas:
+        description: IMAS paths referenced in this code chunk
+        multivalued: true
+        inlined: false
+        range: IMASPath
+        annotations:
+          relationship_type: REFERENCES_IMAS
 
   DataReference:
     description: >-
@@ -3135,6 +3246,27 @@ classes:
         description: Facility-specific tool/API mentions found in this chunk (e.g., tdiExecute, ppfget)
         multivalued: true
         range: string
+      documents_nodes:
+        description: TreeNodes documented by this wiki chunk (resolved from MDSplus paths in content)
+        multivalued: true
+        inlined: false
+        range: TreeNode
+        annotations:
+          relationship_type: DOCUMENTS
+      documents_signals:
+        description: FacilitySignals documented by this wiki chunk
+        multivalued: true
+        inlined: false
+        range: FacilitySignal
+        annotations:
+          relationship_type: DOCUMENTS
+      mentions_imas_paths:
+        description: IMAS DD paths mentioned in this wiki chunk
+        multivalued: true
+        inlined: false
+        range: IMASPath
+        annotations:
+          relationship_type: MENTIONS_IMAS
 
   WikiArtifact:
     description: >-

@@ -68,7 +68,11 @@ def _build_user_prompt(
     version_descriptions: dict[int, str] | None = None,
     tree_context: dict[str, dict[str, Any]] | None = None,
 ) -> str:
-    """Build user prompt with a batch of nodes to describe.
+    """Build user prompt with nodes grouped by parent structure.
+
+    Nodes sharing the same parent STRUCTURE are presented together so
+    the LLM sees the full parameter set of each component (e.g., all
+    R, Z, W, H, INOM for a single coil) in one block.
 
     Args:
         nodes: List of node dicts with path, node_type, tags, units.
@@ -76,64 +80,93 @@ def _build_user_prompt(
         tree_context: Optional dict mapping node path to hierarchy context
             from ``fetch_enrichment_context`` (parent info, sibling nodes).
     """
-    lines = []
+    lines: list[str] = []
     if version_descriptions:
         lines.append("## Version Context")
         for ver, desc in sorted(version_descriptions.items()):
             lines.append(f"- Version {ver}: {desc}")
         lines.append("")
 
+    # Group nodes by parent path for coherent presentation
+    ctx = tree_context or {}
+    groups: dict[str | None, list[dict[str, Any]]] = {}
+    for node in nodes:
+        parent = ctx.get(node["path"], {}).get("parent_path")
+        groups.setdefault(parent, []).append(node)
+
     lines.append("## Nodes to Describe")
     lines.append("")
-    for i, node in enumerate(nodes, 1):
-        lines.append(f"### Node {i}")
-        lines.append(f"path: {node['path']}")
-        if node.get("node_type"):
-            lines.append(f"type: {node['node_type']}")
-        if node.get("tags"):
-            tags = node["tags"] if isinstance(node["tags"], list) else [node["tags"]]
-            lines.append(f"tags: {', '.join(tags)}")
-        if node.get("units"):
-            lines.append(f"units: {node['units']}")
-        if node.get("dtype"):
-            lines.append(f"dtype: {node['dtype']}")
-        if node.get("shape"):
-            lines.append(f"shape: {node['shape']}")
-        if node.get("scalar_value") is not None:
-            lines.append(f"value: {node['scalar_value']}")
 
-        # Inject tree hierarchy context
-        ctx = (tree_context or {}).get(node["path"])
-        if ctx:
-            if ctx.get("parent_path"):
-                parent_label = ctx["parent_path"]
-                if ctx.get("parent_tags"):
-                    ptags = ctx["parent_tags"]
-                    if isinstance(ptags, list):
-                        parent_label += f" (tags: {', '.join(ptags)})"
-                    else:
-                        parent_label += f" (tag: {ptags})"
-                lines.append(f"parent: {parent_label}")
-            siblings = ctx.get("siblings", [])
+    node_num = 0
+    for parent_path, group_nodes in groups.items():
+        # Emit parent header when available
+        if parent_path:
+            parent_info = ctx.get(group_nodes[0]["path"], {})
+            parent_label = parent_path
+            if parent_info.get("parent_tags"):
+                ptags = parent_info["parent_tags"]
+                if isinstance(ptags, list):
+                    parent_label += f" (tags: {', '.join(ptags)})"
+                else:
+                    parent_label += f" (tag: {ptags})"
+            lines.append(f"### Parent: {parent_label}")
+            lines.append("")
+
+            # Show sibling parameters not in this batch for context
+            siblings = parent_info.get("siblings", [])
             if siblings:
-                sib_parts = []
-                for s in siblings:
-                    sib_str = s["path"].rsplit(".", 1)[-1]
-                    extras = []
-                    if s.get("units"):
-                        extras.append(s["units"])
-                    if s.get("tags"):
-                        t = s["tags"]
-                        if isinstance(t, list):
-                            extras.append(", ".join(t))
-                        else:
-                            extras.append(str(t))
-                    if extras:
-                        sib_str += f" [{'; '.join(extras)}]"
-                    sib_parts.append(sib_str)
-                lines.append(f"siblings: {', '.join(sib_parts)}")
+                batch_paths = {n["path"] for n in group_nodes}
+                other_sibs = [s for s in siblings if s["path"] not in batch_paths]
+                if other_sibs:
+                    sib_parts = []
+                    for s in other_sibs:
+                        sib_str = s["path"].rsplit(".", 1)[-1]
+                        extras = []
+                        if s.get("units"):
+                            extras.append(s["units"])
+                        if s.get("tags"):
+                            t = s["tags"]
+                            if isinstance(t, list):
+                                extras.append(", ".join(t))
+                            else:
+                                extras.append(str(t))
+                        if extras:
+                            sib_str += f" [{'; '.join(extras)}]"
+                        sib_parts.append(sib_str)
+                    lines.append(f"other parameters: {', '.join(sib_parts)}")
+                    lines.append("")
 
-        lines.append("")
+        for node in group_nodes:
+            node_num += 1
+            # Use leaf name as concise identifier
+            leaf = (
+                node["path"].rsplit(".", 1)[-1] if "." in node["path"] else node["path"]
+            )
+            lines.append(f"#### Node {node_num}: {leaf}")
+            lines.append(f"path: {node['path']}")
+            if node.get("node_type"):
+                lines.append(f"type: {node['node_type']}")
+            if node.get("tags"):
+                tags = (
+                    node["tags"] if isinstance(node["tags"], list) else [node["tags"]]
+                )
+                lines.append(f"tags: {', '.join(tags)}")
+            if node.get("units"):
+                lines.append(f"units: {node['units']}")
+            if node.get("dtype"):
+                lines.append(f"dtype: {node['dtype']}")
+            if node.get("shape"):
+                lines.append(f"shape: {node['shape']}")
+            if node.get("scalar_value") is not None:
+                lines.append(f"value: {node['scalar_value']}")
+            # Pattern context: this node is a representative of an indexed group
+            if node.get("_pattern_count"):
+                lines.append(
+                    f"pattern: {node['_pattern_count']} indexed instances "
+                    f"under {node['_pattern_grandparent']} "
+                    f"(leaf: {node['_pattern_leaf']})"
+                )
+            lines.append("")
 
     return "\n".join(lines)
 

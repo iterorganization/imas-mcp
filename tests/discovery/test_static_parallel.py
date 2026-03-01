@@ -192,7 +192,12 @@ class TestGraphOps:
         mock_gc = MagicMock()
         mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
         mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
-        mock_gc.query.return_value = [{"has_work": False}]
+        # First call: has_pending_pattern_work returns False
+        # Second call: has_pending_enrich_work node query returns False
+        mock_gc.query.side_effect = [
+            [{"has_work": False}],
+            [{"has_work": False}],
+        ]
 
         assert has_pending_enrich_work("tcv", "static") is False
 
@@ -225,6 +230,8 @@ class TestGraphOps:
                     "pending_enrich": 199500,
                 }
             ],
+            # Pattern stats
+            [{"total": 50, "enriched": 10, "pending": 40}],
         ]
 
         stats = get_static_discovery_stats("tcv", "static")
@@ -235,6 +242,9 @@ class TestGraphOps:
         assert stats["nodes_graph"] == 280000
         assert stats["nodes_enriched"] == 500
         assert stats["pending_enrich"] == 199500
+        assert stats["patterns_total"] == 50
+        assert stats["patterns_enriched"] == 10
+        assert stats["pending_patterns"] == 40
 
     @patch("imas_codex.discovery.static.graph_ops.GraphClient")
     def test_release_node_claims_empty(self, mock_gc_cls):
@@ -249,6 +259,130 @@ class TestGraphOps:
 
         result = mark_nodes_enriched([], {})
         assert result == 0
+
+    # --- Pattern tests ---
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_detect_and_create_patterns_empty(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import detect_and_create_patterns
+
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.return_value = []
+
+        result = detect_and_create_patterns("tcv", "static")
+        assert result == 0
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_detect_and_create_patterns_finds_groups(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import detect_and_create_patterns
+
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.side_effect = [
+            # Detection query result
+            [
+                {
+                    "gp_path": "\\MAGNETICS::TOP.W",
+                    "leaf_name": "R",
+                    "leaf_type": "NUMERIC",
+                    "parent_count": 830,
+                    "representative": "\\MAGNETICS::TOP.W.W001.R",
+                },
+                {
+                    "gp_path": "\\MAGNETICS::TOP.W",
+                    "leaf_name": "Z",
+                    "leaf_type": "NUMERIC",
+                    "parent_count": 830,
+                    "representative": "\\MAGNETICS::TOP.W.W001.Z",
+                },
+            ],
+            # Merge + link result
+            [
+                {"id": "tcv:static:\\MAGNETICS::TOP.W:R", "linked": 830},
+                {"id": "tcv:static:\\MAGNETICS::TOP.W:Z", "linked": 830},
+            ],
+        ]
+
+        result = detect_and_create_patterns("tcv", "static")
+        assert result == 2
+        # Verify ensure_facility was called
+        mock_gc.ensure_facility.assert_called_once_with("tcv")
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_claim_patterns_for_enrichment(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import claim_patterns_for_enrichment
+
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.return_value = [
+            {
+                "id": "tcv:static:\\MAGNETICS::TOP.W:R",
+                "grandparent_path": "\\MAGNETICS::TOP.W",
+                "leaf_name": "R",
+                "index_count": 830,
+                "node_type": "NUMERIC",
+                "representative_path": "\\MAGNETICS::TOP.W.W001.R",
+                "tags": ["R"],
+                "units": "m",
+                "parent_path": "\\MAGNETICS::TOP.W.W001",
+            }
+        ]
+
+        result = claim_patterns_for_enrichment("tcv", "static", limit=10)
+        assert len(result) == 1
+        assert result[0]["leaf_name"] == "R"
+        assert result[0]["index_count"] == 830
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_mark_patterns_enriched_empty(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import mark_patterns_enriched
+
+        result = mark_patterns_enriched([], {})
+        assert result == 0
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_mark_patterns_enriched_propagates(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import mark_patterns_enriched
+
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.return_value = [
+            {"pattern_id": "tcv:static:\\MAGNETICS::TOP.W:R", "propagated": 830}
+        ]
+
+        result = mark_patterns_enriched(
+            ["tcv:static:\\MAGNETICS::TOP.W:R"],
+            {"tcv:static:\\MAGNETICS::TOP.W:R": "Major radius of coil turn"},
+            {
+                "tcv:static:\\MAGNETICS::TOP.W:R": {
+                    "keywords": ["radius", "coil"],
+                    "category": "coil",
+                }
+            },
+        )
+        assert result == 830
+
+    def test_release_pattern_claims_empty(self):
+        from imas_codex.discovery.static.graph_ops import release_pattern_claims
+
+        result = release_pattern_claims([])
+        assert result == 0
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_has_pending_pattern_work(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import has_pending_pattern_work
+
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.return_value = [{"has_work": True}]
+
+        assert has_pending_pattern_work("tcv", "static") is True
 
 
 # ===========================================================================

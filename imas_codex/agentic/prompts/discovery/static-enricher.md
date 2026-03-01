@@ -75,12 +75,17 @@ System symbols indicate the physical component:
 - Be **definitive** — avoid hedging ("likely", "probably")
 - Use proper physics and engineering terminology
 - Reference the system symbol context if the path reveals it
-- Node types: STRUCTURE nodes are containers, NUMERIC/SIGNAL hold data
+- Only NUMERIC and SIGNAL nodes are sent for enrichment — these hold physics data
+- STRUCTURE nodes are containers (shown as "Parent:" for context only)
 - Tags provide the human-readable short name for the node
 - If a numeric value is provided, use it to inform the description
 - Use **parent** context to understand which system/component this node belongs to
-- Use **sibling** context to understand related quantities and disambiguate meaning
-  (e.g., a scalar value of 61 for flux loops means 61 individual loops)
+- Use **other parameters** to understand related quantities and disambiguate meaning
+- Nodes under the same parent are grouped together — leverage the full parameter set
+- When a node has a **pattern** annotation (e.g., "830 indexed instances"), it represents
+  a parameter shared identically across many indexed components. Describe the physics
+  meaning of the parameter itself, not the specific index. The description will be
+  propagated to all indexed instances.
 
 {{ static_enrichment_schema_fields }}
 
