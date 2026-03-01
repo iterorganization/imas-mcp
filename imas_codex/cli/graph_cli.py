@@ -1910,11 +1910,19 @@ def _create_imas_only_dump(source_dump_path: Path, output_path: Path) -> None:
             with driver.session() as session:
                 result = session.run(
                     f"MATCH (n) WHERE {label_check} "
+                    "AND NOT n:GraphMeta "
                     "DETACH DELETE n "
                     "RETURN count(*) AS deleted"
                 )
                 deleted = result.single()["deleted"]
                 click.echo(f"    Removed {deleted} non-DD nodes")
+
+                # Update GraphMeta to reflect imas-only content
+                session.run(
+                    'MATCH (m:GraphMeta {id: "meta"}) '
+                    "SET m.facilities = [], m.imas = true, "
+                    "    m.updated_at = datetime().epochMillis"
+                )
 
             driver.close()
         finally:
@@ -1975,11 +1983,20 @@ def _create_facility_dump(
                     "AND NOT n:IMASPath AND NOT n:DDVersion AND NOT n:Unit "
                     "AND NOT n:IMASCoordinateSpec AND NOT n:PhysicsDomain "
                     "AND NOT n:IMASSemanticCluster "
+                    "AND NOT n:GraphMeta "
                     "DELETE n "
                     "RETURN count(*) AS deleted"
                 )
                 deleted_orphans = result.single()["deleted"]
                 click.echo(f"    Removed {deleted_orphans} orphan nodes")
+
+                # Update GraphMeta to reflect the kept facility
+                session.run(
+                    'MATCH (m:GraphMeta {id: "meta"}) '
+                    "SET m.facilities = [$facility], "
+                    "    m.updated_at = datetime().epochMillis",
+                    facility=facility,
+                )
 
             driver.close()
         finally:
