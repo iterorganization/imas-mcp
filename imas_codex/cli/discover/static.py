@@ -672,6 +672,17 @@ async def _async_pipeline(
     display._extract_start = time.time()
     display.state.extract_versions_total = len(ver_list)
 
+    # Value extraction reads node.data() for every NUMERIC/SIGNAL node
+    # (~30k+ in TCV static), which is much slower than structure-only.
+    # Scale the SSH timeout accordingly.
+    extract_timeout = timeout * 3 if do_extract else timeout
+    if extract_timeout != timeout:
+        logger.info(
+            "Value extraction enabled — SSH timeout scaled to %ds (from %ds)",
+            extract_timeout,
+            timeout,
+        )
+
     # Shared state between async workers
     version_results: list[dict] = []
     enrichable_nodes: list[dict] = []
@@ -685,14 +696,33 @@ async def _async_pipeline(
     # ── EXTRACT worker (one task per version) ─────────────────────────
     async def extract_version(ver: int) -> dict | None:
         ver_idx = ver_list.index(ver) + 1
+        ver_start = time.time()
+        mode_label = "values" if do_extract else "structure"
         display.extract_queue.add(
             [
                 {
                     "version": f"v{ver} {facility}:{tname} ({ver_idx}/{len(ver_list)})",
-                    "detail": "connecting via SSH, walking MDSplus tree...",
+                    "detail": f"connecting via SSH, extracting {mode_label}...",
                 }
             ]
         )
+
+        # Background task to show elapsed time during long SSH waits
+        async def _update_elapsed() -> None:
+            while True:
+                await asyncio.sleep(5.0)
+                elapsed = int(time.time() - ver_start)
+                mins, secs = divmod(elapsed, 60)
+                display.extract_queue.add(
+                    [
+                        {
+                            "version": f"v{ver} {facility}:{tname} ({ver_idx}/{len(ver_list)})",
+                            "detail": f"extracting {mode_label}... {mins}m {secs:02d}s",
+                        }
+                    ]
+                )
+
+        elapsed_task = asyncio.create_task(_update_elapsed())
 
         try:
             data = await async_discover_static_tree_version(
@@ -700,7 +730,7 @@ async def _async_pipeline(
                 tree_name=tname,
                 version=ver,
                 extract_values=do_extract,
-                timeout=timeout,
+                timeout=extract_timeout,
             )
             version_results.append(data)
 
@@ -776,6 +806,12 @@ async def _async_pipeline(
                 latest_version_event.set()
 
             return None
+        finally:
+            elapsed_task.cancel()
+            try:
+                await elapsed_task
+            except asyncio.CancelledError:
+                pass
 
     # ── UNITS worker ──────────────────────────────────────────────────
     async def units_worker() -> None:
