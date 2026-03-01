@@ -47,11 +47,12 @@ class StaticProgressState:
 
     start_time: float = field(default_factory=time.time)
 
-    # EXTRACT
-    extract_completed: int = 0
-    extract_total: int = 1
-    extract_nodes: int = 0
-    extract_rate: float | None = None
+    # EXTRACT — bar tracks cumulative nodes, versions in STATS row
+    extract_completed: int = 0  # versions completed
+    extract_total: int = 1  # versions total
+    extract_nodes: int = 0  # cumulative nodes extracted
+    extract_nodes_total: int = 0  # estimated total nodes
+    extract_rate: float | None = None  # nodes/s
     extract_version: str = ""
     extract_detail: str = ""
 
@@ -87,11 +88,11 @@ class StaticProgressState:
         """Estimated time to completion based on active work."""
         etas: list[float] = []
 
-        # Extract ETA
-        if self.extract_rate and self.extract_rate > 0:
-            remaining = self.extract_total - self.extract_completed
-            if remaining > 0:
-                etas.append(remaining / self.extract_rate)
+        # Extract ETA — based on remaining estimated nodes ÷ nodes/s
+        if self.extract_rate and self.extract_rate > 0 and self.extract_nodes_total > 0:
+            remaining_nodes = self.extract_nodes_total - self.extract_nodes
+            if remaining_nodes > 0:
+                etas.append(remaining_nodes / self.extract_rate)
 
         # Enrich ETA
         if self.enrich_rate and self.enrich_rate > 0:
@@ -152,12 +153,17 @@ class StaticProgressDisplay(BaseProgressDisplay):
         units_complete = self._worker_complete("units")
         enrich_complete = self._worker_complete("enrich")
 
+        # Estimate total nodes from average per completed version
+        if s.extract_completed > 0 and s.extract_total > 0:
+            avg_nodes = s.extract_nodes / s.extract_completed
+            s.extract_nodes_total = int(avg_nodes * s.extract_total)
+
         rows = [
             PipelineRowConfig(
                 name="EXTRACT",
                 style="bold blue",
-                completed=s.extract_completed,
-                total=max(s.extract_total, 1),
+                completed=s.extract_nodes,
+                total=max(s.extract_nodes_total, 1),
                 rate=s.extract_rate,
                 primary_text=s.extract_version,
                 description=s.extract_detail,
@@ -272,16 +278,20 @@ class StaticProgressDisplay(BaseProgressDisplay):
     def update_extract(self, msg: str, stats: WorkerStats, results: Any) -> None:
         """Callback from extract worker."""
         s = self.state
-        s.extract_rate = stats.ema_rate
         if results:
             for r in results:
                 if "node_count" in r:
                     s.extract_completed = stats.processed
-                    s.extract_nodes += r.get("node_count", 0)
+                    node_count = r.get("node_count", 0)
+                    s.extract_nodes += node_count
+                    # Compute nodes/s from cumulative nodes over elapsed time
+                    elapsed = s.elapsed
+                    if elapsed > 0:
+                        s.extract_rate = s.extract_nodes / elapsed
                     self.extract_queue.add(
                         [
                             {
-                                "version": f"v{r['version']} done — {r['node_count']:,} nodes",
+                                "version": f"v{r['version']} done — {node_count:,} nodes",
                                 "detail": f"{r.get('tags', 0)} tags, {r.get('nodes_created', 0):,} ingested",
                             }
                         ]
@@ -344,6 +354,9 @@ class StaticProgressDisplay(BaseProgressDisplay):
         s.extract_total = stats.get("versions_total", s.extract_total)
         s.extract_completed = stats.get("versions_ingested", s.extract_completed)
         s.extract_nodes = stats.get("nodes_total", s.extract_nodes)
+        # Pin node total when all versions are ingested
+        if s.extract_completed >= s.extract_total and s.extract_total > 0:
+            s.extract_nodes_total = s.extract_nodes
         s.enrich_total = stats.get("nodes_enrichable", s.enrich_total)
         s.enrich_completed = stats.get("nodes_enriched", s.enrich_completed)
 

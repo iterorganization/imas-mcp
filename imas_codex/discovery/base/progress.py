@@ -597,10 +597,14 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     if config.worker_annotation:
         label.append(f" {config.worker_annotation}", style="dim")
     # Pad to LABEL_WIDTH for aligned bar start
-    label_pad = LABEL_WIDTH - len(label.plain)
+    label_len = len(label.plain)
+    label_pad = LABEL_WIDTH - label_len
     if label_pad > 0:
         label.append(" " * label_pad)
     row.append_text(label)
+
+    # Shorten bar when label overflows LABEL_WIDTH to keep line 1 on one line
+    effective_bar = bar_width - max(0, label_len - LABEL_WIDTH)
 
     total = max(config.total, 1)
     ratio = min(config.completed / total, 1.0)
@@ -608,7 +612,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     # When displayed percentage rounds to 100%, fill the bar completely
     # to avoid a visual gap between "100%" text and a 99.x% bar
     bar_ratio = 1.0 if round(pct) >= 100 else ratio
-    row.append(make_bar(bar_ratio, bar_width), style=config.style.split()[-1])
+    row.append(make_bar(bar_ratio, effective_bar), style=config.style.split()[-1])
 
     # Right: count + pct only
     count_s = f" {config.completed:>6,}"
