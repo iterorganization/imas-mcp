@@ -400,6 +400,21 @@ def get_llm_scheduler() -> str:
     return resolve_location(location).scheduler
 
 
+# ─── Discovery settings ─────────────────────────────────────────────────────
+
+
+def get_discovery_threshold() -> float:
+    """Get the minimum score threshold for high-value path processing.
+
+    Used by enrichment auto-threshold, refinement gate, and code CLI default.
+
+    Priority: IMAS_CODEX_DISCOVERY_THRESHOLD env → [discovery].threshold → 0.75.
+    """
+    if env := os.getenv("IMAS_CODEX_DISCOVERY_THRESHOLD"):
+        return float(env)
+    return float(_get_section("discovery").get("threshold", 0.75))
+
+
 # ─── Model accessors ───────────────────────────────────────────────────────
 # All callers should use get_model("language"), get_model("vision"), etc.
 # The embedding model is accessed via get_embedding_model() for consistency

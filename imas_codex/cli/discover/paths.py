@@ -47,9 +47,9 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--threshold",
     "-t",
-    default=0.7,
+    default=None,
     type=float,
-    help="Minimum score to expand paths",
+    help="Minimum score for high-value processing (default: from settings)",
 )
 @click.option(
     "--scan-workers",
@@ -85,7 +85,7 @@ logger = logging.getLogger(__name__)
     "--enrich-threshold",
     type=float,
     default=None,
-    help="Auto-enrich paths scoring >= threshold (default: 0.7)",
+    help="Auto-enrich paths scoring >= threshold (default: from settings)",
 )
 @click.option(
     "--reset-refined",
@@ -342,7 +342,7 @@ def _run_iterative_discovery(
                 score_only=score_only,
                 use_rich=use_rich,
                 root_filter=root_filter,
-                auto_enrich_threshold=enrich_threshold or 0.7,
+                auto_enrich_threshold=enrich_threshold,
                 deadline=deadline,
             )
         )
@@ -518,7 +518,11 @@ def _print_discovery_summary(
         )
         return
 
-    all_high_value = get_high_value_paths(facility, min_score=0.7, limit=200)
+    from imas_codex.settings import get_discovery_threshold
+
+    all_high_value = get_high_value_paths(
+        facility, min_score=get_discovery_threshold(), limit=200
+    )
 
     if scored_this_run:
         high_value = [p for p in all_high_value if p["path"] in scored_this_run]
@@ -630,7 +634,7 @@ async def _async_discovery_loop(
     score_only: bool = False,
     use_rich: bool = True,
     root_filter: list[str] | None = None,
-    auto_enrich_threshold: float = 0.7,
+    auto_enrich_threshold: float | None = None,
     deadline: float | None = None,
 ) -> tuple[dict, set[str]]:
     """Async discovery loop with parallel scan/score workers."""

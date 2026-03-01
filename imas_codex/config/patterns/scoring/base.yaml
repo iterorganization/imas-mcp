@@ -30,7 +30,7 @@ thresholds:
   low_value: 0.2
   
   # High-value threshold for prioritized processing
-  high_value: 0.7
+  high_value: 0.75
 
 # Purpose-based score multipliers
 # Applied after dimension scoring

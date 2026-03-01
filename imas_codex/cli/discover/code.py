@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--min-score",
     type=float,
-    default=0.7,
-    help="Minimum FacilityPath score to include (default: 0.7)",
+    default=None,
+    help="Minimum FacilityPath score to include (default: from settings)",
 )
 @click.option(
     "--max-paths",
@@ -83,7 +83,7 @@ logger = logging.getLogger(__name__)
 )
 def code(
     facility: str,
-    min_score: float,
+    min_score: float | None,
     max_paths: int,
     focus: str | None,
     cost_limit: float,
@@ -122,6 +122,10 @@ def code(
     from imas_codex.cli.logging import configure_cli_logging
     from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.settings import get_discovery_threshold
+
+    if min_score is None:
+        min_score = get_discovery_threshold()
 
     use_rich = should_use_rich()
     configure_cli_logging("code", facility=facility, verbose=verbose)

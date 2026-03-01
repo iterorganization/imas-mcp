@@ -152,7 +152,7 @@ A directory containing Python/Fortran source files is typically a **leaf** — i
 
 ## Enrichment Decision
 
-Set `should_enrich=true` for directories worth running deep pattern analysis (regex, line counts, disk usage). All paths scoring ≥ 0.7 are auto-enriched regardless, so `should_enrich` is mainly useful for paths scoring 0.4–0.7 where enrichment could confirm or deny initial suspicions.
+Set `should_enrich=true` for directories worth running deep pattern analysis (regex, line counts, disk usage). Paths scoring above the discovery threshold are auto-enriched regardless, so `should_enrich` is mainly useful for paths below that threshold where enrichment could confirm or deny initial suspicions.
 
 **Patterns searched (by score dimension):**
 {{ enrichment_patterns }}

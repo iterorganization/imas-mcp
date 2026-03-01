@@ -85,6 +85,7 @@ def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
     from imas_codex.discovery import get_discovery_stats, get_high_value_paths
     from imas_codex.discovery.signals.parallel import get_data_discovery_stats
     from imas_codex.discovery.wiki.parallel import get_wiki_discovery_stats
+    from imas_codex.settings import get_discovery_threshold
 
     use_rich = use_rich_output()
 
@@ -94,7 +95,9 @@ def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
 
             if domain is None or domain == "paths":
                 stats = get_discovery_stats(facility)
-                high_value = get_high_value_paths(facility, min_score=0.7, limit=20)
+                high_value = get_high_value_paths(
+                    facility, min_score=get_discovery_threshold(), limit=20
+                )
                 output["paths"] = {"stats": stats, "high_value_paths": high_value}
 
             if domain is None or domain == "wiki":
@@ -313,6 +316,7 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
     import json
 
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold as _gdt
 
     console = Console()
 
@@ -404,7 +408,7 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
                     path_display = "..." + path_display[-32:]
 
                 score_val = p.get("score", 0) or 0
-                if score_val >= 0.7:
+                if score_val >= _gdt():
                     score_str = f"[green]{score_val:.2f}[/green]"
                 elif score_val >= 0.4:
                     score_str = f"[yellow]{score_val:.2f}[/yellow]"

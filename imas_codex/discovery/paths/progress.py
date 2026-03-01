@@ -451,9 +451,12 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
             parts = []
             if score.score is not None:
+                from imas_codex.settings import get_discovery_threshold
+
+                _threshold = get_discovery_threshold()
                 style = (
                     "bold green"
-                    if score.score >= 0.7
+                    if score.score >= _threshold
                     else "yellow"
                     if score.score >= 0.4
                     else "red"
@@ -1114,9 +1117,12 @@ def print_discovery_status(
             coverage = scored / total * 100 if total > 0 else 0
             output(f"Coverage: {coverage:.1f}% scored")
 
-            high_value = get_high_value_paths(facility, min_score=0.7, limit=10)
+            from imas_codex.settings import get_discovery_threshold
+
+            _threshold = get_discovery_threshold()
+            high_value = get_high_value_paths(facility, min_score=_threshold, limit=10)
             if high_value:
-                output(f"High-value paths (score > 0.7): {len(high_value)}")
+                output(f"High-value paths (score > {_threshold}): {len(high_value)}")
                 for p in high_value[:5]:
                     output(f"  [{p['score']:.2f}] {p['path']}")
                 if len(high_value) > 5:

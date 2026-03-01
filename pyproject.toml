@@ -245,6 +245,12 @@ model = "Qwen/Qwen3-Embedding-0.6B"
 dimension = 256
 location = "titan"      # compute location for embed server (or "local" for in-process)
 
+[tool.imas-codex.discovery]
+# Minimum combined score for high-value path processing.
+# Used by: enrichment auto-threshold, refinement gate, code CLI default.
+# Override: IMAS_CODEX_DISCOVERY_THRESHOLD
+threshold = 0.75
+
 [tool.imas-codex.language]
 model = "google/gemini-3-flash-preview"
 batch-size = 50

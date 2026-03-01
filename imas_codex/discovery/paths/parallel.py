@@ -50,7 +50,7 @@ class DiscoveryState:
     cost_limit: float
     path_limit: int | None = None
     focus: str | None = None
-    threshold: float = 0.7
+    threshold: float | None = None  # Uses get_discovery_threshold() when None
     root_filter: list[str] | None = None  # Restrict work to these roots
     auto_enrich_threshold: float | None = None  # Also enrich paths scoring >= this
     deadline: float | None = None  # Unix timestamp when discovery should stop
@@ -576,13 +576,16 @@ def claim_paths_for_enriching(
 
 
 def claim_paths_for_refining(
-    facility: str, limit: int = 10, root_filter: list[str] | None = None
+    facility: str,
+    limit: int = 10,
+    root_filter: list[str] | None = None,
+    min_score: float | None = None,
 ) -> list[dict[str, Any]]:
     """Atomically claim enriched paths for rescoring.
 
     Claims paths where:
     - is_enriched = true
-    - score >= 0.7 (aligned with downstream code discovery threshold)
+    - score >= min_score (defaults to get_discovery_threshold())
     - refined_at is null
 
     Rescoring uses enrichment data (total_bytes, total_lines, language_breakdown)
@@ -594,8 +597,12 @@ def claim_paths_for_refining(
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
+        min_score: Minimum score for refinement (default: discovery threshold)
     """
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold
+
+    threshold = min_score if min_score is not None else get_discovery_threshold()
 
     # Build root filter clause
     root_clause = ""
@@ -608,7 +615,7 @@ def claim_paths_for_refining(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
-              AND p.score >= 0.7
+              AND p.score >= $min_score
               AND p.refined_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
@@ -651,6 +658,7 @@ def claim_paths_for_refining(
             limit=limit,
             cutoff=cutoff,
             root_filter=root_filter or [],
+            min_score=threshold,
         )
         return list(result)
 
@@ -2085,7 +2093,7 @@ async def run_parallel_discovery(
     cost_limit: float = 10.0,
     path_limit: int | None = None,
     focus: str | None = None,
-    threshold: float = 0.7,
+    threshold: float | None = None,
     root_filter: list[str] | None = None,
     auto_enrich_threshold: float | None = None,
     num_scan_workers: int = 1,
@@ -2182,15 +2190,27 @@ async def run_parallel_discovery(
     if stats["total"] == 0:
         seed_facility_roots(facility)
 
+    # Resolve thresholds from settings when not explicitly provided
+    from imas_codex.settings import get_discovery_threshold
+
+    resolved_threshold = (
+        threshold if threshold is not None else get_discovery_threshold()
+    )
+    resolved_enrich = (
+        auto_enrich_threshold
+        if auto_enrich_threshold is not None
+        else get_discovery_threshold()
+    )
+
     # Create shared state
     state = DiscoveryState(
         facility=facility,
         cost_limit=cost_limit,
         path_limit=path_limit,
         focus=focus,
-        threshold=threshold,
+        threshold=resolved_threshold,
         root_filter=root_filter,
-        auto_enrich_threshold=auto_enrich_threshold,
+        auto_enrich_threshold=resolved_enrich,
         deadline=deadline,
     )
 

@@ -29,6 +29,7 @@ All model and tool settings live in `pyproject.toml` under `[tool.imas-codex]`. 
 | `[vision]` | Image/document tasks | `get_model("vision")` |
 | `[agent]` | Planning, exploration, autonomous tasks | `get_model("agent")` |
 | `[compaction]` | Summarization/compaction | `get_model("compaction")` |
+| `[discovery]` | Discovery threshold for high-value processing | `get_discovery_threshold()` |
 | `[data-dictionary]` | DD version, include-ggd, include-error-fields | `get_dd_version()` |
 
 **Model access:** `get_model(section)` is the single entry point for all model lookups. Pass the pyproject.toml section name directly: `"language"`, `"vision"`, `"agent"`, `"compaction"`, or `"embedding"`. Priority: section env var → pyproject.toml config → default.

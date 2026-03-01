@@ -14,7 +14,7 @@ Stop when you have:
 Stop when:
 
 - [ ] All major code directories surveyed (>100 files each)
-- [ ] 100+ high-value source files (score >= 0.7) queued
+- [ ] 100+ high-value source files (score >= 0.75) queued
 - [ ] Key physics domains covered (equilibrium, profiles, transport)
 - [ ] MDSplus trees/databases identified
 - [ ] No new high-value patterns emerging from searches

@@ -1330,20 +1330,24 @@ def mark_path_skipped(
 
 def get_high_value_paths(
     facility: str,
-    min_score: float = 0.7,
+    min_score: float | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """Get scored paths above a threshold.
 
     Args:
         facility: Facility ID
-        min_score: Minimum score threshold
+        min_score: Minimum score threshold (default: discovery threshold from settings)
         limit: Maximum paths to return
 
     Returns:
         List of dicts with path info and scores
     """
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold
+
+    if min_score is None:
+        min_score = get_discovery_threshold()
 
     with GraphClient() as gc:
         result = gc.query(

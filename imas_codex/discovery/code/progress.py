@@ -352,9 +352,12 @@ class FileProgressDisplay(BaseProgressDisplay):
                         )
                     )
             elif score.score is not None:
+                from imas_codex.settings import get_discovery_threshold
+
+                _threshold = get_discovery_threshold()
                 style = (
                     "bold green"
-                    if score.score >= 0.7
+                    if score.score >= _threshold
                     else "yellow"
                     if score.score >= 0.4
                     else "red"
