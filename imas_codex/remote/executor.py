@@ -16,12 +16,10 @@ Functions:
 - cleanup_stale_sockets(): Remove stale SSH control master sockets
 """
 
-import atexit
 import logging
 import os
 import re
 import shlex
-import signal
 import socket
 import subprocess
 from functools import lru_cache
@@ -385,34 +383,12 @@ def ensure_ssh_healthy(ssh_host: str) -> None:
 _verified_hosts: set[str] = set()
 
 
-def _cleanup_ssh_on_exit() -> None:
-    """Close SSH control masters for hosts used during this session.
-
-    Registered as an atexit handler to prevent stale sockets when the
-    process exits normally or via KeyboardInterrupt (Ctrl+C).
-    """
-    for host in list(_verified_hosts):
-        try:
-            subprocess.run(
-                ["ssh", "-O", "exit", host],
-                capture_output=True,
-                timeout=5,
-            )
-        except Exception:
-            pass
-
-
-atexit.register(_cleanup_ssh_on_exit)
-
-
-def _sigterm_handler(signum: int, frame: object) -> None:
-    """Handle SIGTERM by cleaning up SSH sockets before exit."""
-    _cleanup_ssh_on_exit()
-    raise SystemExit(128 + signum)
-
-
-if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
-    signal.signal(signal.SIGTERM, _sigterm_handler)
+# NOTE: No atexit/SIGTERM cleanup of SSH control masters.
+# SSH ControlPersist (typically 600s) handles socket expiration automatically.
+# Aggressively running `ssh -O exit` on process exit kills the shared control
+# master, breaking any other process (e.g. parallel CLI sessions) that shares
+# the same socket.  The _ensure_ssh_healthy_once() check on startup is
+# sufficient to detect and clean up stale sockets from crashed processes.
 
 
 def _ensure_ssh_healthy_once(ssh_host: str) -> None:
