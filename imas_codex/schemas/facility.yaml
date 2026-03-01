@@ -1356,6 +1356,18 @@ classes:
       predecessor:
         description: Previous structure version
         range: TreeModelVersion
+      status:
+        description: >-
+          Lifecycle status for this tree model version.
+          Workers claim versions by setting claimed_at, not by changing status.
+        range: IngestionStatus
+        ifabsent: "discovered"
+      claimed_at:
+        description: >-
+          Timestamp when a worker claimed this version for extraction.
+          Used for distributed worker coordination. Stale claims (>5min)
+          are reclaimed by other workers.
+        range: datetime
       discovery_date:
         description: When this epoch was discovered
         range: datetime
