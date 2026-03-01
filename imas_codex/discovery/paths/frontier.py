@@ -1274,7 +1274,7 @@ def mark_paths_scored(
                 # Mark all discovered children as skipped
                 skipped_result = gc.query(
                     """
-                    MATCH (child:FacilityPath)-[:CHILD_OF]->(p:FacilityPath {id: $id})
+                    MATCH (child:FacilityPath)-[:IN_DIRECTORY]->(p:FacilityPath {id: $id})
                     WHERE child.status = 'discovered'
                     SET child.status = $skipped,
                         child.skipped_at = $now,
