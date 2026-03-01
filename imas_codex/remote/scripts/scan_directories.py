@@ -325,6 +325,8 @@ def scan_directory(
         if os.path.isdir(git_dir):
             # Common git args to bypass ownership checks (scanning other users' repos)
             git_base = ["git", "-c", "safe.directory=*", "-C", path]
+            # Prevent any git credential prompt from hanging the scan
+            git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
 
             # Extract remote origin URL
             try:
@@ -332,7 +334,8 @@ def scan_directory(
                     git_base + ["config", "--get", "remote.origin.url"],
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=3,
+                    env=git_env,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
                     git_remote_url = sanitize_str(proc.stdout.strip())
@@ -345,7 +348,8 @@ def scan_directory(
                     git_base + ["rev-parse", "HEAD"],
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=3,
+                    env=git_env,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
                     git_head_commit = sanitize_str(proc.stdout.strip())
@@ -358,7 +362,8 @@ def scan_directory(
                     git_base + ["symbolic-ref", "--short", "HEAD"],
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=3,
+                    env=git_env,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
                     git_branch = sanitize_str(proc.stdout.strip())
@@ -371,7 +376,8 @@ def scan_directory(
                     git_base + ["rev-list", "--max-parents=0", "HEAD"],
                     capture_output=True,
                     text=True,
-                    timeout=5,
+                    timeout=3,
+                    env=git_env,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
                     # May return multiple root commits (rare), take first
@@ -384,7 +390,14 @@ def scan_directory(
     if vcs_type == "svn":
         try:
             proc = subprocess.run(
-                ["svn", "info", "--show-item", "repos-root-url", path],
+                [
+                    "svn",
+                    "info",
+                    "--non-interactive",
+                    "--show-item",
+                    "repos-root-url",
+                    path,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -407,9 +420,7 @@ def scan_directory(
             pass
 
     # Check VCS remote accessibility (can the code be obtained from the remote?)
-    # Skipped by default — network calls (git ls-remote, svn info, hg identify)
-    # can each take 10s+ per repo, causing SSH timeouts when scanning many paths.
-    # Deferred to enrichment phase where paths are processed individually.
+    # Quick check at scan time — 3s timeout per repo to avoid blocking batches.
     vcs_remote_accessible: Optional[bool] = None
     effective_remote = vcs_remote_url or git_remote_url
     if enable_vcs_remote_check and effective_remote:
@@ -419,7 +430,7 @@ def scan_directory(
                     ["git", "ls-remote", "--exit-code", effective_remote, "HEAD"],
                     capture_output=True,
                     text=True,
-                    timeout=10,
+                    timeout=3,
                     env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
                 )
                 vcs_remote_accessible = proc.returncode == 0
@@ -428,10 +439,16 @@ def scan_directory(
         elif vcs_type == "svn":
             try:
                 proc = subprocess.run(
-                    ["svn", "info", "--non-interactive", effective_remote],
+                    [
+                        "svn",
+                        "info",
+                        "--non-interactive",
+                        "--no-auth-cache",
+                        effective_remote,
+                    ],
                     capture_output=True,
                     text=True,
-                    timeout=10,
+                    timeout=3,
                 )
                 vcs_remote_accessible = proc.returncode == 0
             except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
@@ -442,7 +459,7 @@ def scan_directory(
                     ["hg", "identify", effective_remote],
                     capture_output=True,
                     text=True,
-                    timeout=10,
+                    timeout=3,
                 )
                 vcs_remote_accessible = proc.returncode == 0
             except (subprocess.TimeoutExpired, FileNotFoundError, Exception):

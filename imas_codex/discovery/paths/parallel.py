@@ -1499,6 +1499,7 @@ async def refine_worker(
                 result: dict = {
                     "path": llm_r["path"],
                     "score": llm_r["score"],
+                    "previous_score": orig.get("score"),
                     "score_cost": cost_per_path,
                     "should_expand": orig.get("should_expand", True),
                     "adjustment_reason": llm_r.get("adjustment_reason", ""),
@@ -2307,10 +2308,10 @@ async def run_parallel_discovery(
             )
         )
 
-    # Refine workers (group="score" — same pipeline stage)
+    # Refine workers (group="refine" — own display row)
     for i in range(num_refine_workers):
         worker_name = f"refine_worker_{i}"
-        status = worker_group.create_status(worker_name, group="score")
+        status = worker_group.create_status(worker_name, group="refine")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(

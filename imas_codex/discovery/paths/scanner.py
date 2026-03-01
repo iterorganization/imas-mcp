@@ -384,6 +384,7 @@ def _build_scan_input(
         "rg_patterns": rg_patterns,
         "enable_rg": enable_rg,
         "enable_size": enable_size,
+        "enable_vcs_remote_check": True,
     }
     return ssh_host, input_data
 

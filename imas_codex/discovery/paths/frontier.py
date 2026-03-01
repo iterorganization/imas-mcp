@@ -281,6 +281,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.status = $scored AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 sum(CASE WHEN p.is_enriched = true THEN 1 ELSE 0 END) AS enriched,
                 sum(CASE WHEN p.refined_at IS NOT NULL THEN 1 ELSE 0 END) AS refined,
+                sum(CASE WHEN p.is_enriched = true AND p.refined_at IS NULL THEN 1 ELSE 0 END) AS refine_ready,
                 max(coalesce(p.depth, 0)) AS max_depth
             """,
             facility=facility,
@@ -304,6 +305,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 "enrichment_ready": result[0]["enrichment_ready"],
                 "enriched": result[0]["enriched"],
                 "refined": result[0]["refined"],
+                "refine_ready": result[0]["refine_ready"],
                 "max_depth": result[0]["max_depth"] or 0,
             }
 
@@ -319,6 +321,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             "enrichment_ready": 0,
             "enriched": 0,
             "refined": 0,
+            "refine_ready": 0,
             "max_depth": 0,
         }
 
@@ -1193,7 +1196,7 @@ def mark_paths_scored(
             # For LLM-scored paths it stays NULL - reason is derivable from
             # has_git, path_purpose, score.
 
-            should_expand = score_data.get("should_expand", True)
+            should_expand = score_data.get("should_expand", False)
 
             gc.query(
                 """
@@ -1264,7 +1267,7 @@ def mark_paths_scored(
             # Data container child-skip: mark children as skipped if parent is
             # a data container that shouldn't expand (modeling_data, experimental_data)
             path_purpose = score_data.get("path_purpose")
-            should_expand = score_data.get("should_expand", True)
+            should_expand = score_data.get("should_expand", False)
             data_purposes = {"modeling_data", "experimental_data"}
 
             if path_purpose in data_purposes and not should_expand:
