@@ -147,6 +147,10 @@ def scan_directory(
 
     # Child directories with symlink and device_inode info - enables deduplication
     # Each entry is {path, is_symlink, realpath, device_inode} for graph relationship creation
+    # PERF: skip os.stat() for device_inode — NFS automount stat takes ~0.5-1s
+    # per directory even for small dirs. /home (1051 dirs) would take >350s,
+    # /home/codes (39 dirs) takes 19s. Device_inode is optional for deduplication.
+    skip_stat = True
     child_dirs: List[Dict[str, Any]] = []
     for entry in dirs:
         child_path = sanitize_str(entry.path)
@@ -160,12 +164,13 @@ def scan_directory(
                     child_realpath = None
             else:
                 child_realpath = None
-            # Get device:inode for deduplication
-            try:
-                child_stat = os.stat(entry.path)  # follows symlinks
-                child_device_inode = f"{child_stat.st_dev}:{child_stat.st_ino}"
-            except OSError:
-                pass
+            # Get device:inode for deduplication (skip on large dirs for NFS perf)
+            if not skip_stat:
+                try:
+                    child_stat = os.stat(entry.path)  # follows symlinks
+                    child_device_inode = f"{child_stat.st_dev}:{child_stat.st_ino}"
+                except OSError:
+                    pass
         except OSError:
             child_is_symlink = False
             child_realpath = None
@@ -182,17 +187,23 @@ def scan_directory(
     # Using terminal names only (not full paths) to save tokens
     # Directories get trailing "/" to distinguish from files
     # Sort by mtime (most recently modified first) to show active content
-    def get_mtime(entry: os.DirEntry) -> float:
-        try:
-            return entry.stat(follow_symlinks=False).st_mtime
-        except OSError:
-            return 0.0
+    # PERF: skip mtime sort for large dirs — stat() is slow on NFS automount
+    if skip_stat:
+        file_names = [sanitize_str(f.name) for f in files[:20]]
+        dir_names = [sanitize_str(d.name) + "/" for d in dirs[:20]]
+    else:
 
-    files_sorted = sorted(files, key=get_mtime, reverse=True)
-    dirs_sorted = sorted(dirs, key=get_mtime, reverse=True)
+        def get_mtime(entry: os.DirEntry) -> float:
+            try:
+                return entry.stat(follow_symlinks=False).st_mtime
+            except OSError:
+                return 0.0
 
-    file_names = [sanitize_str(f.name) for f in files_sorted[:20]]
-    dir_names = [sanitize_str(d.name) + "/" for d in dirs_sorted[:20]]
+        files_sorted = sorted(files, key=get_mtime, reverse=True)
+        dirs_sorted = sorted(dirs, key=get_mtime, reverse=True)
+
+        file_names = [sanitize_str(f.name) for f in files_sorted[:20]]
+        dir_names = [sanitize_str(d.name) + "/" for d in dirs_sorted[:20]]
     # Combine for legacy child_names field (first 30 total with trailing / on dirs)
     child_names = dir_names[:15] + file_names[:15]
 
