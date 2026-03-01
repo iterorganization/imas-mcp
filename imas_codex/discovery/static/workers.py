@@ -245,7 +245,7 @@ async def units_worker(
             state.facility,
             state.tree_name,
             latest_version,
-            timeout=180,
+            timeout=state.timeout,
             batch_size=5000,
             on_progress=_on_ssh_progress,
         )
@@ -321,13 +321,13 @@ async def enrich_worker(
     from imas_codex.settings import get_model
 
     from .graph_ops import (
-        claim_nodes_for_enrichment,
+        claim_parent_for_enrichment,
         claim_patterns_for_enrichment,
         detect_and_create_patterns,
         fetch_enrichment_context,
-        mark_nodes_enriched,
+        mark_parent_children_enriched,
         mark_patterns_enriched,
-        release_node_claims,
+        release_parent_claim,
         release_pattern_claims,
     )
 
@@ -479,22 +479,21 @@ async def enrich_worker(
 
         await asyncio.sleep(0.1)
 
-    # --- Phase 2: Enrich remaining non-pattern nodes ---
+    # --- Phase 2: Enrich remaining non-pattern nodes by parent group ---
     while not state.should_stop():
         if state.budget_exhausted:
             if on_progress:
                 on_progress("budget exhausted", state.enrich_stats, None)
             break
 
-        # Claim nodes for enrichment
-        nodes = await asyncio.to_thread(
-            claim_nodes_for_enrichment,
+        # Claim a parent STRUCTURE with un-enriched children
+        parent_data = await asyncio.to_thread(
+            claim_parent_for_enrichment,
             state.facility,
             state.tree_name,
-            limit=state.batch_size,
         )
 
-        if not nodes:
+        if not parent_data:
             state.enrich_phase.record_idle()
             if state.enrich_phase.done:
                 break
@@ -503,36 +502,41 @@ async def enrich_worker(
             await asyncio.sleep(2.0)
             continue
 
-        state.enrich_phase.record_activity(len(nodes))
-        node_ids = [n["id"] for n in nodes]
+        state.enrich_phase.record_activity(1)
+        parent_id = parent_data["parent_id"]
+        parent_path = parent_data["parent_path"]
+        children = parent_data["children"]
 
-        # Fetch tree hierarchy context (parents, siblings) from graph
-        node_paths = [n["path"] for n in nodes]
+        if not children:
+            await asyncio.to_thread(release_parent_claim, parent_id)
+            continue
+
+        # Fetch tree hierarchy context for the children
+        child_paths = [c["path"] for c in children]
         tree_context = await asyncio.to_thread(
             fetch_enrichment_context,
             state.facility,
             state.tree_name,
-            node_paths,
+            child_paths,
         )
 
-        # Build prompt batch
+        # Build prompt batch from all children of this parent
         batch_nodes = []
-        for n in nodes:
+        for c in children:
             batch_nodes.append(
                 {
-                    "path": n["path"],
-                    "node_type": n["node_type"],
-                    "tags": n.get("tags"),
-                    "units": n.get("units"),
+                    "path": c["path"],
+                    "node_type": c["node_type"],
+                    "tags": c.get("tags"),
+                    "units": c.get("units"),
                 }
             )
 
         if on_progress:
-            first_path = nodes[0]["path"] if nodes else "?"
             on_progress(
-                f"enriching {len(nodes)} nodes",
+                f"{parent_path} ({len(children)} children)",
                 state.enrich_stats,
-                [{"path": first_path, "count": len(nodes)}],
+                [{"path": parent_path, "count": len(children)}],
             )
 
         try:
@@ -552,15 +556,14 @@ async def enrich_worker(
             )
             state.enrich_stats.cost += cost
 
-            # Build description and metadata maps
+            # Build description and metadata maps keyed by child ID
             descriptions: dict[str, str] = {}
             metadata: dict[str, dict] = {}
             for r in parsed.results:
-                # Match by path suffix to find the node ID
                 matched_id = None
-                for n in nodes:
-                    if n["path"] == r.path:
-                        matched_id = n["id"]
+                for c in children:
+                    if c["path"] == r.path:
+                        matched_id = c["id"]
                         break
                 if matched_id:
                     descriptions[matched_id] = r.description or ""
@@ -571,32 +574,31 @@ async def enrich_worker(
                         }
 
             enriched = await asyncio.to_thread(
-                mark_nodes_enriched,
-                node_ids,
+                mark_parent_children_enriched,
+                parent_id,
                 descriptions,
                 metadata,
             )
 
-            state.enrich_stats.processed += enriched
-            state.enrich_stats.record_batch(enriched)
+            state.enrich_stats.processed += 1
+            state.enrich_stats.record_batch(1)
 
             if on_progress:
-                for r in parsed.results:
-                    on_progress(
-                        f"{r.path}: {(r.description or '')[:60]}",
-                        state.enrich_stats,
-                        [
-                            {
-                                "path": r.path,
-                                "description": r.description or "",
-                                "cost": cost,
-                            }
-                        ],
-                    )
+                on_progress(
+                    f"{parent_path}: {enriched} children enriched",
+                    state.enrich_stats,
+                    [
+                        {
+                            "path": parent_path,
+                            "description": f"{enriched} children",
+                            "cost": cost,
+                        }
+                    ],
+                )
 
         except Exception as e:
-            logger.error("Enrich batch failed: %s", e)
+            logger.error("Parent enrich failed for %s: %s", parent_path, e)
             state.enrich_stats.errors += 1
-            await asyncio.to_thread(release_node_claims, node_ids)
+            await asyncio.to_thread(release_parent_claim, parent_id)
 
         await asyncio.sleep(0.1)

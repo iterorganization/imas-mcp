@@ -367,8 +367,13 @@ class StaticProgressDisplay(BaseProgressDisplay):
         # as pending instead of the smaller post-pattern work set).
         all_extracted = s.extract_completed >= s.extract_total and s.extract_total > 0
         if all_extracted:
-            s.enrich_total = stats.get("nodes_enrichable", s.enrich_total)
-            s.enrich_completed = stats.get("nodes_enriched", s.enrich_completed)
+            # Enrichment total = patterns + parent groups (not individual nodes)
+            patterns_total = stats.get("patterns_total", 0)
+            parent_groups_total = stats.get("parent_groups_total", 0)
+            s.enrich_total = patterns_total + parent_groups_total
+            patterns_enriched = stats.get("patterns_enriched", 0)
+            parent_groups_enriched = stats.get("parent_groups_enriched", 0)
+            s.enrich_completed = patterns_enriched + parent_groups_enriched
 
     def print_summary(self) -> None:
         """Print final summary."""

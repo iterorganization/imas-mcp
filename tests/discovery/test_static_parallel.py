@@ -227,9 +227,10 @@ class TestGraphOps:
                     "total": 280000,
                     "enriched": 500,
                     "enrichable": 200000,
-                    "pending_enrich": 199500,
                 }
             ],
+            # Parent group stats
+            [{"total_parents": 3000, "pending_parents": 2500, "enriched_parents": 500}],
             # Pattern stats
             [{"total": 50, "enriched": 10, "pending": 40}],
         ]
@@ -241,23 +242,33 @@ class TestGraphOps:
         assert stats["versions_claimed"] == 1
         assert stats["nodes_graph"] == 280000
         assert stats["nodes_enriched"] == 500
-        assert stats["pending_enrich"] == 199500
+        assert stats["parent_groups_total"] == 3000
+        assert stats["parent_groups_pending"] == 2500
+        assert stats["parent_groups_enriched"] == 500
         assert stats["patterns_total"] == 50
         assert stats["patterns_enriched"] == 10
         assert stats["pending_patterns"] == 40
 
     @patch("imas_codex.discovery.static.graph_ops.GraphClient")
-    def test_release_node_claims_empty(self, mock_gc_cls):
-        from imas_codex.discovery.static.graph_ops import release_node_claims
+    def test_release_parent_claim(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import release_parent_claim
 
-        result = release_node_claims([])
-        assert result == 0
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        release_parent_claim("tcv:static:TOP.W")
+        mock_gc.query.assert_called_once()
 
     @patch("imas_codex.discovery.static.graph_ops.GraphClient")
-    def test_mark_nodes_enriched_empty(self, mock_gc_cls):
-        from imas_codex.discovery.static.graph_ops import mark_nodes_enriched
+    def test_mark_parent_children_enriched_empty(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import mark_parent_children_enriched
 
-        result = mark_nodes_enriched([], {})
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = mark_parent_children_enriched("tcv:static:TOP.W", {})
         assert result == 0
 
     # --- Pattern tests ---
@@ -469,9 +480,9 @@ class TestStaticProgressDisplay:
         from imas_codex.cli.discover.static import StaticProgressState
 
         state = StaticProgressState()
-        state.extract_rate = 2.0  # 2 versions/s
-        state.extract_total = 10
-        state.extract_completed = 4
+        state.extract_rate = 2.0  # 2 nodes/s
+        state.extract_nodes_total = 10
+        state.extract_nodes = 4
         eta = state.eta_seconds
         assert eta is not None
         assert eta == pytest.approx(3.0, abs=0.1)
@@ -544,6 +555,10 @@ class TestStaticProgressDisplay:
             "nodes_total": 100000,
             "nodes_enrichable": 34000,
             "nodes_enriched": 0,
+            "patterns_total": 50,
+            "patterns_enriched": 0,
+            "parent_groups_total": 3000,
+            "parent_groups_enriched": 0,
         }
         with patch(
             "imas_codex.discovery.static.graph_ops.get_static_discovery_stats",
@@ -563,7 +578,8 @@ class TestStaticProgressDisplay:
         ):
             display.refresh_from_graph("test", "test_tree")
 
-        assert display.state.enrich_total == 34000
+        # enrich_total = patterns_total + parent_groups_total = 50 + 3000
+        assert display.state.enrich_total == 3050
 
     def test_update_units_with_msg_only(self):
         """Units callback with msg but no results should push to queue."""
