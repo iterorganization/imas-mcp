@@ -1129,6 +1129,13 @@ def graph_start(
             click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
             return
 
+        if alloc.get("_fallback"):
+            raise click.ClickException(
+                f"SLURM is unavailable and Neo4j is not running on {node}. "
+                "Cannot start Neo4j without a SLURM allocation. "
+                "Try again when SLURM recovers."
+            )
+
         _kill_neo4j_on_node(node)
         _clean_neo4j_locks(node)
 
@@ -1314,9 +1321,15 @@ def graph_stop(data_dir: str | None) -> None:
     loc_info = resolve_location(location)
 
     if loc_info.is_compute:
-        from imas_codex.cli.serve import _get_allocation, _stop_service
+        from imas_codex.cli.serve import (
+            _get_allocation,
+            _get_allocation_fallback,
+            _stop_service,
+        )
 
         alloc = _get_allocation()
+        if not alloc or alloc["state"] != "RUNNING":
+            alloc = _get_allocation_fallback()
         if alloc and alloc["state"] == "RUNNING":
             node = alloc["node"]
             if _stop_service(node, "neo4j"):

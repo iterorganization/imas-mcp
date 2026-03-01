@@ -1345,7 +1345,7 @@ def _get_allocation() -> dict | None:
         out = _run_remote(
             f'squeue -n {_ALLOC_JOB} -u "$USER" --format="%A|%T|%M|%N|%b" --noheader'
         )
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
     for line in out.strip().split("\n"):
         line = line.strip()
@@ -1363,17 +1363,52 @@ def _get_allocation() -> dict | None:
     return None
 
 
+def _get_allocation_fallback() -> dict | None:
+    """Fallback allocation from allocation.log when SLURM is unavailable.
+
+    Returns a synthetic allocation dict if the last-known compute node
+    is still reachable, or None.
+    """
+    from imas_codex.remote.locations import _host_reachable, _read_allocation_host
+
+    host = _read_allocation_host()
+    if not host:
+        return None
+    if _host_reachable(host):
+        return {
+            "job_id": "unknown",
+            "state": "RUNNING",
+            "time": "unknown",
+            "node": host,
+            "gres": "unknown",
+            "_fallback": True,
+        }
+    return None
+
+
 def _ensure_allocation(gpus: int = _DEFAULT_GPUS) -> dict:
     """Ensure a SLURM allocation exists, creating one if needed.
 
     The allocation is a ``sleep infinity`` batch job that reserves
     compute resources.  Services are managed separately via SSH.
 
+    When SLURM is unavailable, falls back to the last-known compute
+    node from allocation.log if it is still reachable.
+
     Returns the allocation dict (job_id, node, etc.).
     """
     alloc = _get_allocation()
     if alloc and alloc["state"] == "RUNNING":
         return alloc
+
+    # SLURM returned no running allocation — check if the last-known
+    # compute node is still reachable (services outlive SLURM outages).
+    fallback = _get_allocation_fallback()
+    if fallback:
+        click.echo(
+            f"SLURM unavailable but compute node {fallback['node']} is reachable"
+        )
+        return fallback
 
     # Cancel any PENDING allocation (stuck in queue)
     if alloc:
