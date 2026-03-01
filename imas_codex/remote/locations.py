@@ -239,12 +239,53 @@ def resolve_service_url(
 def _resolve_compute_host(info: LocationInfo) -> str | None:
     """Get the compute host for a SLURM location.
 
-    Called when ``squeue`` finds no running service job.  Returns None
-    since services require an active SLURM allocation.
+    Called when ``squeue`` finds no running service job.  Falls back to
+    the last-known compute node recorded in ``allocation.log`` by the
+    SLURM batch script, verifying it is still reachable before returning.
     """
     logger.debug(
-        "No SLURM job '%s' found for %s — services require active allocation",
+        "No SLURM job '%s' found for %s — trying allocation.log fallback",
         info.service_job_name,
         info.name,
     )
+    host = _read_allocation_host()
+    if not host:
+        return None
+    if _host_reachable(host):
+        logger.info(
+            "SLURM unavailable but compute host %s (from allocation.log) is reachable",
+            host,
+        )
+        return host
+    logger.debug("Compute host %s from allocation.log is not reachable", host)
     return None
+
+
+def _read_allocation_host() -> str | None:
+    """Parse the compute hostname from the services allocation.log.
+
+    The log is written by the SLURM batch script with the format::
+
+        Allocation ready on <hostname> at <date>
+    """
+    import re
+    from pathlib import Path
+
+    log_path = Path.home() / ".local/share/imas-codex/services/allocation.log"
+    try:
+        text = log_path.read_text()
+    except (FileNotFoundError, PermissionError):
+        return None
+    match = re.search(r"Allocation ready on (\S+)", text)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _host_reachable(host: str, port: int = 7474, timeout: float = 3.0) -> bool:
+    """Check if a host is reachable via TCP on the given port."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (OSError, TimeoutError):
+        return False

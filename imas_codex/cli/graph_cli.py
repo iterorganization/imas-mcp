@@ -451,6 +451,24 @@ def is_neo4j_running(http_port: int | None = None) -> bool:
 
     if http_port is None:
         http_port = HTTP_BASE_PORT
+
+    # For SLURM compute locations, check the resolved service URL
+    # instead of blindly hitting localhost.
+    try:
+        from imas_codex.remote.locations import resolve_service_url
+        from imas_codex.settings import get_graph_location
+
+        location = get_graph_location()
+        url = resolve_service_url(location, http_port, protocol="http")
+        if url:
+            import urllib.request
+
+            urllib.request.urlopen(f"{url}/", timeout=2)
+            return True
+    except Exception:
+        pass
+
+    # Fallback: check localhost directly
     try:
         import urllib.request
 
