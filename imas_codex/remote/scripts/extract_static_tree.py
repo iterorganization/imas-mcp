@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Extract static/machine-description tree structure and values.
+"""Extract static/machine-description tree structure.
 
 This script runs on the facility host where MDSplus is available.
 It walks a static tree (versioned by machine configuration, not shot)
-and extracts both the tree structure and optionally the numerical values
-(R/Z coordinates, Green's functions, etc.).
+and extracts the tree structure (paths, node types, tags).
 
 Static trees differ from shot-dependent trees:
 - Opened by version number (shot=1..N), not experimental shot number
@@ -23,7 +22,6 @@ Input (JSON on stdin):
     {
         "tree_name": "static",
         "versions": [1, 2, 3, 4, 5, 6, 7, 8],
-        "extract_values": true,
         "exclude_names": ["COMMENTS", "DATE"]
     }
 
@@ -52,15 +50,13 @@ from typing import Any
 def extract_version(
     tree_name: str,
     version: int,
-    extract_values: bool = False,
     exclude_names: set | None = None,
 ) -> dict[str, Any]:
-    """Extract all nodes and optionally values from a static tree version.
+    """Extract all nodes from a static tree version.
 
     Args:
         tree_name: MDSplus tree name (e.g., "static")
         version: Version number (tree is opened with this as shot number)
-        extract_values: Whether to extract actual numerical data
         exclude_names: Node names to skip
 
     Returns:
@@ -135,38 +131,6 @@ def extract_version(
             if node_tags:
                 record["tags"] = node_tags
 
-            # Extract values if requested and node has data
-            if extract_values and node_type in ("NUMERIC", "SIGNAL"):
-                import numpy as np
-
-                try:
-                    has_data = node.getLength() > 0
-                    if has_data:
-                        data = node.data()
-                        if isinstance(data, np.ndarray):
-                            record["shape"] = list(data.shape)
-                            record["dtype"] = str(data.dtype)
-                            # For small arrays, include actual values
-                            if data.size <= 2048:
-                                record["value"] = data.tolist()
-                            else:
-                                # Too large — store summary only
-                                record["value_summary"] = {
-                                    "min": float(np.nanmin(data)),
-                                    "max": float(np.nanmax(data)),
-                                    "mean": float(np.nanmean(data)),
-                                    "size": int(data.size),
-                                }
-                        elif isinstance(data, int | float):
-                            record["value"] = data
-                            record["shape"] = []
-                            record["dtype"] = type(data).__name__
-                        elif isinstance(data, str):
-                            record["value"] = data[:500]
-                            record["dtype"] = "str"
-                except Exception as e:
-                    record["value_error"] = str(e)[:200]
-
             nodes.append(record)
 
         except Exception:
@@ -217,7 +181,6 @@ def main() -> None:
 
     tree_name = config["tree_name"]
     versions = config.get("versions", [1])
-    extract_values = config.get("extract_values", False)
     exclude_names = {n.upper() for n in config.get("exclude_names", [])}
 
     version_data: dict[str, dict] = {}
@@ -225,7 +188,6 @@ def main() -> None:
         result = extract_version(
             tree_name=tree_name,
             version=ver,
-            extract_values=extract_values,
             exclude_names=exclude_names,
         )
         version_data[str(ver)] = result

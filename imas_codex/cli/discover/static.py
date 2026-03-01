@@ -313,12 +313,6 @@ class StaticProgressDisplay(BaseProgressDisplay):
     "--versions",
     help="Comma-separated version numbers (default: all from config)",
 )
-@click.option(
-    "--values/--no-values",
-    "extract_values",
-    default=None,
-    help="Extract numerical values (R/Z, matrices). Default: from config.",
-)
 @click.option("--dry-run", is_flag=True, help="Preview without ingesting")
 @click.option(
     "--timeout", type=int, default=600, help="SSH timeout per version in seconds"
@@ -347,7 +341,6 @@ def static(
     facility: str,
     tree_name: str | None,
     versions: str | None,
-    extract_values: bool | None,
     dry_run: bool,
     timeout: int,
     cost_limit: float,
@@ -362,8 +355,8 @@ def static(
 
     Static trees contain time-invariant constructional data versioned by
     machine configuration changes. This command extracts tree structure,
-    tags, metadata, and optionally numerical values, then ingests them
-    into the knowledge graph as TreeModelVersion and TreeNode nodes.
+    tags, and metadata, then ingests them into the knowledge graph as
+    TreeModelVersion and TreeNode nodes.
 
     \b
     Pipeline phases:
@@ -374,7 +367,6 @@ def static(
     \b
     Examples:
       imas-codex discover static tcv
-      imas-codex discover static tcv --values
       imas-codex discover static tcv --tree static --versions 1,3,8
       imas-codex discover static tcv --dry-run -v
       imas-codex discover static tcv --no-enrich
@@ -440,7 +432,6 @@ def static(
             facility=facility,
             configs=configs,
             versions=versions,
-            extract_values=extract_values,
             dry_run=dry_run,
             timeout=timeout,
             cost_limit=cost_limit,
@@ -453,7 +444,6 @@ def static(
             facility=facility,
             configs=configs,
             versions=versions,
-            extract_values=extract_values,
             dry_run=dry_run,
             timeout=timeout,
             cost_limit=cost_limit,
@@ -472,7 +462,6 @@ def _run_plain(
     facility: str,
     configs: list[dict],
     versions: str | None,
-    extract_values: bool | None,
     dry_run: bool,
     timeout: int,
     cost_limit: float,
@@ -495,15 +484,10 @@ def _run_plain(
         logger.info("Processing static tree: %s:%s", facility, tname)
 
         ver_list = _parse_versions(versions, cfg)
-        do_extract = (
-            extract_values
-            if extract_values is not None
-            else cfg.get("extract_values", False)
-        )
         if not ver_list:
             ver_list = [1]
 
-        logger.info("  Versions: %s, Extract values: %s", ver_list, do_extract)
+        logger.info("  Versions: %s", ver_list)
 
         # Phase 1: Extract — one version at a time
         version_results = []
@@ -514,7 +498,6 @@ def _run_plain(
                     facility=facility,
                     tree_name=tname,
                     version=ver,
-                    extract_values=do_extract,
                     timeout=timeout,
                 )
                 version_results.append(data)
@@ -584,10 +567,9 @@ def _run_plain(
                 if enrichment_results:
                     _apply_enrichment(client, facility, tname, enrichment_results)
                 logger.info(
-                    "Ingested: %d versions, %d nodes, %d values",
+                    "Ingested: %d versions, %d nodes",
                     stats["versions_created"],
                     stats["nodes_created"],
-                    stats["values_stored"],
                 )
         else:
             stats = ingest_static_tree(None, facility, data, dry_run=True)
@@ -610,7 +592,6 @@ def _run_pipeline(
     cfg: dict,
     tname: str,
     ver_list: list[int],
-    do_extract: bool,
     dry_run: bool,
     timeout: int,
     cost_limit: float,
@@ -627,7 +608,6 @@ def _run_pipeline(
             cfg=cfg,
             tname=tname,
             ver_list=ver_list,
-            do_extract=do_extract,
             dry_run=dry_run,
             timeout=timeout,
             cost_limit=cost_limit,
@@ -644,7 +624,6 @@ async def _async_pipeline(
     cfg: dict,
     tname: str,
     ver_list: list[int],
-    do_extract: bool,
     dry_run: bool,
     timeout: int,
     cost_limit: float,
@@ -672,17 +651,6 @@ async def _async_pipeline(
     display._extract_start = time.time()
     display.state.extract_versions_total = len(ver_list)
 
-    # Value extraction reads node.data() for every NUMERIC/SIGNAL node
-    # (~30k+ in TCV static), which is much slower than structure-only.
-    # Scale the SSH timeout accordingly.
-    extract_timeout = timeout * 3 if do_extract else timeout
-    if extract_timeout != timeout:
-        logger.info(
-            "Value extraction enabled — SSH timeout scaled to %ds (from %ds)",
-            extract_timeout,
-            timeout,
-        )
-
     # Shared state between async workers
     version_results: list[dict] = []
     enrichable_nodes: list[dict] = []
@@ -697,12 +665,11 @@ async def _async_pipeline(
     async def extract_version(ver: int) -> dict | None:
         ver_idx = ver_list.index(ver) + 1
         ver_start = time.time()
-        mode_label = "values" if do_extract else "structure"
         display.extract_queue.add(
             [
                 {
                     "version": f"v{ver} {facility}:{tname} ({ver_idx}/{len(ver_list)})",
-                    "detail": f"connecting via SSH, extracting {mode_label}...",
+                    "detail": "connecting via SSH, extracting structure...",
                 }
             ]
         )
@@ -717,7 +684,7 @@ async def _async_pipeline(
                     [
                         {
                             "version": f"v{ver} {facility}:{tname} ({ver_idx}/{len(ver_list)})",
-                            "detail": f"extracting {mode_label}... {mins}m {secs:02d}s",
+                            "detail": f"extracting structure... {mins}m {secs:02d}s",
                         }
                     ]
                 )
@@ -729,8 +696,7 @@ async def _async_pipeline(
                 facility=facility,
                 tree_name=tname,
                 version=ver,
-                extract_values=do_extract,
-                timeout=extract_timeout,
+                timeout=timeout,
             )
             version_results.append(data)
 
@@ -1049,7 +1015,6 @@ def _run_with_progress(
     facility: str,
     configs: list[dict],
     versions: str | None,
-    extract_values: bool | None,
     dry_run: bool,
     timeout: int,
     cost_limit: float,
@@ -1061,11 +1026,6 @@ def _run_with_progress(
     for cfg in configs:
         tname = cfg["tree_name"]
         ver_list = _parse_versions(versions, cfg)
-        do_extract = (
-            extract_values
-            if extract_values is not None
-            else cfg.get("extract_values", False)
-        )
         if not ver_list:
             ver_list = [1]
 
@@ -1083,7 +1043,6 @@ def _run_with_progress(
                 cfg=cfg,
                 tname=tname,
                 ver_list=ver_list,
-                do_extract=do_extract,
                 dry_run=dry_run,
                 timeout=timeout,
                 cost_limit=cost_limit,

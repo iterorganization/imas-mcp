@@ -137,7 +137,6 @@ data_sources:
     static_trees:
       - tree_name: static
         accessor_function: static
-        extract_values: true
         versions:
           - version: 1
             first_shot: 1

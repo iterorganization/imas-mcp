@@ -517,13 +517,6 @@ classes:
           System symbols are used in tag construction: <parameter>_<system>.
         multivalued: true
         range: StaticTreeSystem
-      extract_values:
-        description: >-
-          Whether to extract actual numerical values (R/Z coordinates, matrices)
-          in addition to tree structure. Required for machine description
-          persistence. Default false (structure-only for regular signal trees).
-        range: boolean
-
   StaticTreeVersion:
     description: >-
       A version of a static tree, corresponding to a machine configuration.

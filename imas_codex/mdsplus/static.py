@@ -67,32 +67,28 @@ def _resolve_versions(
     facility: str,
     tree_name: str,
     versions: list[int] | None,
-) -> tuple[list[int], bool]:
-    """Resolve version list and extract_values from config if not provided.
+) -> list[int]:
+    """Resolve version list from config if not provided.
 
     Returns:
-        (versions, extract_values) tuple.
+        List of version numbers.
     """
-    extract_values = False
     if versions is None:
         configs = get_static_tree_config(facility)
         for cfg in configs:
             if cfg.get("tree_name") == tree_name:
                 ver_list = cfg.get("versions", [])
                 versions = [v["version"] for v in ver_list]
-                if cfg.get("extract_values") is not None:
-                    extract_values = cfg["extract_values"]
                 break
         if versions is None:
             versions = [1]
-    return versions, extract_values
+    return versions
 
 
 def discover_static_tree_version(
     facility: str,
     tree_name: str,
     version: int,
-    extract_values: bool = False,
     timeout: int = 300,
 ) -> dict[str, Any]:
     """Extract a single version of a static tree from a remote facility.
@@ -104,7 +100,6 @@ def discover_static_tree_version(
         facility: SSH host alias (e.g., "tcv")
         tree_name: MDSplus tree name (e.g., "static")
         version: Version number to extract
-        extract_values: Whether to extract numerical data
         timeout: SSH timeout in seconds
 
     Returns:
@@ -117,16 +112,14 @@ def discover_static_tree_version(
     input_data = {
         "tree_name": tree_name,
         "versions": [version],
-        "extract_values": extract_values,
         "exclude_names": exclude_names,
     }
 
     logger.info(
-        "Extracting static tree %s v%d from %s (values=%s)",
+        "Extracting static tree %s v%d from %s",
         tree_name,
         version,
         facility,
-        extract_values,
     )
 
     output = run_python_script(
@@ -158,7 +151,6 @@ async def async_discover_static_tree_version(
     facility: str,
     tree_name: str,
     version: int,
-    extract_values: bool = False,
     timeout: int = 300,
 ) -> dict[str, Any]:
     """Async version of discover_static_tree_version.
@@ -173,16 +165,14 @@ async def async_discover_static_tree_version(
     input_data = {
         "tree_name": tree_name,
         "versions": [version],
-        "extract_values": extract_values,
         "exclude_names": exclude_names,
     }
 
     logger.info(
-        "Extracting static tree %s v%d from %s (values=%s)",
+        "Extracting static tree %s v%d from %s",
         tree_name,
         version,
         facility,
-        extract_values,
     )
 
     output = await async_run_python_script(
@@ -369,10 +359,9 @@ def discover_static_tree(
     facility: str,
     tree_name: str,
     versions: list[int] | None = None,
-    extract_values: bool = False,
     timeout: int = 300,
 ) -> dict[str, Any]:
-    """Extract static tree structure and values from a remote facility.
+    """Extract static tree structure from a remote facility.
 
     Extracts each version individually to avoid SSH timeout on large trees,
     then merges results and computes cross-version diffs.
@@ -381,16 +370,13 @@ def discover_static_tree(
         facility: SSH host alias (e.g., "tcv")
         tree_name: MDSplus tree name (e.g., "static")
         versions: Version numbers to extract (default: all from config)
-        extract_values: Whether to extract numerical data (R/Z, matrices)
         timeout: SSH timeout per version in seconds
 
     Returns:
         Dict with version data, structural diffs, and tag mappings.
         Structure: {"tree_name": str, "versions": {ver: {...}}, "diff": {...}}
     """
-    versions, extract_values_cfg = _resolve_versions(facility, tree_name, versions)
-    if not extract_values:
-        extract_values = extract_values_cfg
+    versions = _resolve_versions(facility, tree_name, versions)
 
     results = []
     for ver in versions:
@@ -398,7 +384,6 @@ def discover_static_tree(
             facility=facility,
             tree_name=tree_name,
             version=ver,
-            extract_values=extract_values,
             timeout=timeout,
         )
         results.append(data)
@@ -580,13 +565,13 @@ def ingest_static_tree(
             batch write to report ingestion progress.
 
     Returns:
-        Dict with counts: versions_created, nodes_created, values_stored
+        Dict with counts: versions_created, nodes_created
     """
     tree_name = data["tree_name"]
     versions = data.get("versions", {})
     diff = data.get("diff", {})
 
-    stats = {"versions_created": 0, "nodes_created": 0, "values_stored": 0}
+    stats = {"versions_created": 0, "nodes_created": 0}
 
     if not versions:
         logger.warning("No version data to ingest")
@@ -724,7 +709,6 @@ def ingest_static_tree(
 
     # Build TreeNode records
     node_records = []
-    value_records = []
     for path, info in all_paths.items():
         node = info["node"]
         normalized = normalize_mdsplus_path(path)
@@ -762,28 +746,6 @@ def ingest_static_tree(
 
         node_records.append(record)
 
-        # Track values separately (don't store large arrays in Neo4j properties)
-        if node.get("value") is not None or node.get("value_summary") is not None:
-            val_record = {
-                "node_id": node_id,
-                "path": normalized,
-            }
-            if node.get("shape") is not None:
-                val_record["shape"] = node["shape"]
-            if node.get("dtype"):
-                val_record["dtype"] = node["dtype"]
-            if node.get("value") is not None:
-                val = node["value"]
-                # Store scalars and small arrays directly on the node
-                if isinstance(val, int | float):
-                    val_record["scalar_value"] = val
-                elif isinstance(val, list) and len(val) <= 100:
-                    val_record["array_value"] = val
-                # Large arrays: store shape/summary only
-            if node.get("value_summary"):
-                val_record["value_summary"] = node["value_summary"]
-            value_records.append(val_record)
-
     if dry_run:
         logger.info("[DRY RUN] Would create %d TreeNode records", len(node_records))
         # Show samples by node type
@@ -793,8 +755,6 @@ def ingest_static_tree(
             by_type[t] = by_type.get(t, 0) + 1
         for t, count in sorted(by_type.items()):
             logger.info("  %s: %d nodes", t, count)
-        if value_records:
-            logger.info("[DRY RUN] Would store values for %d nodes", len(value_records))
     else:
         # Batch insert TreeNodes
         batch_size = 500
@@ -832,34 +792,6 @@ def ingest_static_tree(
                     total_records,
                     f"MERGE batch {batch_num}/{total_batches}",
                 )
-
-        # Store scalar values directly on nodes
-        scalar_batch = [v for v in value_records if "scalar_value" in v]
-        if scalar_batch:
-            client.query(
-                """
-                UNWIND $values AS val
-                MATCH (n:TreeNode {id: val.node_id})
-                SET n.scalar_value = val.scalar_value,
-                    n.shape = val.shape,
-                    n.dtype = val.dtype
-                """,
-                values=scalar_batch,
-            )
-
-        # Store small array values
-        array_batch = [v for v in value_records if "array_value" in v]
-        if array_batch:
-            client.query(
-                """
-                UNWIND $values AS val
-                MATCH (n:TreeNode {id: val.node_id})
-                SET n.array_value = val.array_value,
-                    n.shape = val.shape,
-                    n.dtype = val.dtype
-                """,
-                values=array_batch,
-            )
 
         # Create relationships
         if on_progress:
@@ -919,15 +851,13 @@ def ingest_static_tree(
         )
 
     stats["nodes_created"] = len(node_records)
-    stats["values_stored"] = len(value_records)
 
     logger.info(
-        "Static tree %s:%s — %d versions, %d nodes, %d values",
+        "Static tree %s:%s — %d versions, %d nodes",
         facility,
         tree_name,
         stats["versions_created"],
         stats["nodes_created"],
-        stats["values_stored"],
     )
 
     return stats
