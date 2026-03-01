@@ -2150,24 +2150,17 @@ def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]
     Returns:
         Tuple of (success, message)
     """
-    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.remote.tools import run
 
     try:
-        config = get_facility(facility)
-        ssh_host = config.get("ssh_host", facility)
-    except ValueError:
-        ssh_host = facility
-
-    try:
-        result = run("echo ok", facility=ssh_host, timeout=timeout)
+        result = run("echo ok", facility=facility, timeout=timeout)
         if "ok" in result:
-            return True, f"SSH to {ssh_host} working"
-        return False, f"SSH to {ssh_host} returned unexpected output"
+            return True, f"SSH to {facility} working"
+        return False, f"SSH to {facility} returned unexpected output"
     except subprocess.TimeoutExpired:
-        return False, f"SSH to {ssh_host} timed out after {timeout}s"
+        return False, f"SSH to {facility} timed out after {timeout}s"
     except subprocess.CalledProcessError as e:
-        return False, f"SSH to {ssh_host} failed: {e}"
+        return False, f"SSH to {facility} failed: {e}"
     except Exception as e:
         return False, f"SSH check failed: {e}"
 
@@ -2263,8 +2256,10 @@ async def run_parallel_discovery(
     """
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
-    # SSH preflight check - fail fast if facility is unreachable
-    ssh_ok, ssh_message = check_ssh_connectivity(facility, timeout=15)
+    # SSH preflight check - fail fast if facility is unreachable.
+    # Use 30s timeout to accommodate proxy-jump connections (e.g., TCV via lac912)
+    # and allow time for stale control socket cleanup.
+    ssh_ok, ssh_message = check_ssh_connectivity(facility, timeout=30)
     if not ssh_ok:
         logger.error(f"SSH preflight failed: {ssh_message}")
         raise ConnectionError(f"Cannot connect to facility {facility}: {ssh_message}")
