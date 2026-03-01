@@ -85,7 +85,7 @@ logger = logging.getLogger(__name__)
     "--enrich-threshold",
     type=float,
     default=None,
-    help="Auto-enrich paths scoring >= threshold (e.g., 0.75)",
+    help="Auto-enrich paths scoring >= threshold (default: 0.7)",
 )
 @click.option(
     "--reset-refined",
@@ -342,7 +342,7 @@ def _run_iterative_discovery(
                 score_only=score_only,
                 use_rich=use_rich,
                 root_filter=root_filter,
-                auto_enrich_threshold=enrich_threshold,
+                auto_enrich_threshold=enrich_threshold or 0.7,
                 deadline=deadline,
             )
         )
@@ -630,7 +630,7 @@ async def _async_discovery_loop(
     score_only: bool = False,
     use_rich: bool = True,
     root_filter: list[str] | None = None,
-    auto_enrich_threshold: float = 0.75,
+    auto_enrich_threshold: float = 0.7,
     deadline: float | None = None,
 ) -> tuple[dict, set[str]]:
     """Async discovery loop with parallel scan/score workers."""

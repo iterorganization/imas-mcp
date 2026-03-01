@@ -1193,25 +1193,7 @@ def mark_paths_scored(
             # For LLM-scored paths it stays NULL - reason is derivable from
             # has_git, path_purpose, score.
 
-            # Depth-based expansion gate: deeper paths need higher scores
-            # to justify expansion. This prevents exponential blowup from
-            # expanding thousands of low-value subdirectories.
             should_expand = score_data.get("should_expand", True)
-            score = score_data.get("score", 0.0)
-            depth = path.strip("/").count("/")
-            if should_expand and depth >= 2:
-                # Escalating score threshold by depth
-                depth_thresholds = {2: 0.3, 3: 0.4, 4: 0.5, 5: 0.6, 6: 0.7}
-                threshold = depth_thresholds.get(depth, 0.8)
-                if depth >= 7 or score < threshold:
-                    should_expand = False
-                    logger.debug(
-                        "Expansion blocked at depth %d (score=%.2f < %.2f): %s",
-                        depth,
-                        score,
-                        threshold,
-                        path,
-                    )
 
             gc.query(
                 """

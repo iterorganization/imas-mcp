@@ -8,7 +8,9 @@ dynamic: true
 
 You are analyzing directories at a fusion research facility to classify and score them for knowledge graph enrichment.
 
-**Your scores and expansion decisions are final.** There is no post-processing, no deterministic adjustments, no score caps, no purpose-based multipliers. The combined score is `max(dims) × (1 + mean(nonzero_dims)) / 2` — scoring high on a SINGLE dimension is not enough. You must score high on multiple dimensions for a high combined score. Your `should_expand` decision IS the expansion decision (with depth-based gates applied structurally). Engineer your responses accordingly — if a directory should score low, score it low. If it should not expand, set `should_expand=false`.
+**Your scores and expansion decisions are final.** There is no post-processing, no deterministic adjustments, no score caps, no purpose-based multipliers. The combined score is `max(dims) × (1 + mean(nonzero_dims)) / 2` — scoring high on a SINGLE dimension is not enough. You must score high on multiple dimensions for a high combined score. Your `should_expand` decision IS the expansion decision (with VCS and data container overrides applied structurally). Engineer your responses accordingly — if a directory should score low, score it low. If it should not expand, set `should_expand=false`.
+
+**Scoring and expansion are INDEPENDENT decisions.** A directory's score measures whether IT contains interesting files. Expansion measures whether its SUBDIRECTORIES are worth exploring. A low-scoring directory can expand (it's a navigation container). A high-scoring directory can decline expansion (it IS the leaf project). These are separate judgments.
 
 ## Goal
 
@@ -118,24 +120,26 @@ Boost scores by ~0.15 for paths matching this focus.
 
 ## Expansion Decision
 
-**Your `should_expand` is the SOLE driver of expansion** (except: VCS repos with accessible remotes and data containers are structurally blocked by the code regardless). Set it carefully — every expansion triggers SSH scanning and LLM scoring of all children.
+**`should_expand` controls whether subdirectories are discovered.** This is INDEPENDENT of the directory's own score. A low-scoring navigation container (e.g., `/home`) expands because its children may contain code. A high-scoring leaf project does NOT expand because its source tree is implementation detail.
+
+**Think of it as: "Are this directory's children worth individually evaluating?"**
 
 ### When to expand (`should_expand=true`):
-- **Top-level containers** (depth 0): `/home`, `/work`, `/common` — navigation roots that must be explored
-- **Shared code directories**: `/home/codes`, `/common/codes` — curated code collections with multiple projects
-- **Promising user homes** (depth 1): only when the tree structure shows code (Python/Fortran files, src/, analysis/, scripts/) — NOT empty or configuration-only homes
+- **Navigation containers** at any depth: directories whose purpose is to organize other projects (`/home`, `/work`, `/common/codes`)
+- **User homes** that show evidence of code (Python/Fortran files, src/, analysis/, scripts/ in the tree structure)
+- **Multi-project directories**: parent dirs containing multiple independent projects or tools
+- **Promising intermediate directories**: if the tree structure hints at interesting subdirectories, expand regardless of depth
 
 ### When NOT to expand (`should_expand=false`):
-- **VCS repositories with accessible remotes** — if the `.git`/`.svn`/`.hg` repo's remote URL is reachable, code is obtainable via clone/checkout (also blocked structurally)
+- **VCS repositories with accessible remotes** — code is obtainable via clone/checkout (also blocked structurally)
 - **Data containers** — directories of shot data, run outputs, or numeric-named subdirs (also blocked structurally)
 - **Leaf code directories** — a directory with source files IS the project; its subdirectories (`src/`, `lib/`, `tests/`) are implementation details, not new discoveries
 - **Well-known software installations** — `/opt/imas/`, any public framework clone
-- **User copies of shared frameworks** — `/home/user/rtccode/`, `/home/user/RAPTOR/`, `/home/user/matlab/RAPTOR/` — these are personal copies of centrally-managed code, do NOT expand into them
-- **Deep paths** (depth 4+) — diminishing returns; valuable code is usually found by depth 2-3. Depth-based gates are enforced structurally: depth 3+ requires score ≥ 0.4, depth 5+ requires ≥ 0.6, depth 7+ never expands
+- **User copies of shared frameworks** — `/home/user/rtccode/`, `/home/user/RAPTOR/`, `/home/user/matlab/RAPTOR/` — personal copies of centrally-managed code
 - **Directories you scored < 0.3 on all dimensions** — not worth exploring further
 - **Empty or configuration-only user homes** — homes with only dotfiles, no source code
 - **System, build_artifact, archive directories** — never expand these
-- **Large user-directory containers** with 50+ children and no code in tree structure — expanding creates hundreds of paths to scan
+- **Large user-directory containers** with 50+ children and no code in tree structure
 
 ### VCS repos with inaccessible or missing remotes:
 If a directory has `.git`/`.svn`/`.hg` but the remote URL is unreachable (or missing), the local copy may be the **only source of this code**. Use your judgment: expand if the directory contains multiple independent projects (e.g., a large SVN checkout with per-diagnostic subdirectories). Don't expand if it's a single self-contained project.
@@ -148,7 +152,7 @@ A directory containing Python/Fortran source files is typically a **leaf** — i
 
 ## Enrichment Decision
 
-Set `should_enrich=true` for directories worth running deep pattern analysis (regex, line counts, disk usage).
+Set `should_enrich=true` for directories worth running deep pattern analysis (regex, line counts, disk usage). All paths scoring ≥ 0.7 are auto-enriched regardless, so `should_enrich` is mainly useful for paths scoring 0.4–0.7 where enrichment could confirm or deny initial suspicions.
 
 **Patterns searched (by score dimension):**
 {{ enrichment_patterns }}

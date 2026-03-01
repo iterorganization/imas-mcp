@@ -582,6 +582,7 @@ def claim_paths_for_refining(
 
     Claims paths where:
     - is_enriched = true
+    - score >= 0.7 (aligned with downstream code discovery threshold)
     - refined_at is null
 
     Rescoring uses enrichment data (total_bytes, total_lines, language_breakdown)
@@ -607,6 +608,7 @@ def claim_paths_for_refining(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
+              AND p.score >= 0.7
               AND p.refined_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
