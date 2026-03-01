@@ -22,7 +22,20 @@ from rich.table import Table
 from imas_codex.cli.discover.common import DISCOVERY_DOMAINS, domain_option
 
 
-@click.group()
+class _CleanupGroup(click.Group):
+    """Click group that ensures SSH sockets are cleaned up on exit."""
+
+    def invoke(self, ctx: click.Context) -> None:
+        try:
+            super().invoke(ctx)
+        except (KeyboardInterrupt, click.Abort):
+            from imas_codex.remote.executor import _cleanup_ssh_on_exit
+
+            _cleanup_ssh_on_exit()
+            raise
+
+
+@click.group(cls=_CleanupGroup)
 def discover():
     """Discover facility resources with graph-led exploration.
 
