@@ -475,7 +475,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 if desc:
                     parts.append(
                         (
-                            f"  {clip_text(desc, min(desc_width, 65))}",
+                            f"  {clip_text(desc, desc_width)}",
                             "italic dim",
                         )
                     )

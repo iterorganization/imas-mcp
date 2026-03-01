@@ -27,7 +27,6 @@ from imas_codex.discovery.base.progress import (
     StreamQueue,
     build_pipeline_section,
     build_resource_section,
-    clip_text,
     format_time,
 )
 
@@ -1198,7 +1197,7 @@ def _run_enrichment_with_progress(
         display.enrich_queue.add(
             [
                 {
-                    "path": clip_text(first_path, 50),
+                    "path": first_path,
                     "description": f"batch {batch_num}/{total_batches}, {len(batch)} nodes",
                 }
             ]
@@ -1227,10 +1226,8 @@ def _run_enrichment_with_progress(
                 display.enrich_queue.add(
                     [
                         {
-                            "path": clip_text(r.path, 50),
-                            "description": clip_text(r.description, 60)
-                            if r.description
-                            else "",
+                            "path": r.path,
+                            "description": r.description or "",
                         }
                     ]
                 )

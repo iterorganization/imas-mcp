@@ -347,7 +347,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                     desc = clean_text(score.description)
                     parts.append(
                         (
-                            f"  {clip_text(desc, min(content_width - 20, 55))}",
+                            f"  {clip_text(desc, content_width - 20)}",
                             "italic dim",
                         )
                     )
@@ -366,12 +366,11 @@ class FileProgressDisplay(BaseProgressDisplay):
                 if score.category:
                     parts.append((f"  [{score.category}]", "cyan dim"))
 
-                desc_width = content_width - 20
                 if score.description:
                     desc = clean_text(score.description)
                     parts.append(
                         (
-                            f"  {clip_text(desc, min(desc_width, 55))}",
+                            f"  {clip_text(desc, content_width - 20)}",
                             "italic dim",
                         )
                     )

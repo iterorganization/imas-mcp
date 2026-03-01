@@ -414,6 +414,30 @@ class TestBuildPipelineSection:
                 f"{line!r}"
             )
 
+    def test_detail_parts_clipped_to_row_width(self):
+        """Long detail_parts text is auto-clipped to fit within row_width."""
+        bar_width = 40
+        row_width = LABEL_WIDTH + bar_width + METRICS_WIDTH
+        long_detail = "C" * 200
+        config = PipelineRowConfig(
+            name="SCAN",
+            style="bold blue",
+            completed=50,
+            total=100,
+            rate=1.23,
+            cost=5.67,
+            primary_text="some_item",
+            detail_parts=[("0.85  ", "green"), (long_detail, "dim")],
+        )
+        result = build_pipeline_row(config, bar_width=bar_width)
+        lines = result.plain.split("\n")
+        assert len(lines) == 3
+        for i, line in enumerate(lines):
+            assert len(line) <= row_width, (
+                f"Line {i + 1} is {len(line)} chars, exceeds row_width {row_width}: "
+                f"{line!r}"
+            )
+
 
 # =============================================================================
 # Integration: display classes can render without errors

@@ -698,8 +698,16 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
             )
     elif config.detail_parts:
         line3.append("  ", style="dim")
+        max_detail = max(10, row_width - 4 - cost_reserve)
+        detail_len = 0
         for text, style in config.detail_parts:
+            remaining = max_detail - detail_len
+            if remaining <= 0:
+                break
+            if cell_len(text) > remaining:
+                text = clip_text(text, remaining)
             line3.append(text, style=style)
+            detail_len += cell_len(text)
     # Right-align cost on line 3 (below rate on line 2)
     if cost_s:
         gap = max(1, row_width - cell_len(line3.plain) - len(cost_s))
