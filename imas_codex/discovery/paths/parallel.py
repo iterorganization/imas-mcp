@@ -904,11 +904,13 @@ async def scan_worker(
                 logger.error(
                     f"SSH connection to {state.facility} failed after "
                     f"{state.max_ssh_retries} attempts. "
-                    f"Scan worker stopping (other workers continue)."
+                    f"Stopping discovery (rerun to retry)."
                 )
-                # Only stop this scan worker — don't kill all workers.
-                # Enrich, refine, and embed workers may still have work.
-                state.scan_phase.mark_done()  # Mark as done so should_stop can evaluate
+                # Stop all workers. Without SSH, discovered paths remain
+                # unscanned and has_pending_work() would loop forever
+                # resetting phases. The process is reentrant — rerun to
+                # continue from where it left off.
+                state.stop_requested = True
                 if on_progress:
                     on_progress(
                         f"SSH failed: {state.ssh_error_message}",

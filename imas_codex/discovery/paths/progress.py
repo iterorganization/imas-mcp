@@ -344,7 +344,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             cost_limit=cost_limit,
             console=console,
             focus=focus,
-            title_suffix="Discovery",
+            title_suffix="Paths Discovery",
         )
         self.state = ProgressState(
             facility=facility,
