@@ -497,6 +497,33 @@ async def run_parallel_wiki_discovery(
         max_wiki_connections=max_wiki_connections,
     )
 
+    # Wire up graph-backed has_work_fn on each phase.
+    # Pipeline: scan (bulk) → score → ingest → image
+    #                       → artifact_score → docs (artifact ingest)
+    # Scan phase is always mark_done() (bulk discovery), so skip it.
+    from imas_codex.discovery.wiki import graph_ops as _wiki_ops
+
+    state.score_phase.set_has_work_fn(lambda: _wiki_ops.has_pending_scan_work(facility))
+    state.ingest_phase.set_has_work_fn(
+        lambda: (
+            _wiki_ops.has_pending_ingest_work(facility) or not state.score_phase.done
+        )
+    )
+    state.artifact_score_phase.set_has_work_fn(
+        lambda: _wiki_ops.has_pending_artifact_score_work(facility)
+    )
+    state.docs_phase.set_has_work_fn(
+        lambda: (
+            _wiki_ops.has_pending_artifact_ingest_work(facility)
+            or not state.artifact_score_phase.done
+        )
+    )
+    state.image_phase.set_has_work_fn(
+        lambda: (
+            _wiki_ops.has_pending_image_work(facility) or not state.ingest_phase.done
+        )
+    )
+
     # Pre-warm SSH ControlMaster if using SSH transport.
     # Ensures the master connection is established before concurrent workers
     # spawn multiple ssh subprocesses (which would race to create it).

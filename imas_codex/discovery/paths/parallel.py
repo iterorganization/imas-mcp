@@ -301,6 +301,105 @@ def has_pending_work(facility: str) -> bool:
 
 
 # ============================================================================
+# Per-phase pending work checks (lightweight, targeted graph queries)
+# ============================================================================
+
+
+def _has_pending_scan_work(facility: str) -> bool:
+    """Check if there are discovered paths awaiting scanning."""
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE p.status = $discovered AND p.score IS NULL
+            RETURN count(p) > 0 AS has_work
+            """,
+            facility=facility,
+            discovered=PathStatus.discovered.value,
+        )
+        return bool(result and result[0]["has_work"])
+
+
+def _has_pending_expand_work(facility: str) -> bool:
+    """Check if there are scored paths awaiting expansion."""
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE p.status = $scored
+              AND p.should_expand = true
+              AND p.expanded_at IS NULL
+            RETURN count(p) > 0 AS has_work
+            """,
+            facility=facility,
+            scored=PathStatus.scored.value,
+        )
+        return bool(result and result[0]["has_work"])
+
+
+def _has_pending_score_work(facility: str) -> bool:
+    """Check if there are scanned paths awaiting scoring."""
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE p.status = $scanned AND p.score IS NULL
+            RETURN count(p) > 0 AS has_work
+            """,
+            facility=facility,
+            scanned=PathStatus.scanned.value,
+        )
+        return bool(result and result[0]["has_work"])
+
+
+def _has_pending_enrich_work(facility: str) -> bool:
+    """Check if there are scored paths awaiting enrichment."""
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE p.status = $scored
+              AND p.should_enrich = true
+              AND (p.is_enriched IS NULL OR p.is_enriched = false)
+            RETURN count(p) > 0 AS has_work
+            """,
+            facility=facility,
+            scored=PathStatus.scored.value,
+        )
+        return bool(result and result[0]["has_work"])
+
+
+def _has_pending_refine_work(facility: str) -> bool:
+    """Check if there are enriched paths awaiting refinement.
+
+    Matches the same criteria as claim_paths_for_refining:
+    enriched paths that haven't been refined yet (no score filter —
+    if we spent resources enriching a path, it should be refined).
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE p.is_enriched = true
+              AND p.refined_at IS NULL
+            RETURN count(p) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return bool(result and result[0]["has_work"])
+
+
+# ============================================================================
 # Orphan Recovery (timeout-based, safe for parallel instances)
 # ============================================================================
 
@@ -580,17 +679,16 @@ def claim_paths_for_refining(
     facility: str,
     limit: int = 10,
     root_filter: list[str] | None = None,
-    min_score: float | None = None,
 ) -> list[dict[str, Any]]:
     """Atomically claim enriched paths for rescoring.
 
     Claims paths where:
     - is_enriched = true
-    - score >= min_score (defaults to get_discovery_threshold())
     - refined_at is null
 
-    Rescoring uses enrichment data (total_bytes, total_lines, language_breakdown)
-    to refine the score.
+    No score filter — if a path was worth enriching, it should be refined.
+    Refinement re-evaluates the score using enrichment data (total_bytes,
+    total_lines, language_breakdown).
 
     Returns paths that this worker now owns.
 
@@ -598,12 +696,8 @@ def claim_paths_for_refining(
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
-        min_score: Minimum score for refinement (default: discovery threshold)
     """
     from imas_codex.graph import GraphClient
-    from imas_codex.settings import get_discovery_threshold
-
-    threshold = min_score if min_score is not None else get_discovery_threshold()
 
     # Build root filter clause
     root_clause = ""
@@ -616,7 +710,6 @@ def claim_paths_for_refining(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
-              AND p.score >= $min_score
               AND p.refined_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
@@ -659,7 +752,6 @@ def claim_paths_for_refining(
             limit=limit,
             cutoff=cutoff,
             root_filter=root_filter or [],
-            min_score=threshold,
         )
         return list(result)
 
@@ -2296,6 +2388,27 @@ async def run_parallel_discovery(
         root_filter=root_filter,
         auto_enrich_threshold=resolved_enrich,
         deadline=deadline,
+    )
+
+    # Wire up graph-backed has_work_fn on each phase so PipelinePhase.done
+    # verifies pending work in the graph before declaring a phase complete.
+    # This prevents workers from going idle while upstream phases still have
+    # work to produce.  Each downstream phase also checks if its upstream
+    # is done, so it stays alive until the upstream finishes.
+    state.scan_phase.set_has_work_fn(lambda: _has_pending_scan_work(facility))
+    state.expand_phase.set_has_work_fn(lambda: _has_pending_expand_work(facility))
+    state.score_phase.set_has_work_fn(
+        lambda: (
+            _has_pending_score_work(facility)
+            or not state.scan_phase.done
+            or not state.expand_phase.done
+        )
+    )
+    state.enrich_phase.set_has_work_fn(
+        lambda: _has_pending_enrich_work(facility) or not state.score_phase.done
+    )
+    state.refine_phase.set_has_work_fn(
+        lambda: _has_pending_refine_work(facility) or not state.enrich_phase.done
     )
 
     # Mark phases as done for disabled workers so should_stop() works correctly
