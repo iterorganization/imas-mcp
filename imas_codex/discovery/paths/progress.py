@@ -1207,3 +1207,43 @@ def print_discovery_status(
         except Exception:
             if domain == "signals":
                 output("Signal stats unavailable")
+
+    # --------------------------------------------------------------------------
+    # Static domain
+    # --------------------------------------------------------------------------
+    if domain is None or domain == "static":
+        try:
+            from imas_codex.discovery.static.graph_ops import (
+                get_static_summary_stats,
+            )
+
+            static_stats = get_static_summary_stats(facility)
+            versions_total = static_stats.get("versions_total", 0)
+            if versions_total > 0:
+                if domain is None:
+                    output("\n[bold]Static Tree Discovery:[/bold]")
+                versions_discovered = static_stats.get("versions_discovered", 0)
+                versions_ingested = static_stats.get("versions_ingested", 0)
+                nodes_graph = static_stats.get("nodes_graph", 0)
+                nodes_enriched = static_stats.get("nodes_enriched", 0)
+
+                output(f"Versions: {versions_total:,}")
+                output(
+                    f"├─ Discovered: {versions_discovered:,}"
+                    f" ({versions_discovered / versions_total * 100:.0f}%)"
+                )
+                output(
+                    f"└─ Ingested:   {versions_ingested:,}"
+                    f" ({versions_ingested / versions_total * 100:.0f}%)"
+                )
+                if nodes_graph > 0:
+                    output(f"Nodes: {nodes_graph:,}")
+                    enriched_pct = (
+                        nodes_enriched / nodes_graph * 100 if nodes_graph else 0
+                    )
+                    output(f"└─ Enriched:   {nodes_enriched:,} ({enriched_pct:.0f}%)")
+            elif domain == "static":
+                output("No static trees discovered")
+        except Exception:
+            if domain == "static":
+                output("Static stats unavailable")

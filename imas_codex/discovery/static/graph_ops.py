@@ -438,3 +438,138 @@ def get_static_discovery_stats(
             stats["pending_enrich"] = 0
 
         return stats
+
+
+# ---------------------------------------------------------------------------
+# Clear — delete all static discovery data for a facility
+# ---------------------------------------------------------------------------
+
+
+def clear_facility_static(
+    facility: str,
+    batch_size: int = 1000,
+) -> dict[str, int]:
+    """Clear all static tree discovery data for a facility.
+
+    Deletes TreeNode nodes (is_static=true) and their TreeModelVersion
+    nodes in batches.
+
+    Args:
+        facility: Facility ID
+        batch_size: Nodes to delete per batch
+
+    Returns:
+        Dict with counts: nodes_deleted, versions_deleted
+    """
+    results = {
+        "nodes_deleted": 0,
+        "versions_deleted": 0,
+    }
+
+    with GraphClient() as gc:
+        # Delete static TreeNode nodes in batches
+        while True:
+            result = gc.query(
+                """
+                MATCH (n:TreeNode {facility_id: $facility})
+                WHERE n.is_static = true
+                WITH n LIMIT $batch_size
+                DETACH DELETE n
+                RETURN count(n) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            results["nodes_deleted"] += deleted
+            if deleted < batch_size:
+                break
+
+        # Delete static TreeModelVersion nodes
+        # Static versions have status property (set by static discovery pipeline)
+        while True:
+            result = gc.query(
+                """
+                MATCH (v:TreeModelVersion {facility_id: $facility})
+                WHERE v.status IS NOT NULL
+                WITH v LIMIT $batch_size
+                DETACH DELETE v
+                RETURN count(v) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            results["versions_deleted"] += deleted
+            if deleted < batch_size:
+                break
+
+    logger.info(
+        "Cleared static data for %s: %d nodes, %d versions",
+        facility,
+        results["nodes_deleted"],
+        results["versions_deleted"],
+    )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Summary stats — facility-level stats across all static trees
+# ---------------------------------------------------------------------------
+
+
+def get_static_summary_stats(facility: str) -> dict[str, int]:
+    """Get static discovery statistics across all trees for a facility.
+
+    Unlike get_static_discovery_stats which requires a tree_name, this
+    returns aggregate stats suitable for status/clear commands.
+    """
+    with GraphClient() as gc:
+        ver_result = gc.query(
+            """
+            MATCH (v:TreeModelVersion {facility_id: $facility})
+            WHERE v.status IS NOT NULL
+            RETURN v.status AS status, count(v) AS cnt,
+                   sum(coalesce(v.node_count, 0)) AS nodes
+            """,
+            facility=facility,
+        )
+
+        stats: dict[str, int] = {
+            "versions_total": 0,
+            "versions_discovered": 0,
+            "versions_ingested": 0,
+            "nodes_total": 0,
+        }
+
+        for r in ver_result:
+            cnt = r["cnt"]
+            status = r["status"]
+            stats["versions_total"] += cnt
+            if status == "discovered":
+                stats["versions_discovered"] += cnt
+            elif status == "ingested":
+                stats["versions_ingested"] += cnt
+                stats["nodes_total"] += r["nodes"]
+
+        # Node enrichment stats
+        node_result = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility})
+            WHERE n.is_static = true
+            RETURN
+                count(n) AS total,
+                sum(CASE WHEN n.description IS NOT NULL AND n.description <> ''
+                    THEN 1 ELSE 0 END) AS enriched
+            """,
+            facility=facility,
+        )
+
+        if node_result:
+            stats["nodes_graph"] = node_result[0]["total"]
+            stats["nodes_enriched"] = node_result[0]["enriched"]
+        else:
+            stats["nodes_graph"] = 0
+            stats["nodes_enriched"] = 0
+
+        return stats

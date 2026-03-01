@@ -89,6 +89,7 @@ def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
       imas-codex discover status jet           # All domains
       imas-codex discover status jet -d paths  # Paths only
       imas-codex discover status jet -d wiki   # Wiki only
+      imas-codex discover status jet -d static # Static only
       imas-codex discover status jet --json    # JSON output
     """
     import json as json_module
@@ -129,6 +130,14 @@ def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
                 file_stats = get_code_discovery_stats(facility)
                 output["code"] = file_stats
 
+            if domain is None or domain == "static":
+                from imas_codex.discovery.static.graph_ops import (
+                    get_static_summary_stats,
+                )
+
+                static_stats = get_static_summary_stats(facility)
+                output["static"] = static_stats
+
             click.echo(json_module.dumps(output, indent=2))
         else:
             from imas_codex.discovery.paths.progress import print_discovery_status
@@ -160,6 +169,7 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
       imas-codex discover clear jet -d paths     # Paths only
       imas-codex discover clear jet -d wiki      # Wiki only
       imas-codex discover clear jet -d code      # Code only
+      imas-codex discover clear jet -d static    # Static trees only
       imas-codex discover clear jet --force      # Skip confirmation
     """
     from imas_codex.discovery import clear_facility_paths, get_discovery_stats
@@ -238,6 +248,22 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
                     ("documents", doc_total, clear_facility_documents)
                 )
 
+        # Static domain
+        if domain is None or domain == "static":
+            from imas_codex.discovery.static.graph_ops import (
+                clear_facility_static,
+                get_static_summary_stats,
+            )
+
+            static_stats = get_static_summary_stats(facility)
+            static_versions = static_stats.get("versions_total", 0)
+            static_nodes = static_stats.get("nodes_total", 0)
+            if static_versions > 0 or static_nodes > 0:
+                label = f"static versions + {static_nodes:,} nodes"
+                items_to_clear.append(
+                    (label, static_versions or static_nodes, clear_facility_static)
+                )
+
         if not items_to_clear:
             domain_msg = f" {domain}" if domain else ""
             click.echo(f"No{domain_msg} discovery data to clear for {facility}")
@@ -279,6 +305,8 @@ def _print_clear_result(name: str, result: dict | int, facility: str) -> None:
             "code_chunks_deleted",
             "data_references_deleted",
             "users_deleted",
+            "versions_deleted",
+            "nodes_deleted",
         ):
             if result.get(key):
                 label = key.replace("_deleted", "").replace("_", " ")

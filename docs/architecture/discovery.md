@@ -189,14 +189,17 @@ imas-codex discover wiki tcv --store-images     # Keep image bytes in graph
 
 **Purpose:** Extract and enrich MDSplus static (machine-description) trees.
 
-**Internal pipeline:** `extract → units → enrich → ingest`
+**Internal pipeline:** `extract → units → enrich`
 
-| Phase | Method | Description |
-|-------|--------|-------------|
-| Extract | SSH + MDSplus | Walk static tree versions, enumerate nodes |
-| Units | SSH + MDSplus | Batch unit extraction for NUMERIC/SIGNAL nodes |
-| Enrich | LLM | `discovery/static-enricher` prompt for physics descriptions |
-| Ingest | Graph | Write TreeModelVersion + TreeNode to Neo4j |
+| Phase | Worker | Method | Description |
+|-------|--------|--------|-------------|
+| Extract | SSH + MDSplus | `extract_static_tree.py` remote script | Walk version, enumerate nodes, ingest to graph |
+| Units | SSH + MDSplus | `extract_units.py` remote script | Batch unit extraction for NUMERIC/SIGNAL nodes |
+| Enrich | LLM | `discovery/static-enricher` prompt | Batch physics descriptions for enrichable nodes |
+
+**Graph coordination:** TreeModelVersion nodes use `status` + `claimed_at` for worker claim coordination, matching the pattern used by all other discovery domains. Workers claim versions/nodes atomically, and orphan recovery handles stale claims after 300s.
+
+**State machine:** `discovered → ingested | failed`
 
 **Prompt:** `discovery/static-enricher` with `schema_needs`:
 - `static_enrichment_schema` — StaticEnrichBatch Pydantic schema
@@ -204,8 +207,17 @@ imas-codex discover wiki tcv --store-images     # Keep image bytes in graph
 Rendered with `facility` and `tree_name` context variables.
 
 ```bash
-imas-codex discover static tcv                  # Full pipeline
-imas-codex discover static tcv --tree tc_static # Specific tree only
+imas-codex discover static tcv                    # Full pipeline
+imas-codex discover static tcv --tree tc_static   # Specific tree only
+imas-codex discover static tcv --versions 1,2,3   # Specific versions
+imas-codex discover static tcv --no-enrich         # Extract + units only
+imas-codex discover static tcv --dry-run           # Preview without graph writes
+imas-codex discover static tcv --force             # Re-extract already-ingested versions
+imas-codex discover static tcv --cost-limit 5.0    # Max LLM spend
+imas-codex discover static tcv --extract-workers 2 # Parallel extraction workers
+imas-codex discover static tcv --enrich-workers 3  # Parallel enrichment workers
+imas-codex discover status tcv -d static           # Static domain status
+imas-codex discover clear tcv -d static            # Clear static data
 ```
 
 ### 4. Code Discovery (`discover code`)
