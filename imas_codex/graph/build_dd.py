@@ -1796,7 +1796,7 @@ def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
             UNWIND $versions AS v
             MATCH (ver:DDVersion {id: v.id})
             MATCH (prev:DDVersion {id: v.predecessor})
-            MERGE (ver)-[:PREDECESSOR]->(prev)
+            MERGE (ver)-[:HAS_PREDECESSOR]->(prev)
         """,
             versions=predecessors,
         )

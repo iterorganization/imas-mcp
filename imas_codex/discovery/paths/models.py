@@ -2,7 +2,7 @@
 Data models for graph-led discovery pipeline.
 
 These models define runtime structures for the LLM-based scoring phase.
-Schema-derived types (ResourcePurpose, DiscoveryStatus) are imported from
+Schema-derived types (ResourcePurpose) are imported from
 the generated graph/models.py module.
 
 Note: DirectoryEvidence, ScoredDirectory, ScoredBatch are transient runtime
@@ -22,12 +22,11 @@ from pydantic import BaseModel, Field
 
 # Import schema-derived enums from generated models
 from imas_codex.core.physics_domain import PhysicsDomain
-from imas_codex.graph.models import DiscoveryStatus, ResourcePurpose, TerminalReason
+from imas_codex.graph.models import ResourcePurpose, TerminalReason
 
 __all__ = [
     "PhysicsDomain",
     "ResourcePurpose",
-    "DiscoveryStatus",
     "TerminalReason",
     "DirectoryEvidence",
     "ScoredDirectory",

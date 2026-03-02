@@ -688,6 +688,8 @@ classes:
         multivalued: true
       mapping_relevance:
         description: Relevance for IMAS mapping (high, medium, low)
+      text_embedding_hash:
+        description: Hash of text used for embedding, for change detection during re-embedding
 
   IdentifierSchema:
     description: >-
