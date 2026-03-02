@@ -1388,6 +1388,77 @@ def get_static_discovery_stats(
 
 
 # ---------------------------------------------------------------------------
+# Reset enrichment — clear enrichment data so nodes can be re-enriched
+# ---------------------------------------------------------------------------
+
+
+def reset_enrichment(
+    facility: str,
+    tree_name: str,
+) -> dict[str, int]:
+    """Reset all enrichment data for static tree nodes.
+
+    Clears descriptions, enrichment status, LLM cost/model/timestamp,
+    keywords, and category from all TreeNode and TreeNodePattern nodes.
+    After reset, the enrichment pipeline will re-process all nodes.
+
+    Returns:
+        Dict with counts: nodes_reset, patterns_reset
+    """
+    with GraphClient() as gc:
+        # Reset TreeNode enrichment fields
+        node_result = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            WHERE n.is_static = true
+              AND (n.description IS NOT NULL OR n.enrichment_status IS NOT NULL
+                   OR n.llm_cost IS NOT NULL)
+            SET n.description = null,
+                n.enrichment_status = null,
+                n.enrichment_source = null,
+                n.enrichment_confidence = null,
+                n.enrichment_notes = null,
+                n.keywords = null,
+                n.category = null,
+                n.llm_cost = null,
+                n.llm_model = null,
+                n.llm_at = null,
+                n.llm_tokens_in = null,
+                n.llm_tokens_out = null,
+                n.enrichment_model = null,
+                n.enrichment_at = null,
+                n.claimed_at = null
+            RETURN count(n) AS reset
+            """,
+            facility=facility,
+            tree_name=tree_name,
+        )
+        nodes_reset = node_result[0]["reset"] if node_result else 0
+
+        # Reset TreeNodePattern enrichment fields
+        pattern_result = gc.query(
+            """
+            MATCH (p:TreeNodePattern {facility_id: $facility, tree_name: $tree_name})
+            WHERE p.description IS NOT NULL OR p.enrichment_status IS NOT NULL
+            SET p.description = null,
+                p.enrichment_status = null,
+                p.keywords = null,
+                p.category = null,
+                p.claimed_at = null
+            RETURN count(p) AS reset
+            """,
+            facility=facility,
+            tree_name=tree_name,
+        )
+        patterns_reset = pattern_result[0]["reset"] if pattern_result else 0
+
+        return {
+            "nodes_reset": nodes_reset,
+            "patterns_reset": patterns_reset,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Clear — delete all static discovery data for a facility
 # ---------------------------------------------------------------------------
 

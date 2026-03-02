@@ -480,6 +480,11 @@ class StaticProgressDisplay(BaseProgressDisplay):
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output except errors")
+@click.option(
+    "--reset-enrich",
+    is_flag=True,
+    help="Reset all enrichment data before running (re-enrich with cost tracking)",
+)
 def static(
     facility: str,
     tree_name: str | None,
@@ -495,6 +500,7 @@ def static(
     time_limit: int | None,
     verbose: bool,
     quiet: bool,
+    reset_enrich: bool,
 ) -> None:
     """Discover and ingest static/machine-description MDSplus trees.
 
@@ -558,6 +564,18 @@ def static(
                 f"[red]No static tree named '{tree_name}' in {facility} config[/red]"
             )
             raise SystemExit(1)
+
+    # Handle --reset-enrich before main pipeline
+    if reset_enrich and not dry_run:
+        from imas_codex.discovery.static.graph_ops import reset_enrichment
+
+        for cfg in configs:
+            tname = cfg["tree_name"]
+            result = reset_enrichment(facility, tname)
+            log_print(
+                f"[yellow]Reset enrichment for {facility}:{tname}: "
+                f"{result['nodes_reset']:,} nodes, {result['patterns_reset']} patterns[/yellow]"
+            )
 
     # Load facility config for ssh_host
     try:
