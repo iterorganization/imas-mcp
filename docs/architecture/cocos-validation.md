@@ -329,30 +329,72 @@ it required a hardcoded supplement covering 35% of $\psi$-sensitive paths.
 
 ---
 
-## 6. Recommendations for imas-codex
+## 6. Recommendations for the IMAS Data Dictionary
 
-### 6.1 Retain the label system
+### 6.1 Restore `psi_like` and `dodpsi_like` labels in DD v4
 
-The `COCOSLabelTransformation` enum in
-[imas_dd.yaml](../../imas_codex/schemas/imas_dd.yaml) should keep all 18
-values including `psi_like` and `dodpsi_like`. The
-[build_dd.py](../../imas_codex/graph/build_dd.py) pipeline already extracts
-labels from the DD XML and stores them as properties on `IMASPath` graph nodes.
-This is low-cost (435 of 46,968 paths have labels) and enables graph queries
-for COCOS-sensitive fields.
+The `psi_like` and `dodpsi_like` labels should be restored on all
+$\psi$-sensitive fields in the DD v4 XML. The removal creates an inconsistency:
+all other COCOS-sensitive field classes (`ip_like`, `b0_like`,
+`tor_angle_like`, `pol_angle_like`, `q_like`) retain their labels in v4 despite
+their conventions also being fixed by COCOS 17. The labels describe how fields
+transform under **arbitrary COCOS changes** — a property that is independent
+of which convention the DD itself adopts.
 
-### 6.2 Reconstruct `psi_like` labels on v4 paths
+Without these labels, any tool performing general COCOS conversion on v4 data
+(e.g., COCOS 17 → COCOS 2 for CHEASE compatibility) cannot programmatically
+identify which fields require $\psi$ sign or normalization adjustments. The
+prose documentation ("$\psi$ decreasing outward") is not machine-readable.
 
-To close the asymmetry, imas-codex should reconstruct `psi_like` /
-`dodpsi_like` labels on v4 `IMASPath` nodes by combining both sources:
+### 6.2 Close the labeling coverage gap
 
-1. The 115 paths labeled in the v3 DD XML
-2. The 63 paths in imas-python's `_3to4_sign_flip_paths`
+Even in DD v3, the `psi_like` label was applied to only 115 of the 178
+$\psi$-sensitive paths. The remaining 63 were never annotated, requiring
+imas-python to maintain a hardcoded fallback list (`_3to4_sign_flip_paths`).
+When restoring labels in v4, all 178 paths should be labeled —
+including `psi_boundary`, `psi_magnetic_axis`, and `ggd/psi/values` fields
+that were previously unlabeled.
 
-This gives complete, machine-readable COCOS annotation across the full DD —
-something the DD XML itself does not provide. The documentation-based sign
-definitions serve human readers; the labels serve programmatic consumers.
-Both should coexist.
+The affected paths are well-defined: they are the union of the v3
+`psi_like`/`dodpsi_like`-labeled fields and the paths in imas-python's
+`_3to4_sign_flip_paths` dictionary. A complete list is available from
+imas-python:
+
+```python
+from imas.dd_zip import dd_etree
+from imas.ids_convert import _3to4_sign_flip_paths
+
+# Source 1: XML-labeled paths (115)
+tree = dd_etree("3.42.2")
+for ids_el in tree.findall("IDS"):
+    for field in ids_el.iter("field"):
+        label = field.get("cocos_label_transformation", "")
+        if label in ("psi_like", "dodpsi_like"):
+            print(f'{ids_el.get("name")}/{field.get("path")}')
+
+# Source 2: hardcoded paths (63)
+for ids_name, paths in _3to4_sign_flip_paths.items():
+    for path in paths:
+        print(f"{ids_name}/{path}")
+```
+
+### 6.3 Apply labels consistently to new fields
+
+Going forward, any new field added to the DD that is COCOS-sensitive should
+receive a `cocos_label_transformation` and `cocos_transformation_expression`
+attribute. This applies particularly to $\psi$-related fields, which are the
+most common COCOS-sensitive class (178 paths) and the one most likely to be
+extended as new IDS are added or existing ones gain new $\psi$ grids.
+
+### 6.4 Consider evaluating transformation expressions
+
+The `cocos_transformation_expression` values (`.sigma_b0_eff`, `.fact_psi`,
+etc.) are currently never evaluated by any code — they exist as documentation
+embedded in XML attributes. If the DD provided a specification for how to
+evaluate these expressions given a source and target COCOS, they could enable
+a generic, schema-driven COCOS conversion engine that requires no hardcoded
+path lists. This would eliminate the class of bugs where a new $\psi$-related
+field is added to the DD but not to the hardcoded sign-flip list.
 
 ---
 
