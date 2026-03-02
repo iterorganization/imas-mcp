@@ -721,18 +721,17 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     row.append("\n")
     line3 = Text()
 
-    # Pre-compute cost text so we can clip left content to fit
+    # Pre-compute cost text for right-alignment
     cost_s = ""
     if config.cost is not None and config.cost > 0:
         cost_s = f"${config.cost:.2f}"
-    cost_reserve = (len(cost_s) + 4) if cost_s else 0  # 4-char gap
 
     _desc = config.description or config.description_fallback
     if config.has_content and _desc:
         line3.append("  ", style="dim")
         _style = "italic dim" if config.description else "cyan dim italic"
-        # Fill the full row width; only clip with ... if it overflows
-        max_desc = max(10, row_width - 2 - cost_reserve)
+        # Clip description at bar right edge so "..." aligns with bar end
+        max_desc = max(10, LABEL_WIDTH + bar_width - 2)
         line3.append(clip_text(clean_text(_desc), max_desc), style=_style)
     # Right-align cost on line 3 (below rate on line 2)
     if cost_s:

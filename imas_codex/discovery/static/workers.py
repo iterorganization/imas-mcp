@@ -479,16 +479,20 @@ async def enrich_worker(
             state.enrich_stats.record_batch(len(patterns))
 
             if on_progress:
+                # Stream individual pattern descriptions for display
+                stream_items = [
+                    {
+                        "path": p["representative_path"],
+                        "description": descriptions.get(p["id"], ""),
+                    }
+                    for p in patterns
+                    if descriptions.get(p["id"])
+                ]
                 on_progress(
                     f"{len(patterns)} patterns → {propagated} nodes propagated",
                     state.enrich_stats,
-                    [
-                        {
-                            "patterns": len(patterns),
-                            "propagated": propagated,
-                            "cost": cost,
-                        }
-                    ],
+                    stream_items
+                    or [{"path": f"{len(patterns)} patterns", "description": ""}],
                 )
 
         except Exception as e:
@@ -603,16 +607,19 @@ async def enrich_worker(
             state.enrich_stats.record_batch(1)
 
             if on_progress:
+                # Stream individual child descriptions for display
+                stream_items = [
+                    {
+                        "path": c["path"],
+                        "description": descriptions.get(c["id"], ""),
+                    }
+                    for c in children
+                    if descriptions.get(c["id"])
+                ]
                 on_progress(
                     f"{parent_path}: {enriched} children enriched",
                     state.enrich_stats,
-                    [
-                        {
-                            "path": parent_path,
-                            "description": f"{enriched} children",
-                            "cost": cost,
-                        }
-                    ],
+                    stream_items or [{"path": parent_path, "description": ""}],
                 )
 
         except Exception as e:
@@ -708,16 +715,19 @@ async def enrich_worker(
             state.enrich_stats.record_batch(len(orphans))
 
             if on_progress:
+                # Stream individual orphan descriptions for display
+                stream_items = [
+                    {
+                        "path": o["path"],
+                        "description": descriptions.get(o["id"], ""),
+                    }
+                    for o in orphans
+                    if descriptions.get(o["id"])
+                ]
                 on_progress(
                     f"{enriched} top-level nodes enriched",
                     state.enrich_stats,
-                    [
-                        {
-                            "path": orphan_paths[0],
-                            "description": f"{enriched} nodes",
-                            "cost": cost,
-                        }
-                    ],
+                    stream_items or [{"path": orphan_paths[0], "description": ""}],
                 )
 
         except Exception as e:
