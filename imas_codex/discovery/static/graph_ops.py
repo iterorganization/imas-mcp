@@ -169,6 +169,91 @@ def release_version_claim(version_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Units — track unit extraction per version
+# ---------------------------------------------------------------------------
+
+
+def has_pending_units_work(
+    facility: str,
+    tree_name: str,
+) -> bool:
+    """Check if any ingested versions need unit extraction."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (v:TreeModelVersion)
+            WHERE v.facility_id = $facility AND v.tree_name = $tree_name
+              AND v.status = 'ingested'
+              AND (v.units_extracted IS NULL OR v.units_extracted = false)
+            RETURN count(v) AS cnt
+            """,
+            facility=facility,
+            tree_name=tree_name,
+        )
+        return result[0]["cnt"] > 0 if result else False
+
+
+def mark_version_units_extracted(
+    version_id: str,
+    units_count: int,
+) -> None:
+    """Mark a TreeModelVersion as having completed unit extraction."""
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (v:TreeModelVersion {id: $id})
+            SET v.units_extracted = true,
+                v.units_count = $units_count
+            """,
+            id=version_id,
+            units_count=units_count,
+        )
+
+
+def merge_units_to_graph(
+    facility: str,
+    tree_name: str,
+    units: dict[str, str],
+) -> int:
+    """MERGE Unit nodes and create HAS_UNIT relationships from TreeNodes.
+
+    Creates or reuses existing Unit nodes (keyed by symbol), then
+    creates HAS_UNIT relationships from matching TreeNode nodes.
+
+    Args:
+        facility: Facility identifier
+        tree_name: MDSplus tree name
+        units: Mapping of normalized node IDs to unit symbol strings
+
+    Returns:
+        Number of HAS_UNIT relationships created.
+    """
+    from imas_codex.mdsplus.ingestion import normalize_mdsplus_path
+
+    if not units:
+        return 0
+
+    updates = []
+    for path, unit_str in units.items():
+        normalized = normalize_mdsplus_path(path)
+        node_id = f"{facility}:{tree_name}:{normalized}"
+        updates.append({"id": node_id, "symbol": unit_str})
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $updates AS u
+            MATCH (n:TreeNode {id: u.id})
+            MERGE (unit:Unit {symbol: u.symbol})
+            MERGE (n)-[:HAS_UNIT]->(unit)
+            RETURN count(*) AS created
+            """,
+            updates=updates,
+        )
+    return result[0]["created"] if result else 0
+
+
+# ---------------------------------------------------------------------------
 # Enrichment context — tree hierarchy for LLM prompts
 # ---------------------------------------------------------------------------
 
@@ -918,6 +1003,52 @@ def get_static_discovery_stats(
             tree_name=tree_name,
         )
         stats["versions_claimed"] = claimed[0]["cnt"] if claimed else 0
+
+        # Units extraction stats from TreeModelVersion flags
+        units_result = gc.query(
+            """
+            MATCH (v:TreeModelVersion)
+            WHERE v.facility_id = $facility AND v.tree_name = $tree_name
+              AND v.status = 'ingested'
+            RETURN
+                count(v) AS total,
+                sum(CASE WHEN v.units_extracted = true
+                    THEN 1 ELSE 0 END) AS extracted,
+                sum(coalesce(v.units_count, 0)) AS units_count
+            """,
+            facility=facility,
+            tree_name=tree_name,
+        )
+        if units_result:
+            ur = units_result[0]
+            stats["units_versions_total"] = ur["total"]
+            stats["units_versions_extracted"] = ur["extracted"]
+            stats["units_count"] = ur["units_count"]
+        else:
+            stats["units_versions_total"] = 0
+            stats["units_versions_extracted"] = 0
+            stats["units_count"] = 0
+
+        # Also count actual HAS_UNIT relationships for display
+        hu_result = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            WHERE n.is_static = true
+            OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
+            RETURN
+                count(DISTINCT n) AS nodes_total,
+                count(DISTINCT u) AS unique_units,
+                count(u) AS nodes_with_units
+            """,
+            facility=facility,
+            tree_name=tree_name,
+        )
+        if hu_result:
+            stats["nodes_with_units"] = hu_result[0]["nodes_with_units"]
+            stats["unique_units"] = hu_result[0]["unique_units"]
+        else:
+            stats["nodes_with_units"] = 0
+            stats["unique_units"] = 0
 
         # Node enrichment stats — count parent groups, not individual nodes
         node_result = gc.query(

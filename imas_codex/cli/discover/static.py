@@ -361,6 +361,15 @@ class StaticProgressDisplay(BaseProgressDisplay):
         # Pin node total when all versions are ingested
         if s.extract_completed >= s.extract_total and s.extract_total > 0:
             s.extract_nodes_total = s.extract_nodes
+
+        # Units progress from graph ledger
+        units_versions_total = stats.get("units_versions_total", 0)
+        units_versions_extracted = stats.get("units_versions_extracted", 0)
+        if units_versions_total > 0:
+            s.units_total = units_versions_total
+            s.units_completed = units_versions_extracted
+            s.units_found = stats.get("nodes_with_units", 0)
+
         # Only update enrichment totals after extraction is complete.
         # Before that, patterns haven't been detected so the raw
         # enrichable count is misleading (shows all NUMERIC/SIGNAL nodes
