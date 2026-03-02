@@ -2271,6 +2271,7 @@ async def run_parallel_data_discovery(
     on_enrich_progress: Callable | None = None,
     on_check_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
+    stop_event: asyncio.Event | None = None,
 ) -> dict[str, Any]:
     """Run parallel data discovery with async workers.
 
@@ -2340,6 +2341,13 @@ async def run_parallel_data_discovery(
     # Create worker group
     worker_group = SupervisedWorkerGroup()
 
+    # Watch external stop event (from CLI signal handler)
+    stop_watcher: asyncio.Task | None = None
+    if stop_event is not None:
+        from imas_codex.cli.shutdown import watch_stop_event
+
+        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
+
     # Start scan worker (unless enrich_only)
     if not enrich_only:
         worker_name = "scan_worker_0"
@@ -2372,6 +2380,8 @@ async def run_parallel_data_discovery(
             on_tick=orphan_tick,
         )
         state.stop_requested = True
+        if stop_watcher and not stop_watcher.done():
+            stop_watcher.cancel()
 
         return {
             "scanned": state.discover_stats.processed,
@@ -2452,6 +2462,8 @@ async def run_parallel_data_discovery(
         on_tick=orphan_tick,
     )
     state.stop_requested = True
+    if stop_watcher and not stop_watcher.done():
+        stop_watcher.cancel()
 
     elapsed = time.time() - start_time
     return {

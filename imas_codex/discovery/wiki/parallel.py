@@ -437,6 +437,7 @@ async def run_parallel_wiki_discovery(
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
     max_wiki_connections: int = 10,
+    stop_event: asyncio.Event | None = None,
 ) -> dict[str, Any]:
     """Run parallel wiki discovery with async workers.
 
@@ -552,6 +553,13 @@ async def run_parallel_wiki_discovery(
 
     # Create worker group for status tracking
     worker_group = SupervisedWorkerGroup()
+
+    # Watch external stop event (from CLI signal handler)
+    stop_watcher: asyncio.Task | None = None
+    if stop_event is not None:
+        from imas_codex.cli.shutdown import watch_stop_event
+
+        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
 
     # Bulk discovery: use adapter-based APIs to find all pages instantly
     # This replaces the slow scan phase (crawling links page-by-page)
@@ -796,6 +804,14 @@ async def run_parallel_wiki_discovery(
         on_tick=orphan_tick,
     )
     state.stop_requested = True
+
+    # Cancel stop watcher if still running
+    if stop_watcher is not None and not stop_watcher.done():
+        stop_watcher.cancel()
+        try:
+            await stop_watcher
+        except asyncio.CancelledError:
+            pass
 
     # Clean up async wiki client
     await state.close_async_wiki_client()

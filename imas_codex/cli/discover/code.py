@@ -201,8 +201,12 @@ def code(
                 log_print(f"  Focus: {focus}")
             log_print("")
 
-            result = asyncio.run(
-                run_parallel_code_discovery(
+            async def _run_non_rich():
+                from imas_codex.cli.shutdown import install_shutdown_handlers
+
+                stop_event = asyncio.Event()
+                install_shutdown_handlers(stop_event=stop_event)
+                return await run_parallel_code_discovery(
                     facility=facility,
                     ssh_host=ssh_host,
                     cost_limit=cost_limit,
@@ -219,8 +223,10 @@ def code(
                     on_score_progress=log_score,
                     on_enrich_progress=log_enrich,
                     on_code_progress=log_code_cb,
+                    stop_event=stop_event,
                 )
-            )
+
+            result = asyncio.run(_run_non_rich())
         else:
             # Rich progress display
             from imas_codex.cli.discover.common import create_discovery_monitor
@@ -253,7 +259,11 @@ def code(
                 display.service_monitor = service_monitor
 
                 async def run_with_display():
+                    from imas_codex.cli.shutdown import install_shutdown_handlers
+
+                    stop_event = asyncio.Event()
                     await service_monitor.__aenter__()
+                    install_shutdown_handlers(stop_event=stop_event, display=display)
 
                     async def refresh_graph_state():
                         while True:
@@ -313,6 +323,7 @@ def code(
                             on_code_progress=on_code,
                             on_worker_status=on_worker_status,
                             service_monitor=service_monitor,
+                            stop_event=stop_event,
                         )
                     finally:
                         refresh_task.cancel()

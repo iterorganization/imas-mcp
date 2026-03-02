@@ -23,7 +23,13 @@ from imas_codex.cli.discover.common import DISCOVERY_DOMAINS, domain_option
 
 
 class _CleanupGroup(click.Group):
-    """Click group that ensures SSH sockets are cleaned up on exit."""
+    """Click group that ensures SSH sockets are cleaned up on exit.
+
+    With the graceful shutdown system (``imas_codex.cli.shutdown``),
+    the first Ctrl+C sets a stop event and workers drain cleanly.
+    A second Ctrl+C re-delivers SIGINT which arrives here as
+    ``KeyboardInterrupt``.  We clean up SSH and exit quietly.
+    """
 
     def invoke(self, ctx: click.Context) -> None:
         try:
@@ -32,7 +38,7 @@ class _CleanupGroup(click.Group):
             from imas_codex.remote.executor import cleanup_ssh_on_exit
 
             cleanup_ssh_on_exit()
-            raise
+            ctx.exit(130)
 
 
 @click.group(cls=_CleanupGroup)

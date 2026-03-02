@@ -575,9 +575,6 @@ class PipelineRowConfig:
     description: str = ""  # LLM/VLM description (shown on line 3, at bar start)
     description_fallback: str = ""  # Shown on line 3 when description is empty
 
-    # Legacy: detail_parts as (text, style) tuples — used when structured fields are not set
-    detail_parts: list[tuple[str, str]] | None = None
-
     # Activity state (used when no primary_text)
     is_processing: bool = False
     processing_label: str = "processing..."
@@ -590,17 +587,6 @@ class PipelineRowConfig:
     def has_content(self) -> bool:
         """True when an item is available to display."""
         return bool(self.primary_text)
-
-    @property
-    def has_structured_detail(self) -> bool:
-        """True when structured fields are populated (preferred over detail_parts)."""
-        return bool(
-            self.score_value is not None
-            or self.score_parts
-            or self.physics_domain
-            or self.description
-            or self.description_fallback
-        )
 
 
 def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
@@ -669,7 +655,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         rate_s = f"{config.rate:.2f}/s"
     rate_reserve = (len(rate_s) + 4) if rate_s else 0  # 4-char gap
 
-    if config.has_content and config.has_structured_detail:
+    if config.has_content:
         line2.append("  ", style="dim")
         # Order: score → domain → terminal → name
         if config.score_parts:
@@ -692,10 +678,6 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         if config.terminal_label:
             line2.append(config.terminal_label, style="red dim")
             line2.append("  ", style="dim")
-        max_name = max(10, row_width - cell_len(line2.plain) - rate_reserve)
-        line2.append(clip_text(config.primary_text, max_name), style="white")
-    elif config.has_content:
-        line2.append("  ", style="dim")
         max_name = max(10, row_width - cell_len(line2.plain) - rate_reserve)
         line2.append(clip_text(config.primary_text, max_name), style="white")
     else:
@@ -731,30 +713,12 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         cost_s = f"${config.cost:.2f}"
     cost_reserve = (len(cost_s) + 4) if cost_s else 0  # 4-char gap
 
-    if config.has_structured_detail:
+    _desc = config.description or config.description_fallback
+    if config.has_content and _desc:
         line3.append("  ", style="dim")
-        if config.description:
-            desc = clean_text(config.description)
-            max_desc = max(10, row_width - 4 - cost_reserve)
-            line3.append(clip_text(desc, max_desc), style="italic dim")
-        elif config.description_fallback:
-            max_fb = max(10, row_width - 4 - cost_reserve)
-            line3.append(
-                clip_text(config.description_fallback, max_fb),
-                style="cyan dim italic",
-            )
-    elif config.detail_parts:
-        line3.append("  ", style="dim")
-        max_detail = max(10, row_width - 4 - cost_reserve)
-        detail_len = 0
-        for text, style in config.detail_parts:
-            remaining = max_detail - detail_len
-            if remaining <= 0:
-                break
-            if cell_len(text) > remaining:
-                text = clip_text(text, remaining)
-            line3.append(text, style=style)
-            detail_len += cell_len(text)
+        _style = "italic dim" if config.description else "cyan dim italic"
+        max_desc = max(10, row_width - 4 - cost_reserve)
+        line3.append(clip_text(clean_text(_desc), max_desc), style=_style)
     # Right-align cost on line 3 (below rate on line 2)
     if cost_s:
         gap = max(1, row_width - cell_len(line3.plain) - len(cost_s))
@@ -1030,6 +994,9 @@ class BaseProgressDisplay(ABC):
         self.service_monitor: Any = None
         # Worker group (set by on_worker_status callback)
         self.worker_group: SupervisedWorkerGroup | None = None
+        # Shutdown state
+        self._shutting_down = False
+        self._shutdown_start: float | None = None
 
     # ── Layout properties ──
 
@@ -1156,13 +1123,76 @@ class BaseProgressDisplay(ABC):
         """Build domain-specific resource gauges."""
         ...
 
+    # ── Shutdown ──
+
+    def begin_shutdown(self) -> None:
+        """Switch display to shutdown mode.
+
+        Called by the signal handler on first Ctrl+C.  Changes the
+        panel border to yellow and appends a shutdown progress section
+        that tracks worker drain status in real time.  The next
+        ``_refresh()`` / ``tick()`` will pick up the new state.
+        """
+        self._shutting_down = True
+        self._shutdown_start = time.time()
+        self._refresh()
+
+    def _build_shutdown_section(self) -> Text:
+        """Build shutdown progress section showing per-group drain status.
+
+        Each worker group gets a status indicator:
+          SHUTDOWN  scan done  score draining (2)  enrich done  3.2s
+        """
+        section = Text()
+        section.append("  SHUTDOWN", style="bold yellow")
+
+        wg = self.worker_group
+        if wg is None:
+            section.append("  stopping workers...", style="yellow")
+            return section
+
+        # Collect unique groups preserving discovery order
+        seen: dict[str, None] = {}
+        for _name, status in wg.workers.items():
+            grp = status.group or _name.split("_worker")[0]
+            seen.setdefault(grp, None)
+        groups = list(seen)
+
+        for grp in groups:
+            workers = [
+                s
+                for _n, s in wg.workers.items()
+                if (s.group or _n.split("_worker")[0]) == grp
+            ]
+            active = sum(1 for w in workers if w.is_active)
+            total = len(workers)
+
+            if active == 0:
+                # All workers in this group have stopped
+                section.append(f"  {grp} ", style="dim")
+                section.append("done", style="green")
+            else:
+                section.append(f"  {grp} ", style="white")
+                section.append(f"draining ({active}/{total})", style="yellow")
+
+        # Elapsed shutdown time
+        if self._shutdown_start is not None:
+            shutdown_elapsed = time.time() - self._shutdown_start
+            section.append(f"  {shutdown_elapsed:.1f}s", style="dim")
+
+        return section
+
     # ── Display assembly ──
 
     def _build_display(self) -> Panel:
         """Build the complete display.
 
         Standard layout: HEADER → SERVERS → PIPELINE → RESOURCES
+        During shutdown: HEADER → SHUTDOWN (pipeline/servers/resources hidden)
         """
+        if self._shutting_down:
+            return self._build_shutdown_display()
+
         sections: list[Text] = [self._build_header()]
 
         # SERVERS section (optional)
@@ -1188,6 +1218,32 @@ class BaseProgressDisplay(ABC):
         return Panel(
             content,
             border_style="cyan",
+            width=self.width,
+            padding=(0, 1),
+        )
+
+    def _build_shutdown_display(self) -> Panel:
+        """Compact shutdown-mode display.
+
+        Replaces the full pipeline view with a small panel showing
+        only the header and worker drain status.  This is visually
+        distinct (yellow border) and much shorter so the user sees
+        immediate feedback that shutdown is in progress.
+        """
+        header = Text()
+        title = f"{self.facility.upper()} {self._title_suffix}"
+        header.append(title.center(self.width - 4), style="bold yellow")
+
+        content = Text()
+        content.append_text(header)
+        content.append("\n")
+        content.append("─" * (self.width - 4), style="dim")
+        content.append("\n")
+        content.append_text(self._build_shutdown_section())
+
+        return Panel(
+            content,
+            border_style="yellow",
             width=self.width,
             padding=(0, 1),
         )

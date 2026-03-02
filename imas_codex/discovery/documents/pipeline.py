@@ -119,6 +119,7 @@ async def run_document_discovery(
     scan_only: bool = False,
     focus: str | None = None,
     deadline: float | None = None,
+    stop_event: asyncio.Event | None = None,
 ) -> dict[str, Any]:
     """Run document discovery pipeline.
 
@@ -160,6 +161,13 @@ async def run_document_discovery(
     )
 
     worker_group = SupervisedWorkerGroup()
+
+    # Watch external stop event (from CLI signal handler)
+    stop_watcher: asyncio.Task | None = None
+    if stop_event is not None:
+        from imas_codex.cli.shutdown import watch_stop_event
+
+        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
 
     for i in range(num_image_workers):
         worker_name = f"image_worker_{i}"
@@ -203,6 +211,8 @@ async def run_document_discovery(
 
     await run_supervised_loop(worker_group, state.should_stop)
     state.stop_requested = True
+    if stop_watcher and not stop_watcher.done():
+        stop_watcher.cancel()
 
     elapsed = time.time() - start_time
 

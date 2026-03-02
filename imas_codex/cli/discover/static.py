@@ -650,8 +650,12 @@ def _run_plain(
         if msg != "idle":
             logger.info("ENRICH: %s", msg)
 
-    result = asyncio.run(
-        run_parallel_static_discovery(
+    async def _run_non_rich():
+        from imas_codex.cli.shutdown import install_shutdown_handlers
+
+        stop_event = asyncio.Event()
+        install_shutdown_handlers(stop_event=stop_event)
+        return await run_parallel_static_discovery(
             facility=facility,
             ssh_host=ssh_host,
             tree_name=tname,
@@ -669,8 +673,10 @@ def _run_plain(
             on_units_progress=log_units,
             on_enrich_progress=log_enrich,
             dry_run=dry_run,
+            stop_event=stop_event,
         )
-    )
+
+    result = asyncio.run(_run_non_rich())
 
     logger.info(
         "Complete: %d versions extracted, %d nodes enriched, $%.2f cost, %.0fs",
@@ -741,7 +747,11 @@ def _run_with_rich(
         display.service_monitor = service_monitor
 
         async def run_with_display():
+            from imas_codex.cli.shutdown import install_shutdown_handlers
+
+            stop_event = asyncio.Event()
             await service_monitor.__aenter__()
+            install_shutdown_handlers(stop_event=stop_event, display=display)
 
             async def refresh_graph_state():
                 while True:
@@ -799,6 +809,7 @@ def _run_with_rich(
                     on_worker_status=on_worker_status,
                     service_monitor=service_monitor,
                     dry_run=dry_run,
+                    stop_event=stop_event,
                 )
             finally:
                 refresh_task.cancel()

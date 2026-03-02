@@ -734,6 +734,10 @@ def wiki(
             _deadline: float | None = None,
             _store_images: bool = False,
         ):
+            from imas_codex.cli.shutdown import install_shutdown_handlers
+
+            stop_event = asyncio.Event()
+
             combined: dict = {
                 "scanned": 0,
                 "scored": 0,
@@ -764,6 +768,8 @@ def wiki(
                     wiki_logger.info(f"INGEST: {msg}")
 
             if not _use_rich:
+                install_shutdown_handlers(stop_event=stop_event)
+
                 _multi = len(_site_configs) > 1
                 for i, sc in enumerate(_site_configs):
                     if remaining_budget <= 0:
@@ -809,6 +815,7 @@ def wiki(
                             on_score_progress=log_on_score,
                             on_ingest_progress=log_on_ingest,
                             max_wiki_connections=sc.get("max_wiki_connections", 10),
+                            stop_event=stop_event,
                         )
                     except Exception as e:
                         wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
@@ -866,6 +873,8 @@ def wiki(
             await service_monitor.__aenter__()
 
             with display:
+                install_shutdown_handlers(stop_event=stop_event, display=display)
+
                 if multi_site:
                     display.set_site_info(
                         site_name=_site_configs[0]["base_url"],
@@ -1085,6 +1094,7 @@ def wiki(
                                 on_worker_status=on_worker_status,
                                 service_monitor=service_monitor,
                                 max_wiki_connections=sc.get("max_wiki_connections", 10),
+                                stop_event=stop_event,
                             )
                         except Exception as e:
                             wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)

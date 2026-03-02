@@ -361,6 +361,9 @@ def _run_iterative_discovery(
 
     except KeyboardInterrupt:
         log_print("\n[yellow]Discovery interrupted by user[/yellow]")
+        from imas_codex.remote.executor import cleanup_ssh_on_exit
+
+        cleanup_ssh_on_exit()
         raise SystemExit(130) from None
     except Exception as e:
         log_print(f"\n[red]Error: {e}[/red]")
@@ -646,10 +649,12 @@ async def _async_discovery_loop(
     deadline: float | None = None,
 ) -> tuple[dict, set[str]]:
     """Async discovery loop with parallel scan/score workers."""
+    from imas_codex.cli.shutdown import install_shutdown_handlers
     from imas_codex.discovery.paths.parallel import run_parallel_discovery
 
     disc_logger = logging.getLogger("imas_codex.discovery")
     scored_this_run: set[str] = set()
+    stop_event = asyncio.Event()
 
     if use_rich:
         from imas_codex.cli.discover.common import create_discovery_monitor
@@ -681,6 +686,8 @@ async def _async_discovery_loop(
         ) as display:
             display.service_monitor = service_monitor
             await service_monitor.__aenter__()
+
+            install_shutdown_handlers(stop_event=stop_event, display=display)
 
             async def refresh_graph_state():
                 while True:
@@ -733,6 +740,7 @@ async def _async_discovery_loop(
                     on_refine_progress=on_refine,
                     on_worker_status=on_worker_status,
                     deadline=deadline,
+                    stop_event=stop_event,
                 )
             finally:
                 refresh_task.cancel()
@@ -770,6 +778,8 @@ async def _async_discovery_loop(
                     f"total: {stats.processed}, cost: ${stats.cost:.3f}"
                 )
 
+        install_shutdown_handlers(stop_event=stop_event)
+
         result = await run_parallel_discovery(
             facility=facility,
             cost_limit=budget,
@@ -783,6 +793,7 @@ async def _async_discovery_loop(
             on_scan_progress=on_scan_log,
             on_score_progress=on_score_log,
             deadline=deadline,
+            stop_event=stop_event,
         )
         enrichment_aggregates = {}
 
