@@ -973,7 +973,7 @@ def _mark_clones_terminal(
     canonical_path: str,
     repo_id: str,
 ) -> int:
-    """Mark non-canonical clone paths as terminal (software_repo).
+    """Mark non-canonical clone paths as terminal (clone).
 
     Only marks paths that are not already terminal, not currently claimed
     by another worker, and are in scanned or scored status.
@@ -1013,11 +1013,60 @@ def _mark_clones_terminal(
             scanned=PathStatus.scanned.value,
             scored=PathStatus.scored.value,
             skipped=PathStatus.skipped.value,
-            reason=TerminalReason.software_repo.value,
+            reason=TerminalReason.clone.value,
             skip_reason=skip_reason,
             now=now,
         )
     return result[0]["marked"] if result else 0
+
+
+def _mark_accessible_elsewhere(
+    path_id: str,
+    repo_id: str,
+) -> bool:
+    """Mark a path as terminal because its repo is externally accessible.
+
+    Used by dedup_worker when the canonical clone's repo is publicly
+    accessible — no need to scan/ingest locally.
+
+    Args:
+        path_id: FacilityPath ID to mark terminal
+        repo_id: SoftwareRepo ID (for skip_reason)
+
+    Returns:
+        True if the path was marked.
+    """
+    from datetime import datetime
+
+    from imas_codex.graph import GraphClient
+
+    now = datetime.utcnow().isoformat()
+    skip_reason = f"Repo accessible elsewhere ({repo_id})"
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath {id: $path_id})
+            WHERE p.terminal_reason IS NULL
+              AND p.status IN [$scanned, $scored]
+              AND p.claimed_at IS NULL
+            SET p.status = $skipped,
+                p.terminal_reason = $reason,
+                p.skip_reason = $skip_reason,
+                p.skipped_at = $now,
+                p.should_expand = false,
+                p.should_enrich = false
+            RETURN count(p) AS marked
+            """,
+            path_id=path_id,
+            scanned=PathStatus.scanned.value,
+            scored=PathStatus.scored.value,
+            skipped=PathStatus.skipped.value,
+            reason=TerminalReason.accessible_elsewhere.value,
+            skip_reason=skip_reason,
+            now=now,
+        )
+    return bool(result and result[0]["marked"] > 0)
 
 
 # ============================================================================
@@ -1214,7 +1263,7 @@ async def dedup_worker(
     git_root_commit).  For each clone group, the canonical instance is
     retained (accessible remote > has remote URL > shallowest depth >
     earliest discovered) and all others are marked terminal with
-    terminal_reason=software_repo, status=skipped, should_expand=false,
+    terminal_reason=clone, status=skipped, should_expand=false,
     should_enrich=false.
 
     This blocks ALL downstream work on duplicate paths:
@@ -1265,6 +1314,20 @@ async def dedup_worker(
                 ),
             )
 
+            # If the canonical instance's repo is externally accessible,
+            # mark it too — no need to scan/ingest locally when the code
+            # is available from a public source.
+            canonical_also_skipped = False
+            if canonical["accessible"]:
+                canonical_also_skipped = await loop.run_in_executor(
+                    None,
+                    lambda pid=canonical["id"], rid=repo_id: _mark_accessible_elsewhere(
+                        pid, rid
+                    ),
+                )
+                if canonical_also_skipped:
+                    marked += 1
+
             if marked > 0:
                 state.dedup_stats.processed += marked
                 results.append(
@@ -1273,14 +1336,16 @@ async def dedup_worker(
                         "repo_name": repo_name,
                         "canonical_path": canonical["path"],
                         "clones_marked": marked,
-                        "total_clones": len(clones),
+                        "total_clones": len(active_paths),
+                        "canonical_skipped": canonical_also_skipped,
                     }
                 )
                 logger.info(
-                    "Dedup: marked %d clones of %s terminal (canonical: %s)",
+                    "Dedup: marked %d paths of %s terminal (canonical: %s%s)",
                     marked,
                     repo_name,
                     canonical["path"],
+                    ", also skipped (accessible)" if canonical_also_skipped else "",
                 )
 
         if results:
@@ -1511,7 +1576,7 @@ async def score_worker(
                 {
                     "path": p["path"],
                     "score": 0.0,
-                    "path_purpose": "empty_directory",
+                    "path_purpose": "empty",
                     "description": "Empty directory - no files or subdirectories",
                     "score_modeling_code": 0.0,
                     "score_analysis_code": 0.0,
@@ -1541,8 +1606,8 @@ async def score_worker(
                 {
                     "path": p["path"],
                     "score": 0.0,
-                    "label": "empty_directory",
-                    "path_purpose": "empty_directory",
+                    "label": "empty",
+                    "path_purpose": "empty",
                     "description": "Empty directory - no files or subdirectories",
                     "score_imas": 0.0,
                     "score_convention": 0.0,
@@ -1593,7 +1658,7 @@ async def score_worker(
                     "enrich_skip_reason": (
                         f"{p.get('vcs_type') or 'git'} repo accessible elsewhere"
                     ),
-                    "terminal_reason": TerminalReason.software_repo.value,
+                    "terminal_reason": TerminalReason.accessible_elsewhere.value,
                 }
                 for p in accessible_vcs_paths
             ]
@@ -1619,7 +1684,7 @@ async def score_worker(
                         f"{p.get('vcs_type') or 'git'} repo accessible elsewhere"
                     ),
                     "should_expand": False,
-                    "terminal_reason": TerminalReason.software_repo.value,
+                    "terminal_reason": TerminalReason.accessible_elsewhere.value,
                     "total_files": p.get("total_files", 0),
                 }
                 for p in accessible_vcs_paths

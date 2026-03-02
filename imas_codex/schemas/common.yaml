@@ -64,11 +64,18 @@ enums:
       Lifecycle status for facility path discovery.
       Uses claimed_at timestamp for transient worker coordination.
       No transient states - workers claim by setting claimed_at, not by changing status.
+      
+      Pipeline: discovered → scanned → scored → skipped/excluded/stale
+      
+      Within the scored state, paths may be enriched (du/tokei/patterns) and
+      refined (LLM re-evaluation with enrichment evidence). These sub-phases
+      are tracked via is_enriched, enriched_at, and refined_at properties,
+      not as separate status values.
     permissible_values:
       discovered:
         description: Path found, awaiting enumeration
       scanned:
-        description: Enumerated (file_count, dir_count set), awaiting LLM score
+        description: Enumerated (total_files, total_dirs set), awaiting LLM score
       scored:
         description: LLM scored (may have been refined if high-value)
       skipped:
@@ -100,6 +107,10 @@ enums:
       # === DUPLICATES ===
       alias:
         description: Bind mount, symlink, or redirect to another resource
+      clone:
+        description: Duplicate copy of a repo with a canonical instance elsewhere on this facility
+      accessible_elsewhere:
+        description: VCS repository whose content is available from an external source (public GitHub/GitLab/etc.)
       # === AUTO-SKIP (status=skipped, 0 LLM cost) ===
       empty:
         description: Empty directory (0 files, 0 dirs) or empty page
@@ -107,8 +118,6 @@ enums:
         description: Interest score below threshold
       excluded:
         description: Matched exclusion pattern
-      software_repo:
-        description: VCS repository accessible elsewhere (public or mirrored)
       # === PROPAGATION ===
       parent_terminal:
         description: Parent resource was terminal (skipped or not expanded)
@@ -402,6 +411,8 @@ enums:
         description: Generated/cached files (__pycache__, .venv, node_modules)
       system:
         description: OS/infrastructure resources (/var, /tmp, /opt/modules)
+      empty:
+        description: Empty resource with no content (empty directories, blank pages)
 
   ContentPurpose:
     description: >-
