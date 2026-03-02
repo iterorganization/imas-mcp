@@ -655,11 +655,15 @@ def mark_patterns_enriched(
     pattern_ids: list[str],
     descriptions: dict[str, str],
     metadata: dict[str, dict] | None = None,
+    *,
+    llm_cost: float = 0.0,
+    llm_model: str | None = None,
 ) -> int:
     """Mark patterns as enriched and propagate to all followers.
 
     Sets description/keywords/category on the TreeNodePattern and
     copies them to every TreeNode linked via FOLLOWS_PATTERN.
+    Distributes llm_cost evenly across all follower nodes.
 
     Returns:
         Number of TreeNodes updated (followers).
@@ -703,7 +707,28 @@ def mark_patterns_enriched(
             """,
             updates=updates,
         )
-        return sum(r["propagated"] for r in result) if result else 0
+        total_propagated = sum(r["propagated"] for r in result) if result else 0
+
+        # Write per-node cost to all enriched nodes
+        if llm_cost > 0 and total_propagated > 0:
+            per_node_cost = llm_cost / total_propagated
+            enriched_pattern_ids = [u["id"] for u in updates if u["description"]]
+            if enriched_pattern_ids:
+                gc.query(
+                    """
+                    UNWIND $ids AS pid
+                    MATCH (n:TreeNode)-[:FOLLOWS_PATTERN]->(:TreeNodePattern {id: pid})
+                    WHERE n.enrichment_status = 'enriched'
+                    SET n.llm_cost = $per_node_cost,
+                        n.llm_model = $llm_model,
+                        n.llm_at = datetime()
+                    """,
+                    ids=enriched_pattern_ids,
+                    per_node_cost=per_node_cost,
+                    llm_model=llm_model,
+                )
+
+        return total_propagated
 
 
 def release_pattern_claims(pattern_ids: list[str]) -> int:
@@ -843,13 +868,20 @@ def mark_parent_children_enriched(
     parent_id: str,
     descriptions: dict[str, str],
     metadata: dict[str, dict] | None = None,
+    *,
+    llm_cost: float = 0.0,
+    llm_model: str | None = None,
 ) -> int:
     """Mark all children as enriched and release parent claim.
+
+    Distributes llm_cost evenly across enriched children.
 
     Args:
         parent_id: ID of the parent STRUCTURE node (to release claim)
         descriptions: Map of child node ID to description
         metadata: Optional map of child node ID to keywords/category
+        llm_cost: Total LLM cost for this batch
+        llm_model: Model identifier used
 
     Returns:
         Number of children enriched.
@@ -877,6 +909,8 @@ def mark_parent_children_enriched(
             )
         return 0
 
+    per_node_cost = llm_cost / len(updates) if llm_cost > 0 else 0.0
+
     with GraphClient() as gc:
         result = gc.query(
             """
@@ -886,10 +920,15 @@ def mark_parent_children_enriched(
                 n.keywords = u.keywords,
                 n.category = u.category,
                 n.enrichment_status = 'enriched',
-                n.claimed_at = null
+                n.claimed_at = null,
+                n.llm_cost = $per_node_cost,
+                n.llm_model = $llm_model,
+                n.llm_at = datetime()
             RETURN count(n) AS updated
             """,
             updates=updates,
+            per_node_cost=per_node_cost,
+            llm_model=llm_model,
         )
         # Release parent claim
         gc.query(
@@ -927,13 +966,20 @@ def mark_orphan_nodes_enriched(
     node_ids: list[str],
     descriptions: dict[str, str],
     metadata: dict[str, dict] | None = None,
+    *,
+    llm_cost: float = 0.0,
+    llm_model: str | None = None,
 ) -> int:
     """Mark orphan nodes as enriched and release claims.
+
+    Distributes llm_cost evenly across enriched nodes.
 
     Args:
         node_ids: IDs of all claimed nodes (to release claims)
         descriptions: Map of node ID to description
         metadata: Optional map of node ID to keywords/category
+        llm_cost: Total LLM cost for this batch
+        llm_model: Model identifier used
 
     Returns:
         Number of nodes enriched.
@@ -952,6 +998,8 @@ def mark_orphan_nodes_enriched(
                 update["category"] = m["category"]
         updates.append(update)
 
+    per_node_cost = llm_cost / len(updates) if llm_cost > 0 and updates else 0.0
+
     with GraphClient() as gc:
         enriched = 0
         if updates:
@@ -963,10 +1011,15 @@ def mark_orphan_nodes_enriched(
                     n.keywords = u.keywords,
                     n.category = u.category,
                     n.enrichment_status = 'enriched',
-                    n.claimed_at = null
+                    n.claimed_at = null,
+                    n.llm_cost = $per_node_cost,
+                    n.llm_model = $llm_model,
+                    n.llm_at = datetime()
                 RETURN count(n) AS updated
                 """,
                 updates=updates,
+                per_node_cost=per_node_cost,
+                llm_model=llm_model,
             )
             enriched = result[0]["updated"] if result else 0
 
@@ -1316,6 +1369,20 @@ def get_static_discovery_stats(
             stats["patterns_total"] = 0
             stats["patterns_enriched"] = 0
             stats["pending_patterns"] = 0
+
+        # Accumulated LLM cost from per-node llm_cost fields
+        cost_result = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            WHERE n.is_static = true AND n.llm_cost IS NOT NULL
+            RETURN sum(n.llm_cost) AS total_cost
+            """,
+            facility=facility,
+            tree_name=tree_name,
+        )
+        stats["accumulated_cost"] = (
+            cost_result[0]["total_cost"] if cost_result else 0.0
+        ) or 0.0
 
         return stats
 

@@ -284,6 +284,8 @@ class TestGraphOps:
             [{"total_orphans": 100, "enriched_orphans": 20}],
             # Pattern stats
             [{"total": 50, "enriched": 10, "pending": 40}],
+            # Accumulated cost
+            [{"total_cost": 1.23}],
         ]
 
         stats = get_static_discovery_stats("tcv", "static")
@@ -306,6 +308,7 @@ class TestGraphOps:
         assert stats["patterns_total"] == 50
         assert stats["patterns_enriched"] == 10
         assert stats["pending_patterns"] == 40
+        assert stats["accumulated_cost"] == 1.23
 
     @patch("imas_codex.discovery.static.graph_ops.GraphClient")
     def test_release_parent_claim(self, mock_gc_cls):
@@ -435,6 +438,31 @@ class TestGraphOps:
             },
         )
         assert result == 830
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_mark_patterns_enriched_writes_cost(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import mark_patterns_enriched
+
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.side_effect = [
+            # First call: enrichment propagation
+            [{"pattern_id": "tcv:static:\\MAGNETICS::TOP.W:R", "propagated": 100}],
+            # Second call: cost writing
+            None,
+        ]
+
+        result = mark_patterns_enriched(
+            ["tcv:static:\\MAGNETICS::TOP.W:R"],
+            {"tcv:static:\\MAGNETICS::TOP.W:R": "Major radius"},
+            llm_cost=0.05,
+            llm_model="test-model",
+        )
+        assert result == 100
+        # Verify cost query was called with per_node_cost
+        cost_call = mock_gc.query.call_args_list[1]
+        assert "llm_cost" in cost_call[1] or "per_node_cost" in cost_call[1]
 
     def test_release_pattern_claims_empty(self):
         from imas_codex.discovery.static.graph_ops import release_pattern_claims

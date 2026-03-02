@@ -207,13 +207,17 @@ class StaticProgressDisplay(BaseProgressDisplay):
     def _build_resources_section(self) -> Text:
         s = self.state
 
-        # Compute ETC
+        # Use graph accumulated_cost as source of truth, but if session
+        # cost is ahead (between graph writes), use the higher value.
+        total_cost = max(s.accumulated_cost, s.enrich_cost)
+
+        # Compute ETC from graph-backed cost per enriched node
         etc = None
-        if s.enrich_cost > 0 and s.enrich_completed > 0 and s.enrich_total > 0:
-            cost_per_node = s.enrich_cost / s.enrich_completed
+        if total_cost > 0 and s.enrich_completed > 0 and s.enrich_total > 0:
+            cost_per_node = total_cost / s.enrich_completed
             remaining = s.enrich_total - s.enrich_completed
             if remaining > 0:
-                etc = s.enrich_cost + cost_per_node * remaining
+                etc = total_cost + cost_per_node * remaining
 
         stats: list[tuple[str, str, str]] = [
             ("versions", f"{s.extract_completed}/{s.extract_total}", "blue"),
@@ -232,7 +236,7 @@ class StaticProgressDisplay(BaseProgressDisplay):
             eta=s.eta_seconds,
             run_cost=s.enrich_cost if self.enrich else None,
             cost_limit=self.cost_limit if self.enrich else None,
-            accumulated_cost=s.accumulated_cost if self.enrich else 0.0,
+            accumulated_cost=total_cost if self.enrich else 0.0,
             etc=etc,
             stats=stats,
             pending=pending,
@@ -374,6 +378,9 @@ class StaticProgressDisplay(BaseProgressDisplay):
             s.units_completed = units_versions_extracted
             s.units_found = stats.get("nodes_with_units", 0)
 
+        # Accumulated cost from graph (source of truth)
+        s.accumulated_cost = stats.get("accumulated_cost", 0.0)
+
         # Only update enrichment totals after extraction is complete.
         # Before that, patterns haven't been detected so the raw
         # enrichable count is misleading (shows all NUMERIC/SIGNAL nodes
@@ -395,6 +402,7 @@ class StaticProgressDisplay(BaseProgressDisplay):
     def print_summary(self) -> None:
         """Print final summary."""
         s = self.state
+        total_cost = max(s.accumulated_cost, s.enrich_cost)
         summary = Text()
         summary.append(
             f"  {s.extract_completed} versions, {s.extract_nodes:,} nodes extracted",
@@ -405,8 +413,8 @@ class StaticProgressDisplay(BaseProgressDisplay):
         if self.enrich:
             summary.append(f", {s.enrich_completed} nodes enriched", style="magenta")
         summary.append(f"\n  Time: {format_time(s.elapsed)}", style="dim")
-        if self.enrich and s.enrich_cost > 0:
-            summary.append(f", Cost: ${s.enrich_cost:.2f}", style="dim")
+        if self.enrich and total_cost > 0:
+            summary.append(f", Cost: ${total_cost:.2f}", style="dim")
         self._console.print(
             Panel(summary, title="Static Tree Discovery Complete", border_style="green")
         )
