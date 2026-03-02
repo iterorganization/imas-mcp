@@ -36,7 +36,6 @@ from imas_codex.discovery.base.progress import (
     build_pipeline_section,
     build_resource_section,
     clean_text,
-    clip_path,
     format_time,
 )
 
@@ -278,7 +277,6 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         Stages: SCAN -> SCORE -> ENRICH -> INGEST
         """
-        content_width = self.width - 6
 
         # --- Compute progress data ---
 
@@ -328,7 +326,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         scan_text = ""
         scan_desc = ""
         if scan:
-            scan_text = clip_path(scan.path, content_width - 10)
+            scan_text = scan.path
             if scan.files_found > 0:
                 scan_desc = f"{scan.files_found} files found"
 
@@ -341,7 +339,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         score_desc = ""
         score_terminal = ""
         if score:
-            score_text = clip_path(score.path, content_width - 10)
+            score_text = score.path
             if score.skipped:
                 score_terminal = "skip"
                 if score.category:
@@ -359,7 +357,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         enrich_text = ""
         enrich_desc = ""
         if enrich:
-            enrich_text = clip_path(enrich.path, content_width - 10)
+            enrich_text = enrich.path
             if enrich.patterns > 0:
                 enrich_desc = f"{enrich.patterns} patterns"
 
@@ -367,7 +365,7 @@ class FileProgressDisplay(BaseProgressDisplay):
         ingest_text = ""
         ingest_desc = ""
         if ingest:
-            ingest_text = clip_path(ingest.path, content_width - 10)
+            ingest_text = ingest.path
             if ingest.language:
                 ingest_desc = f"[{ingest.language}]"
             elif ingest.file_type:
