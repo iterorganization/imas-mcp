@@ -93,9 +93,10 @@ def claim_paths_for_file_scan(
     Uses ``files_claimed_at`` (separate from the paths module's ``claimed_at``)
     to avoid conflicts with the paths discovery pipeline.
 
-    Skips paths that have already been scanned (files_scanned > 0) and paths
+    Skips paths that have already been scanned (files_scanned > 0), paths
     linked to publicly-accessible software repos (INSTANCE_OF → SoftwareRepo
-    with remote_url containing github/gitlab/bitbucket).
+    with remote_url containing github/gitlab/bitbucket), and paths where the
+    VCS remote is known to be accessible externally.
 
     Prioritizes paths with high scores on mapping-valuable dimensions
     (data_access, imas, convention, analysis, modeling).
@@ -118,6 +119,7 @@ def claim_paths_for_file_scan(
               AND p.path IS NOT NULL
               AND (p.files_claimed_at IS NULL
                    OR p.files_claimed_at < datetime() - duration($cutoff))
+              AND coalesce(p.vcs_remote_accessible, false) = false
               AND NOT EXISTS {
                 MATCH (p)-[:INSTANCE_OF]->(r:SoftwareRepo)
                 WHERE r.source_type IN ['github', 'gitlab', 'bitbucket']
@@ -411,6 +413,11 @@ def has_pending_scan_work(facility: str, min_score: float = 0.5) -> bool:
             WHERE p.status IN ['scored', 'explored']
               AND coalesce(p.score, 0) >= $min_score
               AND p.path IS NOT NULL
+              AND coalesce(p.vcs_remote_accessible, false) = false
+              AND NOT EXISTS {
+                MATCH (p)-[:INSTANCE_OF]->(r:SoftwareRepo)
+                WHERE r.source_type IN ['github', 'gitlab', 'bitbucket']
+              }
             OPTIONAL MATCH (f:Facility {id: $facility})
             WITH p, f
             WHERE p.last_file_scan_at IS NULL

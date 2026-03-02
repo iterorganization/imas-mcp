@@ -240,7 +240,7 @@ enums:
         description: Mix of static structure with dynamic population
 
   ProgrammingLanguage:
-    description: Programming languages for code examples
+    description: Programming languages for source code files
     permissible_values:
       python:
         description: Python source code
@@ -254,6 +254,8 @@ enums:
         description: TDI (Tree Data Interface) expressions
       cpp:
         description: C++ source code
+      c:
+        description: C source code
       julia:
         description: Julia source code
 
@@ -268,75 +270,6 @@ enums:
         description: Directory containing configuration files
       binary_directory:
         description: Directory containing executables
-
-  PathPurpose:
-    description: >-
-      LLM-classified purpose of a directory. Used during discovery scoring
-      to determine expansion priority (for containers) or ingestion priority
-      (for leaf directories). Score semantics vary by purpose type.
-      
-      Terminology aligns with DiscoveryRootCategory for consistent vocabulary.
-    permissible_values:
-      # === FORWARD MODELING CODE (predictive, offline simulation) ===
-      modeling_code:
-        description: Physics simulation/modeling code (CHEASE, ASTRA, JOREK, JINTRAC)
-      # === EXPERIMENTAL ANALYSIS CODE (shot processing, diagnostics) ===
-      analysis_code:
-        description: >-
-          Experimental data processing code: equilibrium reconstruction (LIUQE, EFIT),
-          diagnostic analysis (Thomson, bolometry), profile fitting, intershot tools
-      operations_code:
-        description: >-
-          Real-time facility operations: control systems, DAQ, hardware interfaces,
-          timing systems, feedback algorithms, actuator commands
-      # === SHARED INFRASTRUCTURE CODE ===
-      data_access:
-        description: Data access/conversion tools (IMAS wrappers, MDSplus readers, EQDSK, TDI)
-      workflow:
-        description: Orchestration and batch processing scripts
-      visualization:
-        description: Plotting and rendering tools
-      # === DATA CATEGORIES ===
-      experimental_data:
-        description: Experimental shot data, measurement databases (MDSplus trees, shot archives)
-      modeling_data:
-        description: Outputs from modeling codes (HDF5 runs, NetCDF outputs, parameter scans)
-      # === SUPPORT CATEGORIES ===
-      documentation:
-        description: Docs, papers, tutorials, READMEs
-      configuration:
-        description: Config files, settings, module files
-      test_suite:
-        description: Unit/integration tests (pytest directories)
-      # === STRUCTURAL CATEGORIES ===
-      container:
-        description: >-
-          Organizational directory with varied content (/home, /work, /work/imas).
-          Score reflects exploration potential of children, not content value.
-          High score = explore children; low score = skip subtree.
-      # === SKIP CATEGORIES (low score forced) ===
-      archive:
-        description: Old/backup content (backup/, old_projects/, deprecated/)
-      build_artifact:
-        description: Generated/cached files (__pycache__, .venv, node_modules)
-      system:
-        description: OS/infrastructure directories (/var, /tmp, /opt/modules)
-      empty_directory:
-        description: Empty directory with no files or subdirectories
-
-  DiscoveryStatus:
-    description: >-
-      Lifecycle status for graph-led discovery pipeline.
-      Simplified from PathStatus for scan/score workflow.
-    permissible_values:
-      pending:
-        description: Path awaiting scan (newly seeded or from expansion)
-      scanned:
-        description: Directory enumerated, DirStats collected
-      scored:
-        description: LLM has evaluated and scored
-      skipped:
-        description: Excluded (dead-end, error, or low value)
 
   DataReferenceType:
     description: Type of data reference found in source code
@@ -365,6 +298,10 @@ enums:
           A parameter accepted by a TDI function (e.g., tcv_eq("PSI")).
           Not a physical tree path but a logical data accessor name.
           Links to TreeNode via accessor_function relationship.
+      static_tree_extraction:
+        description: >-
+          Extracted from static MDSplus tree file via TDI introspection.
+          Tree was loaded from a versioned .characteristics or .datafile.
       manual:
         description: Manually created during exploration or testing
 
@@ -418,23 +355,6 @@ enums:
       disabled:
         description: Permanently disabled
 
-  FileCategory:
-    deprecated: Use CodeFile/Document node types instead of file_category property.
-    description: "[DEPRECATED] Category of a discovered file. Use node types instead."
-    permissible_values:
-      code:
-        description: Source code file (Python, Fortran, etc.)
-      document:
-        description: Document file (PDF, Word, README, etc.)
-      data:
-        description: Data file (HDF5, NetCDF, CSV, etc.)
-      config:
-        description: Configuration file (YAML, JSON, INI, etc.)
-      notebook:
-        description: Computational notebook (Jupyter, Mathematica)
-      other:
-        description: Other file types
-
   DocumentType:
     description: Type of non-code document or media file
     permissible_values:
@@ -460,17 +380,6 @@ enums:
         description: Data file (HDF5, NetCDF, MAT)
       other:
         description: Other document type
-
-  # Legacy alias - will be removed in future version
-  WikiSiteType:
-    description: "[DEPRECATED] Use DocSourceType instead"
-    permissible_values:
-      mediawiki:
-        description: MediaWiki-based sites (Wikipedia, SPCwiki)
-      confluence:
-        description: Atlassian Confluence (REST API available)
-      generic:
-        description: Generic HTML site (scrape only)
 
   WikiAuthType:
     description: Authentication methods for wiki sites
@@ -790,12 +699,6 @@ classes:
         description: When this path was last examined by any pass
         range: datetime
       # Coverage tracking
-      file_count:
-        description: Total files in directory (set during listing)
-        range: integer
-      dir_count:
-        description: Total subdirectories (set during listing)
-        range: integer
       files_scanned:
         description: Files that matched patterns during scanning
         range: integer
@@ -881,7 +784,7 @@ classes:
         description: Primary physics domain (equilibrium, transport, etc.)
       path_purpose:
         description: Classified purpose of the directory
-        range: PathPurpose
+        range: ResourcePurpose
       # Enrichment tracking (for high-value paths with du/tokei data)
       is_enriched:
         description: Whether this path has been enriched with deep scan data
@@ -911,7 +814,7 @@ classes:
         description: >-
           Why this path terminated exploration. Required when terminal
           (status=skipped OR should_expand=false). Enables filtering by
-          termination cause: access_denied vs low_value vs software_repo.
+          termination cause: access_denied vs low_value vs clone.
         range: TerminalReason
       skipped_at:
         description: When this path was marked as skipped
@@ -1375,6 +1278,13 @@ classes:
       discovery_date:
         description: When this epoch was discovered
         range: datetime
+      fingerprint:
+        description: Structure fingerprint for change detection (e.g., static_v67)
+      is_static:
+        description: Whether this version was extracted from static tree analysis
+        range: boolean
+      description:
+        description: Human-readable description of this tree model version
 
   TreeNode:
     description: >-
@@ -1390,6 +1300,9 @@ classes:
         identifier: true
         description: Full node path (e.g., "\\RESULTS::LIUQE:PSI")
         required: true
+      is_static:
+        description: Whether this node was extracted from static tree analysis
+        range: boolean
       tree_name:
         description: Parent tree name
         required: true
@@ -2448,14 +2361,14 @@ classes:
       signals_processed:
         description: Signals with proposals created
         range: integer
-      proposals_created:
-        description: Number of MappingProposal nodes created
+      mappings_created:
+        description: Number of IMASMapping nodes created
         range: integer
-      proposals_validated:
-        description: Number of proposals that reached validated status
+      mappings_validated:
+        description: Number of mappings that reached validated status
         range: integer
-      proposals_rejected:
-        description: Number of proposals rejected
+      mappings_rejected:
+        description: Number of mappings rejected
         range: integer
       # Langfuse correlation
       langfuse_trace_id:

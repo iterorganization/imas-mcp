@@ -348,9 +348,13 @@ class TestDedupWorker:
     """Tests for the dedup_worker async coroutine."""
 
     @pytest.mark.anyio
+    @patch(
+        "imas_codex.discovery.paths.parallel._mark_accessible_elsewhere",
+        return_value=False,
+    )
     @patch("imas_codex.discovery.paths.parallel._mark_clones_terminal", return_value=2)
     @patch("imas_codex.discovery.paths.parallel._find_clone_groups")
-    async def test_processes_clone_groups(self, mock_find, mock_mark):
+    async def test_processes_clone_groups(self, mock_find, mock_mark, mock_mark_ae):
         """Dedup worker processes clone groups and reports progress."""
         from imas_codex.discovery.paths.parallel import dedup_worker
 
@@ -360,9 +364,13 @@ class TestDedupWorker:
                     "github.com/user/MEQ",
                     "MEQ",
                     [
-                        {"id": "tcv:/canonical", "path": "/canonical"},
-                        {"id": "tcv:/clone1", "path": "/clone1"},
-                        {"id": "tcv:/clone2", "path": "/clone2"},
+                        {
+                            "id": "tcv:/canonical",
+                            "path": "/canonical",
+                            "accessible": False,
+                        },
+                        {"id": "tcv:/clone1", "path": "/clone1", "accessible": False},
+                        {"id": "tcv:/clone2", "path": "/clone2", "accessible": False},
                     ],
                 ),
             ],
@@ -387,6 +395,55 @@ class TestDedupWorker:
         assert results is not None
         assert results[0]["repo_name"] == "MEQ"
         assert results[0]["clones_marked"] == 2
+        assert results[0]["canonical_skipped"] is False
+        # Canonical is not accessible, so _mark_accessible_elsewhere not called
+        mock_mark_ae.assert_not_called()
+
+    @pytest.mark.anyio
+    @patch(
+        "imas_codex.discovery.paths.parallel._mark_accessible_elsewhere",
+        return_value=True,
+    )
+    @patch("imas_codex.discovery.paths.parallel._mark_clones_terminal", return_value=1)
+    @patch("imas_codex.discovery.paths.parallel._find_clone_groups")
+    async def test_marks_canonical_accessible_elsewhere(
+        self, mock_find, mock_mark, mock_mark_ae
+    ):
+        """When canonical is externally accessible, it's also marked terminal."""
+        from imas_codex.discovery.paths.parallel import dedup_worker
+
+        mock_find.side_effect = [
+            [
+                (
+                    "github.com/user/MEQ",
+                    "MEQ",
+                    [
+                        {
+                            "id": "tcv:/canonical",
+                            "path": "/canonical",
+                            "accessible": True,
+                        },
+                        {"id": "tcv:/clone1", "path": "/clone1", "accessible": False},
+                    ],
+                ),
+            ],
+            [],
+        ]
+
+        state = DiscoveryState(facility="tcv", cost_limit=10.0)
+        progress_calls = []
+
+        def on_progress(msg, stats, results=None):
+            progress_calls.append((msg, stats.processed, results))
+            state.stop_requested = True
+
+        await dedup_worker(state, on_progress=on_progress, batch_size=10)
+
+        # 1 clone + 1 canonical = 2 total
+        assert state.dedup_stats.processed == 2
+        mock_mark_ae.assert_called_once_with("tcv:/canonical", "github.com/user/MEQ")
+        msg, processed, results = progress_calls[0]
+        assert results[0]["canonical_skipped"] is True
 
     @pytest.mark.anyio
     @patch("imas_codex.discovery.paths.parallel._find_clone_groups", return_value=[])
