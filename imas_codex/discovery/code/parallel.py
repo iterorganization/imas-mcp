@@ -67,6 +67,7 @@ async def run_parallel_code_discovery(
     on_code_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
+    stop_event: asyncio.Event | None = None,
     **_kwargs: Any,
 ) -> dict[str, Any]:
     """Run parallel code discovery with async workers.
@@ -164,6 +165,13 @@ async def run_parallel_code_discovery(
             logger.warning("Failed to pre-warm SSH to %s: %s", ssh_host, e)
 
     worker_group = SupervisedWorkerGroup()
+
+    # Watch external stop event (from CLI signal handler)
+    stop_watcher: asyncio.Task | None = None
+    if stop_event is not None:
+        from imas_codex.cli.shutdown import watch_stop_event
+
+        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
 
     # --- Scan workers (skip in score_only mode) ---
     if not score_only:
@@ -278,6 +286,8 @@ async def run_parallel_code_discovery(
         on_tick=orphan_tick,
     )
     state.stop_requested = True
+    if stop_watcher and not stop_watcher.done():
+        stop_watcher.cancel()
 
     elapsed = time.time() - start_time
 

@@ -174,8 +174,12 @@ def documents(
         # Step 2: Process images (fetch + VLM captioning)
         from imas_codex.discovery.documents.pipeline import run_document_discovery
 
-        result = asyncio.run(
-            run_document_discovery(
+        async def _run_documents():
+            from imas_codex.cli.shutdown import install_shutdown_handlers
+
+            stop_event = asyncio.Event()
+            install_shutdown_handlers(stop_event=stop_event)
+            return await run_document_discovery(
                 facility=facility,
                 ssh_host=ssh_host,
                 cost_limit=cost_limit,
@@ -185,8 +189,10 @@ def documents(
                 store_images=store_bytes,
                 focus=focus,
                 deadline=deadline,
+                stop_event=stop_event,
             )
-        )
+
+        result = asyncio.run(_run_documents())
 
         fetched = result.get("images_fetched", 0)
         captioned = result.get("images_captioned", 0)

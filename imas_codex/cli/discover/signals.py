@@ -226,8 +226,13 @@ def signals(
                 sig_logger.info(f"CHECK: {msg}")
 
         if not use_rich:
-            result = asyncio.run(
-                run_parallel_data_discovery(
+
+            async def _run_non_rich():
+                from imas_codex.cli.shutdown import install_shutdown_handlers
+
+                stop_event = asyncio.Event()
+                install_shutdown_handlers(stop_event=stop_event)
+                return await run_parallel_data_discovery(
                     facility=facility,
                     ssh_host=ssh_host,
                     scanner_types=scanner_types,
@@ -243,8 +248,10 @@ def signals(
                     on_discover_progress=log_on_scan,
                     on_enrich_progress=log_on_enrich,
                     on_check_progress=log_on_check,
+                    stop_event=stop_event,
                 )
-            )
+
+            result = asyncio.run(_run_non_rich())
         else:
             # Rich progress display
             from imas_codex.cli.discover.common import create_discovery_monitor
@@ -277,6 +284,11 @@ def signals(
                 display.service_monitor = service_monitor
 
                 async def run_with_display():
+                    from imas_codex.cli.shutdown import install_shutdown_handlers
+
+                    stop_event = asyncio.Event()
+                    install_shutdown_handlers(stop_event=stop_event, display=display)
+
                     await service_monitor.__aenter__()
 
                     async def refresh_graph_state():
@@ -350,6 +362,7 @@ def signals(
                             on_enrich_progress=on_enrich,
                             on_check_progress=on_check,
                             on_worker_status=on_worker_status,
+                            stop_event=stop_event,
                         )
                     finally:
                         refresh_task.cancel()

@@ -2327,6 +2327,7 @@ async def run_parallel_discovery(
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     graceful_shutdown_timeout: float = 5.0,
     deadline: float | None = None,
+    stop_event: asyncio.Event | None = None,
 ) -> dict[str, Any]:
     """Run parallel discovery with all worker types.
 
@@ -2366,6 +2367,9 @@ async def run_parallel_discovery(
         graceful_shutdown_timeout: Seconds to wait for workers to finish after
             limit reached before cancelling (default: 5.0)
         deadline: Unix timestamp when discovery should stop (optional)
+        stop_event: External asyncio.Event for graceful shutdown. When set,
+            ``state.stop_requested`` is activated so workers finish their
+            current batch and exit cleanly.
 
     Terminates when:
     - Cost limit reached
@@ -2456,6 +2460,13 @@ async def run_parallel_discovery(
 
     # Capture initial terminal count for session-based --limit tracking
     state.initial_terminal_count = state.terminal_count
+
+    # Watch external stop event (from CLI signal handler)
+    stop_watcher: asyncio.Task | None = None
+    if stop_event is not None:
+        from imas_codex.cli.shutdown import watch_stop_event
+
+        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
 
     # Create persistent SSH worker pool to amortize PAM session overhead.
     # Each SSH session to some facilities costs ~2.6s (pam_systemd.so scope
@@ -2691,6 +2702,13 @@ async def run_parallel_discovery(
             "refine_errors": state.refine_stats.errors,
         }
     finally:
+        # Cancel stop watcher if still running
+        if stop_watcher is not None and not stop_watcher.done():
+            stop_watcher.cancel()
+            try:
+                await stop_watcher
+            except asyncio.CancelledError:
+                pass
         # Clean up persistent SSH workers on exit (normal, exception, or Ctrl+C)
         if ssh_pool is not None:
             logger.info("Shutting down persistent SSH worker pool")
