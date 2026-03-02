@@ -62,6 +62,7 @@ __all__ = [
     "DEFAULT_INITIAL_BACKOFF",
     "DEFAULT_MAX_BACKOFF",
     "DEFAULT_MAX_RESTARTS",
+    "DEFAULT_RESTART_RESET_SECONDS",
     "OrphanRecoveryResult",
     "OrphanRecoverySpec",
     "PipelinePhase",
@@ -85,6 +86,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_RESTARTS = 10  # Maximum restarts before giving up
 DEFAULT_INITIAL_BACKOFF = 2.0  # Initial backoff on infrastructure error (seconds)
 DEFAULT_MAX_BACKOFF = 60.0  # Maximum backoff time (seconds)
+# If a worker runs successfully for this long before crashing again,
+# the restart counter resets.  This prevents transient errors spread
+# over hours (e.g. Neo4j deadlocks) from accumulating to the kill
+# threshold.
+DEFAULT_RESTART_RESET_SECONDS = 120.0
 
 
 # =============================================================================
@@ -364,6 +370,7 @@ async def supervised_worker(
     max_restarts: int = DEFAULT_MAX_RESTARTS,
     initial_backoff: float = DEFAULT_INITIAL_BACKOFF,
     max_backoff: float = DEFAULT_MAX_BACKOFF,
+    restart_reset_seconds: float = DEFAULT_RESTART_RESET_SECONDS,
     **kwargs: Any,
 ) -> None:
     """Run a worker with supervision - automatic restart on crash.
@@ -371,6 +378,11 @@ async def supervised_worker(
     This wrapper catches any exception from the worker, logs it, and restarts
     the worker with exponential backoff. This ensures transient infrastructure
     errors (Neo4j timeouts, network issues) don't permanently kill workers.
+
+    If the worker runs successfully for ``restart_reset_seconds`` before
+    crashing again, the restart counter and backoff are reset.  This
+    prevents transient errors spread over hours (e.g. Neo4j deadlocks
+    every ~20 minutes) from accumulating to the kill threshold.
 
     Args:
         worker_fn: The async worker function to supervise
@@ -382,6 +394,8 @@ async def supervised_worker(
         max_restarts: Maximum restarts before giving up
         initial_backoff: Initial backoff delay in seconds
         max_backoff: Maximum backoff delay in seconds
+        restart_reset_seconds: Seconds of successful operation before
+            resetting restart counter (default: 120)
     """
     restart_count = 0
     backoff = initial_backoff
@@ -392,6 +406,7 @@ async def supervised_worker(
         status_tracker.max_restarts = max_restarts
 
     while not should_stop_fn() and restart_count < max_restarts:
+        run_start = time.time()
         try:
             if status_tracker:
                 status_tracker.state = WorkerState.running
@@ -412,6 +427,22 @@ async def supervised_worker(
             raise
 
         except Exception as e:
+            # If the worker ran long enough before this crash, reset the
+            # restart budget — it was clearly making progress and this
+            # is a new transient failure, not a crash loop.
+            run_duration = time.time() - run_start
+            if run_duration >= restart_reset_seconds and restart_count > 0:
+                logger.info(
+                    "%s ran for %.0fs before error — resetting restart "
+                    "counter (was %d/%d)",
+                    worker_name,
+                    run_duration,
+                    restart_count,
+                    max_restarts,
+                )
+                restart_count = 0
+                backoff = initial_backoff
+
             restart_count += 1
             is_infra = is_infrastructure_error(e)
 
