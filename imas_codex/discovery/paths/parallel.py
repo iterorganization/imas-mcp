@@ -1214,11 +1214,16 @@ async def dedup_worker(
     git_root_commit).  For each clone group, the canonical instance is
     retained (accessible remote > has remote URL > shallowest depth >
     earliest discovered) and all others are marked terminal with
-    terminal_reason=software_repo.
+    terminal_reason=software_repo, status=skipped, should_expand=false,
+    should_enrich=false.
 
-    Runs concurrently with the score worker.  By claiming VCS clone paths
-    before score does, it avoids spending LLM tokens on repos whose content
-    is available from a publicly accessible remote.
+    This blocks ALL downstream work on duplicate paths:
+    - Paths scoring (claim_paths_for_scoring requires status=scanned)
+    - Path expansion (claim_paths_for_expanding requires status=scored)
+    - Path enrichment (claim_paths_for_enriching requires status=scored)
+    - Score refinement (claim_paths_for_refining requires is_enriched=true)
+    - Code file scanning (claim_paths_for_file_scan requires status=scored)
+    - Ingestion pipeline (queue_files requires scored FacilityPath parent)
 
     The worker runs entirely against the graph — it fires a Cypher query per
     cycle, marks clones terminal, and sleeps briefly.  When no clone groups
