@@ -144,4 +144,14 @@ Boost scores by ~0.15 for paths matching this focus.
 {% include "schema/dimension-calibration.md" %}
 {% endif %}
 
+## Expansion Decision
+
+With enrichment evidence, you can now identify directories that should NOT continue expanding. Set `should_expand=false` for:
+
+- **Data directories** — enrichment reveals large byte counts but zero or near-zero code lines, no pattern matches. These are shot data, simulation outputs, or measurement archives. Classified as `modeling_data` or `experimental_data`.
+- **Archive/log directories** — enrichment shows no code patterns, only data files or logs.
+- **Directories with no code evidence** — enrichment confirms zero LOC, no pattern matches, no code file types. The initial scorer may have expanded speculatively; enrichment now proves there's nothing to explore.
+
+Do NOT change `should_expand` for directories where enrichment confirms they contain code (LOC > 0, pattern matches > 0). Only change expansion when enrichment provides clear evidence the directory is a data container or has no code value.
+
 {% include "schema/refine-output.md" %}
