@@ -23,11 +23,14 @@ import logging
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from imas_codex.config.discovery_config import get_discovery_config
 from imas_codex.discovery.base.facility import get_facility
 from imas_codex.remote.executor import async_run_python_script, run_python_script
+
+if TYPE_CHECKING:
+    from imas_codex.remote.ssh_worker import SSHWorkerPool
 
 logger = logging.getLogger(__name__)
 
@@ -422,11 +425,16 @@ async def async_enrich_paths(
     paths: list[str],
     timeout: int = 300,
     path_purposes: dict[str, str | None] | None = None,
+    pool: SSHWorkerPool | None = None,
 ) -> list[EnrichmentResult]:
     """Async version of enrich_paths using asyncio subprocesses.
 
     Fully cancellable — SSH subprocess is killed on task cancellation.
     Same parsing logic and error handling as sync version.
+
+    Args:
+        pool: Optional persistent SSH worker pool. When provided, uses
+            a persistent SSH session instead of creating a new one per call.
     """
     import asyncio
 
@@ -436,12 +444,23 @@ async def async_enrich_paths(
     ssh_host, input_data = _build_enrich_input(facility, paths, path_purposes)
 
     try:
-        output = await async_run_python_script(
-            "enrich_directories.py",
-            input_data=input_data,
-            ssh_host=ssh_host,
-            timeout=timeout,
-        )
+        if pool is not None:
+            from imas_codex.remote.ssh_worker import pooled_run_python_script
+
+            output = await pooled_run_python_script(
+                "enrich_directories.py",
+                input_data=input_data,
+                ssh_host=ssh_host,
+                timeout=timeout,
+                pool=pool,
+            )
+        else:
+            output = await async_run_python_script(
+                "enrich_directories.py",
+                input_data=input_data,
+                ssh_host=ssh_host,
+                timeout=timeout,
+            )
     except subprocess.TimeoutExpired as e:
         # Recover partial results from JSONL lines that completed before timeout
         partial_output = getattr(e, "output", None) or ""
