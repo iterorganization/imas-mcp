@@ -211,7 +211,11 @@ def require_ssh_connection(ssh_host: str, timeout: int = 10) -> None:
 
 
 def get_ssh_socket_dir() -> Path:
-    """Get the SSH control socket directory from config or default."""
+    """Get the SSH control socket directory from config or default.
+
+    Creates the directory if it doesn't exist — SSH ControlMaster fails
+    with ``unix_listener: cannot bind to path`` when the directory is missing.
+    """
     ssh_config_path = Path.home() / ".ssh" / "config"
 
     # Default socket directory
@@ -233,6 +237,9 @@ def get_ssh_socket_dir() -> Path:
                     break
         except Exception:
             pass
+
+    # Ensure the directory exists — ControlMaster cannot create it
+    socket_dir.mkdir(parents=True, exist_ok=True)
 
     return socket_dir
 
@@ -409,6 +416,158 @@ def _invalidate_ssh_host(ssh_host: str) -> None:
     """
     _verified_hosts.discard(ssh_host)
     logger.debug("Invalidated SSH host %s after timeout", ssh_host)
+
+
+# ============================================================================
+# Consolidated SSH Preflight & Warm-up
+# ============================================================================
+
+
+def ssh_preflight(
+    ssh_host: str, *, timeout: int = 10, retry: bool = True
+) -> tuple[bool, str]:
+    """Canonical SSH connectivity check with socket dir, cleanup, and retry.
+
+    This is the **single function** all CLI commands and service monitors
+    should use for SSH connectivity validation.  It:
+
+    1. Ensures the ControlPath socket directory exists.
+    2. Checks and cleans stale ControlMaster sockets.
+    3. Runs ``ssh host "echo ok"`` to verify end-to-end connectivity.
+    4. On failure, cleans sockets and retries once (if *retry* is True).
+
+    Args:
+        ssh_host: SSH host alias (e.g. ``'tcv'``, ``'jt-60sa'``).
+        timeout:  Per-attempt SSH timeout in seconds.
+        retry:    Retry once after socket cleanup on failure.
+
+    Returns:
+        ``(True, detail)`` on success, ``(False, detail)`` on failure.
+    """
+    if is_local_host(ssh_host):
+        return True, f"{ssh_host} (local)"
+
+    # 1. Ensure socket directory exists
+    get_ssh_socket_dir()
+
+    # 2. Proactive stale-socket cleanup
+    if not check_ssh_socket(ssh_host, timeout=5):
+        logger.info("Cleaning stale SSH socket for %s before preflight", ssh_host)
+        cleanup_stale_socket(ssh_host)
+
+    # 3. Connectivity test
+    def _probe() -> tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    "-o",
+                    f"ConnectTimeout={timeout}",
+                    "-o",
+                    "BatchMode=yes",
+                    ssh_host,
+                    "echo ok",
+                ],
+                capture_output=True,
+                timeout=timeout + 5,
+            )
+            if result.returncode == 0 and b"ok" in result.stdout:
+                return True, ssh_host
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()[:200]
+            logger.warning("SSH preflight to %s failed: %s", ssh_host, stderr)
+            return False, stderr or f"exit code {result.returncode}"
+        except subprocess.TimeoutExpired:
+            return False, f"timeout ({timeout}s)"
+        except Exception as e:
+            return False, str(e)[:200]
+
+    ok, detail = _probe()
+    if ok:
+        return True, detail
+
+    if not retry:
+        return False, detail
+
+    # 4. Retry after cleanup
+    logger.info("SSH preflight failed for %s, retrying after socket cleanup", ssh_host)
+    cleanup_stale_socket(ssh_host)
+
+    ok, detail = _probe()
+    return ok, detail
+
+
+def warm_ssh_controlmaster(ssh_host: str, *, timeout: int = 30) -> bool:
+    """Ensure an SSH ControlMaster is established for *ssh_host*.
+
+    If a healthy ControlMaster already exists (``ssh -O check`` succeeds),
+    this is a no-op.  Otherwise it opens a new connection with
+    ``ssh host true`` so that subsequent multiplexed connections are fast.
+
+    Args:
+        ssh_host: SSH host alias.
+        timeout:  Timeout for the establishing connection.
+
+    Returns:
+        ``True`` if a ControlMaster is (now) active, ``False`` on failure.
+    """
+    if is_local_host(ssh_host):
+        return True
+
+    # Ensure socket directory exists
+    get_ssh_socket_dir()
+
+    # Already healthy?
+    if check_ssh_socket(ssh_host, timeout=5):
+        return True
+
+    # Establish a fresh ControlMaster
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                f"ConnectTimeout={timeout}",
+                "-o",
+                "BatchMode=yes",
+                ssh_host,
+                "true",
+            ],
+            capture_output=True,
+            timeout=timeout + 5,
+        )
+        if result.returncode == 0:
+            logger.info("SSH ControlMaster established for %s", ssh_host)
+            return True
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()[:100]
+        logger.warning("Failed to warm SSH ControlMaster for %s: %s", ssh_host, stderr)
+        return False
+    except subprocess.TimeoutExpired:
+        logger.warning("SSH ControlMaster warm-up timed out for %s", ssh_host)
+        return False
+    except Exception as e:
+        logger.warning("SSH ControlMaster warm-up failed for %s: %s", ssh_host, e)
+        return False
+
+
+def cleanup_ssh_on_exit() -> None:
+    """Best-effort cleanup of all SSH sockets on process exit.
+
+    Called by CLI groups on ``KeyboardInterrupt`` / ``click.Abort``.
+    Does NOT aggressively kill ControlMasters (they expire via
+    ``ControlPersist``), but closes any active worker pools.
+    """
+    try:
+        import asyncio
+
+        from imas_codex.remote.ssh_worker import close_all_pools
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(close_all_pools())
+        except RuntimeError:
+            asyncio.run(close_all_pools())
+    except Exception:
+        pass  # Best-effort
 
 
 # PATH directories to prepend for SSH commands (non-interactive shells don't load full profile)

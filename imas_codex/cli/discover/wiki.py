@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import subprocess
 import time
 
 import click
@@ -376,32 +375,18 @@ def wiki(
     # Pre-warm SSH ControlMaster for all sites that need SSH access.
     # This prevents race conditions when bulk_discover_pages tries SSH
     # before the ControlMaster is established.
+    from imas_codex.remote.executor import warm_ssh_controlmaster
+
     _ssh_hosts_warmed: set[str] = set()
     for _site in wiki_sites:
         _am = _site.get("access_method", "direct")
         if _am in ("vpn", "tunnel") or _site.get("ssh_available", False):
             _sh = _site.get("ssh_host") or config.get("ssh_host")
             if _sh and _sh not in _ssh_hosts_warmed:
-                try:
-                    subprocess.run(
-                        ["ssh", "-O", "check", _sh],
-                        capture_output=True,
-                        timeout=5,
-                    )
+                if warm_ssh_controlmaster(_sh, timeout=30):
                     _ssh_hosts_warmed.add(_sh)
-                except Exception:
-                    try:
-                        subprocess.run(
-                            ["ssh", _sh, "true"],
-                            capture_output=True,
-                            timeout=30,
-                        )
-                        _ssh_hosts_warmed.add(_sh)
-                        log_print(f"[dim]SSH ControlMaster established for {_sh}[/dim]")
-                    except Exception as _e:
-                        log_print(
-                            f"[yellow]Warning: SSH to {_sh} failed: {_e}[/yellow]"
-                        )
+                else:
+                    log_print(f"[yellow]Warning: SSH to {_sh} failed[/yellow]")
 
     # Validate all sites and run bulk discovery for each
     site_configs: list[dict] = []
