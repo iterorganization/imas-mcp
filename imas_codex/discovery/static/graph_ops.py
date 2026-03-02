@@ -210,6 +210,31 @@ def mark_version_units_extracted(
         )
 
 
+def mark_all_versions_units_extracted(
+    facility: str,
+    tree_name: str,
+    units_count: int,
+) -> None:
+    """Mark all ingested TreeModelVersions as having completed unit extraction.
+
+    Units are per-tree (shared nodes), not per-version. Marking all versions
+    ensures idempotency so re-runs skip units extraction entirely.
+    """
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (v:TreeModelVersion)
+            WHERE v.facility_id = $facility AND v.tree_name = $tree_name
+              AND v.status = 'ingested'
+            SET v.units_extracted = true,
+                v.units_count = $units_count
+            """,
+            facility=facility,
+            tree_name=tree_name,
+            units_count=units_count,
+        )
+
+
 def merge_units_to_graph(
     facility: str,
     tree_name: str,

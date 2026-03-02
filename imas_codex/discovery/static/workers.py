@@ -198,7 +198,7 @@ async def units_worker(
 
     from .graph_ops import (
         has_pending_units_work,
-        mark_version_units_extracted,
+        mark_all_versions_units_extracted,
         merge_units_to_graph,
     )
 
@@ -231,8 +231,6 @@ async def units_worker(
         latest_version = max(v["version"] for v in ver_configs)
     else:
         latest_version = 1
-
-    version_id = f"{state.facility}:{state.tree_name}:v{latest_version}"
 
     if on_progress:
         on_progress(
@@ -293,9 +291,14 @@ async def units_worker(
             if on_progress:
                 on_progress("no units found", state.units_stats, None)
 
-        # Mark version as units-extracted (ledger entry)
+        # Mark ALL ingested versions as units-extracted since units are
+        # per-tree (shared nodes), not per-version. This ensures idempotency:
+        # re-runs skip units if any version was already marked.
         await asyncio.to_thread(
-            mark_version_units_extracted, version_id, len(units) if units else 0
+            mark_all_versions_units_extracted,
+            state.facility,
+            state.tree_name,
+            len(units) if units else 0,
         )
 
     except Exception as e:
