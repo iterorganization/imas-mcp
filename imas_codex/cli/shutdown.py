@@ -6,8 +6,8 @@ with rich shutdown progress tracking:
   First Ctrl+C:  Signal workers to stop, switch display to shutdown
                  mode showing per-group drain progress.  Workers
                  finish their current batch and exit cleanly.
-  Second Ctrl+C: Force-cancel all async tasks, stop Rich display, exit
-  Third Ctrl+C:  Immediate process exit (nuclear, should never be needed)
+  Second Ctrl+C: Stops Rich display, cancels all async tasks.
+  Third Ctrl+C:  Immediate process exit (os._exit).
 
 Usage in async discovery loops::
 
@@ -36,8 +36,40 @@ import asyncio
 import logging
 import os
 import signal
+import sys
+from collections.abc import Coroutine
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def safe_asyncio_run[T](coro: Coroutine[Any, Any, T]) -> T:
+    """Run an async coroutine, suppressing 'Event loop is closed' on cleanup.
+
+    ``asyncio.run()`` closes the event loop after the coroutine returns.
+    If any ``asyncio.create_subprocess_exec()``-spawned transports are
+    garbage-collected *after* the loop is closed, their ``__del__``
+    methods raise ``RuntimeError: Event loop is closed`` — an ugly but
+    harmless traceback on stderr.
+
+    This wrapper installs a temporary ``sys.unraisablehook`` that
+    silences only that specific error, then restores the original hook.
+    """
+    old_hook = sys.unraisablehook
+
+    def _suppress_closed_loop(unraisable: sys.UnraisableHookArgs) -> None:
+        if (
+            isinstance(unraisable.exc_value, RuntimeError)
+            and str(unraisable.exc_value) == "Event loop is closed"
+        ):
+            return
+        old_hook(unraisable)
+
+    sys.unraisablehook = _suppress_closed_loop
+    try:
+        return asyncio.run(coro)
+    finally:
+        sys.unraisablehook = old_hook
 
 
 def install_shutdown_handlers(
@@ -54,9 +86,9 @@ def install_shutdown_handlers(
     1. First Ctrl+C:  Sets stop_event, switches the progress display
        to shutdown mode (yellow border, live worker-drain tracker).
        Workers finish their current batch and exit.
-    2. Second Ctrl+C: Stops Rich Live display, removes custom handler,
-       re-delivers SIGINT to trigger asyncio's default cancellation.
-    3. Third Ctrl+C:  ``os._exit(130)`` (emergency, should not be needed).
+    2. Second Ctrl+C: Stops Rich Live display, cancels all async tasks
+       so the coroutine chain unwinds.
+    3. Third Ctrl+C:  ``os._exit(130)`` (hard exit).
 
     Args:
         stop_event: asyncio.Event that parallel runners watch to
@@ -89,16 +121,13 @@ def install_shutdown_handlers(
                     live.stop()
                 except Exception:
                     pass
-            # Restore asyncio's default handler and re-deliver SIGINT
-            # so asyncio.run() cancels the main task and raises
-            # KeyboardInterrupt to the calling code.
-            try:
-                loop.remove_signal_handler(signal.SIGINT)
-            except Exception:
-                pass
-            os.kill(os.getpid(), signal.SIGINT)
+            # Keep our signal handler installed so the third Ctrl+C
+            # reaches os._exit(130) below.  Cancel all running tasks
+            # from the event loop so the coroutine chain unwinds.
+            for task in asyncio.all_tasks(loop):
+                task.cancel()
         else:
-            # Nuclear exit -- should never be needed
+            # Hard exit -- reached when graceful cancel didn't work
             os._exit(130)
 
     loop.add_signal_handler(signal.SIGINT, _handle_sigint)

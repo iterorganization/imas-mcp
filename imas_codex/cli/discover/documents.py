@@ -192,7 +192,9 @@ def documents(
                 stop_event=stop_event,
             )
 
-        result = asyncio.run(_run_documents())
+        from imas_codex.cli.shutdown import safe_asyncio_run
+
+        result = safe_asyncio_run(_run_documents())
 
         fetched = result.get("images_fetched", 0)
         captioned = result.get("images_captioned", 0)

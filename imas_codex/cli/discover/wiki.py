@@ -1186,7 +1186,9 @@ def wiki(
         if time_limit is not None:
             deadline = time.time() + (time_limit * 60)
 
-        result = asyncio.run(
+        from imas_codex.cli.shutdown import safe_asyncio_run
+
+        result = safe_asyncio_run(
             run_all_sites_unified(
                 _facility=facility,
                 _site_configs=site_configs,

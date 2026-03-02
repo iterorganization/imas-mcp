@@ -693,7 +693,9 @@ def _run_plain(
             stop_event=stop_event,
         )
 
-    result = asyncio.run(_run_non_rich())
+    from imas_codex.cli.shutdown import safe_asyncio_run
+
+    result = safe_asyncio_run(_run_non_rich())
 
     logger.info(
         "Complete: %d versions extracted, %d nodes enriched, $%.2f cost, %.0fs",
@@ -841,7 +843,9 @@ def _run_with_rich(
                     pass
                 await service_monitor.__aexit__(None, None, None)
 
-        asyncio.run(run_with_display())
+        from imas_codex.cli.shutdown import safe_asyncio_run
+
+        safe_asyncio_run(run_with_display())
 
         # Final graph refresh for accurate summary
         try:
