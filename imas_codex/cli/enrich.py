@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 import click
@@ -379,7 +378,9 @@ def enrich_nodes(
             )
 
     console.print()
-    results = asyncio.run(run_with_progress())
+    from imas_codex.cli.shutdown import safe_asyncio_run
+
+    results = safe_asyncio_run(run_with_progress())
     console.print()
 
     # Final summary

@@ -83,8 +83,6 @@ def ingest_run(
         # Preview what would be processed
         imas-codex ingest run tcv --dry-run
     """
-    import asyncio
-
     from imas_codex.ingestion import get_pending_files, ingest_files
 
     # Get pending files (discovered, not yet ingested)
@@ -130,7 +128,9 @@ def ingest_run(
             )
 
         try:
-            stats = asyncio.run(
+            from imas_codex.cli.shutdown import safe_asyncio_run
+
+            stats = safe_asyncio_run(
                 ingest_files(
                     facility=facility,
                     remote_paths=None,  # Use graph queue

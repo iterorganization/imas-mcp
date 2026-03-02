@@ -97,7 +97,9 @@ def run_async(coro: Any) -> Any:
         return loop.run_until_complete(coro)
     except RuntimeError:
         # No running loop - normal CLI case
-        return asyncio.run(coro)
+        from imas_codex.cli.shutdown import safe_asyncio_run
+
+        return safe_asyncio_run(coro)
 
 
 def setup_logging(log_level: str) -> None:

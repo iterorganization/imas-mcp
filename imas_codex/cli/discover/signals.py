@@ -251,7 +251,9 @@ def signals(
                     stop_event=stop_event,
                 )
 
-            result = asyncio.run(_run_non_rich())
+            from imas_codex.cli.shutdown import safe_asyncio_run
+
+            result = safe_asyncio_run(_run_non_rich())
         else:
             # Rich progress display
             from imas_codex.cli.discover.common import create_discovery_monitor
@@ -377,7 +379,9 @@ def signals(
                             pass
                         await service_monitor.__aexit__(None, None, None)
 
-                result = asyncio.run(run_with_display())
+                from imas_codex.cli.shutdown import safe_asyncio_run
+
+                result = safe_asyncio_run(run_with_display())
 
                 # Final graph refresh for accurate summary
                 try:

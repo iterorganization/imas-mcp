@@ -335,8 +335,10 @@ def _run_iterative_discovery(
         log_print(f"Focus: {focus}")
 
     # Run the async discovery loop
+    from imas_codex.cli.shutdown import safe_asyncio_run
+
     try:
-        result, scored_this_run = asyncio.run(
+        result, scored_this_run = safe_asyncio_run(
             _async_discovery_loop(
                 facility=facility,
                 budget=budget,
