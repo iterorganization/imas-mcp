@@ -639,6 +639,11 @@ class SupervisedWorkerGroup:
                     len(still_pending),
                     timeout,
                 )
+        # Force-stop status for any workers still active so the display
+        # transitions from "draining" to "done" immediately.
+        for status in self._workers.values():
+            if status.is_active:
+                status.state = WorkerState.stopped
 
 
 # =============================================================================

@@ -761,10 +761,10 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.scan_rate = stats.ema_rate or stats.active_rate
 
         # Track processing state for display
-        # Don't clear current_scan when idle - let queue drain naturally
-        # via tick(). Only update the processing flag.
         if message == "idle":
             self.state.scan_processing = False
+            self.state.scan_queue.clear()
+            self.state.current_scan = None
             self._refresh()
             return
         elif "scanning" in message.lower():
@@ -810,10 +810,10 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state._run_score_cost = stats.cost
 
         # Track processing state for display
-        # Don't clear current_score when waiting - let queue drain naturally
-        # via tick(). Only update the processing flag.
         if "waiting" in message.lower():
             self.state.score_processing = False
+            self.state.score_queue.clear()
+            self.state.current_score = None
             self._refresh()
             return
         elif "scoring" in message.lower():
@@ -901,10 +901,10 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.enrich_rate = stats.ema_rate or stats.active_rate
 
         # Track processing state for display
-        # Don't clear current_enrich when waiting - let queue drain naturally
-        # via tick(). Only update the processing flag.
         if "waiting" in message.lower():
             self.state.enrich_processing = False
+            self.state.enrich_queue.clear()
+            self.state.current_enrich = None
             self._refresh()
             return
         elif "enriching" in message.lower():
@@ -1007,6 +1007,8 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         # Track processing state for display
         if "waiting" in message.lower():
             self.state.refine_processing = False
+            self.state.refine_queue.clear()
+            self.state.current_refine = None
             self._refresh()
             return
         elif "rescoring" in message.lower():
@@ -1104,6 +1106,26 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
+    def begin_shutdown(self) -> None:
+        """Switch display to shutdown mode, clearing all streaming queues.
+
+        Streaming queues are a user-facing feature that should not delay
+        shutdown.  Clear them immediately so tick() has nothing to drain
+        and the display transitions cleanly to the shutdown section.
+        """
+        # Clear streaming queues — no need to drain during shutdown
+        self.state.scan_queue.clear()
+        self.state.score_queue.clear()
+        self.state.enrich_queue.clear()
+        self.state.refine_queue.clear()
+        # Clear current display items
+        self.state.current_scan = None
+        self.state.current_score = None
+        self.state.current_enrich = None
+        self.state.current_refine = None
+        self.state.current_dedup = None
+        super().begin_shutdown()
+
     def tick(self) -> None:
         """Drain streaming queues for smooth display.
 
@@ -1111,7 +1133,12 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         (not processing a batch).  This prevents flicker between content
         and "idle" when the queue empties between batches while the
         worker is still actively claiming and processing work.
+
+        Becomes a no-op during shutdown — streaming queues are cleared
+        in begin_shutdown() and should not be re-processed.
         """
+        if self._shutting_down:
+            return
         updated = False
 
         next_scan = self.state.scan_queue.pop()

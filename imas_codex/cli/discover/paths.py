@@ -693,7 +693,8 @@ async def _async_discovery_loop(
 
             async def refresh_graph_state():
                 while True:
-                    display.refresh_from_graph(facility)
+                    if not stop_event.is_set():
+                        display.refresh_from_graph(facility)
                     await asyncio.sleep(0.5)
 
             async def queue_ticker():
