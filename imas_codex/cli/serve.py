@@ -1784,16 +1784,19 @@ def _clean_neo4j_locks(node: str) -> None:
         "# Clear stale POSIX locks on neostore* via inode replacement.\n"
         "# Use dd instead of cp — cp uses fstat/fadvise which interact\n"
         "# with GPFS's distributed lock manager and hang on stale locks.\n"
+        "# Each dd is wrapped in a 5s timeout — if GPFS blocks on a\n"
+        "# stale lock the file is skipped (Neo4j recovery handles it).\n"
         'for ns in "$DATA"/databases/*/neostore*; do\n'
         '    [ -f "$ns" ] || continue\n'
-        '    dd if="$ns" of="$ns.unlock" bs=4k 2>/dev/null '
-        '&& mv -f "$ns.unlock" "$ns"\n'
+        '    timeout 5 dd if="$ns" of="$ns.unlock" bs=4k 2>/dev/null '
+        '&& mv -f "$ns.unlock" "$ns" '
+        '|| rm -f "$ns.unlock" 2>/dev/null\n'
         "done\n"
         "echo locks_cleaned\n"
     )
     try:
-        _run_on_node(node, clean, timeout=60)
-    except subprocess.CalledProcessError:
+        _run_on_node(node, clean, timeout=120)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         pass
 
 
