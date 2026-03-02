@@ -247,13 +247,14 @@ def has_pending_work(facility: str) -> bool:
     - Scanned paths awaiting scoring (including actively claimed)
     - Scored paths with should_expand=true that haven't been expanded yet
     - Scored paths with should_enrich=true that haven't been enriched yet
-    - Enriched paths that haven't been refined yet
+    - Enriched paths above the discovery threshold that haven't been refined yet
 
     Note: Unlike claim functions, this does NOT filter out claimed paths.
     Claimed paths represent active work in progress and must count as
     pending to prevent premature termination while workers are mid-task.
     """
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold
 
     with GraphClient() as gc:
         result = gc.query(
@@ -270,7 +271,8 @@ def has_pending_work(facility: str) -> bool:
                  CASE WHEN p.status = $scored AND p.should_enrich = true
                       AND (p.is_enriched IS NULL OR p.is_enriched = false)
                       THEN 'enrich' ELSE null END AS enr,
-                 CASE WHEN p.is_enriched = true AND p.refined_at IS NULL
+                 CASE WHEN p.is_enriched = true AND p.score >= $min_score
+                      AND p.refined_at IS NULL
                       THEN 'refine' ELSE null END AS rsc
             WHERE disc IS NOT NULL OR scn IS NOT NULL OR exp IS NOT NULL
                   OR enr IS NOT NULL OR rsc IS NOT NULL
@@ -285,6 +287,7 @@ def has_pending_work(facility: str) -> bool:
             discovered=PathStatus.discovered.value,
             scanned=PathStatus.scanned.value,
             scored=PathStatus.scored.value,
+            min_score=get_discovery_threshold(),
         )
         if result:
             pending = result[0]["pending"]
@@ -381,20 +384,24 @@ def _has_pending_refine_work(facility: str) -> bool:
     """Check if there are enriched paths awaiting refinement.
 
     Matches the same criteria as claim_paths_for_refining:
-    enriched paths that haven't been refined yet (no score filter —
-    if we spent resources enriching a path, it should be refined).
+    enriched paths above the discovery threshold that haven't been
+    refined yet.
     """
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold
 
+    threshold = get_discovery_threshold()
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.is_enriched = true
+              AND p.score >= $min_score
               AND p.refined_at IS NULL
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,
+            min_score=threshold,
         )
         return bool(result and result[0]["has_work"])
 
@@ -679,16 +686,17 @@ def claim_paths_for_refining(
     facility: str,
     limit: int = 10,
     root_filter: list[str] | None = None,
+    min_score: float | None = None,
 ) -> list[dict[str, Any]]:
     """Atomically claim enriched paths for rescoring.
 
     Claims paths where:
     - is_enriched = true
+    - score >= min_score (defaults to get_discovery_threshold())
     - refined_at is null
 
-    No score filter — if a path was worth enriching, it should be refined.
-    Refinement re-evaluates the score using enrichment data (total_bytes,
-    total_lines, language_breakdown).
+    Refinement is an LLM call so we only refine paths above the
+    discovery threshold to avoid spending budget on low-value paths.
 
     Returns paths that this worker now owns.
 
@@ -696,8 +704,12 @@ def claim_paths_for_refining(
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
+        min_score: Minimum score for refinement (default: discovery threshold)
     """
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold
+
+    threshold = min_score if min_score is not None else get_discovery_threshold()
 
     # Build root filter clause
     root_clause = ""
@@ -710,6 +722,7 @@ def claim_paths_for_refining(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
+              AND p.score >= $min_score
               AND p.refined_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
@@ -752,6 +765,7 @@ def claim_paths_for_refining(
             limit=limit,
             cutoff=cutoff,
             root_filter=root_filter or [],
+            min_score=threshold,
         )
         return list(result)
 

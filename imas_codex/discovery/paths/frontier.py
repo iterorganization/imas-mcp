@@ -264,6 +264,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
         max_depth, claimed (paths with active claims)
     """
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold
 
     with GraphClient() as gc:
         result = gc.query(
@@ -281,7 +282,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.status = $scored AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 sum(CASE WHEN p.is_enriched = true THEN 1 ELSE 0 END) AS enriched,
                 sum(CASE WHEN p.refined_at IS NOT NULL THEN 1 ELSE 0 END) AS refined,
-                sum(CASE WHEN p.is_enriched = true AND p.refined_at IS NULL THEN 1 ELSE 0 END) AS refine_ready,
+                sum(CASE WHEN p.is_enriched = true AND p.score >= $min_score AND p.refined_at IS NULL THEN 1 ELSE 0 END) AS refine_ready,
                 max(coalesce(p.depth, 0)) AS max_depth
             """,
             facility=facility,
@@ -290,6 +291,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             scored=PathStatus.scored.value,
             skipped=PathStatus.skipped.value,
             excluded_reason=TerminalReason.excluded.value,
+            min_score=get_discovery_threshold(),
         )
 
         if result:
