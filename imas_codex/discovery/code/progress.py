@@ -37,7 +37,6 @@ from imas_codex.discovery.base.progress import (
     build_resource_section,
     clean_text,
     clip_path,
-    clip_text,
     format_time,
 )
 
@@ -327,11 +326,11 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # SCAN activity
         scan_text = ""
-        scan_detail: list[tuple[str, str]] | None = None
+        scan_desc = ""
         if scan:
             scan_text = clip_path(scan.path, content_width - 10)
             if scan.files_found > 0:
-                scan_detail = [(f"{scan.files_found} files found", "cyan")]
+                scan_desc = f"{scan.files_found} files found"
 
         # SCORE activity — uses structured fields for 3-line layout:
         #   Line 2: score  [category]  /path/clipped...         rate
@@ -340,22 +339,15 @@ class FileProgressDisplay(BaseProgressDisplay):
         score_value: float | None = None
         score_category = ""
         score_desc = ""
-        score_detail: list[tuple[str, str]] | None = None  # legacy for skipped
+        score_terminal = ""
         if score:
             score_text = clip_path(score.path, content_width - 10)
             if score.skipped:
-                parts: list[tuple[str, str]] = [("skip", "yellow")]
+                score_terminal = "skip"
                 if score.category:
-                    parts.append((f"  [{score.category}]", "dim"))
+                    score_category = score.category
                 if score.description:
-                    desc = clean_text(score.description)
-                    parts.append(
-                        (
-                            f"  {clip_text(desc, content_width - 20)}",
-                            "italic dim",
-                        )
-                    )
-                score_detail = parts
+                    score_desc = clean_text(score.description)
             elif score.score is not None:
                 score_value = score.score
                 if score.category:
@@ -365,23 +357,21 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         # ENRICH activity
         enrich_text = ""
-        enrich_detail: list[tuple[str, str]] | None = None
+        enrich_desc = ""
         if enrich:
             enrich_text = clip_path(enrich.path, content_width - 10)
             if enrich.patterns > 0:
-                enrich_detail = [(f"{enrich.patterns} patterns", "cyan")]
+                enrich_desc = f"{enrich.patterns} patterns"
 
         # INGEST activity (combined code + docs)
         ingest_text = ""
-        ingest_detail: list[tuple[str, str]] | None = None
+        ingest_desc = ""
         if ingest:
             ingest_text = clip_path(ingest.path, content_width - 10)
-            parts = []
             if ingest.language:
-                parts.append((f"[{ingest.language}]", "green dim"))
+                ingest_desc = f"[{ingest.language}]"
             elif ingest.file_type:
-                parts.append((f"[{ingest.file_type}]", "dim"))
-            ingest_detail = parts or None
+                ingest_desc = f"[{ingest.file_type}]"
 
         # --- Build pipeline rows ---
 
@@ -394,7 +384,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 rate=self.state.scan_rate,
                 disabled=self.state.score_only,
                 primary_text=scan_text,
-                detail_parts=scan_detail,
+                description=scan_desc,
                 is_processing=self.state.scan_processing,
                 is_complete=scan_complete,
                 worker_count=scan_count,
@@ -411,8 +401,8 @@ class FileProgressDisplay(BaseProgressDisplay):
                 primary_text=score_text,
                 score_value=score_value,
                 physics_domain=score_category,
+                terminal_label=score_terminal,
                 description=score_desc,
-                detail_parts=score_detail,
                 is_processing=self.state.score_processing,
                 is_complete=score_complete,
                 worker_count=score_count,
@@ -426,7 +416,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 rate=self.state.enrich_rate,
                 disabled=self.state.scan_only or self.state.score_only,
                 primary_text=enrich_text,
-                detail_parts=enrich_detail,
+                description=enrich_desc,
                 is_processing=self.state.enrich_processing,
                 is_complete=enrich_complete,
                 worker_count=enrich_count,
@@ -440,7 +430,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 rate=self.state.ingest_rate,
                 disabled=self.state.scan_only or self.state.score_only,
                 primary_text=ingest_text,
-                detail_parts=ingest_detail,
+                description=ingest_desc,
                 is_processing=self.state.ingest_processing,
                 is_complete=ingest_complete,
                 worker_count=ingest_count,

@@ -309,7 +309,7 @@ class DataProgressDisplay(BaseProgressDisplay):
         # SCAN activity
         scan = self.state.current_scan
         scan_text = ""
-        scan_detail: list[tuple[str, str]] | None = None
+        scan_desc = ""
         if scan:
             if scan.epoch_phase:
                 if scan.epoch_phase == "coarse":
@@ -333,19 +333,16 @@ class DataProgressDisplay(BaseProgressDisplay):
                 path = scan.node_path or scan.signal_id
                 scan_text = clip_text(path, content_width - 10)
 
-            parts: list[tuple[str, str]] = []
+            desc_parts = []
             if scan.tree_name:
-                parts.append((f"tree={scan.tree_name}  ", "cyan"))
+                desc_parts.append(f"tree={scan.tree_name}")
             if scan.epoch_phase and scan.epoch_boundaries_found > 0:
-                parts.append(
-                    (f"{scan.epoch_boundaries_found} epochs detected", "yellow")
-                )
+                desc_parts.append(f"{scan.epoch_boundaries_found} epochs detected")
             elif scan.signals_in_tree > 0:
-                parts.append((f"{scan.signals_in_tree:,} nodes scanned", "dim"))
-            scan_detail = parts or None
+                desc_parts.append(f"{scan.signals_in_tree:,} nodes scanned")
+            scan_desc = "  ".join(desc_parts)
         elif self.state.scan_processing and self.state.current_tree:
-            scan_text = ""  # Will show processing label
-            scan_detail = [(f"tree={self.state.current_tree}", "cyan")]
+            scan_text = f"tree={self.state.current_tree}"
 
         # ENRICH activity
         enrich = self.state.current_enrich
@@ -362,17 +359,20 @@ class DataProgressDisplay(BaseProgressDisplay):
         # CHECK activity
         validate = self.state.current_check
         check_text = ""
-        check_detail: list[tuple[str, str]] | None = None
+        check_domain = ""
+        check_desc = ""
         if validate:
+            check_text = clip_text(validate.signal_id, content_width - 10)
+            if validate.physics_domain:
+                check_domain = validate.physics_domain
             shot_str = f"shot={validate.shot}" if validate.shot else ""
             if validate.success is True:
-                check_text = f"{shot_str} success"
+                status = "success"
             elif validate.success is False:
-                err = validate.error[:40] if validate.error else "failed"
-                check_text = f"{shot_str} {err}"
+                status = validate.error[:40] if validate.error else "failed"
             else:
-                check_text = f"{shot_str} testing..."
-            check_detail = [(clip_text(validate.signal_id, content_width - 10), "dim")]
+                status = "testing..."
+            check_desc = f"{shot_str}  {status}".strip() if shot_str else status
 
         # --- Build pipeline rows ---
 
@@ -387,7 +387,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                 worker_count=scan_count,
                 worker_annotation=scan_ann,
                 primary_text=scan_text,
-                detail_parts=scan_detail,
+                description=scan_desc,
                 is_processing=self.state.scan_processing,
                 is_complete=scan_complete,
                 processing_label="scanning...",
@@ -419,7 +419,8 @@ class DataProgressDisplay(BaseProgressDisplay):
                 worker_count=check_count,
                 worker_annotation=check_ann,
                 primary_text=check_text,
-                detail_parts=check_detail,
+                physics_domain=check_domain,
+                description=check_desc,
                 is_processing=self.state.check_processing,
                 is_complete=check_complete,
                 processing_label="testing...",
