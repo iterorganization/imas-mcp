@@ -730,8 +730,10 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     if config.has_content and _desc:
         line3.append("  ", style="dim")
         _style = "italic dim" if config.description else "cyan dim italic"
-        # Clip description at bar right edge so "..." aligns with bar end
-        max_desc = max(10, LABEL_WIDTH + bar_width - 2)
+        # Description extends to full row width, minus indent and cost text.
+        # When clipped, "..." aligns with the cost column.
+        cost_reserve = (len(cost_s) + 1) if cost_s else 0
+        max_desc = max(10, row_width - 2 - cost_reserve)
         line3.append(clip_text(clean_text(_desc), max_desc), style=_style)
     # Right-align cost on line 3 (below rate on line 2)
     if cost_s:
