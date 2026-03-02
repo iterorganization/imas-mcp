@@ -488,6 +488,8 @@ async def enrich_worker(
                 pattern_ids,
                 descriptions,
                 metadata,
+                llm_cost=cost,
+                llm_model=model,
             )
 
             state.enrich_stats.processed += len(patterns)
@@ -616,6 +618,8 @@ async def enrich_worker(
                 parent_id,
                 descriptions,
                 metadata,
+                llm_cost=cost,
+                llm_model=model,
             )
 
             state.enrich_stats.processed += 1
@@ -724,6 +728,8 @@ async def enrich_worker(
                 orphan_ids,
                 descriptions,
                 metadata,
+                llm_cost=cost,
+                llm_model=model,
             )
 
             state.enrich_stats.processed += len(orphans)
