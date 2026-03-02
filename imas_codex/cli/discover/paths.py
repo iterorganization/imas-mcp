@@ -762,7 +762,8 @@ async def _async_discovery_loop(
                     pass
                 await service_monitor.__aexit__(None, None, None)
 
-            display.refresh_from_graph(facility)
+            if not stop_event.is_set():
+                display.refresh_from_graph(facility)
             scored_this_run = display.get_paths_scored_this_run()
             enrichment_aggregates = display.get_enrichment_aggregates()
 
