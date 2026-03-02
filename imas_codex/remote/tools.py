@@ -161,10 +161,7 @@ def run(
     is_local = is_local_host(facility)
     ssh_host = _resolve_ssh_host(facility) if not is_local else None
 
-    # Prepend PATH for remote execution to find ~/bin tools
-    if not is_local:
-        cmd = PATH_PREFIX + cmd
-
+    # PATH setup is handled by run_command() via _prepend_path_setup()
     return run_command(cmd, ssh_host=ssh_host, timeout=timeout, check=check)
 
 
