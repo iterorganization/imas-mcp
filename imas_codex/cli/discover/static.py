@@ -312,14 +312,17 @@ class StaticProgressDisplay(BaseProgressDisplay):
         s.units_rate = stats.ema_rate
         if results:
             for r in results:
-                s.units_completed = r.get("checked", stats.processed)
-                s.units_total = r.get("total", s.units_total)
+                # Track unit counts for display but don't overwrite
+                # units_completed/units_total — those are version-level
+                # counts managed by refresh_from_graph.
                 s.units_found = r.get("found", s.units_found)
+                checked = r.get("checked", 0)
+                total = r.get("total", 0)
                 batch = r.get("batch", "")
                 self.units_queue.add(
                     [
                         {
-                            "path": f"{s.units_completed:,}/{s.units_total:,} checked",
+                            "path": f"{checked:,}/{total:,} checked" if total else msg,
                             "detail": f"batch {batch}, {s.units_found} with units"
                             if batch
                             else f"{s.units_found} with units",
@@ -333,7 +336,9 @@ class StaticProgressDisplay(BaseProgressDisplay):
         """Callback from enrich worker."""
         s = self.state
         s.enrich_rate = stats.ema_rate
-        s.enrich_completed = stats.processed
+        # Don't overwrite enrich_completed from worker-local stats.
+        # refresh_from_graph is the authoritative source for cumulative
+        # counts including previous runs. Only update cost here.
         s.enrich_cost = stats.cost
         if results:
             items = [
