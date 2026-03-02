@@ -350,19 +350,14 @@ class DataProgressDisplay(BaseProgressDisplay):
         # ENRICH activity
         enrich = self.state.current_enrich
         enrich_text = ""
-        enrich_detail: list[tuple[str, str]] | None = None
+        enrich_domain = ""
+        enrich_desc = ""
         if enrich:
             enrich_text = clip_text(enrich.signal_id, content_width - 10)
-            parts = []
             if enrich.physics_domain:
-                parts.append((f"{enrich.physics_domain}  ", "cyan"))
+                enrich_domain = enrich.physics_domain
             if enrich.description:
-                desc = clean_text(enrich.description)
-                used = 10 + (
-                    len(enrich.physics_domain) + 2 if enrich.physics_domain else 0
-                )
-                parts.append((clip_text(desc, content_width - used), "italic dim"))
-            enrich_detail = parts or None
+                enrich_desc = clean_text(enrich.description)
 
         # CHECK activity
         validate = self.state.current_check
@@ -408,7 +403,8 @@ class DataProgressDisplay(BaseProgressDisplay):
                 worker_count=enrich_count,
                 worker_annotation=enrich_ann,
                 primary_text=enrich_text,
-                detail_parts=enrich_detail,
+                physics_domain=enrich_domain,
+                description=enrich_desc,
                 is_processing=self.state.enrich_processing,
                 is_complete=enrich_complete,
                 processing_label="classifying...",

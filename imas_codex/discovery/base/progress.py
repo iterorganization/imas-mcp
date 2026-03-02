@@ -567,7 +567,11 @@ class PipelineRowConfig:
     # Activity (current item) — structured fields (preferred)
     primary_text: str = ""  # Resource name (shown on line 2)
     score_value: float | None = None  # Score (shown on line 2, left-aligned with name)
+    score_parts: list[tuple[str, str]] | None = (
+        None  # Custom score rendering (e.g. "0.65"+"+0.20")
+    )
     physics_domain: str = ""  # Physics domain (shown on line 2, at bar start)
+    terminal_label: str = ""  # Terminal annotation (shown on line 2, muted red)
     description: str = ""  # LLM/VLM description (shown on line 3, at bar start)
     description_fallback: str = ""  # Shown on line 3 when description is empty
 
@@ -592,6 +596,7 @@ class PipelineRowConfig:
         """True when structured fields are populated (preferred over detail_parts)."""
         return bool(
             self.score_value is not None
+            or self.score_parts
             or self.physics_domain
             or self.description
             or self.description_fallback
@@ -666,8 +671,12 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
 
     if config.has_content and config.has_structured_detail:
         line2.append("  ", style="dim")
-        # Order: score → domain → name
-        if config.score_value is not None:
+        # Order: score → domain → terminal → name
+        if config.score_parts:
+            for text, style in config.score_parts:
+                line2.append(text, style=style)
+            line2.append("  ", style="dim")
+        elif config.score_value is not None:
             score_style = (
                 "bold green"
                 if config.score_value >= 0.7
@@ -679,6 +688,9 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
             line2.append("  ", style="dim")
         if config.physics_domain:
             line2.append(config.physics_domain, style="cyan")
+            line2.append("  ", style="dim")
+        if config.terminal_label:
+            line2.append(config.terminal_label, style="red dim")
             line2.append("  ", style="dim")
         max_name = max(10, row_width - cell_len(line2.plain) - rate_reserve)
         line2.append(clip_text(config.primary_text, max_name), style="white")

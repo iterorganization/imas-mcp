@@ -107,6 +107,8 @@ enums:
         description: Interest score below threshold
       excluded:
         description: Matched exclusion pattern
+      software_repo:
+        description: VCS repository accessible elsewhere (public or mirrored)
       # === PROPAGATION ===
       parent_terminal:
         description: Parent resource was terminal (skipped or not expanded)
