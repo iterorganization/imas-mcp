@@ -1203,11 +1203,9 @@ class BaseProgressDisplay(ABC):
         """Build the complete display.
 
         Standard layout: HEADER → SERVERS → PIPELINE → RESOURCES
-        During shutdown: HEADER → SHUTDOWN (pipeline/servers/resources hidden)
+        During shutdown: same layout + SHUTDOWN section appended,
+        yellow border to indicate graceful drain in progress.
         """
-        if self._shutting_down:
-            return self._build_shutdown_display()
-
         sections: list[Text] = [self._build_header()]
 
         # SERVERS section (optional)
@@ -1224,6 +1222,11 @@ class BaseProgressDisplay(ABC):
         sections.append(Text("─" * (self.width - 4), style="dim"))
         sections.append(self._build_resources_section())
 
+        # Shutdown drain status (appended below when shutting down)
+        if self._shutting_down:
+            sections.append(Text("─" * (self.width - 4), style="dim"))
+            sections.append(self._build_shutdown_section())
+
         content = Text()
         for i, section in enumerate(sections):
             if i > 0:
@@ -1232,33 +1235,7 @@ class BaseProgressDisplay(ABC):
 
         return Panel(
             content,
-            border_style="cyan",
-            width=self.width,
-            padding=(0, 1),
-        )
-
-    def _build_shutdown_display(self) -> Panel:
-        """Compact shutdown-mode display.
-
-        Replaces the full pipeline view with a small panel showing
-        only the header and worker drain status.  This is visually
-        distinct (yellow border) and much shorter so the user sees
-        immediate feedback that shutdown is in progress.
-        """
-        header = Text()
-        title = f"{self.facility.upper()} {self._title_suffix}"
-        header.append(title.center(self.width - 4), style="bold yellow")
-
-        content = Text()
-        content.append_text(header)
-        content.append("\n")
-        content.append("─" * (self.width - 4), style="dim")
-        content.append("\n")
-        content.append_text(self._build_shutdown_section())
-
-        return Panel(
-            content,
-            border_style="yellow",
+            border_style="yellow" if self._shutting_down else "cyan",
             width=self.width,
             padding=(0, 1),
         )
