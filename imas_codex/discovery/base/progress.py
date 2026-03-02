@@ -454,8 +454,8 @@ class WorkerStats:
 # consistent visual alignment.  Domain-specific displays import these
 # constants rather than redefining them.
 #
-#   LABEL_WIDTH       – left label column ("  ARTIFACTx2", "  TIME")
-#   METRICS_WIDTH     – right stat column for progress bars (" {n:>6,} {%}")
+#   LABEL_WIDTH       – left label column ("  EXTRACTx2", "  TIME")
+#   METRICS_WIDTH     – right stat column for progress bars (" {n:>8,} {%}")
 #   GAUGE_METRICS_WIDTH – right stat column for resource gauges (wider: time/cost text)
 #   MIN_WIDTH         – minimum panel width
 #
@@ -467,8 +467,8 @@ class WorkerStats:
 # Rate and cost are right-aligned on line 2 to the same edge.
 # Resource gauges (TIME, COST) keep GAUGE_METRICS_WIDTH for trailing text.
 
-LABEL_WIDTH = 10
-METRICS_WIDTH = 12
+LABEL_WIDTH = 12
+METRICS_WIDTH = 14
 GAUGE_METRICS_WIDTH = 22
 MIN_WIDTH = 80
 
@@ -637,7 +637,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     row.append(make_bar(bar_ratio, effective_bar), style=config.style.split()[-1])
 
     # Right: count + pct only
-    count_s = f" {config.completed:>6,}"
+    count_s = f" {config.completed:>8,}"
     pct_s = f" {pct:>3.0f}%" if config.show_pct else "     "
     pad = max(0, METRICS_WIDTH - len(count_s) - len(pct_s))
     if pad > 0:

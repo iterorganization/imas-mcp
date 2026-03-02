@@ -193,8 +193,10 @@ class TestGraphOps:
         mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
         mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
         # First call: has_pending_pattern_work returns False
-        # Second call: has_pending_enrich_work node query returns False
+        # Second call: parent groups query returns False
+        # Third call: orphan nodes query returns False
         mock_gc.query.side_effect = [
+            [{"has_work": False}],
             [{"has_work": False}],
             [{"has_work": False}],
         ]
@@ -231,6 +233,8 @@ class TestGraphOps:
             ],
             # Parent group stats
             [{"total_parents": 3000, "pending_parents": 2500, "enriched_parents": 500}],
+            # Orphan node stats
+            [{"total_orphans": 100, "enriched_orphans": 20}],
             # Pattern stats
             [{"total": 50, "enriched": 10, "pending": 40}],
         ]
@@ -245,6 +249,8 @@ class TestGraphOps:
         assert stats["parent_groups_total"] == 3000
         assert stats["parent_groups_pending"] == 2500
         assert stats["parent_groups_enriched"] == 500
+        assert stats["orphan_nodes_total"] == 100
+        assert stats["orphan_nodes_enriched"] == 20
         assert stats["patterns_total"] == 50
         assert stats["patterns_enriched"] == 10
         assert stats["pending_patterns"] == 40

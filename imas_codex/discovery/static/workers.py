@@ -323,12 +323,15 @@ async def enrich_worker(
     from imas_codex.settings import get_model
 
     from .graph_ops import (
+        claim_orphan_nodes_for_enrichment,
         claim_parent_for_enrichment,
         claim_patterns_for_enrichment,
         detect_and_create_patterns,
         fetch_enrichment_context,
+        mark_orphan_nodes_enriched,
         mark_parent_children_enriched,
         mark_patterns_enriched,
+        release_orphan_claims,
         release_parent_claim,
         release_pattern_claims,
     )
@@ -602,5 +605,110 @@ async def enrich_worker(
             logger.error("Parent enrich failed for %s: %s", parent_path, e)
             state.enrich_stats.errors += 1
             await asyncio.to_thread(release_parent_claim, parent_id)
+
+        await asyncio.sleep(0.1)
+
+    # --- Phase 3: Enrich orphan nodes (no parent relationship) ---
+    while not state.should_stop():
+        if state.budget_exhausted:
+            if on_progress:
+                on_progress("budget exhausted", state.enrich_stats, None)
+            break
+
+        orphans = await asyncio.to_thread(
+            claim_orphan_nodes_for_enrichment,
+            state.facility,
+            state.tree_name,
+            limit=state.batch_size,
+        )
+
+        if not orphans:
+            break
+
+        state.enrich_phase.record_activity(len(orphans))
+        orphan_ids = [o["id"] for o in orphans]
+
+        batch_nodes = [
+            {
+                "path": o["path"],
+                "node_type": o["node_type"],
+                "tags": o.get("tags"),
+                "units": o.get("units"),
+            }
+            for o in orphans
+        ]
+
+        orphan_paths = [o["path"] for o in orphans]
+        tree_context = await asyncio.to_thread(
+            fetch_enrichment_context,
+            state.facility,
+            state.tree_name,
+            orphan_paths,
+        )
+
+        if on_progress:
+            on_progress(
+                f"enriching {len(orphans)} top-level nodes",
+                state.enrich_stats,
+                [{"path": orphan_paths[0], "count": len(orphans)}],
+            )
+
+        try:
+            user_prompt = _build_user_prompt(
+                batch_nodes, version_descs, tree_context=tree_context
+            )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            parsed, cost, _tokens = await asyncio.to_thread(
+                call_llm_structured,
+                model=model,
+                messages=messages,
+                response_model=StaticNodeBatch,
+            )
+            state.enrich_stats.cost += cost
+
+            descriptions: dict[str, str] = {}
+            metadata: dict[str, dict] = {}
+            for r in parsed.results:
+                for o in orphans:
+                    if o["path"] == r.path:
+                        descriptions[o["id"]] = r.description or ""
+                        if r.keywords or r.category:
+                            metadata[o["id"]] = {
+                                "keywords": r.keywords,
+                                "category": r.category,
+                            }
+                        break
+
+            enriched = await asyncio.to_thread(
+                mark_orphan_nodes_enriched,
+                orphan_ids,
+                descriptions,
+                metadata,
+            )
+
+            state.enrich_stats.processed += len(orphans)
+            state.enrich_stats.record_batch(len(orphans))
+
+            if on_progress:
+                on_progress(
+                    f"{enriched} top-level nodes enriched",
+                    state.enrich_stats,
+                    [
+                        {
+                            "path": orphan_paths[0],
+                            "description": f"{enriched} nodes",
+                            "cost": cost,
+                        }
+                    ],
+                )
+
+        except Exception as e:
+            logger.error("Orphan enrich failed: %s", e)
+            state.enrich_stats.errors += 1
+            await asyncio.to_thread(release_orphan_claims, orphan_ids)
 
         await asyncio.sleep(0.1)
