@@ -214,3 +214,194 @@ class TestClaimPaths:
         assert mock_gc.query.called
         assert len(result) == 1
         assert result[0]["total_files"] == 10
+
+
+class TestFindCloneGroups:
+    """Tests for _find_clone_groups graph query."""
+
+    @patch("imas_codex.graph.GraphClient")
+    def test_returns_sorted_groups(self, mock_gc_class):
+        """Clone groups are sorted: accessible > has_remote > shallowest > earliest."""
+        from imas_codex.discovery.paths.parallel import _find_clone_groups
+
+        mock_gc = MagicMock()
+        mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_class.return_value.__exit__ = MagicMock(return_value=None)
+        mock_gc.query.return_value = [
+            {
+                "repo_id": "github.com/user/MEQ",
+                "repo_name": "MEQ",
+                "active_paths": [
+                    {
+                        "id": "tcv:/deep/clone",
+                        "path": "/deep/clone",
+                        "depth": 5,
+                        "accessible": False,
+                        "has_remote": 1,
+                        "discovered_at": "2024-01-02",
+                    },
+                    {
+                        "id": "tcv:/shallow/meq",
+                        "path": "/shallow/meq",
+                        "depth": 2,
+                        "accessible": True,
+                        "has_remote": 1,
+                        "discovered_at": "2024-01-01",
+                    },
+                    {
+                        "id": "tcv:/mid/meq",
+                        "path": "/mid/meq",
+                        "depth": 3,
+                        "accessible": False,
+                        "has_remote": 0,
+                        "discovered_at": "2024-01-03",
+                    },
+                ],
+            },
+        ]
+
+        groups = _find_clone_groups("tcv", limit=10)
+
+        assert len(groups) == 1
+        repo_id, repo_name, paths = groups[0]
+        assert repo_id == "github.com/user/MEQ"
+        assert repo_name == "MEQ"
+        # Canonical (first) = accessible remote
+        assert paths[0]["id"] == "tcv:/shallow/meq"
+        # Second = has remote but not accessible, shallower
+        assert paths[1]["id"] == "tcv:/deep/clone"
+        # Last = no remote
+        assert paths[2]["id"] == "tcv:/mid/meq"
+
+    @patch("imas_codex.graph.GraphClient")
+    def test_empty_result(self, mock_gc_class):
+        """Returns empty list when no clone groups found."""
+        from imas_codex.discovery.paths.parallel import _find_clone_groups
+
+        mock_gc = MagicMock()
+        mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_class.return_value.__exit__ = MagicMock(return_value=None)
+        mock_gc.query.return_value = []
+
+        groups = _find_clone_groups("tcv")
+        assert groups == []
+
+    @patch("imas_codex.graph.GraphClient")
+    def test_none_result(self, mock_gc_class):
+        """Handles None result from graph client."""
+        from imas_codex.discovery.paths.parallel import _find_clone_groups
+
+        mock_gc = MagicMock()
+        mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_class.return_value.__exit__ = MagicMock(return_value=None)
+        mock_gc.query.return_value = None
+
+        groups = _find_clone_groups("tcv")
+        assert groups == []
+
+
+class TestMarkClonesTerminal:
+    """Tests for _mark_clones_terminal graph mutation."""
+
+    @patch("imas_codex.graph.GraphClient")
+    def test_marks_clones_and_returns_count(self, mock_gc_class):
+        """Marks clone paths terminal and returns count."""
+        from imas_codex.discovery.paths.parallel import _mark_clones_terminal
+
+        mock_gc = MagicMock()
+        mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_class.return_value.__exit__ = MagicMock(return_value=None)
+        mock_gc.query.return_value = [{"marked": 3}]
+
+        result = _mark_clones_terminal(
+            ["tcv:/a", "tcv:/b", "tcv:/c"],
+            canonical_path="/canonical/meq",
+            repo_id="github.com/user/MEQ",
+        )
+
+        assert result == 3
+        assert mock_gc.query.called
+        # Verify the query uses UNWIND for batch operation
+        query_str = mock_gc.query.call_args[0][0]
+        assert "UNWIND" in query_str
+        assert "terminal_reason" in query_str
+
+    @patch("imas_codex.graph.GraphClient")
+    def test_returns_zero_on_empty_result(self, mock_gc_class):
+        """Returns 0 when graph returns empty result."""
+        from imas_codex.discovery.paths.parallel import _mark_clones_terminal
+
+        mock_gc = MagicMock()
+        mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_class.return_value.__exit__ = MagicMock(return_value=None)
+        mock_gc.query.return_value = []
+
+        result = _mark_clones_terminal(
+            ["tcv:/a"],
+            canonical_path="/canonical",
+            repo_id="repo",
+        )
+        assert result == 0
+
+
+class TestDedupWorker:
+    """Tests for the dedup_worker async coroutine."""
+
+    @pytest.mark.anyio
+    @patch("imas_codex.discovery.paths.parallel._mark_clones_terminal", return_value=2)
+    @patch("imas_codex.discovery.paths.parallel._find_clone_groups")
+    async def test_processes_clone_groups(self, mock_find, mock_mark):
+        """Dedup worker processes clone groups and reports progress."""
+        from imas_codex.discovery.paths.parallel import dedup_worker
+
+        mock_find.side_effect = [
+            [
+                (
+                    "github.com/user/MEQ",
+                    "MEQ",
+                    [
+                        {"id": "tcv:/canonical", "path": "/canonical"},
+                        {"id": "tcv:/clone1", "path": "/clone1"},
+                        {"id": "tcv:/clone2", "path": "/clone2"},
+                    ],
+                ),
+            ],
+            [],  # No more groups — triggers idle
+        ]
+
+        state = DiscoveryState(facility="tcv", cost_limit=10.0)
+        progress_calls = []
+
+        def on_progress(msg, stats, results=None):
+            progress_calls.append((msg, stats.processed, results))
+            # Stop after processing
+            state.stop_requested = True
+
+        await dedup_worker(state, on_progress=on_progress, batch_size=10)
+
+        assert state.dedup_stats.processed == 2
+        assert len(progress_calls) >= 1
+        # First progress call should report deduped results
+        msg, processed, results = progress_calls[0]
+        assert "deduped" in msg
+        assert results is not None
+        assert results[0]["repo_name"] == "MEQ"
+        assert results[0]["clones_marked"] == 2
+
+    @pytest.mark.anyio
+    @patch("imas_codex.discovery.paths.parallel._find_clone_groups", return_value=[])
+    async def test_idles_when_no_groups(self, mock_find):
+        """Dedup worker idles and reports waiting when no clone groups."""
+        from imas_codex.discovery.paths.parallel import dedup_worker
+
+        state = DiscoveryState(facility="tcv", cost_limit=10.0)
+        progress_calls = []
+
+        def on_progress(msg, stats, results=None):
+            progress_calls.append(msg)
+            state.stop_requested = True
+
+        await dedup_worker(state, on_progress=on_progress)
+
+        assert len(progress_calls) >= 1
+        assert "waiting" in progress_calls[0]
