@@ -31,7 +31,7 @@ from imas_codex.discovery.base.facility import get_facility
 from imas_codex.remote.executor import async_run_python_script, run_python_script
 
 if TYPE_CHECKING:
-    pass
+    from imas_codex.remote.ssh_worker import SSHWorkerPool
 
 logger = logging.getLogger(__name__)
 
@@ -520,11 +520,17 @@ async def async_scan_paths(
     enable_git_metadata: bool = False,
     enable_tree: bool = False,
     enable_vcs_remote_check: bool = False,
+    pool: SSHWorkerPool | None = None,
 ) -> list[ScanResult]:
     """Async version of scan_paths using asyncio subprocesses.
 
     Fully cancellable — SSH subprocess is killed on task cancellation.
     Same parsing logic and error handling as sync version.
+
+    Args:
+        pool: Optional persistent SSH worker pool. When provided, uses
+            a persistent SSH session instead of creating a new one per call
+            (avoids ~2.6s PAM session overhead per call).
     """
     import asyncio
 
@@ -542,12 +548,23 @@ async def async_scan_paths(
     )
 
     try:
-        output = await async_run_python_script(
-            "scan_directories.py",
-            input_data=input_data,
-            ssh_host=ssh_host,
-            timeout=timeout,
-        )
+        if pool is not None:
+            from imas_codex.remote.ssh_worker import pooled_run_python_script
+
+            output = await pooled_run_python_script(
+                "scan_directories.py",
+                input_data=input_data,
+                ssh_host=ssh_host,
+                timeout=timeout,
+                pool=pool,
+            )
+        else:
+            output = await async_run_python_script(
+                "scan_directories.py",
+                input_data=input_data,
+                ssh_host=ssh_host,
+                timeout=timeout,
+            )
     except subprocess.TimeoutExpired:
         logger.warning(
             f"SSH scan timed out after {timeout}s for {facility}. "

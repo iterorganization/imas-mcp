@@ -399,6 +399,18 @@ def _ensure_ssh_healthy_once(ssh_host: str) -> None:
     _verified_hosts.add(ssh_host)
 
 
+def _invalidate_ssh_host(ssh_host: str) -> None:
+    """Remove host from verified cache so next call re-checks socket health.
+
+    Called after SSH timeouts — killing the SSH process (SIGKILL from
+    subprocess timeout) can kill the ControlMaster, leaving a stale
+    socket.  Invalidating forces the next ``_ensure_ssh_healthy_once``
+    to detect and clean up the stale socket before attempting SSH.
+    """
+    _verified_hosts.discard(ssh_host)
+    logger.debug("Invalidated SSH host %s after timeout", ssh_host)
+
+
 # PATH directories to prepend for SSH commands (non-interactive shells don't load full profile)
 SSH_PATH_DIRS = ["$HOME/bin", "$HOME/.local/bin"]
 
@@ -722,12 +734,18 @@ def run_command(
 
         # SSH execution with -T to disable pseudo-terminal allocation
         # This avoids triggering .bashrc on systems where it's loaded for PTY sessions
-        result = subprocess.run(
-            ["ssh", "-T", ssh_host, remote_cmd],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                ["ssh", "-T", ssh_host, remote_cmd],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            # Killing the SSH process can kill the ControlMaster, leaving
+            # a stale socket. Invalidate so next call re-checks health.
+            _invalidate_ssh_host(ssh_host)
+            raise
 
     output = result.stdout
     if result.stderr:
@@ -810,13 +828,17 @@ def run_script_via_stdin(
 
         # SSH execution via stdin - avoids bash -c overhead
         # Use 'interpreter [args]' to read script from stdin
-        result = subprocess.run(
-            ["ssh", "-T", ssh_host, " ".join(interp_cmd)],
-            input=remote_script,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                ["ssh", "-T", ssh_host, " ".join(interp_cmd)],
+                input=remote_script,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            _invalidate_ssh_host(ssh_host)
+            raise
 
     output = result.stdout
     if result.stderr:
@@ -889,6 +911,23 @@ def run_python_script(
         f'exec(compile(s,"script","exec"))'
     )
 
+    # Remote runner: restore site-packages and PYTHONPATH since -S skips them.
+    # On some facilities, venv Python 3.12 hangs during site initialization when
+    # LD_LIBRARY_PATH and PYTHONPATH are set (slow GPFS + venv site init combo).
+    # -S bypasses site entirely — the fastest startup mode. We manually add the
+    # venv site-packages and PYTHONPATH to sys.path. Note: with -S, sys.prefix
+    # points to the base Python, not the venv, so we use the canonical venv path.
+    remote_runner = (
+        f"import os,sys;"
+        f"vi=sys.version_info;"
+        f'sp=os.path.join(os.path.expanduser("~/.local/share/imas-codex/venv"),"lib",f"python{{vi[0]}}.{{vi[1]}}","site-packages");'
+        f"sys.path.append(sp) if os.path.isdir(sp) else None;"
+        f'[sys.path.insert(0,p) for p in reversed(os.environ.get("PYTHONPATH","").split(":")) if p];'
+        f"import base64;"
+        f's=base64.b64decode("{script_b64}");'
+        f'exec(compile(s,"script","exec"))'
+    )
+
     if is_local:
         result = subprocess.run(
             [python_command, "-c", runner],
@@ -902,7 +941,10 @@ def run_python_script(
         _ensure_ssh_healthy_once(ssh_host)
 
         # Build remote command: PATH prefix + optional setup + python
-        python_cmd = f"{python_command} -c '{runner}'"
+        # Use -S (no site) to prevent venv Python from hanging during site
+        # initialization when PYTHONPATH is set on slow GPFS filesystems.
+        # site-packages and PYTHONPATH are restored inside the remote_runner.
+        python_cmd = f"{python_command} -S -c '{remote_runner}'"
 
         # Wrap Python command with nice if configured for this host
         nice_level = _get_host_nice_level(ssh_host)
@@ -922,13 +964,17 @@ def run_python_script(
         remote_cmd = " && ".join(parts)
 
         # SSH execution with JSON piped through
-        result = subprocess.run(
-            ["ssh", "-T", ssh_host, remote_cmd],
-            input=json_input,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            result = subprocess.run(
+                ["ssh", "-T", ssh_host, remote_cmd],
+                input=json_input,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            _invalidate_ssh_host(ssh_host)
+            raise
 
     # Return only stdout — stderr must not contaminate structured JSON output.
     # Remote Python scripts (check_signals_batch, extract_tdi_functions, etc.)
@@ -1009,13 +1055,27 @@ async def async_run_python_script(
         f'exec(compile(s,"script","exec"))'
     )
 
+    # Remote runner: same as sync version — restores site-packages + PYTHONPATH.
+    # See run_python_script() for full explanation of the -S workaround.
+    remote_runner = (
+        f"import os,sys;"
+        f"vi=sys.version_info;"
+        f'sp=os.path.join(os.path.expanduser("~/.local/share/imas-codex/venv"),"lib",f"python{{vi[0]}}.{{vi[1]}}","site-packages");'
+        f"sys.path.append(sp) if os.path.isdir(sp) else None;"
+        f'[sys.path.insert(0,p) for p in reversed(os.environ.get("PYTHONPATH","").split(":")) if p];'
+        f"import base64;"
+        f's=base64.b64decode("{script_b64}");'
+        f'exec(compile(s,"script","exec"))'
+    )
+
     if is_local:
         cmd = [python_command, "-c", runner]
     else:
         # Check SSH health once per host per session (sync, cached)
         _ensure_ssh_healthy_once(ssh_host)
         # Build remote command: PATH prefix + optional setup + python
-        python_cmd = f"{python_command} -c '{runner}'"
+        # Use -S to prevent venv Python startup hang (see run_python_script).
+        python_cmd = f"{python_command} -S -c '{remote_runner}'"
 
         # Wrap Python command with nice if configured for this host
         nice_level = _get_host_nice_level(ssh_host)
@@ -1047,6 +1107,9 @@ async def async_run_python_script(
     except TimeoutError:
         proc.kill()
         await proc.wait()
+        # Killing SSH can leave ControlMaster socket stale
+        if not is_local and ssh_host:
+            _invalidate_ssh_host(ssh_host)
         # Capture partial stdout from killed process.
         # With JSONL-streaming scripts, completed lines are recoverable.
         partial = b""

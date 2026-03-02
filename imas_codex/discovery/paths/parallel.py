@@ -39,6 +39,8 @@ from imas_codex.graph.models import PathStatus, TerminalReason
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from imas_codex.remote.ssh_worker import SSHWorkerPool
+
 logger = logging.getLogger(__name__)
 
 
@@ -952,6 +954,7 @@ async def scan_worker(
     on_progress: Callable[[str, WorkerStats, list[str] | None, list[dict] | None], None]
     | None = None,
     batch_size: int = 5,
+    pool: SSHWorkerPool | None = None,
 ) -> None:
     """Async scanner worker.
 
@@ -962,6 +965,7 @@ async def scan_worker(
         state: Shared discovery state
         on_progress: Progress callback
         batch_size: Paths per SSH call (default 5)
+        pool: Optional persistent SSH worker pool for session reuse
     """
     from imas_codex.discovery.paths.scanner import async_scan_paths
 
@@ -994,7 +998,11 @@ async def scan_worker(
         start = time.time()
         try:
             results = await async_scan_paths(
-                state.facility, path_strs, enable_rg=False, enable_size=False
+                state.facility,
+                path_strs,
+                enable_rg=False,
+                enable_size=False,
+                pool=pool,
             )
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
             # Transient failure (timeout or SSH connection error)
@@ -1120,6 +1128,7 @@ async def expand_worker(
     on_progress: Callable[[str, WorkerStats, list[str] | None, list[dict] | None], None]
     | None = None,
     batch_size: int = 10,
+    pool: SSHWorkerPool | None = None,
 ) -> None:
     """Async expansion worker.
 
@@ -1130,6 +1139,7 @@ async def expand_worker(
         state: Shared discovery state
         on_progress: Progress callback
         batch_size: Paths per SSH call (default 10)
+        pool: Optional persistent SSH worker pool for session reuse
     """
     from imas_codex.discovery.paths.scanner import async_scan_paths
 
@@ -1162,7 +1172,11 @@ async def expand_worker(
         start = time.time()
         try:
             results = await async_scan_paths(
-                state.facility, path_strs, enable_rg=False, enable_size=False
+                state.facility,
+                path_strs,
+                enable_rg=False,
+                enable_size=False,
+                pool=pool,
             )
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
             # Transient failure - revert paths for retry
@@ -1546,6 +1560,7 @@ async def enrich_worker(
     state: DiscoveryState,
     on_progress: Callable[[str, WorkerStats, list[dict] | None], None] | None = None,
     batch_size: int = 25,
+    pool: SSHWorkerPool | None = None,
 ) -> None:
     """Async enrichment worker.
 
@@ -1557,6 +1572,7 @@ async def enrich_worker(
         state: Shared discovery state
         on_progress: Progress callback
         batch_size: Paths per SSH call (default 25)
+        pool: Optional persistent SSH worker pool for session reuse
     """
     # Use local claim_paths_for_enriching and mark_enrichment_complete
     # (defined above in this module with root_filter support)
@@ -1596,7 +1612,10 @@ async def enrich_worker(
         start = time.time()
         try:
             results = await async_enrich_paths(
-                state.facility, path_strs, path_purposes=path_purposes
+                state.facility,
+                path_strs,
+                path_purposes=path_purposes,
+                pool=pool,
             )
             state.enrich_stats.last_batch_time = time.time() - start
 
@@ -2268,6 +2287,9 @@ async def _async_refine_with_llm(
 def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]:
     """Check if SSH connection to facility is working.
 
+    Proactively cleans stale SSH control sockets before testing,
+    then retries once after cleanup if the first attempt fails.
+
     Args:
         facility: Facility ID
         timeout: Timeout in seconds
@@ -2275,7 +2297,22 @@ def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]
     Returns:
         Tuple of (success, message)
     """
+    from imas_codex.remote.executor import check_ssh_socket, cleanup_stale_sockets
     from imas_codex.remote.tools import run
+
+    # Proactively check and clean stale sockets before the connectivity test
+    ssh_host = facility
+    try:
+        from imas_codex.discovery.base.facility import get_facility
+
+        config = get_facility(facility)
+        ssh_host = config.get("ssh_host", facility)
+    except (ValueError, Exception):
+        pass
+
+    if not check_ssh_socket(ssh_host, timeout=5):
+        logger.info("Cleaning stale SSH socket for %s before preflight", ssh_host)
+        cleanup_stale_sockets([ssh_host])
 
     try:
         result = run("echo ok", facility=facility, timeout=timeout)
@@ -2283,7 +2320,18 @@ def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]
             return True, f"SSH to {facility} working"
         return False, f"SSH to {facility} returned unexpected output"
     except subprocess.TimeoutExpired:
-        return False, f"SSH to {facility} timed out after {timeout}s"
+        # First attempt timed out — try cleanup and retry once
+        logger.info("SSH preflight timed out, cleaning sockets and retrying")
+        cleanup_stale_sockets([ssh_host])
+        try:
+            result = run("echo ok", facility=facility, timeout=timeout)
+            if "ok" in result:
+                return True, f"SSH to {facility} working (after socket cleanup)"
+            return False, f"SSH to {facility} returned unexpected output"
+        except subprocess.TimeoutExpired:
+            return False, f"SSH to {facility} timed out after {timeout}s"
+        except Exception as e:
+            return False, f"SSH to {facility} failed after retry: {e}"
     except subprocess.CalledProcessError as e:
         return False, f"SSH to {facility} failed: {e}"
     except Exception as e:
@@ -2460,193 +2508,241 @@ async def run_parallel_discovery(
     # Capture initial terminal count for session-based --limit tracking
     state.initial_terminal_count = state.terminal_count
 
-    # Create supervised worker group
-    worker_group = SupervisedWorkerGroup()
+    # Create persistent SSH worker pool to amortize PAM session overhead.
+    # Each SSH session to some facilities costs ~2.6s (pam_systemd.so scope
+    # creation). Persistent workers pay this cost once, then execute subsequent
+    # commands in ~12ms (network RTT only).
+    ssh_pool: SSHWorkerPool | None = None
+    num_ssh_workers = num_scan_workers + num_expand_workers + num_enrich_workers
+    if num_ssh_workers > 0:
+        from imas_codex.discovery.base.facility import get_facility
+        from imas_codex.remote.ssh_worker import SSHWorkerPool as _SSHWorkerPool
 
-    # Scan workers (group="scan")
-    for i in range(num_scan_workers):
-        worker_name = f"scan_worker_{i}"
-        status = worker_group.create_status(worker_name, group="scan")
+        try:
+            config = get_facility(facility)
+            ssh_host = config.get("ssh_host", facility)
+        except ValueError:
+            ssh_host = facility
+
+        from imas_codex.remote.executor import is_local_host
+
+        if not is_local_host(ssh_host):
+            try:
+                ssh_pool = _SSHWorkerPool(
+                    ssh_host=ssh_host,
+                    max_workers=num_ssh_workers,
+                )
+                await ssh_pool.start()
+                logger.info(
+                    "Started persistent SSH pool for %s with %d workers",
+                    ssh_host,
+                    num_ssh_workers,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to start SSH worker pool for %s, "
+                    "falling back to per-command SSH: %s",
+                    ssh_host,
+                    e,
+                )
+                ssh_pool = None
+
+    try:
+        # Create supervised worker group
+        worker_group = SupervisedWorkerGroup()
+
+        # Scan workers (group="scan")
+        for i in range(num_scan_workers):
+            worker_name = f"scan_worker_{i}"
+            status = worker_group.create_status(worker_name, group="scan")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        scan_worker,
+                        worker_name,
+                        state,
+                        state.should_stop,
+                        on_progress=on_scan_progress,
+                        batch_size=scan_batch_size,
+                        pool=ssh_pool,
+                        status_tracker=status,
+                    )
+                )
+            )
+
+        # Expand workers (group="scan" — same pipeline stage)
+        for i in range(num_expand_workers):
+            worker_name = f"expand_worker_{i}"
+            status = worker_group.create_status(worker_name, group="scan")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        expand_worker,
+                        worker_name,
+                        state,
+                        state.should_stop,
+                        on_progress=on_expand_progress,
+                        batch_size=expand_batch_size,
+                        pool=ssh_pool,
+                        status_tracker=status,
+                    )
+                )
+            )
+
+        # Score workers (group="score")
+        for i in range(num_score_workers):
+            worker_name = f"score_worker_{i}"
+            status = worker_group.create_status(worker_name, group="score")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        score_worker,
+                        worker_name,
+                        state,
+                        state.should_stop,
+                        on_progress=on_score_progress,
+                        batch_size=score_batch_size,
+                        status_tracker=status,
+                    )
+                )
+            )
+
+        # Enrich workers (group="enrich")
+        for i in range(num_enrich_workers):
+            worker_name = f"enrich_worker_{i}"
+            status = worker_group.create_status(worker_name, group="enrich")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        enrich_worker,
+                        worker_name,
+                        state,
+                        state.should_stop,
+                        on_progress=on_enrich_progress,
+                        batch_size=enrich_batch_size,
+                        pool=ssh_pool,
+                        status_tracker=status,
+                    )
+                )
+            )
+
+        # Refine workers (group="refine" — own display row)
+        for i in range(num_refine_workers):
+            worker_name = f"refine_worker_{i}"
+            status = worker_group.create_status(worker_name, group="refine")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        refine_worker,
+                        worker_name,
+                        state,
+                        state.should_stop,
+                        on_progress=on_refine_progress,
+                        batch_size=refine_batch_size,
+                        status_tracker=status,
+                    )
+                )
+            )
+
+        # Embed description worker (group="score" — embeds scored descriptions)
+        from imas_codex.discovery.base.embed_worker import embed_description_worker
+
+        embed_status = worker_group.create_status("embed_worker", group="score")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
-                    scan_worker,
-                    worker_name,
+                    embed_description_worker,
+                    "embed_worker",
                     state,
                     state.should_stop,
-                    on_progress=on_scan_progress,
-                    batch_size=scan_batch_size,
-                    status_tracker=status,
+                    labels=["FacilityPath"],
+                    status_tracker=embed_status,
                 )
             )
         )
 
-    # Expand workers (group="scan" — same pipeline stage)
-    for i in range(num_expand_workers):
-        worker_name = f"expand_worker_{i}"
-        status = worker_group.create_status(worker_name, group="scan")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    expand_worker,
-                    worker_name,
-                    state,
-                    state.should_stop,
-                    on_progress=on_expand_progress,
-                    batch_size=expand_batch_size,
-                    status_tracker=status,
-                )
-            )
+        logger.info(
+            f"Started {worker_group.get_active_count()} supervised workers: "
+            f"scan={num_scan_workers}, expand={num_expand_workers}, "
+            f"score={num_score_workers}, enrich={num_enrich_workers}, "
+            f"refine={num_refine_workers}, embed=1"
         )
 
-    # Score workers (group="score")
-    for i in range(num_score_workers):
-        worker_name = f"score_worker_{i}"
-        status = worker_group.create_status(worker_name, group="score")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    score_worker,
-                    worker_name,
-                    state,
-                    state.should_stop,
-                    on_progress=on_score_progress,
-                    batch_size=score_batch_size,
-                    status_tracker=status,
-                )
-            )
+        # Periodic orphan recovery during discovery (every 60s)
+        orphan_tick = make_orphan_recovery_tick(
+            facility,
+            [OrphanRecoverySpec("FacilityPath", timeout_seconds=CLAIM_TIMEOUT_SECONDS)],
         )
 
-    # Enrich workers (group="enrich")
-    for i in range(num_enrich_workers):
-        worker_name = f"enrich_worker_{i}"
-        status = worker_group.create_status(worker_name, group="enrich")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    enrich_worker,
-                    worker_name,
-                    state,
-                    state.should_stop,
-                    on_progress=on_enrich_progress,
-                    batch_size=enrich_batch_size,
-                    status_tracker=status,
-                )
-            )
+        # Run supervision loop — handles status updates and clean shutdown
+        await run_supervised_loop(
+            worker_group,
+            state.should_stop,
+            on_worker_status=on_worker_status,
+            on_tick=orphan_tick,
+            shutdown_timeout=graceful_shutdown_timeout,
         )
 
-    # Refine workers (group="refine" — own display row)
-    for i in range(num_refine_workers):
-        worker_name = f"refine_worker_{i}"
-        status = worker_group.create_status(worker_name, group="refine")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    refine_worker,
-                    worker_name,
-                    state,
-                    state.should_stop,
-                    on_progress=on_refine_progress,
-                    batch_size=refine_batch_size,
-                    status_tracker=status,
-                )
+        # Determine why we stopped for logging
+        if state.budget_exhausted:
+            logger.info("Budget limit reached")
+        elif state.path_limit_reached:
+            logger.info("Path limit reached")
+        elif state.stop_requested:
+            logger.info("Stop requested")
+        else:
+            logger.info("Discovery complete (no pending work)")
+
+        state.stop_requested = True
+
+        # Graceful shutdown: reset any in-progress claims for next run
+        reset_count = reset_orphaned_claims(facility, silent=True)
+        if reset_count:
+            logger.info(f"Shutdown cleanup: {reset_count} claimed paths reset")
+
+        # Auto-normalize scores after scoring completes
+        if state.score_stats.processed > 0:
+            from imas_codex.discovery.paths.frontier import normalize_scores
+
+            normalize_scores(facility)
+
+            # Force garbage collection while the event loop is still running so that
+            # orphaned asyncio subprocess transports are cleaned up before the loop
+            # closes.  Without this, BaseSubprocessTransport.__del__ fires after the
+            # loop is closed and prints harmless but noisy RuntimeError tracebacks.
+            import gc
+
+            gc.collect()
+
+            elapsed = max(
+                state.scan_stats.elapsed,
+                state.expand_stats.elapsed,
+                state.score_stats.elapsed,
+                state.enrich_stats.elapsed,
+                state.refine_stats.elapsed,
             )
-        )
 
-    # Embed description worker (group="score" — embeds scored descriptions)
-    from imas_codex.discovery.base.embed_worker import embed_description_worker
-
-    embed_status = worker_group.create_status("embed_worker", group="score")
-    worker_group.add_task(
-        asyncio.create_task(
-            supervised_worker(
-                embed_description_worker,
-                "embed_worker",
-                state,
-                state.should_stop,
-                labels=["FacilityPath"],
-                status_tracker=embed_status,
-            )
-        )
-    )
-
-    logger.info(
-        f"Started {worker_group.get_active_count()} supervised workers: "
-        f"scan={num_scan_workers}, expand={num_expand_workers}, "
-        f"score={num_score_workers}, enrich={num_enrich_workers}, "
-        f"refine={num_refine_workers}, embed=1"
-    )
-
-    # Periodic orphan recovery during discovery (every 60s)
-    orphan_tick = make_orphan_recovery_tick(
-        facility,
-        [OrphanRecoverySpec("FacilityPath", timeout_seconds=CLAIM_TIMEOUT_SECONDS)],
-    )
-
-    # Run supervision loop — handles status updates and clean shutdown
-    await run_supervised_loop(
-        worker_group,
-        state.should_stop,
-        on_worker_status=on_worker_status,
-        on_tick=orphan_tick,
-        shutdown_timeout=graceful_shutdown_timeout,
-    )
-
-    # Determine why we stopped for logging
-    if state.budget_exhausted:
-        logger.info("Budget limit reached")
-    elif state.path_limit_reached:
-        logger.info("Path limit reached")
-    elif state.stop_requested:
-        logger.info("Stop requested")
-    else:
-        logger.info("Discovery complete (no pending work)")
-
-    state.stop_requested = True
-
-    # Graceful shutdown: reset any in-progress claims for next run
-    reset_count = reset_orphaned_claims(facility, silent=True)
-    if reset_count:
-        logger.info(f"Shutdown cleanup: {reset_count} claimed paths reset")
-
-    # Auto-normalize scores after scoring completes
-    if state.score_stats.processed > 0:
-        from imas_codex.discovery.paths.frontier import normalize_scores
-
-        normalize_scores(facility)
-
-    # Force garbage collection while the event loop is still running so that
-    # orphaned asyncio subprocess transports are cleaned up before the loop
-    # closes.  Without this, BaseSubprocessTransport.__del__ fires after the
-    # loop is closed and prints harmless but noisy RuntimeError tracebacks.
-    import gc
-
-    gc.collect()
-
-    elapsed = max(
-        state.scan_stats.elapsed,
-        state.expand_stats.elapsed,
-        state.score_stats.elapsed,
-        state.enrich_stats.elapsed,
-        state.refine_stats.elapsed,
-    )
-
-    return {
-        "scanned": state.scan_stats.processed,
-        "expanded": state.expand_stats.processed,
-        "scored": state.score_stats.processed,
-        "enriched": state.enrich_stats.processed,
-        "refined": state.refine_stats.processed,
-        "cost": state.total_cost,
-        "elapsed_seconds": elapsed,
-        "scan_rate": state.scan_stats.rate,
-        "expand_rate": state.expand_stats.rate,
-        "score_rate": state.score_stats.rate,
-        "enrich_rate": state.enrich_stats.rate,
-        "refine_rate": state.refine_stats.rate,
-        "scan_errors": state.scan_stats.errors,
-        "expand_errors": state.expand_stats.errors,
-        "score_errors": state.score_stats.errors,
-        "enrich_errors": state.enrich_stats.errors,
-        "refine_errors": state.refine_stats.errors,
-    }
+            return {
+                "scanned": state.scan_stats.processed,
+                "expanded": state.expand_stats.processed,
+                "scored": state.score_stats.processed,
+                "enriched": state.enrich_stats.processed,
+                "refined": state.refine_stats.processed,
+                "cost": state.total_cost,
+                "elapsed_seconds": elapsed,
+                "scan_rate": state.scan_stats.rate,
+                "expand_rate": state.expand_stats.rate,
+                "score_rate": state.score_stats.rate,
+                "enrich_rate": state.enrich_stats.rate,
+                "refine_rate": state.refine_stats.rate,
+                "scan_errors": state.scan_stats.errors,
+                "expand_errors": state.expand_stats.errors,
+                "score_errors": state.score_stats.errors,
+                "enrich_errors": state.enrich_stats.errors,
+                "refine_errors": state.refine_stats.errors,
+            }
+    finally:
+        # Clean up persistent SSH workers on exit (normal, exception, or Ctrl+C)
+        if ssh_pool is not None:
+            logger.info("Shutting down persistent SSH worker pool")
+            await ssh_pool.close()
