@@ -336,15 +336,14 @@ class StaticProgressDisplay(BaseProgressDisplay):
         s.enrich_completed = stats.processed
         s.enrich_cost = stats.cost
         if results:
-            for r in results:
-                self.enrich_queue.add(
-                    [
-                        {
-                            "path": r.get("path", ""),
-                            "description": r.get("description", ""),
-                        }
-                    ]
-                )
+            items = [
+                {
+                    "path": r.get("path", ""),
+                    "description": r.get("description", ""),
+                }
+                for r in results
+            ]
+            self.enrich_queue.add(items, last_batch_time=stats.last_batch_time)
         elif msg:
             self.enrich_queue.add([{"path": msg, "description": ""}])
 
