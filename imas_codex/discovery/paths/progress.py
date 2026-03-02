@@ -1284,6 +1284,12 @@ def print_discovery_status(
             output(f"├─ Discovered: {discovered:,} ({discovered / total * 100:.1f}%)")
             output(f"├─ Scanned:    {scanned:,} ({scanned / total * 100:.1f}%)")
             output(f"├─ Scored:     {scored:,} ({scored / total * 100:.1f}%)")
+            enriched = stats.get("enriched", 0)
+            refined = stats.get("refined", 0)
+            if enriched > 0:
+                output(f"│  ├─ Enriched: {enriched:,}")
+            if refined > 0:
+                output(f"│  └─ Refined:  {refined:,}")
             output(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
             output(f"└─ Excluded:   {excluded:,} ({excluded / total * 100:.1f}%)")
 
@@ -1368,9 +1374,12 @@ def print_discovery_status(
 
                 output(f"Total pages: {wiki_total:,}")
                 output(f"├─ Scanned:   {wiki_scanned:,}")
-                output(f"├─ Scored:    {wiki_scored:,}")
-                output(f"├─ Ingested:  {wiki_ingested:,}")
-                output(f"└─ Skipped:   {wiki_skipped:,}")
+                wiki_through_scoring = wiki_scored + wiki_ingested + wiki_skipped
+                output(f"├─ Scored:    {wiki_through_scoring:,}")
+                output(f"│  ├─ Ingested: {wiki_ingested:,}")
+                output(f"│  └─ Skipped:  {wiki_skipped:,}")
+                if wiki_scored > 0:
+                    output(f"└─ Awaiting:  {wiki_scored:,}")
 
                 # Artifact stats
                 total_artifacts = wiki_stats.get("total_artifacts", 0)
@@ -1379,14 +1388,16 @@ def print_discovery_status(
                     art_ingested = wiki_stats.get("artifacts_ingested", 0)
                     art_pending_score = wiki_stats.get("pending_artifact_score", 0)
                     art_pending_ingest = wiki_stats.get("pending_artifact_ingest", 0)
+                    art_through_scoring = art_scored + art_ingested
                     output(f"\nArtifacts: {total_artifacts:,}")
-                    output(f"├─ Scored:    {art_scored:,}")
-                    output(f"├─ Ingested:  {art_ingested:,}")
-                    output(
-                        f"└─ Pending:   "
-                        f"score={art_pending_score:,}, "
-                        f"ingest={art_pending_ingest:,}"
-                    )
+                    output(f"├─ Scored:    {art_through_scoring:,}")
+                    output(f"│  └─ Ingested: {art_ingested:,}")
+                    if art_pending_score > 0 or art_pending_ingest > 0:
+                        output(
+                            f"└─ Pending:   "
+                            f"score={art_pending_score:,}, "
+                            f"ingest={art_pending_ingest:,}"
+                        )
 
                 output(f"Accumulated cost: ${wiki_cost:.2f}")
             elif domain == "wiki":
