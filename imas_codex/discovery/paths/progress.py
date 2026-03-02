@@ -731,7 +731,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update scanner state."""
         self.state.run_scanned = stats.processed
-        self.state.scan_rate = stats.rate
+        self.state.scan_rate = stats.ema_rate or stats.active_rate
 
         # Track processing state for display
         # Don't clear current_scan when idle - let queue drain naturally
@@ -760,11 +760,14 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 )
                 for r in scan_results
             ]
-            # Use actual worker rate, capped for readability
-            # Max 2.0/s = each item visible for at least 0.5s
-            max_display_rate = 2.0
-            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
-            self.state.scan_queue.add(items, display_rate)
+            # Adaptive rate: use last_batch_time to drain queue
+            # just before next batch arrives. EMA as fallback.
+            ema = stats.ema_rate or stats.active_rate
+            self.state.scan_queue.add(
+                items,
+                ema,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -776,7 +779,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update scorer state."""
         self.state.run_scored = stats.processed
-        self.state.score_rate = stats.rate
+        self.state.score_rate = stats.ema_rate or stats.active_rate
         self.state._run_score_cost = stats.cost
 
         # Track processing state for display
@@ -811,11 +814,14 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                         terminal_reason=r.get("terminal_reason", ""),
                     )
                 )
-            # Use actual worker rate, capped for readability
-            # Max 2.0/s = each item visible for at least 0.5s
-            max_display_rate = 2.0
-            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
-            self.state.score_queue.add(items, display_rate)
+            # Adaptive rate: use last_batch_time to drain queue
+            # just before next batch arrives. EMA as fallback.
+            ema = stats.ema_rate or stats.active_rate
+            self.state.score_queue.add(
+                items,
+                ema,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -832,7 +838,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         on high-value directories.
         """
         self.state.run_expanded = stats.processed
-        self.state.expand_rate = stats.rate
+        self.state.expand_rate = stats.ema_rate or stats.active_rate
 
         # Queue expand results to scan stream (they are scans of valuable paths)
         if scan_results:
@@ -847,7 +853,12 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 )
                 for r in scan_results
             ]
-            self.state.scan_queue.add(items, stats.rate)
+            ema = stats.ema_rate or stats.active_rate
+            self.state.scan_queue.add(
+                items,
+                ema,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -859,7 +870,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update enrich worker state with enrichment results."""
         self.state.run_enriched = stats.processed
-        self.state.enrich_rate = stats.rate
+        self.state.enrich_rate = stats.ema_rate or stats.active_rate
 
         # Track processing state for display
         # Don't clear current_enrich when waiting - let queue drain naturally
@@ -942,11 +953,14 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                         warnings=r.get("warnings", []),
                     )
                 )
-            # Use actual worker rate, capped for readability
-            # Max 2.0/s = each item visible for at least 0.5s
-            max_display_rate = 2.0
-            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
-            self.state.enrich_queue.add(items, display_rate)
+            # Adaptive rate: use last_batch_time to drain queue
+            # just before next batch arrives. EMA as fallback.
+            ema = stats.ema_rate or stats.active_rate
+            self.state.enrich_queue.add(
+                items,
+                ema,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -958,7 +972,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update refine worker state with own display row."""
         self.state.run_refined = stats.processed
-        self.state.refine_rate = stats.rate
+        self.state.refine_rate = stats.ema_rate or stats.active_rate
         # Track refine cost separately (cumulative from refine worker)
         self.state._run_refine_cost = stats.cost
 
@@ -988,8 +1002,14 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                         adjustment_reason=reason,
                     )
                 )
-            display_rate = min(stats.rate, 2.0) if stats.rate else 1.0
-            self.state.refine_queue.add(items, display_rate)
+            # Adaptive rate: use last_batch_time to drain queue
+            # just before next batch arrives. EMA as fallback.
+            ema = stats.ema_rate or stats.active_rate
+            self.state.refine_queue.add(
+                items,
+                ema,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -1020,8 +1040,10 @@ class ParallelProgressDisplay(BaseProgressDisplay):
     def tick(self) -> None:
         """Drain streaming queues for smooth display.
 
-        Clears stale current items when queues have drained and no new
-        items have been added for the stale timeout.
+        Only clears a stale current item when the worker is also idle
+        (not processing a batch).  This prevents flicker between content
+        and "idle" when the queue empties between batches while the
+        worker is still actively claiming and processing work.
         """
         updated = False
 
@@ -1029,7 +1051,11 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         if next_scan:
             self.state.current_scan = next_scan
             updated = True
-        elif self.state.scan_queue.is_stale() and self.state.current_scan is not None:
+        elif (
+            self.state.scan_queue.is_stale()
+            and self.state.current_scan is not None
+            and not self.state.scan_processing
+        ):
             self.state.current_scan = None
             updated = True
 
@@ -1037,7 +1063,11 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         if next_score:
             self.state.current_score = next_score
             updated = True
-        elif self.state.score_queue.is_stale() and self.state.current_score is not None:
+        elif (
+            self.state.score_queue.is_stale()
+            and self.state.current_score is not None
+            and not self.state.score_processing
+        ):
             self.state.current_score = None
             updated = True
 
@@ -1046,7 +1076,9 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             self.state.current_enrich = next_enrich
             updated = True
         elif (
-            self.state.enrich_queue.is_stale() and self.state.current_enrich is not None
+            self.state.enrich_queue.is_stale()
+            and self.state.current_enrich is not None
+            and not self.state.enrich_processing
         ):
             self.state.current_enrich = None
             updated = True
@@ -1056,7 +1088,9 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             self.state.current_refine = next_refine
             updated = True
         elif (
-            self.state.refine_queue.is_stale() and self.state.current_refine is not None
+            self.state.refine_queue.is_stale()
+            and self.state.current_refine is not None
+            and not self.state.refine_processing
         ):
             self.state.current_refine = None
             updated = True

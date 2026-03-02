@@ -249,14 +249,13 @@ def has_pending_work(facility: str) -> bool:
     - Scanned paths awaiting scoring (including actively claimed)
     - Scored paths with should_expand=true that haven't been expanded yet
     - Scored paths with should_enrich=true that haven't been enriched yet
-    - Enriched paths above the discovery threshold that haven't been refined yet
+    - Enriched paths that haven't been refined yet
 
     Note: Unlike claim functions, this does NOT filter out claimed paths.
     Claimed paths represent active work in progress and must count as
     pending to prevent premature termination while workers are mid-task.
     """
     from imas_codex.graph import GraphClient
-    from imas_codex.settings import get_discovery_threshold
 
     with GraphClient() as gc:
         result = gc.query(
@@ -271,9 +270,10 @@ def has_pending_work(facility: str) -> bool:
                       AND p.expanded_at IS NULL
                       THEN 'expand' ELSE null END AS exp,
                  CASE WHEN p.status = $scored AND p.should_enrich = true
+                      AND p.score >= 0.15
                       AND (p.is_enriched IS NULL OR p.is_enriched = false)
                       THEN 'enrich' ELSE null END AS enr,
-                 CASE WHEN p.is_enriched = true AND p.score >= $min_score
+                 CASE WHEN p.is_enriched = true
                       AND p.refined_at IS NULL
                       THEN 'refine' ELSE null END AS rsc
             WHERE disc IS NOT NULL OR scn IS NOT NULL OR exp IS NOT NULL
@@ -289,7 +289,6 @@ def has_pending_work(facility: str) -> bool:
             discovered=PathStatus.discovered.value,
             scanned=PathStatus.scanned.value,
             scored=PathStatus.scored.value,
-            min_score=get_discovery_threshold(),
         )
         if result:
             pending = result[0]["pending"]
@@ -373,6 +372,7 @@ def _has_pending_enrich_work(facility: str) -> bool:
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.status = $scored
               AND p.should_enrich = true
+              AND p.score >= 0.15
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
             RETURN count(p) > 0 AS has_work
             """,
@@ -386,24 +386,19 @@ def _has_pending_refine_work(facility: str) -> bool:
     """Check if there are enriched paths awaiting refinement.
 
     Matches the same criteria as claim_paths_for_refining:
-    enriched paths above the discovery threshold that haven't been
-    refined yet.
+    all enriched paths that haven't been refined yet.
     """
     from imas_codex.graph import GraphClient
-    from imas_codex.settings import get_discovery_threshold
 
-    threshold = get_discovery_threshold()
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.is_enriched = true
-              AND p.score >= $min_score
               AND p.refined_at IS NULL
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,
-            min_score=threshold,
         )
         return bool(result and result[0]["has_work"])
 
@@ -653,6 +648,9 @@ def claim_paths_for_enriching(
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
     # Build enrich condition: should_enrich=true OR (threshold and score >= threshold)
+    # Always require a minimum score to avoid enriching worthless paths
+    # (e.g. empty dirs where should_enrich defaulted to true)
+    min_enrich_score = 0.15
     if auto_enrich_threshold is not None:
         enrich_clause = "(p.should_enrich = true OR p.score >= $auto_enrich_threshold)"
     else:
@@ -665,6 +663,7 @@ def claim_paths_for_enriching(
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $scored
               AND {enrich_clause}
+              AND p.score >= $min_enrich_score
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
               AND (p.total_dirs IS NULL OR p.total_dirs <= 500)
@@ -680,6 +679,7 @@ def claim_paths_for_enriching(
             cutoff=cutoff,
             root_filter=root_filter or [],
             auto_enrich_threshold=auto_enrich_threshold,
+            min_enrich_score=min_enrich_score,
         )
         return list(result)
 
@@ -694,11 +694,11 @@ def claim_paths_for_refining(
 
     Claims paths where:
     - is_enriched = true
-    - score >= min_score (defaults to get_discovery_threshold())
     - refined_at is null
 
-    Refinement is an LLM call so we only refine paths above the
-    discovery threshold to avoid spending budget on low-value paths.
+    All enriched paths are refined — we've already invested in
+    enrichment, so use the data. Refinement can raise OR lower
+    scores based on concrete evidence (LOC, patterns, size).
 
     Returns paths that this worker now owns.
 
@@ -706,12 +706,11 @@ def claim_paths_for_refining(
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
-        min_score: Minimum score for refinement (default: discovery threshold)
+        min_score: Minimum score for refinement (default: 0.0 = refine all)
     """
     from imas_codex.graph import GraphClient
-    from imas_codex.settings import get_discovery_threshold
 
-    threshold = min_score if min_score is not None else get_discovery_threshold()
+    threshold = min_score if min_score is not None else 0.0
 
     # Build root filter clause
     root_clause = ""
@@ -982,6 +981,7 @@ async def scan_worker(
 
         if not paths:
             state.scan_phase.record_idle()
+            state.scan_stats.mark_idle()
             if on_progress:
                 on_progress("idle", state.scan_stats, None, None)
             # Wait before polling again
@@ -989,6 +989,7 @@ async def scan_worker(
             continue
 
         state.scan_phase.record_activity(len(paths))
+        state.scan_stats.mark_active()
         path_strs = [p["path"] for p in paths]
 
         if on_progress:
@@ -1092,6 +1093,7 @@ async def scan_worker(
 
         state.scan_stats.processed += stats["scanned"]
         state.scan_stats.errors += stats["errors"]
+        state.scan_stats.record_batch(stats["scanned"])
 
         # Build detailed scan results for progress display
         scan_results = [
@@ -1156,6 +1158,7 @@ async def expand_worker(
 
         if not paths:
             state.expand_phase.record_idle()
+            state.expand_stats.mark_idle()
             if on_progress:
                 on_progress("idle", state.expand_stats, None, None)
             # Wait before polling again
@@ -1163,6 +1166,7 @@ async def expand_worker(
             continue
 
         state.expand_phase.record_activity(len(paths))
+        state.expand_stats.mark_active()
         path_strs = [p["path"] for p in paths]
 
         if on_progress:
@@ -1223,8 +1227,8 @@ async def expand_worker(
 
         state.expand_stats.processed += stats["scanned"]
         state.expand_stats.errors += stats["errors"]
+        state.expand_stats.record_batch(stats["scanned"])
 
-        # Build detailed scan results for progress display
         scan_results = [
             {
                 "path": r.path,
@@ -1291,6 +1295,7 @@ async def score_worker(
 
         if not paths:
             state.score_phase.record_idle()
+            state.score_stats.mark_idle()
             if state.score_phase.idle_count <= 3:
                 logger.debug(
                     f"Score worker idle ({state.score_phase.idle_count}), "
@@ -1303,6 +1308,7 @@ async def score_worker(
             continue
 
         state.score_phase.record_activity(len(paths))
+        state.score_stats.mark_active()
         logger.debug(f"Score worker claimed {len(paths)} paths")
 
         # Split paths into auto-skip categories and paths needing LLM
@@ -1349,6 +1355,8 @@ async def score_worker(
                     "score_imas": 0.0,
                     "score_convention": 0.0,
                     "should_expand": False,
+                    "should_enrich": False,
+                    "enrich_skip_reason": "empty directory",
                     "skip_reason": "empty",
                     "terminal_reason": TerminalReason.empty.value,
                 }
@@ -1482,6 +1490,7 @@ async def score_worker(
             )
 
             state.score_stats.processed += len(result.scored_dirs)
+            state.score_stats.record_batch(len(result.scored_dirs))
 
             # Build detailed score results for progress callback
             detailed_results = [
@@ -1594,6 +1603,7 @@ async def enrich_worker(
 
         if not paths:
             state.enrich_phase.record_idle()
+            state.enrich_stats.mark_idle()
             if on_progress:
                 on_progress("waiting for enrichable paths", state.enrich_stats, None)
             # Wait before polling again
@@ -1601,6 +1611,7 @@ async def enrich_worker(
             continue
 
         state.enrich_phase.record_activity(len(paths))
+        state.enrich_stats.mark_active()
         path_strs = [p["path"] for p in paths]
         # Build path -> purpose mapping for targeted pattern selection
         path_purposes = {p["path"]: p.get("path_purpose") for p in paths}
@@ -1644,6 +1655,7 @@ async def enrich_worker(
 
             state.enrich_stats.processed += enriched
             state.enrich_stats.errors += len([r for r in results if r.error])
+            state.enrich_stats.record_batch(enriched)
 
             if on_progress:
                 on_progress(f"enriched {enriched}", state.enrich_stats, result_dicts)
@@ -1695,6 +1707,7 @@ async def refine_worker(
 
         if not paths:
             state.refine_phase.record_idle()
+            state.refine_stats.mark_idle()
             if on_progress:
                 on_progress("waiting for enriched paths", state.refine_stats, None)
             # Wait before polling again
@@ -1702,6 +1715,7 @@ async def refine_worker(
             continue
 
         state.refine_phase.record_activity(len(paths))
+        state.refine_stats.mark_active()
 
         if on_progress:
             on_progress(f"rescoring {len(paths)} paths", state.refine_stats, None)
@@ -1778,6 +1792,7 @@ async def refine_worker(
                 )
 
             state.refine_stats.processed += refined
+            state.refine_stats.record_batch(refined)
 
             if on_progress:
                 on_progress(f"refined {refined}", state.refine_stats, refine_results)
