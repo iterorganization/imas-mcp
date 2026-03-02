@@ -1280,17 +1280,24 @@ def print_discovery_status(
             skipped = stats.get("skipped", 0)
             excluded = stats.get("excluded", 0)
             max_depth = stats.get("max_depth", 0)
-
-            output(f"├─ Discovered: {discovered:,} ({discovered / total * 100:.1f}%)")
-            output(f"├─ Scanned:    {scanned:,} ({scanned / total * 100:.1f}%)")
-            output(f"├─ Scored:     {scored:,} ({scored / total * 100:.1f}%)")
             enriched = stats.get("enriched", 0)
             refined = stats.get("refined", 0)
+
+            # Cumulative throughput: each stage includes all downstream
+            cum_scanned = scanned + scored + skipped
+            cum_scored = scored + skipped
+
+            output(f"├─ Scanned:    {cum_scanned:,} ({cum_scanned / total * 100:.1f}%)")
+            output(f"│  ├─ Scored:  {cum_scored:,} ({cum_scored / total * 100:.1f}%)")
             if enriched > 0:
-                output(f"│  ├─ Enriched: {enriched:,}")
+                output(f"│  │  ├─ Enriched: {enriched:,}")
             if refined > 0:
-                output(f"│  └─ Refined:  {refined:,}")
-            output(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
+                output(f"│  │  └─ Refined:  {refined:,}")
+            output(f"│  └─ Skipped: {skipped:,} ({skipped / total * 100:.1f}%)")
+            if discovered > 0:
+                output(
+                    f"├─ Pending:    {discovered:,} ({discovered / total * 100:.1f}%)"
+                )
             output(f"└─ Excluded:   {excluded:,} ({excluded / total * 100:.1f}%)")
 
             # Purpose distribution with top paths per category
@@ -1373,24 +1380,27 @@ def print_discovery_status(
                 wiki_cost = wiki_stats.get("accumulated_cost", 0.0)
 
                 output(f"Total pages: {wiki_total:,}")
-                output(f"├─ Scanned:   {wiki_scanned:,}")
-                wiki_through_scoring = wiki_scored + wiki_ingested + wiki_skipped
-                output(f"├─ Scored:    {wiki_through_scoring:,}")
-                output(f"│  ├─ Ingested: {wiki_ingested:,}")
-                output(f"│  └─ Skipped:  {wiki_skipped:,}")
+                # Cumulative throughput: each stage includes all downstream
+                cum_scanned = wiki_scanned + wiki_scored + wiki_ingested + wiki_skipped
+                cum_scored = wiki_scored + wiki_ingested + wiki_skipped
+                output(f"├─ Scanned:   {cum_scanned:,}")
+                output(f"│  ├─ Scored:  {cum_scored:,}")
+                output(f"│  │  ├─ Ingested: {wiki_ingested:,}")
+                output(f"│  │  └─ Skipped:  {wiki_skipped:,}")
                 if wiki_scored > 0:
-                    output(f"└─ Awaiting:  {wiki_scored:,}")
+                    output(f"│  └─ Awaiting: {wiki_scored:,}")
 
                 # Artifact stats
                 total_artifacts = wiki_stats.get("total_artifacts", 0)
                 if total_artifacts > 0:
                     art_scored = wiki_stats.get("artifacts_scored", 0)
-                    art_ingested = wiki_stats.get("artifacts_ingested", 0)
+                    art_ingested = wiki_stats.get("docs_ingested", 0)
                     art_pending_score = wiki_stats.get("pending_artifact_score", 0)
                     art_pending_ingest = wiki_stats.get("pending_artifact_ingest", 0)
-                    art_through_scoring = art_scored + art_ingested
+                    # Cumulative: scored includes downstream ingested
+                    cum_art_scored = art_scored + art_ingested
                     output(f"\nArtifacts: {total_artifacts:,}")
-                    output(f"├─ Scored:    {art_through_scoring:,}")
+                    output(f"├─ Scored:    {cum_art_scored:,}")
                     output(f"│  └─ Ingested: {art_ingested:,}")
                     if art_pending_score > 0 or art_pending_ingest > 0:
                         output(
@@ -1418,17 +1428,21 @@ def print_discovery_status(
             if signal_total > 0:
                 if domain is None:
                     output("\n[bold]Signal Discovery:[/bold]")
-                scanned = signal_stats.get("scanned", 0)
+                discovered = signal_stats.get("discovered", 0)
                 enriched = signal_stats.get("enriched", 0)
                 checked = signal_stats.get("checked", 0)
                 skipped = signal_stats.get("skipped", 0)
                 cost = signal_stats.get("accumulated_cost", 0.0)
 
+                # Cumulative throughput: each stage includes downstream
+                cum_enriched = enriched + checked + skipped
+
                 output(f"Total signals: {signal_total:,}")
-                output(f"├─ Scanned:   {scanned:,}")
-                output(f"├─ Enriched:  {enriched:,}")
-                output(f"├─ Checked:   {checked:,}")
-                output(f"└─ Skipped:   {skipped:,}")
+                output(f"├─ Enriched:  {cum_enriched:,}")
+                output(f"│  ├─ Checked: {checked:,}")
+                output(f"│  └─ Skipped: {skipped:,}")
+                if discovered > 0:
+                    output(f"└─ Pending:   {discovered:,}")
                 if cost > 0:
                     output(f"Accumulated cost: ${cost:.2f}")
             elif domain == "signals":
@@ -1456,10 +1470,12 @@ def print_discovery_status(
                 nodes_graph = static_stats.get("nodes_graph", 0)
                 nodes_enriched = static_stats.get("nodes_enriched", 0)
 
+                # Cumulative: discovered includes downstream ingested
+                cum_discovered = versions_discovered + versions_ingested
                 output(f"Versions: {versions_total:,}")
                 output(
-                    f"├─ Discovered: {versions_discovered:,}"
-                    f" ({versions_discovered / versions_total * 100:.0f}%)"
+                    f"├─ Discovered: {cum_discovered:,}"
+                    f" ({cum_discovered / versions_total * 100:.0f}%)"
                 )
                 output(
                     f"└─ Ingested:   {versions_ingested:,}"
