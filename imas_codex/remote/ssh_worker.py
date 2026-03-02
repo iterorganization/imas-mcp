@@ -225,6 +225,7 @@ class SSHWorker:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=16 * 1024 * 1024,  # 16MB — scan output can exceed 64KB default
         )
 
         # Wait for ready signal
