@@ -388,7 +388,18 @@ Install on any facility: `uv run imas-codex tools install <facility>`
 
 **Critical:** `fd` requires a path argument on large filesystems to avoid hanging: `fd -e py /path`
 
-**Remote Python:** Remote scripts run via `run_python_script()` use the imas-codex venv Python (3.12+), not the system Python. The `_REMOTE_PATH_PREFIX` in `executor.py` prepends `~/.local/share/imas-codex/venv/bin` to PATH so `python3` resolves to the venv. Remote scripts can use modern Python syntax (`X | Y` unions, `match`, `isinstance(x, int | float)`). If a remote script fails with a syntax or type error, verify the venv is installed: `uv run imas-codex tools status <facility>`.
+**Remote Python — Two-interpreter architecture:**
+
+| Executor | Interpreter | Min Python | When Used |
+|----------|-------------|------------|----------|
+| `run_python_script()` / `async_run_python_script()` | Venv `python3` via `_REMOTE_PATH_PREFIX` | 3.12+ | Individual script calls, MDSplus enumeration, TDI extraction |
+| `SSHWorkerPool` / `pooled_run_python_script()` | `/usr/bin/python3` (hardcoded) | 3.9+ | Batch discovery operations (scan, enrich, signal check) |
+
+- **Venv path**: Scripts dispatched via `run_python_script()` get the venv Python (3.12+) because `_REMOTE_PATH_PREFIX` puts `~/.local/share/imas-codex/venv/bin` first in PATH. These scripts may use modern syntax (`X | Y` unions, `match`, `isinstance(x, int | float)`).
+- **System path**: The `SSHWorkerPool` hardcodes `/usr/bin/python3` to avoid 60-100s NFS venv startup penalty. Scripts dispatched through the pool `exec()` inside system Python and **must be Python 3.9+ compatible** with stdlib-only imports. Do **not** use 3.10+ syntax (`match`, `X | Y` type unions) in these scripts.
+- If a venv-path script fails with a syntax error, verify the venv: `uv run imas-codex tools status <facility>`.
+- Remote scripts declare their Python version in a docstring header (`Python 3.8+` or `Python 3.12+`). Always check before adding modern syntax.
+- Ruff skips type-hint modernization for `imas_codex/remote/scripts/*` — see `pyproject.toml` per-file ignores.
 
 **Remote zombie prevention:** All remote SSH commands are wrapped with `timeout <seconds>` on the server side. When a local `subprocess.run()` times out, it kills the SSH client process but the remote process keeps running indefinitely as a zombie. The server-side `timeout` (set to local timeout + 5s) ensures the remote process self-terminates independently. This is enforced in `executor.py` for `run_command()`, `run_script_via_stdin()`, `run_python_script()`, and `async_run_python_script()`. Never bypass this by constructing raw SSH commands — always use the executor functions.
 

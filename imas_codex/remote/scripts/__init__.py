@@ -1,9 +1,19 @@
 # Remote scripts for execution at facilities.
 #
-# These scripts are designed to run on remote systems via SSH with minimal
-# dependencies (Python 3.8+ stdlib only). They are loaded and executed
-# using the run_python_script() / async_run_python_script() functions
-# from executor.py.
+# Two execution paths with different Python version constraints:
+#
+# 1. run_python_script() / async_run_python_script() — uses the imas-codex
+#    venv Python (3.12+). Scripts dispatched via this path may use modern
+#    Python syntax and import from the venv's site-packages (e.g. MDSplus).
+#
+# 2. SSHWorkerPool / pooled_run_python_script() — uses /usr/bin/python3
+#    (system Python, as low as 3.9). Scripts dispatched via exec() inside
+#    the worker MUST be Python 3.9+ compatible and stdlib-only.
+#
+# Each script declares its minimum version in its docstring header:
+#   - "Python 3.8+" — stdlib-only, safe for both execution paths
+#   - "Python 3.12+" — requires venv, must ONLY be dispatched via
+#     run_python_script() / async_run_python_script()
 #
 # All remote execution MUST use these scripts via the executor functions.
 # Never inline SSH subprocess calls in scanner or discovery code.
