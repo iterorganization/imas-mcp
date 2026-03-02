@@ -224,12 +224,12 @@ class StreamQueue:
     """Rate-limited queue for smooth display updates.
 
     Prevents rapid flickering by:
-    1. Rate-limiting pops to a maximum rate (default 2.0/s)
-    2. Enforcing minimum display time per item (default 0.4s)
-    3. Larger queue buffer to absorb batch processing bursts
-
-    The min_display_time ensures items stay visible long enough to read,
-    even when processing is fast. This prevents the jarring path/idle flicker.
+    1. Rate-limiting pops to a maximum rate (default 5.0/s)
+    2. Enforcing minimum display time per item (default 0.2s)
+    3. Adaptive rate calculation: when ``last_batch_time`` is passed to
+       ``add()``, the pop rate is automatically tuned so the queue
+       drains just before the next batch arrives.
+    4. Larger queue buffer to absorb batch processing bursts
 
     Stale detection: tracks when items were last added. When the queue is
     empty and no items have been added for ``stale_timeout`` seconds, the
@@ -239,22 +239,53 @@ class StreamQueue:
     items: deque = field(default_factory=deque)
     last_pop: float = field(default_factory=time.time)
     last_add: float = 0.0  # timestamp of last add() call
-    rate: float = 2.0  # items per second (capped max rate)
-    max_rate: float = 2.5  # never exceed this rate even if worker is faster
-    min_display_time: float = 0.4  # minimum seconds each item stays visible
+    rate: float = 2.0  # items per second (current pop rate)
+    max_rate: float = 5.0  # never exceed this rate even if worker is faster
+    min_display_time: float = 0.2  # minimum seconds each item stays visible
     max_size: int = 500  # larger buffer to absorb batch bursts
     stale_timeout: float = 3.0  # seconds without adds before queue is stale
 
-    def add(self, items: list, rate: float | None = None) -> None:
-        """Add items to queue.
+    def add(
+        self,
+        items: list,
+        rate: float | None = None,
+        *,
+        last_batch_time: float = 0.0,
+    ) -> None:
+        """Add items to queue with adaptive rate calculation.
 
-        The rate is capped at max_rate to ensure smooth display.
+        When ``last_batch_time`` is provided, the pop rate is computed so
+        that the queue drains just before the next batch is expected to
+        arrive, giving a continuous visual stream without flicker.
+
+        Args:
+            items: Items to enqueue.
+            rate: Fallback pop rate (items/s). Used when adaptive
+                calculation is not possible.
+            last_batch_time: Elapsed time of the batch that produced
+                these items. Used to estimate when the next batch will
+                arrive, so the queue drains smoothly.
         """
         self.items.extend(items)
         self.last_add = time.time()
-        if rate and rate > 0:
-            # Cap at max_rate to prevent too-fast streaming
-            self.rate = min(rate, self.max_rate)
+
+        queue_depth = len(self.items)
+        new_rate: float | None = None
+
+        if last_batch_time > 0 and queue_depth > 0:
+            # Estimate gap until next batch: batch processing time + overhead
+            expected_gap = last_batch_time + 1.0
+            # Drain 90% through the gap to avoid emptying before next batch
+            drain_target = expected_gap * 0.9
+            if drain_target > 0:
+                new_rate = queue_depth / drain_target
+
+        if new_rate is None and rate and rate > 0:
+            new_rate = rate
+
+        if new_rate is not None and new_rate > 0:
+            self.rate = min(new_rate, self.max_rate)
+
         # Drop oldest items if queue exceeds max size
         while len(self.items) > self.max_size:
             self.items.popleft()
