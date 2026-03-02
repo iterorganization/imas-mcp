@@ -1241,7 +1241,9 @@ def graph_start(
 
         conf_file.write_text(
             DEFAULT_NEO4J_CONF.format(
-                bolt_port=profile.bolt_port, http_port=profile.http_port
+                listen_address="127.0.0.1",
+                bolt_port=profile.bolt_port,
+                http_port=profile.http_port,
             )
         )
 
@@ -3435,7 +3437,9 @@ def _start_neo4j_after_switch(profile: Neo4jProfile) -> None:
 
         conf_file.write_text(
             DEFAULT_NEO4J_CONF.format(
-                bolt_port=profile.bolt_port, http_port=profile.http_port
+                listen_address="127.0.0.1",
+                bolt_port=profile.bolt_port,
+                http_port=profile.http_port,
             )
         )
 
