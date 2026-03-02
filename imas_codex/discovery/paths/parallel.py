@@ -2534,10 +2534,10 @@ async def run_parallel_discovery(
             )
         )
 
-    # Embed description worker (group="scan" — lightweight I/O)
+    # Embed description worker (group="score" — embeds scored descriptions)
     from imas_codex.discovery.base.embed_worker import embed_description_worker
 
-    embed_status = worker_group.create_status("embed_worker", group="scan")
+    embed_status = worker_group.create_status("embed_worker", group="score")
     worker_group.add_task(
         asyncio.create_task(
             supervised_worker(

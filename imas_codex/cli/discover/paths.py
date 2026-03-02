@@ -312,20 +312,21 @@ def _run_iterative_discovery(
         log_print(f"Model: {model_name}")
 
     # Build worker count display matching TUI group counts.
-    # Groups in run_parallel_discovery: scan+expand+embed → "scan",
-    # score → "score", enrich → "enrich", refine → "refine".
+    # Groups in run_parallel_discovery: scan+expand → "scan",
+    # score+embed → "score", enrich → "enrich", refine → "refine".
     # Defaults from run_parallel_discovery for workers not exposed via CLI:
     num_expand = 1
     num_enrich = 2
     num_refine = 1
-    num_embed = 1  # always 1 embed worker
+    num_embed = 1  # always 1 embed worker (runs after first score)
 
     worker_parts = []
     if not score_only and effective_scan_workers > 0:
-        scan_group = effective_scan_workers + num_expand + num_embed
+        scan_group = effective_scan_workers + num_expand
         worker_parts.append(f"{scan_group} scan")
     if not scan_only and effective_score_workers > 0:
-        worker_parts.append(f"{effective_score_workers} score")
+        score_group = effective_score_workers + num_embed
+        worker_parts.append(f"{score_group} score")
     if not scan_only:
         worker_parts.append(f"{num_enrich} enrich")
         worker_parts.append(f"{num_refine} refine")
