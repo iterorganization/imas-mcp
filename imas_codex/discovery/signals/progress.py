@@ -570,16 +570,6 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    # Backward compatibility alias
-    def update_discover(
-        self,
-        message: str,
-        stats: WorkerStats,
-        results: list[dict] | None = None,
-    ) -> None:
-        """Alias for update_scan for backward compatibility."""
-        self.update_scan(message, stats, results)
-
     def update_enrich(
         self,
         message: str,

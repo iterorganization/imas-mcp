@@ -1287,12 +1287,6 @@ def ensure_wiki_vector_index() -> bool:
         return True
 
 
-# Backward compatibility alias
-def create_wiki_vector_index() -> None:
-    """Deprecated: Use ensure_wiki_vector_index() instead."""
-    ensure_wiki_vector_index()
-
-
 def get_wiki_stats(facility_id: str) -> dict:
     """Get wiki ingestion statistics for a facility.
 
@@ -2337,7 +2331,6 @@ __all__ = [
     "WikiArtifactPipeline",
     "WikiIngestionPipeline",
     "clear_facility_wiki",
-    "create_wiki_vector_index",
     "fetch_artifact_content",
     "fetch_artifact_size",
     "get_embed_model",

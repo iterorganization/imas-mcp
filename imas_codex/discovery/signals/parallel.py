@@ -120,35 +120,6 @@ class DataDiscoveryState:
             has_work_fn=lambda: has_pending_check_work(self.facility),
         )
 
-    # Backwards-compat idle count properties for progress display
-    @property
-    def discover_idle_count(self) -> int:
-        return self.scan_phase.idle_count
-
-    @discover_idle_count.setter
-    def discover_idle_count(self, value: int) -> None:
-        # Support legacy assignment (e.g., enrich_only mode)
-        if value >= 100:
-            self.scan_phase.mark_done()
-        else:
-            self.scan_phase._idle_count = value
-
-    @property
-    def enrich_idle_count(self) -> int:
-        return self.enrich_phase.idle_count
-
-    @enrich_idle_count.setter
-    def enrich_idle_count(self, value: int) -> None:
-        self.enrich_phase._idle_count = value
-
-    @property
-    def check_idle_count(self) -> int:
-        return self.check_phase.idle_count
-
-    @check_idle_count.setter
-    def check_idle_count(self, value: int) -> None:
-        self.check_phase._idle_count = value
-
     @property
     def total_cost(self) -> float:
         return self.enrich_stats.cost

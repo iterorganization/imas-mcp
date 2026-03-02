@@ -25,12 +25,12 @@ def state():
 
 def _set_all_idle(state: WikiDiscoveryState, count: int = 3) -> None:
     """Set all worker idle counts to the given value."""
-    state.scan_idle_count = count
-    state.score_idle_count = count
-    state.ingest_idle_count = count
-    state.docs_idle_count = count
-    state.artifact_score_idle_count = count
-    state.image_idle_count = count
+    state.scan_phase._idle_count = count
+    state.score_phase._idle_count = count
+    state.ingest_phase._idle_count = count
+    state.docs_phase._idle_count = count
+    state.artifact_score_phase._idle_count = count
+    state.image_phase._idle_count = count
 
 
 def _no_pending_work(*args, **kwargs):
@@ -55,7 +55,7 @@ class TestShouldStop:
     def test_no_stop_when_score_not_idle(self, mock_graph_ops, state):
         """Score worker not idle -> should not stop."""
         _set_all_idle(state)
-        state.score_idle_count = 0  # Score still active
+        state.score_phase._idle_count = 0  # Score still active
 
         assert state.should_stop() is False
 
@@ -75,13 +75,13 @@ class TestShouldStop:
         # Simulate: budget exhausted, LLM workers exited (idle=0),
         # I/O workers drained queues (idle=3), scan idle (3)
         state.score_stats.cost = 2.50  # Exceeds cost_limit=2.0
-        state.score_idle_count = 0  # Exited due to budget, never incremented
-        state.artifact_score_idle_count = 0  # Same
-        state.image_idle_count = 0  # Same
+        state.score_phase._idle_count = 0  # Exited due to budget, never incremented
+        state.artifact_score_phase._idle_count = 0  # Same
+        state.image_phase._idle_count = 0  # Same
 
-        state.scan_idle_count = 3
-        state.ingest_idle_count = 3
-        state.docs_idle_count = 3
+        state.scan_phase._idle_count = 3
+        state.ingest_phase._idle_count = 3
+        state.docs_phase._idle_count = 3
 
         assert state.budget_exhausted is True
 
@@ -96,13 +96,13 @@ class TestShouldStop:
     def test_budget_exhausted_io_work_pending(self, mock_graph_ops, state):
         """Budget exhausted but I/O ingest work pending -> don't stop yet."""
         state.score_stats.cost = 2.50
-        state.score_idle_count = 0
-        state.artifact_score_idle_count = 0
-        state.image_idle_count = 0
+        state.score_phase._idle_count = 0
+        state.artifact_score_phase._idle_count = 0
+        state.image_phase._idle_count = 0
 
-        state.scan_idle_count = 3
-        state.ingest_idle_count = 3
-        state.docs_idle_count = 3
+        state.scan_phase._idle_count = 3
+        state.ingest_phase._idle_count = 3
+        state.docs_phase._idle_count = 3
 
         # Pending ingest work (scored pages waiting for embedding)
         mock_ops = mock_graph_ops.return_value
@@ -111,12 +111,12 @@ class TestShouldStop:
 
         assert state.should_stop() is False
         # I/O idle counts should be reset
-        assert state.ingest_idle_count == 0
-        assert state.docs_idle_count == 0
+        assert state.ingest_phase.idle_count == 0
+        assert state.docs_phase.idle_count == 0
         # LLM idle counts should NOT be reset (they've exited)
-        assert state.score_idle_count == 0
-        assert state.artifact_score_idle_count == 0
-        assert state.image_idle_count == 0
+        assert state.score_phase.idle_count == 0
+        assert state.artifact_score_phase.idle_count == 0
+        assert state.image_phase.idle_count == 0
 
     @patch("imas_codex.discovery.wiki.state._get_graph_ops")
     def test_budget_exhausted_ignores_llm_pending_work(self, mock_graph_ops, state):
@@ -126,13 +126,13 @@ class TestShouldStop:
         when the cost limit means scoring can't happen.
         """
         state.score_stats.cost = 2.50
-        state.score_idle_count = 0
-        state.artifact_score_idle_count = 0
-        state.image_idle_count = 0
+        state.score_phase._idle_count = 0
+        state.artifact_score_phase._idle_count = 0
+        state.image_phase._idle_count = 0
 
-        state.scan_idle_count = 3
-        state.ingest_idle_count = 3
-        state.docs_idle_count = 3
+        state.scan_phase._idle_count = 3
+        state.ingest_phase._idle_count = 3
+        state.docs_phase._idle_count = 3
 
         # No I/O work pending — only LLM work pending
         mock_ops = mock_graph_ops.return_value
@@ -162,12 +162,12 @@ class TestShouldStop:
 
         assert state.should_stop() is False
         # ALL idle counts should be reset
-        assert state.scan_idle_count == 0
-        assert state.score_idle_count == 0
-        assert state.ingest_idle_count == 0
-        assert state.docs_idle_count == 0
-        assert state.artifact_score_idle_count == 0
-        assert state.image_idle_count == 0
+        assert state.scan_phase.idle_count == 0
+        assert state.score_phase.idle_count == 0
+        assert state.ingest_phase.idle_count == 0
+        assert state.docs_phase.idle_count == 0
+        assert state.artifact_score_phase.idle_count == 0
+        assert state.image_phase.idle_count == 0
 
 
 class TestShouldStopScoring:
@@ -198,15 +198,15 @@ class TestShouldStopIngesting:
     def test_continues_after_budget(self, mock_graph_ops, state):
         """Ingest workers should continue even after budget exhaustion."""
         state.score_stats.cost = 2.50  # Budget exhausted
-        state.ingest_idle_count = 0  # Still working
+        state.ingest_phase._idle_count = 0  # Still working
         assert state.should_stop_ingesting() is False
 
     @patch("imas_codex.discovery.wiki.state._get_graph_ops")
     def test_stops_when_scoring_done_and_no_work(self, mock_graph_ops, state):
         """Ingest stops when scoring done + no pending ingest work."""
         state.score_stats.cost = 2.50  # Budget exhausted
-        state.score_idle_count = 0
-        state.ingest_idle_count = 3
+        state.score_phase._idle_count = 0
+        state.ingest_phase._idle_count = 3
 
         mock_ops = mock_graph_ops.return_value
         mock_ops.has_pending_ingest_work.return_value = False

@@ -81,50 +81,6 @@ class DiscoveryState:
         self.enrich_phase = PipelinePhase("enrich")
         self.refine_phase = PipelinePhase("refine")
 
-    # Backwards-compat idle count properties for progress display
-    @property
-    def scan_idle_count(self) -> int:
-        return self.scan_phase.idle_count
-
-    @scan_idle_count.setter
-    def scan_idle_count(self, value: int) -> None:
-        if value >= 3:
-            self.scan_phase._idle_count = value
-        else:
-            self.scan_phase._idle_count = value
-
-    @property
-    def expand_idle_count(self) -> int:
-        return self.expand_phase.idle_count
-
-    @expand_idle_count.setter
-    def expand_idle_count(self, value: int) -> None:
-        self.expand_phase._idle_count = value
-
-    @property
-    def score_idle_count(self) -> int:
-        return self.score_phase.idle_count
-
-    @score_idle_count.setter
-    def score_idle_count(self, value: int) -> None:
-        self.score_phase._idle_count = value
-
-    @property
-    def enrich_idle_count(self) -> int:
-        return self.enrich_phase.idle_count
-
-    @enrich_idle_count.setter
-    def enrich_idle_count(self, value: int) -> None:
-        self.enrich_phase._idle_count = value
-
-    @property
-    def refine_idle_count(self) -> int:
-        return self.refine_phase.idle_count
-
-    @refine_idle_count.setter
-    def refine_idle_count(self, value: int) -> None:
-        self.refine_phase._idle_count = value
-
     # SSH retry tracking for exponential backoff
     ssh_retry_count: int = 0
     max_ssh_retries: int = 5
@@ -1018,7 +974,7 @@ async def scan_worker(
                 f"SSH failure {state.ssh_retry_count}/{state.max_ssh_retries}, "
                 f"retry in {backoff_seconds}s: {e}"
             )
-            _revert_listing_claim(state.facility, path_strs)
+            _revert_path_claims(state.facility, path_strs)
             state.scan_stats.errors += len(paths)
 
             if state.ssh_retry_count >= state.max_ssh_retries:
@@ -1185,7 +1141,7 @@ async def expand_worker(
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
             # Transient failure - revert paths for retry
             logger.warning(f"Expand SSH failure: {e}")
-            _revert_listing_claim(state.facility, path_strs)
+            _revert_path_claims(state.facility, path_strs)
             state.expand_stats.errors += len(paths)
             await asyncio.sleep(5.0)
             continue
@@ -1526,13 +1482,13 @@ async def score_worker(
                 f"LLM validation error for batch of {len(paths_to_score)} paths. "
                 "Reverting to scanned status for retry."
             )
-            _revert_scoring_claim(state.facility, [p["path"] for p in paths_to_score])
+            _revert_path_claims(state.facility, [p["path"] for p in paths_to_score])
             # Don't show validation errors in progress display
         except Exception as e:
             # Other errors - increment error count and revert
             logger.exception(f"Score error: {e}")
             state.score_stats.errors += len(paths_to_score)
-            _revert_scoring_claim(state.facility, [p["path"] for p in paths_to_score])
+            _revert_path_claims(state.facility, [p["path"] for p in paths_to_score])
 
         # Brief yield
         await asyncio.sleep(0.1)
@@ -1557,12 +1513,6 @@ def _revert_path_claims(facility: str, paths: list[str]) -> None:
             facility=facility,
             paths=paths,
         )
-
-
-# Backwards-compatible aliases
-_revert_scoring_claim = _revert_path_claims
-_revert_listing_claim = _revert_path_claims
-_revert_enrich_claim = _revert_path_claims
 
 
 async def enrich_worker(
@@ -1663,7 +1613,7 @@ async def enrich_worker(
         except Exception as e:
             logger.exception(f"Enrich error: {e}")
             state.enrich_stats.errors += len(paths)
-            _revert_enrich_claim(state.facility, path_strs)
+            _revert_path_claims(state.facility, path_strs)
 
         # Brief yield
         await asyncio.sleep(0.1)

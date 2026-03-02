@@ -83,7 +83,7 @@ Each worker has independent stopping logic:
 
 ```python
 # scan_worker stops when:
-state.discover_idle_count >= 3  # No new trees to process
+state.discover_phase.done       # No new trees to process
 
 # enrich_worker stops when:
 state.budget_exhausted          # cost_limit reached
@@ -91,7 +91,7 @@ state.signal_limit_reached      # signal_limit reached
 state.stop_requested            # User interrupt (Ctrl+C)
 
 # check_worker stops when:
-state.check_idle_count >= 3     # No pending work
+state.check_phase.done          # No pending work
 AND enriching_done              # Enrich worker has finished
 AND not has_pending_check_work  # No more enriched signals
 ```

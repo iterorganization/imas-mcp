@@ -180,10 +180,6 @@ def calculate_embedding_cost(tokens: int, model: str) -> float:
     return (tokens * cost_per_1m) / 1_000_000
 
 
-# Keep estimate_embedding_cost as alias for backwards compatibility
-estimate_embedding_cost = calculate_embedding_cost
-
-
 @dataclass
 class OpenRouterServerInfo:
     """Information about OpenRouter embedding service."""
@@ -595,7 +591,6 @@ __all__ = [
     "OpenRouterEmbeddingError",
     "OpenRouterServerInfo",
     "calculate_embedding_cost",
-    "estimate_embedding_cost",  # backwards compatibility alias
     "get_openrouter_client",
     "get_openrouter_model_name",
 ]
