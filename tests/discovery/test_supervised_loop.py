@@ -10,8 +10,11 @@ import pytest
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
     SupervisedWorkerGroup,
+    WorkerState,
+    WorkerStatus,
     make_orphan_recovery_tick,
     run_supervised_loop,
+    supervised_worker,
 )
 
 
@@ -389,3 +392,160 @@ class TestMakeOrphanRecoveryTick:
 
         # Tick was called multiple times during the loop
         assert len(calls) > 0
+
+
+# =============================================================================
+# Supervised Worker — restart counter reset
+# =============================================================================
+
+
+class TestSupervisedWorkerRestartReset:
+    """Tests for supervised_worker restart-counter reset after stable runs."""
+
+    @pytest.mark.asyncio
+    async def test_restart_counter_resets_after_stable_run(self):
+        """If worker runs > restart_reset_seconds, restart counter resets."""
+        call_count = 0
+        stop = False
+
+        async def flaky_worker(state):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 15:
+                raise RuntimeError("transient deadlock")
+            # After enough restarts succeed — signal stop
+            nonlocal stop
+            stop = True
+
+        status = WorkerStatus(name="test_worker_0", group="test")
+
+        await supervised_worker(
+            flaky_worker,
+            "test_worker_0",
+            None,
+            lambda: stop,
+            status_tracker=status,
+            max_restarts=5,
+            initial_backoff=0.01,
+            max_backoff=0.01,
+            # Immediate reset — any successful run duration resets counter
+            restart_reset_seconds=0.0,
+        )
+
+        # Worker should have been called many more times than max_restarts
+        # because the counter keeps resetting
+        assert call_count > 5
+        assert status.state == WorkerState.stopped
+
+    @pytest.mark.asyncio
+    async def test_rapid_crashes_still_kill_worker(self):
+        """Rapid crashes (< restart_reset_seconds) accumulate normally."""
+        call_count = 0
+
+        async def always_crash(state):
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("persistent bug")
+
+        status = WorkerStatus(name="test_worker_0", group="test")
+
+        await supervised_worker(
+            always_crash,
+            "test_worker_0",
+            None,
+            lambda: False,
+            status_tracker=status,
+            max_restarts=3,
+            initial_backoff=0.01,
+            max_backoff=0.01,
+            # Very long reset interval — crashes won't reset
+            restart_reset_seconds=9999.0,
+        )
+
+        assert call_count == 3
+        assert status.state == WorkerState.crashed
+
+    @pytest.mark.asyncio
+    async def test_infra_error_resets_after_stable_run(self):
+        """Infrastructure errors (deadlocks) also benefit from reset."""
+        from neo4j.exceptions import TransientError
+
+        call_count = 0
+        stop = False
+
+        async def deadlock_worker(state):
+            nonlocal call_count, stop
+            call_count += 1
+            if call_count <= 8:
+                raise TransientError("deadlock detected")
+            stop = True
+
+        status = WorkerStatus(name="expand_worker_0", group="scan")
+
+        await supervised_worker(
+            deadlock_worker,
+            "expand_worker_0",
+            None,
+            lambda: stop,
+            status_tracker=status,
+            max_restarts=3,
+            initial_backoff=0.01,
+            max_backoff=0.01,
+            restart_reset_seconds=0.0,
+        )
+
+        # Should survive well past max_restarts=3
+        assert call_count > 3
+        assert status.state == WorkerState.stopped
+
+    @pytest.mark.asyncio
+    async def test_normal_exit_not_affected(self):
+        """Worker that exits normally is not affected by the reset logic."""
+        call_count = 0
+        stop = False
+
+        async def clean_worker(state):
+            nonlocal call_count, stop
+            call_count += 1
+            stop = True
+
+        status = WorkerStatus(name="test_worker_0", group="test")
+
+        await supervised_worker(
+            clean_worker,
+            "test_worker_0",
+            None,
+            lambda: stop,
+            status_tracker=status,
+            max_restarts=3,
+            restart_reset_seconds=0.0,
+        )
+
+        assert call_count == 1
+        assert status.state == WorkerState.stopped
+
+    @pytest.mark.asyncio
+    async def test_cancellation_not_affected(self):
+        """CancelledError still propagates immediately."""
+        call_count = 0
+
+        async def cancelled_worker(state):
+            nonlocal call_count
+            call_count += 1
+            raise asyncio.CancelledError()
+
+        status = WorkerStatus(name="test_worker_0", group="test")
+
+        with pytest.raises(asyncio.CancelledError):
+            await supervised_worker(
+                cancelled_worker,
+                "test_worker_0",
+                None,
+                lambda: False,
+                status_tracker=status,
+                max_restarts=10,
+                restart_reset_seconds=0.0,
+            )
+
+        assert call_count == 1
+        assert status.state == WorkerState.stopped
