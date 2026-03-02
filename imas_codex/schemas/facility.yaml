@@ -1283,6 +1283,16 @@ classes:
       is_static:
         description: Whether this version was extracted from static tree analysis
         range: boolean
+      units_extracted:
+        description: >-
+          Whether unit extraction has been completed for this version.
+          Set to true after the units worker has extracted all units and
+          created Unit nodes with HAS_UNIT relationships. Enables the
+          units worker to skip already-processed versions on re-run.
+        range: boolean
+      units_count:
+        description: Number of nodes with units found during extraction
+        range: integer
       description:
         description: Human-readable description of this tree model version
 

@@ -190,9 +190,17 @@ async def units_worker(
     """Units worker: extract units for the latest static tree version.
 
     Runs batched unit extraction via SSH for NUMERIC/SIGNAL nodes,
-    then merges units into TreeNode nodes in the graph.
+    then creates Unit nodes and HAS_UNIT relationships in the graph.
+    Tracks completion via TreeModelVersion.units_extracted flag so
+    re-runs are no-ops for already-processed versions.
     """
     from imas_codex.mdsplus.static import async_extract_units_for_version
+
+    from .graph_ops import (
+        has_pending_units_work,
+        mark_version_units_extracted,
+        merge_units_to_graph,
+    )
 
     # Wait for at least one version to be extracted
     while not state.should_stop():
@@ -207,12 +215,24 @@ async def units_worker(
     if state.should_stop():
         return
 
+    # Check if units already extracted (graph is ledger)
+    pending = await asyncio.to_thread(
+        has_pending_units_work, state.facility, state.tree_name
+    )
+    if not pending:
+        if on_progress:
+            on_progress("already extracted", state.units_stats, None)
+        state.units_phase.mark_done()
+        return
+
     # Find the latest version from config
     ver_configs = state.tree_config.get("versions", [])
     if ver_configs:
         latest_version = max(v["version"] for v in ver_configs)
     else:
         latest_version = 1
+
+    version_id = f"{state.facility}:{state.tree_name}:v{latest_version}"
 
     if on_progress:
         on_progress(
@@ -253,26 +273,15 @@ async def units_worker(
         )
 
         if units:
-            # Merge units into TreeNode nodes in graph
-            from imas_codex.graph import GraphClient
-            from imas_codex.mdsplus.ingestion import normalize_mdsplus_path
-
-            updates = []
-            for path, unit_str in units.items():
-                normalized = normalize_mdsplus_path(path)
-                node_id = f"{state.facility}:{state.tree_name}:{normalized}"
-                updates.append({"id": node_id, "units": unit_str})
-
-            if updates:
-                with GraphClient() as gc:
-                    gc.query(
-                        """
-                        UNWIND $updates AS u
-                        MATCH (n:TreeNode {id: u.id})
-                        SET n.units = u.units
-                        """,
-                        updates=updates,
-                    )
+            # Create Unit nodes and HAS_UNIT relationships
+            created = await asyncio.to_thread(
+                merge_units_to_graph, state.facility, state.tree_name, units
+            )
+            logger.info(
+                "Created %d HAS_UNIT relationships for %d unique unit symbols",
+                created,
+                len(set(units.values())),
+            )
 
             if on_progress:
                 on_progress(
@@ -283,6 +292,11 @@ async def units_worker(
         else:
             if on_progress:
                 on_progress("no units found", state.units_stats, None)
+
+        # Mark version as units-extracted (ledger entry)
+        await asyncio.to_thread(
+            mark_version_units_extracted, version_id, len(units) if units else 0
+        )
 
     except Exception as e:
         logger.exception("Units extraction failed")

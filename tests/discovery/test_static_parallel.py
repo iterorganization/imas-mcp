@@ -209,6 +209,49 @@ class TestGraphOps:
         assert has_pending_ingest_work("tcv", "static") is False
 
     @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_has_pending_units_work(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import has_pending_units_work
+
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.return_value = [{"cnt": 3}]
+
+        assert has_pending_units_work("tcv", "static") is True
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_has_pending_units_work_none(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import has_pending_units_work
+
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.return_value = [{"cnt": 0}]
+
+        assert has_pending_units_work("tcv", "static") is False
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
+    def test_merge_units_to_graph(self, mock_gc_cls):
+        from imas_codex.discovery.static.graph_ops import merge_units_to_graph
+
+        mock_gc = MagicMock()
+        mock_gc_cls.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_cls.return_value.__exit__ = MagicMock(return_value=False)
+        mock_gc.query.return_value = [{"created": 3}]
+
+        units = {
+            "\\STATIC::RES_A": "Ohm",
+            "\\STATIC::SELF_A": "H",
+            "\\STATIC::TAU_A": "s",
+        }
+        count = merge_units_to_graph("tcv", "static", units)
+        assert count == 3
+        # Verify MERGE query was called with proper updates
+        call_args = mock_gc.query.call_args
+        assert "MERGE (unit:Unit {symbol: u.symbol})" in call_args[0][0]
+        assert "MERGE (n)-[:HAS_UNIT]->(unit)" in call_args[0][0]
+
+    @patch("imas_codex.discovery.static.graph_ops.GraphClient")
     def test_get_static_discovery_stats(self, mock_gc_cls):
         from imas_codex.discovery.static.graph_ops import get_static_discovery_stats
 
@@ -223,6 +266,10 @@ class TestGraphOps:
             ],
             # Claimed count
             [{"cnt": 1}],
+            # Units version stats
+            [{"total": 6, "extracted": 4, "units_count": 11596}],
+            # HAS_UNIT relationship stats
+            [{"nodes_total": 280000, "unique_units": 14, "nodes_with_units": 11596}],
             # Node enrichment
             [
                 {
@@ -244,6 +291,11 @@ class TestGraphOps:
         assert stats["versions_discovered"] == 2
         assert stats["versions_ingested"] == 6
         assert stats["versions_claimed"] == 1
+        assert stats["units_versions_total"] == 6
+        assert stats["units_versions_extracted"] == 4
+        assert stats["units_count"] == 11596
+        assert stats["nodes_with_units"] == 11596
+        assert stats["unique_units"] == 14
         assert stats["nodes_graph"] == 280000
         assert stats["nodes_enriched"] == 500
         assert stats["parent_groups_total"] == 3000
