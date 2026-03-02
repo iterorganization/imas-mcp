@@ -965,10 +965,15 @@ async def scan_worker(
     """
     from imas_codex.discovery.paths.scanner import async_scan_paths
 
+    loop = asyncio.get_running_loop()
+
     while not state.should_stop():
-        # Claim work from graph
-        paths = claim_paths_for_scanning(
-            state.facility, limit=batch_size, root_filter=state.root_filter
+        # Claim work from graph (run in executor to avoid blocking event loop)
+        paths = await loop.run_in_executor(
+            None,
+            lambda: claim_paths_for_scanning(
+                state.facility, limit=batch_size, root_filter=state.root_filter
+            ),
         )
 
         if not paths:
@@ -1128,10 +1133,15 @@ async def expand_worker(
     """
     from imas_codex.discovery.paths.scanner import async_scan_paths
 
+    loop = asyncio.get_running_loop()
+
     while not state.should_stop():
-        # Claim expansion work from graph - paths with should_expand=true
-        paths = claim_paths_for_expanding(
-            state.facility, limit=batch_size, root_filter=state.root_filter
+        # Claim expansion work from graph (run in executor to avoid blocking event loop)
+        paths = await loop.run_in_executor(
+            None,
+            lambda: claim_paths_for_expanding(
+                state.facility, limit=batch_size, root_filter=state.root_filter
+            ),
         )
 
         if not paths:
@@ -1257,9 +1267,12 @@ async def score_worker(
                 on_progress("budget exhausted", state.score_stats, None)
             break
 
-        # Claim work from graph
-        paths = claim_paths_for_scoring(
-            state.facility, limit=batch_size, root_filter=state.root_filter
+        # Claim work from graph (run in executor to avoid blocking event loop)
+        paths = await loop.run_in_executor(
+            None,
+            lambda: claim_paths_for_scoring(
+                state.facility, limit=batch_size, root_filter=state.root_filter
+            ),
         )
 
         if not paths:
@@ -1552,12 +1565,15 @@ async def enrich_worker(
     loop = asyncio.get_running_loop()
 
     while not state.should_stop():
-        # Claim work from graph
-        paths = claim_paths_for_enriching(
-            state.facility,
-            limit=batch_size,
-            root_filter=state.root_filter,
-            auto_enrich_threshold=state.auto_enrich_threshold,
+        # Claim work from graph (run in executor to avoid blocking event loop)
+        paths = await loop.run_in_executor(
+            None,
+            lambda: claim_paths_for_enriching(
+                state.facility,
+                limit=batch_size,
+                root_filter=state.root_filter,
+                auto_enrich_threshold=state.auto_enrich_threshold,
+            ),
         )
 
         if not paths:
@@ -1650,9 +1666,12 @@ async def refine_worker(
                 on_progress("budget exhausted", state.refine_stats, None)
             break
 
-        # Claim work from graph
-        paths = claim_paths_for_refining(
-            state.facility, limit=batch_size, root_filter=state.root_filter
+        # Claim work from graph (run in executor to avoid blocking event loop)
+        paths = await loop.run_in_executor(
+            None,
+            lambda: claim_paths_for_refining(
+                state.facility, limit=batch_size, root_filter=state.root_filter
+            ),
         )
 
         if not paths:
@@ -2289,10 +2308,10 @@ async def run_parallel_discovery(
     num_score_workers: int = 1,  # Single scorer: refine also uses LLM (total=2)
     num_enrich_workers: int = 2,  # Two enrichment workers for parallel SSH
     num_refine_workers: int = 1,  # Enabled by default for score refinement
-    scan_batch_size: int = 5,
-    expand_batch_size: int = 10,
-    score_batch_size: int = 50,  # Increased: more work per API call
-    enrich_batch_size: int = 10,  # Smaller: heavy SSH operations (du/tokei)
+    scan_batch_size: int = 20,  # 20 paths per SSH call (amortize connection overhead)
+    expand_batch_size: int = 25,  # Expansion needs child enumeration
+    score_batch_size: int = 50,  # More work per API call
+    enrich_batch_size: int = 25,  # Larger batches: amortize SSH connection cost
     refine_batch_size: int = 10,  # Smaller batches: 20+ fields per path in structured output
     on_scan_progress: Callable[
         [str, WorkerStats, list[str] | None, list[dict] | None], None

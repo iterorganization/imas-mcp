@@ -709,7 +709,7 @@ def run_command(
         # Wrap command with nice if configured for this host
         nice_level = _get_host_nice_level(ssh_host)
         if nice_level is not None and nice_level > 0:
-            cmd = f"nice -n {nice_level} bash -c {shlex.quote(cmd)}"
+            cmd = f"nice -n {nice_level} sh -c {shlex.quote(cmd)}"
 
         # Wrap with remote-side timeout to prevent zombie processes.
         # When the local subprocess.run() times out, it kills the SSH client
