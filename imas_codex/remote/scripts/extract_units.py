@@ -2,9 +2,10 @@
 """Extract units from MDSplus tree nodes in batches.
 
 Runs on the facility host where MDSplus is available.
-Extracts ``node.units`` for a batch of nodes specified by offset/limit,
-returning a path→units mapping. Designed to be called multiple times
-with different offsets for progress tracking and fault tolerance.
+Reads raw records via ``node.getRecord()`` and extracts units only from
+value nodes (stored data wrapped in ``WithUnits``). Expression nodes
+(``EXT_FUNCTION``, ``DIVIDE``, etc.) are skipped entirely to avoid
+triggering expensive TDI evaluation (e.g. Green's function computation).
 
 Requirements:
 - Python 3.12+ (installed via ``imas-codex tools install``)
@@ -12,7 +13,7 @@ Requirements:
 
 Usage:
     echo '{"tree_name": "static", "version": 8}' | python3 extract_units.py
-    echo '{"tree_name": "static", "version": 8, "offset": 5000, "limit": 5000}' | python3 extract_units.py
+    echo '{"tree_name": "static", "version": 8, "offset": 500, "limit": 500}' | python3 extract_units.py
 
 Input (JSON on stdin):
     {
@@ -35,14 +36,79 @@ Output (JSON on stdout):
         },
         "count": 2,
         "total_nodes": 34082,
-        "batch_checked": 5000,
-        "empty": 3200
+        "batch_checked": 500,
+        "empty": 200,
+        "skipped_expressions": 150
     }
 """
 
 import json
 import sys
 from typing import Any
+
+
+def _extract_units_from_record(record) -> str | None:
+    """Extract units string from an MDSplus record without evaluating data.
+
+    Checks for WithUnits compounds (direct or nested inside Parameter).
+    Returns the units string if found, None otherwise.
+    """
+    import MDSplus
+
+    if record is None:
+        return None
+
+    # Direct WithUnits: BUILD_WITH_UNITS(value, units)
+    if isinstance(record, MDSplus.compound.WithUnits):
+        units = record.getUnits()
+        if units is not None:
+            unit_str = str(units).strip()
+            if unit_str and unit_str.lower() not in ("", "none", "unknown", " "):
+                return unit_str
+        return None
+
+    # Parameter: BUILD_PARAM(value, help, validation)
+    # The value inside may be wrapped in WithUnits
+    if isinstance(record, MDSplus.compound.Parameter):
+        try:
+            val = record.getValue()
+            if isinstance(val, MDSplus.compound.WithUnits):
+                units = val.getUnits()
+                if units is not None:
+                    unit_str = str(units).strip()
+                    if unit_str and unit_str.lower() not in (
+                        "",
+                        "none",
+                        "unknown",
+                        " ",
+                    ):
+                        return unit_str
+        except Exception:
+            pass
+        return None
+
+    # Signal: BUILD_SIGNAL(value, raw, dimension)
+    # The value or raw inside may be wrapped in WithUnits
+    if isinstance(record, MDSplus.compound.Signal):
+        try:
+            val = record.getValue()
+            if isinstance(val, MDSplus.compound.WithUnits):
+                units = val.getUnits()
+                if units is not None:
+                    unit_str = str(units).strip()
+                    if unit_str and unit_str.lower() not in (
+                        "",
+                        "none",
+                        "unknown",
+                        " ",
+                    ):
+                        return unit_str
+        except Exception:
+            pass
+        return None
+
+    # Stored value types (Array, Scalar) — no units wrapper
+    return None
 
 
 def extract_units(
@@ -52,14 +118,21 @@ def extract_units(
     offset: int = 0,
     limit: int = 0,
 ) -> dict[str, Any]:
-    """Extract units for a batch of data-bearing nodes.
+    """Extract units from value nodes only, skipping expression nodes.
+
+    Uses ``node.getRecord()`` to read the raw record descriptor without
+    evaluating TDI expressions. Only extracts units from nodes whose
+    record is (or contains) a ``WithUnits`` compound.
+
+    Expression nodes (EXT_FUNCTION, DIVIDE, ADD, etc.) are skipped
+    entirely — they would trigger expensive computation (e.g.
+    Green's function evaluation in static trees) via ``node.units``.
 
     Args:
         tree_name: MDSplus tree name (e.g., "static")
         version: Version number (tree opened with this as shot number)
-        node_types: Node usage types to extract units for, in deterministic
-            order. Must be consistent across batches for correct offset/limit
-            slicing. Defaults to ["NUMERIC", "SIGNAL"].
+        node_types: Node usage types to filter. Defaults to
+            ["NUMERIC", "SIGNAL"].
         offset: Starting index into the filtered node list.
         limit: Max nodes to process (0 = all remaining from offset).
 
@@ -93,13 +166,43 @@ def extract_units(
 
     units: dict[str, str] = {}
     empty_count = 0
+    skipped_expressions = 0
+
+    # Expression types that trigger expensive TDI evaluation
+    _EXPRESSION_TYPES = (
+        MDSplus.compound.Function,  # Base class for EXT_FUNCTION, etc.
+    )
+    # Also check by class name for types that may not share a common base
+    _EXPRESSION_NAMES = frozenset(
+        {
+            "EXT_FUNCTION",
+            "DIVIDE",
+            "ADD",
+            "SUBTRACT",
+            "MULTIPLY",
+            "CONCAT",
+            "TRANSLATE",
+            "VECTOR",
+            "DATA",
+        }
+    )
 
     for node in batch:
         try:
-            path = str(node.path)
-            unit_str = str(node.units).strip()
+            record = node.getRecord()
+            if record is None:
+                empty_count += 1
+                continue
 
-            if unit_str and unit_str.lower() not in ("", "none", "unknown", " "):
+            # Skip expression nodes — they evaluate TDI on access
+            rec_name = type(record).__name__
+            if isinstance(record, _EXPRESSION_TYPES) or rec_name in _EXPRESSION_NAMES:
+                skipped_expressions += 1
+                continue
+
+            unit_str = _extract_units_from_record(record)
+            if unit_str:
+                path = str(node.path)
                 units[path] = unit_str
             else:
                 empty_count += 1
@@ -113,6 +216,7 @@ def extract_units(
         "total_nodes": total_nodes,
         "batch_checked": len(batch),
         "empty": empty_count,
+        "skipped_expressions": skipped_expressions,
     }
 
 

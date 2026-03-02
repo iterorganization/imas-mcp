@@ -221,12 +221,14 @@ async def units_worker(
             None,
         )
 
+    units_batch_size = 500
+
     def _on_ssh_progress(checked: int, total: int, found: int) -> None:
         state.units_stats.processed = checked
         state.units_stats.record_batch()
         if on_progress:
-            batch_num = (checked // 5000) + 1
-            total_batches = (total + 4999) // 5000
+            batch_num = (checked // units_batch_size) + 1
+            total_batches = (total + units_batch_size - 1) // units_batch_size
             on_progress(
                 f"{checked:,}/{total:,} checked, {found} with units",
                 state.units_stats,
@@ -246,7 +248,7 @@ async def units_worker(
             state.tree_name,
             latest_version,
             timeout=state.timeout,
-            batch_size=5000,
+            batch_size=units_batch_size,
             on_progress=_on_ssh_progress,
         )
 

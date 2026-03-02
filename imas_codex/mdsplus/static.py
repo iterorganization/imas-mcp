@@ -296,7 +296,7 @@ async def async_extract_units_for_version(
     tree_name: str,
     version: int,
     timeout: int = 180,
-    batch_size: int = 5000,
+    batch_size: int = 500,
     on_progress: Callable[[int, int, int], None] | None = None,
 ) -> dict[str, str]:
     """Async version of extract_units_for_version.
