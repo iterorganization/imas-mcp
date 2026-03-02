@@ -166,7 +166,9 @@ class TestBuildPipelineSection:
                 completed=50,
                 total=100,
                 primary_text="Thomson_Scattering",
-                detail_parts=[("0.85  ", "green"), ("diagnostics", "cyan")],
+                score_value=0.85,
+                physics_domain="diagnostics",
+                description="edge Thomson scattering profile",
             ),
         ]
         result = build_pipeline_section(rows, bar_width=20)
@@ -414,8 +416,8 @@ class TestBuildPipelineSection:
                 f"{line!r}"
             )
 
-    def test_detail_parts_clipped_to_row_width(self):
-        """Long detail_parts text is auto-clipped to fit within row_width."""
+    def test_long_description_clipped_to_row_width(self):
+        """Long description text is auto-clipped to fit within row_width."""
         bar_width = 40
         row_width = LABEL_WIDTH + bar_width + METRICS_WIDTH
         long_detail = "C" * 200
@@ -427,7 +429,7 @@ class TestBuildPipelineSection:
             rate=1.23,
             cost=5.67,
             primary_text="some_item",
-            detail_parts=[("0.85  ", "green"), (long_detail, "dim")],
+            description=long_detail,
         )
         result = build_pipeline_row(config, bar_width=bar_width)
         lines = result.plain.split("\n")
