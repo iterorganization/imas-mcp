@@ -9,6 +9,16 @@ Solution: Maintain persistent SSH processes with Python workers that
 accept script requests over stdin/stdout. Session setup cost is paid
 once (~2.6s), then subsequent commands execute in ~12ms (network RTT).
 
+IMPORTANT — Python version constraint:
+    Workers use ``/usr/bin/python3`` (system Python, may be 3.9+) to
+    avoid the 60-100s NFS venv startup penalty.  All scripts executed
+    via ``pooled_run_python_script()`` / ``SSHWorkerPool`` must be:
+      - Python 3.9+ compatible (no ``match``, no ``X | Y`` type unions)
+      - stdlib-only (no third-party imports)
+    Scripts requiring 3.12+ features or venv packages (e.g. MDSplus)
+    must be dispatched via ``run_python_script()`` instead, which uses
+    the imas-codex venv Python.
+
 Architecture:
     SSHWorkerPool (per ssh_host)
     ├── Worker 0: ssh -T host python3 -c '<worker_loop>'

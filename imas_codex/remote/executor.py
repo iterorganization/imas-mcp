@@ -27,11 +27,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# PATH prefix applied to all remote SSH commands so that tools installed
-# by ``imas-codex tools install`` (uv, rg, fd, python via uv) are found.
-# The imas-codex venv bin is first so ``python3`` resolves to our managed
-# Python (3.12+) rather than the system Python which may be too old for
-# modern syntax used in remote scripts.
+# PATH prefix applied to remote SSH commands dispatched by
+# ``run_python_script()`` / ``async_run_python_script()``.  The imas-codex
+# venv bin is first so ``python3`` resolves to our managed Python 3.12+.
+#
+# NOTE: The ``SSHWorkerPool`` does NOT use this prefix — it hardcodes
+# ``/usr/bin/python3`` (system Python, may be 3.9+) to avoid NFS startup
+# penalty.  Scripts executed inside the worker pool must be Python 3.9+
+# compatible and stdlib-only.  See ``ssh_worker.py`` for details.
 _REMOTE_PATH_PREFIX = 'export PATH="$HOME/.local/share/imas-codex/venv/bin:$HOME/bin:$HOME/.local/bin:$PATH"'
 
 
