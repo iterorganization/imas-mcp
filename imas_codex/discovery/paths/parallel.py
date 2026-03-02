@@ -1164,6 +1164,7 @@ async def scan_worker(
                 path_strs,
                 enable_rg=False,
                 enable_size=False,
+                enable_git_metadata=True,
                 pool=pool,
             )
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
