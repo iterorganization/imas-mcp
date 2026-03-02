@@ -31,7 +31,6 @@ from imas_codex.discovery.base.progress import (
     build_resource_section,
     clean_text,
     clip_path,
-    clip_text,
 )
 
 if TYPE_CHECKING:
@@ -97,6 +96,16 @@ class RefineItem:
     description: str = ""
     physics_domain: str = ""  # Primary physics domain
     adjustment_reason: str = ""
+
+
+@dataclass
+class DedupItem:
+    """Current dedup activity — one batch of clone marking."""
+
+    repo_name: str  # SoftwareRepo name (e.g. "MEQ")
+    canonical_path: str  # Path retained as canonical
+    clones_marked: int  # How many clones were marked terminal this batch
+    total_clones: int  # Total clones including canonical
 
 
 # ============================================================================
@@ -181,6 +190,12 @@ class ProgressState:
     # Current refine item (for streaming display)
     current_refine: RefineItem | None = None
     refine_processing: bool = False
+
+    # Dedup tracking
+    run_deduped: int = 0  # Clone paths marked terminal this session
+    dedup_rate: float | None = None
+    current_dedup: DedupItem | None = None
+    dedup_processing: bool = False
 
     # Tracking
     scored_paths: set[str] = field(default_factory=set)
@@ -450,18 +465,13 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         # SCAN activity
         scan_text = ""
-        scan_detail: list[tuple[str, str]] | None = None
+        scan_desc = ""
         if scan:
             scan_text = clip_path(scan.path, content_width - LABEL_WIDTH)
-            parts: list[tuple[str, str]] = [
-                (f"{scan.files} files", "cyan"),
-                (", ", "dim"),
-                (f"{scan.dirs} dirs", "cyan"),
-            ]
+            scan_parts = [f"{scan.files} files, {scan.dirs} dirs"]
             if scan.has_code:
-                parts.append(("  ", "dim"))
-                parts.append(("code project", "green dim"))
-            scan_detail = parts
+                scan_parts.append("code project")
+            scan_desc = "  ".join(scan_parts)
 
         # SCORE activity — uses structured fields for 3-line layout:
         #   Line 2: score  physics_domain  /path/clipped...        rate
@@ -472,7 +482,6 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         score_desc = ""
         score_desc_fallback = ""
         score_terminal = ""
-        score_detail: list[tuple[str, str]] | None = None  # legacy fallback for skipped
         if score:
             score_path = clip_path(score.path, content_width - LABEL_WIDTH - 14)
 
@@ -495,22 +504,18 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 elif score.purpose:
                     score_desc_fallback = clean_text(score.purpose)
             elif score.skipped:
-                # Skipped items use detail_parts (legacy)
-                parts = [("skipped", "yellow")]
+                score_terminal = "skipped"
                 if score.skip_reason:
-                    reason = clean_text(score.skip_reason)
-                    parts.append((f"  {clip_text(reason, content_width - 16)}", "dim"))
-                score_detail = parts
+                    score_desc = clean_text(score.skip_reason)
 
         # ENRICH activity
         enrich_text = ""
-        enrich_detail: list[tuple[str, str]] | None = None
+        enrich_desc = ""
         queue_empty = self.state.enrich_queue.is_empty()
         if enrich and (not queue_empty or self.state.enrich_processing):
             enrich_text = clip_path(enrich.path, content_width - LABEL_WIDTH)
-            parts = []
             if enrich.error:
-                parts.append((enrich.error, "red"))
+                enrich_desc = f"error: {enrich.error}"
             elif enrich.warnings:
                 if enrich.total_bytes >= 1_000_000:
                     size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
@@ -518,9 +523,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
                 else:
                     size_str = f"{enrich.total_bytes}B"
-                parts.append((size_str, "cyan"))
-                warn_str = ", ".join(enrich.warnings)
-                parts.append((f"  [{warn_str}]", "yellow"))
+                enrich_desc = f"{size_str}  [{', '.join(enrich.warnings)}]"
             else:
                 if enrich.total_bytes >= 1_000_000:
                     size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
@@ -528,34 +531,28 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
                 else:
                     size_str = f"{enrich.total_bytes}B"
-                parts.append((size_str, "cyan"))
+                desc_parts = [size_str]
                 if enrich.total_lines > 0:
-                    parts.append((f"  {enrich.total_lines:,} LOC", "cyan"))
+                    desc_parts.append(f"{enrich.total_lines:,} LOC")
                 if enrich.languages:
-                    langs = ", ".join(enrich.languages[:3])
-                    parts.append((f"  [{langs}]", "green dim"))
-                # Show pattern categories (mdsplus, hdf5, imas, etc.)
+                    desc_parts.append(f"[{', '.join(enrich.languages[:3])}]")
                 if enrich.pattern_categories:
-                    cat_parts = []
-                    for cat, count in sorted(
-                        enrich.pattern_categories.items(),
-                        key=lambda x: x[1],
-                        reverse=True,
-                    ):
-                        cat_parts.append(f"{cat}:{count}")
-                    cats_str = " ".join(cat_parts[:4])
-                    parts.append(("  ", "dim"))
-                    parts.append((cats_str, "yellow"))
+                    cat_strs = [
+                        f"{cat}:{count}"
+                        for cat, count in sorted(
+                            enrich.pattern_categories.items(),
+                            key=lambda x: x[1],
+                            reverse=True,
+                        )[:4]
+                    ]
+                    desc_parts.append(" ".join(cat_strs))
                 elif enrich.is_multiformat:
-                    parts.append(("  multiformat", "yellow"))
+                    desc_parts.append("multiformat")
                 elif enrich.read_matches > 0 or enrich.write_matches > 0:
-                    parts.append(
-                        (
-                            f"  r:{enrich.read_matches} w:{enrich.write_matches}",
-                            "dim",
-                        )
+                    desc_parts.append(
+                        f"r:{enrich.read_matches} w:{enrich.write_matches}"
                     )
-            enrich_detail = parts
+                enrich_desc = "  ".join(desc_parts)
 
         # REFINE activity
         refine_count, refine_ann = self._count_group_workers("refine")
@@ -618,6 +615,16 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             self.state._run_refine_cost if self.state._run_refine_cost > 0 else None
         )
 
+        # DEDUP activity
+        dedup_count, dedup_ann = self._count_group_workers("dedup")
+        dedup = self.state.current_dedup
+        dedup_complete = self._worker_complete("dedup") and not dedup
+        dedup_text = ""
+        dedup_desc = ""
+        if dedup:
+            dedup_text = dedup.repo_name
+            dedup_desc = f"{dedup.clones_marked} duplicates → {clip_path(dedup.canonical_path, content_width - 30)}"
+
         # --- Build pipeline rows ---
 
         rows = [
@@ -629,7 +636,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 rate=scan_rate,
                 disabled=self.state.score_only,
                 primary_text=scan_text,
-                detail_parts=scan_detail,
+                description=scan_desc,
                 is_processing=self.state.scan_processing,
                 is_complete=scan_complete,
                 worker_count=scan_count,
@@ -641,6 +648,22 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     and not self.state.scan_processing
                     else 0
                 ),
+            ),
+            PipelineRowConfig(
+                name="DEDUP",
+                style="bold yellow",
+                completed=self.state.run_deduped,
+                total=max(self.state.run_deduped, 1),
+                rate=self.state.dedup_rate,
+                show_pct=False,
+                disabled=self.state.score_only,
+                primary_text=dedup_text,
+                description=dedup_desc,
+                is_processing=self.state.dedup_processing,
+                is_complete=dedup_complete,
+                worker_count=dedup_count,
+                worker_annotation=dedup_ann,
+                disabled_msg="no clones",
             ),
             PipelineRowConfig(
                 name="SCORE",
@@ -656,7 +679,6 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 terminal_label=score_terminal,
                 description=score_desc,
                 description_fallback=score_desc_fallback,
-                detail_parts=score_detail,
                 is_processing=self.state.score_processing,
                 is_complete=score_complete,
                 worker_count=score_count,
@@ -677,7 +699,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 rate=self.state.enrich_rate,
                 disabled=self.state.scan_only,
                 primary_text=enrich_text,
-                detail_parts=enrich_detail,
+                description=enrich_desc,
                 is_processing=self.state.enrich_processing,
                 is_complete=enrich_complete,
                 worker_count=enrich_count,
@@ -1041,6 +1063,38 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 items,
                 ema,
                 last_batch_time=stats.last_batch_time,
+            )
+
+        self._refresh()
+
+    def update_dedup(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update dedup worker state."""
+        self.state.run_deduped = stats.processed
+        self.state.dedup_rate = stats.ema_rate or stats.active_rate
+
+        if "waiting" in message.lower():
+            self.state.dedup_processing = False
+            self.state.current_dedup = None
+            self._refresh()
+            return
+        elif "deduped" in message.lower():
+            self.state.dedup_processing = False
+        else:
+            self.state.dedup_processing = True
+
+        if results:
+            # Show the most recent dedup event
+            last = results[-1]
+            self.state.current_dedup = DedupItem(
+                repo_name=last.get("repo_name", "unknown"),
+                canonical_path=last.get("canonical_path", ""),
+                clones_marked=last.get("clones_marked", 0),
+                total_clones=last.get("total_clones", 0),
             )
 
         self._refresh()

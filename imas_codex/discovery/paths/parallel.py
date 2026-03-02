@@ -63,6 +63,7 @@ class DiscoveryState:
     score_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
     refine_stats: WorkerStats = field(default_factory=WorkerStats)
+    dedup_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
@@ -900,6 +901,126 @@ def mark_refine_complete(
 
 
 # ============================================================================
+# Deduplication helpers (graph-only, no SSH)
+# ============================================================================
+
+
+def _find_clone_groups(
+    facility: str,
+    limit: int = 50,
+) -> list[tuple[str, str, list[dict]]]:
+    """Find SoftwareRepos with multiple non-terminal paths at this facility.
+
+    Returns a list of (repo_id, repo_name, active_paths) tuples where
+    active_paths is sorted: canonical first (accessible remote > has remote
+    URL > shallowest depth > earliest discovered).
+
+    Args:
+        facility: Facility ID
+        limit: Maximum number of repos to process per call
+
+    Returns:
+        List of (repo_id, repo_name, sorted_paths) for repos with >1 clone.
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        rows = gc.query(
+            """
+            MATCH (r:SoftwareRepo)
+            MATCH (p:FacilityPath)-[:INSTANCE_OF]->(r)
+            WHERE p.status IN [$scanned, $scored]
+              AND p.terminal_reason IS NULL
+            WITH r,
+                 collect({
+                     id: p.id,
+                     path: p.path,
+                     depth: coalesce(p.depth, 99),
+                     accessible: coalesce(p.vcs_remote_accessible, false),
+                     has_remote: CASE WHEN p.vcs_remote_url IS NOT NULL THEN 1 ELSE 0 END,
+                     discovered_at: coalesce(toString(p.discovered_at), "")
+                 }) AS active_paths
+            WHERE size(active_paths) > 1
+            RETURN r.id AS repo_id,
+                   coalesce(r.name, split(r.id, "/")[-1]) AS repo_name,
+                   active_paths
+            ORDER BY size(active_paths) DESC
+            LIMIT $limit
+            """,
+            scanned=PathStatus.scanned.value,
+            scored=PathStatus.scored.value,
+            limit=limit,
+        )
+
+    groups = []
+    for row in rows or []:
+        # Sort Python-side: canonical = accessible remote > has remote > shallowest > earliest
+        paths = sorted(
+            row["active_paths"],
+            key=lambda p: (
+                0 if p["accessible"] else 1,
+                1 - p["has_remote"],
+                p["depth"],
+                p["discovered_at"],
+            ),
+        )
+        groups.append((row["repo_id"], row["repo_name"], paths))
+    return groups
+
+
+def _mark_clones_terminal(
+    clone_ids: list[str],
+    canonical_path: str,
+    repo_id: str,
+) -> int:
+    """Mark non-canonical clone paths as terminal (software_repo).
+
+    Only marks paths that are not already terminal, not currently claimed
+    by another worker, and are in scanned or scored status.
+
+    Args:
+        clone_ids: FacilityPath IDs to mark terminal
+        canonical_path: Path of the canonical instance (for skip_reason)
+        repo_id: SoftwareRepo ID (for skip_reason)
+
+    Returns:
+        Number of paths actually marked.
+    """
+    from datetime import datetime
+
+    from imas_codex.graph import GraphClient
+
+    now = datetime.utcnow().isoformat()
+    skip_reason = f"Clone of {canonical_path} ({repo_id})"
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $clone_ids AS clone_id
+            MATCH (p:FacilityPath {id: clone_id})
+            WHERE p.terminal_reason IS NULL
+              AND p.status IN [$scanned, $scored]
+              AND p.claimed_at IS NULL
+            SET p.status = $skipped,
+                p.terminal_reason = $reason,
+                p.skip_reason = $skip_reason,
+                p.skipped_at = $now,
+                p.should_expand = false,
+                p.should_enrich = false
+            RETURN count(p) AS marked
+            """,
+            clone_ids=clone_ids,
+            scanned=PathStatus.scanned.value,
+            scored=PathStatus.scored.value,
+            skipped=PathStatus.skipped.value,
+            reason=TerminalReason.software_repo.value,
+            skip_reason=skip_reason,
+            now=now,
+        )
+    return result[0]["marked"] if result else 0
+
+
+# ============================================================================
 # Async Workers
 # ============================================================================
 
@@ -1079,6 +1200,94 @@ async def scan_worker(
 
         # Brief yield to allow score worker to run
         await asyncio.sleep(0.1)
+
+
+async def dedup_worker(
+    state: DiscoveryState,
+    on_progress: Callable[[str, WorkerStats, list[dict] | None], None] | None = None,
+    batch_size: int = 50,
+) -> None:
+    """Async deduplication worker — graph-only, no SSH, no LLM cost.
+
+    Identifies FacilityPaths that are clones of the same upstream repository
+    by grouping on shared SoftwareRepo nodes (identity = remote_url or
+    git_root_commit).  For each clone group, the canonical instance is
+    retained (accessible remote > has remote URL > shallowest depth >
+    earliest discovered) and all others are marked terminal with
+    terminal_reason=software_repo.
+
+    Runs concurrently with the score worker.  By claiming VCS clone paths
+    before score does, it avoids spending LLM tokens on repos whose content
+    is available from a publicly accessible remote.
+
+    The worker runs entirely against the graph — it fires a Cypher query per
+    cycle, marks clones terminal, and sleeps briefly.  When no clone groups
+    remain it backs off to 5 s polls and eventually idles.
+
+    Args:
+        state: Shared discovery state
+        on_progress: Progress callback receiving (message, stats, results)
+        batch_size: Maximum SoftwareRepo groups to process per cycle
+    """
+    loop = asyncio.get_running_loop()
+    idle_sleep = 5.0  # longer sleep when no work found
+
+    while not state.should_stop():
+        groups = await loop.run_in_executor(
+            None,
+            lambda: _find_clone_groups(state.facility, batch_size),
+        )
+
+        if not groups:
+            state.dedup_stats.mark_idle()
+            if on_progress:
+                on_progress("waiting for clone groups", state.dedup_stats, None)
+            await asyncio.sleep(idle_sleep)
+            continue
+
+        state.dedup_stats.mark_active()
+        results = []
+
+        for repo_id, repo_name, active_paths in groups:
+            canonical = active_paths[0]
+            clones = active_paths[1:]
+            clone_ids = [p["id"] for p in clones]
+
+            marked = await loop.run_in_executor(
+                None,
+                lambda cids=clone_ids, cp=canonical["path"], rid=repo_id: (
+                    _mark_clones_terminal(cids, cp, rid)
+                ),
+            )
+
+            if marked > 0:
+                state.dedup_stats.processed += marked
+                results.append(
+                    {
+                        "repo_id": repo_id,
+                        "repo_name": repo_name,
+                        "canonical_path": canonical["path"],
+                        "clones_marked": marked,
+                        "total_clones": len(clones),
+                    }
+                )
+                logger.info(
+                    "Dedup: marked %d clones of %s terminal (canonical: %s)",
+                    marked,
+                    repo_name,
+                    canonical["path"],
+                )
+
+        if results:
+            if on_progress:
+                on_progress(
+                    f"deduped {state.dedup_stats.processed}",
+                    state.dedup_stats,
+                    results,
+                )
+
+        # Short yield to not starve other workers
+        await asyncio.sleep(0.5)
 
 
 async def expand_worker(
@@ -2310,6 +2519,7 @@ async def run_parallel_discovery(
     score_batch_size: int = 50,  # More work per API call
     enrich_batch_size: int = 25,  # Larger batches: amortize SSH connection cost
     refine_batch_size: int = 10,  # Smaller batches: 20+ fields per path in structured output
+    dedup_batch_size: int = 50,  # Repos to check per dedup cycle
     on_scan_progress: Callable[
         [str, WorkerStats, list[str] | None, list[dict] | None], None
     ]
@@ -2324,6 +2534,8 @@ async def run_parallel_discovery(
     | None = None,
     on_refine_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
+    on_dedup_progress: Callable[[str, WorkerStats, list[dict] | None], None]
+    | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     graceful_shutdown_timeout: float = 5.0,
     deadline: float | None = None,
@@ -2337,6 +2549,7 @@ async def run_parallel_discovery(
     - score: LLM-based scoring with should_expand/should_enrich decisions
     - enrich: Deep analysis (du/tokei/patterns) for should_enrich=true paths
     - refine: Refines scores using enrichment data (optional)
+    - dedup: Marks clone paths terminal using SoftwareRepo identity (graph-only)
 
     All workers run in PARALLEL - expand/enrich do not wait for each other.
 
@@ -2357,11 +2570,13 @@ async def run_parallel_discovery(
         score_batch_size: Paths per LLM call (default: 50)
         enrich_batch_size: Paths per SSH call (default: 10)
         refine_batch_size: Paths per refine (default: 50)
+        dedup_batch_size: SoftwareRepo clone groups per dedup cycle (default: 50)
         on_scan_progress: Callback for scan progress
         on_expand_progress: Callback for expand progress
         on_score_progress: Callback for score progress
         on_enrich_progress: Callback for enrich progress
         on_refine_progress: Callback for refine progress
+        on_dedup_progress: Callback for dedup progress
         on_worker_status: Callback for worker status changes. Called with
             SupervisedWorkerGroup for display integration.
         graceful_shutdown_timeout: Seconds to wait for workers to finish after
@@ -2378,7 +2593,7 @@ async def run_parallel_discovery(
     - All workers idle (no more work)
 
     Returns:
-        Summary dict with scanned, expanded, scored, enriched, refined, cost, elapsed, rates
+        Summary dict with scanned, expanded, scored, enriched, refined, deduped, cost, elapsed, rates
     """
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
@@ -2621,11 +2836,27 @@ async def run_parallel_discovery(
             )
         )
 
+        # Dedup worker (own group for independent display/completion tracking)
+        dedup_status = worker_group.create_status("dedup_worker", group="dedup")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    dedup_worker,
+                    "dedup_worker",
+                    state,
+                    state.should_stop,
+                    on_progress=on_dedup_progress,
+                    batch_size=dedup_batch_size,
+                    status_tracker=dedup_status,
+                )
+            )
+        )
+
         logger.info(
             f"Started {worker_group.get_active_count()} supervised workers: "
             f"scan={num_scan_workers}, expand={num_expand_workers}, "
             f"score={num_score_workers}, enrich={num_enrich_workers}, "
-            f"refine={num_refine_workers}, embed=1"
+            f"refine={num_refine_workers}, dedup=1, embed=1"
         )
 
         # Periodic orphan recovery during discovery (every 60s)
@@ -2680,6 +2911,7 @@ async def run_parallel_discovery(
             state.score_stats.elapsed,
             state.enrich_stats.elapsed,
             state.refine_stats.elapsed,
+            state.dedup_stats.elapsed,
         )
 
         return {
@@ -2688,6 +2920,7 @@ async def run_parallel_discovery(
             "scored": state.score_stats.processed,
             "enriched": state.enrich_stats.processed,
             "refined": state.refine_stats.processed,
+            "deduped": state.dedup_stats.processed,
             "cost": state.total_cost,
             "elapsed_seconds": elapsed,
             "scan_rate": state.scan_stats.rate,
