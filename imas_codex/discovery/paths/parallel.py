@@ -34,6 +34,7 @@ from imas_codex.discovery.base.supervision import (
     run_supervised_loop,
     supervised_worker,
 )
+from imas_codex.discovery.paths.models import RefineBatch
 from imas_codex.graph.models import PathStatus, TerminalReason
 
 if TYPE_CHECKING:
@@ -880,6 +881,7 @@ def mark_refine_complete(
                     p.keywords = $keywords,
                     p.path_purpose = $path_purpose,
                     p.physics_domain = $physics_domain,
+                    p.should_expand = $should_expand,
                     p.claimed_at = null{extra_set}
                 """,
                 id=path_id,
@@ -893,9 +895,42 @@ def mark_refine_complete(
                 keywords=keywords,
                 path_purpose=result.get("path_purpose"),
                 physics_domain=result.get("physics_domain"),
+                should_expand=result.get("should_expand", True),
                 **dim_params,
             )
             updated += 1
+
+            # Data container child-skip: if refine marked this as a data
+            # container that shouldn't expand, mark children as terminal
+            path_purpose = result.get("path_purpose")
+            should_expand = result.get("should_expand", True)
+            data_purposes = {"modeling_data", "experimental_data"}
+
+            if path_purpose in data_purposes and not should_expand:
+                skipped_result = gc.query(
+                    """
+                    MATCH (child:FacilityPath)-[:IN_DIRECTORY]->(p:FacilityPath {id: $id})
+                    WHERE child.status = 'discovered'
+                    SET child.status = $skipped,
+                        child.skipped_at = $now,
+                        child.terminal_reason = $terminal_reason,
+                        child.skip_reason = $reason
+                    RETURN count(child) AS skipped_count
+                    """,
+                    id=path_id,
+                    now=now,
+                    terminal_reason=TerminalReason.parent_terminal.value,
+                    reason=f"parent_{path_purpose}",
+                    skipped=PathStatus.skipped.value,
+                )
+                skipped_count = (
+                    skipped_result[0]["skipped_count"] if skipped_result else 0
+                )
+                if skipped_count > 0:
+                    logger.debug(
+                        f"Refine: skipped {skipped_count} children of "
+                        f"{path_purpose}: {result['path']}"
+                    )
 
     return updated
 
@@ -1980,7 +2015,9 @@ async def refine_worker(
                     "score": llm_r["score"],
                     "previous_score": orig.get("score"),
                     "score_cost": cost_per_path,
-                    "should_expand": orig.get("should_expand", True),
+                    "should_expand": llm_r.get(
+                        "should_expand", orig.get("should_expand", True)
+                    ),
                     "adjustment_reason": llm_r.get("adjustment_reason", ""),
                     "primary_evidence": llm_r.get("primary_evidence", []),
                     "evidence_summary": llm_r.get("evidence_summary", ""),
@@ -2018,6 +2055,10 @@ async def refine_worker(
             state.refine_stats.last_batch_time = time.time() - start
             state.refine_stats.cost += cost
 
+            # Programmatic data directory detection: override should_expand
+            # for paths that structurally look like data containers
+            _apply_refine_data_dir_overrides(refine_results, paths)
+
             # Persist only successful results
             refined = 0
             if refine_results:
@@ -2038,6 +2079,143 @@ async def refine_worker(
 
         # Brief yield
         await asyncio.sleep(0.1)
+
+
+def _apply_refine_data_dir_overrides(
+    refine_results: list[dict],
+    orig_paths: list[dict],
+) -> None:
+    """Programmatic data directory detection for refine results.
+
+    Overrides should_expand=false for paths that structurally look like
+    data containers based on enrichment metadata, even if the LLM didn't
+    flag them. Checks:
+    1. High data-dimension scores with no code lines
+    2. Directories with mostly numeric child names (shot numbers)
+    3. path_purpose already set to data types by LLM
+
+    Mutates refine_results in place.
+    """
+    data_purposes = {"modeling_data", "experimental_data"}
+    orig_by_path = {p["path"]: p for p in orig_paths}
+
+    for result in refine_results:
+        if not result.get("should_expand", True):
+            continue  # Already marked terminal
+
+        path_purpose = result.get("path_purpose")
+        orig = orig_by_path.get(result["path"], {})
+        total_lines = orig.get("total_lines") or 0
+        total_bytes = orig.get("total_bytes") or 0
+        child_names = orig.get("child_names") or ""
+
+        # 1. Data purpose with no code → terminal
+        if path_purpose in data_purposes:
+            result["should_expand"] = False
+            logger.debug(
+                "Refine data-dir override: %s (purpose=%s)",
+                result["path"],
+                path_purpose,
+            )
+            continue
+
+        # 2. Mostly numeric children (shot directories like 1001/, 1002/)
+        if child_names:
+            import json as _json
+
+            try:
+                names = (
+                    _json.loads(child_names)
+                    if isinstance(child_names, str)
+                    else child_names
+                )
+            except (ValueError, TypeError):
+                names = []
+            if len(names) >= 5:
+                numeric_count = sum(1 for n in names if str(n).strip("/").isdigit())
+                if numeric_count / len(names) >= 0.6:
+                    result["should_expand"] = False
+                    if not path_purpose:
+                        result["path_purpose"] = "experimental_data"
+                    logger.debug(
+                        "Refine data-dir override (numeric children): %s "
+                        "(%d/%d numeric)",
+                        result["path"],
+                        numeric_count,
+                        len(names),
+                    )
+                    continue
+
+        # 3. Large byte count with zero code lines → likely raw data
+        if total_bytes > 100_000_000 and total_lines == 0:
+            result["should_expand"] = False
+            if not path_purpose:
+                result["path_purpose"] = "experimental_data"
+            logger.debug(
+                "Refine data-dir override (large no-code): %s (%d bytes)",
+                result["path"],
+                total_bytes,
+            )
+
+
+def _build_refine_results(
+    batch: RefineBatch,
+    paths: list[dict],
+) -> list[dict]:
+    """Build results dict from LLM refine batch (shared by sync/async)."""
+    path_to_result = {r.path: r for r in batch.results}
+    results = []
+
+    for p in paths:
+        if p["path"] in path_to_result:
+            r = path_to_result[p["path"]]
+            result: dict = {
+                "path": p["path"],
+                "score": max(0.0, min(1.0, r.new_score)),
+                "adjustment_reason": (r.adjustment_reason[:80] or ""),
+                "primary_evidence": r.primary_evidence or [],
+                "evidence_summary": (r.evidence_summary or "")[:200],
+                "description": r.description or p.get("description", ""),
+                "keywords": r.keywords or p.get("keywords", []),
+                "path_purpose": (r.path_purpose.value if r.path_purpose else None)
+                or p.get("path_purpose"),
+                "physics_domain": (r.physics_domain.value if r.physics_domain else None)
+                or p.get("physics_domain"),
+                "should_expand": r.should_expand,
+            }
+
+            # Add per-dimension scores (use original if LLM returned None)
+            for dim in [
+                "score_modeling_code",
+                "score_analysis_code",
+                "score_operations_code",
+                "score_modeling_data",
+                "score_experimental_data",
+                "score_data_access",
+                "score_workflow",
+                "score_visualization",
+                "score_documentation",
+                "score_imas",
+                "score_convention",
+            ]:
+                llm_value = getattr(r, dim, None)
+                if llm_value is not None:
+                    result[dim] = max(0.0, min(1.0, llm_value))
+                else:
+                    result[dim] = p.get(dim, 0.0)
+
+            results.append(result)
+        else:
+            results.append(
+                {
+                    "path": p["path"],
+                    "score": p.get("score", 0.5),
+                    "adjustment_reason": "not in response",
+                    "_failed": True,
+                }
+            )
+
+    return results
 
 
 def _refine_with_llm(
@@ -2224,60 +2402,7 @@ def _refine_with_llm(
             for p in paths
         ], 0.0
 
-    # Build results dict with per-dimension updates
-    path_to_result = {r.path: r for r in batch.results}
-    results = []
-
-    for p in paths:
-        if p["path"] in path_to_result:
-            r = path_to_result[p["path"]]
-            result: dict = {
-                "path": p["path"],
-                "score": max(0.0, min(1.0, r.new_score)),
-                "adjustment_reason": (r.adjustment_reason[:80] or ""),
-                "primary_evidence": r.primary_evidence or [],
-                "evidence_summary": (r.evidence_summary or "")[:200],
-                "description": r.description or p.get("description", ""),
-                "keywords": r.keywords or p.get("keywords", []),
-                "path_purpose": (r.path_purpose.value if r.path_purpose else None)
-                or p.get("path_purpose"),
-                "physics_domain": (r.physics_domain.value if r.physics_domain else None)
-                or p.get("physics_domain"),
-            }
-
-            # Add per-dimension scores (use original if LLM returned None)
-            for dim in [
-                "score_modeling_code",
-                "score_analysis_code",
-                "score_operations_code",
-                "score_modeling_data",
-                "score_experimental_data",
-                "score_data_access",
-                "score_workflow",
-                "score_visualization",
-                "score_documentation",
-                "score_imas",
-                "score_convention",
-            ]:
-                llm_value = getattr(r, dim, None)
-                if llm_value is not None:
-                    result[dim] = max(0.0, min(1.0, llm_value))
-                else:
-                    # Keep original value
-                    result[dim] = p.get(dim, 0.0)
-
-            results.append(result)
-        else:
-            # Path not in response — mark as failed so it's skipped
-            results.append(
-                {
-                    "path": p["path"],
-                    "score": p.get("score", 0.5),
-                    "adjustment_reason": "not in response",
-                    "_failed": True,
-                }
-            )
-
+    results = _build_refine_results(batch, paths)
     return results, cost
 
 
@@ -2472,60 +2597,7 @@ async def _async_refine_with_llm(
             for p in paths
         ], 0.0
 
-    # Build results dict with per-dimension updates
-    path_to_result = {r.path: r for r in batch.results}
-    results = []
-
-    for p in paths:
-        if p["path"] in path_to_result:
-            r = path_to_result[p["path"]]
-            result: dict = {
-                "path": p["path"],
-                "score": max(0.0, min(1.0, r.new_score)),
-                "adjustment_reason": (r.adjustment_reason[:80] or ""),
-                "primary_evidence": r.primary_evidence or [],
-                "evidence_summary": (r.evidence_summary or "")[:200],
-                "description": r.description or p.get("description", ""),
-                "keywords": r.keywords or p.get("keywords", []),
-                "path_purpose": (r.path_purpose.value if r.path_purpose else None)
-                or p.get("path_purpose"),
-                "physics_domain": (r.physics_domain.value if r.physics_domain else None)
-                or p.get("physics_domain"),
-            }
-
-            # Add per-dimension scores (use original if LLM returned None)
-            for dim in [
-                "score_modeling_code",
-                "score_analysis_code",
-                "score_operations_code",
-                "score_modeling_data",
-                "score_experimental_data",
-                "score_data_access",
-                "score_workflow",
-                "score_visualization",
-                "score_documentation",
-                "score_imas",
-                "score_convention",
-            ]:
-                llm_value = getattr(r, dim, None)
-                if llm_value is not None:
-                    result[dim] = max(0.0, min(1.0, llm_value))
-                else:
-                    # Keep original value
-                    result[dim] = p.get(dim, 0.0)
-
-            results.append(result)
-        else:
-            # Path not in response — mark as failed so it's skipped
-            results.append(
-                {
-                    "path": p["path"],
-                    "score": p.get("score", 0.5),
-                    "adjustment_reason": "not in response",
-                    "_failed": True,
-                }
-            )
-
+    results = _build_refine_results(batch, paths)
     return results, cost
 
 

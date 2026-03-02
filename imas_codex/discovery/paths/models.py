@@ -243,6 +243,13 @@ class RefineResult(BaseModel):
         description="Combined score = max of all dimension scores (0.0-1.0)"
     )
 
+    # Expansion decision — can be changed based on enrichment evidence
+    should_expand: bool = Field(
+        default=True,
+        description="Whether to continue exploring child directories. "
+        "Set false for data directories, archives, or dirs with no code.",
+    )
+
     # Updated keywords based on enrichment evidence
     keywords: list[str] = Field(
         default_factory=list,

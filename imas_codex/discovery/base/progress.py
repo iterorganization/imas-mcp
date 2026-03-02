@@ -413,8 +413,13 @@ class WorkerStats:
     def record_batch(self, batch_size: int | None = None) -> None:
         """Record a batch completion for EMA rate calculation.
 
-        Call after each batch of items is processed. Uses delta between
-        calls to compute instantaneous rate, then smooths with EMA.
+        When ``last_batch_time`` is set (by the worker after each batch),
+        uses ``batch_size / last_batch_time`` as instantaneous rate.
+        This correctly reflects actual processing throughput even when
+        multiple workers share the same stats object and call
+        ``record_batch`` nearly simultaneously.
+
+        Falls back to inter-call timing when ``last_batch_time`` is not set.
 
         Args:
             batch_size: Items in this batch. If None, inferred from
@@ -426,9 +431,18 @@ class WorkerStats:
         if batch_size <= 0:
             return
 
-        dt = now - self._prev_batch_time if self._prev_batch_time > 0 else 0
-        if dt > 0:
-            instant_rate = batch_size / dt
+        # Prefer last_batch_time (actual processing duration) over
+        # inter-call timing which is distorted by concurrent workers
+        if self.last_batch_time > 0:
+            instant_rate = batch_size / self.last_batch_time
+        else:
+            dt = now - self._prev_batch_time if self._prev_batch_time > 0 else 0
+            if dt > 0:
+                instant_rate = batch_size / dt
+            else:
+                instant_rate = 0.0
+
+        if instant_rate > 0:
             if self._ema_rate > 0:
                 self._ema_rate = (
                     self._ema_alpha * instant_rate
@@ -717,7 +731,8 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     if config.has_content and _desc:
         line3.append("  ", style="dim")
         _style = "italic dim" if config.description else "cyan dim italic"
-        max_desc = max(10, row_width - 4 - cost_reserve)
+        # Fill the full row width; only clip with ... if it overflows
+        max_desc = max(10, row_width - 2 - cost_reserve)
         line3.append(clip_text(clean_text(_desc), max_desc), style=_style)
     # Right-align cost on line 3 (below rate on line 2)
     if cost_s:

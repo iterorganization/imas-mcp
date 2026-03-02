@@ -96,6 +96,8 @@ class RefineItem:
     description: str = ""
     physics_domain: str = ""  # Primary physics domain
     adjustment_reason: str = ""
+    should_expand: bool = True  # False = terminal (won't explore children)
+    terminal_reason: str = ""  # TerminalReason enum value when terminal
 
 
 @dataclass
@@ -563,32 +565,24 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         refine_score_parts: list[tuple[str, str]] | None = None
         refine_domain = ""
         refine_desc = ""
+        refine_terminal = ""
         refine_queue_empty = self.state.refine_queue.is_empty()
         if refine and (not refine_queue_empty or self.state.refine_processing):
             refine_text = clip_path(refine.path, content_width - LABEL_WIDTH - 14)
             if refine.score is not None:
-                from imas_codex.settings import get_discovery_threshold
-
-                _threshold = get_discovery_threshold()
-                # Show as original_score+increment (e.g. 0.65+0.20)
+                # Show just the +diff (delta) — the original score is already
+                # visible in the score worker stream
                 parts: list[tuple[str, str]] = []
                 if refine.previous_score is not None:
                     delta = refine.score - refine.previous_score
-                    # Original score colored same as score worker would
-                    orig_style = (
-                        "bold green"
-                        if refine.previous_score >= _threshold
-                        else "yellow"
-                        if refine.previous_score >= 0.4
-                        else "red"
-                    )
-                    parts.append((f"{refine.previous_score:.2f}", orig_style))
-                    # Increment in distinct color
                     delta_style = (
                         "green" if delta > 0 else "red" if delta < 0 else "dim"
                     )
                     parts.append((f"{delta:+.2f}", delta_style))
                 else:
+                    from imas_codex.settings import get_discovery_threshold
+
+                    _threshold = get_discovery_threshold()
                     style = (
                         "bold green"
                         if refine.score >= _threshold
@@ -603,6 +597,13 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 if refine.physics_domain and refine.physics_domain != "general":
                     refine_domain = refine.physics_domain.replace("_", " ")
 
+                # Terminal label (data dirs marked terminal by refine)
+                if not refine.should_expand and refine.terminal_reason:
+                    refine_terminal = refine.terminal_reason.replace("_", " ")
+                elif not refine.should_expand and refine.previous_score is not None:
+                    # Only show terminal for items that changed expansion
+                    pass
+
                 # Description for line 3
                 if refine.adjustment_reason:
                     refine_desc = clean_text(refine.adjustment_reason)
@@ -615,15 +616,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             self.state._run_refine_cost if self.state._run_refine_cost > 0 else None
         )
 
-        # DEDUP activity
-        dedup_count, dedup_ann = self._count_group_workers("dedup")
-        dedup = self.state.current_dedup
-        dedup_complete = self._worker_complete("dedup") and not dedup
-        dedup_text = ""
-        dedup_desc = ""
-        if dedup:
-            dedup_text = dedup.repo_name
-            dedup_desc = f"{dedup.clones_marked} duplicates → {clip_path(dedup.canonical_path, content_width - 30)}"
+        # DEDUP runs in background — not shown in pipeline display
 
         # --- Build pipeline rows ---
 
@@ -648,22 +641,6 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     and not self.state.scan_processing
                     else 0
                 ),
-            ),
-            PipelineRowConfig(
-                name="DEDUP",
-                style="bold yellow",
-                completed=self.state.run_deduped,
-                total=max(self.state.run_deduped, 1),
-                rate=self.state.dedup_rate,
-                show_pct=False,
-                disabled=self.state.score_only,
-                primary_text=dedup_text,
-                description=dedup_desc,
-                is_processing=self.state.dedup_processing,
-                is_complete=dedup_complete,
-                worker_count=dedup_count,
-                worker_annotation=dedup_ann,
-                disabled_msg="no clones",
             ),
             PipelineRowConfig(
                 name="SCORE",
@@ -716,6 +693,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 primary_text=refine_text,
                 score_parts=refine_score_parts,
                 physics_domain=refine_domain,
+                terminal_label=refine_terminal,
                 description=refine_desc,
                 is_processing=self.state.refine_processing,
                 is_complete=refine_complete,
@@ -1054,6 +1032,12 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                         description=r.get("description", ""),
                         physics_domain=r.get("physics_domain", "") or "",
                         adjustment_reason=reason,
+                        should_expand=r.get("should_expand", True),
+                        terminal_reason=(
+                            f"data:{r.get('path_purpose', '')}"
+                            if not r.get("should_expand", True)
+                            else ""
+                        ),
                     )
                 )
             # Adaptive rate: use last_batch_time to drain queue
