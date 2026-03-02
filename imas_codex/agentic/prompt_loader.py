@@ -367,9 +367,9 @@ def _get_linkml_schema():
 
 @lru_cache(maxsize=1)
 def _provide_path_purposes() -> dict[str, Any]:
-    """Provide PathPurpose enum values grouped by category."""
+    """Provide ResourcePurpose enum values grouped by category."""
     schema = _get_linkml_schema()
-    path_purposes = schema.get_enum_with_descriptions("PathPurpose") or []
+    path_purposes = schema.get_enum_with_descriptions("ResourcePurpose") or []
 
     # Group path purposes for convenience in templates
     code_purposes = [

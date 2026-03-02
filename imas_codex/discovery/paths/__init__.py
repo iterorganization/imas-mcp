@@ -27,7 +27,6 @@ from imas_codex.discovery.paths.frontier import (
 )
 from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
-    DiscoveryStatus,
     ResourcePurpose,
     ScoreBatch,
     ScoredBatch,
@@ -52,7 +51,6 @@ __all__ = [
     "cleanup_orphaned_software_repos",
     # Models
     "ResourcePurpose",
-    "DiscoveryStatus",
     "TerminalReason",
     "DirectoryEvidence",
     "ScoredDirectory",
