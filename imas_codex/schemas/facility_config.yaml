@@ -510,6 +510,15 @@ classes:
           Used to enumerate all versions for complete extraction.
         multivalued: true
         range: StaticTreeVersion
+      member_parent_types:
+        description: >-
+          MDSplus node types whose direct member children (colon-separated,
+          e.g. :PRE, :VAL, :STORE) should be grouped into patterns for
+          batch enrichment. At TCV, SIGNAL nodes have identical NUMERIC
+          member children across thousands of instances. Other facilities
+          may use different parent types. If omitted, member-suffix pattern
+          detection is skipped for this tree.
+        multivalued: true
       systems:
         description: >-
           Named subsystems within the static tree. Each system groups related

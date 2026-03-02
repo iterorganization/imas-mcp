@@ -799,6 +799,20 @@ def ingest_static_tree(
                 all_paths[path]["removed_version"] = epoch_id
 
     # Build TreeNode records
+    #
+    # Build a fullpath → normalized-tag-path lookup first. MDSplus returns
+    # tag-aliased paths (e.g. \STATIC::DBRDR_A_A) for nodes whose structural
+    # fullpath is \STATIC::TOP.GREENS.GREEN_A_A:DBRDR. The tag path loses
+    # parent hierarchy, so we need to map fullpath parents back to the matching
+    # tag-path node that's actually stored in the graph.
+    fullpath_to_tagpath: dict[str, str] = {}
+    for path, info in all_paths.items():
+        fullpath = info["node"].get("fullpath")
+        normalized = normalize_mdsplus_path(path)
+        if fullpath:
+            fp_normalized = normalize_mdsplus_path(fullpath)
+            fullpath_to_tagpath[fp_normalized] = normalized
+
     node_records = []
     for path, info in all_paths.items():
         node = info["node"]
@@ -830,8 +844,20 @@ def ingest_static_tree(
         if node.get("tags"):
             record["tags"] = node["tags"]
 
-        # Parent path
+        # Parent path — try tag-path first, then resolve via fullpath.
+        # Tag-aliased nodes like \STATIC::DBRDR_A_A have no hierarchy after ::
+        # so _compute_parent_path returns None. In that case, use fullpath
+        # (\STATIC::TOP.GREENS.GREEN_A_A:DBRDR) to find the structural parent
+        # (\STATIC::TOP.GREENS.GREEN_A_A) and map it back to its tag path.
         parent = _compute_parent_path(normalized)
+        if not parent:
+            fullpath = node.get("fullpath")
+            if fullpath:
+                fp_normalized = normalize_mdsplus_path(fullpath)
+                fp_parent = _compute_parent_path(fp_normalized)
+                if fp_parent:
+                    # Resolve the fullpath parent to its stored tag-path alias
+                    parent = fullpath_to_tagpath.get(fp_parent, fp_parent)
         if parent:
             record["parent_path"] = parent
 
