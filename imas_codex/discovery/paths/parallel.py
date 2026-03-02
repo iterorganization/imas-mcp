@@ -1379,6 +1379,7 @@ async def score_worker(
                     "enrich_skip_reason": (
                         f"{p.get('vcs_type') or 'git'} repo accessible elsewhere"
                     ),
+                    "terminal_reason": TerminalReason.software_repo.value,
                 }
                 for p in accessible_vcs_paths
             ]
@@ -1404,6 +1405,7 @@ async def score_worker(
                         f"{p.get('vcs_type') or 'git'} repo accessible elsewhere"
                     ),
                     "should_expand": False,
+                    "terminal_reason": TerminalReason.software_repo.value,
                     "total_files": p.get("total_files", 0),
                 }
                 for p in accessible_vcs_paths
@@ -1456,9 +1458,13 @@ async def score_worker(
                     "label": d.path_purpose.value if d.path_purpose else "",
                     "path_purpose": d.path_purpose.value if d.path_purpose else "",
                     "description": d.description,
+                    "physics_domain": (
+                        d.physics_domain.value if d.physics_domain else ""
+                    ),
                     "score_imas": d.score_imas,
                     "skip_reason": d.skip_reason or "",
                     "should_expand": d.should_expand,
+                    "terminal_reason": d.terminal_reason or "",
                     "total_files": 0,  # Not available at score time
                 }
                 for d in result.scored_dirs

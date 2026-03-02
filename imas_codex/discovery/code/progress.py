@@ -333,14 +333,18 @@ class FileProgressDisplay(BaseProgressDisplay):
             if scan.files_found > 0:
                 scan_detail = [(f"{scan.files_found} files found", "cyan")]
 
-        # SCORE activity (with [category] + description like paths shows purpose)
+        # SCORE activity — uses structured fields for 3-line layout:
+        #   Line 2: score  [category]  /path/clipped...         rate
+        #   Line 3: LLM description spanning full width...      $cost
         score_text = ""
-        score_detail: list[tuple[str, str]] | None = None
+        score_value: float | None = None
+        score_category = ""
+        score_desc = ""
+        score_detail: list[tuple[str, str]] | None = None  # legacy for skipped
         if score:
             score_text = clip_path(score.path, content_width - 10)
-            parts: list[tuple[str, str]] = []
             if score.skipped:
-                parts.append(("skip", "yellow"))
+                parts: list[tuple[str, str]] = [("skip", "yellow")]
                 if score.category:
                     parts.append((f"  [{score.category}]", "dim"))
                 if score.description:
@@ -351,32 +355,13 @@ class FileProgressDisplay(BaseProgressDisplay):
                             "italic dim",
                         )
                     )
+                score_detail = parts
             elif score.score is not None:
-                from imas_codex.settings import get_discovery_threshold
-
-                _threshold = get_discovery_threshold()
-                style = (
-                    "bold green"
-                    if score.score >= _threshold
-                    else "yellow"
-                    if score.score >= 0.4
-                    else "red"
-                )
-                parts.append((f"{score.score:.2f}", style))
+                score_value = score.score
                 if score.category:
-                    parts.append((f"  [{score.category}]", "cyan dim"))
-
+                    score_category = score.category
                 if score.description:
-                    desc = clean_text(score.description)
-                    parts.append(
-                        (
-                            f"  {clip_text(desc, content_width - 20)}",
-                            "italic dim",
-                        )
-                    )
-            elif score.category:
-                parts.append((f"[{score.category}]", "dim"))
-            score_detail = parts or None
+                    score_desc = clean_text(score.description)
 
         # ENRICH activity
         enrich_text = ""
@@ -424,6 +409,9 @@ class FileProgressDisplay(BaseProgressDisplay):
                 cost=score_cost,
                 disabled=self.state.scan_only,
                 primary_text=score_text,
+                score_value=score_value,
+                physics_domain=score_category,
+                description=score_desc,
                 detail_parts=score_detail,
                 is_processing=self.state.score_processing,
                 is_complete=score_complete,

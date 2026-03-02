@@ -61,6 +61,7 @@ class ScoreItem:
     score: float | None = None
     purpose: str = ""  # Category: experimental_data, modeling_code, etc.
     description: str = ""  # LLM reasoning about why this path is valuable
+    physics_domain: str = ""  # Primary physics domain (equilibrium, transport, etc.)
     skipped: bool = False
     skip_reason: str = ""
     should_expand: bool = True  # False = terminal (won't explore children)
@@ -94,6 +95,7 @@ class RefineItem:
     previous_score: float | None = None
     purpose: str = ""
     description: str = ""
+    physics_domain: str = ""  # Primary physics domain
     adjustment_reason: str = ""
 
 
@@ -461,51 +463,44 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 parts.append(("code project", "green dim"))
             scan_detail = parts
 
-        # SCORE activity
-        score_text = ""
-        score_detail: list[tuple[str, str]] | None = None
+        # SCORE activity — uses structured fields for 3-line layout:
+        #   Line 2: score  physics_domain  /path/clipped...        rate
+        #   Line 3: LLM description spanning full width...          $cost
+        score_path = ""
+        score_value: float | None = None
+        score_domain = ""
+        score_desc = ""
+        score_desc_fallback = ""
+        score_terminal = ""
+        score_detail: list[tuple[str, str]] | None = None  # legacy fallback for skipped
         if score:
-            path_display = clip_path(score.path, content_width - LABEL_WIDTH - 14)
-            if not score.should_expand:
-                path_display += " terminal"
-            score_text = path_display
+            score_path = clip_path(score.path, content_width - LABEL_WIDTH - 14)
 
-            parts = []
             if score.score is not None:
-                from imas_codex.settings import get_discovery_threshold
+                score_value = score.score
 
-                _threshold = get_discovery_threshold()
-                style = (
-                    "bold green"
-                    if score.score >= _threshold
-                    else "yellow"
-                    if score.score >= 0.4
-                    else "red"
-                )
-                parts.append((f"{score.score:.2f}", style))
+                # Physics domain (shown on line 2)
+                if score.physics_domain and score.physics_domain != "general":
+                    score_domain = score.physics_domain.replace("_", " ")
 
-                desc_width = content_width - 12
-                if score.terminal_reason:
-                    desc = score.terminal_reason.replace("_", " ")
-                elif score.description:
-                    desc = clean_text(score.description)
+                # Terminal label in muted red
+                if not score.should_expand and score.terminal_reason:
+                    score_terminal = score.terminal_reason.replace("_", " ")
+                elif not score.should_expand:
+                    score_terminal = "terminal"
+
+                # Description for line 3
+                if score.description:
+                    score_desc = clean_text(score.description)
                 elif score.purpose:
-                    desc = clean_text(score.purpose)
-                else:
-                    desc = ""
-                if desc:
-                    parts.append(
-                        (
-                            f"  {clip_text(desc, desc_width)}",
-                            "italic dim",
-                        )
-                    )
+                    score_desc_fallback = clean_text(score.purpose)
             elif score.skipped:
-                parts.append(("skipped", "yellow"))
+                # Skipped items use detail_parts (legacy)
+                parts = [("skipped", "yellow")]
                 if score.skip_reason:
                     reason = clean_text(score.skip_reason)
                     parts.append((f"  {clip_text(reason, content_width - 16)}", "dim"))
-            score_detail = parts or None
+                score_detail = parts
 
         # ENRICH activity
         enrich_text = ""
@@ -539,7 +534,19 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 if enrich.languages:
                     langs = ", ".join(enrich.languages[:3])
                     parts.append((f"  [{langs}]", "green dim"))
-                if enrich.is_multiformat:
+                # Show pattern categories (mdsplus, hdf5, imas, etc.)
+                if enrich.pattern_categories:
+                    cat_parts = []
+                    for cat, count in sorted(
+                        enrich.pattern_categories.items(),
+                        key=lambda x: x[1],
+                        reverse=True,
+                    ):
+                        cat_parts.append(f"{cat}:{count}")
+                    cats_str = " ".join(cat_parts[:4])
+                    parts.append(("  ", "dim"))
+                    parts.append((cats_str, "yellow"))
+                elif enrich.is_multiformat:
                     parts.append(("  multiformat", "yellow"))
                 elif enrich.read_matches > 0 or enrich.write_matches > 0:
                     parts.append(
@@ -556,36 +563,52 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         refine_complete = self._worker_complete("refine") and not refine
 
         refine_text = ""
-        refine_detail: list[tuple[str, str]] | None = None
+        refine_score_parts: list[tuple[str, str]] | None = None
+        refine_domain = ""
+        refine_desc = ""
         refine_queue_empty = self.state.refine_queue.is_empty()
         if refine and (not refine_queue_empty or self.state.refine_processing):
             refine_text = clip_path(refine.path, content_width - LABEL_WIDTH - 14)
-            parts = []
             if refine.score is not None:
                 from imas_codex.settings import get_discovery_threshold
 
                 _threshold = get_discovery_threshold()
-                style = (
-                    "bold green"
-                    if refine.score >= _threshold
-                    else "yellow"
-                    if refine.score >= 0.4
-                    else "red"
-                )
-                parts.append((f"{refine.score:.2f}", style))
+                # Show as original_score+increment (e.g. 0.65+0.20)
+                parts: list[tuple[str, str]] = []
                 if refine.previous_score is not None:
                     delta = refine.score - refine.previous_score
-                    delta_str = f"{delta:+.2f}"
+                    # Original score colored same as score worker would
+                    orig_style = (
+                        "bold green"
+                        if refine.previous_score >= _threshold
+                        else "yellow"
+                        if refine.previous_score >= 0.4
+                        else "red"
+                    )
+                    parts.append((f"{refine.previous_score:.2f}", orig_style))
+                    # Increment in distinct color
                     delta_style = (
                         "green" if delta > 0 else "red" if delta < 0 else "dim"
                     )
-                    parts.append((f" ({delta_str})", delta_style))
-                if refine.adjustment_reason:
-                    reason = clean_text(refine.adjustment_reason)
-                    parts.append(
-                        (f"  {clip_text(reason, content_width - 24)}", "italic dim")
+                    parts.append((f"{delta:+.2f}", delta_style))
+                else:
+                    style = (
+                        "bold green"
+                        if refine.score >= _threshold
+                        else "yellow"
+                        if refine.score >= 0.4
+                        else "red"
                     )
-            refine_detail = parts or None
+                    parts.append((f"{refine.score:.2f}", style))
+                refine_score_parts = parts or None
+
+                # Physics domain
+                if refine.physics_domain and refine.physics_domain != "general":
+                    refine_domain = refine.physics_domain.replace("_", " ")
+
+                # Description for line 3
+                if refine.adjustment_reason:
+                    refine_desc = clean_text(refine.adjustment_reason)
 
         # REFINE totals
         refine_total = max(self.state.pending_refine + self.state.refined, 1)
@@ -627,7 +650,12 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 rate=score_rate,
                 cost=score_cost,
                 disabled=self.state.scan_only,
-                primary_text=score_text,
+                primary_text=score_path,
+                score_value=score_value,
+                physics_domain=score_domain,
+                terminal_label=score_terminal,
+                description=score_desc,
+                description_fallback=score_desc_fallback,
                 detail_parts=score_detail,
                 is_processing=self.state.score_processing,
                 is_complete=score_complete,
@@ -664,7 +692,9 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 cost=refine_cost,
                 disabled=self.state.scan_only,
                 primary_text=refine_text,
-                detail_parts=refine_detail,
+                score_parts=refine_score_parts,
+                physics_domain=refine_domain,
+                description=refine_desc,
                 is_processing=self.state.refine_processing,
                 is_complete=refine_complete,
                 worker_count=refine_count,
@@ -808,6 +838,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                         score=r.get("score"),
                         purpose=r.get("label", "") or r.get("path_purpose", ""),
                         description=r.get("description", ""),
+                        physics_domain=r.get("physics_domain", ""),
                         skipped=bool(r.get("skip_reason")),
                         skip_reason=r.get("skip_reason", ""),
                         should_expand=r.get("should_expand", True),
@@ -999,6 +1030,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                         previous_score=r.get("previous_score"),
                         purpose=r.get("path_purpose", ""),
                         description=r.get("description", ""),
+                        physics_domain=r.get("physics_domain", "") or "",
                         adjustment_reason=reason,
                     )
                 )
