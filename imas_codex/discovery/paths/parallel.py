@@ -2680,7 +2680,7 @@ async def run_parallel_discovery(
     on_dedup_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
-    graceful_shutdown_timeout: float = 5.0,
+    graceful_shutdown_timeout: float = 2.0,
     deadline: float | None = None,
     stop_event: asyncio.Event | None = None,
 ) -> dict[str, Any]:
@@ -3027,26 +3027,35 @@ async def run_parallel_discovery(
         else:
             logger.info("Discovery complete (no pending work)")
 
+        user_interrupted = state.stop_requested
         state.stop_requested = True
 
-        # Graceful shutdown: reset any in-progress claims for next run
-        reset_count = reset_orphaned_claims(facility, silent=True)
-        if reset_count:
-            logger.info(f"Shutdown cleanup: {reset_count} claimed paths reset")
+        # Skip heavyweight cleanup when the user pressed Ctrl+C — these are
+        # nice-to-have ops that will run at the start of the next session.
+        if not user_interrupted:
+            # Graceful shutdown: reset any in-progress claims for next run
+            reset_count = reset_orphaned_claims(facility, silent=True)
+            if reset_count:
+                logger.info(f"Shutdown cleanup: {reset_count} claimed paths reset")
 
-        # Auto-normalize scores after scoring completes
-        if state.score_stats.processed > 0:
-            from imas_codex.discovery.paths.frontier import normalize_scores
+            # Auto-normalize scores after scoring completes
+            if state.score_stats.processed > 0:
+                from imas_codex.discovery.paths.frontier import normalize_scores
 
-            normalize_scores(facility)
+                normalize_scores(facility)
 
-            # Force garbage collection while the event loop is still running so that
-            # orphaned asyncio subprocess transports are cleaned up before the loop
-            # closes.  Without this, BaseSubprocessTransport.__del__ fires after the
-            # loop is closed and prints harmless but noisy RuntimeError tracebacks.
-            import gc
+                # Force garbage collection while the event loop is still running so
+                # that orphaned asyncio subprocess transports are cleaned up before
+                # the loop closes.  Without this,
+                # BaseSubprocessTransport.__del__ fires after the loop is closed and
+                # prints harmless but noisy RuntimeError tracebacks.
+                import gc
 
-            gc.collect()
+                gc.collect()
+        else:
+            logger.info(
+                "User interrupted — skipping score normalization and orphan reset"
+            )
 
         elapsed = max(
             state.scan_stats.elapsed,
@@ -3087,5 +3096,11 @@ async def run_parallel_discovery(
                 pass
         # Clean up persistent SSH workers on exit (normal, exception, or Ctrl+C)
         if ssh_pool is not None:
-            logger.info("Shutting down persistent SSH worker pool")
-            await ssh_pool.close()
+            if state.stop_requested:
+                # User interrupted — force-kill immediately instead of
+                # waiting 3-5s per worker for graceful close.
+                logger.info("Force-killing SSH worker pool (user interrupt)")
+                ssh_pool.force_kill_all()
+            else:
+                logger.info("Shutting down persistent SSH worker pool")
+                await ssh_pool.close()
