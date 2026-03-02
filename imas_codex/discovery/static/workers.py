@@ -520,6 +520,12 @@ async def enrich_worker(
         await asyncio.sleep(0.1)
 
     # --- Phase 2: Enrich remaining non-pattern nodes by parent group ---
+    # Use a local idle counter — Phase 2 must exit cleanly when parent-
+    # group work is exhausted so that Phase 3 (orphan nodes) can run.
+    # The global enrich_phase.done check includes orphan work and would
+    # keep Phase 2 looping forever if only orphans remain.
+    parent_idle_count = 0
+    parent_idle_threshold = 3
     while not state.should_stop():
         if state.budget_exhausted:
             if on_progress:
@@ -534,14 +540,15 @@ async def enrich_worker(
         )
 
         if not parent_data:
-            state.enrich_phase.record_idle()
-            if state.enrich_phase.done:
+            parent_idle_count += 1
+            if parent_idle_count >= parent_idle_threshold:
                 break
             if on_progress:
                 on_progress("idle", state.enrich_stats, None)
             await asyncio.sleep(2.0)
             continue
 
+        parent_idle_count = 0
         state.enrich_phase.record_activity(1)
         parent_id = parent_data["parent_id"]
         parent_path = parent_data["parent_path"]
