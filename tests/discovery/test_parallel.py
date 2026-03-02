@@ -98,11 +98,11 @@ class TestDiscoveryState:
     def test_should_stop_when_both_idle(self, mock_has_pending):
         """Test should_stop returns True when all workers idle."""
         state = DiscoveryState(facility="test", cost_limit=10.0)
-        state.scan_idle_count = 3
-        state.expand_idle_count = 3
-        state.score_idle_count = 3
-        state.enrich_idle_count = 3
-        state.refine_idle_count = 3
+        state.scan_phase._idle_count = 3
+        state.expand_phase._idle_count = 3
+        state.score_phase._idle_count = 3
+        state.enrich_phase._idle_count = 3
+        state.refine_phase._idle_count = 3
         assert state.should_stop()
 
     @patch("imas_codex.discovery.paths.parallel.has_pending_work", return_value=True)
@@ -115,21 +115,21 @@ class TestDiscoveryState:
         has_pending_work counts claimed paths as in-progress work.
         """
         state = DiscoveryState(facility="test", cost_limit=10.0)
-        state.scan_idle_count = 3
-        state.expand_idle_count = 3
-        state.score_idle_count = 3
-        state.enrich_idle_count = 3
-        state.refine_idle_count = 3
+        state.scan_phase._idle_count = 3
+        state.expand_phase._idle_count = 3
+        state.score_phase._idle_count = 3
+        state.enrich_phase._idle_count = 3
+        state.refine_phase._idle_count = 3
         assert not state.should_stop()
         # Idle counts should have been reset
-        assert state.scan_idle_count == 0
-        assert state.score_idle_count == 0
+        assert state.scan_phase.idle_count == 0
+        assert state.score_phase.idle_count == 0
 
     def test_should_not_stop_when_one_active(self):
         """Test should_stop returns False when one worker active."""
         state = DiscoveryState(facility="test", cost_limit=10.0)
-        state.scan_idle_count = 5
-        state.score_idle_count = 1  # Still active
+        state.scan_phase._idle_count = 5
+        state.score_phase._idle_count = 1  # Still active
         assert not state.should_stop()
 
     def test_should_stop_when_requested(self):

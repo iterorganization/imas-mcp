@@ -114,55 +114,6 @@ class WikiDiscoveryState:
     )
     image_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("image"))
 
-    # Backwards-compatible idle_count properties
-    @property
-    def scan_idle_count(self) -> int:
-        return self.scan_phase.idle_count
-
-    @scan_idle_count.setter
-    def scan_idle_count(self, value: int) -> None:
-        self.scan_phase._idle_count = value
-
-    @property
-    def score_idle_count(self) -> int:
-        return self.score_phase.idle_count
-
-    @score_idle_count.setter
-    def score_idle_count(self, value: int) -> None:
-        self.score_phase._idle_count = value
-
-    @property
-    def ingest_idle_count(self) -> int:
-        return self.ingest_phase.idle_count
-
-    @ingest_idle_count.setter
-    def ingest_idle_count(self, value: int) -> None:
-        self.ingest_phase._idle_count = value
-
-    @property
-    def docs_idle_count(self) -> int:
-        return self.docs_phase.idle_count
-
-    @docs_idle_count.setter
-    def docs_idle_count(self, value: int) -> None:
-        self.docs_phase._idle_count = value
-
-    @property
-    def artifact_score_idle_count(self) -> int:
-        return self.artifact_score_phase.idle_count
-
-    @artifact_score_idle_count.setter
-    def artifact_score_idle_count(self, value: int) -> None:
-        self.artifact_score_phase._idle_count = value
-
-    @property
-    def image_idle_count(self) -> int:
-        return self.image_phase.idle_count
-
-    @image_idle_count.setter
-    def image_idle_count(self, value: int) -> None:
-        self.image_phase._idle_count = value
-
     # SSH retry tracking
     ssh_retry_count: int = 0
     max_ssh_retries: int = 5

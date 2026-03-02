@@ -182,10 +182,6 @@ def get_embedding_location() -> str:
     return str(location).lower() if location else "local"
 
 
-# Backward-compatible alias
-get_embedding_backend = get_embedding_location
-
-
 def is_embedding_remote() -> bool:
     """True when embedding location targets a remote facility (not in-process)."""
     return get_embedding_location() != "local"

@@ -356,11 +356,11 @@ def mock_state():
     state.image_stats = MockWorkerStats()
 
     # Idle counts
-    state.score_idle_count = 0
-    state.ingest_idle_count = 0
-    state.docs_idle_count = 0
-    state.artifact_score_idle_count = 0
-    state.image_idle_count = 0
+    state.score_phase._idle_count = 0
+    state.ingest_phase._idle_count = 0
+    state.docs_phase._idle_count = 0
+    state.artifact_score_phase._idle_count = 0
+    state.image_phase._idle_count = 0
 
     # should_stop methods — all return False by default (run once)
     _stop_counter = {"score": 0, "ingest": 0, "artifact": 0, "ascore": 0, "image": 0}

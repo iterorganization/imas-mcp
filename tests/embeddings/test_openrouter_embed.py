@@ -14,7 +14,7 @@ from imas_codex.embeddings.openrouter_embed import (
     OpenRouterEmbeddingClient,
     OpenRouterEmbeddingError,
     OpenRouterServerInfo,
-    estimate_embedding_cost,
+    calculate_embedding_cost,
     get_openrouter_client,
     get_openrouter_model_name,
 )
@@ -118,30 +118,30 @@ class TestEmbeddingCostTracker:
         assert "tokens" in summary
 
 
-class TestEstimateEmbeddingCost:
+class TestCalculateEmbeddingCost:
     """Tests for cost estimation function."""
 
     def test_known_model_cost(self):
         """Test cost estimation for known model."""
-        cost = estimate_embedding_cost(1_000_000, "qwen/qwen3-embedding-8b")
+        cost = calculate_embedding_cost(1_000_000, "qwen/qwen3-embedding-8b")
         expected = EMBEDDING_MODEL_COSTS["qwen/qwen3-embedding-8b"]
         assert cost == expected
 
     def test_unknown_model_uses_default(self):
         """Test unknown model uses default pricing."""
-        cost = estimate_embedding_cost(1_000_000, "unknown/model")
+        cost = calculate_embedding_cost(1_000_000, "unknown/model")
         # Default is 0.10 per 1M tokens
         assert cost == 0.10
 
     def test_zero_tokens_zero_cost(self):
         """Test zero tokens has zero cost."""
-        cost = estimate_embedding_cost(0, "qwen/qwen3-embedding-8b")
+        cost = calculate_embedding_cost(0, "qwen/qwen3-embedding-8b")
         assert cost == 0.0
 
     def test_case_insensitive_model_lookup(self):
         """Test model lookup is case-insensitive."""
-        cost_lower = estimate_embedding_cost(1000, "qwen/qwen3-embedding-8b")
-        cost_upper = estimate_embedding_cost(1000, "QWEN/QWEN3-EMBEDDING-8B")
+        cost_lower = calculate_embedding_cost(1000, "qwen/qwen3-embedding-8b")
+        cost_upper = calculate_embedding_cost(1000, "QWEN/QWEN3-EMBEDDING-8B")
         assert cost_lower == cost_upper
 
 
@@ -363,16 +363,6 @@ class TestCalculateEmbeddingCost:
         cost = calculate_embedding_cost(1000, "qwen/qwen3-embedding-8b")
         expected = (1000 * EMBEDDING_MODEL_COSTS["qwen/qwen3-embedding-8b"]) / 1_000_000
         assert cost == expected
-
-    def test_estimate_is_alias_for_calculate(self):
-        """Test estimate_embedding_cost is alias for calculate_embedding_cost."""
-        from imas_codex.embeddings.openrouter_embed import calculate_embedding_cost
-
-        tokens = 5000
-        model = "qwen/qwen3-embedding-8b"
-        assert estimate_embedding_cost(tokens, model) == calculate_embedding_cost(
-            tokens, model
-        )
 
 
 class TestEmbeddingCostTrackerWithActualCost:
