@@ -123,7 +123,7 @@ class Neo4jOperation:
             # check above misses Neo4j running on a SLURM compute node.
             if not needs_stop:
                 try:
-                    from imas_codex.cli.serve import (
+                    from imas_codex.cli.services import (
                         _get_allocation,
                         _is_graph_compute_target,
                         _service_running,
@@ -221,10 +221,10 @@ class Neo4jOperation:
     def _stop_neo4j(self) -> None:
         # Try SLURM-based stop first (Neo4j on compute node)
         try:
-            from imas_codex.cli.serve import _is_graph_compute_target
+            from imas_codex.cli.services import _is_graph_compute_target
 
             if _is_graph_compute_target():
-                from imas_codex.cli.serve import (
+                from imas_codex.cli.services import (
                     _clean_neo4j_locks,
                     _get_allocation,
                     _stop_service,
@@ -258,10 +258,10 @@ class Neo4jOperation:
     def _start_neo4j(self) -> None:
         # Try SLURM-based start first (Neo4j on compute node)
         try:
-            from imas_codex.cli.serve import _is_graph_compute_target
+            from imas_codex.cli.services import _is_graph_compute_target
 
             if _is_graph_compute_target():
-                from imas_codex.cli.serve import (
+                from imas_codex.cli.services import (
                     _get_allocation,
                     _neo4j_service_command,
                     _start_service,
@@ -272,7 +272,7 @@ class Neo4jOperation:
                 if alloc and alloc["state"] == "RUNNING":
                     node = alloc["node"]
                     _start_service(node, "neo4j", _neo4j_service_command())
-                    from imas_codex.cli.serve import _graph_http_port
+                    from imas_codex.cli.services import _graph_http_port
 
                     http_port = _graph_http_port()
                     _wait_for_health("Neo4j", f"curl -sf http://{node}:{http_port}/")
@@ -732,7 +732,7 @@ def _neo4j_process_info(profile: Neo4jProfile) -> str | None:
     # Check SLURM allocation (Neo4j may be on a compute node)
     slurm_node = None
     try:
-        from imas_codex.cli.serve import _is_graph_compute_target
+        from imas_codex.cli.services import _is_graph_compute_target
 
         if _is_graph_compute_target():
             result = subprocess.run(
@@ -1105,7 +1105,7 @@ def graph_start(
     loc_info = resolve_location(location)
 
     if loc_info.is_compute:
-        from imas_codex.cli.serve import (
+        from imas_codex.cli.services import (
             _clean_neo4j_locks,
             _ensure_allocation,
             _graph_http_port,
@@ -1323,7 +1323,7 @@ def graph_stop(data_dir: str | None) -> None:
     loc_info = resolve_location(location)
 
     if loc_info.is_compute:
-        from imas_codex.cli.serve import (
+        from imas_codex.cli.services import (
             _get_allocation,
             _get_allocation_fallback,
             _stop_service,
