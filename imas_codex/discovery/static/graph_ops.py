@@ -516,9 +516,9 @@ def claim_parent_for_enrichment(
     facility: str,
     tree_name: str,
 ) -> dict[str, Any] | None:
-    """Claim a parent STRUCTURE node whose children need enrichment.
+    """Claim a parent node whose children need enrichment.
 
-    Finds a STRUCTURE node with un-enriched NUMERIC/SIGNAL children
+    Finds any TreeNode with un-enriched NUMERIC/SIGNAL children
     that don't follow a TreeNodePattern. Claims the parent by setting
     claimed_at. Returns the parent info plus all its un-enriched children.
 
@@ -530,7 +530,7 @@ def claim_parent_for_enrichment(
         result = gc.query(
             """
             MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE parent.node_type = 'STRUCTURE' AND parent.is_static = true
+            WHERE parent.is_static = true
               AND parent.claimed_at IS NULL
             WITH parent
             MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
@@ -561,6 +561,43 @@ def claim_parent_for_enrichment(
         if result:
             return dict(result[0])
         return None
+
+
+def claim_orphan_nodes_for_enrichment(
+    facility: str,
+    tree_name: str,
+    limit: int = 40,
+) -> list[dict[str, Any]]:
+    """Claim enrichable nodes that have no parent HAS_NODE relationship.
+
+    These are top-level tree nodes not nested under any parent.
+    Claims them by setting claimed_at and returns them as a batch.
+
+    Returns:
+        List of node dicts with id, path, node_type, tags, units.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (child:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            WHERE child.node_type IN $node_types
+              AND child.is_static = true
+              AND (child.description IS NULL OR child.description = '')
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
+              AND NOT EXISTS { (:TreeNode)-[:HAS_NODE]->(child) }
+              AND child.claimed_at IS NULL
+            WITH child ORDER BY child.path LIMIT $limit
+            SET child.claimed_at = datetime()
+            RETURN child.id AS id, child.path AS path,
+                   child.node_type AS node_type,
+                   child.tags AS tags, child.units AS units
+            """,
+            facility=facility,
+            tree_name=tree_name,
+            node_types=ENRICHABLE_NODE_TYPES,
+            limit=limit,
+        )
+        return [dict(r) for r in result] if result else []
 
 
 def mark_parent_children_enriched(
@@ -624,12 +661,89 @@ def mark_parent_children_enriched(
 
 
 def release_parent_claim(parent_id: str) -> None:
-    """Release claim on a parent STRUCTURE node (on error)."""
+    """Release claim on a parent node (on error)."""
     with GraphClient() as gc:
         gc.query(
             "MATCH (n:TreeNode {id: $id}) SET n.claimed_at = null",
             id=parent_id,
         )
+
+
+def release_orphan_claims(node_ids: list[str]) -> None:
+    """Release claims on orphan nodes (on error)."""
+    if not node_ids:
+        return
+    with GraphClient() as gc:
+        gc.query(
+            """
+            UNWIND $ids AS nid
+            MATCH (n:TreeNode {id: nid})
+            SET n.claimed_at = null
+            """,
+            ids=node_ids,
+        )
+
+
+def mark_orphan_nodes_enriched(
+    node_ids: list[str],
+    descriptions: dict[str, str],
+    metadata: dict[str, dict] | None = None,
+) -> int:
+    """Mark orphan nodes as enriched and release claims.
+
+    Args:
+        node_ids: IDs of all claimed nodes (to release claims)
+        descriptions: Map of node ID to description
+        metadata: Optional map of node ID to keywords/category
+
+    Returns:
+        Number of nodes enriched.
+    """
+    updates = []
+    for nid, desc in descriptions.items():
+        update: dict[str, Any] = {
+            "id": nid,
+            "description": desc,
+        }
+        if metadata and nid in metadata:
+            m = metadata[nid]
+            if m.get("keywords"):
+                update["keywords"] = m["keywords"]
+            if m.get("category"):
+                update["category"] = m["category"]
+        updates.append(update)
+
+    with GraphClient() as gc:
+        enriched = 0
+        if updates:
+            result = gc.query(
+                """
+                UNWIND $updates AS u
+                MATCH (n:TreeNode {id: u.id})
+                SET n.description = u.description,
+                    n.keywords = u.keywords,
+                    n.category = u.category,
+                    n.enrichment_status = 'enriched',
+                    n.claimed_at = null
+                RETURN count(n) AS updated
+                """,
+                updates=updates,
+            )
+            enriched = result[0]["updated"] if result else 0
+
+        # Release claims on any nodes that weren't enriched
+        enriched_ids = {u["id"] for u in updates}
+        remaining = [nid for nid in node_ids if nid not in enriched_ids]
+        if remaining:
+            gc.query(
+                """
+                UNWIND $ids AS nid
+                MATCH (n:TreeNode {id: nid})
+                SET n.claimed_at = null
+                """,
+                ids=remaining,
+            )
+        return enriched
 
 
 # ---------------------------------------------------------------------------
@@ -655,14 +769,15 @@ def has_pending_extract_work(facility: str, tree_name: str) -> bool:
 
 
 def has_pending_enrich_work(facility: str, tree_name: str) -> bool:
-    """Check if any patterns or parent groups need enrichment."""
+    """Check if any patterns, parent groups, or orphan nodes need enrichment."""
     if has_pending_pattern_work(facility, tree_name):
         return True
     with GraphClient() as gc:
+        # Check for parents with unenriched children (any parent type)
         result = gc.query(
             """
             MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE parent.node_type = 'STRUCTURE' AND parent.is_static = true
+            WHERE parent.is_static = true
             WITH parent
             MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
             WHERE child.node_type IN $node_types
@@ -674,7 +789,25 @@ def has_pending_enrich_work(facility: str, tree_name: str) -> bool:
             tree_name=tree_name,
             node_types=ENRICHABLE_NODE_TYPES,
         )
-        return result[0]["has_work"] if result else False
+        if result and result[0]["has_work"]:
+            return True
+
+        # Check for orphan nodes (no parent HAS_NODE relationship)
+        orphan_result = gc.query(
+            """
+            MATCH (child:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            WHERE child.node_type IN $node_types
+              AND child.is_static = true
+              AND (child.description IS NULL OR child.description = '')
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
+              AND NOT EXISTS { (:TreeNode)-[:HAS_NODE]->(child) }
+            RETURN count(child) > 0 AS has_work
+            """,
+            facility=facility,
+            tree_name=tree_name,
+            node_types=ENRICHABLE_NODE_TYPES,
+        )
+        return orphan_result[0]["has_work"] if orphan_result else False
 
 
 def has_pending_ingest_work(facility: str, tree_name: str) -> bool:
@@ -814,11 +947,11 @@ def get_static_discovery_stats(
             stats["nodes_enriched"] = 0
             stats["nodes_enrichable"] = 0
 
-        # Parent groups pending enrichment (non-pattern work units)
+        # Parent groups pending enrichment (non-pattern work units, any parent type)
         parent_result = gc.query(
             """
             MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE parent.node_type = 'STRUCTURE' AND parent.is_static = true
+            WHERE parent.is_static = true
             WITH parent
             MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
             WHERE child.node_type IN $node_types
@@ -848,6 +981,31 @@ def get_static_discovery_stats(
             stats["parent_groups_total"] = 0
             stats["parent_groups_pending"] = 0
             stats["parent_groups_enriched"] = 0
+
+        # Orphan nodes (no parent HAS_NODE relationship)
+        orphan_result = gc.query(
+            """
+            MATCH (child:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            WHERE child.node_type IN $node_types
+              AND child.is_static = true
+              AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
+              AND NOT EXISTS { (:TreeNode)-[:HAS_NODE]->(child) }
+            RETURN count(child) AS total_orphans,
+                   sum(CASE WHEN child.description IS NOT NULL
+                            AND child.description <> ''
+                       THEN 1 ELSE 0 END) AS enriched_orphans
+            """,
+            facility=facility,
+            tree_name=tree_name,
+            node_types=ENRICHABLE_NODE_TYPES,
+        )
+        if orphan_result:
+            orph = orphan_result[0]
+            stats["orphan_nodes_total"] = orph["total_orphans"]
+            stats["orphan_nodes_enriched"] = orph["enriched_orphans"]
+        else:
+            stats["orphan_nodes_total"] = 0
+            stats["orphan_nodes_enriched"] = 0
 
         # Pattern stats
         pattern_result = gc.query(
