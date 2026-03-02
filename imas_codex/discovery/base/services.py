@@ -39,7 +39,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-class ServiceState(str, Enum):
+class ServiceState(StrEnum):
     """Health state of a monitored service."""
 
     unknown = "unknown"  # Not yet checked
@@ -129,31 +129,15 @@ def neo4j_health_check() -> tuple[bool, str]:
         return False, str(e)[:100]
 
 
-def _kill_ssh_controlmaster(ssh_host: str) -> None:
-    """Kill a stale SSH ControlMaster socket.
-
-    When VPN drops, the ControlMaster socket becomes stale and all new
-    ssh connections multiplex through the dead socket.  Killing it
-    forces the next ssh to establish a fresh connection.
-    """
-    try:
-        subprocess.run(
-            ["ssh", "-O", "exit", ssh_host],
-            capture_output=True,
-            timeout=5,
-        )
-    except Exception:
-        pass  # Best-effort cleanup
-
-
 def ssh_health_check(ssh_host: str, timeout: int = 10) -> tuple[bool, str]:
     """Check SSH connectivity to a remote host.
 
+    Delegates to :func:`~imas_codex.remote.executor.ssh_preflight` — the
+    canonical SSH connectivity check that handles socket directory creation,
+    stale socket cleanup, and retry logic.
+
     For VPN-gated hosts (like jt-60sa), this implicitly validates VPN
     status since SSH will fail if the VPN tunnel is down.
-
-    On failure after a previous success, kills the ControlMaster socket
-    so recovery can establish a fresh connection.
 
     Args:
         ssh_host: SSH host alias (from ~/.ssh/config)
@@ -162,32 +146,9 @@ def ssh_health_check(ssh_host: str, timeout: int = 10) -> tuple[bool, str]:
     Returns:
         (healthy, detail) tuple
     """
-    try:
-        result = subprocess.run(
-            [
-                "ssh",
-                "-o",
-                f"ConnectTimeout={timeout}",
-                "-o",
-                "BatchMode=yes",
-                ssh_host,
-                "echo ok",
-            ],
-            capture_output=True,
-            timeout=timeout + 5,
-        )
-        if result.returncode == 0 and b"ok" in result.stdout:
-            return True, ssh_host
-        # SSH failed — kill stale ControlMaster so recovery can reconnect
-        _kill_ssh_controlmaster(ssh_host)
-        stderr = result.stderr.decode("utf-8", errors="replace").strip()[:100]
-        return False, stderr or f"exit code {result.returncode}"
-    except subprocess.TimeoutExpired:
-        _kill_ssh_controlmaster(ssh_host)
-        return False, f"timeout ({timeout}s)"
-    except Exception as e:
-        _kill_ssh_controlmaster(ssh_host)
-        return False, str(e)[:100]
+    from imas_codex.remote.executor import ssh_preflight
+
+    return ssh_preflight(ssh_host, timeout=timeout, retry=True)
 
 
 def wiki_auth_check(

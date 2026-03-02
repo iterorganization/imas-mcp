@@ -29,9 +29,9 @@ class _CleanupGroup(click.Group):
         try:
             super().invoke(ctx)
         except (KeyboardInterrupt, click.Abort):
-            from imas_codex.remote.executor import _cleanup_ssh_on_exit
+            from imas_codex.remote.executor import cleanup_ssh_on_exit
 
-            _cleanup_ssh_on_exit()
+            cleanup_ssh_on_exit()
             raise
 
 

@@ -21,12 +21,15 @@ See imas_codex/config/README.md for exploration guidance.
 
 # Low-level executor (no facility imports - avoids circular imports)
 from imas_codex.remote.executor import (
+    cleanup_ssh_on_exit,
     cleanup_stale_sockets,
     configure_host_nice,
     ensure_ssh_healthy,
     is_local_host,
     run_command,
     run_script_via_stdin,
+    ssh_preflight,
+    warm_ssh_controlmaster,
 )
 
 # High-level facility-aware tools
@@ -59,12 +62,15 @@ from imas_codex.remote.tunnel import (
 
 __all__ = [
     # Low-level executor
+    "cleanup_ssh_on_exit",
     "cleanup_stale_sockets",
     "configure_host_nice",
     "ensure_ssh_healthy",
     "is_local_host",
     "run_command",
     "run_script_via_stdin",
+    "ssh_preflight",
+    "warm_ssh_controlmaster",
     # SSH tunnel management
     "SSH_TUNNEL_OPTS",
     "TUNNEL_OFFSET",

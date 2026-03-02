@@ -2287,8 +2287,9 @@ async def _async_refine_with_llm(
 def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]:
     """Check if SSH connection to facility is working.
 
-    Proactively cleans stale SSH control sockets before testing,
-    then retries once after cleanup if the first attempt fails.
+    Delegates to :func:`~imas_codex.remote.executor.ssh_preflight` — the
+    canonical SSH connectivity check that handles socket directory creation,
+    stale socket cleanup, and retry logic.
 
     Args:
         facility: Facility ID
@@ -2297,10 +2298,9 @@ def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]
     Returns:
         Tuple of (success, message)
     """
-    from imas_codex.remote.executor import check_ssh_socket, cleanup_stale_sockets
-    from imas_codex.remote.tools import run
+    from imas_codex.remote.executor import ssh_preflight
 
-    # Proactively check and clean stale sockets before the connectivity test
+    # Resolve facility → SSH host alias
     ssh_host = facility
     try:
         from imas_codex.discovery.base.facility import get_facility
@@ -2310,32 +2310,10 @@ def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]
     except (ValueError, Exception):
         pass
 
-    if not check_ssh_socket(ssh_host, timeout=5):
-        logger.info("Cleaning stale SSH socket for %s before preflight", ssh_host)
-        cleanup_stale_sockets([ssh_host])
-
-    try:
-        result = run("echo ok", facility=facility, timeout=timeout)
-        if "ok" in result:
-            return True, f"SSH to {facility} working"
-        return False, f"SSH to {facility} returned unexpected output"
-    except subprocess.TimeoutExpired:
-        # First attempt timed out — try cleanup and retry once
-        logger.info("SSH preflight timed out, cleaning sockets and retrying")
-        cleanup_stale_sockets([ssh_host])
-        try:
-            result = run("echo ok", facility=facility, timeout=timeout)
-            if "ok" in result:
-                return True, f"SSH to {facility} working (after socket cleanup)"
-            return False, f"SSH to {facility} returned unexpected output"
-        except subprocess.TimeoutExpired:
-            return False, f"SSH to {facility} timed out after {timeout}s"
-        except Exception as e:
-            return False, f"SSH to {facility} failed after retry: {e}"
-    except subprocess.CalledProcessError as e:
-        return False, f"SSH to {facility} failed: {e}"
-    except Exception as e:
-        return False, f"SSH check failed: {e}"
+    ok, detail = ssh_preflight(ssh_host, timeout=timeout, retry=True)
+    if ok:
+        return True, f"SSH to {facility} working"
+    return False, f"Cannot connect to {facility}: {detail}"
 
 
 # ============================================================================
@@ -2714,33 +2692,33 @@ async def run_parallel_discovery(
 
             gc.collect()
 
-            elapsed = max(
-                state.scan_stats.elapsed,
-                state.expand_stats.elapsed,
-                state.score_stats.elapsed,
-                state.enrich_stats.elapsed,
-                state.refine_stats.elapsed,
-            )
+        elapsed = max(
+            state.scan_stats.elapsed,
+            state.expand_stats.elapsed,
+            state.score_stats.elapsed,
+            state.enrich_stats.elapsed,
+            state.refine_stats.elapsed,
+        )
 
-            return {
-                "scanned": state.scan_stats.processed,
-                "expanded": state.expand_stats.processed,
-                "scored": state.score_stats.processed,
-                "enriched": state.enrich_stats.processed,
-                "refined": state.refine_stats.processed,
-                "cost": state.total_cost,
-                "elapsed_seconds": elapsed,
-                "scan_rate": state.scan_stats.rate,
-                "expand_rate": state.expand_stats.rate,
-                "score_rate": state.score_stats.rate,
-                "enrich_rate": state.enrich_stats.rate,
-                "refine_rate": state.refine_stats.rate,
-                "scan_errors": state.scan_stats.errors,
-                "expand_errors": state.expand_stats.errors,
-                "score_errors": state.score_stats.errors,
-                "enrich_errors": state.enrich_stats.errors,
-                "refine_errors": state.refine_stats.errors,
-            }
+        return {
+            "scanned": state.scan_stats.processed,
+            "expanded": state.expand_stats.processed,
+            "scored": state.score_stats.processed,
+            "enriched": state.enrich_stats.processed,
+            "refined": state.refine_stats.processed,
+            "cost": state.total_cost,
+            "elapsed_seconds": elapsed,
+            "scan_rate": state.scan_stats.rate,
+            "expand_rate": state.expand_stats.rate,
+            "score_rate": state.score_stats.rate,
+            "enrich_rate": state.enrich_stats.rate,
+            "refine_rate": state.refine_stats.rate,
+            "scan_errors": state.scan_stats.errors,
+            "expand_errors": state.expand_stats.errors,
+            "score_errors": state.score_stats.errors,
+            "enrich_errors": state.enrich_stats.errors,
+            "refine_errors": state.refine_stats.errors,
+        }
     finally:
         # Clean up persistent SSH workers on exit (normal, exception, or Ctrl+C)
         if ssh_pool is not None:
