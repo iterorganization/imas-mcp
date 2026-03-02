@@ -35,7 +35,6 @@ from imas_codex.discovery.base.progress import (
     build_pipeline_section,
     build_resource_section,
     clean_text,
-    clip_text,
     format_time,
 )
 
@@ -278,7 +277,6 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         Stages: SCAN → ENRICH → CHECK
         """
-        content_width = self.width - 6
 
         # --- Compute progress data ---
 
@@ -331,7 +329,7 @@ class DataProgressDisplay(BaseProgressDisplay):
                 scan_text = status
             else:
                 path = scan.node_path or scan.signal_id
-                scan_text = clip_text(path, content_width - 10)
+                scan_text = path
 
             desc_parts = []
             if scan.tree_name:
@@ -350,7 +348,7 @@ class DataProgressDisplay(BaseProgressDisplay):
         enrich_domain = ""
         enrich_desc = ""
         if enrich:
-            enrich_text = clip_text(enrich.signal_id, content_width - 10)
+            enrich_text = enrich.signal_id
             if enrich.physics_domain:
                 enrich_domain = enrich.physics_domain
             if enrich.description:
@@ -362,7 +360,7 @@ class DataProgressDisplay(BaseProgressDisplay):
         check_domain = ""
         check_desc = ""
         if validate:
-            check_text = clip_text(validate.signal_id, content_width - 10)
+            check_text = validate.signal_id
             if validate.physics_domain:
                 check_domain = validate.physics_domain
             shot_str = f"shot={validate.shot}" if validate.shot else ""

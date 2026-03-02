@@ -22,7 +22,6 @@ from rich.text import Text
 
 # Import common utilities
 from imas_codex.discovery.base.progress import (
-    LABEL_WIDTH,
     BaseProgressDisplay,
     PipelineRowConfig,
     ResourceConfig,
@@ -30,7 +29,6 @@ from imas_codex.discovery.base.progress import (
     build_pipeline_section,
     build_resource_section,
     clean_text,
-    clip_path,
 )
 
 if TYPE_CHECKING:
@@ -414,7 +412,6 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         Stages: SCAN → SCORE → ENRICH
         """
-        content_width = self.width - 6
 
         # --- Compute progress data ---
 
@@ -469,7 +466,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         scan_text = ""
         scan_desc = ""
         if scan:
-            scan_text = clip_path(scan.path, content_width - LABEL_WIDTH)
+            scan_text = scan.path
             scan_parts = [f"{scan.files} files, {scan.dirs} dirs"]
             if scan.has_code:
                 scan_parts.append("code project")
@@ -485,7 +482,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         score_desc_fallback = ""
         score_terminal = ""
         if score:
-            score_path = clip_path(score.path, content_width - LABEL_WIDTH - 14)
+            score_path = score.path
 
             if score.score is not None:
                 score_value = score.score
@@ -515,7 +512,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         enrich_desc = ""
         queue_empty = self.state.enrich_queue.is_empty()
         if enrich and (not queue_empty or self.state.enrich_processing):
-            enrich_text = clip_path(enrich.path, content_width - LABEL_WIDTH)
+            enrich_text = enrich.path
             if enrich.error:
                 enrich_desc = f"error: {enrich.error}"
             elif enrich.warnings:
@@ -568,7 +565,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         refine_terminal = ""
         refine_queue_empty = self.state.refine_queue.is_empty()
         if refine and (not refine_queue_empty or self.state.refine_processing):
-            refine_text = clip_path(refine.path, content_width - LABEL_WIDTH - 14)
+            refine_text = refine.path
             if refine.score is not None:
                 # Show just the +diff (delta) — the original score is already
                 # visible in the score worker stream

@@ -628,7 +628,6 @@ class WikiProgressDisplay(BaseProgressDisplay):
 
         Stages: SCORE → INGEST → FILE → IMAGE
         """
-        content_width = self.width - 6
         monitor = self.service_monitor
         is_paused = monitor is not None and monitor.paused
 
@@ -705,7 +704,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             elif self.state.cost_limit_reached:
                 triage_complete_label = "cost limit"
         if score:
-            triage_text = self._clip_title(score.title, content_width - LABEL_WIDTH)
+            triage_text = score.title
             if score.skipped:
                 reason = score.skip_reason[:40] if score.skip_reason else ""
                 triage_desc_fallback = f"skipped: {reason}"
@@ -732,7 +731,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         if pages_at_100 and not ingest:
             pages_complete = True
         if ingest:
-            pages_text = self._clip_title(ingest.title, content_width - LABEL_WIDTH)
+            pages_text = ingest.title
             pages_score = ingest.score
             pages_domain = ingest.physics_domain or ""
             pages_desc = ingest.description
@@ -764,7 +763,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 display_name += f" ({artifact.chunk_count} chunks)"
             elif artifact.score is not None and artifact.score < 0.5:
                 display_name += " (skipped)"
-            docs_text = self._clip_title(display_name, content_width - LABEL_WIDTH)
+            docs_text = display_name
             docs_score = artifact.score
             docs_domain = artifact.physics_domain or ""
             docs_desc = artifact.description
@@ -800,9 +799,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             elif self.state.cost_limit_reached:
                 images_complete_label = "cost limit"
         if image:
-            images_text = self._clip_title(
-                image.display_name, content_width - LABEL_WIDTH
-            )
+            images_text = image.display_name
             images_score = image.score
             images_domain = image.physics_domain or ""
             images_desc = image.description
