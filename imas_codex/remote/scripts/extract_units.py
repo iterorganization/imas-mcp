@@ -47,15 +47,25 @@ import sys
 from typing import Any
 
 
-def _extract_units_from_record(record) -> str | None:
+def _extract_units_from_record(record, _depth: int = 0) -> str | None:
     """Extract units string from an MDSplus record without evaluating data.
 
-    Checks for WithUnits compounds (direct or nested inside Parameter).
+    Recursively unwraps safe compound types (Parameter, Signal) to find
+    a WithUnits wrapper at any depth. TCV static tree records are often
+    nested 3 levels deep: Parameter→Signal→WithUnits.
+
+    Uses ``getDescAt(0)`` instead of ``getValue()`` to access inner
+    descriptors — Parameter objects lack a ``getValue()`` method in the
+    MDSplus Python API, but ``getDescAt(0)`` works universally.
+
+    Only descends through Parameter/Signal — never evaluates
+    expression nodes (Function, etc.) which would trigger TDI computation.
+
     Returns the units string if found, None otherwise.
     """
     import MDSplus
 
-    if record is None:
+    if record is None or _depth > 5:
         return None
 
     # Direct WithUnits: BUILD_WITH_UNITS(value, units)
@@ -68,46 +78,22 @@ def _extract_units_from_record(record) -> str | None:
         return None
 
     # Parameter: BUILD_PARAM(value, help, validation)
-    # The value inside may be wrapped in WithUnits
+    # getDescAt(0) returns the value descriptor — may be Signal→WithUnits
     if isinstance(record, MDSplus.compound.Parameter):
         try:
-            val = record.getValue()
-            if isinstance(val, MDSplus.compound.WithUnits):
-                units = val.getUnits()
-                if units is not None:
-                    unit_str = str(units).strip()
-                    if unit_str and unit_str.lower() not in (
-                        "",
-                        "none",
-                        "unknown",
-                        " ",
-                    ):
-                        return unit_str
+            return _extract_units_from_record(record.getDescAt(0), _depth + 1)
         except Exception:
-            pass
-        return None
+            return None
 
     # Signal: BUILD_SIGNAL(value, raw, dimension)
-    # The value or raw inside may be wrapped in WithUnits
+    # getDescAt(0) returns the value descriptor — may be WithUnits
     if isinstance(record, MDSplus.compound.Signal):
         try:
-            val = record.getValue()
-            if isinstance(val, MDSplus.compound.WithUnits):
-                units = val.getUnits()
-                if units is not None:
-                    unit_str = str(units).strip()
-                    if unit_str and unit_str.lower() not in (
-                        "",
-                        "none",
-                        "unknown",
-                        " ",
-                    ):
-                        return unit_str
+            return _extract_units_from_record(record.getDescAt(0), _depth + 1)
         except Exception:
-            pass
-        return None
+            return None
 
-    # Stored value types (Array, Scalar) — no units wrapper
+    # Stored value types (Array, Scalar, expressions) — no units wrapper
     return None
 
 
