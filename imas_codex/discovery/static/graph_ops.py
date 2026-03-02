@@ -471,6 +471,135 @@ def detect_and_create_patterns(
         return created
 
 
+def detect_and_create_member_patterns(
+    facility: str,
+    tree_name: str,
+    member_parent_types: list[str] | None = None,
+    min_instances: int = MIN_PATTERN_INSTANCES,
+) -> int:
+    """Detect member-suffix patterns and create TreeNodePattern nodes.
+
+    MDSplus nodes often have member sub-nodes (colon-separated, e.g.
+    `:PRE`, `:VAL`, `:STORE`) that share identical semantic meaning
+    across thousands of parent nodes. This detects groups of leaf nodes
+    whose name (after the last `:` separator) is identical and whose
+    parent has one of the configured ``member_parent_types``.
+
+    Which parent node types to look for is facility-specific and
+    configured via ``member_parent_types`` in the static tree config
+    YAML (e.g. ``["SIGNAL"]`` for TCV). If *None* or empty, this
+    function is a no-op.
+
+    Unlike `detect_and_create_patterns` (which groups by grandparent →
+    indexed-parent → leaf), this groups globally by (leaf_name, parent
+    node_type) so a single pattern covers all instances.
+
+    Args:
+        facility: Facility identifier
+        tree_name: Static tree name
+        member_parent_types: Parent node types to scan for member children.
+            Loaded from facility YAML ``static_trees[].member_parent_types``.
+        min_instances: Minimum instances to qualify
+
+    Returns:
+        Number of patterns created
+    """
+    if not member_parent_types:
+        return 0
+
+    with GraphClient() as gc:
+        # Find member leaf names that repeat across many parents of
+        # the configured types
+        groups = gc.query(
+            """
+            MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
+            WHERE parent.is_static = true AND parent.node_type IN $parent_types
+            MATCH (parent)-[:HAS_NODE]->(leaf:TreeNode)
+            WHERE leaf.node_type IN $node_types
+              AND NOT EXISTS { (leaf)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
+            WITH split(leaf.path, ':')[-1] AS leaf_name,
+                 parent.node_type AS parent_type,
+                 count(leaf) AS instance_count,
+                 head(collect(leaf.path)) AS representative,
+                 head(collect(leaf.node_type)) AS leaf_type
+            WHERE instance_count >= $min_instances
+            RETURN leaf_name, parent_type, instance_count, representative, leaf_type
+            """,
+            facility=facility,
+            tree_name=tree_name,
+            parent_types=member_parent_types,
+            node_types=ENRICHABLE_NODE_TYPES,
+            min_instances=min_instances,
+        )
+
+        if not groups:
+            logger.info(
+                "No member-suffix patterns found for %s:%s", facility, tree_name
+            )
+            return 0
+
+        # Create patterns — keyed by facility:tree:member:parent_type:leaf_name
+        patterns = []
+        for g in groups:
+            pattern_id = (
+                f"{facility}:{tree_name}:member:{g['parent_type']}:{g['leaf_name']}"
+            )
+            patterns.append(
+                {
+                    "id": pattern_id,
+                    "facility_id": facility,
+                    "tree_name": tree_name,
+                    "grandparent_path": g["parent_type"],  # parent type, not a path
+                    "leaf_name": g["leaf_name"],
+                    "index_count": g["instance_count"],
+                    "node_type": g["leaf_type"],
+                    "representative_path": g["representative"],
+                }
+            )
+
+        gc.ensure_facility(facility)
+        result = gc.query(
+            """
+            UNWIND $patterns AS p
+            MERGE (pat:TreeNodePattern {id: p.id})
+            ON CREATE SET
+                pat.facility_id = p.facility_id,
+                pat.tree_name = p.tree_name,
+                pat.grandparent_path = p.grandparent_path,
+                pat.leaf_name = p.leaf_name,
+                pat.index_count = p.index_count,
+                pat.node_type = p.node_type,
+                pat.representative_path = p.representative_path
+            WITH pat, p
+            MATCH (f:Facility {id: p.facility_id})
+            MERGE (pat)-[:AT_FACILITY]->(f)
+            WITH pat, p
+            // Link all matching leaf nodes under parents of the configured type
+            MATCH (parent:TreeNode {facility_id: p.facility_id})
+            WHERE parent.tree_name = p.tree_name AND parent.is_static = true
+              AND parent.node_type = p.grandparent_path
+            MATCH (parent)-[:HAS_NODE]->(leaf:TreeNode)
+            WHERE leaf.node_type IN $node_types
+              AND split(leaf.path, ':')[-1] = p.leaf_name
+            MERGE (leaf)-[:FOLLOWS_PATTERN]->(pat)
+            RETURN pat.id AS id, count(leaf) AS linked
+            """,
+            patterns=patterns,
+            node_types=ENRICHABLE_NODE_TYPES,
+        )
+
+        created = len(result) if result else 0
+        total_linked = sum(r["linked"] for r in result) if result else 0
+        logger.info(
+            "Created %d member-suffix patterns for %s:%s (%d nodes linked)",
+            created,
+            facility,
+            tree_name,
+            total_linked,
+        )
+        return created
+
+
 # ---------------------------------------------------------------------------
 # Enrichment claiming — TreeNodePattern (pattern-first enrichment)
 # ---------------------------------------------------------------------------

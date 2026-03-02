@@ -162,6 +162,11 @@ data_sources:
           - version: 8
             first_shot: 74971
             description: 2nd-gen HFS and 1st-gen LFS baffles (LI-LO)
+        # Node types whose member children (:PRE, :VAL, :STORE) repeat
+        # identically across thousands of parent nodes and should be grouped
+        # into patterns for batch enrichment rather than enriched individually.
+        member_parent_types:
+          - SIGNAL
         systems:
           - symbol: W
             name: Individual coil turns

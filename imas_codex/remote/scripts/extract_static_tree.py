@@ -122,11 +122,19 @@ def extract_version(
             # Get tags from pre-built reverse mapping (avoids per-node MDSplus lookups)
             node_tags = path_to_tags.get(path, [])
 
+            # fullpath preserves the structural hierarchy (uses . and : separators)
+            # while path may return a flat tag alias (e.g. \STATIC::DBRDR_A_A)
+            # that loses parent-child context.
+            fullpath = str(node.fullpath)
+
             record: dict[str, Any] = {
                 "path": path,
                 "name": name,
                 "node_type": node_type,
             }
+
+            if fullpath != path:
+                record["fullpath"] = fullpath
 
             if node_tags:
                 record["tags"] = node_tags

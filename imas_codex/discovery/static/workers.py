@@ -343,6 +343,7 @@ async def enrich_worker(
         claim_orphan_nodes_for_enrichment,
         claim_parent_for_enrichment,
         claim_patterns_for_enrichment,
+        detect_and_create_member_patterns,
         detect_and_create_patterns,
         fetch_enrichment_context,
         mark_orphan_nodes_enriched,
@@ -378,9 +379,20 @@ async def enrich_worker(
         state.facility,
         state.tree_name,
     )
+
+    # Detect member-suffix patterns (:PRE, :VAL, :STORE under configured parent types)
+    member_parent_types = state.tree_config.get("member_parent_types")
+    member_patterns_created = await asyncio.to_thread(
+        detect_and_create_member_patterns,
+        state.facility,
+        state.tree_name,
+        member_parent_types=member_parent_types,
+    )
+    patterns_created += member_patterns_created
+
     if patterns_created and on_progress:
         on_progress(
-            f"found {patterns_created} parameter patterns",
+            f"found {patterns_created} patterns ({member_patterns_created} member-suffix)",
             state.enrich_stats,
             [{"patterns_created": patterns_created}],
         )
