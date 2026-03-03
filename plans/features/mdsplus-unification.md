@@ -655,7 +655,7 @@ scripts/
 
 ## Implementation Phases
 
-### Phase 1: Schema and Config — Tree→Subtree Nesting
+### Phase 1: Schema and Config — Tree→Subtree Nesting ✅
 
 **Goal:** Unified `TreeConfig` schema with subtree nesting, updated facility YAML.
 
