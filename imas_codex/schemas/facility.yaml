@@ -1317,8 +1317,11 @@ classes:
       - LLMOperation
     class_uri: facility:TreeNode
     attributes:
-      path:
+      id:
         identifier: true
+        description: Compound identifier (facility:tree:path)
+        required: true
+      path:
         description: Full node path (e.g., "\\RESULTS::LIUQE:PSI")
         required: true
       is_static:
@@ -1478,6 +1481,15 @@ classes:
         range: EnrichmentStatus
       enrichment_notes:
         description: Agent reasoning or notes about the enrichment
+      category:
+        description: >-
+          Category classification for this node (e.g., "coil", "vessel",
+          "diagnostic", "other"). Assigned during enrichment.
+      keywords:
+        description: >-
+          Keywords describing the physics or purpose of this node.
+          Assigned during enrichment.
+        multivalued: true
       follows_pattern:
         description: >-
           Pattern this node follows for indexed repetitions.

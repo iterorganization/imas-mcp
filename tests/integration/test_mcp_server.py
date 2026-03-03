@@ -5,7 +5,7 @@ Tests the graph-backed server with mock GraphClient, focusing on
 MCP protocol compliance and component integration.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -111,7 +111,12 @@ class TestMCPServer:
                 neo4j.exceptions.DatabaseUnavailable,
             )
         ):
-            Server(ids_set=STANDARD_TEST_IDS_SET)
+            # Mock _connect_graph to prevent auto-reconnection to remote Neo4j
+            with patch(
+                "imas_codex.server._connect_graph",
+                side_effect=RuntimeError("Neo4j unavailable"),
+            ):
+                Server(ids_set=STANDARD_TEST_IDS_SET)
 
     def test_server_name_from_graph(self, server):
         """Server name is derived from DDVersion nodes in graph."""

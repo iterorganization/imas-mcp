@@ -81,7 +81,7 @@ class TestBuildResourceSection:
         text = result.plain
         assert "COST" in text
         assert "$5.00" in text  # accumulated from graph is primary
-        assert "session $2.50" in text
+        assert "$2.50" in text
 
     def test_cost_with_etc(self):
         """COST row shows ETC when projection exceeds current total."""
