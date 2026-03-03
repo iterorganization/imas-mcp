@@ -1021,16 +1021,16 @@ def graph() -> None:
     """Manage graph database lifecycle.
 
     \b
-    Setup:
-      imas-codex graph init NAME           Create a new graph
-      imas-codex graph status              Show graph and server status
-      imas-codex graph list                List local graph instances
-      imas-codex graph switch NAME         Activate a different graph
+    Server:
+      imas-codex graph start               Start Neo4j (SLURM/systemd/local)
+      imas-codex graph stop                Stop Neo4j
+      imas-codex graph status              Show status with SLURM resource usage
 
     \b
-    Server:
-      imas-codex graph start               Start Neo4j
-      imas-codex graph stop                Stop Neo4j
+    Setup:
+      imas-codex graph init NAME           Create a new graph
+      imas-codex graph list                List local graph instances
+      imas-codex graph switch NAME         Activate a different graph
       imas-codex graph shell               Interactive Cypher REPL
 
     \b
@@ -1341,7 +1341,7 @@ def graph_stop(data_dir: str | None) -> None:
 @graph.command("status")
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 def graph_status(registry: str | None) -> None:
-    """Show local and registry status."""
+    """Show Neo4j graph status with color-coded SLURM resource usage."""
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
 
@@ -1373,7 +1373,25 @@ def graph_status(registry: str | None) -> None:
                 f"-r{manifest.get('dev_revision', '?')}"
             )
 
-    click.echo(f"\nNeo4j: {'running' if is_neo4j_running() else 'stopped'}")
+    # SLURM job status with color-coded resource usage
+    try:
+        from imas_codex.cli.services import _format_service_status, _get_neo4j_job
+
+        job = _get_neo4j_job()
+        if job:
+            click.echo("\nSLURM:")
+            for line in _format_service_status(job, "neo4j"):
+                click.echo(line)
+    except Exception:
+        pass
+
+    running = is_neo4j_running()
+    state_str = (
+        click.style("running", fg="green")
+        if running
+        else click.style("stopped", fg="red")
+    )
+    click.echo(f"\nNeo4j: {state_str}")
 
     from imas_codex.graph.profiles import resolve_neo4j
     from imas_codex.remote.executor import is_local_host
@@ -1391,7 +1409,7 @@ def graph_status(registry: str | None) -> None:
     except Exception:
         pass
 
-    if is_neo4j_running():
+    if running:
         try:
             from imas_codex.graph.client import GraphClient
             from imas_codex.graph.meta import get_graph_meta

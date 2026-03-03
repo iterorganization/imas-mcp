@@ -15,11 +15,23 @@ logger = logging.getLogger(__name__)
 
 @click.group()
 def serve() -> None:
-    """Start MCP servers.
+    """MCP servers and embedding service.
 
     \b
-      imas-codex serve imas     Start the IMAS Data Dictionary server
-      imas-codex serve agents   Start the Agents server for facility exploration
+      imas-codex serve imas              Start the IMAS DD MCP server
+      imas-codex serve agents            Start the Agents MCP server
+      imas-codex serve embed deploy      Deploy embedding server (SLURM/systemd)
+      imas-codex serve embed status      Show embed server health and load
+      imas-codex serve embed stop        Stop embedding server
+      imas-codex serve embed restart     Restart with new GPU allocation
+      imas-codex serve embed logs        View embed server logs
+      imas-codex serve llm deploy        Deploy LLM proxy (systemd)
+      imas-codex serve llm status        Show LLM proxy health
+      imas-codex serve tunnel start      Start SSH tunnels
+      imas-codex serve tunnel status     Show active tunnels
+
+    \b
+    Neo4j is managed separately via 'imas-codex graph start/stop/status'.
     """
     pass
 
@@ -993,22 +1005,10 @@ def embed_status(url: str | None, local: bool) -> None:
     try:
         job = _get_embed_job()
         if job:
-            click.echo(
-                f"Embed job: {job['job_id']} {job['state']} on {job['node']} "
-                f"({job['gres']}, {job['cpus']} CPUs, {job['time']})"
-            )
-            if job["state"] == "RUNNING":
-                load = _get_service_load(job["node"], "embed")
-                if load:
-                    parts = [
-                        f"CPU: {load.get('cpu', '?')}%",
-                        f"Mem: {load.get('mem_mb', '?')} MB",
-                    ]
-                    if "gpu_mem_mb" in load:
-                        parts.append(f"GPU Mem: {load['gpu_mem_mb']} MB")
-                    click.echo(f"  Load: {', '.join(parts)}")
+            for line in _format_service_status(job, "embed"):
+                click.echo(line)
         else:
-            click.echo("Embed job: none")
+            click.echo(click.style("Embed job: none", dim=True))
     except Exception:
         click.echo("Embed job: unavailable")
 
@@ -1192,28 +1192,19 @@ WantedBy=default.target
 from imas_codex.cli.services import (  # noqa: E402
     _DEFAULT_GPUS,
     _EMBED_JOB,
-    _NEO4J_JOB,
     _PROJECT,
     _SERVICES_DIR,
     _cancel_service_job,
     _deploy_login_embed,
-    _deploy_login_neo4j,
     _embed_port,
-    _get_all_service_jobs,
+    _format_service_status,
     _get_embed_job,
-    _get_service_load,
-    _graph_http_port,
-    _graph_port,
     _is_compute_target,
-    _is_graph_compute_target,
     _llm_port,
-    _run_on_node,
     _run_remote,
-    _show_embed_info_on_node,
     _tail_log,
     _wait_for_health,
     deploy_embed,
-    deploy_neo4j,
 )
 
 # ── Embed deploy/stop/restart/logs commands ──────────────────────────────
@@ -1350,200 +1341,6 @@ def embed_logs(follow: bool, lines: int) -> None:
     _tail_log(log_file, follow, lines)
 
 
-# ── Allocation management command ────────────────────────────────────────
-
-
-@serve.group("alloc")
-def serve_alloc_group() -> None:
-    """Manage SLURM service jobs.
-
-    Each service (Neo4j, embed) runs as its own SLURM job.
-    Use these commands to view status or release all jobs.
-
-    \\b
-      imas-codex serve alloc status     Show service jobs and load
-      imas-codex serve alloc release    Cancel all service jobs
-    """
-    pass
-
-
-@serve_alloc_group.command("status")
-def alloc_status() -> None:
-    """Show SLURM service jobs and real-time resource usage.
-
-    \\b
-    Examples:
-        imas-codex serve alloc status
-    """
-    jobs = _get_all_service_jobs()
-    any_running = False
-
-    for svc_name, job in jobs.items():
-        if job and job["state"] == "RUNNING":
-            any_running = True
-            click.echo(f"{svc_name}: job {job['job_id']} ({job['state']})")
-            click.echo(
-                f"  Node: {job['node']}, CPUs: {job['cpus']}, "
-                f"GPUs: {job['gres']}, Time: {job['time']}"
-            )
-            # Get real-time load
-            load = _get_service_load(job["node"], svc_name)
-            if load:
-                parts = [
-                    f"CPU: {load.get('cpu', '?')}%",
-                    f"Mem: {load.get('mem_mb', '?')} MB",
-                ]
-                if "gpu_mem_mb" in load:
-                    parts.append(f"GPU Mem: {load['gpu_mem_mb']} MB")
-                if "gpu_count" in load:
-                    parts.append(f"GPU Procs: {load['gpu_count']}")
-                click.echo(f"  Load: {', '.join(parts)}")
-        elif job:
-            any_running = True
-            click.echo(f"{svc_name}: job {job['job_id']} ({job['state']})")
-        else:
-            click.echo(f"{svc_name}: not running")
-
-    if not any_running:
-        click.echo("\nNo services running")
-        click.echo("  Deploy with: imas-codex serve deploy")
-
-
-@serve_alloc_group.command("release")
-def alloc_release() -> None:
-    """Cancel all SLURM service jobs (stops all services).
-
-    \\b
-    Examples:
-        imas-codex serve alloc release
-    """
-    cancelled = []
-    for job_name in (_NEO4J_JOB, _EMBED_JOB):
-        if _cancel_service_job(job_name):
-            cancelled.append(job_name)
-            click.echo(f"Cancelled {job_name}")
-
-    if cancelled:
-        click.echo(f"Released {len(cancelled)} service(s)")
-    else:
-        click.echo("No services to release")
-
-
-# ============================================================================
-# Unified Deploy
-# ============================================================================
-
-
-@serve.command("deploy")
-@click.option(
-    "--gpus",
-    "-g",
-    default=_DEFAULT_GPUS,
-    type=int,
-    help=f"Number of GPUs for SLURM allocation (default: {_DEFAULT_GPUS})",
-)
-@click.option(
-    "--workers",
-    "-w",
-    default=None,
-    type=int,
-    help="Embed worker processes (default: same as gpus)",
-)
-@click.option(
-    "--skip-tunnels",
-    is_flag=True,
-    help="Skip SSH tunnel setup after deploying services",
-)
-def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
-    """Deploy all services (Neo4j, embedding, LLM proxy) and start tunnels.
-
-    Each service gets its own SLURM job (when configured).  Neo4j runs
-    without GPUs; the embed server gets the requested GPU allocation.
-
-    Idempotent: services already running are skipped.
-
-    \b
-    Examples:
-        imas-codex serve deploy              # Deploy everything
-        imas-codex serve deploy -g 2         # Embed with 2 GPUs
-        imas-codex serve deploy --skip-tunnels  # Services only
-    """
-    import shutil
-
-    from imas_codex.cli.tunnel import (
-        _get_tunnel_ports,
-        _resolve_host,
-        _start_tunnels,
-    )
-
-    if workers is None:
-        workers = gpus
-
-    # ── Step 1: Neo4j ────────────────────────────────────────────────
-    click.echo("── Neo4j ──")
-    if _is_graph_compute_target():
-        job = deploy_neo4j()
-        node = job["node"]
-        click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
-        click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
-    else:
-        _deploy_login_neo4j()
-        click.echo(f"  Bolt: bolt://localhost:{_graph_port()}")
-        click.echo(f"  HTTP: http://localhost:{_graph_http_port()}")
-    click.echo()
-
-    # ── Step 2: Embedding server ─────────────────────────────────────
-    click.echo("── Embedding ──")
-    if _is_compute_target():
-        job = deploy_embed(gpus, workers)
-        node = job["node"]
-        click.echo(f"  URL: http://{node}:{_embed_port()}")
-    else:
-        _deploy_login_embed()
-        click.echo(f"  URL: http://localhost:{_embed_port()}")
-    click.echo()
-
-    # ── Step 3: LLM proxy (login node — needs outbound HTTPS) ──────
-    click.echo("── LLM Proxy ──")
-    _deploy_login_llm()
-    port = _llm_port()
-    from imas_codex.cli.services import _wait_for_health
-
-    _wait_for_health(
-        "LLM proxy",
-        f"curl -sf http://localhost:{port}/",
-        timeout_s=60,
-    )
-    click.echo(f"  URL: http://localhost:{port}")
-    click.echo()
-
-    # ── Step 4: SSH tunnels ──────────────────────────────────────────
-    if skip_tunnels:
-        click.echo("── Tunnels (skipped) ──")
-        return
-
-    click.echo("── Tunnels ──")
-    try:
-        host = _resolve_host(None)
-    except click.ClickException:
-        click.echo("  No remote host configured — tunnels not needed")
-        return
-
-    use_autossh = bool(shutil.which("autossh"))
-    ports = _get_tunnel_ports(host, neo4j=False, embed=False, llm=False)
-    if not ports:
-        click.echo("  No tunnel ports configured")
-        return
-
-    ok = _start_tunnels(host, ports, use_autossh)
-    if ok == len(ports):
-        click.echo(f"  ✓ All {ok} tunnel(s) active")
-    elif ok > 0:
-        click.echo(f"  ⚠ {ok}/{len(ports)} tunnel(s) active")
-    else:
-        click.echo("  ✗ No tunnels could be established")
-
-
 # ============================================================================
 # Tunnel Subgroup (delegates to tunnel.py)
 # ============================================================================
@@ -1641,259 +1438,3 @@ def serve_tunnel_status() -> None:
 
     ctx = click.get_current_context()
     ctx.invoke(tunnel_status)
-
-
-# ============================================================================
-# Unified Serve Status
-# ============================================================================
-
-
-@serve.command("status")
-def serve_status() -> None:
-    """Show status of all servers (graph, embedding, LLM proxy).
-
-    Checks health, location, deployment mode, and URLs for each service.
-
-    \\b
-    Examples:
-        imas-codex serve status
-    """
-    from imas_codex.remote.locations import is_location_local
-    from imas_codex.settings import (
-        get_embed_remote_url,
-        get_embed_scheduler,
-        get_embedding_location,
-        get_graph_location,
-    )
-
-    # ── SLURM Service Jobs ───────────────────────────────────────────────
-    jobs = _get_all_service_jobs()
-    neo4j_job = jobs.get("neo4j")
-    embed_job = jobs.get("embed")
-
-    if neo4j_job or embed_job:
-        click.echo("SLURM Jobs:")
-        for svc_name, job in jobs.items():
-            if job:
-                click.echo(
-                    f"  {svc_name}: job {job['job_id']} ({job['state']}) "
-                    f"on {job['node']}, CPUs: {job['cpus']}, "
-                    f"GPUs: {job['gres']}, Time: {job['time']}"
-                )
-                if job["state"] == "RUNNING":
-                    load = _get_service_load(job["node"], svc_name)
-                    if load:
-                        parts = [
-                            f"CPU: {load.get('cpu', '?')}%",
-                            f"Mem: {load.get('mem_mb', '?')} MB",
-                        ]
-                        if "gpu_mem_mb" in load:
-                            parts.append(f"GPU Mem: {load['gpu_mem_mb']} MB")
-                        click.echo(f"    Load: {', '.join(parts)}")
-            else:
-                click.echo(f"  {svc_name}: not running")
-        click.echo()
-
-    # ── Graph (Neo4j) ────────────────────────────────────────────────────
-    click.echo("Neo4j Graph:")
-    graph_location = get_graph_location()
-
-    if neo4j_job and neo4j_job["state"] == "RUNNING":
-        compute_node = neo4j_job["node"]
-        bolt_port = _graph_port()
-        http_port = _graph_http_port()
-        click.echo(f"  Bolt: bolt://{compute_node}:{bolt_port}")
-        click.echo(f"  HTTP: http://{compute_node}:{http_port}")
-        click.echo(f"  Location: {graph_location}")
-        try:
-            result = _run_on_node(
-                compute_node,
-                f"curl -sf http://localhost:{http_port}/",
-                timeout=10,
-            )
-            if result and result != "(no output)":
-                click.echo("  ✓ Status: running")
-                try:
-                    stats = _run_on_node(
-                        compute_node,
-                        f"curl -sf http://localhost:{http_port}/db/neo4j/tx/commit "
-                        '-H "Content-Type: application/json" '
-                        '-d \'{"statements":[{"statement":"MATCH (n) RETURN count(n) AS nodes"},{"statement":"MATCH ()-[r]->() RETURN count(r) AS rels"}]}\' '
-                        f"-u neo4j:imas-codex",
-                        timeout=10,
-                    )
-                    if stats:
-                        import json
-
-                        data = json.loads(stats)
-                        results = data.get("results", [])
-                        if len(results) >= 2:
-                            nodes = results[0]["data"][0]["row"][0]
-                            rels = results[1]["data"][0]["row"][0]
-                            click.echo(f"  Nodes: {nodes}, Relationships: {rels}")
-                except Exception:
-                    pass
-            else:
-                click.echo("  ✗ Status: not responding")
-        except subprocess.CalledProcessError:
-            click.echo("  ✗ Status: not responding on compute node")
-
-        if is_location_local(graph_location):
-            click.echo("  Access: direct (on-facility)")
-        else:
-            from imas_codex.remote.tunnel import TUNNEL_OFFSET, is_tunnel_active
-
-            tunnel_bolt = bolt_port + TUNNEL_OFFSET
-            tunnel_http = http_port + TUNNEL_OFFSET
-            bolt_ok = is_tunnel_active(tunnel_bolt)
-            http_ok = is_tunnel_active(tunnel_http)
-            if bolt_ok and http_ok:
-                click.echo(
-                    f"  Tunnel: ✓ bolt://localhost:{tunnel_bolt}, "
-                    f"http://localhost:{tunnel_http}"
-                )
-            else:
-                click.echo(
-                    f"  Tunnel: ✗ bolt:{tunnel_bolt} "
-                    f"{'✓' if bolt_ok else '✗'}, "
-                    f"http:{tunnel_http} {'✓' if http_ok else '✗'}"
-                )
-    else:
-        # Non-SLURM or no allocation: use profile-based health check
-        try:
-            from imas_codex.graph.health import check_graph_health
-
-            gh = check_graph_health()
-            status_icon = "✓" if gh.status == "ok" else "✗"
-            click.echo(f"  {status_icon} Status: {gh.status}")
-            click.echo(f"  Name: {gh.name}")
-            click.echo(f"  Location: {gh.location}")
-            if gh.host:
-                click.echo(f"  Host: {gh.host}")
-            click.echo(f"  Bolt URL: {gh.bolt_url}")
-            click.echo(f"  HTTP URL: {gh.http_url}")
-            click.echo(f"  Location: {graph_location}")
-            if gh.status == "ok":
-                if gh.neo4j_version:
-                    click.echo(f"  Version: {gh.neo4j_version}")
-                if gh.node_count is not None:
-                    click.echo(
-                        f"  Nodes: {gh.node_count}, "
-                        f"Relationships: {gh.relationship_count}"
-                    )
-                if gh.facilities:
-                    click.echo(f"  Facilities: {', '.join(gh.facilities)}")
-            if gh.error:
-                click.echo(f"  Error: {gh.error}")
-        except Exception as e:
-            click.echo(f"  ✗ Error: {e}")
-
-    click.echo()
-
-    # ── Embedding Server ─────────────────────────────────────────────────
-    click.echo("Embedding Server:")
-    embed_location = get_embedding_location()
-    embed_scheduler = get_embed_scheduler()
-    click.echo(f"  Location: {embed_location}")
-    click.echo(f"  Scheduler: {embed_scheduler}")
-
-    if embed_job and embed_job["state"] == "RUNNING":
-        compute_node = embed_job["node"]
-        port = _embed_port()
-        click.echo(f"  Compute: http://{compute_node}:{port}")
-        try:
-            result = _run_on_node(
-                compute_node,
-                f"curl -sf http://localhost:{port}/health",
-                timeout=10,
-            )
-            if result and '"status"' in result:
-                click.echo("  ✓ Status: running")
-                _show_embed_info_on_node(compute_node, port)
-            else:
-                click.echo("  ✗ Status: not responding")
-        except subprocess.CalledProcessError:
-            click.echo("  ✗ Status: not responding on compute node")
-
-        if is_location_local(embed_location):
-            click.echo("  Access: direct (on-facility)")
-        else:
-            from imas_codex.remote.tunnel import is_tunnel_active
-
-            if is_tunnel_active(port):
-                click.echo(f"  Tunnel: ✓ localhost:{port}")
-            else:
-                click.echo(f"  Tunnel: ✗ localhost:{port} not reachable")
-    else:
-        # Non-SLURM: check via URL
-        embed_url = get_embed_remote_url()
-        if embed_url:
-            click.echo(f"  URL: {embed_url}")
-
-        if embed_location != "local" and embed_url:
-            try:
-                from imas_codex.embeddings.client import RemoteEmbeddingClient
-
-                client = RemoteEmbeddingClient(embed_url)
-                if client.is_available(timeout=3.0):
-                    info = client.get_detailed_info()
-                    click.echo("  ✓ Status: ok")
-                    if info:
-                        click.echo(f"  Model: {info['model']['name']}")
-                        click.echo(f"  Device: {info['model']['device']}")
-                        if info["gpu"]["name"]:
-                            click.echo(f"  GPU: {info['gpu']['name']}")
-                        location_label = info["server"].get("location")
-                        if location_label:
-                            click.echo(f"  Deploy: {location_label}")
-                        uptime_h = info["server"]["uptime_seconds"] / 3600
-                        click.echo(f"  Uptime: {uptime_h:.1f}h")
-                else:
-                    click.echo("  ✗ Status: not available")
-            except Exception as e:
-                click.echo(f"  ✗ Status: error ({e})")
-        elif embed_location == "local":
-            click.echo("  ✓ Mode: in-process (no server)")
-
-    click.echo()
-
-    # ── LLM Proxy ────────────────────────────────────────────────────────
-    click.echo("LLM Proxy:")
-    from imas_codex.settings import get_llm_location
-
-    llm_location = get_llm_location()
-    click.echo(f"  Location: {llm_location}")
-    click.echo("  Deploy: systemd (uv tool run)")
-
-    # Check systemd status on login node
-    try:
-        result = _run_remote(
-            "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
-            timeout=10,
-        )
-        if "active" in result and "inactive" not in result:
-            click.echo("  ✓ Status: running (login node)")
-        else:
-            click.echo("  ✗ Status: not running on login node")
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        click.echo("  ✗ Status: could not check (SSH error)")
-
-    # Check local accessibility (direct or via tunnel)
-    from imas_codex.settings import get_llm_proxy_url
-
-    llm_url = get_llm_proxy_url()
-    click.echo(f"  URL: {llm_url}")
-    try:
-        import httpx
-
-        resp = httpx.get(f"{llm_url}/", timeout=3.0)
-        if resp.status_code == 200:
-            click.echo("  ✓ Reachable: ok")
-        else:
-            click.echo(f"  ✗ Reachable: unhealthy (HTTP {resp.status_code})")
-    except httpx.ConnectError:
-        click.echo("  ✗ Reachable: no (tunnel needed?)")
-    except httpx.RemoteProtocolError:
-        click.echo("  ✗ Reachable: port in use by non-HTTP process")
-    except Exception:
-        click.echo("  ✗ Reachable: no")

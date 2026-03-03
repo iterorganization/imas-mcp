@@ -39,8 +39,6 @@ logger = logging.getLogger(__name__)
 # Per-service SLURM job names
 _NEO4J_JOB = "codex-neo4j"
 _EMBED_JOB = "codex-embed"
-# Legacy job name for migration
-_LEGACY_ALLOC_JOB = "imas-codex-services"
 
 _SERVICES_DIR = "$HOME/.local/share/imas-codex/services"
 _DEFAULT_GPUS = 4
@@ -51,6 +49,123 @@ _NEO4J_CPUS = 4
 _NEO4J_MEM = "32G"
 _EMBED_CPUS = 2
 _EMBED_MEM = "16G"
+
+
+# ── Color-coded status helpers ───────────────────────────────────────────
+
+
+def _partition_limits() -> dict:
+    """Return the partition resource limits for color coding.
+
+    Loads from facility compute config; falls back to titan defaults.
+    """
+    try:
+        partition = _gpu_partition()
+        return {
+            "cpus": partition.get("cpus_per_node", 20),
+            "gpus": partition.get("gpus_per_node", 8),
+            "mem_gb": partition.get("mem_per_node_gb", 250),
+        }
+    except click.ClickException:
+        return {"cpus": 20, "gpus": 8, "mem_gb": 250}
+
+
+def _usage_color(used: float, limit: float) -> str:
+    """Return a color name based on proximity to limit.
+
+    Green: <50%, yellow: 50-80%, red: >80%.
+    """
+    if limit <= 0:
+        return "white"
+    ratio = used / limit
+    if ratio > 0.8:
+        return "red"
+    if ratio > 0.5:
+        return "yellow"
+    return "green"
+
+
+def _colored_bar(used: float, limit: float, width: int = 20) -> str:
+    """Render a colored usage bar: [████████░░░░] 40%."""
+    if limit <= 0:
+        return ""
+    ratio = min(used / limit, 1.0)
+    filled = int(ratio * width)
+    empty = width - filled
+    color = _usage_color(used, limit)
+    bar = click.style("█" * filled, fg=color) + click.style("░" * empty, dim=True)
+    pct = click.style(f"{ratio * 100:.0f}%", fg=color)
+    return f"[{bar}] {pct}"
+
+
+def _format_service_status(job: dict | None, svc_name: str) -> list[str]:
+    """Format a service status block with color-coded resource usage.
+
+    Returns a list of pre-formatted lines ready for click.echo().
+    """
+    lines: list[str] = []
+    limits = _partition_limits()
+
+    if not job:
+        lines.append(click.style(f"  {svc_name}: not running", dim=True))
+        return lines
+
+    state = job["state"]
+    if state == "RUNNING":
+        state_color = "green"
+    elif state == "PENDING":
+        state_color = "yellow"
+    else:
+        state_color = "red"
+
+    header = (
+        f"  {svc_name}: job {job['job_id']} "
+        f"{click.style(state, fg=state_color)} "
+        f"on {job['node']}"
+    )
+    lines.append(header)
+
+    if state != "RUNNING":
+        return lines
+
+    # Parse allocated resources from job info
+    cpus = int(job.get("cpus", 0) or 0)
+    gres = job.get("gres", "")
+    gpus = 0
+    if "gpu:" in gres:
+        try:
+            gpus = int(gres.split("gpu:")[-1].split(",")[0].split("(")[0])
+        except (ValueError, IndexError):
+            pass
+
+    alloc_parts = [
+        f"CPUs: {cpus}/{limits['cpus']}",
+        f"Time: {job['time']}",
+    ]
+    if gpus > 0:
+        alloc_parts.insert(1, f"GPUs: {gpus}/{limits['gpus']}")
+    lines.append(f"    Allocated: {', '.join(alloc_parts)}")
+
+    # Real-time load
+    load = _get_service_load(job["node"], svc_name)
+    if load:
+        cpu_val = float(load.get("cpu", 0))
+        mem_mb = float(load.get("mem_mb", 0))
+        mem_limit_mb = limits["mem_gb"] * 1024
+
+        cpu_bar = _colored_bar(cpu_val / 100, cpus)
+        mem_bar = _colored_bar(mem_mb, mem_limit_mb)
+
+        lines.append(f"    CPU:  {cpu_bar}  {cpu_val:.0f}% of {cpus} cores")
+        lines.append(f"    Mem:  {mem_bar}  {mem_mb:.0f} MB / {limits['mem_gb']} GB")
+
+        if "gpu_mem_mb" in load:
+            gpu_mem = float(load.get("gpu_mem_mb", 0))
+            gpu_limit = gpus * 16384  # P100 = 16GB
+            gpu_bar = _colored_bar(gpu_mem, gpu_limit)
+            lines.append(f"    GPU:  {gpu_bar}  {gpu_mem:.0f} MB / {gpu_limit} MB VRAM")
+
+    return lines
 
 
 # ── Port helpers ─────────────────────────────────────────────────────────
@@ -233,44 +348,6 @@ def _get_embed_job() -> dict | None:
     return _get_service_job(_EMBED_JOB)
 
 
-def _get_allocation() -> dict | None:
-    """Get any running service job (backward compat for graph_cli).
-
-    Checks neo4j job first (most common caller), then embed, then legacy.
-    Returns the first RUNNING job found, or None.
-    """
-    for name in (_NEO4J_JOB, _EMBED_JOB, _LEGACY_ALLOC_JOB):
-        job = _get_service_job(name)
-        if job and job["state"] == "RUNNING":
-            return job
-    return None
-
-
-def _get_allocation_fallback() -> dict | None:
-    """Fallback when SLURM is unavailable.
-
-    Returns a synthetic job dict if the last-known compute node
-    is still reachable, or None.
-    """
-    from imas_codex.remote.locations import _host_reachable, _read_allocation_host
-
-    host = _read_allocation_host()
-    if not host:
-        return None
-    if _host_reachable(host):
-        return {
-            "job_name": "fallback",
-            "job_id": "unknown",
-            "state": "RUNNING",
-            "time": "unknown",
-            "node": host,
-            "gres": "unknown",
-            "cpus": "",
-            "_fallback": True,
-        }
-    return None
-
-
 def _get_all_service_jobs() -> dict[str, dict | None]:
     """Get status of all service jobs.
 
@@ -332,9 +409,6 @@ def _submit_service_job(
 
     # Cancel any existing job with this name
     _cancel_service_job(job_name)
-
-    # Cancel legacy combined allocation
-    _cancel_legacy_jobs()
 
     # Stop conflicting login-node services
     _stop_login_services(job_name)
@@ -463,27 +537,14 @@ def _stop_service(node: str, name: str) -> bool:
 
 
 def _service_running(node: str, name: str) -> bool:
-    """Check if a named service is running.
-
-    Checks SLURM job state first, then falls back to port-liveness
-    check for services started outside the deploy workflow.
-    """
-    # Check via SLURM job
+    """Check if a named service is running on a compute node."""
     job_names = {"neo4j": _NEO4J_JOB, "embed": _EMBED_JOB}
     job_name = job_names.get(name, name)
     job = _get_service_job(job_name)
     if job and job["state"] == "RUNNING":
         return True
 
-    # Also check legacy allocation job
-    legacy = _get_service_job(_LEGACY_ALLOC_JOB)
-    if legacy and legacy["state"] == "RUNNING" and legacy["node"] == node:
-        # Legacy pattern — check port
-        port = _get_service_port(name)
-        if port:
-            return _port_listening(node, port)
-
-    # Fallback: direct port check for orphaned processes
+    # Direct port check for orphaned processes
     port = _get_service_port(name)
     if port:
         return _port_listening(node, port)
@@ -514,20 +575,6 @@ def _port_listening(node: str, port: int) -> bool:
         return "listening" in result
     except subprocess.CalledProcessError:
         return False
-
-
-def _cancel_legacy_jobs() -> None:
-    """Cancel legacy combined allocation jobs."""
-    for name in (_LEGACY_ALLOC_JOB, "codex-embed", "codex-services"):
-        try:
-            out = _run_remote(f'squeue -n {name} -u "$USER" --format="%A" --noheader')
-            for line in out.strip().split("\n"):
-                jid = line.strip()
-                if jid and jid != "(no output)" and jid.isdigit():
-                    _run_remote(f"scancel {jid}", check=False)
-                    click.echo(f"  Cancelled legacy job {jid} ({name})")
-        except subprocess.CalledProcessError:
-            pass
 
 
 def _stop_login_services(job_name: str = "") -> None:
@@ -875,15 +922,6 @@ def deploy_embed(gpus: int = _DEFAULT_GPUS, workers: int | None = None) -> dict:
         health_cmd=f"curl -sf http://{host}:{port}/health",
         health_test='"status"',
     )
-
-
-def _ensure_allocation(gpus: int = _DEFAULT_GPUS) -> dict:
-    """Backward-compatible allocation entry point.
-
-    Used by ``graph_cli.py`` which expects an allocation dict with
-    a ``node`` key.  Ensures the Neo4j job is running and returns it.
-    """
-    return deploy_neo4j()
 
 
 # ── Health checks ────────────────────────────────────────────────────────
