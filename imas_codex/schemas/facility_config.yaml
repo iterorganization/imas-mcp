@@ -440,28 +440,22 @@ classes:
     attributes:
       connection_tree:
         description: Default MDSplus tree for TDI context and data access
-      trees:
-        description: >-
-          Physics-relevant tree/subtree names to scan for signals.
-          Only these trees are walked during discovery. Omit large
-          hardware/control trees (e.g., ATLAS, PCS) to avoid
-          scanning tens of thousands of non-physics nodes.
-        multivalued: true
-      subtrees:
+      all_subtrees:
         description: >-
           Complete list of all available subtrees (scanned and unscanned).
           Documentary only — used for reference and exploration notes.
         multivalued: true
-      static_trees:
+      trees:
         description: >-
-          Static/machine-description trees that contain time-invariant data:
-          vessel geometry, coil positions, tile contours, magnetic probe
-          positions, Green's functions, and other constructional parameters.
-          These trees are versioned by machine configuration (e.g., baffle
-          changes) rather than shot number. Each entry configures one static
-          tree with its version range and accessor function.
+          MDSplus tree configurations. Each entry describes one tree with
+          its extraction parameters: version/epoch strategy, subtrees,
+          accessor function, and systems. Both versioned (machine-description)
+          trees and shot-scoped (dynamic) trees use the same TreeConfig
+          structure — the difference is in what fields are populated.
+          Replaces the previous split between flat 'trees' list and
+          'static_trees' structured list.
         multivalued: true
-        range: StaticTreeConfig
+        range: TreeConfig
       reference_shot:
         description: Shot number for tree introspection and signal validation
         range: integer
@@ -483,33 +477,56 @@ classes:
           configuration parameters, AXIS nodes are time bases.
         multivalued: true
 
-  StaticTreeConfig:
+  TreeConfig:
     description: >-
-      Configuration for a static/machine-description MDSplus tree. Static trees
-      contain time-invariant constructional data (vessel geometry, coil positions,
-      tile contours, flux loop positions, Green's functions). They are versioned
-      by machine configuration changes (baffle installations, port modifications)
-      rather than shot number. Data is accessed via a TDI accessor function
-      (e.g., static("r_c")) that selects the correct version for a given shot.
-    class_uri: fc:StaticTreeConfig
+      Unified configuration for an MDSplus tree. Covers both versioned
+      (machine-description) trees and shot-scoped (dynamic) trees.
+      Versioned trees have pre-configured versions; shot-scoped trees
+      use reference_shot for extraction. Trees may have subtrees that
+      are scanned as independent MDSplus trees.
+    class_uri: fc:TreeConfig
     attributes:
       tree_name:
         description: >-
-          MDSplus tree name (e.g., "static"). Opened with specific version
-          shot numbers rather than experimental shot numbers.
+          MDSplus tree name (e.g., "static", "results", "magnetics").
+          For versioned trees, opened by version number. For shot-scoped
+          trees, opened by experimental shot number.
         required: true
       accessor_function:
         description: >-
           TDI function that abstracts version selection (e.g., "static").
           Called as accessor("tag") to get data from the correct version
-          based on the currently open experimental shot.
+          based on the currently open experimental shot. Only applicable
+          to versioned trees.
       versions:
         description: >-
           Known version numbers and their first applicable shot. List of
           {version: N, first_shot: M, description: "..."} mappings.
           Used to enumerate all versions for complete extraction.
+          If omitted, the tree is treated as shot-scoped.
         multivalued: true
-        range: StaticTreeVersion
+        range: TreeVersion
+      subtrees:
+        description: >-
+          Subtrees that are scanned as independent MDSplus trees.
+          Each subtree is a TreeConfig nested under this parent tree.
+          Subtrees inherit setup_commands and other settings from the
+          parent MDSplusConfig.
+        multivalued: true
+        range: TreeConfig
+      detect_epochs:
+        description: >-
+          Whether to detect structural epochs via batched SSH
+          fingerprinting. When true, the epoch detection pipeline
+          discovers version boundaries automatically. When false
+          (default), uses pre-configured versions or single-shot
+          extraction.
+        range: boolean
+      epoch_config:
+        description: >-
+          Configuration for structural epoch detection. Only relevant
+          when detect_epochs is true.
+        range: EpochConfig
       member_parent_types:
         description: >-
           MDSplus node types whose direct member children (colon-separated,
@@ -521,15 +538,18 @@ classes:
         multivalued: true
       systems:
         description: >-
-          Named subsystems within the static tree. Each system groups related
+          Named subsystems within the tree. Each system groups related
           parameters (e.g., coils, vessel, tiles, flux loops, magnetic probes).
           System symbols are used in tag construction: <parameter>_<system>.
+          Only applicable to versioned/static trees.
         multivalued: true
-        range: StaticTreeSystem
-  StaticTreeVersion:
+        range: TreeSystem
+  TreeVersion:
     description: >-
-      A version of a static tree, corresponding to a machine configuration.
-    class_uri: fc:StaticTreeVersion
+      A version of a tree, corresponding to a machine configuration or
+      structural epoch. Used for both pre-configured versions and
+      discovered epoch boundaries.
+    class_uri: fc:TreeVersion
     attributes:
       version:
         description: Version number (1-based)
@@ -538,14 +558,38 @@ classes:
       first_shot:
         description: First shot where this version applies
         range: integer
+      last_shot:
+        description: Last shot where this version applies (optional)
+        range: integer
       description:
-        description: Machine configuration description (e.g., "Belt limiter removed")
+        description: Configuration description (e.g., "Belt limiter removed")
 
-  StaticTreeSystem:
+  EpochConfig:
     description: >-
-      A named subsystem within a static tree. Groups related mechanical
+      Configuration for structural epoch detection via batched SSH
+      fingerprinting. Controls how aggressively the binary search
+      for epoch boundaries operates.
+    class_uri: fc:EpochConfig
+    attributes:
+      start_shot:
+        description: First shot to scan from
+        range: integer
+      step_size:
+        description: Shot increment for coarse scanning
+        range: integer
+      batch_size:
+        description: Shots per SSH query for fingerprinting
+        range: integer
+      subtree_path:
+        description: >-
+          Subtree path within the tree to fingerprint. If omitted,
+          fingerprints the entire tree structure.
+
+  TreeSystem:
+    description: >-
+      A named subsystem within a tree. Groups related mechanical
       or electromagnetic parameters.
-    class_uri: fc:StaticTreeSystem
+    class_uri: fc:TreeSystem
     attributes:
       symbol:
         description: >-

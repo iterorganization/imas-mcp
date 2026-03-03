@@ -40,8 +40,7 @@ class MDSplusScanner:
         connection_tree: str - Default tree for TDI context
         setup_commands: list[str] - MDSplus environment setup
         reference_shot: int - Shot for dynamic tree introspection
-        trees: list[str] - Dynamic subtree names to scan
-        static_trees: list[dict] - Static tree configurations
+        trees: list[TreeConfig] - Unified tree configurations
         node_usages: list[str] - Node types to include
         exclude_node_names: list[str] - Node names to skip
     """
@@ -64,12 +63,28 @@ class MDSplusScanner:
         """
         connection_tree = config.get("connection_tree")
         ref_shot = reference_shot or config.get("reference_shot")
+        scan_limit = config.get("_scan_limit")
 
         all_signals: list[FacilitySignal] = []
         all_stats: dict[str, Any] = {}
 
+        # Partition unified trees into versioned (static) and dynamic
+        all_trees = config.get("trees", [])
+        static_trees = [t for t in all_trees if t.get("versions")]
+        dynamic_parent_trees = [t for t in all_trees if not t.get("versions")]
+
+        # Collect dynamic tree names from parent trees and their subtrees
+        dynamic_tree_names: list[str] = []
+        for tree in dynamic_parent_trees:
+            subtrees = tree.get("subtrees", [])
+            if subtrees:
+                dynamic_tree_names.extend(
+                    st["tree_name"] for st in subtrees if st.get("tree_name")
+                )
+            else:
+                dynamic_tree_names.append(tree["tree_name"])
+
         # Phase 1: Static trees (versioned, machine-description)
-        static_trees = config.get("static_trees", [])
         for tree_config in static_trees:
             tree_name = tree_config.get("tree_name")
             if not tree_name:
@@ -81,7 +96,11 @@ class MDSplusScanner:
                     facility, ssh_host, tree_name, tree_config, config
                 )
                 promoted = await self._promote_static_signals(
-                    facility, tree_name, tree_config, config
+                    facility,
+                    tree_name,
+                    tree_config,
+                    config,
+                    limit=scan_limit,
                 )
                 all_stats[f"static_{tree_name}"] = {
                     **static_stats,
@@ -95,18 +114,38 @@ class MDSplusScanner:
                 all_stats[f"static_{tree_name}"] = {"error": str(e)}
 
         # Phase 2: Dynamic trees (shot-scoped)
-        dynamic_trees = config.get("trees", [])
-        if dynamic_trees and ref_shot:
-            try:
-                dynamic_signals, dynamic_stats = await self._scan_dynamic_trees(
-                    facility, ssh_host, config, dynamic_trees, ref_shot
+        skip_dynamic = False
+        if dynamic_tree_names and ref_shot:
+            remaining = None
+            if scan_limit:
+                static_promoted = sum(
+                    s.get("promoted", 0)
+                    for s in all_stats.values()
+                    if isinstance(s, dict) and "promoted" in s
                 )
-                all_signals.extend(dynamic_signals)
-                all_stats["dynamic"] = dynamic_stats
-            except Exception as e:
-                logger.error("Dynamic tree scan failed: %s", e)
-                all_stats["dynamic"] = {"error": str(e)}
-        elif dynamic_trees and not ref_shot:
+                remaining = max(0, scan_limit - static_promoted)
+                if remaining == 0:
+                    logger.info(
+                        "Scan limit reached after static trees, skipping dynamic"
+                    )
+                    all_stats["dynamic"] = {"skipped": "scan_limit reached"}
+                    skip_dynamic = True
+            if not skip_dynamic:
+                try:
+                    dynamic_signals, dynamic_stats = await self._scan_dynamic_trees(
+                        facility,
+                        ssh_host,
+                        config,
+                        dynamic_tree_names,
+                        ref_shot,
+                        limit=remaining,
+                    )
+                    all_signals.extend(dynamic_signals)
+                    all_stats["dynamic"] = dynamic_stats
+                except Exception as e:
+                    logger.error("Dynamic tree scan failed: %s", e)
+                    all_stats["dynamic"] = {"error": str(e)}
+        elif dynamic_tree_names and not ref_shot:
             logger.warning(
                 "MDSplus scanner: no reference_shot for dynamic trees in %s",
                 facility,
@@ -115,7 +154,9 @@ class MDSplusScanner:
 
         # Build DataAccess node for the connection tree
         data_access = None
-        primary_tree = connection_tree or (dynamic_trees[0] if dynamic_trees else None)
+        primary_tree = connection_tree or (
+            dynamic_tree_names[0] if dynamic_tree_names else None
+        )
         if primary_tree:
             data_access = DataAccess(
                 id=f"{facility}:mdsplus:tree_tdi",
@@ -203,6 +244,7 @@ class MDSplusScanner:
         tree_name: str,
         tree_config: dict[str, Any],
         mdsplus_config: dict[str, Any],
+        limit: int | None = None,
     ) -> int:
         """Promote enriched leaf TreeNodes to FacilitySignals with SOURCE_NODE edges.
 
@@ -242,57 +284,104 @@ class MDSplusScanner:
             except Exception as e:
                 logger.warning("Failed to create static DataAccess: %s", e)
 
-        # Promote enriched leaf nodes to FacilitySignals
+        # Promote enriched leaf nodes to FacilitySignals in batched transactions
+        # to avoid locking the entire graph with 34K+ MERGE operations
+        batch_size = 500
         try:
             with GraphClient() as gc:
-                result = gc.query(
+                # Count promotable nodes first
+                count_result = gc.query(
                     """
                     MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree})
                     WHERE n.description IS NOT NULL
                       AND n.node_type IN ['NUMERIC', 'SIGNAL']
-                    WITH n
-                    WITH n,
-                         $facility + ':' +
-                         COALESCE(n.physics_domain, 'general') + '/' +
-                         $tree + '/' +
-                         toLower(split(n.path, ':')[-1]) AS sig_id
-                    MERGE (s:FacilitySignal {id: sig_id})
-                    ON CREATE SET
-                        s.facility_id = $facility,
-                        s.status = $enriched,
-                        s.physics_domain = COALESCE(n.physics_domain, 'general'),
-                        s.name = n.description,
-                        s.description = n.description,
-                        s.accessor = split(n.path, ':')[-1],
-                        s.data_access = $da_id,
-                        s.tree_name = $tree,
-                        s.node_path = n.path,
-                        s.unit = n.unit,
-                        s.temporality = 'static',
-                        s.discovery_source = 'tree_traversal',
-                        s.source_node = n.id,
-                        s.discovered_at = datetime(),
-                        s.enriched_at = datetime()
-                    ON MATCH SET
-                        s.description = COALESCE(n.description, s.description),
-                        s.unit = COALESCE(n.unit, s.unit),
-                        s.source_node = n.id
-                    WITH s, n
-                    MERGE (s)-[:SOURCE_NODE]->(n)
-                    WITH s
-                    MATCH (f:Facility {id: $facility})
-                    MERGE (s)-[:AT_FACILITY]->(f)
-                    WITH s
-                    MATCH (da:DataAccess {id: $da_id})
-                    MERGE (s)-[:DATA_ACCESS]->(da)
-                    RETURN count(s) AS promoted
+                    RETURN count(n) AS total
                     """,
                     facility=facility,
                     tree=tree_name,
-                    da_id=data_access_id,
-                    enriched=FacilitySignalStatus.enriched.value,
                 )
-                return result[0]["promoted"] if result else 0
+                total = count_result[0]["total"] if count_result else 0
+                if total == 0:
+                    return 0
+
+                # Apply scan limit to cap how many we promote
+                effective_total = min(total, limit) if limit else total
+
+                logger.info(
+                    "Promoting %d/%d TreeNodes to FacilitySignals (batches of %d)",
+                    effective_total,
+                    total,
+                    batch_size,
+                )
+
+                promoted = 0
+                for offset in range(0, effective_total, batch_size):
+                    batch_limit = min(batch_size, effective_total - offset)
+                    result = gc.query(
+                        """
+                        MATCH (n:TreeNode {facility_id: $facility,
+                                           tree_name: $tree})
+                        WHERE n.description IS NOT NULL
+                          AND n.node_type IN ['NUMERIC', 'SIGNAL']
+                        WITH n ORDER BY n.id SKIP $offset LIMIT $batch_limit
+                        WITH n,
+                             split(n.path, '::')[-1] AS node_path_raw
+                        WITH n, node_path_raw,
+                             $facility + ':' +
+                             COALESCE(n.physics_domain, 'general') + '/' +
+                             $tree + '/' +
+                             toLower(replace(node_path_raw, ':', '/'))
+                             AS sig_id
+                        MERGE (s:FacilitySignal {id: sig_id})
+                        ON CREATE SET
+                            s.facility_id = $facility,
+                            s.status = $enriched,
+                            s.physics_domain =
+                                COALESCE(n.physics_domain, 'general'),
+                            s.name = n.description,
+                            s.description = n.description,
+                            s.accessor = node_path_raw,
+                            s.data_access = $da_id,
+                            s.tree_name = $tree,
+                            s.node_path = n.path,
+                            s.unit = n.unit,
+                            s.temporality = 'static',
+                            s.discovery_source = 'tree_traversal',
+                            s.source_node = n.id,
+                            s.discovered_at = datetime(),
+                            s.enriched_at = datetime()
+                        ON MATCH SET
+                            s.description =
+                                COALESCE(n.description, s.description),
+                            s.unit = COALESCE(n.unit, s.unit),
+                            s.source_node = n.id
+                        WITH s, n
+                        MERGE (s)-[:SOURCE_NODE]->(n)
+                        WITH s
+                        MATCH (f:Facility {id: $facility})
+                        MERGE (s)-[:AT_FACILITY]->(f)
+                        WITH s
+                        MATCH (da:DataAccess {id: $da_id})
+                        MERGE (s)-[:DATA_ACCESS]->(da)
+                        RETURN count(s) AS promoted
+                        """,
+                        facility=facility,
+                        tree=tree_name,
+                        da_id=data_access_id,
+                        enriched=FacilitySignalStatus.enriched.value,
+                        offset=offset,
+                        batch_limit=batch_limit,
+                    )
+                    batch_count = result[0]["promoted"] if result else 0
+                    promoted += batch_count
+                    logger.debug(
+                        "Promote batch %d/%d: %d signals (%d total)",
+                        offset // batch_size + 1,
+                        (effective_total + batch_size - 1) // batch_size,
+                        batch_count,
+                        promoted,
+                    )
+                return promoted
         except Exception as e:
             logger.error("Failed to promote static signals: %s", e)
             return 0
@@ -304,6 +393,7 @@ class MDSplusScanner:
         config: dict[str, Any],
         trees: list[str],
         ref_shot: int,
+        limit: int | None = None,
     ) -> tuple[list[FacilitySignal], dict[str, Any]]:
         """Discover signals from dynamic MDSplus trees via SSH enumeration.
 
@@ -312,6 +402,8 @@ class MDSplusScanner:
         """
         exclude_names = config.get("exclude_node_names", [])
         max_nodes = config.get("max_nodes_per_tree", 5000)
+        if limit:
+            max_nodes = min(max_nodes, limit)
         node_usages = config.get("node_usages", ["SIGNAL"])
         input_data = {
             "trees": trees,
@@ -407,6 +499,10 @@ class MDSplusScanner:
                 facility_signals.append(fs)
             except Exception as e:
                 logger.debug("Could not create FacilitySignal for %s: %s", path, e)
+
+        # Apply limit to dynamic signals
+        if limit and len(facility_signals) > limit:
+            facility_signals = facility_signals[:limit]
 
         return facility_signals, {
             "signals_discovered": len(facility_signals),

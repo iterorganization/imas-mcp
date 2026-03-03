@@ -506,7 +506,7 @@ def detect_and_create_member_patterns(
         facility: Facility identifier
         tree_name: Static tree name
         member_parent_types: Parent node types to scan for member children.
-            Loaded from facility YAML ``static_trees[].member_parent_types``.
+            Loaded from facility YAML ``trees[].member_parent_types``.
         min_instances: Minimum instances to qualify
 
     Returns:

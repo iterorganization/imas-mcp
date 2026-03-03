@@ -1949,13 +1949,13 @@ async def check_worker(
     facility_config = get_facility(state.facility)
     data_sources = facility_config.get("data_sources", {})
 
-    # Build fallback shots from static tree epochs (operational phases)
+    # Build fallback shots from versioned tree epochs (operational phases)
     # These provide representative shots from different machine configurations
     fallback_shots: list[int] = []
     mdsplus_config = data_sources.get("mdsplus", {})
     if isinstance(mdsplus_config, dict):
-        static_trees = mdsplus_config.get("static_trees", [])
-        for st in static_trees:
+        all_trees = mdsplus_config.get("trees", [])
+        for st in all_trees:
             if isinstance(st, dict):
                 for v in st.get("versions", []):
                     first_shot = v.get("first_shot")

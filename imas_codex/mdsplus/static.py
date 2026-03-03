@@ -9,7 +9,7 @@ Static trees differ from shot-dependent signal trees:
 - Opened by version number (shot=1..N), not experimental shot number
 - Contain geometry and parameters that change only during shutdowns
 
-Generic: works with any facility that has static_trees configured
+Generic: works with any facility that has versioned trees configured
 in its facility YAML.
 
 Usage:
@@ -39,20 +39,24 @@ logger = logging.getLogger(__name__)
 
 
 def get_static_tree_config(facility: str) -> list[dict[str, Any]]:
-    """Load static_trees config from facility YAML.
+    """Load versioned tree configs from facility YAML.
+
+    Returns trees from the unified ``trees`` list that have versions
+    configured (i.e., versioned/static trees).
 
     Args:
         facility: Facility identifier (e.g., "tcv")
 
     Returns:
-        List of static tree config dicts, or empty list if none configured.
+        List of tree config dicts that have versions, or empty list.
     """
     from imas_codex.discovery.base.facility import get_facility
 
     config = get_facility(facility)
     data_sources = config.get("data_sources", {})
     mdsplus = data_sources.get("mdsplus", {})
-    return mdsplus.get("static_trees", [])
+    all_trees = mdsplus.get("trees", [])
+    return [t for t in all_trees if t.get("versions")]
 
 
 def get_static_tree_graph_state(

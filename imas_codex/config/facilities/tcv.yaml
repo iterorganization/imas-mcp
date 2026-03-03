@@ -76,65 +76,11 @@ data_sources:
     # Source MDSplus environment (sets PYTHONPATH for MDSplus Python bindings)
     setup_commands:
       - source /etc/profile.d/mdsplus.sh
-    # Subtrees to scan for signal discovery.
-    # Each is opened as a separate MDSplus tree.
+    # MDSplus tree configurations.
+    # Both versioned (static) and shot-scoped (dynamic) trees use the same
+    # TreeConfig structure. Dynamic trees are nested as subtrees of tcv_shot.
     trees:
-      - results      # Equilibrium, analysis outputs (~1500 signals w/ data)
-      - magnetics    # Magnetic field measurements (~215 signals)
-      - diagz        # Diagnostic measurements (~220 signals)
-      - base         # Core plasma parameters (~287 signals)
-      - ecrh         # Electron cyclotron heating (~416 signals)
-      - power        # Power supply data
-      - diag_act     # Diagnostic actions
-      - manual       # Manually-populated signals
-      - vsystem      # Vista control parameters
-      - hybrid       # Hybrid heating scenarios (16k nodes but physics-relevant)
-    # Node usage types to include. SIGNAL is physics measurements,
-    # NUMERIC includes computed/processed values and calibration data.
-    # Many diagnostic trees store real data under NUMERIC usage.
-    node_usages:
-      - SIGNAL
-      - NUMERIC
-    # All subtrees (including hardware/control, not scanned)
-    subtrees:
-      - ATLAS         # Raw acquisition hardware (35k nodes - skip)
-      - BASE
-      - DIAGZ
-      - DIAG_ACT
-      - ECRH
-      - HYBRID        # Hybrid heating internals (16k nodes - skip)
-      - MAGNETICS
-      - MANUAL
-      - POWER
-      - RESULTS
-      - VSYSTEM
-      - PCS           # Plasma control system (15k nodes - skip)
-      - APCS
-    # Skip metadata nodes that are not physics signals
-    exclude_node_names:
-      - COMMENTS
-      - DATE
-      - LAST_TRIAL
-      - OK_TRIALINDX
-      - USER_TRIAL
-      - SUBCALL
-      - ROUTINE
-      - VERSION_NUM
-      - CONFIDENCE
-      - ERROR_BAR
-      - IGNORE
-      - FOO
-      - NODES_USED
-      - TEST
-      - TRIAL
-    # Static/machine-description trees containing time-invariant constructional data.
-    # These are separate MDSplus trees (not subtrees of tcv_shot) versioned by
-    # machine configuration changes. The STATIC tree was not discovered by signal
-    # discovery because it is not a subtree of tcv_shot — it is an independent
-    # tree opened by version number (shot=1..8), not by experimental shot number.
-    # Data is accessed via the TDI function static("tag")[$shot] which auto-selects
-    # the correct version based on the currently open experimental shot.
-    static_trees:
+      # Versioned machine-description tree (vessel geometry, coil positions, etc.)
       - tree_name: static
         accessor_function: static
         versions:
@@ -214,6 +160,57 @@ data_sources:
             name: Tile contour
             size: 512
             parameters: [R, Z, S, DIM]
+      # Shot-scoped dynamic trees (subtrees of tcv_shot)
+      - tree_name: tcv_shot
+        subtrees:
+          - tree_name: results      # Equilibrium, analysis outputs (~1500 signals w/ data)
+          - tree_name: magnetics    # Magnetic field measurements (~215 signals)
+          - tree_name: diagz        # Diagnostic measurements (~220 signals)
+          - tree_name: base         # Core plasma parameters (~287 signals)
+          - tree_name: ecrh         # Electron cyclotron heating (~416 signals)
+          - tree_name: power        # Power supply data
+          - tree_name: diag_act     # Diagnostic actions
+          - tree_name: manual       # Manually-populated signals
+          - tree_name: vsystem      # Vista control parameters
+          - tree_name: hybrid       # Hybrid heating scenarios (16k nodes but physics-relevant)
+    # Node usage types to include. SIGNAL is physics measurements,
+    # NUMERIC includes computed/processed values and calibration data.
+    # Many diagnostic trees store real data under NUMERIC usage.
+    node_usages:
+      - SIGNAL
+      - NUMERIC
+    # All subtrees (including hardware/control, not scanned)
+    all_subtrees:
+      - ATLAS         # Raw acquisition hardware (35k nodes - skip)
+      - BASE
+      - DIAGZ
+      - DIAG_ACT
+      - ECRH
+      - HYBRID        # Hybrid heating internals (16k nodes - skip)
+      - MAGNETICS
+      - MANUAL
+      - POWER
+      - RESULTS
+      - VSYSTEM
+      - PCS           # Plasma control system (15k nodes - skip)
+      - APCS
+    # Skip metadata nodes that are not physics signals
+    exclude_node_names:
+      - COMMENTS
+      - DATE
+      - LAST_TRIAL
+      - OK_TRIALINDX
+      - USER_TRIAL
+      - SUBCALL
+      - ROUTINE
+      - VERSION_NUM
+      - CONFIDENCE
+      - ERROR_BAR
+      - IGNORE
+      - FOO
+      - NODES_USED
+      - TEST
+      - TRIAL
 
 # Data access patterns discovered during facility exploration.
 # Informs wiki scoring, code ingestion, and signal discovery.
