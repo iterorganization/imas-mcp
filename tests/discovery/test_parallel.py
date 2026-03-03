@@ -446,6 +446,57 @@ class TestDedupWorker:
         assert results[0]["canonical_skipped"] is True
 
     @pytest.mark.anyio
+    @patch(
+        "imas_codex.discovery.paths.parallel._mark_accessible_elsewhere",
+        return_value=True,
+    )
+    @patch("imas_codex.discovery.paths.parallel._mark_clones_terminal", return_value=0)
+    @patch("imas_codex.discovery.paths.parallel._find_clone_groups")
+    async def test_single_instance_accessible_marked_terminal(
+        self, mock_find, mock_mark, mock_mark_ae
+    ):
+        """Single-instance repo that is accessible elsewhere is marked terminal."""
+        from imas_codex.discovery.paths.parallel import dedup_worker
+
+        mock_find.side_effect = [
+            [
+                (
+                    "github:chalmersplasmatheory/DREAM",
+                    "DREAM",
+                    [
+                        {
+                            "id": "tcv:/home/codes/DREAM",
+                            "path": "/home/codes/DREAM",
+                            "accessible": True,
+                        },
+                    ],
+                ),
+            ],
+            [],
+        ]
+
+        state = DiscoveryState(facility="tcv", cost_limit=10.0)
+        progress_calls = []
+
+        def on_progress(msg, stats, results=None):
+            progress_calls.append((msg, stats.processed, results))
+            state.stop_requested = True
+
+        await dedup_worker(state, on_progress=on_progress, batch_size=10)
+
+        # Single path marked as accessible_elsewhere
+        assert state.dedup_stats.processed == 1
+        mock_mark_ae.assert_called_once_with(
+            "tcv:/home/codes/DREAM", "github:chalmersplasmatheory/DREAM"
+        )
+        # _mark_clones_terminal called with empty list (no clones)
+        mock_mark.assert_called_once()
+        assert mock_mark.call_args[0][0] == []  # clone_ids is empty
+        msg, processed, results = progress_calls[0]
+        assert results[0]["canonical_skipped"] is True
+        assert results[0]["clones_marked"] == 1  # 0 clones + 1 canonical
+
+    @pytest.mark.anyio
     @patch("imas_codex.discovery.paths.parallel._find_clone_groups", return_value=[])
     async def test_idles_when_no_groups(self, mock_find):
         """Dedup worker idles and reports waiting when no clone groups."""
