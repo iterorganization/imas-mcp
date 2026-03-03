@@ -1332,9 +1332,6 @@ classes:
         range: datetime
       fingerprint:
         description: Structure fingerprint for change detection (e.g., static_v67)
-      is_static:
-        description: Whether this version was extracted from static tree analysis
-        range: boolean
       units_extracted:
         description: >-
           Whether unit extraction has been completed for this version.
@@ -1365,9 +1362,6 @@ classes:
       path:
         description: Full node path (e.g., "\\RESULTS::LIUQE:PSI")
         required: true
-      is_static:
-        description: Whether this node was extracted from static tree analysis
-        range: boolean
       tree_name:
         description: Parent tree name
         required: true
