@@ -770,7 +770,7 @@ works for both version numbers and experimental shot numbers. The main
 change is removing the "static" naming assumption and accepting node_usages
 filtering for dynamic trees.
 
-### Phase 4: Unified Pipeline Core — `discovery/mdsplus/`
+### Phase 4: Unified Pipeline Core — `discovery/mdsplus/` ✅
 
 **Goal:** Move `discovery/static/` to `discovery/mdsplus/`, make it tree-generic.
 
