@@ -243,7 +243,7 @@ The pipeline extracts MDSplus tree paths, TDI function calls, IDS references, an
 
 ## Graph Operations
 
-### Neo4j Management
+**Schema verification:** Before writing Cypher queries, verify property names against `agents/schema-reference.md` (auto-generated) or call `get_graph_schema()`. Common pitfall: WikiChunk/CodeChunk text content is stored in the `text` property.\n\n### Neo4j Management
 
 ```bash
 uv run imas-codex graph start                 # Start Neo4j (auto-detects mode)
