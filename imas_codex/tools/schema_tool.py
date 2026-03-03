@@ -73,7 +73,7 @@ def _build_schema_summary() -> dict:
         "notes": {
             "version_lifecycle": (
                 "IMASPath nodes link to DDVersion via INTRODUCED_IN and "
-                "DEPRECATED_IN relationships. DDVersion nodes chain via PREDECESSOR."
+                "DEPRECATED_IN relationships. DDVersion nodes chain via HAS_PREDECESSOR."
             ),
             "version_evolution": (
                 "IMASPathChange nodes track metadata mutations between versions. "
@@ -99,7 +99,7 @@ class SchemaTool:
         "Call this before composing Cypher queries with query_imas_graph() to "
         "understand available data structures. Returns node types (DDVersion, IDS, "
         "IMASPath, Unit, IMASSemanticCluster, IMASPathChange, etc.), their properties, "
-        "relationships (INTRODUCED_IN, DEPRECATED_IN, IN_IDS, IN_CLUSTER, PREDECESSOR, "
+        "relationships (INTRODUCED_IN, DEPRECATED_IN, IN_IDS, IN_CLUSTER, HAS_PREDECESSOR, "
         "FOR_IMAS_PATH, etc.), and semantic search indexes."
     )
     async def get_dd_graph_schema(self) -> dict:

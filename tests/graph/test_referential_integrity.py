@@ -174,8 +174,8 @@ class TestIMASLinks:
 
         # Count distinct versions reachable from chain traversal
         result = graph_client.query(
-            "MATCH path = (v:DDVersion)-[:PREDECESSOR*0..100]->(root:DDVersion) "
-            "WHERE NOT (root)-[:PREDECESSOR]->() "
+            "MATCH path = (v:DDVersion)-[:HAS_PREDECESSOR*0..100]->(root:DDVersion) "
+            "WHERE NOT (root)-[:HAS_PREDECESSOR]->() "
             "WITH v, length(path) AS depth "
             "RETURN max(depth) AS max_depth, count(DISTINCT v) AS chain_count"
         )

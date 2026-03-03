@@ -964,6 +964,9 @@ def _seed_portal_page(
                           wp.status = $scanned,
                           wp.link_depth = 0,
                           wp.discovered_at = datetime()
+            WITH wp
+            MATCH (f:Facility {id: $facility})
+            MERGE (wp)-[:AT_FACILITY]->(f)
             """,
             id=page_id,
             title=portal_page,

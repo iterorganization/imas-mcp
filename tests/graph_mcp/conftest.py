@@ -303,14 +303,14 @@ def _load_fixture_graph(client) -> None:
             **v,
         )
 
-    # Chain versions with PREDECESSOR
+    # Chain versions with HAS_PREDECESSOR
     client.query(
         "MATCH (a:DDVersion {id: '4.0.0'}), (b:DDVersion {id: '3.42.0'}) "
-        "CREATE (a)-[:PREDECESSOR]->(b)"
+        "CREATE (a)-[:HAS_PREDECESSOR]->(b)"
     )
     client.query(
         "MATCH (a:DDVersion {id: '4.1.0'}), (b:DDVersion {id: '4.0.0'}) "
-        "CREATE (a)-[:PREDECESSOR]->(b)"
+        "CREATE (a)-[:HAS_PREDECESSOR]->(b)"
     )
 
     # Create Unit nodes

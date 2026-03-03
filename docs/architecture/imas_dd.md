@@ -15,7 +15,7 @@ The IMAS Data Dictionary (DD) is stored in Neo4j with full version tracking acro
     version: "4.1.0",
     release_date: "2024-01-15",
     path_count: 19136
-})-[:PREDECESSOR]->(:DDVersion {version: "4.0.0"})
+})-[:HAS_PREDECESSOR]->(:DDVersion {version: "4.0.0"})
 ```
 
 ### DDPath Node
