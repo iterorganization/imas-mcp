@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from imas_codex.mdsplus.static import (
+from imas_codex.mdsplus.extraction import (
     _compute_parent_path,
     get_static_tree_config,
     get_static_tree_graph_state,

@@ -38,8 +38,8 @@ async def extract_worker(
     for that version, then immediately ingests the results into the graph.
     Each version is claimed-extracted-ingested as a unit.
     """
-    from imas_codex.mdsplus.static import (
-        async_discover_static_tree_version,
+    from imas_codex.mdsplus.extraction import (
+        async_extract_tree_version,
         ingest_static_tree,
         merge_version_results,
     )
@@ -83,10 +83,10 @@ async def extract_worker(
 
         try:
             # SSH extraction
-            data = await async_discover_static_tree_version(
+            data = await async_extract_tree_version(
                 facility=state.facility,
                 tree_name=state.tree_name,
-                version=version,
+                shot=version,
                 timeout=state.timeout,
             )
             ssh_retry_count = 0  # Reset on success
@@ -194,7 +194,7 @@ async def units_worker(
     Tracks completion via TreeModelVersion.units_extracted flag so
     re-runs are no-ops for already-processed versions.
     """
-    from imas_codex.mdsplus.static import async_extract_units_for_version
+    from imas_codex.mdsplus.extraction import async_extract_units_for_version
 
     from .graph_ops import (
         has_pending_units_work,

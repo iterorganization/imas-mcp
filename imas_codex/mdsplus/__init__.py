@@ -43,6 +43,13 @@ from imas_codex.mdsplus.discovery import (
     discover_epochs,
     get_tree_structure,
 )
+from imas_codex.mdsplus.extraction import (
+    async_extract_tree_version,
+    discover_tree,
+    extract_tree_version,
+    get_static_tree_config,
+    ingest_static_tree,
+)
 from imas_codex.mdsplus.ingestion import (
     cleanup_legacy_nodes,
     compute_canonical_path,
@@ -56,25 +63,26 @@ from imas_codex.mdsplus.metadata import (
     enrich_graph_metadata,
     extract_metadata,
 )
-from imas_codex.mdsplus.static import (
-    discover_static_tree,
-    get_static_tree_config,
-    ingest_static_tree,
-)
+
+# Backward-compatible aliases
+discover_static_tree = discover_tree
 
 __all__ = [
     "BatchDiscovery",
     "DiscoveryCheckpoint",
     "EpochProgress",
     "TreeDiscovery",
+    "async_extract_tree_version",
     "cleanup_legacy_nodes",
     "compute_canonical_path",
     "discover_epochs",
     "discover_epochs_optimized",
     "discover_static_tree",
+    "discover_tree",
     "enrich_graph_metadata",
     "enrich_node_metadata",
     "extract_metadata",
+    "extract_tree_version",
     "get_static_tree_config",
     "get_tree_structure",
     "ingest_epochs",
