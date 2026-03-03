@@ -14,14 +14,13 @@ logger = logging.getLogger(__name__)
 def embed():
     """Manage GPU embedding server.
 
-    Deploy mode is determined by ``[embedding].scheduler`` in pyproject.toml:
-      slurm → SLURM batch job on GPU compute node
-      (omit) → systemd service on login node
+    Deploy target is derived from ``[embedding].location`` in pyproject.toml.
+    When the location maps to a SLURM compute partition in the facility
+    YAML (e.g. ``titan`` → ``iter.yaml`` → ``scheduler: slurm``), deploy
+    submits a SLURM batch job.  Otherwise deploys via systemd on the
+    login node.
 
-    The embedding location (``[embedding].location``) determines where
-    commands are sent (e.g. ``iter``).
-
-    Override with env vars: IMAS_CODEX_EMBED_SCHEDULER, IMAS_CODEX_EMBEDDING_LOCATION
+    Override: IMAS_CODEX_EMBEDDING_LOCATION env var.
 
     \b
       imas-codex embed deploy     Deploy per config
