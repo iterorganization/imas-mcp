@@ -692,7 +692,7 @@ def iter_extraction_targets(mdsplus_config, global_ref_shot):
             yield tree["tree_name"], ref, tree
 ```
 
-### Phase 2: Epoch Detection Integration
+### Phase 2: Epoch Detection Integration ✅
 
 **Goal:** Integrate `BatchDiscovery` into the unified pipeline for
 trees with `detect_epochs: true`.
@@ -751,7 +751,7 @@ Extracting tcv:results v3 (shot 65001)... 1481 nodes
 ...
 ```
 
-### Phase 3: Unified Remote Extraction
+### Phase 3: Unified Remote Extraction ✅
 
 **Goal:** One remote script that extracts any MDSplus tree.
 
