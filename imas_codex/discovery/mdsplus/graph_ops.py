@@ -321,7 +321,7 @@ def fetch_enrichment_context(
             """
             UNWIND $paths AS node_path
             MATCH (n:TreeNode {path: node_path, facility_id: $facility})
-            WHERE n.tree_name = $tree_name AND n.is_static = true
+            WHERE n.tree_name = $tree_name
             OPTIONAL MATCH (parent:TreeNode {
                 path: n.parent_path, facility_id: $facility
             })
@@ -396,7 +396,7 @@ def detect_and_create_patterns(
         groups = gc.query(
             """
             MATCH (gp:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE gp.node_type = 'STRUCTURE' AND gp.is_static = true
+            WHERE gp.node_type = 'STRUCTURE'
             MATCH (gp)-[:HAS_NODE]->(parent:TreeNode)
             WHERE parent.node_type = 'STRUCTURE'
             MATCH (parent)-[:HAS_NODE]->(leaf:TreeNode)
@@ -521,7 +521,7 @@ def detect_and_create_member_patterns(
         groups = gc.query(
             """
             MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE parent.is_static = true AND parent.node_type IN $parent_types
+            WHERE parent.node_type IN $parent_types
             MATCH (parent)-[:HAS_NODE]->(leaf:TreeNode)
             WHERE leaf.node_type IN $node_types
               AND NOT EXISTS { (leaf)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
@@ -584,7 +584,7 @@ def detect_and_create_member_patterns(
             WITH pat, p
             // Link all matching leaf nodes under parents of the configured type
             MATCH (parent:TreeNode {facility_id: p.facility_id})
-            WHERE parent.tree_name = p.tree_name AND parent.is_static = true
+            WHERE parent.tree_name = p.tree_name
               AND parent.node_type = p.grandparent_path
             MATCH (parent)-[:HAS_NODE]->(leaf:TreeNode)
             WHERE leaf.node_type IN $node_types
@@ -802,8 +802,7 @@ def claim_parent_for_enrichment(
         result = gc.query(
             """
             MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE parent.is_static = true
-              AND parent.claimed_at IS NULL
+            WHERE parent.claimed_at IS NULL
             WITH parent
             MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
             WHERE child.node_type IN $node_types
@@ -853,7 +852,6 @@ def claim_orphan_nodes_for_enrichment(
             """
             MATCH (child:TreeNode {facility_id: $facility, tree_name: $tree_name})
             WHERE child.node_type IN $node_types
-              AND child.is_static = true
               AND (child.description IS NULL OR child.description = '')
               AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
               AND NOT EXISTS { (:TreeNode)-[:HAS_NODE]->(child) }
@@ -1077,7 +1075,6 @@ def has_pending_enrich_work(facility: str, tree_name: str) -> bool:
         result = gc.query(
             """
             MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE parent.is_static = true
             WITH parent
             MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
             WHERE child.node_type IN $node_types
@@ -1097,7 +1094,6 @@ def has_pending_enrich_work(facility: str, tree_name: str) -> bool:
             """
             MATCH (child:TreeNode {facility_id: $facility, tree_name: $tree_name})
             WHERE child.node_type IN $node_types
-              AND child.is_static = true
               AND (child.description IS NULL OR child.description = '')
               AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
               AND NOT EXISTS { (:TreeNode)-[:HAS_NODE]->(child) }
@@ -1248,7 +1244,6 @@ def get_static_discovery_stats(
         hu_result = gc.query(
             """
             MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE n.is_static = true
             OPTIONAL MATCH (n)-[:HAS_UNIT]->(u:Unit)
             RETURN
                 count(DISTINCT n) AS nodes_total,
@@ -1270,7 +1265,6 @@ def get_static_discovery_stats(
             """
             MATCH (n:TreeNode)
             WHERE n.facility_id = $facility AND n.tree_name = $tree_name
-              AND n.is_static = true
             RETURN
                 count(n) AS total,
                 sum(CASE WHEN n.description IS NOT NULL AND n.description <> ''
@@ -1297,7 +1291,6 @@ def get_static_discovery_stats(
         parent_result = gc.query(
             """
             MATCH (parent:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE parent.is_static = true
             WITH parent
             MATCH (parent)-[:HAS_NODE]->(child:TreeNode)
             WHERE child.node_type IN $node_types
@@ -1333,7 +1326,6 @@ def get_static_discovery_stats(
             """
             MATCH (child:TreeNode {facility_id: $facility, tree_name: $tree_name})
             WHERE child.node_type IN $node_types
-              AND child.is_static = true
               AND NOT EXISTS { (child)-[:FOLLOWS_PATTERN]->(:TreeNodePattern) }
               AND NOT EXISTS { (:TreeNode)-[:HAS_NODE]->(child) }
             RETURN count(child) AS total_orphans,
@@ -1382,7 +1374,7 @@ def get_static_discovery_stats(
         cost_result = gc.query(
             """
             MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE n.is_static = true AND n.llm_cost IS NOT NULL
+            WHERE n.llm_cost IS NOT NULL
             RETURN sum(n.llm_cost) AS total_cost
             """,
             facility=facility,
@@ -1418,8 +1410,7 @@ def reset_enrichment(
         node_result = gc.query(
             """
             MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree_name})
-            WHERE n.is_static = true
-              AND (n.description IS NOT NULL OR n.enrichment_status IS NOT NULL
+            WHERE (n.description IS NOT NULL OR n.enrichment_status IS NOT NULL
                    OR n.llm_cost IS NOT NULL)
             SET n.description = null,
                 n.enrichment_status = null,
@@ -1477,7 +1468,7 @@ def clear_facility_static(
 ) -> dict[str, int]:
     """Clear all static tree discovery data for a facility.
 
-    Deletes TreeNode nodes (is_static=true), TreeNodePattern nodes,
+    Deletes TreeNode nodes, TreeNodePattern nodes,
     and their TreeModelVersion nodes in batches.
 
     Args:
@@ -1510,7 +1501,6 @@ def clear_facility_static(
             result = gc.query(
                 """
                 MATCH (n:TreeNode {facility_id: $facility})
-                WHERE n.is_static = true
                 WITH n LIMIT $batch_size
                 DETACH DELETE n
                 RETURN count(n) AS deleted
@@ -1594,7 +1584,6 @@ def get_static_summary_stats(facility: str) -> dict[str, int]:
         node_result = gc.query(
             """
             MATCH (n:TreeNode {facility_id: $facility})
-            WHERE n.is_static = true
             RETURN
                 count(n) AS total,
                 sum(CASE WHEN n.description IS NOT NULL AND n.description <> ''

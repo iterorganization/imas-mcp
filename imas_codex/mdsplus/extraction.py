@@ -101,7 +101,6 @@ def get_static_tree_graph_state(
         """
         MATCH (n:TreeNode)
         WHERE n.tree_name = $tree_name AND n.facility_id = $facility
-          AND n.is_static = true
         RETURN
             count(n) AS total,
             sum(CASE WHEN n.description IS NOT NULL AND n.description <> ''
@@ -122,7 +121,6 @@ def get_static_tree_graph_state(
         """
         MATCH (n:TreeNode)
         WHERE n.tree_name = $tree_name AND n.facility_id = $facility
-          AND n.is_static = true
           AND n.node_type IN ['NUMERIC', 'SIGNAL', 'AXIS', 'TEXT']
           AND (n.description IS NULL OR n.description = '')
         RETURN n.path AS path, n.node_type AS node_type,
@@ -761,7 +759,6 @@ def ingest_static_tree(
             "first_shot": first_shot,
             "node_count": ver_data.get("node_count", 0),
             "fingerprint": f"static_v{ver_num}",
-            "is_static": True,
             "description": desc,
         }
         if last_shot is not None:
@@ -872,7 +869,6 @@ def ingest_static_tree(
             "first_shot": info["first_shot"],
             "introduced_version": info["introduced_version"],
             "source": "static_tree_extraction",
-            "is_static": True,
         }
 
         if info["last_shot"] is not None:
@@ -937,8 +933,7 @@ def ingest_static_tree(
                     n.source = node.source,
                     n.unit = node.unit,
                     n.description = node.description,
-                    n.tags = node.tags,
-                    n.is_static = node.is_static
+                    n.tags = node.tags
                 """,
                 nodes=batch,
             )
@@ -959,7 +954,6 @@ def ingest_static_tree(
             """
             MATCH (n:TreeNode)
             WHERE n.tree_name = $tree_name AND n.facility_id = $facility
-              AND n.is_static = true
             WITH n
             MATCH (f:Facility {id: $facility})
             MERGE (n)-[:AT_FACILITY]->(f)
@@ -972,7 +966,7 @@ def ingest_static_tree(
             """
             MATCH (n:TreeNode)
             WHERE n.tree_name = $tree_name AND n.facility_id = $facility
-              AND n.is_static = true AND n.introduced_version IS NOT NULL
+              AND n.introduced_version IS NOT NULL
             WITH n
             MATCH (v:TreeModelVersion {id: n.introduced_version})
             MERGE (n)-[:INTRODUCED_IN]->(v)
@@ -985,7 +979,7 @@ def ingest_static_tree(
             """
             MATCH (n:TreeNode)
             WHERE n.tree_name = $tree_name AND n.facility_id = $facility
-              AND n.is_static = true AND n.removed_version IS NOT NULL
+              AND n.removed_version IS NOT NULL
             WITH n
             MATCH (v:TreeModelVersion {id: n.removed_version})
             MERGE (n)-[:REMOVED_IN]->(v)
@@ -999,7 +993,7 @@ def ingest_static_tree(
             """
             MATCH (child:TreeNode)
             WHERE child.tree_name = $tree_name AND child.facility_id = $facility
-              AND child.is_static = true AND child.parent_path IS NOT NULL
+              AND child.parent_path IS NOT NULL
             WITH child
             MATCH (parent:TreeNode {path: child.parent_path, facility_id: $facility})
             WHERE parent.tree_name = $tree_name
