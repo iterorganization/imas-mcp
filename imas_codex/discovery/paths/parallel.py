@@ -1043,6 +1043,8 @@ def _find_clone_groups(
                      discovered_at: coalesce(toString(p.discovered_at), "")
                  }) AS active_paths
             WHERE size(active_paths) > 1
+               OR (size(active_paths) = 1
+                   AND size([p IN active_paths WHERE p.accessible]) > 0)
             RETURN r.id AS repo_id,
                    coalesce(r.name, split(r.id, "/")[-1]) AS repo_name,
                    active_paths
@@ -1232,6 +1234,7 @@ async def scan_worker(
                 enable_rg=False,
                 enable_size=False,
                 enable_git_metadata=True,
+                enable_vcs_remote_check=True,
                 pool=pool,
             )
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
