@@ -1182,6 +1182,10 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         """Get paths triaged during this run."""
         return self.state.triaged_paths
 
+    def get_paths_scored_this_run(self) -> set[str]:
+        """Get paths scored (triaged + scored) during this run."""
+        return self.state.triaged_paths
+
     def get_enrichment_aggregates(self) -> dict:
         """Get aggregated enrichment statistics.
 
