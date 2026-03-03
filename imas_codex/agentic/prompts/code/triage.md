@@ -1,5 +1,5 @@
 ---
-name: discovery/file-triage
+name: code/triage
 description: Fast keep/skip triage for discovered files using path + enrichment evidence
 used_by: imas_codex.discovery.code.scorer
 task: score

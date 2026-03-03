@@ -1,7 +1,7 @@
 ---
-name: discovery/triage
+name: paths/triage
 description: Initial directory triage and classification for graph-led discovery
-used_by: imas_codex.discovery.scorer.DirectoryScorer
+used_by: imas_codex.discovery.paths.scorer.DirectoryTriager
 task: score
 dynamic: true
 ---
@@ -92,8 +92,10 @@ Each dimension represents a distinct value category. Score dimensions independen
 - `/home/user/.cache/pip/` → pip cache, build artifacts
 - `/opt/modules/` → environment modules, system infrastructure
 - `/scratch/user/run_12345/output/` → simulation output data, not code
+- `/tmp/build-abc123/` → temporary build directory
+- `/var/log/slurm/` → cluster log files
 
-**Score 0.1-0.3 (minimal — available elsewhere):**
+**Score 0.1-0.3 (minimal — available elsewhere or generic):**
 - `/opt/imas/core/3.40.0/` → IMAS installation (available from IMAS repos)
 - `/home/user/JOREK/` → clone of public simulation code
 - `/usr/local/matlab/toolbox/` → MATLAB installation
@@ -101,14 +103,30 @@ Each dimension represents a distinct value category. Score dimensions independen
 - `/home/user/rtccode/libs/RAPTOR/code/physics` → user copy of RAPTOR framework
 - `/home/user/matlab/RAPTOR/trunk/` → personal MATLAB checkout of shared code
 - `/home/user/rtccode/` → user copy of centrally-managed real-time control code
+- `/common/docs/manuals/` → generic reference documentation, not facility-specific
+- `/home/user/matplotlib_styles/` → visualization config, no data access code
 
 **Score 0.3-0.5 (moderate — some facility-specific content):**
 - `/home/user/scripts/` → personal scripts, may contain some data access
 - `/home/user/jetto_runs/tools/` → helper scripts alongside simulation runs
+- `/common/docs/operations/` → facility operations documentation, some unique procedures
+- `/home/user/plotting/` → visualization scripts with some facility data access
+- `/home/user/workflows/` → job submission scripts, references facility batch systems
+- `/data/archive/campaign_2023/analysis/` → analysis alongside archived data
+
+**Score 0.5-0.7 (significant — contains unique facility content):**
+- `/home/user/analysis/profile_fits/` → custom profile fitting scripts
+- `/common/docs/diagnostics/bolometer/` → facility-specific diagnostic documentation
+- `/home/user/vis_tools/equilibrium_viewer/` → custom visualization with facility data readers
+- `/home/user/sim_tools/input_prep/` → simulation input preparation using facility data
+- `/data/reference/calibration_db/` → facility calibration data with access scripts
 
 **Score 0.7+ (high — unique facility code with data access/processing):**
 - `/home/user/liuqe_interface/` → custom data access with MDSplus calls
 - `/home/codes/tcv_eq/` → facility-specific equilibrium reconstruction code
+- `/home/user/imas_mapping/` → IMAS data mapping with IDS put/get
+- `/common/codes/thomson_analysis/` → diagnostic-specific analysis pipeline
+- `/home/user/transport_workflow/` → end-to-end transport analysis workflow
 
 {% if focus %}
 ## Focus Area

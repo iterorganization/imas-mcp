@@ -2268,12 +2268,12 @@ def _score_with_llm(
     )
     has_examples = any(enriched_examples.get(cat) for cat in enriched_examples)
     if has_examples:
-        context["enriched_examples"] = enriched_examples
+        context["score_calibration"] = enriched_examples
     if focus:
         context["focus"] = focus
 
     # Render prompt with examples
-    system_prompt = render_prompt("discovery/scorer", context)
+    system_prompt = render_prompt("paths/scorer", context)
 
     # Build user prompt with enrichment data but NO numeric triage scores
     lines = ["Score these directories using their enrichment evidence:\n"]
@@ -2429,12 +2429,12 @@ async def _async_score_with_llm(
     )
     has_examples = any(enriched_examples.get(cat) for cat in enriched_examples)
     if has_examples:
-        context["enriched_examples"] = enriched_examples
+        context["score_calibration"] = enriched_examples
     if focus:
         context["focus"] = focus
 
     # Render prompt with examples
-    system_prompt = render_prompt("discovery/scorer", context)
+    system_prompt = render_prompt("paths/scorer", context)
 
     # Build user prompt with enrichment data but NO numeric triage scores
     lines_prompt = ["Score these directories using their enrichment evidence:\n"]

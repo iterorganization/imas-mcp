@@ -157,7 +157,7 @@ def _build_triage_system_prompt(focus: str | None = None) -> str:
     context: dict[str, Any] = {}
     if focus:
         context["focus"] = focus
-    return render_prompt("discovery/file-triage", context)
+    return render_prompt("code/triage", context)
 
 
 def _build_system_prompt(focus: str | None = None) -> str:
@@ -171,7 +171,7 @@ def _build_system_prompt(focus: str | None = None) -> str:
     if focus:
         context["focus"] = focus
 
-    return render_prompt("discovery/file-scorer", context)
+    return render_prompt("code/scorer", context)
 
 
 def _build_triage_user_prompt(file_groups: list[dict[str, Any]]) -> str:

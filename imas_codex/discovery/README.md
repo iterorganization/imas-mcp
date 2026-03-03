@@ -406,7 +406,7 @@ Schema context is loaded lazily via `get_schema_for_prompt()`:
 from imas_codex.agentic.prompt_loader import render_prompt
 
 # Only loads what the prompt needs (9 keys for scorer, 5 for refiner)
-prompt = render_prompt("discovery/scorer", {"facility": "tcv", "paths": paths})
+prompt = render_prompt("paths/scorer", {"facility": "tcv", "paths": paths})
 ```
 
 ### Pydantic Models
@@ -427,14 +427,14 @@ batch = DirectoryScoringBatch.model_validate_json(response.content)
 
 ### Adding New Prompts
 
-1. Create prompt in `imas_codex/agentic/prompts/discovery/`
+1. Create prompt in `imas_codex/agentic/prompts/` (use appropriate subdir: `paths/`, `code/`, `signals/`)
 2. Define Pydantic model in `imas_codex/discovery/paths/models.py`
 3. Add to `_DEFAULT_SCHEMA_NEEDS` in `prompt_loader.py`:
    ```python
    _DEFAULT_SCHEMA_NEEDS = {
-       "discovery/scorer": ["path_purposes", "score_dimensions", "scoring_schema"],
-       "discovery/refiner": ["refine_schema"],
-       "discovery/your_new_prompt": ["your_schema_needs"],
+       "paths/scorer": ["score_schema", "score_dimensions", ...],
+       "paths/triage": ["scoring_schema", "score_dimensions", ...],
+       "your_domain/your_new_prompt": ["your_schema_needs"],
    }
    ```
 4. Use `response_format=YourModel` in LiteLLM call

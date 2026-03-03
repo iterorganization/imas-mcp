@@ -1393,7 +1393,7 @@ async def enrich_worker(
     model = get_model("language")
 
     # Render system prompt once (contains physics domains from schema)
-    system_prompt = render_prompt("discovery/signal-enrichment")
+    system_prompt = render_prompt("signals/enrichment")
 
     # Cache for TDI function source code
     tdi_source_cache: dict[str, str] = {}

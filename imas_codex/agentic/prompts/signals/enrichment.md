@@ -1,5 +1,5 @@
 ---
-name: discovery/signal-enrichment
+name: signals/enrichment
 description: Batch signal enrichment for physics domain classification with multi-source context
 used_by: imas_codex.discovery.signals.parallel.enrich_worker
 task: enrichment

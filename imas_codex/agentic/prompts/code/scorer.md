@@ -1,5 +1,5 @@
 ---
-name: discovery/file-scorer
+name: code/scorer
 description: Multi-dimensional file scoring with per-file enrichment evidence (pass 2)
 used_by: imas_codex.discovery.code.scorer
 task: score

@@ -1,7 +1,7 @@
 ---
-name: discovery/scorer
+name: paths/scorer
 description: Independent scoring of directories using enrichment evidence
-used_by: imas_codex.discovery.parallel.score_worker
+used_by: imas_codex.discovery.paths.parallel.score_worker
 task: score
 dynamic: true
 ---
@@ -92,15 +92,36 @@ If `pattern_categories` shows `mdsplus: 20`, the directory **definitely** access
 
 ### Evidence-Based Score Calibration
 
+Use the full 0.0-1.0 range. Most directories should score below 0.5 on most dimensions.
+
 | Evidence | Score Range |
 |----------|------------|
-| Pattern count ≥ 25 for a category | 0.85+ for that dimension |
-| Pattern count 10-24 | 0.70+ for that dimension |
-| Pattern count 1-9 | 0.40-0.70 for that dimension |
+| No code, no patterns, pure data/logs/config | 0.0 on all dimensions |
+| Build artifacts, caches, temp files | 0.0-0.05 |
+| System package or well-known framework clone | 0.05-0.15 |
+| Pattern count 1-3 on a dimension (trace) | 0.15-0.30 |
+| Generic scripts, no facility data access | 0.20-0.40 |
+| Documentation with some facility-specific procedures | 0.30-0.50 on `score_documentation` |
+| Pattern count 4-9 for a category | 0.40-0.60 for that dimension |
+| Visualization code with facility data readers | 0.40-0.60 on `score_analysis_code` |
+| Pattern count 10-24 | 0.65-0.80 for that dimension |
+| Facility-specific simulation input/output tools | 0.60-0.80 on `score_modeling_code` |
+| Pattern count ≥ 25 for a category | 0.80-0.95 for that dimension |
 | `is_multiformat=true` | `score_data_access` ≥ 0.8 |
-| Dimension had triage interest but 0 matches (non-empty patterns) | 0.0-0.2 |
-| Pattern categories empty `{}` | Score conservatively based on structure |
+| Deep IMAS integration (IDS read+write) | `score_imas` ≥ 0.8 |
+| Dimension had triage interest but 0 matches (non-empty patterns) | 0.0-0.15 |
+| Pattern categories empty `{}` (rg unavailable) | Score conservatively from structure |
 | `enrich_warnings` present for a metric | Treat that metric as unknown |
+
+### What scores LOW after enrichment
+
+Enrichment often **disproves** triage optimism. Directories that looked promising from path names alone frequently turn out to contain no actual code or data access patterns:
+
+- **Data-only directories** — large `total_bytes` but 0 LOC, 0 pattern matches → 0.0-0.1
+- **Documentation-only directories** — Markdown/RST/PDF files, no executable code → 0.0-0.15 (unless `score_documentation` applies)
+- **Empty or stub directories** — 0 files or only `__init__.py` → 0.0
+- **Well-known software clones** confirmed by pattern analysis → 0.05-0.15
+- **Archived/stale directories** — old data, no recent patterns → 0.0-0.1
 
 ### Description Rules
 
@@ -135,14 +156,14 @@ Boost scores by ~0.15 for paths matching this focus.
 
 These are real paths from the knowledge graph showing what scores were assigned at each level. Use these to calibrate your scoring — a path similar to a 0.6 example should score around 0.6.
 
-{% for category, levels in score_calibration.items() %}
-### {{ category }}
-{% for level, examples in levels.items() %}
-**{{ level }}:**
+{% for category, examples in score_calibration.items() %}
+{% if examples %}
+### {{ category | replace('_', ' ') | title }}
 {% for ex in examples %}
-- `{{ ex.path }}` ({{ ex.facility }}) — score={{ ex.score }}, {{ ex.total_lines }} LOC, {{ ex.evidence_summary }}
+- `{{ ex.path }}` ({{ ex.facility }}) — score={{ ex.score }}, {{ ex.total_lines }} LOC, purpose={{ ex.purpose }}{% if ex.description %}, {{ ex.description }}{% endif %}
+
 {% endfor %}
-{% endfor %}
+{% endif %}
 {% endfor %}
 {% endif %}
 
