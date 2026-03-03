@@ -1358,6 +1358,11 @@ classes:
         range: Unit
         annotations:
           relationship_type: HAS_UNIT
+      unit_symbol:
+        description: >-
+          Unit symbol string for property-level access (e.g., "T/A", "m", "rad").
+          Denormalized from the HAS_UNIT relationship for efficient Cypher filtering
+          without relationship traversal. Backfilled from Unit node symbol.
       description:
         description: Node description
       embedding:
