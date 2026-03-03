@@ -283,7 +283,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.status = $triaged AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 sum(CASE WHEN p.is_enriched = true THEN 1 ELSE 0 END) AS enriched,
                 sum(CASE WHEN p.status = $triaged THEN 1 ELSE 0 END) AS triaged,
-                sum(CASE WHEN p.is_enriched = true AND p.triage_score >= $min_score AND p.scored_at IS NULL THEN 1 ELSE 0 END) AS score_ready,
+                sum(CASE WHEN p.is_enriched = true AND p.triage_composite >= $min_score AND p.scored_at IS NULL THEN 1 ELSE 0 END) AS score_ready,
                 max(coalesce(p.depth, 0)) AS max_depth
             """,
             facility=facility,
@@ -401,7 +401,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.status = $scanned AND p.score IS NULL
+            WHERE p.status = $scanned AND p.triage_composite IS NULL
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
@@ -1296,16 +1296,18 @@ def mark_paths_triaged(
 ) -> int:
     """Update multiple paths with LLM triage results and create/link Evidence nodes.
 
-    Sets status to 'triaged' and stores triage_score (composite) alongside
-    per-dimension scores. Paths above the discovery threshold proceed to
-    enrichment and 2nd-pass scoring.
+    Sets status to 'triaged' and stores triage_composite alongside
+    per-dimension triage scores (triage_modeling_code, etc.).  Only triage_*
+    properties are written — score_* properties are reserved for the 2nd-pass
+    scoring phase to avoid polluting the score namespace.
 
     Args:
         facility: Facility ID
         scores: List of dicts from TriagedDirectory.to_graph_dict() with:
-                path, path_purpose, description, evidence, per-purpose scores
-                (score_modeling_code, score_analysis_code, etc.), score, should_expand,
-                keywords, physics_domain, expansion_reason, skip_reason
+                path, path_purpose, description, evidence, per-dimension triage
+                scores (triage_modeling_code, triage_analysis_code, etc.),
+                triage_composite, should_expand, keywords, physics_domain,
+                expansion_reason, skip_reason
 
     Returns:
         Number of paths updated
@@ -1369,29 +1371,18 @@ def mark_paths_triaged(
                 SET p.status = $triaged,
                     p.claimed_at = null,
                     p.triaged_at = $now,
-                    p.triage_score = $score,
-                    p.score_modeling_code = $score_modeling_code,
-                    p.score_analysis_code = $score_analysis_code,
-                    p.score_operations_code = $score_operations_code,
-                    p.score_modeling_data = $score_modeling_data,
-                    p.score_experimental_data = $score_experimental_data,
-                    p.score_data_access = $score_data_access,
-                    p.score_workflow = $score_workflow,
-                    p.score_visualization = $score_visualization,
-                    p.score_documentation = $score_documentation,
-                    p.score_imas = $score_imas,
-                    p.score_convention = $score_convention,
-                    p.triage_score_modeling_code = $score_modeling_code,
-                    p.triage_score_analysis_code = $score_analysis_code,
-                    p.triage_score_operations_code = $score_operations_code,
-                    p.triage_score_modeling_data = $score_modeling_data,
-                    p.triage_score_experimental_data = $score_experimental_data,
-                    p.triage_score_data_access = $score_data_access,
-                    p.triage_score_workflow = $score_workflow,
-                    p.triage_score_visualization = $score_visualization,
-                    p.triage_score_documentation = $score_documentation,
-                    p.triage_score_imas = $score_imas,
-                    p.triage_score_convention = $score_convention,
+                    p.triage_composite = $triage_composite,
+                    p.triage_modeling_code = $triage_modeling_code,
+                    p.triage_analysis_code = $triage_analysis_code,
+                    p.triage_operations_code = $triage_operations_code,
+                    p.triage_modeling_data = $triage_modeling_data,
+                    p.triage_experimental_data = $triage_experimental_data,
+                    p.triage_data_access = $triage_data_access,
+                    p.triage_workflow = $triage_workflow,
+                    p.triage_visualization = $triage_visualization,
+                    p.triage_documentation = $triage_documentation,
+                    p.triage_imas = $triage_imas,
+                    p.triage_convention = $triage_convention,
                     p.description = $description,
                     p.path_purpose = $path_purpose,
                     p.evidence_id = $evidence_id,
@@ -1412,18 +1403,18 @@ def mark_paths_triaged(
                 """,
                 id=path_id,
                 now=now,
-                score=score_data.get("score"),
-                score_modeling_code=score_data.get("score_modeling_code"),
-                score_analysis_code=score_data.get("score_analysis_code"),
-                score_operations_code=score_data.get("score_operations_code"),
-                score_modeling_data=score_data.get("score_modeling_data"),
-                score_experimental_data=score_data.get("score_experimental_data"),
-                score_data_access=score_data.get("score_data_access"),
-                score_workflow=score_data.get("score_workflow"),
-                score_visualization=score_data.get("score_visualization"),
-                score_documentation=score_data.get("score_documentation"),
-                score_imas=score_data.get("score_imas"),
-                score_convention=score_data.get("score_convention"),
+                triage_composite=score_data.get("triage_composite"),
+                triage_modeling_code=score_data.get("triage_modeling_code"),
+                triage_analysis_code=score_data.get("triage_analysis_code"),
+                triage_operations_code=score_data.get("triage_operations_code"),
+                triage_modeling_data=score_data.get("triage_modeling_data"),
+                triage_experimental_data=score_data.get("triage_experimental_data"),
+                triage_data_access=score_data.get("triage_data_access"),
+                triage_workflow=score_data.get("triage_workflow"),
+                triage_visualization=score_data.get("triage_visualization"),
+                triage_documentation=score_data.get("triage_documentation"),
+                triage_imas=score_data.get("triage_imas"),
+                triage_convention=score_data.get("triage_convention"),
                 description=score_data.get("description"),
                 path_purpose=score_data.get("path_purpose"),
                 evidence_id=evidence_id,
@@ -1532,8 +1523,9 @@ def get_high_value_paths(
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.score >= $min_score
-            RETURN p.id AS id, p.path AS path, p.score AS score,
+            WHERE coalesce(p.score_composite, p.triage_composite) >= $min_score
+            RETURN p.id AS id, p.path AS path,
+                   coalesce(p.score_composite, p.triage_composite) AS score,
                    p.description AS description, p.path_purpose AS path_purpose,
                    p.score_modeling_code AS score_modeling_code,
                    p.score_analysis_code AS score_analysis_code,
@@ -1546,7 +1538,7 @@ def get_high_value_paths(
                    p.score_documentation AS score_documentation,
                    p.score_imas AS score_imas,
                    p.should_expand AS should_expand, p.skip_reason AS skip_reason
-            ORDER BY p.score DESC
+            ORDER BY score DESC
             LIMIT $limit
             """,
             facility=facility,
@@ -1612,9 +1604,9 @@ def get_top_paths_by_purpose(
             result = gc.query(
                 """
                 MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-                WHERE p.path_purpose = $purpose AND p.score > 0
-                RETURN p.path AS path, p.score AS score, p.description AS description
-                ORDER BY p.score DESC
+                WHERE p.path_purpose = $purpose AND coalesce(p.score_composite, p.triage_composite) > 0
+                RETURN p.path AS path, coalesce(p.score_composite, p.triage_composite) AS score, p.description AS description
+                ORDER BY score DESC
                 LIMIT $limit
                 """,
                 facility=facility,
@@ -2440,9 +2432,9 @@ def normalize_scores(facility: str) -> dict[str, int]:
         result = gc.query(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
-            WHERE p.status = 'scored' AND p.score IS NOT NULL
-            RETURN p.id AS id, p.score AS score
-            ORDER BY p.score ASC
+            WHERE p.status = 'scored' AND p.score_composite IS NOT NULL
+            RETURN p.id AS id, p.score_composite AS score
+            ORDER BY p.score_composite ASC
             """,
             facility=facility,
         )
@@ -2517,10 +2509,10 @@ def sample_scored_paths(
                 """
                 MATCH (p:FacilityPath {facility_id: $facility})
                 WHERE p.status = 'scored'
-                    AND p.score >= $min_score
-                    AND p.score < $max_score
+                    AND p.score_composite >= $min_score
+                    AND p.score_composite < $max_score
                 RETURN p.path AS path,
-                       p.score AS score,
+                       p.score_composite AS score,
                        p.path_purpose AS purpose,
                        p.description AS description
                 ORDER BY rand()
@@ -2561,7 +2553,7 @@ SCORE_DIMENSIONS = [
 
 # Triage-phase dimension names — permanently preserved on FacilityPath
 # so calibration can draw from the full triage population (triaged + scored).
-TRIAGE_SCORE_DIMENSIONS = [f"triage_{d}" for d in SCORE_DIMENSIONS]
+TRIAGE_DIMENSIONS = [d.replace("score_", "triage_") for d in SCORE_DIMENSIONS]
 
 
 def sample_paths_by_dimension(
@@ -2729,22 +2721,22 @@ def sample_enriched_paths(
         },
         "small_code": {
             "filter": "p.total_lines > 0 AND p.total_lines < 500",
-            "order": "p.score DESC",
+            "order": "p.score_composite DESC",
             "desc": "Smaller codebases (under 500 LOC)",
         },
         # Score distribution categories (how scores distribute)
         "score_high": {
-            "filter": "p.score >= 0.75",
-            "order": "p.score DESC",
+            "filter": "p.score_composite >= 0.75",
+            "order": "p.score_composite DESC",
             "desc": "High-scoring enriched paths (0.75+)",
         },
         "score_medium": {
-            "filter": "p.score >= 0.5 AND p.score < 0.75",
+            "filter": "p.score_composite >= 0.5 AND p.score_composite < 0.75",
             "order": "rand()",
             "desc": "Medium-scoring enriched paths (0.5-0.75)",
         },
         "score_low": {
-            "filter": "p.score >= 0.25 AND p.score < 0.5",
+            "filter": "p.score_composite >= 0.25 AND p.score_composite < 0.5",
             "order": "rand()",
             "desc": "Lower-scoring enriched paths (0.25-0.5)",
         },
@@ -2769,7 +2761,7 @@ def sample_enriched_paths(
                         {facility_filter}
                     RETURN p.path AS path,
                            p.facility_id AS facility,
-                           p.score AS score,
+                           p.score_composite AS score,
                            p.total_lines AS total_lines,
                            p.language_breakdown AS language_breakdown,
                            p.is_multiformat AS is_multiformat,
@@ -2892,10 +2884,10 @@ def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, 
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime($cutoff))
               AND (p.total_dirs IS NULL OR p.total_dirs <= 500)
             WITH p
-            ORDER BY p.score DESC, p.depth ASC
+            ORDER BY p.score_composite DESC, p.depth ASC
             LIMIT $limit
             SET p.claimed_at = $now
-            RETURN p.id AS id, p.path AS path, p.score AS score,
+            RETURN p.id AS id, p.path AS path, p.score_composite AS score,
                    p.total_files AS total_files, p.total_dirs AS total_dirs
             """,
             facility=facility,
@@ -3000,7 +2992,7 @@ def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, An
     Paths ready for scoring:
     - status = 'triaged' (initial triage complete)
     - is_enriched = true (deep analysis done)
-    - triage_score >= 0.5 (only bother scoring potentially valuable paths)
+    - triage_composite >= 0.5 (only bother scoring potentially valuable paths)
     - scored_at IS NULL (not yet scored)
 
     Uses claimed_at for worker coordination.
@@ -3024,30 +3016,30 @@ def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, An
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.status = $triaged
               AND p.is_enriched = true
-              AND p.triage_score >= 0.5
+              AND p.triage_composite >= 0.5
               AND p.scored_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime($cutoff))
             WITH p
-            ORDER BY p.triage_score DESC
+            ORDER BY p.triage_composite DESC
             LIMIT $limit
             SET p.claimed_at = $now
-            RETURN p.id AS id, p.path AS path, p.triage_score AS triage_score,
+            RETURN p.id AS id, p.path AS path, p.triage_composite AS triage_composite,
                    p.total_bytes AS total_bytes, p.total_lines AS total_lines,
                    p.language_breakdown AS language_breakdown,
                    p.is_multiformat AS is_multiformat,
                    p.description AS description, p.path_purpose AS path_purpose,
                    p.keywords AS keywords, p.child_names AS child_names,
                    p.expansion_reason AS expansion_reason,
-                   p.score_modeling_code AS score_modeling_code,
-                   p.score_analysis_code AS score_analysis_code,
-                   p.score_operations_code AS score_operations_code,
-                   p.score_modeling_data AS score_modeling_data,
-                   p.score_experimental_data AS score_experimental_data,
-                   p.score_data_access AS score_data_access,
-                   p.score_workflow AS score_workflow,
-                   p.score_visualization AS score_visualization,
-                   p.score_documentation AS score_documentation,
-                   p.score_imas AS score_imas
+                   p.triage_modeling_code AS triage_modeling_code,
+                   p.triage_analysis_code AS triage_analysis_code,
+                   p.triage_operations_code AS triage_operations_code,
+                   p.triage_modeling_data AS triage_modeling_data,
+                   p.triage_experimental_data AS triage_experimental_data,
+                   p.triage_data_access AS triage_data_access,
+                   p.triage_workflow AS triage_workflow,
+                   p.triage_visualization AS triage_visualization,
+                   p.triage_documentation AS triage_documentation,
+                   p.triage_imas AS triage_imas
             """,
             facility=facility,
             triaged=PathStatus.triaged.value,
@@ -3129,9 +3121,10 @@ def _fetch_dimension_calibration(
     graduates among strong peers.  Each phase draws from its own
     population so the LLM calibrates against the right peer group.
 
-    For triage: queries ``triage_score_*`` properties from ALL paths
-    (triaged + scored) — these are permanently preserved at triage time,
-    giving the full population distribution including graduated paths.
+    For triage: queries ``triage_*`` properties (triage_modeling_code, etc.)
+    from ALL paths (triaged + scored) — these are permanently preserved at
+    triage time, giving the full population distribution including
+    graduated paths.
 
     For score: queries ``score_*`` properties from scored paths only —
     these reflect the 2nd-pass re-grading among graduates.
@@ -3139,14 +3132,14 @@ def _fetch_dimension_calibration(
     from imas_codex.graph import GraphClient
 
     if phase == "triage":
-        # Triage calibration: use triage_score_* from all paths that
+        # Triage calibration: use triage_* from all paths that
         # have been through triage (both triaged-only and graduated/scored)
         status_clause = "p.status IN ['triaged', 'scored']"
-        dim_prefix = "triage_"
+        dims_to_query = TRIAGE_DIMENSIONS
     else:
         # Score calibration: use score_* from scored paths only
         status_clause = "p.status = 'scored'"
-        dim_prefix = ""
+        dims_to_query = SCORE_DIMENSIONS
 
     # Same 0–1 buckets for both phases — different cohorts, same scale.
     buckets: list[tuple[str, float, float]] = [
@@ -3160,9 +3153,8 @@ def _fetch_dimension_calibration(
     samples: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
     with GraphClient() as gc:
-        for dim in SCORE_DIMENSIONS:
-            # Property to query: triage_score_* for triage, score_* for score
-            graph_prop = f"{dim_prefix}{dim}"
+        for dim, graph_prop in zip(SCORE_DIMENSIONS, dims_to_query, strict=True):
+            # Property to query: triage_* for triage, score_* for score
             samples[dim] = {}
 
             for level_name, min_score, max_score in buckets:
@@ -3266,7 +3258,7 @@ def mark_score_complete(
 
             # Build SET clause dynamically based on which dimensions are present
             set_parts = [
-                "p.score = $score",
+                "p.score_composite = $score",
                 "p.status = $scored",
                 "p.scored_at = $now",
                 "p.claimed_at = null",
@@ -3368,13 +3360,13 @@ def get_hierarchy_context(
                  collect({
                      path: sibling.path,
                      purpose: sibling.path_purpose,
-                     score: sibling.score,
+                     score: sibling.score_composite,
                      description: left(coalesce(sibling.description, ''), 60)
                  })[0..$max_siblings] AS siblings
             RETURN pid,
                    parent.path AS parent_path,
                    parent.path_purpose AS parent_purpose,
-                   parent.score AS parent_score,
+                   parent.score_composite AS parent_score,
                    left(coalesce(parent.description, ''), 80) AS parent_description,
                    parent.depth AS parent_depth,
                    siblings

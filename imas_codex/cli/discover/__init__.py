@@ -387,14 +387,14 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
             scored_paths = gc.query(
                 """
                 MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-                WHERE p.status = 'scored' AND p.score IS NOT NULL
-                RETURN p.path AS path, p.score AS score,
+                WHERE p.status = 'scored' AND p.score_composite IS NOT NULL
+                RETURN p.path AS path, p.score_composite AS score,
                        p.score_modeling_code AS score_modeling_code,
                        p.score_analysis_code AS score_analysis_code,
                        p.score_imas AS score_imas, p.path_purpose AS path_purpose,
                        p.description AS description, p.total_files AS total_files,
                        p.scored_at AS scored_at
-                ORDER BY p.score DESC
+                ORDER BY p.score_composite DESC
                 LIMIT $limit
                 """,
                 facility=facility,

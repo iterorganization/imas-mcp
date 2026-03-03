@@ -226,15 +226,15 @@ def has_pending_work(facility: str) -> bool:
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WITH p,
-                 CASE WHEN p.status = $discovered AND p.score IS NULL
+                 CASE WHEN p.status = $discovered AND p.triage_composite IS NULL
                       THEN 'discovered' ELSE null END AS disc,
-                 CASE WHEN p.status = $scanned AND p.score IS NULL
+                 CASE WHEN p.status = $scanned AND p.triage_composite IS NULL
                       THEN 'scanned' ELSE null END AS scn,
                  CASE WHEN p.status = $triaged AND p.should_expand = true
                       AND p.expanded_at IS NULL
                       THEN 'expand' ELSE null END AS exp,
                  CASE WHEN p.status = $triaged AND p.should_enrich = true
-                      AND p.triage_score >= 0.15
+                      AND p.triage_composite >= 0.15
                       AND (p.is_enriched IS NULL OR p.is_enriched = false)
                       THEN 'enrich' ELSE null END AS enr,
                  CASE WHEN p.is_enriched = true
@@ -281,7 +281,7 @@ def _has_pending_scan_work(facility: str) -> bool:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.status = $discovered AND p.score IS NULL
+            WHERE p.status = $discovered AND p.triage_composite IS NULL
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,
@@ -317,7 +317,7 @@ def _has_pending_triage_work(facility: str) -> bool:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.status = $scanned AND p.score IS NULL
+            WHERE p.status = $scanned AND p.triage_composite IS NULL
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,
@@ -336,7 +336,7 @@ def _has_pending_enrich_work(facility: str) -> bool:
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.status = $triaged
               AND p.should_enrich = true
-              AND p.triage_score >= 0.15
+              AND p.triage_composite >= 0.15
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
             RETURN count(p) > 0 AS has_work
             """,
@@ -488,7 +488,7 @@ def claim_paths_for_scanning(
         result = gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
-            WHERE p.status = $discovered AND p.score IS NULL
+            WHERE p.status = $discovered AND p.triage_composite IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
@@ -537,7 +537,7 @@ def claim_paths_for_expanding(
               AND p.expanded_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
-            WITH p ORDER BY p.triage_score DESC, p.depth ASC LIMIT $limit
+            WITH p ORDER BY p.triage_composite DESC, p.depth ASC LIMIT $limit
             SET p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
             """,
@@ -575,7 +575,7 @@ def claim_paths_for_triaging(
         result = gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
-            WHERE p.status = $scanned AND p.score IS NULL
+            WHERE p.status = $scanned AND p.triage_composite IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
@@ -648,7 +648,7 @@ def claim_paths_for_enriching(
 
     Claims paths where:
     - status = 'triaged'
-    - should_enrich = true OR triage_score >= auto_enrich_threshold
+    - should_enrich = true OR triage_composite >= auto_enrich_threshold
     - is_enriched is null or false
 
     Uses claimed_at timestamp for orphan recovery.
@@ -673,7 +673,7 @@ def claim_paths_for_enriching(
     min_enrich_score = 0.15
     if auto_enrich_threshold is not None:
         enrich_clause = (
-            "(p.should_enrich = true OR p.triage_score >= $auto_enrich_threshold)"
+            "(p.should_enrich = true OR p.triage_composite >= $auto_enrich_threshold)"
         )
     else:
         enrich_clause = "p.should_enrich = true"
@@ -685,14 +685,14 @@ def claim_paths_for_enriching(
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.status = $triaged
               AND {enrich_clause}
-              AND p.triage_score >= $min_enrich_score
+              AND p.triage_composite >= $min_enrich_score
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
               AND (p.total_dirs IS NULL OR p.total_dirs <= 500)
             {root_clause}
-            With p ORDER BY p.triage_score DESC, p.depth ASC LIMIT $limit
+            With p ORDER BY p.triage_composite DESC, p.depth ASC LIMIT $limit
             SET p.claimed_at = datetime()
-            RETURN p.id AS id, p.path AS path, p.depth AS depth, p.triage_score AS triage_score,
+            RETURN p.id AS id, p.path AS path, p.depth AS depth, p.triage_composite AS triage_composite,
                    p.path_purpose AS path_purpose
             """,
             facility=facility,
@@ -728,7 +728,7 @@ def claim_paths_for_scoring(
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
-        min_score: Minimum triage_score for scoring (default: 0.0 = score all)
+        min_score: Minimum triage_composite for scoring (default: 0.0 = score all)
     """
     from imas_codex.graph import GraphClient
 
@@ -745,25 +745,25 @@ def claim_paths_for_scoring(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
-              AND p.triage_score >= $min_score
+              AND p.triage_composite >= $min_score
               AND p.scored_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
-            WITH p ORDER BY p.triage_score DESC LIMIT $limit
+            WITH p ORDER BY p.triage_composite DESC LIMIT $limit
             SET p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
-                   p.triage_score AS triage_score,
-                   p.score_modeling_code AS score_modeling_code,
-                   p.score_analysis_code AS score_analysis_code,
-                   p.score_operations_code AS score_operations_code,
-                   p.score_modeling_data AS score_modeling_data,
-                   p.score_experimental_data AS score_experimental_data,
-                   p.score_data_access AS score_data_access,
-                   p.score_workflow AS score_workflow,
-                   p.score_visualization AS score_visualization,
-                   p.score_documentation AS score_documentation,
-                   p.score_imas AS score_imas,
-                   p.score_convention AS score_convention,
+                   p.triage_composite AS triage_composite,
+                   p.triage_modeling_code AS triage_modeling_code,
+                   p.triage_analysis_code AS triage_analysis_code,
+                   p.triage_operations_code AS triage_operations_code,
+                   p.triage_modeling_data AS triage_modeling_data,
+                   p.triage_experimental_data AS triage_experimental_data,
+                   p.triage_data_access AS triage_data_access,
+                   p.triage_workflow AS triage_workflow,
+                   p.triage_visualization AS triage_visualization,
+                   p.triage_documentation AS triage_documentation,
+                   p.triage_imas AS triage_imas,
+                   p.triage_convention AS triage_convention,
                    p.total_bytes AS total_bytes, p.total_lines AS total_lines,
                    p.language_breakdown AS language_breakdown,
                    p.is_multiformat AS is_multiformat,
@@ -938,7 +938,7 @@ def mark_score_complete(
                 MATCH (p:FacilityPath {{id: $id}})
                 SET p.status = $scored,
                     p.scored_at = $now,
-                    p.score = $score,
+                    p.score_composite = $score,
                     p.score_cost = coalesce(p.score_cost, 0) + $score_cost,
                     p.score_reason = $adjustment_reason,
                     p.primary_evidence = $primary_evidence,
@@ -1681,20 +1681,20 @@ async def triage_worker(
             skip_data = [
                 {
                     "path": p["path"],
-                    "score": 0.0,
+                    "triage_composite": 0.0,
                     "path_purpose": "empty",
                     "description": "Empty directory - no files or subdirectories",
-                    "score_modeling_code": 0.0,
-                    "score_analysis_code": 0.0,
-                    "score_operations_code": 0.0,
-                    "score_modeling_data": 0.0,
-                    "score_experimental_data": 0.0,
-                    "score_data_access": 0.0,
-                    "score_workflow": 0.0,
-                    "score_visualization": 0.0,
-                    "score_documentation": 0.0,
-                    "score_imas": 0.0,
-                    "score_convention": 0.0,
+                    "triage_modeling_code": 0.0,
+                    "triage_analysis_code": 0.0,
+                    "triage_operations_code": 0.0,
+                    "triage_modeling_data": 0.0,
+                    "triage_experimental_data": 0.0,
+                    "triage_data_access": 0.0,
+                    "triage_workflow": 0.0,
+                    "triage_visualization": 0.0,
+                    "triage_documentation": 0.0,
+                    "triage_imas": 0.0,
+                    "triage_convention": 0.0,
                     "should_expand": False,
                     "should_enrich": False,
                     "enrich_skip_reason": "empty directory",
@@ -1739,23 +1739,23 @@ async def triage_worker(
             vcs_skip_data = [
                 {
                     "path": p["path"],
-                    "score": 0.15,
+                    "triage_composite": 0.15,
                     "path_purpose": "software_project",
                     "description": (
                         f"VCS repository accessible elsewhere"
                         f" ({p.get('vcs_remote_url') or p.get('git_remote_url', '')})"
                     ),
-                    "score_modeling_code": 0.1,
-                    "score_analysis_code": 0.1,
-                    "score_operations_code": 0.0,
-                    "score_modeling_data": 0.0,
-                    "score_experimental_data": 0.0,
-                    "score_data_access": 0.1,
-                    "score_workflow": 0.0,
-                    "score_visualization": 0.0,
-                    "score_documentation": 0.0,
-                    "score_imas": 0.0,
-                    "score_convention": 0.0,
+                    "triage_modeling_code": 0.1,
+                    "triage_analysis_code": 0.1,
+                    "triage_operations_code": 0.0,
+                    "triage_modeling_data": 0.0,
+                    "triage_experimental_data": 0.0,
+                    "triage_data_access": 0.1,
+                    "triage_workflow": 0.0,
+                    "triage_visualization": 0.0,
+                    "triage_documentation": 0.0,
+                    "triage_imas": 0.0,
+                    "triage_convention": 0.0,
                     "should_expand": False,
                     "should_enrich": False,
                     "skip_reason": (
@@ -2086,7 +2086,7 @@ async def score_worker(
                 result: dict = {
                     "path": llm_r["path"],
                     "score": llm_r["score"],
-                    "previous_score": orig.get("score"),
+                    "previous_score": orig.get("triage_composite"),
                     "score_cost": cost_per_path,
                     "should_expand": llm_r.get(
                         "should_expand", orig.get("should_expand", True)
@@ -2275,14 +2275,16 @@ def _build_score_results(
                 if llm_value is not None:
                     result[dim] = max(0.0, min(1.0, llm_value))
                 else:
-                    result[dim] = p.get(dim, 0.0)
+                    # Fall back to triage-phase value
+                    triage_dim = dim.replace("score_", "triage_")
+                    result[dim] = p.get(triage_dim, 0.0)
 
             results.append(result)
         else:
             results.append(
                 {
                     "path": p["path"],
-                    "score": p.get("score", 0.5),
+                    "score": p.get("triage_composite", 0.5),
                     "adjustment_reason": "not in response",
                     "_failed": True,
                 }
@@ -2460,7 +2462,7 @@ def _score_with_llm(
         return [
             {
                 "path": p["path"],
-                "score": p.get("score", 0.5),
+                "score": p.get("triage_composite", 0.5),
                 "adjustment_reason": "parse error",
                 "_failed": True,
             }
@@ -2640,7 +2642,7 @@ async def _async_score_with_llm(
         return [
             {
                 "path": p["path"],
-                "score": p.get("score", 0.5),
+                "score": p.get("triage_composite", 0.5),
                 "adjustment_reason": "parse error",
                 "_failed": True,
             }

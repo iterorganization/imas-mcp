@@ -268,11 +268,11 @@ def _get_scannable_paths(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
             WHERE p.status IN ['scored', 'explored']
-              AND coalesce(p.score, 0) >= $min_score
+              AND coalesce(p.score_composite, 0) >= $min_score
               AND p.path IS NOT NULL
-            RETURN p.id AS id, p.path AS path, p.score AS score,
+            RETURN p.id AS id, p.path AS path, p.score_composite AS score,
                    p.purpose AS purpose, coalesce(p.files_scanned, 0) AS files_scanned
-            ORDER BY p.score DESC
+            ORDER BY p.score_composite DESC
             LIMIT $limit
             """,
             facility=facility,

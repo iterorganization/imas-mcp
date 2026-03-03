@@ -599,9 +599,9 @@ classes:
       
       PARALLEL DISCOVERY PIPELINE:
       1. Scan: discovered -> listed (enumerate files, set counts)
-      2. Triage: listed -> triaged (LLM classification, sets triage_score/expand/enrich)
+      2. Triage: listed -> triaged (LLM classification, sets triage_composite/expand/enrich)
       3. Expand: triaged + should_expand -> children created as discovered
-      4. Enrich: triaged + should_enrich + triage_score >= threshold -> enriched
+      4. Enrich: triaged + should_enrich + triage_composite >= threshold -> enriched
       5. Score: enriched -> scored (independent LLM evaluation with enrichment evidence)
       
       Expand and Enrich run in PARALLEL as independent workers.
@@ -716,49 +716,54 @@ classes:
       # Scoring dimensions (LLM-assigned, 0.0-1.0 each)
       # Per-purpose scores aligned with DiscoveryRootCategory taxonomy
       # Enables downstream actors to query specific dimensions
-      triage_score:
+      #
+      # Naming convention: triage_ prefix for 1st-pass (directory structure only),
+      # score_ prefix for 2nd-pass (enrichment evidence). Composites use
+      # triage_composite / score_composite. Shared suffixes are the dimension
+      # taxonomy: modeling_code, analysis_code, etc.
+      triage_composite:
         description: >-
           Composite triage score (0.0-1.0) from initial LLM classification.
           Set during triage phase based on directory structure only.
-          Preserved when score worker overwrites per-dimension scores.
+          Preserved permanently — never overwritten by scoring.
         range: float
       # Per-dimension triage scores — preserved permanently so calibration
       # can draw from the full triage population (triaged + scored paths).
-      # Written at triage time alongside score_*, never overwritten by scoring.
-      triage_score_modeling_code:
-        description: Triage-phase score for forward modeling/simulation code
+      # Written at triage time, never overwritten by scoring.
+      triage_modeling_code:
+        description: Triage-phase dimension for forward modeling/simulation code
         range: float
-      triage_score_analysis_code:
-        description: Triage-phase score for experimental analysis code
+      triage_analysis_code:
+        description: Triage-phase dimension for experimental analysis code
         range: float
-      triage_score_operations_code:
-        description: Triage-phase score for real-time operations code
+      triage_operations_code:
+        description: Triage-phase dimension for real-time operations code
         range: float
-      triage_score_modeling_data:
-        description: Triage-phase score for modeling outputs
+      triage_modeling_data:
+        description: Triage-phase dimension for modeling outputs
         range: float
-      triage_score_experimental_data:
-        description: Triage-phase score for experimental shot data
+      triage_experimental_data:
+        description: Triage-phase dimension for experimental shot data
         range: float
-      triage_score_data_access:
-        description: Triage-phase score for data access tools
+      triage_data_access:
+        description: Triage-phase dimension for data access tools
         range: float
-      triage_score_workflow:
-        description: Triage-phase score for orchestration and batch processing
+      triage_workflow:
+        description: Triage-phase dimension for orchestration and batch processing
         range: float
-      triage_score_visualization:
-        description: Triage-phase score for plotting and rendering tools
+      triage_visualization:
+        description: Triage-phase dimension for plotting and rendering tools
         range: float
-      triage_score_documentation:
-        description: Triage-phase score for documentation value
+      triage_documentation:
+        description: Triage-phase dimension for documentation value
         range: float
-      triage_score_imas:
-        description: Triage-phase score for IMAS relevance
+      triage_imas:
+        description: Triage-phase dimension for IMAS relevance
         range: float
-      triage_score_convention:
-        description: Triage-phase score for sign/coordinate/COCOS convention handling
+      triage_convention:
+        description: Triage-phase dimension for sign/coordinate/COCOS convention handling
         range: float
-      score:
+      score_composite:
         description: >-
           Authoritative composite score (0.0-1.0) from second-pass LLM evaluation
           with enrichment evidence. Only set for paths that completed scoring.
@@ -1985,6 +1990,22 @@ classes:
         range: datetime
       skip_reason:
         description: Why this signal was skipped during enrichment or access checking
+      temporality:
+        description: >-
+          Whether this signal's data varies with time or is static
+          (machine-description / constructional). Static signals come from
+          versioned MDSplus trees (e.g., vessel geometry, coil positions);
+          dynamic signals are shot-scoped measurements.
+        range: SignalTemporality
+      source_node:
+        description: >-
+          Link to the TreeNode that this signal was promoted from.
+          Set during the PROMOTE phase of MDSplus static tree discovery.
+          Preserves provenance from raw tree extraction through to the
+          unified FacilitySignal layer.
+        range: TreeNode
+        annotations:
+          relationship_type: SOURCE_NODE
 
   DataAccess:
     description: >-

@@ -571,10 +571,10 @@ def get_paths_pending_enrichment(facility: str, threshold: float = 0.75) -> list
                 AND (p.is_enriched IS NULL OR p.is_enriched = false)
                 AND (
                     p.should_enrich = true
-                    OR (p.should_enrich IS NULL AND p.score >= $threshold)
+                    OR (p.should_enrich IS NULL AND p.score_composite >= $threshold)
                 )
             RETURN p.path AS path
-            ORDER BY p.score DESC
+            ORDER BY p.score_composite DESC
             """,
             facility=facility,
             threshold=threshold,

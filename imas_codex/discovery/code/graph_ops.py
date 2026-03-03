@@ -115,7 +115,7 @@ def claim_paths_for_file_scan(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
             WHERE p.status IN ['scored', 'explored']
-              AND coalesce(p.score, 0) >= $min_score
+              AND coalesce(p.score_composite, 0) >= $min_score
               AND p.path IS NOT NULL
               AND (p.files_claimed_at IS NULL
                    OR p.files_claimed_at < datetime() - duration($cutoff))
@@ -136,10 +136,10 @@ def claim_paths_for_file_scan(
                 + coalesce(p.score_convention, 0) * 2
                 + coalesce(p.score_analysis_code, 0)
                 + coalesce(p.score_modeling_code, 0)
-            ) DESC, p.score DESC
+            ) DESC, p.score_composite DESC
             LIMIT $limit
             SET p.files_claimed_at = datetime()
-            RETURN p.id AS id, p.path AS path, p.score AS score,
+            RETURN p.id AS id, p.path AS path, p.score_composite AS score,
                    p.purpose AS purpose,
                    coalesce(p.files_scanned, 0) AS files_scanned
             """,
@@ -276,7 +276,7 @@ def claim_files_for_scoring(
                    OR sf.claimed_at < datetime() - duration($cutoff))
             OPTIONAL MATCH (sf)-[:IN_DIRECTORY]->(p:FacilityPath)
             WITH sf, p
-            ORDER BY coalesce(p.score, 0) DESC, sf.discovered_at ASC
+            ORDER BY coalesce(p.score_composite, 0) DESC, sf.discovered_at ASC
             LIMIT $limit
             SET sf.claimed_at = datetime()
             RETURN sf.id AS id, sf.path AS path,
@@ -286,7 +286,7 @@ def claim_files_for_scoring(
                    sf.line_count AS line_count,
                    sf.is_enriched AS is_enriched,
                    p.id AS parent_path_id, p.path AS parent_path,
-                   p.score AS parent_score, p.purpose AS parent_purpose,
+                   p.score_composite AS parent_score, p.purpose AS parent_purpose,
                    p.description AS parent_description,
                    p.pattern_categories AS parent_patterns,
                    p.read_matches AS parent_read_matches,
@@ -411,7 +411,7 @@ def has_pending_scan_work(facility: str, min_score: float = 0.5) -> bool:
             """
             MATCH (p:FacilityPath {facility_id: $facility})
             WHERE p.status IN ['scored', 'explored']
-              AND coalesce(p.score, 0) >= $min_score
+              AND coalesce(p.score_composite, 0) >= $min_score
               AND p.path IS NOT NULL
               AND coalesce(p.vcs_remote_accessible, false) = false
               AND NOT EXISTS {
