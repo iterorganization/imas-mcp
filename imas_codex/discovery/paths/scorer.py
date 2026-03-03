@@ -247,11 +247,13 @@ class DirectoryTriager:
         # Add dimension calibration examples (5 levels x 11 dimensions x 5 examples)
         # This provides comprehensive calibration for the LLM to understand
         # what scores have historically been assigned at each level.
-        # Results are cached with 5-minute TTL to avoid redundant graph queries.
+        # Results are cached with 60s TTL to avoid redundant graph queries.
+        # phase='triage' draws from triaged peers (1st-pass dimensions).
         dimension_calibration = sample_dimension_calibration_examples(
             facility=self.facility,
             per_level=5,
             tolerance=0.1,
+            phase="triage",
         )
         # Only add if we have meaningful data
         has_calibration = any(

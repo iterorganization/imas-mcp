@@ -3044,27 +3044,32 @@ def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, An
         return list(result)
 
 
-_calibration_cache: dict[str, Any] = {}
-_calibration_cache_time: float = 0.0
-_CALIBRATION_TTL_SECONDS = 300  # 5 minutes — graph data stabilizes quickly
+_calibration_cache: dict[
+    str, tuple[float, dict[str, dict[str, list[dict[str, Any]]]]]
+] = {}
+_CALIBRATION_TTL_SECONDS = 60  # 1 minute — short enough to track graph growth
 
 
 def sample_dimension_calibration_examples(
     facility: str | None = None,
     per_level: int = 3,
     tolerance: float = 0.1,
+    phase: str = "score",
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
     """Sample calibration examples for each dimension at 5 score levels.
 
-    Results are cached in-process with a 5-minute TTL. Because the pool of
-    scored paths grows monotonically, calibration examples stabilize quickly —
-    refreshing every 5 minutes is sufficient to pick up newly-scored paths
-    without repeating expensive per-dimension graph queries on every batch.
+    Results are cached in-process with a 60-second TTL — short enough to
+    track graph growth during early population, long enough to ensure all
+    items within a batch see identical calibration examples (no jitter).
+    As the pool of scored paths grows, examples stabilize naturally.
 
     Args:
         facility: Current facility (preferring same-facility examples)
         per_level: Number of examples per score level (default 3)
         tolerance: Score range tolerance (default ±0.1)
+        phase: ``"triage"`` draws from triaged-only paths (1st-pass
+            dimensions), ``"score"`` draws from scored paths (2nd-pass
+            dimensions).  Each phase sees its own peer examples.
 
     Returns:
         Nested dict: dimension -> level -> list of examples
@@ -3073,20 +3078,18 @@ def sample_dimension_calibration_examples(
     """
     import time
 
-    global _calibration_cache, _calibration_cache_time  # noqa: PLW0603
+    global _calibration_cache  # noqa: PLW0603
 
-    cache_key = f"{facility}:{per_level}:{tolerance}"
+    cache_key = f"{phase}:{facility}:{per_level}:{tolerance}"
     now = time.monotonic()
 
-    if (
-        cache_key in _calibration_cache
-        and (now - _calibration_cache_time) < _CALIBRATION_TTL_SECONDS
-    ):
-        return _calibration_cache[cache_key]
+    if cache_key in _calibration_cache:
+        cached_time, cached_data = _calibration_cache[cache_key]
+        if (now - cached_time) < _CALIBRATION_TTL_SECONDS:
+            return cached_data
 
-    samples = _fetch_dimension_calibration(facility, per_level, tolerance)
-    _calibration_cache[cache_key] = samples
-    _calibration_cache_time = now
+    samples = _fetch_dimension_calibration(facility, per_level, tolerance, phase)
+    _calibration_cache[cache_key] = (now, samples)
     return samples
 
 
@@ -3094,9 +3097,21 @@ def _fetch_dimension_calibration(
     facility: str | None,
     per_level: int,
     tolerance: float,
+    phase: str,
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
-    """Fetch calibration examples from graph (uncached)."""
+    """Fetch calibration examples from graph (uncached).
+
+    Args:
+        phase: ``"triage"`` selects paths still in triaged status (1st-pass
+            dimensions), ``"score"`` selects scored paths (2nd-pass dims).
+    """
     from imas_codex.graph import GraphClient
+
+    # Map phase to the graph status(es) we draw examples from
+    if phase == "triage":
+        status_clause = "p.status IN ['triaged', 'scored']"
+    else:
+        status_clause = "p.status = 'scored'"
 
     # Target score levels with descriptive names
     score_levels = {
@@ -3124,11 +3139,10 @@ def _fetch_dimension_calibration(
                     max_score = min(0.96, target_score + tolerance)
 
                 # Query for examples at this score level for this dimension
-                # Only consider paths where this dimension has a meaningful score
                 result = gc.query(
                     f"""
                     MATCH (p:FacilityPath)
-                    WHERE p.status = 'scored'
+                    WHERE {status_clause}
                         AND p.{dim} >= $min_score
                         AND p.{dim} < $max_score
                         AND p.{dim} IS NOT NULL
