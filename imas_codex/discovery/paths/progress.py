@@ -169,9 +169,13 @@ class ProgressState:
     current_scan: ScanItem | None = None
     current_score: ScoreItem | None = None
     current_enrich: EnrichItem | None = None
-    scan_processing: bool = False  # True when awaiting SSH batch
-    score_processing: bool = False  # True when awaiting LLM batch
-    enrich_processing: bool = False  # True when awaiting SSH enrichment batch
+    # Processing counters — incremented when a worker starts a batch,
+    # decremented when results arrive. Using counters (not bools) because
+    # multiple workers of the same type run in parallel, and a single bool
+    # would toggle incorrectly when one finishes while another is still active.
+    scan_processing: int = 0
+    score_processing: int = 0
+    enrich_processing: int = 0
 
     # Streaming queues - enrich adapts rate based on batch size to fill inter-batch gaps
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
@@ -189,13 +193,13 @@ class ProgressState:
 
     # Current refine item (for streaming display)
     current_refine: RefineItem | None = None
-    refine_processing: bool = False
+    refine_processing: int = 0
 
     # Dedup tracking
     run_deduped: int = 0  # Clone paths marked terminal this session
     dedup_rate: float | None = None
     current_dedup: DedupItem | None = None
-    dedup_processing: bool = False
+    dedup_processing: int = 0
 
     # Tracking
     scored_paths: set[str] = field(default_factory=set)
@@ -448,6 +452,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         # Worker counts per group
         scan_count, scan_ann = self._count_group_workers("scan")
+        expand_count, _ = self._count_group_workers("expand")
         score_count, score_ann = self._count_group_workers("score")
         enrich_count, enrich_ann = self._count_group_workers("enrich")
 
@@ -457,8 +462,13 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         score = self.state.current_score
         enrich = self.state.current_enrich
 
-        # Worker completion detection
-        scan_complete = self._worker_complete("scan") and not scan
+        # Worker completion detection — scan row is complete when both
+        # scan and expand workers are done.
+        scan_complete = (
+            self._worker_complete("scan")
+            and self._worker_complete("expand")
+            and not scan
+        )
         score_complete = self._worker_complete("score") and not score
         enrich_complete = self._worker_complete("enrich") and not enrich
 
@@ -511,7 +521,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         enrich_text = ""
         enrich_desc = ""
         queue_empty = self.state.enrich_queue.is_empty()
-        if enrich and (not queue_empty or self.state.enrich_processing):
+        if enrich and (not queue_empty or self.state.enrich_processing > 0):
             enrich_text = enrich.path
             if enrich.error:
                 enrich_desc = f"error: {enrich.error}"
@@ -555,6 +565,8 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         # REFINE activity
         refine_count, refine_ann = self._count_group_workers("refine")
+        dedup_count, _ = self._count_group_workers("dedup")
+        embed_count, _ = self._count_group_workers("embed")
         refine = self.state.current_refine
         refine_complete = self._worker_complete("refine") and not refine
 
@@ -564,7 +576,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         refine_desc = ""
         refine_terminal = ""
         refine_queue_empty = self.state.refine_queue.is_empty()
-        if refine and (not refine_queue_empty or self.state.refine_processing):
+        if refine and (not refine_queue_empty or self.state.refine_processing > 0):
             refine_text = refine.path
             if refine.score is not None:
                 # Show just the +diff (delta) — the original score is already
@@ -627,10 +639,11 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 disabled=self.state.score_only,
                 primary_text=scan_text,
                 description=scan_desc,
-                is_processing=self.state.scan_processing,
+                is_processing=self.state.scan_processing > 0,
                 is_complete=scan_complete,
                 worker_count=scan_count,
                 worker_annotation=scan_ann,
+                aux_workers=([("expand", expand_count)] if expand_count > 0 else None),
                 queue_size=(
                     len(self.state.scan_queue)
                     if not self.state.scan_queue.is_empty()
@@ -653,15 +666,16 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 terminal_label=score_terminal,
                 description=score_desc,
                 description_fallback=score_desc_fallback,
-                is_processing=self.state.score_processing,
+                is_processing=self.state.score_processing > 0,
                 is_complete=score_complete,
                 worker_count=score_count,
                 worker_annotation=score_ann,
+                aux_workers=([("embed", embed_count)] if embed_count > 0 else None),
                 queue_size=(
                     len(self.state.score_queue)
                     if not self.state.score_queue.is_empty()
                     and not score
-                    and not self.state.score_processing
+                    and self.state.score_processing == 0
                     else 0
                 ),
             ),
@@ -674,7 +688,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 disabled=self.state.scan_only,
                 primary_text=enrich_text,
                 description=enrich_desc,
-                is_processing=self.state.enrich_processing,
+                is_processing=self.state.enrich_processing > 0,
                 is_complete=enrich_complete,
                 worker_count=enrich_count,
                 worker_annotation=enrich_ann,
@@ -692,10 +706,11 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 physics_domain=refine_domain,
                 terminal_label=refine_terminal,
                 description=refine_desc,
-                is_processing=self.state.refine_processing,
+                is_processing=self.state.refine_processing > 0,
                 is_complete=refine_complete,
                 worker_count=refine_count,
                 worker_annotation=refine_ann,
+                aux_workers=([("dedup", dedup_count)] if dedup_count > 0 else None),
             ),
         ]
         return build_pipeline_section(rows, self.bar_width)
@@ -761,18 +776,18 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.scan_rate = stats.ema_rate or stats.active_rate
 
         # Track processing state for display
+        # Don't clear current_scan when idle - let queue drain naturally
+        # via tick(). Only update the processing counter.
         if message == "idle":
-            self.state.scan_processing = False
-            self.state.scan_queue.clear()
-            self.state.current_scan = None
+            self.state.scan_processing = max(0, self.state.scan_processing - 1)
             self._refresh()
             return
         elif "scanning" in message.lower():
             # About to run SSH scan - mark as processing
-            self.state.scan_processing = True
+            self.state.scan_processing += 1
         else:
             # Got results back ("scanned N paths")
-            self.state.scan_processing = False
+            self.state.scan_processing = max(0, self.state.scan_processing - 1)
 
         # Queue scan results for streaming (tick() handles rate-limited popping)
         if scan_results:
@@ -810,18 +825,18 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state._run_score_cost = stats.cost
 
         # Track processing state for display
+        # Don't clear current_score when waiting - let queue drain naturally
+        # via tick(). Only update the processing counter.
         if "waiting" in message.lower():
-            self.state.score_processing = False
-            self.state.score_queue.clear()
-            self.state.current_score = None
+            self.state.score_processing = max(0, self.state.score_processing - 1)
             self._refresh()
             return
         elif "scoring" in message.lower():
             # About to call LLM - mark as processing
-            self.state.score_processing = True
+            self.state.score_processing += 1
         else:
             # Got results back
-            self.state.score_processing = False
+            self.state.score_processing = max(0, self.state.score_processing - 1)
 
         # Queue score results for streaming (tick() handles rate-limited popping)
         if results:
@@ -901,18 +916,18 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.enrich_rate = stats.ema_rate or stats.active_rate
 
         # Track processing state for display
+        # Don't clear current_enrich when waiting - let queue drain naturally
+        # via tick(). Only update the processing counter.
         if "waiting" in message.lower():
-            self.state.enrich_processing = False
-            self.state.enrich_queue.clear()
-            self.state.current_enrich = None
+            self.state.enrich_processing = max(0, self.state.enrich_processing - 1)
             self._refresh()
             return
         elif "enriching" in message.lower():
             # About to run SSH enrichment - mark as processing
-            self.state.enrich_processing = True
+            self.state.enrich_processing += 1
         else:
             # Got results back
-            self.state.enrich_processing = False
+            self.state.enrich_processing = max(0, self.state.enrich_processing - 1)
 
         # Queue enrich results for streaming display
         if results:
@@ -1006,15 +1021,13 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         # Track processing state for display
         if "waiting" in message.lower():
-            self.state.refine_processing = False
-            self.state.refine_queue.clear()
-            self.state.current_refine = None
+            self.state.refine_processing = max(0, self.state.refine_processing - 1)
             self._refresh()
             return
         elif "rescoring" in message.lower():
-            self.state.refine_processing = True
+            self.state.refine_processing += 1
         else:
-            self.state.refine_processing = False
+            self.state.refine_processing = max(0, self.state.refine_processing - 1)
 
         # Queue refine results to refine stream (own display row)
         if results:
@@ -1061,14 +1074,14 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.dedup_rate = stats.ema_rate or stats.active_rate
 
         if "waiting" in message.lower():
-            self.state.dedup_processing = False
+            self.state.dedup_processing = max(0, self.state.dedup_processing - 1)
             self.state.current_dedup = None
             self._refresh()
             return
         elif "deduped" in message.lower():
-            self.state.dedup_processing = False
+            self.state.dedup_processing = max(0, self.state.dedup_processing - 1)
         else:
-            self.state.dedup_processing = True
+            self.state.dedup_processing += 1
 
         if results:
             # Show the most recent dedup event
@@ -1106,26 +1119,6 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    def begin_shutdown(self) -> None:
-        """Switch display to shutdown mode, clearing all streaming queues.
-
-        Streaming queues are a user-facing feature that should not delay
-        shutdown.  Clear them immediately so tick() has nothing to drain
-        and the display transitions cleanly to the shutdown section.
-        """
-        # Clear streaming queues — no need to drain during shutdown
-        self.state.scan_queue.clear()
-        self.state.score_queue.clear()
-        self.state.enrich_queue.clear()
-        self.state.refine_queue.clear()
-        # Clear current display items
-        self.state.current_scan = None
-        self.state.current_score = None
-        self.state.current_enrich = None
-        self.state.current_refine = None
-        self.state.current_dedup = None
-        super().begin_shutdown()
-
     def tick(self) -> None:
         """Drain streaming queues for smooth display.
 
@@ -1133,12 +1126,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         (not processing a batch).  This prevents flicker between content
         and "idle" when the queue empties between batches while the
         worker is still actively claiming and processing work.
-
-        Becomes a no-op during shutdown — streaming queues are cleared
-        in begin_shutdown() and should not be re-processed.
         """
-        if self._shutting_down:
-            return
         updated = False
 
         next_scan = self.state.scan_queue.pop()
@@ -1148,7 +1136,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         elif (
             self.state.scan_queue.is_stale()
             and self.state.current_scan is not None
-            and not self.state.scan_processing
+            and self.state.scan_processing == 0
         ):
             self.state.current_scan = None
             updated = True
@@ -1160,7 +1148,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         elif (
             self.state.score_queue.is_stale()
             and self.state.current_score is not None
-            and not self.state.score_processing
+            and self.state.score_processing == 0
         ):
             self.state.current_score = None
             updated = True
@@ -1172,7 +1160,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         elif (
             self.state.enrich_queue.is_stale()
             and self.state.current_enrich is not None
-            and not self.state.enrich_processing
+            and self.state.enrich_processing == 0
         ):
             self.state.current_enrich = None
             updated = True
@@ -1184,7 +1172,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         elif (
             self.state.refine_queue.is_stale()
             and self.state.current_refine is not None
-            and not self.state.refine_processing
+            and self.state.refine_processing == 0
         ):
             self.state.current_refine = None
             updated = True
