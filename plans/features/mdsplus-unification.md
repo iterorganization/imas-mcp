@@ -886,7 +886,7 @@ remaining edges.
 4. Delete `_scan_static_tree`, `_scan_dynamic_trees`,
    `_promote_static_signals` — all absorbed into `run_tree_discovery`
 
-### Phase 7: Enrichment Pipeline Enhancement
+### Phase 7: Enrichment Pipeline Enhancement ✅
 
 **Goal:** Signals enrichment pipeline fetches all available context.
 

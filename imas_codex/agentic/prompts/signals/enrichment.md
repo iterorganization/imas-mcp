@@ -119,6 +119,22 @@ Direct tree traversal signals have tree_name and node_path:
 - Path structure reveals diagnostics: `\RESULTS::LIUQE:*` → equilibrium
 - Tree name reveals data organization
 
+When `parent_node` and `siblings` are provided:
+- The parent node path reveals the tree hierarchy and diagnostic grouping
+- Sibling nodes are leaf nodes sharing the same parent — they often represent
+  related quantities from the same diagnostic or analysis code
+- Use sibling names to infer measurement context (e.g., siblings IP, Q95, LI
+  under a LIUQE parent → all equilibrium outputs)
+
+When `tdi_function` and `tdi_source` are provided per-signal:
+- This is a TDI function that resolves to the signal's TreeNode
+- The TDI source code shows how the quantity is accessed programmatically
+- Use it exactly like group-level TDI context (analysis code, sign conventions)
+
+When `applicability` is provided:
+- Indicates the version range where this signal exists in the tree
+- Useful for understanding if a signal is legacy or current
+
 ## Diagnostic Naming Convention
 
 {% include "schema/diagnostic-categories.md" %}
