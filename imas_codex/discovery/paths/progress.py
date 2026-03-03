@@ -1501,7 +1501,7 @@ def print_discovery_status(
     # --------------------------------------------------------------------------
     if domain is None or domain == "static":
         try:
-            from imas_codex.discovery.static.graph_ops import (
+            from imas_codex.discovery.mdsplus.graph_ops import (
                 get_static_summary_stats,
             )
 

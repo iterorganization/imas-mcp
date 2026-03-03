@@ -144,17 +144,11 @@ class TestWorkerExports:
 
         assert not hasattr(w, "enrich_worker")
 
-    def test_old_workers_still_have_enrich(self):
-        """Old workers module should still export enrich_worker."""
-        from imas_codex.discovery.static.workers import enrich_worker
-
-        assert callable(enrich_worker)
-
 
 class TestGraphOps:
     """Test graph_ops module."""
 
-    def test_re_exports_static_ops(self):
+    def test_has_core_ops(self):
         from imas_codex.discovery.mdsplus.graph_ops import (
             claim_version_for_extraction,
             mark_version_extracted,
@@ -171,6 +165,13 @@ class TestGraphOps:
         )
 
         assert callable(promote_leaf_nodes_to_signals)
+
+    def test_static_shim_re_exports(self):
+        """Static graph_ops shim re-exports from mdsplus."""
+        from imas_codex.discovery.mdsplus.graph_ops import seed_versions as sv1
+        from imas_codex.discovery.static.graph_ops import seed_versions as sv2
+
+        assert sv1 is sv2
 
 
 class TestPromoteWorker:

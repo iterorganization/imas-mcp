@@ -6,7 +6,7 @@
 > TDI function discovery as a higher-level access layer that links back to
 > tree-scoped signals.
 
-## Status: Planning (v2)
+## Status: Implemented
 
 ## Problem Statement
 
@@ -928,20 +928,20 @@ remaining edges.
 
 4. Delete `mdsplus/enrichment.py` — superseded by the unified template.
 
-### Phase 8: Cleanup
+### Phase 8: Cleanup ✅
 
 **Goal:** Remove dead code and legacy modules.
 
-1. Delete `mdsplus/discovery.py` (legacy sequential `TreeDiscovery`)
-2. Delete `mdsplus/metadata.py` (legacy inline scripts)
-3. Delete `mdsplus/enrichment.py` (moved to signals pipeline)
-4. Delete `remote/scripts/enumerate_mdsplus.py` (replaced by extract_tree.py)
-5. Delete `remote/scripts/extract_tdi_functions.py` (superseded)
-6. Delete `scripts/discover_mdsplus.py` (absorbed into pipeline)
-7. Delete `discovery/static/` directory (moved to `discovery/mdsplus/`)
-8. Remove `TreeNode.is_static` from graph schema
-9. Update all imports across the codebase
-10. Update tests: rename test files, add epoch detection tests
+1. ~~Delete `mdsplus/discovery.py` (legacy sequential `TreeDiscovery`)~~ ✅
+2. ~~Delete `mdsplus/metadata.py` (legacy inline scripts)~~ ✅
+3. Delete `mdsplus/enrichment.py` — deferred (still used by `discovery/static/workers.py`)
+4. ~~Delete `remote/scripts/enumerate_mdsplus.py` (replaced by extract_tree.py)~~ ✅
+5. Delete `remote/scripts/extract_tdi_functions.py` — deferred (still used by `discovery/signals/tdi.py`)
+6. ~~Delete `scripts/discover_mdsplus.py` (absorbed into pipeline)~~ ✅
+7. `discovery/static/` converted to backward-compat re-export shims (graph_ops content moved to `discovery/mdsplus/graph_ops.py`)
+8. Remove `TreeNode.is_static` — deferred (schema changes are additive-only per AGENTS.md; used in 30+ Cypher queries)
+9. ~~Update all imports across the codebase~~ ✅
+10. ~~Update tests: rename test files, add epoch detection tests~~ ✅
 
 ## Cross-Cutting Concerns
 
