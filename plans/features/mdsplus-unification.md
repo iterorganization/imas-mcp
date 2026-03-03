@@ -825,7 +825,7 @@ async def process_tree(facility, ssh_host, tree_config, state):
         await group.run()
 ```
 
-### Phase 5: TDI Linkage
+### Phase 5: TDI Linkage ✅
 
 **Goal:** Link TDI functions to TreeNode paths for bidirectional context.
 
