@@ -873,13 +873,13 @@ def _run_with_rich(
 
         safe_asyncio_run(run_with_display())
 
-        # Final graph refresh for accurate summary
-        try:
-            display.refresh_from_graph(facility, tname)
-        except Exception:
-            pass
+    # Final graph refresh for accurate summary
+    try:
+        display.refresh_from_graph(facility, tname)
+    except Exception:
+        pass
 
-        display.print_summary()
+    display.print_summary()
 
 
 # =============================================================================

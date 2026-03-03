@@ -1390,7 +1390,7 @@ def build_resource_section(
         if etc is not None and etc > total_cost:
             section.append(f"ETC ${etc:.2f}", style="dim")
         elif config.run_cost > 0:
-            section.append(f"session ${config.run_cost:.2f}", style="dim")
+            section.append(f"${config.run_cost:.2f}", style="dim")
         section.append("\n")
 
     # STATS row
