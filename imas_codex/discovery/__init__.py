@@ -36,7 +36,7 @@ from imas_codex.discovery.base import (
 
 # Re-export paths discovery at discovery level for convenience
 from imas_codex.discovery.paths import (
-    DirectoryScorer,
+    DirectoryTriager,
     cleanup_orphaned_software_repos,
     clear_facility_paths,
     combined_score,
@@ -64,7 +64,7 @@ __all__ = [
     "filter_private_fields",
     "validate_no_private_fields",
     # Paths discovery
-    "DirectoryScorer",
+    "DirectoryTriager",
     "combined_score",
     "get_discovery_stats",
     "get_purpose_distribution",

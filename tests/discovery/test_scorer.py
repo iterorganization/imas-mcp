@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from imas_codex.discovery.paths.models import ResourcePurpose, ScoreBatch, ScoreResult
+from imas_codex.discovery.paths.models import ResourcePurpose, TriageBatch, TriageResult
 from imas_codex.discovery.paths.scorer import (
-    DirectoryScorer,
+    DirectoryTriager,
     combined_score,
 )
 
@@ -105,9 +105,9 @@ class TestContainerExpansion:
         should_expand: bool = False,
         should_enrich: bool = False,
         **score_overrides,
-    ) -> ScoreResult:
-        """Create a ScoreResult with default zero scores."""
-        return ScoreResult(
+    ) -> TriageResult:
+        """Create a TriageResult with default zero scores."""
+        return TriageResult(
             path=path,
             path_purpose=purpose,
             description="Test directory",
@@ -116,13 +116,13 @@ class TestContainerExpansion:
             **score_overrides,
         )
 
-    def _score_batch(self, results: list[ScoreResult]) -> ScoreBatch:
-        return ScoreBatch(results=results)
+    def _triage_batch(self, results: list[TriageResult]) -> TriageBatch:
+        return TriageBatch(results=results)
 
     def test_container_expands_when_llm_says_yes(self):
         """Container expands when LLM sets should_expand=true, even with 0 scores."""
-        scorer = DirectoryScorer(facility="test")
-        batch = self._score_batch(
+        scorer = DirectoryTriager(facility="test")
+        batch = self._triage_batch(
             [
                 self._make_score_result("/home", should_expand=True),
             ]
@@ -138,14 +138,14 @@ class TestContainerExpansion:
             }
         ]
 
-        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        results = scorer._map_triaged_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
         assert results[0].should_expand is True
 
     def test_container_respects_llm_no_expand(self):
         """Container does not expand when LLM sets should_expand=false."""
-        scorer = DirectoryScorer(facility="test")
-        batch = self._score_batch(
+        scorer = DirectoryTriager(facility="test")
+        batch = self._triage_batch(
             [
                 self._make_score_result("/tmp/few", should_expand=False),
             ]
@@ -161,18 +161,18 @@ class TestContainerExpansion:
             }
         ]
 
-        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        results = scorer._map_triaged_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
         assert results[0].should_expand is False
 
     def test_container_with_git_passes_through_llm_decision(self):
         """Container with .git passes through LLM's should_expand decision.
 
-        VCS accessibility overrides are applied in mark_paths_scored (frontier),
+        VCS accessibility overrides are applied in mark_paths_triaged (frontier),
         not in the scorer. The scorer only computes scores.
         """
-        scorer = DirectoryScorer(facility="test")
-        batch = self._score_batch(
+        scorer = DirectoryTriager(facility="test")
+        batch = self._triage_batch(
             [
                 self._make_score_result("/home/user/repo", should_expand=True),
             ]
@@ -188,7 +188,7 @@ class TestContainerExpansion:
             }
         ]
 
-        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        results = scorer._map_triaged_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
         # Scorer passes through LLM decision; VCS override is in frontier
         assert results[0].should_expand is True
@@ -199,8 +199,8 @@ class TestContainerExpansion:
         Non-containers require score >= threshold AND should_expand=true.
         Containers only require should_expand=true (the prompt guides this).
         """
-        scorer = DirectoryScorer(facility="test")
-        batch = self._score_batch(
+        scorer = DirectoryTriager(facility="test")
+        batch = self._triage_batch(
             [
                 self._make_score_result(
                     "/home",
@@ -229,15 +229,15 @@ class TestContainerExpansion:
             }
         ]
 
-        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        results = scorer._map_triaged_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
         # Expands because LLM said yes — root containers always expand
         assert results[0].should_expand is True
 
     def test_non_root_container_expands_when_llm_says_yes(self):
         """Non-root containers expand when LLM says yes — no minimum score."""
-        scorer = DirectoryScorer(facility="test")
-        batch = self._score_batch(
+        scorer = DirectoryTriager(facility="test")
+        batch = self._triage_batch(
             [
                 self._make_score_result(
                     "/home/empty_user",
@@ -267,15 +267,15 @@ class TestContainerExpansion:
             }
         ]
 
-        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        results = scorer._map_triaged_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
         # LLM decision is trusted directly — no minimum score for containers
         assert results[0].should_expand is True
 
     def test_non_container_trusts_llm_expand(self):
         """Non-container paths expand when LLM says yes — no score threshold."""
-        scorer = DirectoryScorer(facility="test")
-        batch = self._score_batch(
+        scorer = DirectoryTriager(facility="test")
+        batch = self._triage_batch(
             [
                 self._make_score_result(
                     "/work/codes/analysis",
@@ -296,15 +296,15 @@ class TestContainerExpansion:
             }
         ]
 
-        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        results = scorer._map_triaged_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
         # LLM said expand — trusted directly regardless of score vs threshold
         assert results[0].should_expand is True
 
     def test_data_container_passes_through_llm_decision(self):
         """Data containers pass through LLM decision (override in frontier)."""
-        scorer = DirectoryScorer(facility="test")
-        batch = self._score_batch(
+        scorer = DirectoryTriager(facility="test")
+        batch = self._triage_batch(
             [
                 self._make_score_result(
                     "/work/simulation_runs",
@@ -324,7 +324,7 @@ class TestContainerExpansion:
             }
         ]
 
-        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        results = scorer._map_triaged_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
         # Scorer passes through LLM decision; data container override is in frontier
         assert results[0].should_expand is True
@@ -332,8 +332,8 @@ class TestContainerExpansion:
     @pytest.mark.parametrize("vcs_type", ["svn", "hg", "bzr"])
     def test_non_git_vcs_repos_pass_through_llm_decision(self, vcs_type):
         """SVN/Hg/Bzr repos pass through LLM decision (override in frontier)."""
-        scorer = DirectoryScorer(facility="test")
-        batch = self._score_batch(
+        scorer = DirectoryTriager(facility="test")
+        batch = self._triage_batch(
             [
                 self._make_score_result(
                     "/work/codes/legacy_code",
@@ -355,7 +355,7 @@ class TestContainerExpansion:
             }
         ]
 
-        results = scorer._map_scored_directories(batch, directories, threshold=0.7)
+        results = scorer._map_triaged_directories(batch, directories, threshold=0.7)
         assert len(results) == 1
         # Scorer passes through LLM decision; VCS override is in frontier
         assert results[0].should_expand is True

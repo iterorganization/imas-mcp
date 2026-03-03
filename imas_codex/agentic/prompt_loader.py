@@ -18,8 +18,8 @@ Schema Provider Architecture:
     - path_purposes: PathPurpose enum values (grouped by category)
     - discovery_categories: DiscoveryRootCategory enum values
     - score_dimensions: score_* fields from FacilityPath schema
-    - scoring_schema: ScoreBatch Pydantic schema
-    - refine_schema: RefineBatch Pydantic schema
+    - scoring_schema: TriageBatch Pydantic schema (first-pass triage)
+    - score_schema: ScoreBatch Pydantic schema (second-pass scoring)
     - data_access_fields: DataAccess schema fields
     - data_access_graph: Existing DataAccess nodes from graph
 
@@ -36,8 +36,8 @@ Directory structure:
     │   └── schema/       # Schema-derived templates
     ├── discovery/        # Discovery pipeline prompts
     │   ├── roots.md      # Seed discovery frontier
-    │   ├── scorer.md     # Score directories
-    │   ├── refiner.md    # Refine with enrichment evidence
+    │   ├── triage.md     # Triage directories (first pass)
+    │   ├── scorer.md     # Score with enrichment evidence (second pass)
     │   └── enricher.md   # Extract metadata
     ├── exploration/      # Interactive exploration
     │   └── facility.md   # Facility exploration agent
@@ -457,26 +457,26 @@ def _provide_score_dimensions() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _provide_scoring_schema() -> dict[str, Any]:
-    """Provide ScoreBatch Pydantic schema for LLM prompts."""
+    """Provide TriageBatch Pydantic schema for LLM prompts (first pass)."""
     from imas_codex.discovery.paths.models import (
-        ScoreBatch,
-        ScoreResult,
+        TriageBatch,
+        TriageResult,
     )
 
     return {
-        "scoring_schema_example": get_pydantic_schema_json(ScoreBatch),
-        "scoring_schema_fields": get_pydantic_schema_description(ScoreResult),
+        "scoring_schema_example": get_pydantic_schema_json(TriageBatch),
+        "scoring_schema_fields": get_pydantic_schema_description(TriageResult),
     }
 
 
 @lru_cache(maxsize=1)
-def _provide_refine_schema() -> dict[str, Any]:
-    """Provide RefineBatch Pydantic schema for LLM prompts."""
-    from imas_codex.discovery.paths.models import RefineBatch, RefineResult
+def _provide_score_schema() -> dict[str, Any]:
+    """Provide ScoreBatch Pydantic schema for LLM prompts (second pass)."""
+    from imas_codex.discovery.paths.models import ScoreBatch, ScoreResult
 
     return {
-        "refine_schema_example": get_pydantic_schema_json(RefineBatch),
-        "refine_schema_fields": get_pydantic_schema_description(RefineResult),
+        "score_schema_example": get_pydantic_schema_json(ScoreBatch),
+        "score_schema_fields": get_pydantic_schema_description(ScoreResult),
     }
 
 
@@ -848,7 +848,8 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "score_dimensions": _provide_score_dimensions,
     "scoring_schema": _provide_scoring_schema,
     "physics_domains": _provide_physics_domains,
-    "refine_schema": _provide_refine_schema,
+    "refine_schema": _provide_score_schema,  # backwards compat alias
+    "score_schema": _provide_score_schema,
     "data_access_fields": _provide_data_access_fields,
     "format_patterns": _provide_format_patterns,
     # Wiki providers
@@ -918,15 +919,15 @@ _SCHEMA_PROVIDERS["file_triage_schema"] = _provide_file_triage_schema
 # Default schema needs per prompt (when not specified in frontmatter)
 # Only load what's actually used by each prompt
 _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
-    "discovery/scorer": [
+    "discovery/triage": [
         "path_purposes",
         "score_dimensions",
         "scoring_schema",
         "format_patterns",
         "physics_domains",
     ],
-    "discovery/refiner": [
-        "refine_schema",
+    "discovery/scorer": [
+        "score_schema",
         "format_patterns",
         "path_purposes",
         "score_dimensions",

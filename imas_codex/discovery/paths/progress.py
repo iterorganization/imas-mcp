@@ -51,8 +51,8 @@ class ScanItem:
 
 
 @dataclass
-class ScoreItem:
-    """Current score activity."""
+class TriageItem:
+    """Current triage activity."""
 
     path: str
     score: float | None = None
@@ -84,8 +84,8 @@ class EnrichItem:
 
 
 @dataclass
-class RefineItem:
-    """Current refine activity."""
+class ScoreItem:
+    """Current score activity (2nd pass with enrichment evidence)."""
 
     path: str
     score: float | None = None
@@ -125,75 +125,75 @@ class ProgressState:
 
     # Mode flags
     scan_only: bool = False
-    score_only: bool = False
+    triage_only: bool = False
 
     # Graph totals (aligned with new state machine)
     total: int = 0
     discovered: int = 0  # Awaiting scan
-    scanned: int = 0  # Awaiting score
-    scored: int = 0  # Scored complete
+    scanned: int = 0  # Awaiting triage
+    triaged: int = 0  # Triaged (1st pass)
+    scored: int = 0  # Scored complete (2nd pass)
     skipped: int = 0  # Low value or dead-end
     excluded: int = 0  # Matched exclusion pattern
     max_depth: int = 0  # Maximum tree depth
 
     # Pending work counts (for progress bars)
     pending_scan: int = 0  # discovered + scanning
-    pending_score: int = 0  # scanned + scoring
-    pending_expand: int = 0  # scored + should_expand + not expanded
-    pending_enrich: int = 0  # scored + should_enrich + not enriched
-    pending_refine: int = 0  # enriched + not refined
+    pending_triage: int = 0  # scanned + triaging
+    pending_expand: int = 0  # triaged + should_expand + not expanded
+    pending_enrich: int = 0  # triaged + should_enrich + not enriched
+    pending_score: int = 0  # enriched + not scored
 
     # Graph-persistent totals (from get_discovery_stats)
     enriched: int = 0  # Total enriched paths in graph
-    refined: int = 0  # Total refined paths in graph
 
     # This run stats
     run_scanned: int = 0
-    run_scored: int = 0
+    run_triaged: int = 0
     run_expanded: int = 0
     run_enriched: int = 0
-    run_refined: int = 0
-    # Track score and refine costs separately to avoid double-counting
+    run_scored: int = 0
+    # Track triage and score costs separately to avoid double-counting
+    _run_triage_cost: float = 0.0
     _run_score_cost: float = 0.0
-    _run_refine_cost: float = 0.0
     scan_rate: float | None = None
-    score_rate: float | None = None
+    triage_rate: float | None = None
     expand_rate: float | None = None
     enrich_rate: float | None = None
-    refine_rate: float | None = None
+    score_rate: float | None = None
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
 
     # Current items (and their processing state)
     current_scan: ScanItem | None = None
-    current_score: ScoreItem | None = None
+    current_triage: TriageItem | None = None
     current_enrich: EnrichItem | None = None
     # Processing counters — incremented when a worker starts a batch,
     # decremented when results arrive. Using counters (not bools) because
     # multiple workers of the same type run in parallel, and a single bool
     # would toggle incorrectly when one finishes while another is still active.
     scan_processing: int = 0
-    score_processing: int = 0
+    triage_processing: int = 0
     enrich_processing: int = 0
 
     # Streaming queues - enrich adapts rate based on batch size to fill inter-batch gaps
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
-    score_queue: StreamQueue = field(default_factory=StreamQueue)
+    triage_queue: StreamQueue = field(default_factory=StreamQueue)
     enrich_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.5, max_rate=2.5, min_display_time=0.4
         )
     )
-    refine_queue: StreamQueue = field(
+    score_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.5, max_rate=2.0, min_display_time=0.5
         )
     )
 
-    # Current refine item (for streaming display)
-    current_refine: RefineItem | None = None
-    refine_processing: int = 0
+    # Current score item (for streaming display)
+    current_score: ScoreItem | None = None
+    score_processing: int = 0
 
     # Dedup tracking
     run_deduped: int = 0  # Clone paths marked terminal this session
@@ -202,7 +202,7 @@ class ProgressState:
     dedup_processing: int = 0
 
     # Tracking
-    scored_paths: set[str] = field(default_factory=set)
+    triaged_paths: set[str] = field(default_factory=set)
     start_time: float = field(default_factory=time.time)
 
     # Enrichment aggregates for summary display
@@ -221,19 +221,19 @@ class ProgressState:
 
     @property
     def pending_work(self) -> int:
-        """Total pending work: scan + score + expand + enrich queues."""
+        """Total pending work: scan + triage + expand + enrich queues."""
         return (
             self.pending_scan
-            + self.pending_score
+            + self.pending_triage
             + self.pending_expand
             + self.pending_enrich
         )
 
     @property
     def cost_per_path(self) -> float | None:
-        """Average LLM cost per initially scored path (excludes refine cost)."""
-        if self.run_scored > 0:
-            return self._run_score_cost / self.run_scored
+        """Average LLM cost per triaged path (excludes score cost)."""
+        if self.run_triaged > 0:
+            return self._run_triage_cost / self.run_triaged
         return None
 
     @property
@@ -241,27 +241,27 @@ class ProgressState:
         """Estimated total cost based on current rate.
 
         Predicts cost for all remaining LLM work:
-        - pending_score paths at cost_per_path rate (initial scoring)
-        - pending_refine paths at refine cost rate
+        - pending_triage paths at cost_per_path rate (initial triage)
+        - pending_score paths at score cost rate
         """
         cpp = self.cost_per_path
         if cpp is None:
             return None
 
-        remaining_score_cost = (self.pending_scan + self.pending_score) * cpp
+        remaining_triage_cost = (self.pending_scan + self.pending_triage) * cpp
 
-        # Refine cost rate (separate from initial scoring)
-        remaining_refine_cost = 0.0
-        if self.run_refined > 0 and self._run_refine_cost > 0:
-            cost_per_refine = self._run_refine_cost / self.run_refined
-            remaining_refine_cost = self.pending_refine * cost_per_refine
+        # Score cost rate (separate from triage)
+        remaining_score_cost = 0.0
+        if self.run_scored > 0 and self._run_score_cost > 0:
+            cost_per_score = self._run_score_cost / self.run_scored
+            remaining_score_cost = self.pending_score * cost_per_score
 
-        return self.run_cost + remaining_score_cost + remaining_refine_cost
+        return self.run_cost + remaining_triage_cost + remaining_score_cost
 
     @property
     def run_cost(self) -> float:
-        """Total cost for this run (score + refine)."""
-        return self._run_score_cost + self._run_refine_cost
+        """Total cost for this run (triage + score)."""
+        return self._run_triage_cost + self._run_score_cost
 
     @property
     def coverage(self) -> float:
@@ -270,8 +270,8 @@ class ProgressState:
 
     @property
     def frontier_size(self) -> int:
-        """Total paths awaiting work (scan or score)."""
-        return self.pending_scan + self.pending_score + self.pending_expand
+        """Total paths awaiting work (scan or triage)."""
+        return self.pending_scan + self.pending_triage + self.pending_expand
 
     @property
     def cost_limit_reached(self) -> bool:
@@ -282,12 +282,12 @@ class ProgressState:
     def path_limit_reached(self) -> bool:
         """Check if path limit has been reached.
 
-        Uses scored count (terminal state) rather than scan + score
-        since scanning is just the start of the pipeline.
+        Uses triaged + scored count (terminal states) since both
+        represent paths that have completed their pipeline stage.
         """
         if self.path_limit is None or self.path_limit <= 0:
             return False
-        return self.run_scored >= self.path_limit
+        return (self.run_triaged + self.run_scored) >= self.path_limit
 
     @property
     def limit_reason(self) -> str | None:
@@ -333,10 +333,10 @@ class ProgressState:
         if self.pending_scan > 0 and combined_scan_rate > 0:
             worker_etas.append(self.pending_scan / combined_scan_rate)
 
-        # Score pipeline: pending_score paths at combined score+refine rate
-        combined_score_rate = sum(r for r in [self.score_rate, self.refine_rate] if r)
-        if self.pending_score > 0 and combined_score_rate > 0:
-            worker_etas.append(self.pending_score / combined_score_rate)
+        # Score pipeline: pending_triage paths at combined triage+score rate
+        combined_triage_rate = sum(r for r in [self.triage_rate, self.score_rate] if r)
+        if self.pending_triage > 0 and combined_triage_rate > 0:
+            worker_etas.append(self.pending_triage / combined_triage_rate)
 
         # Expand pipeline: pending_expand at expand rate
         if self.pending_expand > 0 and self.expand_rate and self.expand_rate > 0:
@@ -346,9 +346,9 @@ class ProgressState:
         if self.pending_enrich > 0 and self.enrich_rate and self.enrich_rate > 0:
             worker_etas.append(self.pending_enrich / self.enrich_rate)
 
-        # Refine pipeline: pending_refine at refine rate
-        if self.pending_refine > 0 and self.refine_rate and self.refine_rate > 0:
-            worker_etas.append(self.pending_refine / self.refine_rate)
+        # Score pipeline: pending_score at score rate
+        if self.pending_score > 0 and self.score_rate and self.score_rate > 0:
+            worker_etas.append(self.pending_score / self.score_rate)
 
         if worker_etas:
             return max(worker_etas)
@@ -366,7 +366,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
     """Clean progress display for parallel discovery.
 
     Extends ``BaseProgressDisplay`` for the paths discovery pipeline
-    (SCAN → SCORE → ENRICH).  Inherits header, servers, worker tracking,
+    (SCAN → TRIAGE → ENRICH → SCORE).  Inherits header, servers, worker tracking,
     and live-display lifecycle from the base class.
     """
 
@@ -379,7 +379,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         console: Console | None = None,
         focus: str = "",
         scan_only: bool = False,
-        score_only: bool = False,
+        triage_only: bool = False,
     ) -> None:
         super().__init__(
             facility=facility,
@@ -395,15 +395,15 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             model=model,
             focus=focus,
             scan_only=scan_only,
-            score_only=score_only,
+            triage_only=triage_only,
         )
 
     def _header_mode_label(self) -> str | None:
-        """Show SCAN ONLY / SCORE ONLY mode in header."""
+        """Show SCAN ONLY / TRIAGE ONLY mode in header."""
         if self.state.scan_only:
             return "SCAN ONLY"
-        if self.state.score_only:
-            return "SCORE ONLY"
+        if self.state.triage_only:
+            return "TRIAGE ONLY"
         return None
 
     def _build_pipeline_section(self) -> Text:
@@ -414,23 +414,24 @@ class ParallelProgressDisplay(BaseProgressDisplay):
           Line 2:       /gss/work/imas/codes/chease/src
           Line 3:       45 files, 3 dirs  code project
 
-        Stages: SCAN → SCORE → ENRICH
+        Stages: SCAN → TRIAGE → ENRICH → SCORE
         """
 
         # --- Compute progress data ---
 
         # SCAN: paths that finished scan / total needing scan
         scanned_paths = (
-            self.state.pending_score
+            self.state.pending_triage
+            + self.state.triaged
             + self.state.scored
             + self.state.skipped
             - self.state.excluded
         )
         scan_total = max(self.state.total - self.state.excluded, 1)
 
-        # SCORE: paths through LLM / total needing scoring
-        scored_paths = self.state.scored
-        score_total = max(self.state.pending_score + self.state.scored, 1)
+        # TRIAGE: paths through 1st LLM pass / total needing triage
+        triaged_paths = self.state.triaged + self.state.scored
+        triage_total = max(self.state.pending_triage + triaged_paths, 1)
 
         # ENRICH: enriched / total needing enrichment (graph-persistent)
         enrich_total = max(self.state.pending_enrich + self.state.enriched, 1)
@@ -439,27 +440,23 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         scan_rate = (
             sum(r for r in [self.state.scan_rate, self.state.expand_rate] if r) or None
         )
-        score_rate = (
-            sum(r for r in [self.state.score_rate, self.state.refine_rate] if r) or None
-        )
+        triage_rate = self.state.triage_rate
 
-        # Score cost for display
-        score_cost = (
-            self.state._run_score_cost + self.state._run_refine_cost
-            if self.state._run_score_cost > 0 or self.state._run_refine_cost > 0
-            else None
+        # Triage cost for display
+        triage_cost = (
+            self.state._run_triage_cost if self.state._run_triage_cost > 0 else None
         )
 
         # Worker counts per group
         scan_count, scan_ann = self._count_group_workers("scan")
         expand_count, _ = self._count_group_workers("expand")
-        score_count, score_ann = self._count_group_workers("score")
+        triage_count, triage_ann = self._count_group_workers("triage")
         enrich_count, enrich_ann = self._count_group_workers("enrich")
 
         # --- Build activity data ---
 
         scan = self.state.current_scan
-        score = self.state.current_score
+        triage = self.state.current_triage
         enrich = self.state.current_enrich
 
         # Worker completion detection — scan row is complete when both
@@ -469,7 +466,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             and self._worker_complete("expand")
             and not scan
         )
-        score_complete = self._worker_complete("score") and not score
+        triage_complete = self._worker_complete("triage") and not triage
         enrich_complete = self._worker_complete("enrich") and not enrich
 
         # SCAN activity
@@ -482,40 +479,40 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 scan_parts.append("code project")
             scan_desc = "  ".join(scan_parts)
 
-        # SCORE activity — uses structured fields for 3-line layout:
+        # TRIAGE activity — uses structured fields for 3-line layout:
         #   Line 2: score  physics_domain  /path/clipped...        rate
         #   Line 3: LLM description spanning full width...          $cost
-        score_path = ""
-        score_value: float | None = None
-        score_domain = ""
-        score_desc = ""
-        score_desc_fallback = ""
-        score_terminal = ""
-        if score:
-            score_path = score.path
+        triage_path = ""
+        triage_value: float | None = None
+        triage_domain = ""
+        triage_desc = ""
+        triage_desc_fallback = ""
+        triage_terminal = ""
+        if triage:
+            triage_path = triage.path
 
-            if score.score is not None:
-                score_value = score.score
+            if triage.score is not None:
+                triage_value = triage.score
 
                 # Physics domain (shown on line 2)
-                if score.physics_domain and score.physics_domain != "general":
-                    score_domain = score.physics_domain.replace("_", " ")
+                if triage.physics_domain and triage.physics_domain != "general":
+                    triage_domain = triage.physics_domain.replace("_", " ")
 
                 # Terminal label in muted red
-                if not score.should_expand and score.terminal_reason:
-                    score_terminal = score.terminal_reason.replace("_", " ")
-                elif not score.should_expand:
-                    score_terminal = "terminal"
+                if not triage.should_expand and triage.terminal_reason:
+                    triage_terminal = triage.terminal_reason.replace("_", " ")
+                elif not triage.should_expand:
+                    triage_terminal = "terminal"
 
                 # Description for line 3
-                if score.description:
-                    score_desc = clean_text(score.description)
-                elif score.purpose:
-                    score_desc_fallback = clean_text(score.purpose)
-            elif score.skipped:
-                score_terminal = "skipped"
-                if score.skip_reason:
-                    score_desc = clean_text(score.skip_reason)
+                if triage.description:
+                    triage_desc = clean_text(triage.description)
+                elif triage.purpose:
+                    triage_desc_fallback = clean_text(triage.purpose)
+            elif triage.skipped:
+                triage_terminal = "skipped"
+                if triage.skip_reason:
+                    triage_desc = clean_text(triage.skip_reason)
 
         # ENRICH activity
         enrich_text = ""
@@ -563,27 +560,27 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     )
                 enrich_desc = "  ".join(desc_parts)
 
-        # REFINE activity
-        refine_count, refine_ann = self._count_group_workers("refine")
+        # SCORE activity (2nd pass with enrichment evidence)
+        score_count, score_ann = self._count_group_workers("score")
         dedup_count, _ = self._count_group_workers("dedup")
         embed_count, _ = self._count_group_workers("embed")
-        refine = self.state.current_refine
-        refine_complete = self._worker_complete("refine") and not refine
+        score = self.state.current_score
+        score_complete = self._worker_complete("score") and not score
 
-        refine_text = ""
-        refine_score_parts: list[tuple[str, str]] | None = None
-        refine_domain = ""
-        refine_desc = ""
-        refine_terminal = ""
-        refine_queue_empty = self.state.refine_queue.is_empty()
-        if refine and (not refine_queue_empty or self.state.refine_processing > 0):
-            refine_text = refine.path
-            if refine.score is not None:
-                # Show just the +diff (delta) — the original score is already
-                # visible in the score worker stream
+        score_text = ""
+        score_score_parts: list[tuple[str, str]] | None = None
+        score_domain = ""
+        score_desc = ""
+        score_terminal = ""
+        score_queue_empty = self.state.score_queue.is_empty()
+        if score and (not score_queue_empty or self.state.score_processing > 0):
+            score_text = score.path
+            if score.score is not None:
+                # Show just the +diff (delta) — the triage score is already
+                # visible in the triage worker stream
                 parts: list[tuple[str, str]] = []
-                if refine.previous_score is not None:
-                    delta = refine.score - refine.previous_score
+                if score.previous_score is not None:
+                    delta = score.score - score.previous_score
                     delta_style = (
                         "green" if delta > 0 else "red" if delta < 0 else "dim"
                     )
@@ -594,35 +591,35 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     _threshold = get_discovery_threshold()
                     style = (
                         "bold green"
-                        if refine.score >= _threshold
+                        if score.score >= _threshold
                         else "yellow"
-                        if refine.score >= 0.4
+                        if score.score >= 0.4
                         else "red"
                     )
-                    parts.append((f"{refine.score:.2f}", style))
-                refine_score_parts = parts or None
+                    parts.append((f"{score.score:.2f}", style))
+                score_score_parts = parts or None
 
                 # Physics domain
-                if refine.physics_domain and refine.physics_domain != "general":
-                    refine_domain = refine.physics_domain.replace("_", " ")
+                if score.physics_domain and score.physics_domain != "general":
+                    score_domain = score.physics_domain.replace("_", " ")
 
-                # Terminal label (data dirs marked terminal by refine)
-                if not refine.should_expand and refine.terminal_reason:
-                    refine_terminal = refine.terminal_reason.replace("_", " ")
-                elif not refine.should_expand and refine.previous_score is not None:
+                # Terminal label (data dirs marked terminal by score)
+                if not score.should_expand and score.terminal_reason:
+                    score_terminal = score.terminal_reason.replace("_", " ")
+                elif not score.should_expand and score.previous_score is not None:
                     # Only show terminal for items that changed expansion
                     pass
 
                 # Description for line 3
-                if refine.adjustment_reason:
-                    refine_desc = clean_text(refine.adjustment_reason)
+                if score.adjustment_reason:
+                    score_desc = clean_text(score.adjustment_reason)
 
-        # REFINE totals
-        refine_total = max(self.state.pending_refine + self.state.refined, 1)
+        # SCORE totals
+        score_total = max(self.state.pending_score + self.state.scored, 1)
 
-        # Refine cost for display
-        refine_cost = (
-            self.state._run_refine_cost if self.state._run_refine_cost > 0 else None
+        # Score cost for display
+        score_cost = (
+            self.state._run_score_cost if self.state._run_score_cost > 0 else None
         )
 
         # DEDUP runs in background — not shown in pipeline display
@@ -636,7 +633,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 completed=scanned_paths,
                 total=scan_total,
                 rate=scan_rate,
-                disabled=self.state.score_only,
+                disabled=self.state.triage_only,
                 primary_text=scan_text,
                 description=scan_desc,
                 is_processing=self.state.scan_processing > 0,
@@ -653,29 +650,29 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 ),
             ),
             PipelineRowConfig(
-                name="SCORE",
+                name="TRIAGE",
                 style="bold green",
-                completed=scored_paths,
-                total=score_total,
-                rate=score_rate,
-                cost=score_cost,
+                completed=triaged_paths,
+                total=triage_total,
+                rate=triage_rate,
+                cost=triage_cost,
                 disabled=self.state.scan_only,
-                primary_text=score_path,
-                score_value=score_value,
-                physics_domain=score_domain,
-                terminal_label=score_terminal,
-                description=score_desc,
-                description_fallback=score_desc_fallback,
-                is_processing=self.state.score_processing > 0,
-                is_complete=score_complete,
-                worker_count=score_count,
-                worker_annotation=score_ann,
+                primary_text=triage_path,
+                score_value=triage_value,
+                physics_domain=triage_domain,
+                terminal_label=triage_terminal,
+                description=triage_desc,
+                description_fallback=triage_desc_fallback,
+                is_processing=self.state.triage_processing > 0,
+                is_complete=triage_complete,
+                worker_count=triage_count,
+                worker_annotation=triage_ann,
                 aux_workers=([("embed", embed_count)] if embed_count > 0 else None),
                 queue_size=(
-                    len(self.state.score_queue)
-                    if not self.state.score_queue.is_empty()
-                    and not score
-                    and self.state.score_processing == 0
+                    len(self.state.triage_queue)
+                    if not self.state.triage_queue.is_empty()
+                    and not triage
+                    and self.state.triage_processing == 0
                     else 0
                 ),
             ),
@@ -694,22 +691,22 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 worker_annotation=enrich_ann,
             ),
             PipelineRowConfig(
-                name="REFINE",
+                name="SCORE",
                 style="bold cyan",
-                completed=self.state.refined,
-                total=refine_total,
-                rate=self.state.refine_rate,
-                cost=refine_cost,
+                completed=self.state.scored,
+                total=score_total,
+                rate=self.state.score_rate,
+                cost=score_cost,
                 disabled=self.state.scan_only,
-                primary_text=refine_text,
-                score_parts=refine_score_parts,
-                physics_domain=refine_domain,
-                terminal_label=refine_terminal,
-                description=refine_desc,
-                is_processing=self.state.refine_processing > 0,
-                is_complete=refine_complete,
-                worker_count=refine_count,
-                worker_annotation=refine_ann,
+                primary_text=score_text,
+                score_parts=score_score_parts,
+                physics_domain=score_domain,
+                terminal_label=score_terminal,
+                description=score_desc,
+                is_processing=self.state.score_processing > 0,
+                is_complete=score_complete,
+                worker_count=score_count,
+                worker_annotation=score_ann,
                 aux_workers=([("dedup", dedup_count)] if dedup_count > 0 else None),
             ),
         ]
@@ -723,11 +720,11 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         etc = total_facility_cost
         cpp = self.state.cost_per_path
         if cpp and cpp > 0:
-            pending = self.state.pending_scan + self.state.pending_score
+            pending = self.state.pending_scan + self.state.pending_triage
             etc += pending * cpp
-        if self.state.run_refined > 0 and self.state._run_refine_cost > 0:
-            cost_per_refine = self.state._run_refine_cost / self.state.run_refined
-            etc += self.state.pending_refine * cost_per_refine
+        if self.state.run_scored > 0 and self.state._run_score_cost > 0:
+            cost_per_score = self.state._run_score_cost / self.state.run_scored
+            etc += self.state.pending_score * cost_per_score
 
         # Build stats
         stats: list[tuple[str, str, str]] = [
@@ -755,7 +752,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 ("scan", self.state.pending_scan),
                 ("expand", self.state.pending_expand),
                 ("enrich", self.state.pending_enrich),
-                ("refine", self.state.pending_refine),
+                ("score", self.state.pending_score),
             ],
         )
         return build_resource_section(config, self.gauge_width)
@@ -813,39 +810,39 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    def update_score(
+    def update_triage(
         self,
         message: str,
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update scorer state."""
-        self.state.run_scored = stats.processed
-        self.state.score_rate = stats.ema_rate or stats.active_rate
-        self.state._run_score_cost = stats.cost
+        """Update triage worker state."""
+        self.state.run_triaged = stats.processed
+        self.state.triage_rate = stats.ema_rate or stats.active_rate
+        self.state._run_triage_cost = stats.cost
 
         # Track processing state for display
-        # Don't clear current_score when waiting - let queue drain naturally
+        # Don't clear current_triage when waiting - let queue drain naturally
         # via tick(). Only update the processing counter.
         if "waiting" in message.lower():
-            self.state.score_processing = max(0, self.state.score_processing - 1)
+            self.state.triage_processing = max(0, self.state.triage_processing - 1)
             self._refresh()
             return
-        elif "scoring" in message.lower():
+        elif "triaging" in message.lower():
             # About to call LLM - mark as processing
-            self.state.score_processing += 1
+            self.state.triage_processing += 1
         else:
             # Got results back
-            self.state.score_processing = max(0, self.state.score_processing - 1)
+            self.state.triage_processing = max(0, self.state.triage_processing - 1)
 
-        # Queue score results for streaming (tick() handles rate-limited popping)
+        # Queue triage results for streaming (tick() handles rate-limited popping)
         if results:
             items = []
             for r in results:
                 path = r.get("path", "")
-                self.state.scored_paths.add(path)
+                self.state.triaged_paths.add(path)
                 items.append(
-                    ScoreItem(
+                    TriageItem(
                         path=path,
                         score=r.get("score"),
                         purpose=r.get("label", "") or r.get("path_purpose", ""),
@@ -860,7 +857,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             # Adaptive rate: use last_batch_time to drain queue
             # just before next batch arrives. EMA as fallback.
             ema = stats.ema_rate or stats.active_rate
-            self.state.score_queue.add(
+            self.state.triage_queue.add(
                 items,
                 ema,
                 last_batch_time=stats.last_batch_time,
@@ -1007,36 +1004,36 @@ class ParallelProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
-    def update_refine(
+    def update_score(
         self,
         message: str,
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update refine worker state with own display row."""
-        self.state.run_refined = stats.processed
-        self.state.refine_rate = stats.ema_rate or stats.active_rate
-        # Track refine cost separately (cumulative from refine worker)
-        self.state._run_refine_cost = stats.cost
+        """Update score worker state with own display row."""
+        self.state.run_scored = stats.processed
+        self.state.score_rate = stats.ema_rate or stats.active_rate
+        # Track score cost separately (cumulative from score worker)
+        self.state._run_score_cost = stats.cost
 
         # Track processing state for display
         if "waiting" in message.lower():
-            self.state.refine_processing = max(0, self.state.refine_processing - 1)
+            self.state.score_processing = max(0, self.state.score_processing - 1)
             self._refresh()
             return
-        elif "rescoring" in message.lower():
-            self.state.refine_processing += 1
+        elif "scoring" in message.lower():
+            self.state.score_processing += 1
         else:
-            self.state.refine_processing = max(0, self.state.refine_processing - 1)
+            self.state.score_processing = max(0, self.state.score_processing - 1)
 
-        # Queue refine results to refine stream (own display row)
+        # Queue score results to score stream (own display row)
         if results:
             items = []
             for r in results:
                 path = r.get("path", "")
                 reason = r.get("adjustment_reason", "")
                 items.append(
-                    RefineItem(
+                    ScoreItem(
                         path=path,
                         score=r.get("score"),
                         previous_score=r.get("previous_score"),
@@ -1055,7 +1052,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             # Adaptive rate: use last_batch_time to drain queue
             # just before next batch arrives. EMA as fallback.
             ema = stats.ema_rate or stats.active_rate
-            self.state.refine_queue.add(
+            self.state.score_queue.add(
                 items,
                 ema,
                 last_batch_time=stats.last_batch_time,
@@ -1106,6 +1103,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.total = stats["total"]
         self.state.discovered = stats["discovered"]
         self.state.scanned = stats["scanned"]
+        self.state.triaged = stats["triaged"]
         self.state.scored = stats["scored"]
         self.state.skipped = stats["skipped"]
         self.state.excluded = stats["excluded"]
@@ -1141,16 +1139,16 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             self.state.current_scan = None
             updated = True
 
-        next_score = self.state.score_queue.pop()
-        if next_score:
-            self.state.current_score = next_score
+        next_triage = self.state.triage_queue.pop()
+        if next_triage:
+            self.state.current_triage = next_triage
             updated = True
         elif (
-            self.state.score_queue.is_stale()
-            and self.state.current_score is not None
-            and self.state.score_processing == 0
+            self.state.triage_queue.is_stale()
+            and self.state.current_triage is not None
+            and self.state.triage_processing == 0
         ):
-            self.state.current_score = None
+            self.state.current_triage = None
             updated = True
 
         next_enrich = self.state.enrich_queue.pop()
@@ -1165,24 +1163,24 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             self.state.current_enrich = None
             updated = True
 
-        next_refine = self.state.refine_queue.pop()
-        if next_refine:
-            self.state.current_refine = next_refine
+        next_score = self.state.score_queue.pop()
+        if next_score:
+            self.state.current_score = next_score
             updated = True
         elif (
-            self.state.refine_queue.is_stale()
-            and self.state.current_refine is not None
-            and self.state.refine_processing == 0
+            self.state.score_queue.is_stale()
+            and self.state.current_score is not None
+            and self.state.score_processing == 0
         ):
-            self.state.current_refine = None
+            self.state.current_score = None
             updated = True
 
         if updated:
             self._refresh()
 
-    def get_paths_scored_this_run(self) -> set[str]:
-        """Get paths scored during this run."""
-        return self.state.scored_paths
+    def get_paths_triaged_this_run(self) -> set[str]:
+        """Get paths triaged during this run."""
+        return self.state.triaged_paths
 
     def get_enrichment_aggregates(self) -> dict:
         """Get aggregated enrichment statistics.
@@ -1207,14 +1205,13 @@ class ParallelProgressDisplay(BaseProgressDisplay):
     def _calculate_pending_from_stats(self, stats: dict) -> None:
         """Calculate pending work counts from graph stats."""
         scanning = stats.get("scanning", 0)
-        scoring = stats.get("scoring", 0)
+        triaging = stats.get("triaging", 0)
         self.state.pending_scan = stats.get("discovered", 0) + scanning
-        self.state.pending_score = stats.get("scanned", 0) + scoring
+        self.state.pending_triage = stats.get("scanned", 0) + triaging
         self.state.pending_expand = stats.get("expansion_ready", 0)
         self.state.pending_enrich = stats.get("enrichment_ready", 0)
-        self.state.pending_refine = stats.get("refine_ready", 0)
+        self.state.pending_score = stats.get("score_ready", 0)
         self.state.enriched = stats.get("enriched", 0)
-        self.state.refined = stats.get("refined", 0)
 
 
 def print_discovery_status(
@@ -1272,23 +1269,23 @@ def print_discovery_status(
 
             discovered = stats.get("discovered", 0)
             scanned = stats.get("scanned", 0)
+            triaged = stats.get("triaged", 0)
             scored = stats.get("scored", 0)
             skipped = stats.get("skipped", 0)
             excluded = stats.get("excluded", 0)
             max_depth = stats.get("max_depth", 0)
             enriched = stats.get("enriched", 0)
-            refined = stats.get("refined", 0)
 
             # Cumulative throughput: each stage includes all downstream
-            cum_scanned = scanned + scored + skipped
-            cum_scored = scored + skipped
+            cum_scanned = scanned + triaged + scored + skipped
+            cum_triaged = triaged + scored + skipped
 
             output(f"├─ Scanned:    {cum_scanned:,} ({cum_scanned / total * 100:.1f}%)")
-            output(f"│  ├─ Scored:  {cum_scored:,} ({cum_scored / total * 100:.1f}%)")
+            output(f"│  ├─ Triaged: {cum_triaged:,} ({cum_triaged / total * 100:.1f}%)")
             if enriched > 0:
                 output(f"│  │  ├─ Enriched: {enriched:,}")
-            if refined > 0:
-                output(f"│  │  └─ Refined:  {refined:,}")
+            if scored > 0:
+                output(f"│  │  └─ Scored:   {scored:,}")
             output(f"│  └─ Skipped: {skipped:,} ({skipped / total * 100:.1f}%)")
             if discovered > 0:
                 output(
@@ -1341,8 +1338,8 @@ def print_discovery_status(
             frontier = discovered + scanned
             output(f"\nFrontier: {frontier} paths awaiting work")
             output(f"Max depth: {max_depth}")
-            coverage = scored / total * 100 if total > 0 else 0
-            output(f"Coverage: {coverage:.1f}% scored")
+            coverage = (triaged + scored) / total * 100 if total > 0 else 0
+            output(f"Coverage: {coverage:.1f}% triaged")
 
             from imas_codex.settings import get_discovery_threshold
 

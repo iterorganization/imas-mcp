@@ -100,9 +100,9 @@ class TestDiscoveryState:
         state = DiscoveryState(facility="test", cost_limit=10.0)
         state.scan_phase._idle_count = 3
         state.expand_phase._idle_count = 3
-        state.score_phase._idle_count = 3
+        state.triage_phase._idle_count = 3
         state.enrich_phase._idle_count = 3
-        state.refine_phase._idle_count = 3
+        state.score_phase._idle_count = 3
         assert state.should_stop()
 
     @patch("imas_codex.discovery.paths.parallel.has_pending_work", return_value=True)
@@ -117,13 +117,13 @@ class TestDiscoveryState:
         state = DiscoveryState(facility="test", cost_limit=10.0)
         state.scan_phase._idle_count = 3
         state.expand_phase._idle_count = 3
-        state.score_phase._idle_count = 3
+        state.triage_phase._idle_count = 3
         state.enrich_phase._idle_count = 3
-        state.refine_phase._idle_count = 3
+        state.score_phase._idle_count = 3
         assert not state.should_stop()
         # Idle counts should have been reset
         assert state.scan_phase.idle_count == 0
-        assert state.score_phase.idle_count == 0
+        assert state.triage_phase.idle_count == 0
 
     def test_should_not_stop_when_one_active(self):
         """Test should_stop returns False when one worker active."""

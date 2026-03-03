@@ -5,12 +5,12 @@ You MUST return valid JSON matching this EXACT structure. The response MUST be p
 **Schema derived from Pydantic model:**
 
 ```json
-{{ refine_schema_example }}
+{{ score_schema_example }}
 ```
 
 ### Field Requirements
 
-{{ refine_schema_fields }}
+{{ score_schema_fields }}
 
 ### Critical Rules
 

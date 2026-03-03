@@ -598,23 +598,25 @@ classes:
       - eza: Tree view for directory hierarchy context
       
       PARALLEL DISCOVERY PIPELINE:
-      1. Scan: discovered -> listing -> listed (enumerate files, set counts)
-      2. Score: listed -> scoring -> scored (LLM evaluates, sets score/expand/enrich)
-      3. Expand: scored + should_expand -> children created as discovered
-      4. Enrich: scored + should_enrich -> enriched (du/tokei/patterns)
-      5. Refine: enriched -> refined (LLM re-evaluation with enrichment evidence)
+      1. Scan: discovered -> listed (enumerate files, set counts)
+      2. Triage: listed -> triaged (LLM classification, sets triage_score/expand/enrich)
+      3. Expand: triaged + should_expand -> children created as discovered
+      4. Enrich: triaged + should_enrich + triage_score >= threshold -> enriched
+      5. Score: enriched -> scored (independent LLM evaluation with enrichment evidence)
       
       Expand and Enrich run in PARALLEL as independent workers.
-      Refine runs after enrichment for high-value paths.
+      Score runs after enrichment for high-value paths.
+      Paths below threshold remain terminal in triaged state.
       
       Terminal states:
-      - scored: Has LLM score, ready for ingestion if high-value
+      - triaged: Below threshold, initial classification only
+      - scored: Fully evaluated with enrichment evidence
       - skipped: Low score (< 0.2), not worth ingesting
       - excluded: Matched exclusion pattern (never scanned)
       - stale: May have changed, needs re-discovery
       
       Query paths by status to find work for each phase.
-      Use score field to prioritize paths for code ingestion.
+      Use score field (set by scoring) to prioritize paths for code ingestion.
     mixins:
       - LLMOperation
       - DiscoveryProvenance
@@ -714,8 +716,17 @@ classes:
       # Scoring dimensions (LLM-assigned, 0.0-1.0 each)
       # Per-purpose scores aligned with DiscoveryRootCategory taxonomy
       # Enables downstream actors to query specific dimensions
+      triage_score:
+        description: >-
+          Composite triage score (0.0-1.0) from initial LLM classification.
+          Set during triage phase based on directory structure only.
+          Preserved when score worker overwrites per-dimension scores.
+        range: float
       score:
-        description: Composite interest score (0.0-1.0), max of per-purpose scores
+        description: >-
+          Authoritative composite score (0.0-1.0) from second-pass LLM evaluation
+          with enrichment evidence. Only set for paths that completed scoring.
+          Null for paths that remained in triaged state.
         range: float
       score_percentile:
         description: Percentile rank within facility (0.0-1.0), updated periodically
@@ -819,11 +830,11 @@ classes:
       skipped_at:
         description: When this path was marked as skipped
         range: datetime
-      scored_at:
-        description: When this path was scored
+      triaged_at:
+        description: When this path was triaged (initial classification)
         range: datetime
-      refined_at:
-        description: When this path was refined with enrichment evidence (null if not refined)
+      scored_at:
+        description: When this path was scored (second-pass evaluation, null if not scored)
         range: datetime
       session_id:
         description: Scout session that discovered/processed this path
@@ -913,8 +924,8 @@ classes:
         description: Total count of data-write pattern matches across all categories
         range: integer
       # Refinement properties (set during LLM refinement with enrichment evidence)
-      refine_reason:
-        description: Brief explanation of main score adjustment during refinement
+      score_reason:
+        description: Brief explanation of scoring rationale from second-pass evaluation
       primary_evidence:
         description: JSON-encoded list of key pattern categories informing score adjustment
       evidence_summary:

@@ -2,17 +2,17 @@
 Frontier management for graph-led discovery.
 
 The frontier is the set of FacilityPath nodes that are ready for scanning
-(status='discovered') or ready for scoring (status='scanned'). This module
+(status='discovered') or ready for triage (status='scanned'). This module
 provides queries and utilities for managing the frontier.
 
 State machine:
-    discovered → scanning → scanned → scoring → scored
+    discovered → scanned → triaged → scored
 
-    Transient states (scanning, scoring) auto-recover to previous state on timeout.
-    Paths with score >= 0.75 are refined after enrichment (is_enriched=true).
+    Paths above threshold proceed: triaged → enriched → scored (2nd LLM pass).
+    Paths below threshold remain terminal in triaged state.
 
 Key concepts:
-    - Frontier: Paths awaiting work (discovered → scan, scanned → score)
+    - Frontier: Paths awaiting work (discovered → scan, scanned → triage)
     - Coverage: Fraction of known paths that are scored
     - Seeding: Creating initial root paths for a facility
 """
@@ -225,8 +225,9 @@ class DiscoveryStats:
     facility: str
     total: int = 0
     discovered: int = 0  # Awaiting scan
-    scanned: int = 0  # Awaiting score
-    scored: int = 0  # Scored (including refined)
+    scanned: int = 0  # Awaiting triage
+    triaged: int = 0  # Triaged (initial classification)
+    scored: int = 0  # Scored (2nd pass after enrichment)
     skipped: int = 0  # Low value or dead-end
     excluded: int = 0  # Matched exclusion pattern
     max_depth: int = 0  # Maximum depth in tree
@@ -278,16 +279,17 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.status = $skipped THEN 1 ELSE 0 END) AS skipped,
                 sum(CASE WHEN p.terminal_reason = $excluded_reason THEN 1 ELSE 0 END) AS excluded,
                 sum(CASE WHEN p.claimed_at IS NOT NULL THEN 1 ELSE 0 END) AS claimed,
-                sum(CASE WHEN p.status = $scored AND p.should_expand = true AND p.expanded_at IS NULL THEN 1 ELSE 0 END) AS expansion_ready,
-                sum(CASE WHEN p.status = $scored AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
+                sum(CASE WHEN p.status = $triaged AND p.should_expand = true AND p.expanded_at IS NULL THEN 1 ELSE 0 END) AS expansion_ready,
+                sum(CASE WHEN p.status = $triaged AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 sum(CASE WHEN p.is_enriched = true THEN 1 ELSE 0 END) AS enriched,
-                sum(CASE WHEN p.refined_at IS NOT NULL THEN 1 ELSE 0 END) AS refined,
-                sum(CASE WHEN p.is_enriched = true AND p.score >= $min_score AND p.refined_at IS NULL THEN 1 ELSE 0 END) AS refine_ready,
+                sum(CASE WHEN p.status = $triaged THEN 1 ELSE 0 END) AS triaged,
+                sum(CASE WHEN p.is_enriched = true AND p.triage_score >= $min_score AND p.scored_at IS NULL THEN 1 ELSE 0 END) AS score_ready,
                 max(coalesce(p.depth, 0)) AS max_depth
             """,
             facility=facility,
             discovered=PathStatus.discovered.value,
             scanned=PathStatus.scanned.value,
+            triaged=PathStatus.triaged.value,
             scored=PathStatus.scored.value,
             skipped=PathStatus.skipped.value,
             excluded_reason=TerminalReason.excluded.value,
@@ -306,8 +308,8 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 "expansion_ready": result[0]["expansion_ready"],
                 "enrichment_ready": result[0]["enrichment_ready"],
                 "enriched": result[0]["enriched"],
-                "refined": result[0]["refined"],
-                "refine_ready": result[0]["refine_ready"],
+                "triaged": result[0]["triaged"],
+                "score_ready": result[0]["score_ready"],
                 "max_depth": result[0]["max_depth"] or 0,
             }
 
@@ -322,8 +324,8 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             "expansion_ready": 0,
             "enrichment_ready": 0,
             "enriched": 0,
-            "refined": 0,
-            "refine_ready": 0,
+            "triaged": 0,
+            "score_ready": 0,
             "max_depth": 0,
         }
 
@@ -353,33 +355,22 @@ def get_purpose_distribution(facility: str) -> dict[str, int]:
 def get_frontier(
     facility: str,
     limit: int = 100,
-    include_refine: bool = True,
 ) -> list[dict[str, Any]]:
-    """Get paths in the frontier (awaiting scan or refinement).
+    """Get paths in the frontier (awaiting scan).
 
     Frontier includes:
     1. Paths with status='discovered' (awaiting initial scan)
-    2. Paths with status='scored', is_enriched=true, score >= 0.75,
-       refine_count < 1 (awaiting refinement)
 
     Args:
         facility: Facility ID
         limit: Maximum paths to return
-        include_refine: Include paths marked for refinement
 
     Returns:
         List of dicts with path info: id, path, depth, status, in_directory
     """
     from imas_codex.graph import GraphClient
 
-    if include_refine:
-        where_clause = (
-            f"p.status = '{PathStatus.discovered.value}' OR "
-            f"(p.status = '{PathStatus.scored.value}' AND p.is_enriched = true AND "
-            f"p.score >= 0.75 AND coalesce(p.refine_count, 0) < 1)"
-        )
-    else:
-        where_clause = f"p.status = '{PathStatus.discovered.value}'"
+    where_clause = f"p.status = '{PathStatus.discovered.value}'"
 
     with GraphClient() as gc:
         result = gc.query(
@@ -1080,7 +1071,7 @@ def apply_expansion_overrides(
 
     Args:
         facility: Facility ID
-        scores: List of dicts from ScoredDirectory.to_graph_dict()
+        scores: List of dicts from TriagedDirectory.to_graph_dict()
     """
     from imas_codex.config.discovery_config import is_repo_accessible_elsewhere
     from imas_codex.graph import GraphClient
@@ -1162,15 +1153,19 @@ def apply_expansion_overrides(
                 )
 
 
-def mark_paths_scored(
+def mark_paths_triaged(
     facility: str,
     scores: list[dict[str, Any]],
 ) -> int:
-    """Update multiple paths with LLM scores and create/link Evidence nodes.
+    """Update multiple paths with LLM triage results and create/link Evidence nodes.
+
+    Sets status to 'triaged' and stores triage_score (composite) alongside
+    per-dimension scores. Paths above the discovery threshold proceed to
+    enrichment and 2nd-pass scoring.
 
     Args:
         facility: Facility ID
-        scores: List of dicts from ScoredDirectory.to_graph_dict() with:
+        scores: List of dicts from TriagedDirectory.to_graph_dict() with:
                 path, path_purpose, description, evidence, per-purpose scores
                 (score_modeling_code, score_analysis_code, etc.), score, should_expand,
                 keywords, physics_domain, expansion_reason, skip_reason
@@ -1234,10 +1229,10 @@ def mark_paths_scored(
             gc.query(
                 """
                 MATCH (p:FacilityPath {id: $id})
-                SET p.status = $scored,
+                SET p.status = $triaged,
                     p.claimed_at = null,
-                    p.scored_at = $now,
-                    p.score = $score,
+                    p.triaged_at = $now,
+                    p.triage_score = $score,
                     p.score_modeling_code = $score_modeling_code,
                     p.score_analysis_code = $score_analysis_code,
                     p.score_operations_code = $score_operations_code,
@@ -1293,7 +1288,7 @@ def mark_paths_scored(
                 terminal_reason=score_data.get("terminal_reason"),
                 enrich_skip_reason=score_data.get("enrich_skip_reason"),
                 score_cost=score_data.get("score_cost", 0.0),
-                scored=PathStatus.scored.value,
+                triaged=PathStatus.triaged.value,
             )
             updated += 1
 
@@ -1706,8 +1701,7 @@ async def persist_scan_results(
                 update_dict["patterns_found"] = patterns
 
             if is_expanding:
-                # Expansion scan: keep scored status, mark as expanded
-                update_dict["status"] = PathStatus.scored.value
+                # Expansion scan: keep current status, mark as expanded
                 update_dict["expanded_at"] = now
                 expansion_updates.append(update_dict)
 
@@ -1838,14 +1832,13 @@ async def persist_scan_results(
             # newly-scanned paths while we handle excluded dirs, users, etc.
             await asyncio.sleep(0)
 
-        # Batch update expansion paths (scored stays scored, mark expanded)
+        # Batch update expansion paths (keep current status, mark expanded)
         if expansion_updates:
             expand_result = gc.query(
                 """
                 UNWIND $items AS item
                 MATCH (p:FacilityPath {id: item.id})
-                SET p.status = item.status,
-                    p.claimed_at = null,
+                SET p.claimed_at = null,
                     p.expanded_at = item.expanded_at,
                     p.listed_at = item.listed_at,
                     p.total_files = item.total_files,
@@ -2473,12 +2466,12 @@ def sample_paths_by_dimension(
     return samples
 
 
-def reset_refined_paths(facility: str) -> int:
-    """Reset all refined paths so they get picked up for refinement again.
+def reset_scored_paths(facility: str) -> int:
+    """Reset all scored paths so they get picked up for scoring again.
 
-    Clears refined_at, refine_reason, primary_evidence, and evidence_summary
-    on all enriched paths for the facility. This allows re-refinement with an
-    improved prompt without re-running enrichment.
+    Clears scored_at and score_reason on all enriched paths for the facility.
+    This allows re-scoring with an improved prompt without re-running enrichment.
+    Status reverts from 'scored' back to 'triaged'.
 
     Args:
         facility: Facility ID
@@ -2492,14 +2485,14 @@ def reset_refined_paths(facility: str) -> int:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.is_enriched = true AND p.refined_at IS NOT NULL
-            SET p.refined_at = null,
-                p.refine_reason = null,
-                p.primary_evidence = null,
-                p.evidence_summary = null
+            WHERE p.is_enriched = true AND p.scored_at IS NOT NULL
+            SET p.scored_at = null,
+                p.score_reason = null,
+                p.status = $triaged
             RETURN count(p) AS reset_count
             """,
             facility=facility,
+            triaged=PathStatus.triaged.value,
         )
         rows = list(result)
         return rows[0]["reset_count"] if rows else 0
@@ -2510,11 +2503,11 @@ def sample_enriched_paths(
     per_category: int = 2,
     cross_facility: bool = True,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Sample paths with enrichment data for refine calibration.
+    """Sample paths with enrichment data for score calibration.
 
     Returns examples that show how enrichment data (LOC, languages,
     multiformat) correlates with scores, AND examples from different
-    score ranges to help the refiner understand score distribution.
+    score ranges to help the scorer understand score distribution.
 
     Args:
         facility: Current facility (for preferring same-facility examples)
@@ -2816,14 +2809,14 @@ def mark_enrichment_complete(
     return updated
 
 
-def claim_paths_for_refining(facility: str, limit: int = 10) -> list[dict[str, Any]]:
-    """Claim enriched paths ready for refinement with full context.
+def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Claim enriched paths ready for 2nd-pass scoring with full context.
 
-    Paths ready for refinement:
-    - status = 'scored' (base scoring complete)
+    Paths ready for scoring:
+    - status = 'triaged' (initial triage complete)
     - is_enriched = true (deep analysis done)
-    - score >= 0.5 (only bother refining potentially valuable paths)
-    - refined_at IS NULL (not yet refined)
+    - triage_score >= 0.5 (only bother scoring potentially valuable paths)
+    - scored_at IS NULL (not yet scored)
 
     Uses claimed_at for worker coordination.
 
@@ -2844,16 +2837,16 @@ def claim_paths_for_refining(facility: str, limit: int = 10) -> list[dict[str, A
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.status = $scored
+            WHERE p.status = $triaged
               AND p.is_enriched = true
-              AND p.score >= 0.5
-              AND p.refined_at IS NULL
+              AND p.triage_score >= 0.5
+              AND p.scored_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime($cutoff))
             WITH p
-            ORDER BY p.score DESC
+            ORDER BY p.triage_score DESC
             LIMIT $limit
             SET p.claimed_at = $now
-            RETURN p.id AS id, p.path AS path, p.score AS score,
+            RETURN p.id AS id, p.path AS path, p.triage_score AS triage_score,
                    p.total_bytes AS total_bytes, p.total_lines AS total_lines,
                    p.language_breakdown AS language_breakdown,
                    p.is_multiformat AS is_multiformat,
@@ -2872,7 +2865,7 @@ def claim_paths_for_refining(facility: str, limit: int = 10) -> list[dict[str, A
                    p.score_imas AS score_imas
             """,
             facility=facility,
-            scored=PathStatus.scored.value,
+            triaged=PathStatus.triaged.value,
             cutoff=cutoff,
             now=now_iso,
             limit=limit,
@@ -2990,16 +2983,17 @@ def sample_dimension_calibration_examples(
     return samples
 
 
-def mark_refine_complete(
+def mark_score_complete(
     facility: str,
     results: list[dict[str, Any]],
 ) -> int:
-    """Mark paths as refined with updated per-dimension scores.
+    """Mark paths as scored (2nd pass) with updated per-dimension scores.
 
     Updates paths with:
-    - Combined score and individual dimension scores (refined based on enrichment)
-    - refine_reason: explanation of why scores changed
-    - refined_at = current timestamp
+    - Combined score and individual dimension scores (based on enrichment evidence)
+    - score_reason: explanation of the scoring rationale
+    - scored_at = current timestamp
+    - status = 'scored'
     - Augments score_cost (doesn't replace)
     - Clears claimed_at
 
@@ -3008,8 +3002,8 @@ def mark_refine_complete(
         results: List of dicts with:
             - path: Path string
             - score: New combined score
-            - score_cost: LLM cost for refinement (added to existing)
-            - adjustment_reason: Why scores changed (stored as refine_reason)
+            - score_cost: LLM cost for scoring (added to existing)
+            - adjustment_reason: Scoring rationale (stored as score_reason)
             - score_modeling_code, score_analysis_code, etc. (optional per-dimension)
 
     Returns:
@@ -3042,7 +3036,8 @@ def mark_refine_complete(
             # Build SET clause dynamically based on which dimensions are present
             set_parts = [
                 "p.score = $score",
-                "p.refined_at = $now",
+                "p.status = $scored",
+                "p.scored_at = $now",
                 "p.claimed_at = null",
                 "p.score_cost = coalesce(p.score_cost, 0) + $cost",
             ]
@@ -3051,12 +3046,13 @@ def mark_refine_complete(
                 "now": now,
                 "score": result.get("score"),
                 "cost": result.get("score_cost", 0.0),
+                "scored": PathStatus.scored.value,
             }
 
-            # Store refine reason
+            # Store score reason
             if result.get("adjustment_reason"):
-                set_parts.append("p.refine_reason = $refine_reason")
-                params["refine_reason"] = result["adjustment_reason"]
+                set_parts.append("p.score_reason = $score_reason")
+                params["score_reason"] = result["adjustment_reason"]
 
             # Add each dimension that has a value
             for dim in dimensions:

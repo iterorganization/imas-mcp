@@ -1,16 +1,17 @@
 """
 Data models for graph-led discovery pipeline.
 
-These models define runtime structures for the LLM-based scoring phase.
+These models define runtime structures for the LLM-based triage and scoring phases.
 Schema-derived types (ResourcePurpose) are imported from
 the generated graph/models.py module.
 
-Note: DirectoryEvidence, ScoredDirectory, ScoredBatch are transient runtime
-structures for the scorer, NOT graph node types. They are converted to
-graph updates via frontier.mark_paths_scored().
+Note: DirectoryEvidence, TriagedDirectory, TriagedBatch are transient runtime
+structures for the triager, NOT graph node types. They are converted to
+graph updates via frontier.mark_paths_triaged().
 
-The Pydantic models (ScoreResult, ScoreBatch, RefineResult, RefineBatch)
-are used for LLM structured output - LiteLLM parses responses directly into these.
+Pydantic models for LLM structured output:
+- TriageResult/TriageBatch: First-pass triage (directory structure only)
+- ScoreResult/ScoreBatch: Second-pass scoring (with enrichment evidence)
 """
 
 from __future__ import annotations
@@ -29,12 +30,12 @@ __all__ = [
     "ResourcePurpose",
     "TerminalReason",
     "DirectoryEvidence",
-    "ScoredDirectory",
-    "ScoredBatch",
+    "TriagedDirectory",
+    "TriagedBatch",
+    "TriageResult",
+    "TriageBatch",
     "ScoreResult",
     "ScoreBatch",
-    "RefineResult",
-    "RefineBatch",
 ]
 
 
@@ -53,25 +54,14 @@ __all__ = [
 # and the nested object definition from the schema sent to the LLM.
 
 
-class ScoreResult(BaseModel):
-    """LLM scoring result for a single directory.
+class TriageResult(BaseModel):
+    """LLM triage result for a single directory (first pass).
 
     This Pydantic model is passed to LiteLLM's response_format parameter
     to ensure structured, parseable output from the LLM.
 
-    Per-purpose scores aligned with DiscoveryRootCategory taxonomy:
-    - Code: modeling_code, analysis_code, operations_code
-    - Data: modeling_data, experimental_data
-    - Infrastructure: data_access, workflow, visualization
-    - Support: documentation
-    - Cross-cutting: imas (for IMAS relevance)
-
-    SCHEMA SIMPLIFICATION (Feb 2026):
-    - Removed nested EvidenceSchema (evidence derived from input data)
-    - Changed nullable str fields to empty-string defaults (removes anyOf branching)
-    - Made physics_domain required with 'general' default (removes anyOf branching)
-    - Made should_enrich required
-    These changes reduce JSON schema complexity for Gemini structured output.
+    Triage uses directory structure only (file names, counts, quality indicators).
+    High-triage-score paths proceed to enrichment and independent scoring.
     """
 
     path: str = Field(description="The directory path (echo from input)")
@@ -164,78 +154,69 @@ class ScoreResult(BaseModel):
     )
 
 
-class ScoreBatch(BaseModel):
-    """Batch of directory scoring results from LLM.
+class TriageBatch(BaseModel):
+    """Batch of directory triage results from LLM (first pass)."""
 
-    This is the top-level model passed to LiteLLM's response_format.
-    The LLM returns a list of ScoreResult objects.
-    """
-
-    results: list[ScoreResult] = Field(
-        description="List of scoring results, one per input directory, in order"
+    results: list[TriageResult] = Field(
+        description="List of triage results, one per input directory, in order"
     )
 
 
 # ============================================================================
-# LLM Refinement Models
+# LLM Scoring Models (Second Pass)
 # ============================================================================
 
 
-class RefineResult(BaseModel):
-    """LLM refinement result for a single directory.
+class ScoreResult(BaseModel):
+    """LLM scoring result for a single directory (second pass).
 
-    Full re-evaluation using enrichment evidence (pattern matches, language
-    breakdown, LOC, multiformat detection). Produces all fields from the
-    original ScoreResult plus evidence tracking, allowing the refiner to
-    improve descriptions, reclassify purposes, and update keywords based
-    on concrete filesystem evidence.
+    Independent evaluation using enrichment evidence (pattern matches,
+    language breakdown, LOC, multiformat detection) plus triage context
+    (description, keywords, purpose) but WITHOUT numeric triage scores.
+    This prevents anchoring bias and allows the full score range.
     """
 
     path: str = Field(description="The directory path (echo from input)")
 
-    # Classification — can be reclassified based on enrichment evidence
+    # Classification — evaluated with enrichment evidence
     path_purpose: ResourcePurpose = Field(
-        description="Classification (may be updated from initial based on evidence)"
+        description="Classification based on enrichment evidence"
     )
 
-    # Description — improved using enrichment evidence
+    # Description — written using enrichment evidence
     description: str = Field(
-        description="Improved description incorporating enrichment evidence (1-2 sentences)"
+        description="Description incorporating enrichment evidence (1-2 sentences)"
     )
 
-    # Per-dimension refined values (0.0-1.0, required)
+    # Per-dimension scores (0.0-1.0, required)
     score_modeling_code: float = Field(
-        default=0.0, description="Refined modeling code score (0.0-1.0)"
+        default=0.0, description="Modeling code score (0.0-1.0)"
     )
     score_analysis_code: float = Field(
-        default=0.0, description="Refined analysis code score (0.0-1.0)"
+        default=0.0, description="Analysis code score (0.0-1.0)"
     )
     score_operations_code: float = Field(
-        default=0.0, description="Refined operations code score (0.0-1.0)"
+        default=0.0, description="Operations code score (0.0-1.0)"
     )
     score_modeling_data: float = Field(
-        default=0.0, description="Refined modeling data score (0.0-1.0)"
+        default=0.0, description="Modeling data score (0.0-1.0)"
     )
     score_experimental_data: float = Field(
-        default=0.0, description="Refined experimental data score (0.0-1.0)"
+        default=0.0, description="Experimental data score (0.0-1.0)"
     )
     score_data_access: float = Field(
-        default=0.0, description="Refined data access score (0.0-1.0)"
+        default=0.0, description="Data access score (0.0-1.0)"
     )
-    score_workflow: float = Field(
-        default=0.0, description="Refined workflow score (0.0-1.0)"
-    )
+    score_workflow: float = Field(default=0.0, description="Workflow score (0.0-1.0)")
     score_visualization: float = Field(
-        default=0.0, description="Refined visualization score (0.0-1.0)"
+        default=0.0, description="Visualization score (0.0-1.0)"
     )
     score_documentation: float = Field(
-        default=0.0, description="Refined documentation score (0.0-1.0)"
+        default=0.0, description="Documentation score (0.0-1.0)"
     )
-    score_imas: float = Field(
-        default=0.0, description="Refined IMAS relevance score (0.0-1.0)"
-    )
+    score_imas: float = Field(default=0.0, description="IMAS relevance score (0.0-1.0)")
     score_convention: float = Field(
-        default=0.0, description="Refined convention handling score (0.0-1.0)"
+        default=0.0, description="Convention handling score (0.0-1.0)"
     )
 
     # Combined score (max of dimension scores)
@@ -272,17 +253,17 @@ class RefineResult(BaseModel):
         description="Brief summary of pattern evidence (e.g., '15 MDSplus, 3 IMAS writes')",
     )
 
-    adjustment_reason: str = Field(
+    scoring_reason: str = Field(
         default="",
-        description="Brief explanation of main adjustment",
+        description="Brief explanation of scoring rationale",
     )
 
 
-class RefineBatch(BaseModel):
-    """Batch of refinement results from LLM."""
+class ScoreBatch(BaseModel):
+    """Batch of scoring results from LLM (second pass)."""
 
-    results: list[RefineResult] = Field(
-        description="List of refinement results, one per input directory"
+    results: list[ScoreResult] = Field(
+        description="List of scoring results, one per input directory"
     )
 
 
@@ -348,8 +329,8 @@ def parse_path_purpose(value: str) -> ResourcePurpose:
 
 
 @dataclass
-class ScoredDirectory:
-    """Result of LLM scoring for a single directory.
+class TriagedDirectory:
+    """Result of LLM triage for a single directory (first pass).
 
     Contains per-purpose scores, evidence, and expansion decision.
     Enriches the graph with metadata beyond just scores.
@@ -470,17 +451,17 @@ class ScoredDirectory:
 
 
 @dataclass
-class ScoredBatch:
-    """Result of scoring a batch of directories."""
+class TriagedBatch:
+    """Result of triaging a batch of directories."""
 
-    scored_dirs: list[ScoredDirectory]
-    """List of scored directories."""
+    triaged_dirs: list[TriagedDirectory]
+    """List of triaged directories."""
 
     total_cost: float
     """Estimated cost in USD for this batch."""
 
     model: str
-    """Model used for scoring."""
+    """Model used for triage."""
 
     tokens_used: int
     """Total tokens (input + output) used."""
@@ -488,4 +469,4 @@ class ScoredBatch:
     @property
     def expanded_count(self) -> int:
         """Number of directories marked for expansion."""
-        return sum(1 for d in self.scored_dirs if d.should_expand)
+        return sum(1 for d in self.triaged_dirs if d.should_expand)

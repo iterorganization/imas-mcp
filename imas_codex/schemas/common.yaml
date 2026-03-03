@@ -65,19 +65,26 @@ enums:
       Uses claimed_at timestamp for transient worker coordination.
       No transient states - workers claim by setting claimed_at, not by changing status.
       
-      Pipeline: discovered → scanned → scored → skipped/excluded/stale
+      Pipeline: discovered → scanned → triaged → scored → skipped/excluded/stale
       
-      Within the scored state, paths may be enriched (du/tokei/patterns) and
-      refined (LLM re-evaluation with enrichment evidence). These sub-phases
-      are tracked via is_enriched, enriched_at, and refined_at properties,
-      not as separate status values.
+      Triage is an initial LLM classification using directory structure only.
+      Paths with triage_score >= threshold proceed to enrichment (du/tokei/patterns)
+      and then scoring (independent LLM evaluation with enrichment evidence).
+      Paths below threshold remain in triaged state (terminal).
     permissible_values:
       discovered:
         description: Path found, awaiting enumeration
       scanned:
-        description: Enumerated (total_files, total_dirs set), awaiting LLM score
+        description: Enumerated (total_files, total_dirs set), awaiting LLM triage
+      triaged:
+        description: >-
+          LLM triaged with initial classification and triage_score.
+          Paths above threshold proceed to enrichment and scoring.
+          Paths below threshold are terminal in this state.
       scored:
-        description: LLM scored (may have been refined if high-value)
+        description: >-
+          Fully scored with enrichment evidence (second-pass LLM evaluation).
+          Authoritative score for downstream ingestion decisions.
       skipped:
         description: Intentionally not processed (low-score, excluded, empty)
       failed:
