@@ -989,21 +989,28 @@ def embed_status(url: str | None, local: bool) -> None:
 
         return
 
-    # Allocation / embed service status
+    # Embed service job status
     try:
-        alloc = _get_allocation()
-        if alloc:
+        job = _get_embed_job()
+        if job:
             click.echo(
-                f"Allocation: {alloc['job_id']} {alloc['state']} on {alloc['node']} ({alloc['gres']}, {alloc['time']})"
+                f"Embed job: {job['job_id']} {job['state']} on {job['node']} "
+                f"({job['gres']}, {job['cpus']} CPUs, {job['time']})"
             )
-            if alloc["state"] == "RUNNING" and _service_running(alloc["node"], "embed"):
-                click.echo("  embed: running")
-            else:
-                click.echo("  embed: not running")
+            if job["state"] == "RUNNING":
+                load = _get_service_load(job["node"], "embed")
+                if load:
+                    parts = [
+                        f"CPU: {load.get('cpu', '?')}%",
+                        f"Mem: {load.get('mem_mb', '?')} MB",
+                    ]
+                    if "gpu_mem_mb" in load:
+                        parts.append(f"GPU Mem: {load['gpu_mem_mb']} MB")
+                    click.echo(f"  Load: {', '.join(parts)}")
         else:
-            click.echo("Allocation: none")
+            click.echo("Embed job: none")
     except Exception:
-        click.echo("Allocation: unavailable")
+        click.echo("Embed job: unavailable")
 
     # Check remote server health
     if url is None:
@@ -1176,47 +1183,37 @@ WantedBy=default.target
 # Compute Node Allocation & Service Management
 # ============================================================================
 #
-# Architecture: A persistent SLURM allocation (sleep infinity) provides a
-# "compute lease" on a GPU node.  Individual services (Neo4j, embed server)
-# are started/stopped independently on that node via SSH + PID files.
-#
-# Allocation:  sbatch → sleep infinity         (one job, always running)
-# Services:    ssh node → nohup service &      (per-service PID + log files)
-#
-# Benefits over multi-script approach:
-#   - Single SLURM job to manage
-#   - Independent service lifecycles (stop neo4j without touching embed)
-#   - No combinatorial explosion of batch scripts
-#   - Easy to add new services later
+# Architecture: Each service (Neo4j, embed) runs as its own SLURM job.
+# The job script runs the service process directly — no ``sleep infinity``
+# allocation, no ``nohup`` wrappers.  SLURM manages the lifecycle:
+# ``scancel`` stops the service, cgroup enforcement is automatic, and
+# ``squeue`` shows accurate resource accounting.
 
 from imas_codex.cli.services import (  # noqa: E402
     _DEFAULT_GPUS,
+    _EMBED_JOB,
+    _NEO4J_JOB,
     _PROJECT,
     _SERVICES_DIR,
-    _cancel_allocation,
-    _clean_neo4j_locks,
+    _cancel_service_job,
     _deploy_login_embed,
     _deploy_login_neo4j,
     _embed_port,
-    _embed_service_command,
-    _ensure_allocation,
-    _get_allocation,
+    _get_all_service_jobs,
+    _get_embed_job,
+    _get_service_load,
     _graph_http_port,
     _graph_port,
     _is_compute_target,
     _is_graph_compute_target,
-    _kill_neo4j_on_node,
     _llm_port,
-    _neo4j_pre_launch,
-    _neo4j_service_command,
     _run_on_node,
     _run_remote,
-    _service_running,
     _show_embed_info_on_node,
-    _start_service,
-    _stop_service,
     _tail_log,
     _wait_for_health,
+    deploy_embed,
+    deploy_neo4j,
 )
 
 # ── Embed deploy/stop/restart/logs commands ──────────────────────────────
@@ -1240,46 +1237,21 @@ from imas_codex.cli.services import (  # noqa: E402
 def embed_deploy(gpus: int, workers: int | None) -> None:
     """Deploy embedding server.
 
-    When ``[embedding].scheduler = "slurm"``, ensures a SLURM allocation
-    exists on the compute node and starts the embed service on it.
-    The allocation is shared with Neo4j — each service has an independent
-    lifecycle.
+    When ``[embedding].scheduler = "slurm"``, submits a dedicated SLURM
+    job for the embed server with the requested GPU/worker count.
 
     When scheduler is not set, deploys via systemd on the login node.
 
-    Idempotent: no-op if already running.
+    Idempotent: no-op if already running.  Use ``--gpus`` to redeploy
+    with different resources (stops existing job first).
 
     \b
     Examples:
         imas-codex serve embed deploy          # Deploy per config
         imas-codex serve embed deploy -g 2     # 2 GPUs
     """
-    if workers is None:
-        workers = gpus
-
     if _is_compute_target():
-        alloc = _ensure_allocation(gpus)
-        node = alloc["node"]
-        if _service_running(node, "embed"):
-            click.echo(
-                f"Already running: embed on {node} "
-                f"(alloc {alloc['job_id']}, {alloc['gres']}, {alloc['time']})"
-            )
-            click.echo(f"  URL: http://{node}:{_embed_port()}")
-            return
-
-        click.echo(f"Starting embed server on {node}...")
-        cmd = _embed_service_command(gpus, workers)
-        _start_service(node, "embed", cmd)
-
-        port = _embed_port()
-        _wait_for_health(
-            "embed",
-            f"curl -sf http://{node}:{port}/health",
-            success_test='"status"',
-        )
-
-        click.echo(f"  URL: http://{node}:{port}")
+        deploy_embed(gpus, workers)
     else:
         _deploy_login_embed()
         click.echo(f"  URL: http://localhost:{_embed_port()}")
@@ -1289,7 +1261,7 @@ def embed_deploy(gpus: int, workers: int | None) -> None:
 def embed_stop() -> None:
     """Stop the embedding server.
 
-    Stops the embed service on the compute node (allocation stays alive)
+    Cancels the embed SLURM job (which stops the server process),
     or stops the systemd service on the login node.
 
     \b
@@ -1298,11 +1270,10 @@ def embed_stop() -> None:
     """
     stopped = False
 
-    # Stop on compute node if allocation exists
-    alloc = _get_allocation()
-    if alloc and alloc["state"] == "RUNNING":
-        if _stop_service(alloc["node"], "embed"):
-            stopped = True
+    # Cancel embed SLURM job
+    if _cancel_service_job(_EMBED_JOB):
+        click.echo("Stopped embed server (SLURM job cancelled)")
+        stopped = True
 
     # Stop systemd service
     try:
@@ -1338,40 +1309,25 @@ def embed_stop() -> None:
 def embed_restart(gpus: int, workers: int | None) -> None:
     """Restart the embedding server (stop + deploy).
 
-    Stops the embed service and redeploys.  The SLURM allocation and
-    other services (e.g. Neo4j) are not affected.
+    Cancels the existing embed SLURM job and submits a new one.
+    Use ``--gpus`` to change GPU allocation on restart.
 
     \b
     Examples:
         imas-codex serve embed restart         # Restart
         imas-codex serve embed restart -g 2    # Restart with 2 GPUs
     """
-    if workers is None:
-        workers = gpus
-
     # Stop
-    alloc = _get_allocation()
-    if alloc and alloc["state"] == "RUNNING":
-        _stop_service(alloc["node"], "embed")
-        time.sleep(2)
+    _cancel_service_job(_EMBED_JOB)
     try:
         _run_remote("systemctl --user stop imas-codex-embed 2>/dev/null", timeout=15)
     except subprocess.CalledProcessError:
         pass
+    time.sleep(2)
 
     # Deploy
     if _is_compute_target():
-        alloc = _ensure_allocation(gpus)
-        node = alloc["node"]
-        click.echo(f"Starting embed server on {node}...")
-        cmd = _embed_service_command(gpus, workers)
-        _start_service(node, "embed", cmd)
-        port = _embed_port()
-        _wait_for_health(
-            "embed",
-            f"curl -sf http://{node}:{port}/health",
-            success_test='"status"',
-        )
+        deploy_embed(gpus, workers)
     else:
         _deploy_login_embed()
 
@@ -1390,7 +1346,7 @@ def embed_logs(follow: bool, lines: int) -> None:
         imas-codex serve embed logs -f         # Follow live
         imas-codex serve embed logs -n 100     # Last 100 lines
     """
-    log_file = f"{_SERVICES_DIR}/embed.log"
+    log_file = f"{_SERVICES_DIR}/codex-embed.log"
     _tail_log(log_file, follow, lines)
 
 
@@ -1399,65 +1355,78 @@ def embed_logs(follow: bool, lines: int) -> None:
 
 @serve.group("alloc")
 def serve_alloc_group() -> None:
-    """Manage the shared SLURM compute allocation.
+    """Manage SLURM service jobs.
 
-    The allocation is a persistent SLURM job that reserves GPU resources.
-    Services (embed, neo4j) run independently on the allocated node.
+    Each service (Neo4j, embed) runs as its own SLURM job.
+    Use these commands to view status or release all jobs.
 
     \\b
-      imas-codex serve alloc status     Show allocation status
-      imas-codex serve alloc release    Cancel the allocation
+      imas-codex serve alloc status     Show service jobs and load
+      imas-codex serve alloc release    Cancel all service jobs
     """
     pass
 
 
 @serve_alloc_group.command("status")
 def alloc_status() -> None:
-    """Show SLURM allocation status and running services.
+    """Show SLURM service jobs and real-time resource usage.
 
     \\b
     Examples:
         imas-codex serve alloc status
     """
-    alloc = _get_allocation()
-    if not alloc:
-        click.echo("No allocation running")
-        click.echo("  Create with: imas-codex serve embed deploy")
-        click.echo("           or: imas-codex graph start")
-        return
+    jobs = _get_all_service_jobs()
+    any_running = False
 
-    click.echo(f"Allocation: {alloc['job_id']} ({alloc['state']})")
-    click.echo(f"  Node: {alloc['node']}")
-    click.echo(f"  GPUs: {alloc['gres']}")
-    click.echo(f"  Time: {alloc['time']}")
+    for svc_name, job in jobs.items():
+        if job and job["state"] == "RUNNING":
+            any_running = True
+            click.echo(f"{svc_name}: job {job['job_id']} ({job['state']})")
+            click.echo(
+                f"  Node: {job['node']}, CPUs: {job['cpus']}, "
+                f"GPUs: {job['gres']}, Time: {job['time']}"
+            )
+            # Get real-time load
+            load = _get_service_load(job["node"], svc_name)
+            if load:
+                parts = [
+                    f"CPU: {load.get('cpu', '?')}%",
+                    f"Mem: {load.get('mem_mb', '?')} MB",
+                ]
+                if "gpu_mem_mb" in load:
+                    parts.append(f"GPU Mem: {load['gpu_mem_mb']} MB")
+                if "gpu_count" in load:
+                    parts.append(f"GPU Procs: {load['gpu_count']}")
+                click.echo(f"  Load: {', '.join(parts)}")
+        elif job:
+            any_running = True
+            click.echo(f"{svc_name}: job {job['job_id']} ({job['state']})")
+        else:
+            click.echo(f"{svc_name}: not running")
 
-    if alloc["state"] == "RUNNING":
-        node = alloc["node"]
-        click.echo("Services:")
-        for svc, port_fn in [
-            ("neo4j", _graph_http_port),
-            ("embed", _embed_port),
-            ("llm", _llm_port),
-        ]:
-            running = _service_running(node, svc)
-            status = "running" if running else "stopped"
-            port = port_fn()
-            click.echo(f"  {svc}: {status} (port {port})")
+    if not any_running:
+        click.echo("\nNo services running")
+        click.echo("  Deploy with: imas-codex serve deploy")
 
 
 @serve_alloc_group.command("release")
 def alloc_release() -> None:
-    """Release the SLURM allocation (stops all services).
+    """Cancel all SLURM service jobs (stops all services).
 
     \\b
     Examples:
         imas-codex serve alloc release
     """
-    cancelled = _cancel_allocation()
+    cancelled = []
+    for job_name in (_NEO4J_JOB, _EMBED_JOB):
+        if _cancel_service_job(job_name):
+            cancelled.append(job_name)
+            click.echo(f"Cancelled {job_name}")
+
     if cancelled:
-        click.echo(f"Released allocation (job {cancelled[0]})")
+        click.echo(f"Released {len(cancelled)} service(s)")
     else:
-        click.echo("No allocation to release")
+        click.echo("No services to release")
 
 
 # ============================================================================
@@ -1488,16 +1457,15 @@ def alloc_release() -> None:
 def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
     """Deploy all services (Neo4j, embedding, LLM proxy) and start tunnels.
 
-    Ensures a SLURM allocation exists (when configured), then deploys
-    each service that is not already running.  After all services are up,
-    starts SSH tunnels so services are accessible from the local machine.
+    Each service gets its own SLURM job (when configured).  Neo4j runs
+    without GPUs; the embed server gets the requested GPU allocation.
 
     Idempotent: services already running are skipped.
 
     \b
     Examples:
         imas-codex serve deploy              # Deploy everything
-        imas-codex serve deploy -g 2         # With 2-GPU allocation
+        imas-codex serve deploy -g 2         # Embed with 2 GPUs
         imas-codex serve deploy --skip-tunnels  # Services only
     """
     import shutil
@@ -1511,33 +1479,11 @@ def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
     if workers is None:
         workers = gpus
 
-    any_compute = _is_graph_compute_target() or _is_compute_target()
-
-    # ── Step 1: SLURM allocation ─────────────────────────────────────
-    node: str | None = None
-    if any_compute:
-        click.echo("── Allocation ──")
-        alloc = _ensure_allocation(gpus)
-        node = alloc["node"]
-        click.echo(f"  Ready: job {alloc['job_id']} on {node} ({alloc['gres']})")
-        click.echo()
-
-    # ── Step 2: Neo4j ────────────────────────────────────────────────
+    # ── Step 1: Neo4j ────────────────────────────────────────────────
     click.echo("── Neo4j ──")
     if _is_graph_compute_target():
-        assert node is not None
-        if _service_running(node, "neo4j"):
-            click.echo(f"  Already running on {node}")
-        else:
-            _kill_neo4j_on_node(node)
-            _clean_neo4j_locks(node)
-            click.echo(f"  Starting Neo4j on {node}...")
-            _neo4j_pre_launch(node)
-            _start_service(node, "neo4j", _neo4j_service_command())
-            _wait_for_health(
-                "Neo4j",
-                f"curl -sf http://{node}:{_graph_http_port()}/",
-            )
+        job = deploy_neo4j()
+        node = job["node"]
         click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
         click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
     else:
@@ -1546,31 +1492,23 @@ def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
         click.echo(f"  HTTP: http://localhost:{_graph_http_port()}")
     click.echo()
 
-    # ── Step 3: Embedding server ─────────────────────────────────────
+    # ── Step 2: Embedding server ─────────────────────────────────────
     click.echo("── Embedding ──")
     if _is_compute_target():
-        assert node is not None
-        if _service_running(node, "embed"):
-            click.echo(f"  Already running on {node}")
-        else:
-            click.echo(f"  Starting embed on {node}...")
-            cmd = _embed_service_command(gpus, workers)
-            _start_service(node, "embed", cmd)
-            _wait_for_health(
-                "embed",
-                f"curl -sf http://{node}:{_embed_port()}/health",
-                success_test='"status"',
-            )
+        job = deploy_embed(gpus, workers)
+        node = job["node"]
         click.echo(f"  URL: http://{node}:{_embed_port()}")
     else:
         _deploy_login_embed()
         click.echo(f"  URL: http://localhost:{_embed_port()}")
     click.echo()
 
-    # ── Step 4: LLM proxy (login node — needs outbound HTTPS) ──────
+    # ── Step 3: LLM proxy (login node — needs outbound HTTPS) ──────
     click.echo("── LLM Proxy ──")
     _deploy_login_llm()
     port = _llm_port()
+    from imas_codex.cli.services import _wait_for_health
+
     _wait_for_health(
         "LLM proxy",
         f"curl -sf http://localhost:{port}/",
@@ -1579,7 +1517,7 @@ def serve_deploy(gpus: int, workers: int | None, skip_tunnels: bool) -> None:
     click.echo(f"  URL: http://localhost:{port}")
     click.echo()
 
-    # ── Step 5: SSH tunnels ──────────────────────────────────────────
+    # ── Step 4: SSH tunnels ──────────────────────────────────────────
     if skip_tunnels:
         click.echo("── Tunnels (skipped) ──")
         return
@@ -1728,30 +1666,40 @@ def serve_status() -> None:
         get_graph_location,
     )
 
-    # ── SLURM Allocation ─────────────────────────────────────────────────
-    alloc = _get_allocation()
-    compute_node: str | None = None
-    compute_services: dict[str, bool] = {}
+    # ── SLURM Service Jobs ───────────────────────────────────────────────
+    jobs = _get_all_service_jobs()
+    neo4j_job = jobs.get("neo4j")
+    embed_job = jobs.get("embed")
 
-    if alloc:
-        click.echo(f"Allocation: {alloc['job_id']} ({alloc['state']})")
-        click.echo(
-            f"  Node: {alloc['node']}, GPUs: {alloc['gres']}, Time: {alloc['time']}"
-        )
-        if alloc["state"] == "RUNNING":
-            compute_node = alloc["node"]
-            for svc in ("neo4j", "embed"):
-                running = _service_running(compute_node, svc)
-                compute_services[svc] = running
-                click.echo(f"  {svc}: {'running' if running else 'stopped'}")
+    if neo4j_job or embed_job:
+        click.echo("SLURM Jobs:")
+        for svc_name, job in jobs.items():
+            if job:
+                click.echo(
+                    f"  {svc_name}: job {job['job_id']} ({job['state']}) "
+                    f"on {job['node']}, CPUs: {job['cpus']}, "
+                    f"GPUs: {job['gres']}, Time: {job['time']}"
+                )
+                if job["state"] == "RUNNING":
+                    load = _get_service_load(job["node"], svc_name)
+                    if load:
+                        parts = [
+                            f"CPU: {load.get('cpu', '?')}%",
+                            f"Mem: {load.get('mem_mb', '?')} MB",
+                        ]
+                        if "gpu_mem_mb" in load:
+                            parts.append(f"GPU Mem: {load['gpu_mem_mb']} MB")
+                        click.echo(f"    Load: {', '.join(parts)}")
+            else:
+                click.echo(f"  {svc_name}: not running")
         click.echo()
 
     # ── Graph (Neo4j) ────────────────────────────────────────────────────
     click.echo("Neo4j Graph:")
     graph_location = get_graph_location()
 
-    if compute_node and compute_services.get("neo4j"):
-        # SLURM: check health directly on the compute node
+    if neo4j_job and neo4j_job["state"] == "RUNNING":
+        compute_node = neo4j_job["node"]
         bolt_port = _graph_port()
         http_port = _graph_http_port()
         click.echo(f"  Bolt: bolt://{compute_node}:{bolt_port}")
@@ -1765,7 +1713,6 @@ def serve_status() -> None:
             )
             if result and result != "(no output)":
                 click.echo("  ✓ Status: running")
-                # Get detailed stats via curl on compute
                 try:
                     stats = _run_on_node(
                         compute_node,
@@ -1791,8 +1738,6 @@ def serve_status() -> None:
         except subprocess.CalledProcessError:
             click.echo("  ✗ Status: not responding on compute node")
 
-        # Access: direct when on-facility, tunnel when remote
-        graph_location = get_graph_location()
         if is_location_local(graph_location):
             click.echo("  Access: direct (on-facility)")
         else:
@@ -1813,9 +1758,6 @@ def serve_status() -> None:
                     f"{'✓' if bolt_ok else '✗'}, "
                     f"http:{tunnel_http} {'✓' if http_ok else '✗'}"
                 )
-    elif compute_node and not compute_services.get("neo4j"):
-        click.echo(f"  ✗ Status: stopped (not running on {compute_node})")
-        click.echo(f"  Location: {graph_location}")
     else:
         # Non-SLURM or no allocation: use profile-based health check
         try:
@@ -1855,8 +1797,8 @@ def serve_status() -> None:
     click.echo(f"  Location: {embed_location}")
     click.echo(f"  Scheduler: {embed_scheduler}")
 
-    if compute_node and compute_services.get("embed"):
-        # SLURM: check health directly on the compute node
+    if embed_job and embed_job["state"] == "RUNNING":
+        compute_node = embed_job["node"]
         port = _embed_port()
         click.echo(f"  Compute: http://{compute_node}:{port}")
         try:
@@ -1873,7 +1815,6 @@ def serve_status() -> None:
         except subprocess.CalledProcessError:
             click.echo("  ✗ Status: not responding on compute node")
 
-        # Access: direct when on-facility, tunnel when remote
         if is_location_local(embed_location):
             click.echo("  Access: direct (on-facility)")
         else:
@@ -1883,8 +1824,6 @@ def serve_status() -> None:
                 click.echo(f"  Tunnel: ✓ localhost:{port}")
             else:
                 click.echo(f"  Tunnel: ✗ localhost:{port} not reachable")
-    elif compute_node and not compute_services.get("embed"):
-        click.echo(f"  ✗ Status: stopped (not running on {compute_node})")
     else:
         # Non-SLURM: check via URL
         embed_url = get_embed_remote_url()
