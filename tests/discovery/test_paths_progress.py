@@ -725,5 +725,3 @@ class TestWorkerStatusUpdate:
 
         # Worker counts should appear as "×N" in the output
         assert "x1" in text  # scan, score, or enrich (all x1)
-        # Expand worker appears as aux_worker "+1 expand"
-        assert "+1 expand" in text

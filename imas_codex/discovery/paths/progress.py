@@ -640,7 +640,6 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 is_complete=scan_complete,
                 worker_count=scan_count,
                 worker_annotation=scan_ann,
-                aux_workers=([("expand", expand_count)] if expand_count > 0 else None),
                 queue_size=(
                     len(self.state.scan_queue)
                     if not self.state.scan_queue.is_empty()
@@ -667,7 +666,6 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 is_complete=triage_complete,
                 worker_count=triage_count,
                 worker_annotation=triage_ann,
-                aux_workers=([("embed", embed_count)] if embed_count > 0 else None),
                 queue_size=(
                     len(self.state.triage_queue)
                     if not self.state.triage_queue.is_empty()
@@ -707,7 +705,6 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 is_complete=score_complete,
                 worker_count=score_count,
                 worker_annotation=score_ann,
-                aux_workers=([("dedup", dedup_count)] if dedup_count > 0 else None),
             ),
         ]
         return build_pipeline_section(rows, self.bar_width)
