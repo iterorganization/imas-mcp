@@ -1090,11 +1090,11 @@ def _mark_clones_terminal(
     Returns:
         Number of paths actually marked.
     """
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from imas_codex.graph import GraphClient
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     skip_reason = f"Clone of {canonical_path} ({repo_id})"
 
     with GraphClient() as gc:
@@ -1140,11 +1140,11 @@ def _mark_accessible_elsewhere(
     Returns:
         True if the path was marked.
     """
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from imas_codex.graph import GraphClient
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     skip_reason = f"Repo accessible elsewhere ({repo_id})"
 
     with GraphClient() as gc:
