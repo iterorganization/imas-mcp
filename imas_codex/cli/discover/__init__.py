@@ -51,8 +51,7 @@ def discover():
       code               Source code discovery from scored paths
       documents          Document & image discovery
       wiki               Wiki page discovery and ingestion
-      signals            Facility signal discovery
-      static             Static/machine-description tree discovery
+      signals            Facility signal discovery (incl. static MDSplus trees)
 
     \b
     Management Commands:
@@ -67,7 +66,7 @@ def discover():
       imas-codex discover wiki jt-60sa          # Run wiki discovery
       imas-codex discover code tcv             # Code discovery
       imas-codex discover documents tcv        # Document discovery
-      imas-codex discover static tcv           # Static tree discovery
+      imas-codex discover signals tcv          # Signal discovery
       imas-codex discover status jet           # All domains status
       imas-codex discover status jet -d wiki   # Wiki status only
       imas-codex discover clear jet -d paths   # Clear paths only
@@ -95,7 +94,6 @@ def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
       imas-codex discover status jet           # All domains
       imas-codex discover status jet -d paths  # Paths only
       imas-codex discover status jet -d wiki   # Wiki only
-      imas-codex discover status jet -d static # Static only
       imas-codex discover status jet --json    # JSON output
     """
     import json as json_module
@@ -136,14 +134,6 @@ def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
                 file_stats = get_code_discovery_stats(facility)
                 output["code"] = file_stats
 
-            if domain is None or domain == "static":
-                from imas_codex.discovery.static.graph_ops import (
-                    get_static_summary_stats,
-                )
-
-                static_stats = get_static_summary_stats(facility)
-                output["static"] = static_stats
-
             click.echo(json_module.dumps(output, indent=2))
         else:
             from imas_codex.discovery.paths.progress import print_discovery_status
@@ -175,7 +165,6 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
       imas-codex discover clear jet -d paths     # Paths only
       imas-codex discover clear jet -d wiki      # Wiki only
       imas-codex discover clear jet -d code      # Code only
-      imas-codex discover clear jet -d static    # Static trees only
       imas-codex discover clear jet --force      # Skip confirmation
     """
     from imas_codex.discovery import clear_facility_paths, get_discovery_stats
@@ -252,22 +241,6 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
             if doc_total > 0:
                 items_to_clear.append(
                     ("documents", doc_total, clear_facility_documents)
-                )
-
-        # Static domain
-        if domain is None or domain == "static":
-            from imas_codex.discovery.static.graph_ops import (
-                clear_facility_static,
-                get_static_summary_stats,
-            )
-
-            static_stats = get_static_summary_stats(facility)
-            static_versions = static_stats.get("versions_total", 0)
-            static_nodes = static_stats.get("nodes_total", 0)
-            if static_versions > 0 or static_nodes > 0:
-                label = f"static versions + {static_nodes:,} nodes"
-                items_to_clear.append(
-                    (label, static_versions or static_nodes, clear_facility_static)
                 )
 
         if not items_to_clear:
@@ -495,7 +468,6 @@ from imas_codex.cli.discover.code import code  # noqa: E402
 from imas_codex.cli.discover.documents import documents  # noqa: E402
 from imas_codex.cli.discover.paths import paths  # noqa: E402
 from imas_codex.cli.discover.signals import signals  # noqa: E402
-from imas_codex.cli.discover.static import static  # noqa: E402
 from imas_codex.cli.discover.wiki import wiki  # noqa: E402
 
 discover.add_command(paths)
@@ -503,4 +475,3 @@ discover.add_command(wiki)
 discover.add_command(signals)
 discover.add_command(code)
 discover.add_command(documents)
-discover.add_command(static)
