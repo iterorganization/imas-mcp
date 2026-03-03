@@ -513,3 +513,104 @@ class TestDedupWorker:
 
         assert len(progress_calls) >= 1
         assert "waiting" in progress_calls[0]
+
+
+class TestParseVcsRemoteUrl:
+    """Tests for _parse_vcs_remote_url handling git, SVN, and Hg URLs."""
+
+    def test_git_ssh_github(self):
+        from imas_codex.discovery.paths.frontier import _parse_vcs_remote_url
+
+        source, owner, name = _parse_vcs_remote_url(
+            "git@github.com:owner/repo.git", "git"
+        )
+        assert source == "github"
+        assert owner == "owner"
+        assert name == "repo"
+
+    def test_git_https_gitlab(self):
+        from imas_codex.discovery.paths.frontier import _parse_vcs_remote_url
+
+        source, owner, name = _parse_vcs_remote_url(
+            "https://gitlab.epfl.ch/spc/tcv/analysis/rdpa.git", "git"
+        )
+        assert source == "gitlab"
+        assert owner == "spc"
+        assert name == "tcv/analysis/rdpa"  # Nested GitLab groups
+
+    def test_svn_https(self):
+        from imas_codex.discovery.paths.frontier import _parse_vcs_remote_url
+
+        source, owner, name = _parse_vcs_remote_url(
+            "https://spcsvn.epfl.ch/repos/CaxeKinx", "svn"
+        )
+        assert source == "svn"
+        assert owner == "spcsvn.epfl.ch/repos/CaxeKinx"
+        assert name == "CaxeKinx"
+
+    def test_svn_protocol(self):
+        from imas_codex.discovery.paths.frontier import _parse_vcs_remote_url
+
+        source, owner, name = _parse_vcs_remote_url(
+            "svn://svnserver.example.com/project/trunk", "svn"
+        )
+        assert source == "svn"
+        assert name == "trunk"
+
+    def test_svn_ssh(self):
+        from imas_codex.discovery.paths.frontier import _parse_vcs_remote_url
+
+        source, owner, name = _parse_vcs_remote_url(
+            "svn+ssh://svnserver.example.com/repos/code", "svn"
+        )
+        assert source == "svn"
+        assert name == "code"
+
+    def test_same_svn_url_produces_same_id(self):
+        """Two paths with the same SVN remote should produce the same repo ID."""
+        from imas_codex.discovery.paths.frontier import _parse_vcs_remote_url
+
+        s1, o1, n1 = _parse_vcs_remote_url(
+            "https://spcsvn.epfl.ch/repos/CaxeKinx", "svn"
+        )
+        s2, o2, n2 = _parse_vcs_remote_url(
+            "https://spcsvn.epfl.ch/repos/CaxeKinx", "svn"
+        )
+        assert f"{s1}:{o1}/{n1}" == f"{s2}:{o2}/{n2}"
+
+
+class TestReconcileSoftwareRepos:
+    """Tests for _reconcile_software_repos root_commit merging."""
+
+    def test_merges_root_into_remote(self):
+        from imas_codex.discovery.paths.frontier import _reconcile_software_repos
+
+        gc = MagicMock()
+        # Simulate finding a root:... sibling
+        gc.query.side_effect = [
+            # First call: find siblings with same root_commit
+            [{"id": "root:abc123", "remote_url": None}],
+            # Second call: move INSTANCE_OF relationships
+            [],
+            # Third call: update clone count and delete orphan
+            [],
+        ]
+
+        _reconcile_software_repos(gc, "github:owner/repo", "abc123")
+
+        assert gc.query.call_count == 3
+        # Check orphan_id and canonical_id in the move query
+        move_call = gc.query.call_args_list[1]
+        assert move_call.kwargs["orphan_id"] == "root:abc123"
+        assert move_call.kwargs["canonical_id"] == "github:owner/repo"
+
+    def test_noop_when_no_siblings(self):
+        from imas_codex.discovery.paths.frontier import _reconcile_software_repos
+
+        gc = MagicMock()
+        gc.query.return_value = []
+
+        _reconcile_software_repos(gc, "github:owner/repo", "abc123")
+
+        # Only the initial sibling query
+        assert gc.query.call_count == 1

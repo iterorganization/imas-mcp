@@ -800,6 +800,38 @@ def _parse_git_remote_url(url: str) -> tuple[str, str | None, str | None]:
     return "local", None, None
 
 
+def _parse_vcs_remote_url(
+    url: str, vcs_type: str
+) -> tuple[str, str | None, str | None]:
+    """Parse VCS remote URL for any VCS type.
+
+    For git repos, delegates to _parse_git_remote_url.
+    For SVN/Hg, normalizes to svn:host/path or hg:host/path.
+
+    Args:
+        url: Remote URL
+        vcs_type: VCS type (git, svn, hg, bzr)
+
+    Returns:
+        Tuple of (source_type, owner_or_path, repo_name)
+    """
+    import re
+
+    if vcs_type == "git":
+        return _parse_git_remote_url(url)
+
+    # SVN/Hg: https://host/path/to/repo or svn://host/path
+    url_match = re.match(r"(?:https?|svn|svn\+ssh)://([^/]+)/(.+?)/?$", url)
+    if url_match:
+        host, path = url_match.groups()
+        # Strip common prefixes like "repos/"
+        repo_name = path.rsplit("/", 1)[-1]
+        prefix = vcs_type  # "svn" or "hg"
+        return prefix, f"{host}/{path}", repo_name
+
+    return "local", None, None
+
+
 def _create_software_repo_link(
     gc: Any,
     facility: str,
@@ -809,44 +841,49 @@ def _create_software_repo_link(
     head_commit: str | None,
     branch: str | None,
     now: str,
+    vcs_type: str = "git",
 ) -> None:
     """Create SoftwareRepo node and INSTANCE_OF relationship.
 
     Identity priority:
-    1. remote_url (github:owner/repo, gitlab:host/owner/repo, etc.)
-    2. root_commit (root:{commit_hash} for repos without remote)
+    1. remote_url (github:owner/repo, svn:host/path, etc.)
+    2. root_commit (root:{commit_hash} for git repos without remote)
     3. path-based (local:{facility}:{path} as fallback)
+
+    After creating/merging, reconciles SoftwareRepo nodes that share
+    the same root_commit to merge root-commit-identified repos with
+    remote-identified repos.
 
     Args:
         gc: GraphClient instance
         facility: Facility ID
         path_id: FacilityPath ID
-        remote_url: Git remote origin URL (if available)
-        root_commit: First commit hash in repo history
-        head_commit: Current HEAD commit hash
-        branch: Current branch name
+        remote_url: VCS remote URL (git, SVN, Hg)
+        root_commit: First commit hash (git only)
+        head_commit: Current HEAD commit hash (git only)
+        branch: Current branch name (git only)
         now: ISO timestamp
+        vcs_type: VCS type (git, svn, hg, bzr)
     """
     # Determine SoftwareRepo identity and metadata
+    repo_id = None
+    name = None
+    source_type = "local"
+
     if remote_url:
-        source_type, owner, repo_name = _parse_git_remote_url(remote_url)
+        source_type, owner, repo_name = _parse_vcs_remote_url(remote_url, vcs_type)
         if source_type != "local" and owner and repo_name:
-            # Use remote URL as identity
             repo_id = f"{source_type}:{owner}/{repo_name}"
             name = repo_name
         else:
-            # Can't parse remote URL, fall back to root commit
             remote_url = None  # Ignore unparseable URL
 
-    if not remote_url:
-        # No remote or unparseable - use root commit as identity
+    if not repo_id:
         if root_commit:
             repo_id = f"root:{root_commit}"
-            # Extract name from path
             name = path_id.split("/")[-1] if "/" in path_id else path_id
             source_type = "local"
         else:
-            # No remote and no root commit - rare case, use path-based ID
             repo_id = f"local:{facility}:{path_id.split(':', 1)[1]}"
             name = path_id.split("/")[-1] if "/" in path_id else path_id
             source_type = "local"
@@ -860,6 +897,7 @@ def _create_software_repo_link(
             r.remote_url = $remote_url,
             r.root_commit = $root_commit,
             r.name = $name,
+            r.vcs_type = $vcs_type,
             r.discovered_at = $now,
             r.clone_count = 1
         ON MATCH SET
@@ -874,6 +912,7 @@ def _create_software_repo_link(
         remote_url=remote_url,
         root_commit=root_commit,
         name=name,
+        vcs_type=vcs_type,
         now=now,
     )
 
@@ -897,6 +936,100 @@ def _create_software_repo_link(
         head_commit=head_commit,
         branch=branch,
         now=now,
+    )
+
+    # Reconcile: if we just created/matched a root:... node, check if a
+    # remote-identified repo shares the same root_commit and merge them.
+    # Or if we created a remote-identified repo, absorb any root:... sibling.
+    if root_commit and not repo_id.startswith("root:"):
+        # Remote-identified repo with a root_commit — absorb root:... sibling
+        _reconcile_software_repos(gc, repo_id, root_commit)
+    elif root_commit and repo_id.startswith("root:"):
+        # Root-commit-identified repo — check if a remote sibling exists
+        _reconcile_software_repos(gc, repo_id, root_commit)
+
+
+def _reconcile_software_repos(
+    gc: Any,
+    current_repo_id: str,
+    root_commit: str,
+) -> None:
+    """Merge SoftwareRepo nodes sharing the same root_commit.
+
+    When a remote-identified repo and a root-commit-identified repo share
+    the same root_commit, absorb the root:... node into the remote one:
+    move all INSTANCE_OF relationships and delete the orphan.
+
+    Args:
+        gc: GraphClient instance
+        current_repo_id: The repo we just created/merged
+        root_commit: The root commit to match on
+    """
+    # Find other SoftwareRepo nodes with the same root_commit
+    siblings = gc.query(
+        """
+        MATCH (r:SoftwareRepo)
+        WHERE r.root_commit = $root_commit
+          AND r.id <> $current_id
+        RETURN r.id AS id, r.remote_url AS remote_url
+        """,
+        root_commit=root_commit,
+        current_id=current_repo_id,
+    )
+    if not siblings:
+        return
+
+    # Determine canonical: prefer remote-identified over root-commit-identified
+    if current_repo_id.startswith("root:"):
+        # Current is root-identified — check if a remote sibling exists
+        remote_siblings = [s for s in siblings if not s["id"].startswith("root:")]
+        if remote_siblings:
+            canonical_id = remote_siblings[0]["id"]
+            orphan_id = current_repo_id
+        else:
+            return  # All siblings are root-identified, nothing to merge
+    else:
+        # Current is remote-identified — absorb any root:... siblings
+        root_siblings = [s for s in siblings if s["id"].startswith("root:")]
+        if root_siblings:
+            canonical_id = current_repo_id
+            orphan_id = root_siblings[0]["id"]
+        else:
+            return  # No root:... siblings to absorb
+
+    # Move all INSTANCE_OF relationships from orphan to canonical
+    gc.query(
+        """
+        MATCH (p:FacilityPath)-[old:INSTANCE_OF]->(orphan:SoftwareRepo {id: $orphan_id})
+        MATCH (canonical:SoftwareRepo {id: $canonical_id})
+        MERGE (p)-[new:INSTANCE_OF]->(canonical)
+        ON CREATE SET new = properties(old)
+        SET p.software_repo_id = $canonical_id
+        DELETE old
+        """,
+        orphan_id=orphan_id,
+        canonical_id=canonical_id,
+    )
+
+    # Update clone count on canonical
+    gc.query(
+        """
+        MATCH (canonical:SoftwareRepo {id: $canonical_id})
+        OPTIONAL MATCH (orphan:SoftwareRepo {id: $orphan_id})
+        SET canonical.clone_count = coalesce(canonical.clone_count, 1)
+            + coalesce(orphan.clone_count, 1) - 1
+        WITH orphan WHERE orphan IS NOT NULL
+        DETACH DELETE orphan
+        """,
+        canonical_id=canonical_id,
+        orphan_id=orphan_id,
+    )
+
+    logger.info(
+        "Reconciled SoftwareRepo: merged %s into %s (root_commit=%s)",
+        orphan_id,
+        canonical_id,
+        root_commit[:12],
     )
 
 
@@ -2183,21 +2316,35 @@ async def persist_scan_results(
             # User enrichment is non-critical; don't fail scan
             logger.warning(f"User enrichment failed: {e}")
 
-        # Create SoftwareRepo nodes for git repos (with remote URL or root commit)
+        # Create SoftwareRepo nodes for any VCS repo (git, svn, hg)
         all_updates = first_scan_updates + expansion_updates
-        git_repos = [
-            (
-                item["id"],
-                item.get("git_remote_url"),
-                item.get("git_root_commit"),
-                item.get("git_head_commit"),
-                item.get("git_branch"),
-            )
-            for item in all_updates
-            if item.get("has_git")
-            and (item.get("git_remote_url") or item.get("git_root_commit"))
-        ]
-        for path_id, remote_url, root_commit, head_commit, branch in git_repos:
+        vcs_repos = []
+        for item in all_updates:
+            vcs_type = item.get("vcs_type")
+            if not vcs_type:
+                continue
+            # Effective remote: git_remote_url for git, vcs_remote_url for svn/hg
+            remote = item.get("git_remote_url") or item.get("vcs_remote_url")
+            root_commit = item.get("git_root_commit")
+            if remote or root_commit:
+                vcs_repos.append(
+                    (
+                        item["id"],
+                        remote,
+                        root_commit,
+                        item.get("git_head_commit"),
+                        item.get("git_branch"),
+                        vcs_type,
+                    )
+                )
+        for (
+            path_id,
+            remote_url,
+            root_commit,
+            head_commit,
+            branch,
+            vcs_type,
+        ) in vcs_repos:
             try:
                 _create_software_repo_link(
                     gc,
@@ -2208,6 +2355,7 @@ async def persist_scan_results(
                     head_commit,
                     branch,
                     now,
+                    vcs_type=vcs_type,
                 )
             except Exception as e:
                 logger.debug(f"Failed to create SoftwareRepo for {path_id}: {e}")
