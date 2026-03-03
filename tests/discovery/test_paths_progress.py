@@ -349,7 +349,7 @@ class TestParallelProgressDisplay:
         )
         section = display._build_pipeline_section()
         text = section.plain
-        assert "low value leaf" in text
+        assert "terminal" in text
 
     def test_pipeline_shows_enrich_activity(self):
         """Pipeline shows current enrich item with metrics."""
