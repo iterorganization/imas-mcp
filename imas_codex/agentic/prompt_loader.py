@@ -837,7 +837,10 @@ def _provide_cluster_label_schema() -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def _provide_static_enrichment_schema() -> dict[str, Any]:
     """Provide StaticNodeBatch Pydantic schema for LLM prompts."""
-    from imas_codex.mdsplus.enrichment import StaticNodeBatch, StaticNodeResult
+    from imas_codex.discovery.mdsplus.enrichment import (
+        StaticNodeBatch,
+        StaticNodeResult,
+    )
 
     return {
         "static_enrichment_schema_example": get_pydantic_schema_json(StaticNodeBatch),
