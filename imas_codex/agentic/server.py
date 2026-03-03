@@ -37,7 +37,7 @@ Use dedicated MCP tools for:
 - Clear, type-safe operations
 - Better discoverability and documentation
 
-REPL state is loaded eagerly on server startup for instant tool response.
+REPL state is initialized lazily on first use to avoid import deadlocks.
 """
 
 import asyncio
@@ -46,6 +46,7 @@ import logging
 import subprocess
 import sys
 import threading
+from contextlib import redirect_stdout
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -57,6 +58,7 @@ from imas_codex.agentic.prompt_loader import (
     PromptDefinition,
     load_prompts,
 )
+from imas_codex.agentic.tool_installer import quick_setup, setup_tools
 from imas_codex.discovery import (
     get_facility as _get_facility_config,
     get_facility_infrastructure,
@@ -64,8 +66,16 @@ from imas_codex.discovery import (
     update_infrastructure,
     update_metadata,
 )
+from imas_codex.embeddings.config import EncoderConfig
+from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
 from imas_codex.graph import GraphClient, get_schema
 from imas_codex.graph.schema import to_cypher_props
+from imas_codex.remote.tools import (
+    check_all_tools as _check_all_tools,
+    install_all_tools as _install_all_tools,
+    run as _run,
+)
+from imas_codex.settings import get_embedding_location
 
 logger = logging.getLogger(__name__)
 
@@ -109,20 +119,23 @@ def _neo4j_error_message(e: Exception) -> str:
 
 
 # =============================================================================
-# Persistent Python REPL - Loaded eagerly on server startup
+# Persistent Python REPL - Initialized lazily on first use
 # =============================================================================
 
 _repl_globals: dict[str, Any] | None = None
+_repl_lock = threading.Lock()
 _imas_tools_instance = None
 
 
-def _get_imas_tools():
-    """Get or create singleton Tools instance with shared DocumentStore."""
+def _get_imas_tools(gc: GraphClient | None = None):
+    """Get or create singleton Tools instance with shared GraphClient."""
     global _imas_tools_instance
     if _imas_tools_instance is None:
         from imas_codex.tools import Tools
 
-        _imas_tools_instance = Tools()
+        if gc is None:
+            gc = _get_repl()["gc"]
+        _imas_tools_instance = Tools(graph_client=gc)
     return _imas_tools_instance
 
 
@@ -145,20 +158,15 @@ def _run_async(coro):
 def _init_repl() -> dict[str, Any]:
     """Initialize the persistent REPL environment with all utilities.
 
-    Called once at server startup. Uses lazy embedding via Encoder class
-    which respects the embedding-backend config (local/remote).
+    Called lazily on first python() tool invocation. All heavy imports
+    are at module level to avoid import deadlocks. Only I/O-bound work
+    (Neo4j connection, encoder setup) happens here.
     """
     global _repl_globals
     if _repl_globals is not None:
         return _repl_globals
 
     logger.info("Initializing Python REPL...")
-
-    from imas_codex.embeddings.config import EncoderConfig
-    from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
-    from imas_codex.graph import GraphClient
-    from imas_codex.ingestion.search import ChunkSearch
-    from imas_codex.settings import get_embedding_location
 
     gc = GraphClient()
 
@@ -547,12 +555,14 @@ def _init_repl() -> dict[str, Any]:
     # Code search utilities
     # =========================================================================
 
-    _code_searcher: ChunkSearch | None = None
+    _code_searcher = None
 
-    def _get_code_searcher() -> ChunkSearch:
+    def _get_code_searcher():
         """Get or create ChunkSearch, loading embedding model on first use."""
         nonlocal _code_searcher
         if _code_searcher is None:
+            from imas_codex.ingestion.search import ChunkSearch
+
             logger.info("Initializing ChunkSearch (embedding loading)...")
             _code_searcher = ChunkSearch()
             logger.info("ChunkSearch ready")
@@ -858,14 +868,6 @@ def _init_repl() -> dict[str, Any]:
     # Tool management utilities (from remote.tools)
     # =========================================================================
 
-    # Import the new unified tool functions
-    from imas_codex.agentic.tool_installer import quick_setup, setup_tools
-    from imas_codex.remote.tools import (
-        check_all_tools as _check_all_tools,
-        install_all_tools as _install_all_tools,
-        run as _run,
-    )
-
     def run(cmd: str, facility: str | None = None, timeout: int = 60) -> str:
         """Execute command locally or via SSH depending on facility.
 
@@ -980,10 +982,18 @@ def _init_repl() -> dict[str, Any]:
 
 
 def _get_repl() -> dict[str, Any]:
-    """Get the persistent REPL environment (already initialized at startup)."""
+    """Get the persistent REPL environment, initializing lazily on first call.
+
+    Thread-safe: uses a lock to prevent concurrent initialization.
+    All imports are at module level, so no import deadlock risk.
+    """
     global _repl_globals
-    if _repl_globals is None:
-        return _init_repl()
+    if _repl_globals is not None:
+        return _repl_globals
+    with _repl_lock:
+        # Double-check after acquiring lock
+        if _repl_globals is None:
+            _init_repl()
     return _repl_globals
 
 
@@ -1019,54 +1029,6 @@ def _reload_repl() -> str:
 
 
 # =============================================================================
-# Background REPL initialization (non-blocking)
-# =============================================================================
-
-# Event signaling REPL initialization completion
-_repl_ready = threading.Event()
-_repl_init_error: Exception | None = None
-
-
-def _init_repl_background():
-    """Initialize REPL in background thread.
-
-    Logs progress to stderr (visible in MCP output) and signals completion.
-    """
-    global _repl_init_error
-
-    try:
-        logger.info("Starting REPL initialization (embedding model + graph client)...")
-        _init_repl()
-        logger.info("REPL initialization complete - all tools ready")
-    except Exception as e:
-        logger.error(f"REPL initialization failed: {e}")
-        _repl_init_error = e
-    finally:
-        _repl_ready.set()
-
-
-def _wait_for_repl(timeout: float = 300.0) -> None:
-    """Wait for REPL initialization to complete.
-
-    Args:
-        timeout: Maximum seconds to wait (default 5 minutes for embedding rebuild)
-
-    Raises:
-        RuntimeError: If initialization failed or timed out
-    """
-    if not _repl_ready.wait(timeout=timeout):
-        raise RuntimeError(
-            f"REPL initialization timed out after {timeout}s. "
-            "Check MCP server logs for details."
-        )
-
-    if _repl_init_error is not None:
-        raise RuntimeError(
-            f"REPL initialization failed: {_repl_init_error}"
-        ) from _repl_init_error
-
-
-# =============================================================================
 # MCP Server with 9 Core Tools
 # =============================================================================
 
@@ -1076,8 +1038,9 @@ class AgentsServer:
     """
     MCP server with 9 core tools for facility exploration.
 
-    Uses background initialization to eagerly load REPL without blocking
-    the MCP handshake. The python() tool waits for initialization to complete.
+    Uses lazy initialization for the REPL — the first python() call
+    triggers GraphClient connection and encoder setup. This avoids
+    import deadlocks that occur when background threads perform imports.
 
     Tools:
     - python: Persistent REPL with rich utilities (primary interface)
@@ -1103,25 +1066,14 @@ class AgentsServer:
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
 
     def __post_init__(self):
-        """Initialize the MCP server with background REPL loading.
+        """Initialize the MCP server with lazy REPL loading.
 
-        The background initialization pattern ensures:
-        1. Server responds to MCP 'initialize' immediately (no timeout)
-        2. REPL initialization runs in background with progress logging
-        3. python() tool waits for REPL to be ready before executing
+        REPL initialization is deferred to the first python() tool call.
+        All imports are at module level to avoid deadlocks. Only I/O-bound
+        work (Neo4j connection) happens lazily.
         """
         self.mcp = FastMCP(name="imas-codex-agents")
         self._prompts = load_prompts()
-
-        # Start REPL initialization in background thread
-        # This allows the server to respond to 'initialize' immediately
-        init_thread = threading.Thread(
-            target=_init_repl_background,
-            name="repl-init",
-            daemon=True,
-        )
-        init_thread.start()
-        logger.info("REPL initialization started in background")
 
         self._register_tools()
         self._register_prompts()
@@ -1212,24 +1164,19 @@ class AgentsServer:
                 python("x = 42")
                 python("print(x * 2)")  # prints 84
             """
-            # Wait for background initialization to complete (up to 5 minutes)
-            _wait_for_repl()
-
             repl = _get_repl()
 
             stdout_capture = io.StringIO()
-            old_stdout = sys.stdout
 
             try:
-                sys.stdout = stdout_capture
-
-                try:
-                    result = eval(code, repl)
-                    if result is not None:
-                        repl["_"] = result
-                        print(repr(result))
-                except SyntaxError:
-                    exec(code, repl)
+                with redirect_stdout(stdout_capture):
+                    try:
+                        result = eval(code, repl)
+                        if result is not None:
+                            repl["_"] = result
+                            print(repr(result))
+                    except SyntaxError:
+                        exec(code, repl)
 
                 output = stdout_capture.getvalue()
                 return output if output else "(no output)"
@@ -1239,9 +1186,6 @@ class AgentsServer:
 
                 tb = traceback.format_exc()
                 return f"Error: {e}\n\n{tb}"
-
-            finally:
-                sys.stdout = old_stdout
 
         # =====================================================================
         # Tool 2: get_graph_schema - Schema introspection

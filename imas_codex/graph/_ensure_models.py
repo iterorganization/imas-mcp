@@ -44,8 +44,17 @@ def ensure_models_fresh() -> None:
 
     Only acts in editable/development installs. In installed packages,
     models are baked into the wheel and this is a no-op.
+
+    Skips regeneration when called from a non-main thread to avoid
+    import deadlocks (subprocess.run holds the import lock).
     """
     if not _is_editable_install():
+        return
+
+    # Avoid running subprocess while import lock is held in non-main threads
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
         return
 
     models = _models_file()
