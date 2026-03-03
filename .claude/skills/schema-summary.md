@@ -15,8 +15,8 @@ Condensed schema for the imas-codex Neo4j knowledge graph.
 | IMASMapping | id, source_path, target_path, driver, status | Facility→IMAS mapping |
 | MappingEvidence | id, evidence_type, content | Evidence supporting a mapping |
 | WikiPage | id, url, title, status, score | Wiki documentation page |
-| WikiChunk | id, content, embedding | Searchable wiki text chunk |
-| CodeChunk | id, content, embedding | Searchable code chunk |
+| WikiChunk | id, text, embedding | Searchable wiki text chunk |
+| CodeChunk | id, text, embedding | Searchable code chunk |
 | AgentSession | id, facility_id, status | Agent team session tracking |
 
 ## Key Relationships

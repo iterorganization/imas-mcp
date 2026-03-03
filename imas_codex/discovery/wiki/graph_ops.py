@@ -102,7 +102,8 @@ def _bulk_create_wiki_pages(
                           wp.discovered_at = datetime(),
                           wp.bulk_discovered = true
             ON MATCH SET wp.bulk_discovered = true,
-                         wp.url = page.url
+                         wp.url = page.url,
+                         wp.title = page.title
             WITH wp
             MATCH (f:Facility {id: $facility})
             MERGE (wp)-[:AT_FACILITY]->(f)

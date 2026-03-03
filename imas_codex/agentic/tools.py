@@ -297,7 +297,7 @@ def search_wiki(query: str, limit: int = 5, facility: str = "tcv") -> str:
                 MATCH (p:WikiPage)-[:HAS_CHUNK]->(node)
                 WHERE p.facility_id = $facility
                 RETURN p.title AS page_title, p.url AS url,
-                       node.content AS content, score
+                       node.text AS text, score
                 ORDER BY score DESC
                 """,
                 limit=limit,
@@ -313,12 +313,8 @@ def search_wiki(query: str, limit: int = 5, facility: str = "tcv") -> str:
             for r in result:
                 output.append(f"=== {r['page_title']} (score: {r['score']:.3f}) ===")
                 output.append(f"URL: {r['url']}")
-                content = (
-                    r["content"][:500] + "..."
-                    if len(r["content"]) > 500
-                    else r["content"]
-                )
-                output.append(content)
+                text = r["text"][:500] + "..." if len(r["text"]) > 500 else r["text"]
+                output.append(text)
                 output.append("")
 
             return "\n".join(output)
@@ -351,7 +347,7 @@ def get_wiki_context_for_path(path: str, facility: str = "tcv") -> str:
                 MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:TreeNode)
                 WHERE t.path CONTAINS $path OR t.canonical_path = $normalized
                 MATCH (wp:WikiPage)-[:HAS_CHUNK]->(wc)
-                RETURN wp.title AS page_title, wc.content AS content
+                RETURN wp.title AS page_title, wc.text AS text
                 LIMIT 5
                 """,
                 path=path,
@@ -365,7 +361,7 @@ def get_wiki_context_for_path(path: str, facility: str = "tcv") -> str:
                     MATCH (wc:WikiChunk {facility_id: $facility})
                     WHERE ANY(p IN wc.mdsplus_paths_mentioned WHERE p CONTAINS $path_part)
                     MATCH (wp:WikiPage)-[:HAS_CHUNK]->(wc)
-                    RETURN wp.title AS page_title, wc.content AS content
+                    RETURN wp.title AS page_title, wc.text AS text
                     LIMIT 5
                     """,
                     facility=facility,
@@ -379,12 +375,8 @@ def get_wiki_context_for_path(path: str, facility: str = "tcv") -> str:
             output = [f"Wiki documentation for {path}:", ""]
             for r in result:
                 output.append(f"From: {r['page_title']}")
-                content = (
-                    r["content"][:400] + "..."
-                    if len(r["content"]) > 400
-                    else r["content"]
-                )
-                output.append(content)
+                text = r["text"][:400] + "..." if len(r["text"]) > 400 else r["text"]
+                output.append(text)
                 output.append("")
 
             return "\n".join(output)
