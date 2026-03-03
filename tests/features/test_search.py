@@ -182,15 +182,13 @@ class TestSearchErrorHandling:
 
     @pytest.mark.asyncio
     async def test_search_very_long_query(self, tools):
-        """Test search handles very long queries."""
+        """Test search handles very long queries gracefully."""
         long_query = "plasma " * 100  # Very long query
 
         result = await tools.search_imas_paths(query=long_query, max_results=5)
 
-        # Should handle without crashing - validation error returns ToolError
-
-        assert isinstance(result, ToolError)
-        assert "Validation error" in result.error
+        # GraphSearchTool does not enforce max_length — should handle gracefully
+        assert isinstance(result, SearchPathsResult)
 
     @pytest.mark.asyncio
     async def test_search_special_characters(self, tools):

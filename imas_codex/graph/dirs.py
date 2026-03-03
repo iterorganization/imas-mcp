@@ -52,8 +52,8 @@ server.memory.heap.max_size=4g
 server.memory.pagecache.size=4g
 
 server.default_listen_address={listen_address}
-server.bolt.listen_address={listen_address}:{bolt_port}
-server.http.listen_address={listen_address}:{http_port}
+server.bolt.listen_address=:{bolt_port}
+server.http.listen_address=:{http_port}
 
 # Standard directories (bound from host via Apptainer)
 server.directories.data=/data
