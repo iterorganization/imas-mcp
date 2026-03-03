@@ -21,7 +21,7 @@ class TestSchemaToolStatic:
         summary = _build_schema_summary()
         assert "relationships" in summary
         rel_types = {r["type"] for r in summary["relationships"]}
-        assert "PREDECESSOR" in rel_types
+        assert "HAS_PREDECESSOR" in rel_types
         assert "IN_IDS" in rel_types
         assert "INTRODUCED_IN" in rel_types
 
@@ -60,7 +60,7 @@ class TestSchemaToolStatic:
     def test_relationship_directionality(self):
         summary = _build_schema_summary()
         # Find PREDECESSOR relationship
-        pred = [r for r in summary["relationships"] if r["type"] == "PREDECESSOR"]
+        pred = [r for r in summary["relationships"] if r["type"] == "HAS_PREDECESSOR"]
         assert len(pred) >= 1
         assert pred[0]["from"] == "DDVersion"
         assert pred[0]["to"] == "DDVersion"

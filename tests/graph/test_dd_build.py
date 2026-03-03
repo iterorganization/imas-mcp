@@ -87,7 +87,7 @@ class TestDDVersions:
         # Count versions without predecessor (should be exactly 1 — the oldest)
         result = graph_client.query(
             "MATCH (v:DDVersion) "
-            "WHERE NOT (v)-[:PREDECESSOR]->(:DDVersion) "
+            "WHERE NOT (v)-[:HAS_PREDECESSOR]->(:DDVersion) "
             "RETURN count(v) AS cnt"
         )
         roots = result[0]["cnt"] if result else 0
@@ -98,11 +98,11 @@ class TestDDVersions:
 
         # Count predecessor edges (should be total - 1)
         result = graph_client.query(
-            "MATCH (:DDVersion)-[r:PREDECESSOR]->(:DDVersion) RETURN count(r) AS cnt"
+            "MATCH (:DDVersion)-[r:HAS_PREDECESSOR]->(:DDVersion) RETURN count(r) AS cnt"
         )
         edges = result[0]["cnt"] if result else 0
         assert edges == total - 1, (
-            f"Expected {total - 1} PREDECESSOR edges for {total} versions, "
+            f"Expected {total - 1} HAS_PREDECESSOR edges for {total} versions, "
             f"found {edges}."
         )
 
@@ -112,7 +112,7 @@ class TestDDVersions:
             pytest.skip("No DDVersion nodes in graph")
 
         result = graph_client.query(
-            "MATCH (v:DDVersion)-[:PREDECESSOR]->(p:DDVersion) "
+            "MATCH (v:DDVersion)-[:HAS_PREDECESSOR]->(p:DDVersion) "
             "WITH v, count(p) AS pred_count "
             "WHERE pred_count > 1 "
             "RETURN v.id AS version, pred_count LIMIT 5"

@@ -27,9 +27,9 @@ class TestFixtureGraphStructure:
         assert result[0]["id"] == "4.1.0"
 
     def test_version_chain(self, graph_client):
-        """DDVersion nodes are chained via PREDECESSOR."""
+        """DDVersion nodes are chained via HAS_PREDECESSOR."""
         result = graph_client.query(
-            "MATCH (a:DDVersion)-[:PREDECESSOR]->(b:DDVersion) "
+            "MATCH (a:DDVersion)-[:HAS_PREDECESSOR]->(b:DDVersion) "
             "RETURN a.id AS from_v, b.id AS to_v ORDER BY a.id"
         )
         assert len(result) == 2
