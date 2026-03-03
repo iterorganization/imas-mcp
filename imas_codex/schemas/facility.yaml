@@ -722,6 +722,42 @@ classes:
           Set during triage phase based on directory structure only.
           Preserved when score worker overwrites per-dimension scores.
         range: float
+      # Per-dimension triage scores — preserved permanently so calibration
+      # can draw from the full triage population (triaged + scored paths).
+      # Written at triage time alongside score_*, never overwritten by scoring.
+      triage_score_modeling_code:
+        description: Triage-phase score for forward modeling/simulation code
+        range: float
+      triage_score_analysis_code:
+        description: Triage-phase score for experimental analysis code
+        range: float
+      triage_score_operations_code:
+        description: Triage-phase score for real-time operations code
+        range: float
+      triage_score_modeling_data:
+        description: Triage-phase score for modeling outputs
+        range: float
+      triage_score_experimental_data:
+        description: Triage-phase score for experimental shot data
+        range: float
+      triage_score_data_access:
+        description: Triage-phase score for data access tools
+        range: float
+      triage_score_workflow:
+        description: Triage-phase score for orchestration and batch processing
+        range: float
+      triage_score_visualization:
+        description: Triage-phase score for plotting and rendering tools
+        range: float
+      triage_score_documentation:
+        description: Triage-phase score for documentation value
+        range: float
+      triage_score_imas:
+        description: Triage-phase score for IMAS relevance
+        range: float
+      triage_score_convention:
+        description: Triage-phase score for sign/coordinate/COCOS convention handling
+        range: float
       score:
         description: >-
           Authoritative composite score (0.0-1.0) from second-pass LLM evaluation
