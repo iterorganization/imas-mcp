@@ -2335,11 +2335,13 @@ def _score_with_llm(
     if has_examples:
         context["score_calibration"] = enriched_examples
 
-    # Add per-dimension calibration examples (cached with 5-min TTL)
+    # Add per-dimension calibration examples (cached with 60s TTL)
+    # phase='score' draws from scored peers (2nd-pass dimensions).
     dimension_calibration = sample_dimension_calibration_examples(
         facility=facility,
         per_level=5,
         tolerance=0.1,
+        phase="score",
     )
     has_dim_calibration = any(
         any(examples for examples in dim_levels.values())
@@ -2513,11 +2515,13 @@ async def _async_score_with_llm(
     if has_examples:
         context["score_calibration"] = enriched_examples
 
-    # Add per-dimension calibration examples (cached with 5-min TTL)
+    # Add per-dimension calibration examples (cached with 60s TTL)
+    # phase='score' draws from scored peers (2nd-pass dimensions).
     dimension_calibration = sample_dimension_calibration_examples(
         facility=facility,
         per_level=5,
         tolerance=0.1,
+        phase="score",
     )
     has_dim_calibration = any(
         any(examples for examples in dim_levels.values())
