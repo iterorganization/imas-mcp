@@ -1,9 +1,14 @@
-"""Shared SLURM allocation and service management infrastructure.
+"""Shared SLURM service management infrastructure.
+
+Each service (Neo4j, embed) runs as its own SLURM job.  The job
+script runs the service process directly — no ``sleep infinity``
+allocation, no ``nohup`` wrappers.  SLURM manages the lifecycle:
+``scancel`` stops the service, cgroup enforcement is automatic,
+and ``squeue`` shows accurate resource accounting.
 
 Extracted from ``serve.py`` so that both ``graph_cli.py`` (Neo4j
 management) and ``serve.py`` (embed/LLM deployment) can share
-the same service lifecycle primitives without cross-module
-private-function imports.
+the same service lifecycle primitives.
 
 Sections:
     - Constants
@@ -11,9 +16,9 @@ Sections:
     - Scheduler detection
     - Facility compute config
     - SSH helpers
-    - SLURM allocation management
-    - Service management (start/stop/check on compute nodes)
+    - Per-service SLURM job management
     - Neo4j-specific service helpers
+    - Embed-specific service helpers
     - Health checks
     - Log tailing
 """
@@ -31,10 +36,21 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-_ALLOC_JOB = "imas-codex-services"
+# Per-service SLURM job names
+_NEO4J_JOB = "codex-neo4j"
+_EMBED_JOB = "codex-embed"
+# Legacy job name for migration
+_LEGACY_ALLOC_JOB = "imas-codex-services"
+
 _SERVICES_DIR = "$HOME/.local/share/imas-codex/services"
 _DEFAULT_GPUS = 4
 _PROJECT = "$HOME/Code/imas-codex"
+
+# Per-service resource defaults
+_NEO4J_CPUS = 4
+_NEO4J_MEM = "32G"
+_EMBED_CPUS = 2
+_EMBED_MEM = "16G"
 
 
 # ── Port helpers ─────────────────────────────────────────────────────────
@@ -175,17 +191,17 @@ def _run_on_node(node: str, cmd: str, timeout: int = 30) -> str:
     )
 
 
-# ── SLURM allocation management ─────────────────────────────────────────
+# ── Per-service SLURM job management ─────────────────────────────────────
 
 
-def _get_allocation() -> dict | None:
-    """Get the active imas-codex-services SLURM allocation.
+def _get_service_job(job_name: str) -> dict | None:
+    """Get the active SLURM job for a named service.
 
-    Returns dict with job_id, state, node, gres, time — or None.
+    Returns dict with job_id, state, node, gres, time, cpus — or None.
     """
     try:
         out = _run_remote(
-            f'squeue -n {_ALLOC_JOB} -u "$USER" --format="%A|%T|%M|%N|%b" --noheader'
+            f'squeue -n {job_name} -u "$USER" --format="%A|%T|%M|%N|%b|%C" --noheader'
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
@@ -196,19 +212,44 @@ def _get_allocation() -> dict | None:
         parts = line.split("|")
         if len(parts) >= 5:
             return {
+                "job_name": job_name,
                 "job_id": parts[0].strip(),
                 "state": parts[1].strip(),
                 "time": parts[2].strip(),
                 "node": parts[3].strip(),
                 "gres": parts[4].strip(),
+                "cpus": parts[5].strip() if len(parts) > 5 else "",
             }
     return None
 
 
-def _get_allocation_fallback() -> dict | None:
-    """Fallback allocation from allocation.log when SLURM is unavailable.
+def _get_neo4j_job() -> dict | None:
+    """Get the active Neo4j SLURM job."""
+    return _get_service_job(_NEO4J_JOB)
 
-    Returns a synthetic allocation dict if the last-known compute node
+
+def _get_embed_job() -> dict | None:
+    """Get the active embed server SLURM job."""
+    return _get_service_job(_EMBED_JOB)
+
+
+def _get_allocation() -> dict | None:
+    """Get any running service job (backward compat for graph_cli).
+
+    Checks neo4j job first (most common caller), then embed, then legacy.
+    Returns the first RUNNING job found, or None.
+    """
+    for name in (_NEO4J_JOB, _EMBED_JOB, _LEGACY_ALLOC_JOB):
+        job = _get_service_job(name)
+        if job and job["state"] == "RUNNING":
+            return job
+    return None
+
+
+def _get_allocation_fallback() -> dict | None:
+    """Fallback when SLURM is unavailable.
+
+    Returns a synthetic job dict if the last-known compute node
     is still reachable, or None.
     """
     from imas_codex.remote.locations import _host_reachable, _read_allocation_host
@@ -218,383 +259,393 @@ def _get_allocation_fallback() -> dict | None:
         return None
     if _host_reachable(host):
         return {
+            "job_name": "fallback",
             "job_id": "unknown",
             "state": "RUNNING",
             "time": "unknown",
             "node": host,
             "gres": "unknown",
+            "cpus": "",
             "_fallback": True,
         }
     return None
 
 
-def _ensure_allocation(gpus: int = _DEFAULT_GPUS) -> dict:
-    """Ensure a SLURM allocation exists, creating one if needed.
+def _get_all_service_jobs() -> dict[str, dict | None]:
+    """Get status of all service jobs.
 
-    The allocation is a ``sleep infinity`` batch job that reserves
-    compute resources.  Services are managed separately via SSH.
-
-    When SLURM is unavailable, falls back to the last-known compute
-    node from allocation.log if it is still reachable.
-
-    Returns the allocation dict (job_id, node, etc.).
+    Returns a dict mapping service name to job info (or None).
     """
-    alloc = _get_allocation()
-    if alloc and alloc["state"] == "RUNNING":
-        return alloc
-
-    # SLURM returned no running allocation — check if the last-known
-    # compute node is still reachable (services outlive SLURM outages).
-    fallback = _get_allocation_fallback()
-    if fallback:
-        click.echo(
-            f"SLURM unavailable but compute node {fallback['node']} is reachable"
-        )
-        return fallback
-
-    # Cancel any PENDING allocation (stuck in queue)
-    if alloc:
-        _run_remote(f"scancel {alloc['job_id']}", check=False)
-        time.sleep(1)
-
-    _submit_allocation(gpus)
-
-    # Wait for RUNNING state
-    click.echo("Waiting for allocation to start...")
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        time.sleep(3)
-        alloc = _get_allocation()
-        if alloc and alloc["state"] == "RUNNING":
-            click.echo(
-                f"  Allocation ready: job {alloc['job_id']} on {alloc['node']} "
-                f"({alloc['gres']})"
-            )
-            return alloc
-        remaining = int(deadline - time.time())
-        if remaining > 0 and remaining % 15 < 5:
-            state = alloc["state"] if alloc else "UNKNOWN"
-            click.echo(f"  State: {state} ({remaining}s remaining)")
-
-    raise click.ClickException(
-        "Allocation did not start within 120s. Check: squeue -u $USER"
-    )
+    return {
+        "neo4j": _get_neo4j_job(),
+        "embed": _get_embed_job(),
+    }
 
 
-def _submit_allocation(gpus: int) -> None:
-    """Submit a new allocation job (sleep infinity with cleanup trap)."""
+def _submit_service_job(
+    job_name: str,
+    service_command: str,
+    *,
+    cpus: int,
+    mem: str,
+    gpus: int = 0,
+    pre_launch: str = "",
+) -> None:
+    """Submit a SLURM job that runs a service directly.
+
+    The job script sources ``.env``, runs optional pre-launch setup,
+    then ``exec``s the service command.  SLURM manages the process
+    lifecycle — ``scancel`` stops it, cgroup enforcement is automatic.
+    """
     import base64
 
-    gpu_e = _gpu_entry()
     partition = _gpu_partition()
-    host = gpu_e["location"]
+    host = _gpu_entry()["location"]
     partition_name = partition["name"]
-    cpus = gpus * 4
 
-    # Resolve remote $HOME for SBATCH directives (SLURM does NOT expand
-    # shell variables in #SBATCH lines — only inside the script body).
     remote_home = _run_remote("echo $HOME", timeout=10).strip()
     services_dir_abs = f"{remote_home}/.local/share/imas-codex/services"
+
+    gres_line = f"#SBATCH --gres=gpu:{gpus}\n" if gpus > 0 else ""
 
     script = (
         "#!/bin/bash\n"
         f"#SBATCH --partition={partition_name}\n"
-        f"#SBATCH --gres=gpu:{gpus}\n"
+        f"{gres_line}"
         f"#SBATCH --cpus-per-task={cpus}\n"
-        "#SBATCH --mem=64G\n"
+        f"#SBATCH --mem={mem}\n"
         "#SBATCH --time=UNLIMITED\n"
-        f"#SBATCH --job-name={_ALLOC_JOB}\n"
+        f"#SBATCH --job-name={job_name}\n"
         f"#SBATCH --nodelist={host}\n"
-        f"#SBATCH --output={services_dir_abs}/allocation.log\n"
+        f"#SBATCH --output={services_dir_abs}/{job_name}.log\n"
         "\n"
-        f"SERVICES_DIR={_SERVICES_DIR}\n"
-        'mkdir -p "$SERVICES_DIR"\n'
+        f"cd {_PROJECT}\n"
+        f"source {_PROJECT}/.env 2>/dev/null || true\n"
         "\n"
-        "cleanup() {\n"
-        '    echo "Releasing allocation at $(date), stopping services..."\n'
-        '    for pidfile in "$SERVICES_DIR"/*.pid; do\n'
-        '        [ -f "$pidfile" ] || continue\n'
-        '        pid=$(cat "$pidfile")\n'
-        '        name=$(basename "$pidfile" .pid)\n'
-        '        if kill -0 "$pid" 2>/dev/null; then\n'
-        '            echo "Stopping $name (PID $pid)..."\n'
-        '            pkill -TERM -P "$pid" 2>/dev/null || true\n'
-        '            kill -TERM "$pid" 2>/dev/null || true\n'
-        "            sleep 2\n"
-        '            if kill -0 "$pid" 2>/dev/null; then\n'
-        '                pkill -KILL -P "$pid" 2>/dev/null || true\n'
-        '                kill -KILL "$pid" 2>/dev/null || true\n'
-        "            fi\n"
-        "        fi\n"
-        '        rm -f "$pidfile"\n'
-        "    done\n"
-        '    echo "All services stopped"\n'
-        "}\n"
-        "trap cleanup EXIT TERM INT\n"
-        "\n"
-        'echo "Allocation ready on $(hostname) at $(date)"\n'
-        'echo "GPUs: $(nvidia-smi -L 2>/dev/null | wc -l)"\n'
-        "\n"
-        "sleep infinity\n"
+        f'echo "{job_name} started on $(hostname) at $(date)"\n'
     )
 
-    # Cancel conflicting legacy jobs (standalone embed, etc.)
+    if pre_launch:
+        script += f"\n# Pre-launch setup\n{pre_launch}\n"
+
+    script += f"\nexec {service_command}\n"
+
+    # Cancel any existing job with this name
+    _cancel_service_job(job_name)
+
+    # Cancel legacy combined allocation
     _cancel_legacy_jobs()
 
     # Stop conflicting login-node services
-    _stop_login_services()
+    _stop_login_services(job_name)
 
     script_b64 = base64.b64encode(script.encode()).decode()
     submit_cmd = (
-        f"mkdir -p {_SERVICES_DIR} && "
-        f'echo "{script_b64}" | base64 -d > /tmp/codex-alloc.sh && '
-        "sbatch /tmp/codex-alloc.sh && "
-        "rm -f /tmp/codex-alloc.sh"
+        f"mkdir -p {services_dir_abs} && "
+        f'echo "{script_b64}" | base64 -d > /tmp/{job_name}.sh && '
+        f"sbatch /tmp/{job_name}.sh && "
+        f"rm -f /tmp/{job_name}.sh"
     )
     output = _run_remote(submit_cmd, timeout=30, check=True)
-    click.echo(output.strip().split("\n")[0])
+    click.echo(f"  {output.strip().split(chr(10))[0]}")
 
 
-def _cancel_allocation() -> list[str]:
-    """Cancel the allocation job (stopping all services first)."""
-    alloc = _get_allocation()
-    if not alloc:
-        return []
+def _ensure_service_job(
+    job_name: str,
+    service_command: str,
+    *,
+    cpus: int,
+    mem: str,
+    gpus: int = 0,
+    pre_launch: str = "",
+    health_cmd: str | None = None,
+    health_test: str | None = None,
+) -> dict:
+    """Ensure a service SLURM job is running, creating one if needed.
 
-    # Stop services explicitly before canceling the allocation,
-    # since nohup'd processes survive SLURM job termination.
-    if alloc["state"] == "RUNNING":
-        node = alloc["node"]
-        for svc in ("neo4j", "embed", "llm"):
-            if _service_running(node, svc):
-                _stop_service(node, svc)
+    Returns the job dict (job_id, node, etc.).
+    """
+    job = _get_service_job(job_name)
+    if job and job["state"] == "RUNNING":
+        return job
+
+    # Cancel any PENDING job (stuck in queue)
+    if job:
+        _run_remote(f"scancel {job['job_id']}", check=False)
+        time.sleep(1)
+
+    _submit_service_job(
+        job_name,
+        service_command,
+        cpus=cpus,
+        mem=mem,
+        gpus=gpus,
+        pre_launch=pre_launch,
+    )
+
+    # Wait for RUNNING state
+    click.echo(f"  Waiting for {job_name} to start...")
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        time.sleep(3)
+        job = _get_service_job(job_name)
+        if job and job["state"] == "RUNNING":
+            click.echo(f"  {job_name} running: job {job['job_id']} on {job['node']}")
+            break
+        remaining = int(deadline - time.time())
+        if remaining > 0 and remaining % 15 < 5:
+            state = job["state"] if job else "UNKNOWN"
+            click.echo(f"    State: {state} ({remaining}s remaining)")
+    else:
+        raise click.ClickException(
+            f"{job_name} did not start within 120s. Check: squeue -u $USER"
+        )
+
+    # Wait for health if configured
+    if health_cmd and job:
+        _wait_for_health(job_name, health_cmd, success_test=health_test)
+
+    return job  # type: ignore[return-value]
+
+
+def _cancel_service_job(job_name: str) -> bool:
+    """Cancel a service's SLURM job. Returns True if cancelled."""
+    job = _get_service_job(job_name)
+    if not job:
+        return False
+    try:
+        _run_remote(f"scancel {job['job_id']}", check=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def _stop_service(node: str, name: str) -> bool:
+    """Stop a named service by canceling its SLURM job.
+
+    For Neo4j, sends SIGTERM first for graceful shutdown before
+    canceling the SLURM job, allowing checkpoint/flush.
+    """
+    # Map service name to SLURM job name
+    job_names = {"neo4j": _NEO4J_JOB, "embed": _EMBED_JOB}
+    job_name = job_names.get(name, name)
+    job = _get_service_job(job_name)
+
+    if not job or job["state"] != "RUNNING":
+        click.echo(f"  {name} not running")
+        return False
+
+    # For Neo4j, send graceful shutdown signal before scancel
+    if name == "neo4j":
+        try:
+            _run_on_node(
+                node,
+                'pid=$(pgrep -u $USER -f "Neo4jCommunity" 2>/dev/null | head -1)\n'
+                'if [ -n "$pid" ]; then\n'
+                '    kill -TERM "$pid" 2>/dev/null || true\n'
+                "    for i in $(seq 1 60); do\n"
+                '        kill -0 "$pid" 2>/dev/null || break\n'
+                "        sleep 1\n"
+                "    done\n"
+                "fi\n",
+                timeout=90,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
 
     try:
-        _run_remote(f"scancel {alloc['job_id']}", check=True)
-        return [alloc["job_id"]]
+        _run_remote(f"scancel {job['job_id']}", check=True)
+        click.echo(f"  Stopped {name} (job {job['job_id']})")
+        return True
     except subprocess.CalledProcessError:
-        return []
+        click.echo(f"  Failed to stop {name}")
+        return False
+
+
+def _service_running(node: str, name: str) -> bool:
+    """Check if a named service is running.
+
+    Checks SLURM job state first, then falls back to port-liveness
+    check for services started outside the deploy workflow.
+    """
+    # Check via SLURM job
+    job_names = {"neo4j": _NEO4J_JOB, "embed": _EMBED_JOB}
+    job_name = job_names.get(name, name)
+    job = _get_service_job(job_name)
+    if job and job["state"] == "RUNNING":
+        return True
+
+    # Also check legacy allocation job
+    legacy = _get_service_job(_LEGACY_ALLOC_JOB)
+    if legacy and legacy["state"] == "RUNNING" and legacy["node"] == node:
+        # Legacy pattern — check port
+        port = _get_service_port(name)
+        if port:
+            return _port_listening(node, port)
+
+    # Fallback: direct port check for orphaned processes
+    port = _get_service_port(name)
+    if port:
+        return _port_listening(node, port)
+
+    return False
+
+
+def _get_service_port(name: str) -> int | None:
+    """Get the port for a named service."""
+    try:
+        if name == "neo4j":
+            return _graph_http_port()
+        if name == "embed":
+            return _embed_port()
+    except Exception:
+        pass
+    return None
+
+
+def _port_listening(node: str, port: int) -> bool:
+    """Check if a port is listening on a compute node."""
+    try:
+        result = _run_on_node(
+            node,
+            f"ss -tlnp sport = :{port} 2>/dev/null | grep -q LISTEN && echo listening",
+            timeout=10,
+        )
+        return "listening" in result
+    except subprocess.CalledProcessError:
+        return False
 
 
 def _cancel_legacy_jobs() -> None:
-    """Cancel any legacy standalone SLURM jobs (codex-embed, etc.)."""
-    for name in ("codex-embed", "codex-services"):
+    """Cancel legacy combined allocation jobs."""
+    for name in (_LEGACY_ALLOC_JOB, "codex-embed", "codex-services"):
         try:
             out = _run_remote(f'squeue -n {name} -u "$USER" --format="%A" --noheader')
             for line in out.strip().split("\n"):
                 jid = line.strip()
                 if jid and jid != "(no output)" and jid.isdigit():
                     _run_remote(f"scancel {jid}", check=False)
-                    click.echo(f"Cancelled legacy job {jid} ({name})")
+                    click.echo(f"  Cancelled legacy job {jid} ({name})")
         except subprocess.CalledProcessError:
             pass
 
 
-def _stop_login_services() -> None:
-    """Stop any conflicting login-node services (systemd, apptainer)."""
-    # Embed systemd service
-    try:
-        result = _run_remote(
-            "systemctl --user is-active imas-codex-embed 2>/dev/null || true",
-            timeout=10,
-        )
-        if "active" in result:
-            _run_remote(
-                "systemctl --user stop imas-codex-embed 2>/dev/null || true",
-                timeout=15,
-            )
-            click.echo("Stopped login embed service")
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pass
-
-    # Neo4j systemd service
-    try:
-        result = _run_remote(
-            "systemctl --user list-units 'imas-codex-neo4j-*' --no-pager "
-            "--plain --no-legend 2>/dev/null | awk '{print $1}' | head -1",
-            timeout=10,
-        )
-        service = result.strip()
-        if service and service != "(no output)":
-            _run_remote(
-                f"systemctl --user stop {service} 2>/dev/null || true", timeout=15
-            )
-            click.echo(f"Stopped login service ({service})")
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pass
-
-    # Kill any direct Neo4j apptainer processes (manual starts)
-    try:
-        result = _run_remote(
-            "pgrep -u $USER -f 'neo4j_.*community.*\\.sif' 2>/dev/null | head -1",
-            timeout=10,
-        )
-        pid = result.strip()
-        if pid and pid != "(no output)" and pid.isdigit():
-            _run_remote(f"kill {pid} 2>/dev/null || true", timeout=10)
-            click.echo(f"Killed login Neo4j process (PID {pid})")
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pass
-
-    # LLM proxy systemd service
-    try:
-        result = _run_remote(
-            "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
-            timeout=10,
-        )
-        if "active" in result:
-            _run_remote(
-                "systemctl --user stop imas-codex-llm 2>/dev/null || true",
-                timeout=15,
-            )
-            click.echo("Stopped login LLM proxy service")
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        pass
-
-
-# ── Service management on allocated node ─────────────────────────────────
-
-
-def _start_service(node: str, name: str, command: str) -> None:
-    """Start a named service on the compute node.
-
-    Writes the command to a launcher script on the shared filesystem,
-    then runs ``nohup`` on the compute node.  PID tracked in
-    ``$SERVICES_DIR/<name>.pid``, logs in ``$SERVICES_DIR/<name>.log``.
-
-    Idempotent: no-op if already running.
-    """
-    import base64 as b64
-
-    if _service_running(node, name):
-        click.echo(f"  {name} already running on {node}")
-        return
-
-    # Write service command as a launcher script on shared GPFS.
-    # Source .env first for API keys, then exec the service command
-    # so the script's PID becomes the actual process PID (not a
-    # dead bash wrapper).
-    svc_script = f"{_SERVICES_DIR}/{name}.sh"
-    script_content = (
-        f"#!/bin/bash\n"
-        f"cd {_PROJECT}\n"
-        f"source {_PROJECT}/.env 2>/dev/null || true\n"
-        f"exec {command}\n"
-    )
-    script_b64 = b64.b64encode(script_content.encode()).decode()
-    _run_remote(
-        f"mkdir -p {_SERVICES_DIR} && "
-        f'echo "{script_b64}" | base64 -d > {svc_script} && '
-        f"chmod +x {svc_script}",
-        timeout=10,
-    )
-
-    # Launch on compute node via nohup (script is on shared GPFS)
-    launch = (
-        f"nohup {svc_script} > {_SERVICES_DIR}/{name}.log 2>&1 &\n"
-        f"echo $! > {_SERVICES_DIR}/{name}.pid\n"
-        f'echo "Started {name} (PID $!)"\n'
-    )
-    result = _run_on_node(node, launch, timeout=30)
-    click.echo(f"  {result.strip()}")
-
-
-def _stop_service(node: str, name: str) -> bool:
-    """Stop a named service on the compute node. Returns True if stopped.
-
-    Sends SIGTERM to the top-level process first (Apptainer for Neo4j),
-    which propagates it to the JVM for a graceful checkpoint/shutdown.
-    Waits up to 90 seconds — Neo4j with a multi-GB database on GPFS
-    can need 60+ seconds to checkpoint.
-
-    Only escalates to SIGKILL as a last resort if the graceful window
-    expires.  SIGKILL skips checkpointing and leaves stale POSIX locks
-    on GPFS that require inode replacement (``_clean_neo4j_locks``).
-    """
-    stop = (
-        f"pid=$(cat {_SERVICES_DIR}/{name}.pid 2>/dev/null) || exit 0\n"
-        f'if kill -0 "$pid" 2>/dev/null; then\n'
-        f"    # SIGTERM to top-level process — Apptainer forwards to JVM\n"
-        f'    kill -TERM "$pid" 2>/dev/null || true\n'
-        f"    # Wait up to 90s for graceful checkpoint + shutdown\n"
-        f"    for i in $(seq 1 90); do\n"
-        f'        kill -0 "$pid" 2>/dev/null || break\n'
-        f"        sleep 1\n"
-        f"    done\n"
-        f'    if kill -0 "$pid" 2>/dev/null; then\n'
-        f'        echo "Graceful shutdown timed out — escalating to SIGKILL"\n'
-        f'        pkill -KILL -P "$pid" 2>/dev/null || true\n'
-        f'        kill -KILL "$pid" 2>/dev/null || true\n'
-        f"        sleep 2\n"
-        f"    fi\n"
-        f'    echo "Stopped {name} (PID $pid)"\n'
-        f"else\n"
-        f'    echo "{name} not running"\n'
-        f"fi\n"
-        f"rm -f {_SERVICES_DIR}/{name}.pid {_SERVICES_DIR}/{name}.sh\n"
-    )
-    result = _run_on_node(node, stop, timeout=120)
-    click.echo(f"  {result.strip()}")
-    return "Stopped" in result
-
-
-_SERVICE_PORTS: dict[str, str] = {
-    "neo4j": "_graph_port",
-    "embed": "_embed_port",
-}
-
-
-def _service_running(node: str, name: str) -> bool:
-    """Check if a named service is running on the compute node.
-
-    First checks the PID file.  If the tracked PID is dead, falls back
-    to a port-liveness check — this catches orphaned services that were
-    started outside the deploy workflow (or whose PID file is stale).
-    """
-    check = (
-        f"pid=$(cat {_SERVICES_DIR}/{name}.pid 2>/dev/null) || exit 1\n"
-        f'kill -0 "$pid" 2>/dev/null || exit 1\n'
-        f'echo "running"\n'
-    )
-    try:
-        result = _run_on_node(node, check, timeout=10)
-        if "running" in result:
-            return True
-    except subprocess.CalledProcessError:
-        pass
-
-    # Fallback: check if the service port is responding
-    port_fn_name = _SERVICE_PORTS.get(name)
-    if port_fn_name:
-        port = globals()[port_fn_name]()
+def _stop_login_services(job_name: str = "") -> None:
+    """Stop conflicting login-node services (systemd, apptainer)."""
+    if job_name in ("", _NEO4J_JOB):
+        # Neo4j systemd
         try:
-            result = _run_on_node(
-                node,
-                f"ss -tlnp sport = :{port} 2>/dev/null | grep -q LISTEN && echo listening",
+            result = _run_remote(
+                "systemctl --user list-units 'imas-codex-neo4j-*' --no-pager "
+                "--plain --no-legend 2>/dev/null | awk '{print $1}' | head -1",
                 timeout=10,
             )
-            if "listening" in result:
-                # Port is bound — adopt the process into the PID file
-                try:
-                    pid_result = _run_on_node(
-                        node,
-                        f"ss -tlnp sport = :{port} 2>/dev/null"
-                        f" | grep -oP 'pid=\\K[0-9]+' | head -1",
-                        timeout=10,
-                    )
-                    pid = pid_result.strip()
-                    if pid:
-                        _run_remote(
-                            f"echo {pid} > {_SERVICES_DIR}/{name}.pid",
-                            timeout=5,
-                        )
-                except (subprocess.CalledProcessError, ValueError):
-                    pass
-                return True
-        except subprocess.CalledProcessError:
+            service = result.strip()
+            if service and service != "(no output)":
+                _run_remote(
+                    f"systemctl --user stop {service} 2>/dev/null || true", timeout=15
+                )
+                click.echo(f"  Stopped login service ({service})")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             pass
 
-    return False
+        # Kill direct Neo4j apptainer processes
+        try:
+            result = _run_remote(
+                "pgrep -u $USER -f 'neo4j_.*community.*\\.sif' 2>/dev/null | head -1",
+                timeout=10,
+            )
+            pid = result.strip()
+            if pid and pid != "(no output)" and pid.isdigit():
+                _run_remote(f"kill {pid} 2>/dev/null || true", timeout=10)
+                click.echo(f"  Killed login Neo4j process (PID {pid})")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+
+    if job_name in ("", _EMBED_JOB):
+        # Embed systemd
+        try:
+            result = _run_remote(
+                "systemctl --user is-active imas-codex-embed 2>/dev/null || true",
+                timeout=10,
+            )
+            if "active" in result:
+                _run_remote(
+                    "systemctl --user stop imas-codex-embed 2>/dev/null || true",
+                    timeout=15,
+                )
+                click.echo("  Stopped login embed service")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+
+    # LLM proxy (always check)
+    if job_name == "":
+        try:
+            result = _run_remote(
+                "systemctl --user is-active imas-codex-llm 2>/dev/null || true",
+                timeout=10,
+            )
+            if "active" in result:
+                _run_remote(
+                    "systemctl --user stop imas-codex-llm 2>/dev/null || true",
+                    timeout=15,
+                )
+                click.echo("  Stopped login LLM proxy service")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+
+
+def _get_service_load(node: str, name: str) -> dict | None:
+    """Get real-time resource usage for a service on a compute node.
+
+    Returns dict with cpu_percent, mem_mb, gpu_util (if applicable).
+    """
+    import json as _json
+
+    if name == "neo4j":
+        process_pattern = "Neo4jCommunity"
+    elif name == "embed":
+        process_pattern = "imas-codex serve embed"
+    else:
+        return None
+
+    script = (
+        f'pids=$(pgrep -u $USER -f "{process_pattern}" 2>/dev/null)\n'
+        'if [ -z "$pids" ]; then echo "{{}}"; exit 0; fi\n'
+        "cpu=0; mem=0\n"
+        "for pid in $pids; do\n"
+        "    vals=$(ps -p $pid -o %cpu=,%mem=,rss= 2>/dev/null | tail -1)\n"
+        "    c=$(echo \"$vals\" | awk '{print $1}')\n"
+        "    m=$(echo \"$vals\" | awk '{print $3}')\n"  # RSS in KB
+        '    cpu=$(echo "$cpu + $c" | bc 2>/dev/null || echo "$cpu")\n'
+        '    mem=$(echo "$mem + $m" | bc 2>/dev/null || echo "$mem")\n'
+        "done\n"
+        "mem_mb=$((mem / 1024))\n"
+    )
+
+    if name == "embed":
+        # Include GPU utilization
+        script += (
+            "gpu_util=$(nvidia-smi --query-compute-apps=pid,used_memory "
+            "--format=csv,noheader,nounits 2>/dev/null | "
+            "awk -F', ' '{sum+=$2} END {print sum+0}')\n"
+            "gpu_count=$(nvidia-smi --query-compute-apps=pid "
+            "--format=csv,noheader 2>/dev/null | wc -l)\n"
+            'printf \'{"cpu": %s, "mem_mb": %s, "gpu_mem_mb": %s, '
+            '"gpu_count": %s}\\n\' "$cpu" "$mem_mb" "$gpu_util" "$gpu_count"\n'
+        )
+    else:
+        script += 'printf \'{"cpu": %s, "mem_mb": %s}\\n\' "$cpu" "$mem_mb"\n'
+
+    try:
+        result = _run_on_node(node, script, timeout=15)
+        for line in result.strip().split("\n"):
+            line = line.strip()
+            if line.startswith("{"):
+                return _json.loads(line)
+    except (subprocess.CalledProcessError, _json.JSONDecodeError, ValueError):
+        pass
+    return None
 
 
 # ── Neo4j-specific service helpers ───────────────────────────────────────
@@ -670,19 +721,14 @@ def _kill_neo4j_on_node(node: str) -> None:
 def _neo4j_service_command() -> str:
     """Build the shell command to start Neo4j on a compute node.
 
-    Binds to ``0.0.0.0`` on the exclusively-allocated SLURM compute
-    node.  Port collisions between users are impossible because each
-    user's allocation runs on a different node.
+    Binds to ``0.0.0.0`` inside the SLURM job's cgroup.  Port
+    collisions between users are impossible because each user's
+    job runs on a different node (or exclusive allocation).
 
     Uses ``neo4j console`` directly with a host-side ``conf/`` bind
     mount for configuration.  **Never** use the Docker entrypoint —
     it calls ``set-initial-password`` and ``rm -rf conf/*`` on every
     start, which can reinitialize an existing database.
-
-    The returned command is used inside ``_start_service()`` which wraps
-    it with ``exec``, so the command must be a single executable call
-    (no ``&&`` chains).  All setup (directory creation, config writing)
-    is done in ``_neo4j_pre_launch()`` before this command runs.
     """
     from imas_codex.settings import get_neo4j_image_shell
 
@@ -705,16 +751,16 @@ def _neo4j_service_command() -> str:
     )
 
 
-def _neo4j_pre_launch(node: str) -> None:
-    """Create directories and ensure neo4j.conf exists on the compute node.
+def _neo4j_pre_launch(node: str | None = None) -> str:
+    """Build pre-launch setup script for Neo4j.
 
-    Must be called before ``_start_service()`` with the neo4j command.
-    Separated from the service command because ``_start_service()``
-    wraps the command with ``exec`` (replacing the shell), so
-    ``&&``-chained setup steps would not work.
+    Creates directories and ensures neo4j.conf exists.  Only writes
+    the config if it does not already exist — preserving any manual
+    memory tuning.
 
-    Only writes neo4j.conf if it does not already exist — preserving
-    any manual memory tuning.
+    When ``node`` is provided, also runs the script on that node
+    (backward compat for graph_cli).  Always returns the script text
+    for embedding in ``_submit_service_job(..., pre_launch=...)``.
     """
     from imas_codex.graph.dirs import DEFAULT_NEO4J_CONF
     from imas_codex.graph.profiles import resolve_neo4j
@@ -735,7 +781,11 @@ def _neo4j_pre_launch(node: str) -> None:
         "CONFEOF\n"
         "fi\n"
     )
-    _run_on_node(node, setup_script, timeout=15)
+
+    if node is not None:
+        _run_on_node(node, setup_script, timeout=15)
+
+    return setup_script
 
 
 # ── Embed-specific service helpers ───────────────────────────────────────
@@ -744,9 +794,8 @@ def _neo4j_pre_launch(node: str) -> None:
 def _embed_service_command(gpus: int, workers: int) -> str:
     """Build the shell command to start the embed server on a compute node.
 
-    Binds to ``0.0.0.0`` on the exclusively-allocated SLURM compute
-    node.  Accessible from the login node via the compute node's
-    hostname on the cluster network.
+    Binds to ``0.0.0.0`` inside the SLURM job's cgroup.  Accessible
+    from the login node via the compute node's hostname.
     """
     port = _embed_port()
     gpu_ids = ",".join(str(i) for i in range(gpus))
@@ -759,6 +808,82 @@ def _embed_service_command(gpus: int, workers: int) -> str:
         f"--host 0.0.0.0 --port {port} "
         f"--gpus {gpu_ids} --workers {workers} --deploy-label {partition_name}"
     )
+
+
+# ── High-level deploy functions ──────────────────────────────────────────
+
+
+def deploy_neo4j() -> dict:
+    """Deploy Neo4j as its own SLURM job (no GPUs).
+
+    Returns the job dict.
+    """
+    job = _get_neo4j_job()
+    if job and job["state"] == "RUNNING":
+        click.echo(
+            f"Neo4j already running: job {job['job_id']} on {job['node']} "
+            f"({job['cpus']} CPUs, {job['time']})"
+        )
+        return job
+
+    # Kill orphaned Neo4j processes on the target node
+    host = _gpu_entry()["location"]
+    _kill_neo4j_on_node(host)
+    _clean_neo4j_locks(host)
+
+    pre_launch = _neo4j_pre_launch()
+    http_port = _graph_http_port()
+
+    click.echo("Deploying Neo4j...")
+    return _ensure_service_job(
+        _NEO4J_JOB,
+        _neo4j_service_command(),
+        cpus=_NEO4J_CPUS,
+        mem=_NEO4J_MEM,
+        gpus=0,
+        pre_launch=pre_launch,
+        health_cmd=f"curl -sf http://{host}:{http_port}/",
+    )
+
+
+def deploy_embed(gpus: int = _DEFAULT_GPUS, workers: int | None = None) -> dict:
+    """Deploy the embed server as its own SLURM job.
+
+    Returns the job dict.
+    """
+    if workers is None:
+        workers = gpus
+
+    job = _get_embed_job()
+    if job and job["state"] == "RUNNING":
+        click.echo(
+            f"Embed already running: job {job['job_id']} on {job['node']} "
+            f"({job['gres']}, {job['cpus']} CPUs, {job['time']})"
+        )
+        return job
+
+    host = _gpu_entry()["location"]
+    port = _embed_port()
+
+    click.echo(f"Deploying embed server ({gpus} GPUs, {workers} workers)...")
+    return _ensure_service_job(
+        _EMBED_JOB,
+        _embed_service_command(gpus, workers),
+        cpus=_EMBED_CPUS,
+        mem=_EMBED_MEM,
+        gpus=gpus,
+        health_cmd=f"curl -sf http://{host}:{port}/health",
+        health_test='"status"',
+    )
+
+
+def _ensure_allocation(gpus: int = _DEFAULT_GPUS) -> dict:
+    """Backward-compatible allocation entry point.
+
+    Used by ``graph_cli.py`` which expects an allocation dict with
+    a ``node`` key.  Ensures the Neo4j job is running and returns it.
+    """
+    return deploy_neo4j()
 
 
 # ── Health checks ────────────────────────────────────────────────────────

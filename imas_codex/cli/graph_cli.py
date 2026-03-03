@@ -124,18 +124,13 @@ class Neo4jOperation:
             if not needs_stop:
                 try:
                     from imas_codex.cli.services import (
-                        _get_allocation,
+                        _get_neo4j_job,
                         _is_graph_compute_target,
-                        _service_running,
                     )
 
                     if _is_graph_compute_target():
-                        alloc = _get_allocation()
-                        if (
-                            alloc
-                            and alloc["state"] == "RUNNING"
-                            and _service_running(alloc["node"], "neo4j")
-                        ):
+                        job = _get_neo4j_job()
+                        if job and job["state"] == "RUNNING":
                             needs_stop = True
                 except Exception:
                     pass
@@ -225,16 +220,17 @@ class Neo4jOperation:
 
             if _is_graph_compute_target():
                 from imas_codex.cli.services import (
+                    _NEO4J_JOB,
+                    _cancel_service_job,
                     _clean_neo4j_locks,
-                    _get_allocation,
-                    _stop_service,
+                    _get_neo4j_job,
                 )
 
-                alloc = _get_allocation()
-                if alloc and alloc["state"] == "RUNNING":
-                    if _stop_service(alloc["node"], "neo4j"):
-                        # Clean stale POSIX locks left by SIGKILL on GPFS
-                        _clean_neo4j_locks(alloc["node"])
+                job = _get_neo4j_job()
+                if job and job["state"] == "RUNNING":
+                    node = job["node"]
+                    _cancel_service_job(_NEO4J_JOB)
+                    _clean_neo4j_locks(node)
         except Exception:
             pass
 
@@ -261,23 +257,12 @@ class Neo4jOperation:
             from imas_codex.cli.services import _is_graph_compute_target
 
             if _is_graph_compute_target():
-                from imas_codex.cli.services import (
-                    _get_allocation,
-                    _neo4j_service_command,
-                    _start_service,
-                    _wait_for_health,
-                )
+                from imas_codex.cli.services import deploy_neo4j
 
-                alloc = _get_allocation()
-                if alloc and alloc["state"] == "RUNNING":
-                    node = alloc["node"]
-                    _start_service(node, "neo4j", _neo4j_service_command())
-                    from imas_codex.cli.services import _graph_http_port
-
-                    http_port = _graph_http_port()
-                    _wait_for_health("Neo4j", f"curl -sf http://{node}:{http_port}/")
-                    click.echo(f"  Neo4j [{self.profile.name}] ready on {node}")
-                    return
+                job = deploy_neo4j()
+                node = job["node"]
+                click.echo(f"  Neo4j [{self.profile.name}] ready on {node}")
+                return
         except Exception:
             pass
 
@@ -1106,45 +1091,20 @@ def graph_start(
 
     if loc_info.is_compute:
         from imas_codex.cli.services import (
-            _clean_neo4j_locks,
-            _ensure_allocation,
             _graph_http_port,
             _graph_port,
-            _kill_neo4j_on_node,
-            _neo4j_pre_launch,
-            _neo4j_service_command,
-            _service_running,
-            _start_service,
-            _wait_for_health,
+            deploy_neo4j,
         )
 
-        alloc = _ensure_allocation()
-        node = alloc["node"]
-        if _service_running(node, "neo4j"):
-            click.echo(
-                f"Neo4j [{profile.name}] already running on {node} "
-                f"(alloc {alloc['job_id']}, {alloc['gres']}, {alloc['time']})"
-            )
-            click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
-            click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
-            return
+        job = deploy_neo4j()
+        node = job["node"]
 
-        if alloc.get("_fallback"):
+        if job.get("_fallback"):
             raise click.ClickException(
                 f"SLURM is unavailable and Neo4j is not running on {node}. "
                 "Cannot start Neo4j without a SLURM allocation. "
                 "Try again when SLURM recovers."
             )
-
-        _kill_neo4j_on_node(node)
-        _clean_neo4j_locks(node)
-
-        click.echo(f"Starting Neo4j [{profile.name}] on {node}...")
-        _neo4j_pre_launch(node)
-        _start_service(node, "neo4j", _neo4j_service_command())
-
-        http_port = _graph_http_port()
-        _wait_for_health("Neo4j", f"curl -sf http://{node}:{http_port}/")
 
         click.echo(f"  Bolt: bolt://{node}:{_graph_port()}")
         click.echo(f"  HTTP: http://{node}:{_graph_http_port()}")
@@ -1324,22 +1284,20 @@ def graph_stop(data_dir: str | None) -> None:
 
     if loc_info.is_compute:
         from imas_codex.cli.services import (
-            _get_allocation,
-            _get_allocation_fallback,
-            _stop_service,
+            _NEO4J_JOB,
+            _cancel_service_job,
+            _get_neo4j_job,
         )
 
-        alloc = _get_allocation()
-        if not alloc or alloc["state"] != "RUNNING":
-            alloc = _get_allocation_fallback()
-        if alloc and alloc["state"] == "RUNNING":
-            node = alloc["node"]
-            if _stop_service(node, "neo4j"):
+        job = _get_neo4j_job()
+        if job and job["state"] == "RUNNING":
+            node = job["node"]
+            if _cancel_service_job(_NEO4J_JOB):
                 click.echo(f"✓ Neo4j [{profile.name}] stopped on {node}")
             else:
-                click.echo(f"Neo4j [{profile.name}] was not running on {node}")
+                click.echo(f"Failed to stop Neo4j [{profile.name}]")
         else:
-            click.echo(f"Neo4j [{profile.name}] not running (no SLURM allocation)")
+            click.echo(f"Neo4j [{profile.name}] not running (no SLURM job)")
         return
     # ── End SLURM compute dispatch ───────────────────────────────────────
 
