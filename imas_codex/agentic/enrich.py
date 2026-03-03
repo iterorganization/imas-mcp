@@ -50,7 +50,7 @@ class EnrichmentResult:
     path: str
     description: str | None
     physics_domain: PhysicsDomain | None
-    units: str | None
+    unit: str | None
     confidence: str
     # IMAS mapping preparation fields
     sign_convention: str | None = None
@@ -211,8 +211,8 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult], dry_run: bool) -
             if result.physics_domain:
                 props["physics_domain"] = result.physics_domain.value
 
-            if result.units:
-                props["units"] = result.units
+            if result.unit:
+                props["unit"] = result.unit
 
             if result.sign_convention:
                 props["sign_convention"] = result.sign_convention
@@ -418,7 +418,7 @@ Output a JSON array with enrichments. Each object must have:
 - "path": The exact MDSplus path
 - "description": 1-2 sentence physics description
 - "physics_domain": One of: {physics_domains}
-- "units": SI units (e.g., "A", "Wb", "m^-3") or null
+- "unit": SI units (e.g., "A", "Wb", "m^-3") or null
 - "confidence": "high", "medium", or "low"
 
 Optional fields: sign_convention, dimensions, error_node
@@ -460,7 +460,7 @@ Output ONLY the JSON array."""
                 path=item.get("path", paths[i] if i < len(paths) else "unknown"),
                 description=item.get("description"),
                 physics_domain=_parse_physics_domain(item.get("physics_domain")),
-                units=item.get("units"),
+                unit=item.get("unit"),
                 confidence=item.get("confidence", "low"),
                 sign_convention=item.get("sign_convention"),
                 dimensions=item.get("dimensions"),
@@ -475,7 +475,7 @@ Output ONLY the JSON array."""
                 path=p,
                 description=None,
                 physics_domain=None,
-                units=None,
+                unit=None,
                 confidence="low",
                 error=str(e),
             )
@@ -551,7 +551,7 @@ async def batch_enrich_paths(
                             path=p,
                             description=None,
                             physics_domain=None,
-                            units=None,
+                            unit=None,
                             confidence="low",
                             error=f"Failed after {max_retries} attempts",
                         )

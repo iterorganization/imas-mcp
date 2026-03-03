@@ -2101,7 +2101,7 @@ def _batch_create_path_nodes(
                 "maxoccur": path_info.get("maxoccur"),
                 "ids_name": ids_name,
                 "parent_path": path_info.get("parent_path"),
-                "units": path_info.get("units", ""),
+                "unit": path_info.get("units", ""),
                 "coordinates": path_info.get("coordinates", []),
                 "cocos_label_transformation": path_info.get(
                     "cocos_label_transformation"
@@ -2163,7 +2163,7 @@ def _batch_create_path_nodes(
                 path.cocos_transformation_expression = p.cocos_transformation_expression,
                 path.alternative_coordinate1 = p.alternative_coordinate1,
                 path.url = p.url,
-                path.units = p.units,
+                path.unit = p.unit,
                 path.coordinate1_same_as = p.coordinate1_same_as,
                 path.coordinate2_same_as = p.coordinate2_same_as,
                 path.coordinate3_same_as = p.coordinate3_same_as,
@@ -2206,15 +2206,15 @@ def _batch_create_path_nodes(
 
         unit_paths = []
         for p in batch:
-            if p["units"] and p["units"] != "":
-                normalized = normalize_unit_symbol(p["units"]) or p["units"]
-                unit_paths.append({**p, "units": normalized})
+            if p["unit"] and p["unit"] != "":
+                normalized = normalize_unit_symbol(p["unit"]) or p["unit"]
+                unit_paths.append({**p, "unit": normalized})
         if unit_paths:
             client.query(
                 """
                 UNWIND $paths AS p
                 MATCH (path:IMASPath {id: p.id})
-                MATCH (u:Unit {symbol: p.units})
+                MATCH (u:Unit {symbol: p.unit})
                 MERGE (path)-[:HAS_UNIT]->(u)
             """,
                 paths=unit_paths,

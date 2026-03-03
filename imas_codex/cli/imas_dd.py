@@ -426,7 +426,7 @@ def imas_search(
             CALL db.index.vector.queryNodes("imas_path_embedding", $limit * 2, $embedding)
             YIELD node, score
             {where_clause}
-            RETURN node.id AS path, score, node.units AS units, node.documentation AS doc
+            RETURN node.id AS path, score, node.unit AS unit, node.documentation AS doc
             LIMIT $limit
         """,
             embedding=embedding,
@@ -443,7 +443,7 @@ def imas_search(
     table.add_column("Units", width=8)
 
     for r in results:
-        units = r["units"] or ""
+        units = r["unit"] or ""
         table.add_row(f"{r['score']:.3f}", r["path"], units)
 
     console.print(table)

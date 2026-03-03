@@ -1902,10 +1902,10 @@ classes:
       embedded_at:
         description: When the description embedding was last computed
         range: datetime
-      units:
+      unit:
         description: >-
-          Physical units of the signal data. Extracted from MDSplus node.units,
-          data system metadata, or documentation.
+          Normalized unit symbol string. Extracted from MDSplus node.units,
+          data system metadata, or documentation. Normalized via pint.
           E.g., "A", "V", "T", "m^-3", "eV"
       sign_convention:
         description: >-

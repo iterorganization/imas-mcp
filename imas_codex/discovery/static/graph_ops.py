@@ -334,7 +334,7 @@ def fetch_enrichment_context(
                 path: sibling.path,
                 node_type: sibling.node_type,
                 tags: sibling.tags,
-                units: sibling.units
+                units: sibling.unit
             })[0..20] AS siblings
             RETURN n.path AS path,
                    parent.path AS parent_path,
@@ -649,7 +649,7 @@ def claim_patterns_for_enrichment(
                    p.node_type AS node_type,
                    p.representative_path AS representative_path,
                    rep.tags AS tags,
-                   rep.units AS units,
+                   rep.unit AS unit,
                    rep.parent_path AS parent_path
             """,
             facility=facility,
@@ -823,7 +823,7 @@ def claim_parent_for_enrichment(
                    collect({
                        id: child.id, path: child.path,
                        node_type: child.node_type,
-                       tags: child.tags, units: child.units
+                       tags: child.tags, unit: child.unit
                    }) AS children
             """,
             facility=facility,
@@ -862,7 +862,7 @@ def claim_orphan_nodes_for_enrichment(
             SET child.claimed_at = datetime()
             RETURN child.id AS id, child.path AS path,
                    child.node_type AS node_type,
-                   child.tags AS tags, child.units AS units
+                   child.tags AS tags, child.unit AS unit
             """,
             facility=facility,
             tree_name=tree_name,

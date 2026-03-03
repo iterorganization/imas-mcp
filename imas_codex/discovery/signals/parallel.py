@@ -442,7 +442,7 @@ def claim_signals_for_enrichment(
                 WITH s ORDER BY s.tdi_function, s.id LIMIT $batch_size
                 SET s.claimed_at = datetime()
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
-                       s.node_path AS node_path, s.units AS units, s.name AS name,
+                       s.node_path AS node_path, s.unit AS unit, s.name AS name,
                        s.tdi_function AS tdi_function,
                        s.discovery_source AS discovery_source,
                        s.description AS description
@@ -863,7 +863,7 @@ def ingest_epochs(
                                 or f"{facility_id}:mdsplus:tree_tdi",
                                 "tree_name": tree_name,
                                 "node_path": path,
-                                "units": "",
+                                "unit": "",
                                 "status": FacilitySignalStatus.discovered.value,
                                 "discovery_source": "epoch_detection",
                                 "example_shot": reference_shot or epoch["first_shot"],
@@ -986,7 +986,7 @@ for node in nodes:
         signals.append({{
             "path": path,
             "name": name,
-            "units": units or "",
+            "unit": units or "",
             "usage": usage,
         }})
     except Exception:
@@ -1038,7 +1038,7 @@ print(json.dumps(signals))
                 "data_access": data_access_id,
                 "tree_name": tree_name,
                 "node_path": path,
-                "units": raw.get("units", ""),
+                "unit": raw.get("units", ""),
                 "status": FacilitySignalStatus.discovered.value,
                 "discovery_source": "tree_traversal",
                 "example_shot": shot,
@@ -1795,8 +1795,8 @@ async def enrich_worker(
                 user_lines.append(f"\n### Signal {signal_index}")
                 user_lines.append(f"accessor: {signal['accessor']}")
                 user_lines.append(f"name: {signal.get('name', 'unknown')}")
-                if signal.get("units"):
-                    user_lines.append(f"units: {signal['units']}")
+                if signal.get("unit"):
+                    user_lines.append(f"units: {signal['unit']}")
                 if signal.get("tree_name"):
                     user_lines.append(f"tree_name: {signal['tree_name']}")
                 if signal.get("node_path"):

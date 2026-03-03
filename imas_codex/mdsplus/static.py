@@ -129,7 +129,7 @@ def get_static_tree_graph_state(
           AND n.node_type IN ['NUMERIC', 'SIGNAL', 'AXIS', 'TEXT']
           AND (n.description IS NULL OR n.description = '')
         RETURN n.path AS path, n.node_type AS node_type,
-               n.tags AS tags, n.units AS units
+               n.tags AS tags, n.unit AS unit
         """,
         tree_name=tree_name,
         facility=facility,
@@ -838,7 +838,7 @@ def ingest_static_tree(
         if info["removed_version"] is not None:
             record["removed_version"] = info["removed_version"]
         if node.get("units"):
-            record["units"] = node["units"]
+            record["unit"] = node["units"]
         if node.get("description"):
             record["description"] = node["description"]
         if node.get("tags"):
@@ -893,7 +893,7 @@ def ingest_static_tree(
                     n.removed_version = node.removed_version,
                     n.node_type = node.node_type,
                     n.source = node.source,
-                    n.units = node.units,
+                    n.unit = node.unit,
                     n.description = node.description,
                     n.tags = node.tags,
                     n.is_static = node.is_static

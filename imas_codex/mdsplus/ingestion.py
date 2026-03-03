@@ -218,7 +218,7 @@ def ingest_super_tree(
                 "removed_version": ranges["removed_version"],
                 "node_type": "STRUCTURE",  # Default, can be enhanced later
                 "source": "tree_introspection",
-                "units": "dimensionless",
+                "unit": "dimensionless",
             }
         )
 
@@ -250,7 +250,7 @@ def ingest_super_tree(
                 n.removed_version = node.removed_version,
                 n.node_type = COALESCE(n.node_type, node.node_type),
                 n.source = COALESCE(n.source, node.source),
-                n.units = COALESCE(n.units, node.units)
+                n.unit = COALESCE(n.unit, node.unit)
         """,
             nodes=batch,
         )
@@ -397,7 +397,7 @@ def enrich_node_metadata(
             facility_id: $facility
         })
         SET n.node_type = d.node_type,
-            n.units = d.units,
+            n.unit = d.units,
             n.description = d.description
     """,
         details=details,
@@ -456,8 +456,8 @@ def merge_legacy_metadata(
                epoch.description AS epoch_desc,
                legacy.physics_domain AS legacy_domain,
                epoch.physics_domain AS epoch_domain,
-               legacy.units AS legacy_units,
-               epoch.units AS epoch_units
+               legacy.unit AS legacy_units,
+               epoch.unit AS epoch_units
         """,
         tree_name=tree_name,
         double_bs=double_bs,
@@ -512,7 +512,7 @@ def merge_legacy_metadata(
             and legacy_units != "dimensionless"
             and (not epoch_units or epoch_units == "dimensionless")
         ):
-            updates["units"] = legacy_units
+            updates["unit"] = legacy_units
             stats["units_merged"] += 1
 
         if updates:

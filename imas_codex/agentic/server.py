@@ -522,7 +522,7 @@ def _init_repl() -> dict[str, Any]:
             limit: Maximum nodes to return
 
         Returns:
-            List of {path, description, units, physics_domain}
+            List of {path, description, unit, physics_domain}
         """
         if path_prefix:
             return gc.query(
@@ -530,7 +530,7 @@ def _init_repl() -> dict[str, Any]:
                 MATCH (n:TreeNode {tree_name: $tree})
                 WHERE n.path STARTS WITH $prefix
                 RETURN n.path AS path, n.description AS description,
-                       n.units AS units, n.physics_domain AS domain
+                       n.unit AS unit, n.physics_domain AS domain
                 ORDER BY n.path
                 LIMIT $limit
                 """,
@@ -543,7 +543,7 @@ def _init_repl() -> dict[str, Any]:
                 """
                 MATCH (n:TreeNode {tree_name: $tree})
                 RETURN n.path AS path, n.description AS description,
-                       n.units AS units, n.physics_domain AS domain
+                       n.unit AS unit, n.physics_domain AS domain
                 ORDER BY n.path
                 LIMIT $limit
                 """,
