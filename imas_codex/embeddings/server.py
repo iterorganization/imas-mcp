@@ -6,14 +6,14 @@ Clients connect via localhost, direct network, or SSH tunnel.
 Multi-worker mode::
 
     # 4 workers on GPUs 0-3 (Titan: 8x P100, use half)
-    imas-codex serve embed start --gpu 0,1,2,3 --workers 4
+    imas-codex embed start --gpu 0,1,2,3 --workers 4
 
     Each uvicorn worker process claims a unique GPU from the pool
     via an atomic file-based counter during startup.
 
 Single-worker mode::
 
-    imas-codex serve embed start --gpu 1
+    imas-codex embed start --gpu 1
 
 GPU Memory Protection:
     On shared nodes (login T4), the server caps its memory fraction

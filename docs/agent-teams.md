@@ -85,14 +85,14 @@ LANGFUSE_HOST=https://cloud.langfuse.com
 
 ```bash
 # Foreground (development)
-imas-codex serve llm start
+imas-codex llm start
 
 # As systemd service (production)
-imas-codex serve llm service install
-imas-codex serve llm service start
+imas-codex llm service install
+imas-codex llm service start
 
 # Verify
-imas-codex serve llm status
+imas-codex llm status
 ```
 
 The proxy routes all LLM calls through a single endpoint with:
@@ -279,7 +279,7 @@ If cost pressure builds, shift Evidence Researcher and Facility Analyst to Sonne
 
 ```bash
 # Check proxy health and model availability
-imas-codex serve llm status
+imas-codex llm status
 
 # Query session cost from graph
 python -c "
@@ -306,7 +306,7 @@ Start with TCV — smallest signal set, best SSH access, most wiki documentation
 
 ### Per-Phase Checklist
 
-1. Start LiteLLM proxy: `imas-codex serve llm start`
+1. Start LiteLLM proxy: `imas-codex llm start`
 2. Ensure Neo4j is running: `imas-codex graph status`
 3. Verify checked signals exist:
    ```cypher

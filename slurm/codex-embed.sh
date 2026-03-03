@@ -42,7 +42,7 @@ echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 # Start embed server — exec replaces shell for clean signal handling
 # --offline: compute nodes cannot reach PyPI; deps pre-synced on login node
 # --workers 4 --gpus 0,1,2,3: one worker per GPU for parallel embedding
-exec uv run --offline --extra gpu imas-codex serve embed start \
+exec uv run --offline --extra gpu imas-codex embed start \
     --host 0.0.0.0 \
     --port 18765 \
     --gpus 0,1,2,3 \

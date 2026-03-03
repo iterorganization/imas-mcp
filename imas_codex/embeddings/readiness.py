@@ -192,7 +192,7 @@ def ensure_embedding_ready(
             return False, (
                 "Cannot establish SSH tunnel.\n"
                 "Start manually: ssh -f -N -L 18765:127.0.0.1:18765 iter\n"
-                "Or install autossh service: imas-codex serve tunnel service install"
+                "Or install autossh service: imas-codex tunnel service install"
             )
 
     # Step 3: On login node, try starting the systemd service.
@@ -230,10 +230,10 @@ def ensure_embedding_ready(
     start_hint = (
         "Start the server on ITER:\n"
         "  ssh iter\n"
-        "  imas-codex serve embed start --gpu 1\n"
+        "  imas-codex embed start --gpu 1\n"
         "Or install as systemd service:\n"
-        "  imas-codex serve embed service install\n"
-        "  imas-codex serve embed service start"
+        "  imas-codex embed service install\n"
+        "  imas-codex embed service start"
     )
 
     return False, (

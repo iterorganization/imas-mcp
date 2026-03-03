@@ -652,7 +652,7 @@ def _get_service_load(node: str, name: str) -> dict | None:
     if name == "neo4j":
         process_pattern = "Neo4jCommunity"
     elif name == "embed":
-        process_pattern = "imas-codex serve embed"
+        process_pattern = "imas-codex embed"
     else:
         return None
 
@@ -851,7 +851,7 @@ def _embed_service_command(gpus: int, workers: int) -> str:
 
     return (
         f"CUDA_VISIBLE_DEVICES={gpu_ids} "
-        "uv run --offline --extra gpu imas-codex serve embed start "
+        "uv run --offline --extra gpu imas-codex embed start "
         f"--host 0.0.0.0 --port {port} "
         f"--gpus {gpu_ids} --workers {workers} --deploy-label {partition_name}"
     )
@@ -969,7 +969,7 @@ def _deploy_login_embed() -> None:
         click.echo("  Service started")
     except subprocess.CalledProcessError as exc:
         raise click.ClickException(
-            "Service not installed. Run: imas-codex serve embed service install"
+            "Service not installed. Run: imas-codex embed service install"
         ) from exc
 
 

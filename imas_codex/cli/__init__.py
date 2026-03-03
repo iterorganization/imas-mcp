@@ -34,12 +34,12 @@ def main(ctx: click.Context, version: bool) -> None:
     Use subcommands to start servers or manage data:
 
     \b
-      imas-codex serve imas         Start the IMAS Data Dictionary MCP server
+      imas-codex serve imas         Start the IMAS DD MCP server
       imas-codex serve agents       Start the Agents MCP server
-      imas-codex serve embed        Start GPU embedding server
       imas-codex graph start        Start Neo4j graph database
-      imas-codex graph push         Push graph archive to GHCR
-      imas-codex tunnel start       Start SSH tunnels to remote services
+      imas-codex embed deploy       Deploy GPU embedding server
+      imas-codex llm deploy         Deploy LiteLLM proxy
+      imas-codex tunnel start       Start SSH tunnels
       imas-codex config private     Manage private facility YAML
       imas-codex imas build         Build/update IMAS DD graph
       imas-codex facilities list    List configured facilities
@@ -66,6 +66,7 @@ def register_commands() -> None:
     from imas_codex.cli.hosts import hosts
     from imas_codex.cli.imas_dd import imas
     from imas_codex.cli.ingest import ingest
+    from imas_codex.cli.llm_cli import llm
     from imas_codex.cli.release import release
     from imas_codex.cli.serve import serve
     from imas_codex.cli.tools import tools
@@ -74,6 +75,7 @@ def register_commands() -> None:
 
     main.add_command(serve)
     main.add_command(graph)
+    main.add_command(llm)
     main.add_command(tunnel)
     main.add_command(config)
     main.add_command(hpc)

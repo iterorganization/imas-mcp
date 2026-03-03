@@ -1,6 +1,6 @@
 # imas-codex LiteLLM Proxy Configuration
 #
-# Start: imas-codex serve llm start
+# Start: imas-codex llm start
 # Or:    litellm --config imas_codex/config/litellm_config.yaml
 #
 # All agent teams, discovery workers, and MCP tools route through this proxy.

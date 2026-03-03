@@ -132,7 +132,7 @@ uv run pytest
 
 # Serve extra works
 pip install -e ".[serve]"
-uv run imas-codex serve embed start --dry-run
+uv run imas-codex embed start --dry-run
 ```
 
 ---
@@ -154,7 +154,7 @@ Create `imas_codex/config/litellm_config.yaml`:
 
 ```yaml
 # imas-codex LiteLLM Proxy Configuration
-# Start: imas-codex serve llm start
+# Start: imas-codex llm start
 # Or:    litellm --config imas_codex/config/litellm_config.yaml
 
 # --- Shared credentials ---
@@ -219,7 +219,7 @@ general_settings:
 Add `serve llm` subcommand group to `imas_codex/cli/serve.py` (follows `serve embed` pattern):
 
 ```
-imas-codex serve llm
+imas-codex llm
 ├── start     # litellm --config ... (foreground, port 4000)
 ├── status    # Health check against proxy
 └── service   # systemd install/start/stop/status
@@ -346,7 +346,7 @@ if __name__ == "__main__":
 
 ### Verification Steps
 
-1. Start proxy: `imas-codex serve llm start`
+1. Start proxy: `imas-codex llm start`
 2. Run test: `uv run python scripts/test_prompt_caching.py`
 3. Check Langfuse dashboard for `cached_tokens` in usage response
 4. Check OpenRouter activity page for `cache_discount` field

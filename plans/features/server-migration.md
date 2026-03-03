@@ -90,7 +90,7 @@ $HOME/Code/imas-codex/scripts/start-neo4j.sh &
 
 # Start embed server on GPU
 cd $HOME/Code/imas-codex
-uv run --extra gpu imas-codex serve embed start --host 0.0.0.0 --port 18765 --gpu 0
+uv run --extra gpu imas-codex embed start --host 0.0.0.0 --port 18765 --gpu 0
 
 # Keep alive
 wait
