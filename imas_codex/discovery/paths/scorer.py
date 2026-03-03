@@ -244,12 +244,13 @@ class DirectoryTriager:
         if focus:
             context["focus"] = focus
 
-        # Add dimension calibration examples (5 levels x 10 dimensions x 3 examples)
+        # Add dimension calibration examples (5 levels x 11 dimensions x 5 examples)
         # This provides comprehensive calibration for the LLM to understand
-        # what scores have historically been assigned at each level
+        # what scores have historically been assigned at each level.
+        # Results are cached with 5-minute TTL to avoid redundant graph queries.
         dimension_calibration = sample_dimension_calibration_examples(
             facility=self.facility,
-            per_level=3,
+            per_level=5,
             tolerance=0.1,
         )
         # Only add if we have meaningful data

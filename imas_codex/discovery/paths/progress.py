@@ -96,6 +96,9 @@ class ScoreItem:
     adjustment_reason: str = ""
     should_expand: bool = True  # False = terminal (won't explore children)
     terminal_reason: str = ""  # TerminalReason enum value when terminal
+    dimension_scores: dict[str, float] = field(
+        default_factory=dict
+    )  # Per-dimension scores for display
 
 
 @dataclass
@@ -498,10 +501,8 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 if triage.physics_domain and triage.physics_domain != "general":
                     triage_domain = triage.physics_domain.replace("_", " ")
 
-                # Terminal label in muted red
-                if not triage.should_expand and triage.terminal_reason:
-                    triage_terminal = triage.terminal_reason.replace("_", " ")
-                elif not triage.should_expand:
+                # Terminal flag (just "terminal" in muted red)
+                if not triage.should_expand:
                     triage_terminal = "terminal"
 
                 # Description for line 3
@@ -576,11 +577,25 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         if score and (not score_queue_empty or self.state.score_processing > 0):
             score_text = score.path
             if score.score is not None:
-                # Show just the +diff (delta) — the triage score is already
-                # visible in the triage worker stream
+                # Show top dimension score + label instead of combined score
                 parts: list[tuple[str, str]] = []
+
+                # Find top dimension for display
+                top_dim = ""
+                top_val = 0.0
+                if score.dimension_scores:
+                    for dim, val in score.dimension_scores.items():
+                        if val > top_val:
+                            top_val = val
+                            top_dim = dim
+
+                display_score = top_val if top_dim else score.score
+                dim_label = (
+                    top_dim.replace("score_", "").replace("_", " ") if top_dim else ""
+                )
+
                 if score.previous_score is not None:
-                    delta = score.score - score.previous_score
+                    delta = display_score - score.previous_score
                     delta_style = (
                         "green" if delta > 0 else "red" if delta < 0 else "dim"
                     )
@@ -591,27 +606,29 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     _threshold = get_discovery_threshold()
                     style = (
                         "bold green"
-                        if score.score >= _threshold
+                        if display_score >= _threshold
                         else "yellow"
-                        if score.score >= 0.4
+                        if display_score >= 0.4
                         else "red"
                     )
-                    parts.append((f"{score.score:.2f}", style))
+                    parts.append((f"{display_score:.2f}", style))
+                if dim_label:
+                    parts.append((" ", "dim"))
+                    parts.append((dim_label, "dim italic"))
                 score_score_parts = parts or None
 
                 # Physics domain
                 if score.physics_domain and score.physics_domain != "general":
                     score_domain = score.physics_domain.replace("_", " ")
 
-                # Terminal label (data dirs marked terminal by score)
+                # Terminal flag (just "terminal" in muted red)
                 if not score.should_expand and score.terminal_reason:
-                    score_terminal = score.terminal_reason.replace("_", " ")
-                elif not score.should_expand and score.previous_score is not None:
-                    # Only show terminal for items that changed expansion
-                    pass
+                    score_terminal = "terminal"
 
-                # Description for line 3
-                if score.adjustment_reason:
+                # Description for line 3 — prefer actual description over scoring reason
+                if score.description:
+                    score_desc = clean_text(score.description)
+                elif score.adjustment_reason:
                     score_desc = clean_text(score.adjustment_reason)
 
         # SCORE totals
@@ -1029,6 +1046,12 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             for r in results:
                 path = r.get("path", "")
                 reason = r.get("adjustment_reason", "")
+                # Collect per-dimension scores for display
+                dim_scores = {
+                    k: v
+                    for k, v in r.items()
+                    if k.startswith("score_") and isinstance(v, int | float)
+                }
                 items.append(
                     ScoreItem(
                         path=path,
@@ -1044,6 +1067,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                             if not r.get("should_expand", True)
                             else ""
                         ),
+                        dimension_scores=dim_scores,
                     )
                 )
             # Adaptive rate: use last_batch_time to drain queue
@@ -1301,13 +1325,16 @@ def print_discovery_status(
 
                 categories = [
                     ("Modeling Code", "cyan", ["modeling_code"]),
-                    ("Analysis Code", "green", ["analysis_code", "operations_code"]),
-                    ("Data", "yellow", ["modeling_data", "experimental_data"]),
+                    ("Analysis Code", "green", ["analysis_code"]),
+                    ("Operations Code", "green", ["operations_code"]),
                     (
-                        "Infrastructure",
-                        "blue",
-                        ["data_access", "workflow", "visualization"],
+                        "Data",
+                        "yellow",
+                        ["modeling_data", "experimental_data"],
                     ),
+                    ("Data Access", "blue", ["data_access"]),
+                    ("Workflow", "blue", ["workflow"]),
+                    ("Visualization", "blue", ["visualization"]),
                     ("Documentation", "magenta", ["documentation"]),
                 ]
 
@@ -1349,7 +1376,31 @@ def print_discovery_status(
             if high_value:
                 output(f"High-value paths (score > {_threshold}): {len(high_value)}")
                 for p in high_value[:5]:
-                    output(f"  [{p['score']:.2f}] {p['path']}")
+                    # Find top dimension for display
+                    top_dim = ""
+                    top_val = 0.0
+                    for dim_key in [
+                        "score_modeling_code",
+                        "score_analysis_code",
+                        "score_operations_code",
+                        "score_data_access",
+                        "score_workflow",
+                        "score_visualization",
+                        "score_documentation",
+                        "score_imas",
+                    ]:
+                        val = p.get(dim_key, 0) or 0
+                        if val > top_val:
+                            top_val = val
+                            top_dim = dim_key
+                    dim_label = (
+                        top_dim.replace("score_", "").replace("_", " ")
+                        if top_dim
+                        else ""
+                    )
+                    score_str = f"{top_val:.2f}" if top_dim else f"{p['score']:.2f}"
+                    dim_suffix = f" [dim]{dim_label}[/dim]" if dim_label else ""
+                    output(f"  [{score_str}]{dim_suffix} {p['path']}")
                 if len(high_value) > 5:
                     output(f"  ... and {len(high_value) - 5} more")
         elif domain == "paths":

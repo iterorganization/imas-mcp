@@ -73,7 +73,8 @@ class TriageResult(BaseModel):
     )
 
     description: str = Field(
-        description="Concise description of directory contents (1-2 sentences)"
+        description="What this directory contains and its purpose (1-2 sentences). "
+        "Describe the code, tools, or data — NOT the scoring rationale."
     )
 
     # Per-purpose scores (0.0-1.0 each)
@@ -183,9 +184,11 @@ class ScoreResult(BaseModel):
         description="Classification based on enrichment evidence"
     )
 
-    # Description — written using enrichment evidence
+    # Description — what the directory IS (not why it scored this way)
     description: str = Field(
-        description="Description incorporating enrichment evidence (1-2 sentences)"
+        description="What this directory contains and its purpose (1-2 sentences). "
+        "Describe the code, tools, or data — NOT the scoring rationale. "
+        "Example: 'Custom LIUQE equilibrium reconstruction interface with 2,500 lines of Python and MDSplus data readers'"
     )
 
     # Per-dimension scores (0.0-1.0, required)
@@ -255,7 +258,8 @@ class ScoreResult(BaseModel):
 
     scoring_reason: str = Field(
         default="",
-        description="Brief explanation of scoring rationale",
+        description="Why the scores were assigned — the scoring rationale. "
+        "Example: 'High data_access due to 15 MDSplus pattern matches; moderate analysis from profile fitting code'",
     )
 
 

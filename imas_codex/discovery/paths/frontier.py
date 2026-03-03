@@ -1553,29 +1553,63 @@ def get_top_paths_by_purpose(
 ) -> list[dict[str, Any]]:
     """Get top-scoring paths for a specific purpose.
 
+    Returns paths sorted by their purpose-relevant dimension score rather than
+    the combined score, since the dimension score is what matters for
+    category-based views.
+
     Args:
         facility: Facility ID
         purpose: ResourcePurpose value (e.g., 'modeling_code', 'analysis_code')
         limit: Maximum paths to return (default 3)
 
     Returns:
-        List of dicts with path, score, and description
+        List of dicts with path, score (dimension-specific), and description
     """
     from imas_codex.graph import GraphClient
 
+    # Map purpose to the most relevant dimension score
+    _purpose_to_dim = {
+        "modeling_code": "score_modeling_code",
+        "analysis_code": "score_analysis_code",
+        "operations_code": "score_operations_code",
+        "modeling_data": "score_modeling_data",
+        "experimental_data": "score_experimental_data",
+        "data_access": "score_data_access",
+        "workflow": "score_workflow",
+        "visualization": "score_visualization",
+        "documentation": "score_documentation",
+    }
+    dim = _purpose_to_dim.get(purpose)
+
     with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.path_purpose = $purpose AND p.score > 0
-            RETURN p.path AS path, p.score AS score, p.description AS description
-            ORDER BY p.score DESC
-            LIMIT $limit
-            """,
-            facility=facility,
-            purpose=purpose,
-            limit=limit,
-        )
+        if dim:
+            result = gc.query(
+                f"""
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
+                WHERE p.path_purpose = $purpose AND p.{dim} > 0
+                RETURN p.path AS path,
+                       p.{dim} AS score,
+                       p.description AS description
+                ORDER BY p.{dim} DESC
+                LIMIT $limit
+                """,
+                facility=facility,
+                purpose=purpose,
+                limit=limit,
+            )
+        else:
+            result = gc.query(
+                """
+                MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
+                WHERE p.path_purpose = $purpose AND p.score > 0
+                RETURN p.path AS path, p.score AS score, p.description AS description
+                ORDER BY p.score DESC
+                LIMIT $limit
+                """,
+                facility=facility,
+                purpose=purpose,
+                limit=limit,
+            )
 
         return list(result)
 
@@ -3010,6 +3044,11 @@ def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, An
         return list(result)
 
 
+_calibration_cache: dict[str, Any] = {}
+_calibration_cache_time: float = 0.0
+_CALIBRATION_TTL_SECONDS = 300  # 5 minutes — graph data stabilizes quickly
+
+
 def sample_dimension_calibration_examples(
     facility: str | None = None,
     per_level: int = 3,
@@ -3017,9 +3056,10 @@ def sample_dimension_calibration_examples(
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
     """Sample calibration examples for each dimension at 5 score levels.
 
-    Returns representative examples at score levels 0.0, 0.2, 0.5, 0.8, and 1.0
-    for each scoring dimension. This enables LLMs to calibrate their scoring
-    by seeing what historically received each score level.
+    Results are cached in-process with a 5-minute TTL. Because the pool of
+    scored paths grows monotonically, calibration examples stabilize quickly —
+    refreshing every 5 minutes is sufficient to pick up newly-scored paths
+    without repeating expensive per-dimension graph queries on every batch.
 
     Args:
         facility: Current facility (preferring same-facility examples)
@@ -3030,19 +3070,32 @@ def sample_dimension_calibration_examples(
         Nested dict: dimension -> level -> list of examples
         Each example has: path, facility, score, purpose, description
         Level keys: "lowest", "low", "medium", "high", "highest"
-
-    Example structure:
-        {
-            "score_modeling_code": {
-                "lowest": [{"path": "...", "score": 0.05, ...}, ...],
-                "low": [{"path": "...", "score": 0.22, ...}, ...],
-                "medium": [{"path": "...", "score": 0.48, ...}, ...],
-                "high": [{"path": "...", "score": 0.78, ...}, ...],
-                "highest": [{"path": "...", "score": 0.92, ...}, ...],
-            },
-            ...
-        }
     """
+    import time
+
+    global _calibration_cache, _calibration_cache_time  # noqa: PLW0603
+
+    cache_key = f"{facility}:{per_level}:{tolerance}"
+    now = time.monotonic()
+
+    if (
+        cache_key in _calibration_cache
+        and (now - _calibration_cache_time) < _CALIBRATION_TTL_SECONDS
+    ):
+        return _calibration_cache[cache_key]
+
+    samples = _fetch_dimension_calibration(facility, per_level, tolerance)
+    _calibration_cache[cache_key] = samples
+    _calibration_cache_time = now
+    return samples
+
+
+def _fetch_dimension_calibration(
+    facility: str | None,
+    per_level: int,
+    tolerance: float,
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Fetch calibration examples from graph (uncached)."""
     from imas_codex.graph import GraphClient
 
     # Target score levels with descriptive names

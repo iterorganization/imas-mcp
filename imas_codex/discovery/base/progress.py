@@ -555,12 +555,12 @@ class PipelineRowConfig:
     into a single block.  Each pipeline stage renders as:
 
         TRIAGEx4  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  7,782 100%
-        0.85  electromagnetic  Thomson Scattering            0.23/s
-        General documentation for Thomson Scattering        $12.54
+        /home/user/codes/chease  electromagnetic  terminal    0.23/s
+        0.85  Thomson Scattering analysis code               $12.54
 
     Line 1: NAMExN + bar + count + pct
-    Line 2: score + domain + name … rate (right-aligned in metrics zone)
-    Line 3: description … cost (right-aligned in metrics zone)
+    Line 2: name + domain + terminal … rate (right-aligned in metrics zone)
+    Line 3: score + description … cost (right-aligned in metrics zone)
 
     Text on lines 2-3 clips at the progress bar's right edge so "..."
     aligns with the bar end.  Rate and cost right-align at ``row_width``
@@ -588,14 +588,14 @@ class PipelineRowConfig:
     worker_annotation: str = ""  # e.g., "(1 backoff)" or "(budget)"
 
     # Activity (current item) — structured fields (preferred)
-    primary_text: str = ""  # Resource name (shown on line 2)
-    score_value: float | None = None  # Score (shown on line 2, left-aligned with name)
+    primary_text: str = ""  # Resource name (shown on line 2, left-aligned)
+    score_value: float | None = None  # Score (shown on line 3, before description)
     score_parts: list[tuple[str, str]] | None = (
         None  # Custom score rendering (e.g. "0.65"+"+0.20")
     )
-    physics_domain: str = ""  # Physics domain (shown on line 2, at bar start)
-    terminal_label: str = ""  # Terminal annotation (shown on line 2, muted red)
-    description: str = ""  # LLM/VLM description (shown on line 3, at bar start)
+    physics_domain: str = ""  # Physics domain (shown on line 2, after name)
+    terminal_label: str = ""  # Terminal flag (shown on line 2 as "terminal" in muted red)
+    description: str = ""  # LLM/VLM description (shown on line 3, after score)
     description_fallback: str = ""  # Shown on line 3 when description is empty
 
     # Activity state (used when no primary_text)
@@ -617,8 +617,8 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
 
     Renders 3 lines:
       Line 1: NAMExN + bar + count + pct
-      Line 2: score + domain + name…  (clips at bar end)  rate
-      Line 3: description…            (clips at bar end)  $cost
+      Line 2: name + domain + terminal…  (clips at bar end)  rate
+      Line 3: score + description…        (clips at bar end)  $cost
 
     Args:
         config: Pipeline row configuration.
@@ -670,7 +670,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     row.append(count_s, style="bold")
     row.append(pct_s, style="cyan" if config.show_pct else "dim")
 
-    # ── Line 2: activity info (left) + rate (right-aligned) ──
+    # ── Line 2: name + domain + terminal (left) + rate (right-aligned) ──
     row.append("\n")
     line2 = Text()
 
@@ -681,30 +681,21 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
 
     if config.has_content:
         line2.append("  ", style="dim")
-        # Order: score → domain → terminal → name
-        if config.score_parts:
-            for text, style in config.score_parts:
-                line2.append(text, style=style)
-            line2.append("  ", style="dim")
-        elif config.score_value is not None:
-            score_style = (
-                "bold green"
-                if config.score_value >= 0.7
-                else "yellow"
-                if config.score_value >= 0.4
-                else "red"
-            )
-            line2.append(f"{config.score_value:.2f}", style=score_style)
-            line2.append("  ", style="dim")
+        # Order: name → domain → terminal
+        # Pre-compute suffix widths to clip name appropriately
+        suffix_width = 0
         if config.physics_domain:
-            line2.append(config.physics_domain, style="cyan")
-            line2.append("  ", style="dim")
+            suffix_width += cell_len(config.physics_domain) + 2
         if config.terminal_label:
-            line2.append(config.terminal_label, style="red dim")
-            line2.append("  ", style="dim")
-        # Clip text at bar end so "..." aligns with progress bar right edge
-        max_name = max(10, bar_end - cell_len(line2.plain))
+            suffix_width += len("terminal") + 2
+        max_name = max(10, bar_end - 2 - suffix_width)
         line2.append(clip_text(config.primary_text, max_name), style="white")
+        if config.physics_domain:
+            line2.append("  ", style="dim")
+            line2.append(config.physics_domain, style="cyan")
+        if config.terminal_label:
+            line2.append("  ", style="dim")
+            line2.append("terminal", style="red dim")
     else:
         # No content: show status text
         line2.append("  ", style="dim")
@@ -728,7 +719,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         line2.append(rate_s, style="dim")
     row.append_text(line2)
 
-    # ── Line 3: description (left) + cost (right-aligned with rate) ──
+    # ── Line 3: score + description (left) + cost (right-aligned) ──
     row.append("\n")
     line3 = Text()
 
@@ -737,14 +728,34 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     if config.cost is not None and config.cost > 0:
         cost_s = f"${config.cost:.2f}"
 
-    _desc = config.description or config.description_fallback
-    if config.has_content and _desc:
-        line3.append("  ", style="dim")
-        _style = "italic dim" if config.description else "cyan dim italic"
-        # Clip description at bar end so "..." aligns with progress bar
-        # right edge.  Rate/cost right-align at row_width (metrics zone).
-        max_desc = max(10, bar_end - 2)
-        line3.append(clip_text(clean_text(_desc), max_desc), style=_style)
+    if config.has_content:
+        # Score at start of line 3
+        if config.score_parts:
+            line3.append("  ", style="dim")
+            for text, style in config.score_parts:
+                line3.append(text, style=style)
+            line3.append("  ", style="dim")
+        elif config.score_value is not None:
+            line3.append("  ", style="dim")
+            score_style = (
+                "bold green"
+                if config.score_value >= 0.7
+                else "yellow"
+                if config.score_value >= 0.4
+                else "red"
+            )
+            line3.append(f"{config.score_value:.2f}", style=score_style)
+            line3.append("  ", style="dim")
+
+        # Description clipped to remaining space before bar end
+        _desc = config.description or config.description_fallback
+        if _desc:
+            if not line3.plain.strip():
+                line3.append("  ", style="dim")
+            _style = "italic dim" if config.description else "cyan dim italic"
+            max_desc = max(10, bar_end - cell_len(line3.plain))
+            line3.append(clip_text(clean_text(_desc), max_desc), style=_style)
+
     # Right-align cost on line 3 (below rate on line 2)
     if cost_s:
         gap = max(1, row_width - cell_len(line3.plain) - len(cost_s))

@@ -33,7 +33,7 @@ For each directory path and its metadata, provide:
 1. **Classification** - Select the most appropriate `path_purpose`
 2. **Scores** - Rate each dimension 0.0-1.0 based on content relevance
 3. **Expansion decision** - Whether to explore subdirectories
-4. **Description** - Brief summary of the directory's purpose
+4. **Description** - Brief summary of what the directory contains and its purpose (NOT scoring rationale — describe the code/tools/data, not why you scored it)
 
 {% include "schema/path-purposes.md" %}
 
