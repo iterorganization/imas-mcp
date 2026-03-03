@@ -2362,7 +2362,7 @@ def sample_scored_paths(
                     "path": r["path"],
                     "score": r["score"],
                     "purpose": r["purpose"] or "unknown",
-                    "description": (r["description"] or "")[:100],
+                    "description": r["description"] or "",
                 }
                 for r in result
             ]
@@ -2465,7 +2465,7 @@ def sample_paths_by_dimension(
                     "facility": r["facility"],
                     "dimension_score": round(r["dimension_score"], 2),
                     "purpose": r["purpose"] or "unknown",
-                    "description": (r["description"] or "")[:80],
+                    "description": r["description"] or "",
                 }
                 for r in paths[:per_dimension]
             ]
@@ -2625,7 +2625,7 @@ def sample_enriched_paths(
                     "language_breakdown": r["language_breakdown"] or "{}",
                     "is_multiformat": r["is_multiformat"] or False,
                     "purpose": r["purpose"] or "unknown",
-                    "description": (r["description"] or "")[:60],
+                    "description": r["description"] or "",
                 }
                 for r in paths[:per_category]
             ]
@@ -2982,7 +2982,7 @@ def sample_dimension_calibration_examples(
                         "facility": r["facility"],
                         "score": round(r["score"], 2),
                         "purpose": r["purpose"] or "unknown",
-                        "description": (r["description"] or "")[:100],
+                        "description": r["description"] or "",
                     }
                     for r in paths[:per_level]
                 ]
@@ -3056,7 +3056,7 @@ def mark_refine_complete(
             # Store refine reason
             if result.get("adjustment_reason"):
                 set_parts.append("p.refine_reason = $refine_reason")
-                params["refine_reason"] = result["adjustment_reason"][:200]
+                params["refine_reason"] = result["adjustment_reason"]
 
             # Add each dimension that has a value
             for dim in dimensions:

@@ -2175,7 +2175,7 @@ def _build_refine_results(
                 "score": max(0.0, min(1.0, r.new_score)),
                 "adjustment_reason": r.adjustment_reason or "",
                 "primary_evidence": r.primary_evidence or [],
-                "evidence_summary": (r.evidence_summary or "")[:200],
+                "evidence_summary": r.evidence_summary or "",
                 "description": r.description or p.get("description", ""),
                 "keywords": r.keywords or p.get("keywords", []),
                 "path_purpose": (r.path_purpose.value if r.path_purpose else None)
