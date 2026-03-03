@@ -594,7 +594,9 @@ class PipelineRowConfig:
         None  # Custom score rendering (e.g. "0.65"+"+0.20")
     )
     physics_domain: str = ""  # Physics domain (shown on line 2, after name)
-    terminal_label: str = ""  # Terminal flag (shown on line 2 as "terminal" in muted red)
+    terminal_label: str = (
+        ""  # Terminal flag (shown on line 2 as "terminal" in muted red)
+    )
     description: str = ""  # LLM/VLM description (shown on line 3, after score)
     description_fallback: str = ""  # Shown on line 3 when description is empty
 
@@ -687,7 +689,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         if config.physics_domain:
             suffix_width += cell_len(config.physics_domain) + 2
         if config.terminal_label:
-            suffix_width += len("terminal") + 2
+            suffix_width += cell_len(config.terminal_label) + 2
         max_name = max(10, bar_end - 2 - suffix_width)
         line2.append(clip_text(config.primary_text, max_name), style="white")
         if config.physics_domain:
@@ -695,7 +697,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
             line2.append(config.physics_domain, style="cyan")
         if config.terminal_label:
             line2.append("  ", style="dim")
-            line2.append("terminal", style="red dim")
+            line2.append(config.terminal_label, style="red dim")
     else:
         # No content: show status text
         line2.append("  ", style="dim")
