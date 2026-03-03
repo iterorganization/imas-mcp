@@ -37,8 +37,8 @@ def main(ctx: click.Context, version: bool) -> None:
       imas-codex serve imas         Start the IMAS DD MCP server
       imas-codex serve agents       Start the Agents MCP server
       imas-codex graph start        Start Neo4j graph database
-      imas-codex embed deploy       Deploy GPU embedding server
-      imas-codex llm deploy         Deploy LiteLLM proxy
+      imas-codex embed start        Start GPU embedding server
+      imas-codex llm start          Start LiteLLM proxy
       imas-codex tunnel start       Start SSH tunnels
       imas-codex config private     Manage private facility YAML
       imas-codex imas build         Build/update IMAS DD graph
