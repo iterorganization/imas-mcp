@@ -505,7 +505,7 @@ class TestParallelProgressDisplay:
         """Display shows processing state for scan."""
         display = self._display()
         display.state.total = 100
-        display.state.scan_processing = True
+        display.state.scan_processing = 1
         section = display._build_pipeline_section()
         text = section.plain
         assert (
@@ -668,19 +668,21 @@ class TestCountGroupWorkers:
         count, ann = display._count_group_workers("scan")
         assert count == 1
 
-    def test_embed_worker_in_scan_group(self):
-        """Embed worker assigned to scan group counts correctly."""
+    def test_embed_worker_in_embed_group(self):
+        """Embed worker has its own group for accurate counting."""
         workers = {
             "scan_worker_0": WorkerStatus(
                 name="scan_worker_0", group="scan", state=WorkerState.running
             ),
             "embed_worker": WorkerStatus(
-                name="embed_worker", group="scan", state=WorkerState.running
+                name="embed_worker", group="embed", state=WorkerState.running
             ),
         }
         display = self._display_with_workers(workers)
-        count, ann = display._count_group_workers("scan")
-        assert count == 2
+        scan_count, _ = display._count_group_workers("scan")
+        embed_count, _ = display._count_group_workers("embed")
+        assert scan_count == 1
+        assert embed_count == 1
 
 
 class TestWorkerStatusUpdate:
@@ -703,7 +705,7 @@ class TestWorkerStatusUpdate:
                 name="scan_worker_0", group="scan", state=WorkerState.running
             ),
             "expand_worker_0": WorkerStatus(
-                name="expand_worker_0", group="scan", state=WorkerState.running
+                name="expand_worker_0", group="expand", state=WorkerState.running
             ),
             "score_worker_0": WorkerStatus(
                 name="score_worker_0", group="score", state=WorkerState.running
@@ -720,5 +722,6 @@ class TestWorkerStatusUpdate:
         text = section.plain
 
         # Worker counts should appear as "×N" in the output
-        assert "x2" in text  # scan group (scan + expand)
-        assert "x1" in text  # score or enrich group
+        assert "x1" in text  # scan, score, or enrich (all x1)
+        # Expand worker appears as aux_worker "+1 expand"
+        assert "+1 expand" in text

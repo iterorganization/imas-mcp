@@ -255,8 +255,9 @@ class StreamQueue:
         """Add items to queue with adaptive rate calculation.
 
         When ``last_batch_time`` is provided, the pop rate is computed so
-        that the queue drains just before the next batch is expected to
-        arrive, giving a continuous visual stream without flicker.
+        that items drain *slower* than the worker produces them. This
+        ensures items remain in the queue when the next batch arrives,
+        bridging inter-batch gaps and preventing "processing..." flicker.
 
         Args:
             items: Items to enqueue.
@@ -275,8 +276,10 @@ class StreamQueue:
         if last_batch_time > 0 and queue_depth > 0:
             # Estimate gap until next batch: batch processing time + overhead
             expected_gap = last_batch_time + 1.0
-            # Drain 90% through the gap to avoid emptying before next batch
-            drain_target = expected_gap * 0.9
+            # Drain over 120% of the expected gap so items remain in the
+            # queue when the next batch arrives, bridging the inter-batch
+            # gap and preventing "processing..." flicker.
+            drain_target = expected_gap * 1.2
             if drain_target > 0:
                 new_rate = queue_depth / drain_target
 
@@ -583,6 +586,7 @@ class PipelineRowConfig:
     # Worker annotation
     worker_count: int = 0  # Number of workers in this group
     worker_annotation: str = ""  # e.g., "(1 backoff)" or "(budget)"
+    aux_workers: list[tuple[str, int]] | None = None  # e.g., [("expand", 1)]
 
     # Activity (current item) — structured fields (preferred)
     primary_text: str = ""  # Resource name (shown on line 2)
@@ -638,6 +642,10 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     label.append(f"  {config.name}", style=config.style)
     if config.worker_count > 0:
         label.append(f"x{config.worker_count}", style="dim")
+    if config.aux_workers:
+        for aux_name, aux_count in config.aux_workers:
+            if aux_count > 0:
+                label.append(f" +{aux_count} {aux_name}", style="dim")
     if config.worker_annotation:
         label.append(f" {config.worker_annotation}", style="dim")
     # Pad to LABEL_WIDTH for aligned bar start
