@@ -1381,6 +1381,17 @@ def mark_paths_triaged(
                     p.score_documentation = $score_documentation,
                     p.score_imas = $score_imas,
                     p.score_convention = $score_convention,
+                    p.triage_score_modeling_code = $score_modeling_code,
+                    p.triage_score_analysis_code = $score_analysis_code,
+                    p.triage_score_operations_code = $score_operations_code,
+                    p.triage_score_modeling_data = $score_modeling_data,
+                    p.triage_score_experimental_data = $score_experimental_data,
+                    p.triage_score_data_access = $score_data_access,
+                    p.triage_score_workflow = $score_workflow,
+                    p.triage_score_visualization = $score_visualization,
+                    p.triage_score_documentation = $score_documentation,
+                    p.triage_score_imas = $score_imas,
+                    p.triage_score_convention = $score_convention,
                     p.description = $description,
                     p.path_purpose = $path_purpose,
                     p.evidence_id = $evidence_id,
@@ -2548,6 +2559,10 @@ SCORE_DIMENSIONS = [
     "score_convention",
 ]
 
+# Triage-phase dimension names — permanently preserved on FacilityPath
+# so calibration can draw from the full triage population (triaged + scored).
+TRIAGE_SCORE_DIMENSIONS = [f"triage_{d}" for d in SCORE_DIMENSIONS]
+
 
 def sample_paths_by_dimension(
     facility: str | None = None,
@@ -3061,15 +3076,23 @@ def sample_dimension_calibration_examples(
     Results are cached in-process with a 60-second TTL — short enough to
     track graph growth during early population, long enough to ensure all
     items within a batch see identical calibration examples (no jitter).
-    As the pool of scored paths grows, examples stabilize naturally.
+
+    Triage and score operate on different scales because they evaluate
+    different cohorts.  Triage grades the general population — paths
+    scoring above the discovery threshold (~0.75) graduate to scoring.
+    Score re-grades only these graduates on a fresh 0–1 scale among a
+    cohort of already-strong peers: a former triage 0.75 that was top
+    of its class may sit at 0.2 among university peers.
+
+    Each phase draws exclusively from its own peer population so the
+    LLM sees calibration examples on the scale it is expected to produce.
 
     Args:
         facility: Current facility (preferring same-facility examples)
         per_level: Number of examples per score level (default 3)
         tolerance: Score range tolerance (default ±0.1)
-        phase: ``"triage"`` draws from triaged-only paths (1st-pass
-            dimensions), ``"score"`` draws from scored paths (2nd-pass
-            dimensions).  Each phase sees its own peer examples.
+        phase: ``"triage"`` draws from triaged peers (general population),
+            ``"score"`` draws from scored peers (graduate cohort).
 
     Returns:
         Nested dict: dimension -> level -> list of examples
@@ -3101,54 +3124,58 @@ def _fetch_dimension_calibration(
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
     """Fetch calibration examples from graph (uncached).
 
-    Args:
-        phase: ``"triage"`` selects paths still in triaged status (1st-pass
-            dimensions), ``"score"`` selects scored paths (2nd-pass dims).
+    Triage and score grade different cohorts on the same 0–1 scale.
+    Triage covers the general population; score re-grades only the
+    graduates among strong peers.  Each phase draws from its own
+    population so the LLM calibrates against the right peer group.
+
+    For triage: queries ``triage_score_*`` properties from ALL paths
+    (triaged + scored) — these are permanently preserved at triage time,
+    giving the full population distribution including graduated paths.
+
+    For score: queries ``score_*`` properties from scored paths only —
+    these reflect the 2nd-pass re-grading among graduates.
     """
     from imas_codex.graph import GraphClient
 
-    # Map phase to the graph status(es) we draw examples from
     if phase == "triage":
+        # Triage calibration: use triage_score_* from all paths that
+        # have been through triage (both triaged-only and graduated/scored)
         status_clause = "p.status IN ['triaged', 'scored']"
+        dim_prefix = "triage_"
     else:
+        # Score calibration: use score_* from scored paths only
         status_clause = "p.status = 'scored'"
+        dim_prefix = ""
 
-    # Target score levels with descriptive names
-    score_levels = {
-        "lowest": 0.0,  # Range: 0.0-0.1
-        "low": 0.2,  # Range: 0.1-0.3
-        "medium": 0.5,  # Range: 0.4-0.6
-        "high": 0.8,  # Range: 0.7-0.9
-        "highest": 1.0,  # Range: 0.9-1.0
-    }
+    # Same 0–1 buckets for both phases — different cohorts, same scale.
+    buckets: list[tuple[str, float, float]] = [
+        ("lowest", 0.0, 0.15),
+        ("low", 0.10, 0.30),
+        ("medium", 0.40, 0.60),
+        ("high", 0.70, 0.90),
+        ("highest", 0.90, 1.01),
+    ]
 
     samples: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
     with GraphClient() as gc:
         for dim in SCORE_DIMENSIONS:
+            # Property to query: triage_score_* for triage, score_* for score
+            graph_prop = f"{dim_prefix}{dim}"
             samples[dim] = {}
 
-            for level_name, target_score in score_levels.items():
-                # Calculate score range based on level (different ranges for edge cases)
-                if level_name == "lowest":
-                    min_score, max_score = 0.0, 0.15
-                elif level_name == "highest":
-                    min_score, max_score = 0.9, 1.01  # Include 1.0
-                else:
-                    min_score = max(0.0, target_score - tolerance)
-                    max_score = min(0.96, target_score + tolerance)
-
-                # Query for examples at this score level for this dimension
+            for level_name, min_score, max_score in buckets:
                 result = gc.query(
                     f"""
                     MATCH (p:FacilityPath)
                     WHERE {status_clause}
-                        AND p.{dim} >= $min_score
-                        AND p.{dim} < $max_score
-                        AND p.{dim} IS NOT NULL
+                        AND p.{graph_prop} >= $min_score
+                        AND p.{graph_prop} < $max_score
+                        AND p.{graph_prop} IS NOT NULL
                     RETURN p.path AS path,
                            p.facility_id AS facility,
-                           p.{dim} AS score,
+                           p.{graph_prop} AS score,
                            p.path_purpose AS purpose,
                            p.description AS description
                     ORDER BY rand()
@@ -3229,6 +3256,7 @@ def mark_score_complete(
         "score_visualization",
         "score_documentation",
         "score_imas",
+        "score_convention",
     ]
 
     with GraphClient() as gc:
