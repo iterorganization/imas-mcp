@@ -2173,7 +2173,7 @@ def _build_refine_results(
             result: dict = {
                 "path": p["path"],
                 "score": max(0.0, min(1.0, r.new_score)),
-                "adjustment_reason": (r.adjustment_reason[:80] or ""),
+                "adjustment_reason": r.adjustment_reason or "",
                 "primary_evidence": r.primary_evidence or [],
                 "evidence_summary": (r.evidence_summary or "")[:200],
                 "description": r.description or p.get("description", ""),
@@ -2888,10 +2888,10 @@ async def run_parallel_discovery(
                 )
             )
 
-        # Expand workers (group="scan" — same pipeline stage)
+        # Expand workers (group="expand")
         for i in range(num_expand_workers):
             worker_name = f"expand_worker_{i}"
-            status = worker_group.create_status(worker_name, group="scan")
+            status = worker_group.create_status(worker_name, group="expand")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
@@ -2962,10 +2962,10 @@ async def run_parallel_discovery(
                 )
             )
 
-        # Embed description worker (group="score" — embeds scored descriptions)
+        # Embed description worker (group="embed")
         from imas_codex.discovery.base.embed_worker import embed_description_worker
 
-        embed_status = worker_group.create_status("embed_worker", group="score")
+        embed_status = worker_group.create_status("embed_worker", group="embed")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
