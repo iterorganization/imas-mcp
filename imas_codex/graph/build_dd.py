@@ -1916,8 +1916,16 @@ def _ensure_indexes(client: GraphClient) -> None:
 
 
 def _create_unit_nodes(client: GraphClient, units: set[str]) -> None:
-    """Create Unit nodes."""
-    unit_list = [{"symbol": u} for u in units if u]
+    """Create Unit nodes with pint-normalized symbols."""
+    from imas_codex.units import normalize_unit_symbol
+
+    unit_list = []
+    for u in units:
+        if not u:
+            continue
+        symbol = normalize_unit_symbol(u) or u
+        unit_list.append({"symbol": symbol})
+
     if unit_list:
         client.query(
             """
@@ -2193,7 +2201,14 @@ def _batch_create_path_nodes(
             )
 
         # Step 4: Create HAS_UNIT relationships (filter out empty units)
-        unit_paths = [p for p in batch if p["units"] and p["units"] != ""]
+        # Normalize unit symbols to match pint-normalized Unit nodes
+        from imas_codex.units import normalize_unit_symbol
+
+        unit_paths = []
+        for p in batch:
+            if p["units"] and p["units"] != "":
+                normalized = normalize_unit_symbol(p["units"]) or p["units"]
+                unit_paths.append({**p, "units": normalized})
         if unit_paths:
             client.query(
                 """

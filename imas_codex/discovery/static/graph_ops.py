@@ -242,8 +242,13 @@ def merge_units_to_graph(
 ) -> int:
     """MERGE Unit nodes and create HAS_UNIT relationships from TreeNodes.
 
-    Creates or reuses existing Unit nodes (keyed by symbol), then
-    creates HAS_UNIT relationships from matching TreeNode nodes.
+    Creates or reuses existing Unit nodes (keyed by normalized symbol),
+    then creates HAS_UNIT relationships from matching TreeNode nodes.
+    Also sets the ``unit`` string property on each TreeNode for
+    efficient property-level filtering.
+
+    Unit symbols are normalized via pint to prevent duplicate Unit nodes
+    with equivalent formats (e.g., ``Ohm`` vs ``ohm``, ``m.s^-1`` vs ``m/s``).
 
     Args:
         facility: Facility identifier
@@ -254,15 +259,17 @@ def merge_units_to_graph(
         Number of HAS_UNIT relationships created.
     """
     from imas_codex.mdsplus.ingestion import normalize_mdsplus_path
+    from imas_codex.units import normalize_unit_symbol
 
     if not units:
         return 0
 
     updates = []
     for path, unit_str in units.items():
-        normalized = normalize_mdsplus_path(path)
-        node_id = f"{facility}:{tree_name}:{normalized}"
-        updates.append({"id": node_id, "symbol": unit_str})
+        normalized_path = normalize_mdsplus_path(path)
+        node_id = f"{facility}:{tree_name}:{normalized_path}"
+        symbol = normalize_unit_symbol(unit_str) or unit_str
+        updates.append({"id": node_id, "symbol": symbol})
 
     with GraphClient() as gc:
         result = gc.query(
@@ -271,6 +278,7 @@ def merge_units_to_graph(
             MATCH (n:TreeNode {id: u.id})
             MERGE (unit:Unit {symbol: u.symbol})
             MERGE (n)-[:HAS_UNIT]->(unit)
+            SET n.unit = u.symbol
             RETURN count(*) AS created
             """,
             updates=updates,
