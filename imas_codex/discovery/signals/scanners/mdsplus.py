@@ -1,9 +1,8 @@
 """Unified MDSplus scanner plugin.
 
-Handles both static (versioned, machine-description) and dynamic (shot-scoped)
-MDSplus trees through a single scanner interface. Static trees go through the
-full EXTRACT → UNITS → ENRICH → PROMOTE pipeline; dynamic trees use lightweight
-SSH enumeration.
+Thin loop over config.trees, delegating to run_tree_discovery() for the
+full EXTRACT → UNITS → PROMOTE pipeline per tree. After tree processing,
+runs TDI linkage to connect TDI functions to TreeNodes.
 
 Config key: data_sources.mdsplus
 Facility: Any facility with MDSplus (TCV, JET, JT-60SA, ITER)
@@ -20,8 +19,7 @@ from imas_codex.discovery.signals.scanners.base import (
     ScanResult,
     register_scanner,
 )
-from imas_codex.graph import GraphClient
-from imas_codex.graph.models import DataAccess, FacilitySignal, FacilitySignalStatus
+from imas_codex.graph.models import DataAccess, FacilitySignal
 from imas_codex.remote.executor import run_python_script
 
 logger = logging.getLogger(__name__)
@@ -30,11 +28,13 @@ logger = logging.getLogger(__name__)
 class MDSplusScanner:
     """Unified MDSplus tree scanner.
 
-    Discovers signals from both static (versioned) and dynamic (shot-scoped)
-    MDSplus trees. Static trees use the full parallel discovery pipeline
-    (extract → units → enrich) then promote enriched TreeNodes to
-    FacilitySignals. Dynamic trees use SSH enumeration via
-    enumerate_mdsplus.py.
+    Iterates over config.trees and runs the unified tree discovery
+    pipeline (extract → units → promote) for each tree. Versioned trees
+    use their configured versions; dynamic trees use the reference_shot.
+    Subtrees are expanded and processed individually.
+
+    After tree extraction, runs TDI linkage to connect TDI function
+    build_path references to TreeNode nodes in the graph.
 
     Config (data_sources.mdsplus):
         connection_tree: str - Default tree for TDI context
@@ -54,109 +54,104 @@ class MDSplusScanner:
         config: dict[str, Any],
         reference_shot: int | None = None,
     ) -> ScanResult:
-        """Discover signals from both static and dynamic MDSplus trees.
+        """Discover signals from MDSplus trees via unified pipeline.
 
-        Static trees run the full parallel discovery pipeline internally,
-        then promote enriched leaf TreeNodes to FacilitySignals with
-        SOURCE_NODE edges. Dynamic trees enumerate via SSH and return
-        FacilitySignals directly.
+        For each tree in config.trees, runs run_tree_discovery() which
+        handles extraction, units, and promotion to FacilitySignals.
+        Signals are written directly to the graph — returned ScanResult
+        has an empty signals list.
         """
+        from imas_codex.discovery.mdsplus.pipeline import run_tree_discovery
+        from imas_codex.discovery.mdsplus.tdi_linkage import link_tdi_to_tree_nodes
+
         connection_tree = config.get("connection_tree")
         ref_shot = reference_shot or config.get("reference_shot")
-        scan_limit = config.get("_scan_limit")
 
-        all_signals: list[FacilitySignal] = []
         all_stats: dict[str, Any] = {}
+        total_promoted = 0
 
-        # Partition unified trees into versioned (static) and dynamic
-        all_trees = config.get("trees", [])
-        static_trees = [t for t in all_trees if t.get("versions")]
-        dynamic_parent_trees = [t for t in all_trees if not t.get("versions")]
-
-        # Collect dynamic tree names from parent trees and their subtrees
-        dynamic_tree_names: list[str] = []
-        for tree in dynamic_parent_trees:
-            subtrees = tree.get("subtrees", [])
-            if subtrees:
-                dynamic_tree_names.extend(
-                    st["tree_name"] for st in subtrees if st.get("tree_name")
-                )
-            else:
-                dynamic_tree_names.append(tree["tree_name"])
-
-        # Phase 1: Static trees (versioned, machine-description)
-        for tree_config in static_trees:
+        # Process each tree through the unified pipeline
+        for tree_config in config.get("trees", []):
             tree_name = tree_config.get("tree_name")
             if not tree_name:
                 continue
 
-            logger.info("MDSplus scanner: processing static tree '%s'", tree_name)
-            try:
-                static_stats = await self._scan_static_tree(
-                    facility, ssh_host, tree_name, tree_config, config
-                )
-                promoted = await self._promote_static_signals(
-                    facility,
-                    tree_name,
-                    tree_config,
-                    config,
-                    limit=scan_limit,
-                )
-                all_stats[f"static_{tree_name}"] = {
-                    **static_stats,
-                    "promoted": promoted,
-                }
-                logger.info(
-                    "Static tree '%s': promoted %d signals", tree_name, promoted
-                )
-            except Exception as e:
-                logger.error("Static tree '%s' failed: %s", tree_name, e)
-                all_stats[f"static_{tree_name}"] = {"error": str(e)}
+            # Merge setup_commands from parent config
+            merged_config = dict(tree_config)
+            if "setup_commands" not in merged_config:
+                merged_config["setup_commands"] = config.get("setup_commands", [])
 
-        # Phase 2: Dynamic trees (shot-scoped)
-        skip_dynamic = False
-        if dynamic_tree_names and ref_shot:
-            remaining = None
-            if scan_limit:
-                static_promoted = sum(
-                    s.get("promoted", 0)
-                    for s in all_stats.values()
-                    if isinstance(s, dict) and "promoted" in s
-                )
-                remaining = max(0, scan_limit - static_promoted)
-                if remaining == 0:
-                    logger.info(
-                        "Scan limit reached after static trees, skipping dynamic"
-                    )
-                    all_stats["dynamic"] = {"skipped": "scan_limit reached"}
-                    skip_dynamic = True
-            if not skip_dynamic:
-                try:
-                    dynamic_signals, dynamic_stats = await self._scan_dynamic_trees(
-                        facility,
-                        ssh_host,
-                        config,
-                        dynamic_tree_names,
-                        ref_shot,
-                        limit=remaining,
-                    )
-                    all_signals.extend(dynamic_signals)
-                    all_stats["dynamic"] = dynamic_stats
-                except Exception as e:
-                    logger.error("Dynamic tree scan failed: %s", e)
-                    all_stats["dynamic"] = {"error": str(e)}
-        elif dynamic_tree_names and not ref_shot:
-            logger.warning(
-                "MDSplus scanner: no reference_shot for dynamic trees in %s",
-                facility,
+            # Expand subtrees — each subtree is processed as its own tree
+            subtrees = tree_config.get("subtrees", [])
+            trees_to_process = (
+                [
+                    (st["tree_name"], {**merged_config, **st})
+                    for st in subtrees
+                    if st.get("tree_name")
+                ]
+                if subtrees
+                else [(tree_name, merged_config)]
             )
-            all_stats["dynamic"] = {"error": "no reference_shot configured"}
+
+            for sub_name, sub_config in trees_to_process:
+                # Resolve version list: versioned trees use config,
+                # dynamic trees use reference_shot
+                versions = sub_config.get("versions", [])
+                ver_list = [v["version"] for v in versions if "version" in v]
+                if not ver_list and ref_shot:
+                    ver_list = [ref_shot]
+                elif not ver_list:
+                    logger.warning(
+                        "MDSplus scanner: no versions or reference_shot "
+                        "for tree '%s' in %s",
+                        sub_name,
+                        facility,
+                    )
+                    all_stats[sub_name] = {
+                        "error": "no versions or reference_shot",
+                    }
+                    continue
+
+                logger.info(
+                    "MDSplus scanner: processing tree '%s' (%d versions)",
+                    sub_name,
+                    len(ver_list),
+                )
+                try:
+                    stats = await run_tree_discovery(
+                        facility=facility,
+                        ssh_host=ssh_host,
+                        tree_name=sub_name,
+                        tree_config=sub_config,
+                        ver_list=ver_list,
+                    )
+                    all_stats[sub_name] = stats
+                    total_promoted += stats.get("signals_promoted", 0)
+                    logger.info(
+                        "Tree '%s': %d promoted",
+                        sub_name,
+                        stats.get("signals_promoted", 0),
+                    )
+                except Exception as e:
+                    logger.error("Tree '%s' failed: %s", sub_name, e)
+                    all_stats[sub_name] = {"error": str(e)}
+
+        # Run TDI linkage after all trees are processed
+        tdi_links = 0
+        try:
+            tdi_links = link_tdi_to_tree_nodes(facility)
+            if tdi_links:
+                logger.info("TDI linkage: created %d edges", tdi_links)
+        except Exception as e:
+            logger.warning("TDI linkage failed: %s", e)
 
         # Build DataAccess node for the connection tree
         data_access = None
-        primary_tree = connection_tree or (
-            dynamic_tree_names[0] if dynamic_tree_names else None
+        first_tree = next(
+            (t["tree_name"] for t in config.get("trees", []) if t.get("tree_name")),
+            None,
         )
+        primary_tree = connection_tree or first_tree
         if primary_tree:
             data_access = DataAccess(
                 id=f"{facility}:mdsplus:tree_tdi",
@@ -173,343 +168,23 @@ class MDSplusScanner:
                 data_source="mdsplus",
             )
 
-        total_signals = len(all_signals)
-        static_promoted = sum(
-            s.get("promoted", 0)
-            for s in all_stats.values()
-            if isinstance(s, dict) and "promoted" in s
-        )
-
         logger.info(
-            "MDSplus scanner %s: %d dynamic signals, %d static promoted",
+            "MDSplus scanner %s: %d signals promoted, %d TDI links",
             facility,
-            total_signals,
-            static_promoted,
+            total_promoted,
+            tdi_links,
         )
 
         return ScanResult(
-            signals=all_signals,
+            signals=[],
             data_access=data_access,
             metadata={"connection_tree": connection_tree},
             stats={
-                "signals_discovered": total_signals,
-                "static_promoted": static_promoted,
+                "signals_promoted": total_promoted,
+                "tdi_links": tdi_links,
                 **all_stats,
             },
         )
-
-    async def _scan_static_tree(
-        self,
-        facility: str,
-        ssh_host: str,
-        tree_name: str,
-        tree_config: dict[str, Any],
-        mdsplus_config: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Run the full static discovery pipeline for a versioned tree.
-
-        Delegates to run_parallel_static_discovery() which handles:
-        - Seeding TreeModelVersion nodes
-        - SSH extraction of tree structure per version
-        - Unit extraction from MDSplus metadata
-        - LLM enrichment of TreeNode descriptions
-        """
-        from imas_codex.discovery.static.parallel import (
-            run_parallel_static_discovery,
-        )
-
-        versions = tree_config.get("versions", [])
-        ver_list = [v["version"] for v in versions if "version" in v]
-        if not ver_list:
-            return {"error": "no versions configured"}
-
-        # Merge setup_commands from parent mdsplus config
-        merged_config = dict(tree_config)
-        if "setup_commands" not in merged_config:
-            merged_config["setup_commands"] = mdsplus_config.get("setup_commands", [])
-
-        result = await run_parallel_static_discovery(
-            facility=facility,
-            ssh_host=ssh_host,
-            tree_name=tree_name,
-            tree_config=merged_config,
-            ver_list=ver_list,
-            enrich=True,
-        )
-        return result
-
-    async def _promote_static_signals(
-        self,
-        facility: str,
-        tree_name: str,
-        tree_config: dict[str, Any],
-        mdsplus_config: dict[str, Any],
-        limit: int | None = None,
-    ) -> int:
-        """Promote enriched leaf TreeNodes to FacilitySignals with SOURCE_NODE edges.
-
-        Queries the graph for enriched leaf TreeNodes (NUMERIC/SIGNAL) from the
-        static tree, creates FacilitySignal nodes with pre-populated descriptions
-        and physics domains, and links them via SOURCE_NODE.
-
-        Returns count of promoted signals.
-        """
-        accessor_function = tree_config.get("accessor_function")
-        data_access_id = f"{facility}:mdsplus:tree_tdi"
-
-        # Create static-specific DataAccess if there's an accessor function
-        if accessor_function:
-            data_access_id = f"{facility}:mdsplus:static_{tree_name}"
-            try:
-                with GraphClient() as gc:
-                    gc.query(
-                        """
-                        MERGE (da:DataAccess {id: $id})
-                        SET da.facility_id = $facility,
-                            da.method_type = 'mdsplus',
-                            da.library = 'MDSplus',
-                            da.access_type = 'local',
-                            da.data_source = 'mdsplus',
-                            da.name = $name,
-                            da.data_template = $template
-                        WITH da
-                        MATCH (f:Facility {id: $facility})
-                        MERGE (da)-[:AT_FACILITY]->(f)
-                        """,
-                        id=data_access_id,
-                        facility=facility,
-                        name=f"MDSplus static {tree_name} ({accessor_function})",
-                        template=f"{accessor_function}('{{accessor}}')",
-                    )
-            except Exception as e:
-                logger.warning("Failed to create static DataAccess: %s", e)
-
-        # Promote enriched leaf nodes to FacilitySignals in batched transactions
-        # to avoid locking the entire graph with 34K+ MERGE operations
-        batch_size = 500
-        try:
-            with GraphClient() as gc:
-                # Count promotable nodes first
-                count_result = gc.query(
-                    """
-                    MATCH (n:TreeNode {facility_id: $facility, tree_name: $tree})
-                    WHERE n.description IS NOT NULL
-                      AND n.node_type IN ['NUMERIC', 'SIGNAL']
-                    RETURN count(n) AS total
-                    """,
-                    facility=facility,
-                    tree=tree_name,
-                )
-                total = count_result[0]["total"] if count_result else 0
-                if total == 0:
-                    return 0
-
-                # Apply scan limit to cap how many we promote
-                effective_total = min(total, limit) if limit else total
-
-                logger.info(
-                    "Promoting %d/%d TreeNodes to FacilitySignals (batches of %d)",
-                    effective_total,
-                    total,
-                    batch_size,
-                )
-
-                promoted = 0
-                for offset in range(0, effective_total, batch_size):
-                    batch_limit = min(batch_size, effective_total - offset)
-                    result = gc.query(
-                        """
-                        MATCH (n:TreeNode {facility_id: $facility,
-                                           tree_name: $tree})
-                        WHERE n.description IS NOT NULL
-                          AND n.node_type IN ['NUMERIC', 'SIGNAL']
-                        WITH n ORDER BY n.id SKIP $offset LIMIT $batch_limit
-                        WITH n,
-                             split(n.path, '::')[-1] AS node_path_raw
-                        WITH n, node_path_raw,
-                             $facility + ':' +
-                             COALESCE(n.physics_domain, 'general') + '/' +
-                             $tree + '/' +
-                             toLower(replace(node_path_raw, ':', '/'))
-                             AS sig_id
-                        MERGE (s:FacilitySignal {id: sig_id})
-                        ON CREATE SET
-                            s.facility_id = $facility,
-                            s.status = $enriched,
-                            s.physics_domain =
-                                COALESCE(n.physics_domain, 'general'),
-                            s.name = n.description,
-                            s.description = n.description,
-                            s.accessor = node_path_raw,
-                            s.data_access = $da_id,
-                            s.tree_name = $tree,
-                            s.node_path = n.path,
-                            s.unit = n.unit,
-                            s.temporality = 'static',
-                            s.discovery_source = 'tree_traversal',
-                            s.source_node = n.id,
-                            s.discovered_at = datetime(),
-                            s.enriched_at = datetime()
-                        ON MATCH SET
-                            s.description =
-                                COALESCE(n.description, s.description),
-                            s.unit = COALESCE(n.unit, s.unit),
-                            s.source_node = n.id
-                        WITH s, n
-                        MERGE (s)-[:SOURCE_NODE]->(n)
-                        WITH s
-                        MATCH (f:Facility {id: $facility})
-                        MERGE (s)-[:AT_FACILITY]->(f)
-                        WITH s
-                        MATCH (da:DataAccess {id: $da_id})
-                        MERGE (s)-[:DATA_ACCESS]->(da)
-                        RETURN count(s) AS promoted
-                        """,
-                        facility=facility,
-                        tree=tree_name,
-                        da_id=data_access_id,
-                        enriched=FacilitySignalStatus.enriched.value,
-                        offset=offset,
-                        batch_limit=batch_limit,
-                    )
-                    batch_count = result[0]["promoted"] if result else 0
-                    promoted += batch_count
-                    logger.debug(
-                        "Promote batch %d/%d: %d signals (%d total)",
-                        offset // batch_size + 1,
-                        (effective_total + batch_size - 1) // batch_size,
-                        batch_count,
-                        promoted,
-                    )
-                return promoted
-        except Exception as e:
-            logger.error("Failed to promote static signals: %s", e)
-            return 0
-
-    async def _scan_dynamic_trees(
-        self,
-        facility: str,
-        ssh_host: str,
-        config: dict[str, Any],
-        trees: list[str],
-        ref_shot: int,
-        limit: int | None = None,
-    ) -> tuple[list[FacilitySignal], dict[str, Any]]:
-        """Discover signals from dynamic MDSplus trees via SSH enumeration.
-
-        Uses enumerate_mdsplus.py to walk trees and extract SIGNAL/NUMERIC
-        nodes with data, filtering metadata and deduplicating channels.
-        """
-        exclude_names = config.get("exclude_node_names", [])
-        max_nodes = config.get("max_nodes_per_tree", 5000)
-        if limit:
-            max_nodes = min(max_nodes, limit)
-        node_usages = config.get("node_usages", ["SIGNAL"])
-        input_data = {
-            "trees": trees,
-            "shot": ref_shot,
-            "exclude_names": exclude_names,
-            "max_nodes_per_tree": max_nodes,
-            "node_usages": node_usages,
-        }
-
-        setup_cmds = config.get("setup_commands")
-        python_cmd = config.get("python_command", "python3")
-
-        try:
-            output = await asyncio.to_thread(
-                run_python_script,
-                "enumerate_mdsplus.py",
-                input_data,
-                ssh_host=ssh_host,
-                timeout=300,
-                python_command=python_cmd,
-                setup_commands=setup_cmds,
-            )
-
-            # Find JSON in output — MDSplus C libraries may print warnings
-            response = None
-            for line in reversed(output.strip().split("\n")):
-                line = line.strip()
-                if line.startswith("{"):
-                    try:
-                        response = json.loads(line)
-                        break
-                    except json.JSONDecodeError:
-                        continue
-
-            if response is None:
-                logger.error(
-                    "MDSplus enumerate for %s: no JSON in output (%d bytes)",
-                    facility,
-                    len(output),
-                )
-                return [], {"error": "no JSON in remote script output"}
-        except Exception as e:
-            logger.error("MDSplus enumerate failed for %s: %s", facility, e)
-            return [], {"error": f"enumerate failed: {e}"}
-
-        if "error" in response:
-            logger.error(
-                "MDSplus enumerate error for %s: %s", facility, response["error"]
-            )
-            return [], {"error": response["error"]}
-
-        raw_signals = response.get("signals", [])
-        tree_stats = response.get("tree_stats", {})
-
-        # Create DataAccess IDs for each tree
-        data_access_nodes = {}
-        for tree_name in trees:
-            da_id = f"{facility}:mdsplus:{tree_name}"
-            data_access_nodes[tree_name] = da_id
-
-        # Convert to FacilitySignal objects
-        facility_signals: list[FacilitySignal] = []
-        for sig in raw_signals:
-            tree_name = sig["tree"]
-            name = sig["name"]
-            path = sig["path"]
-            group = sig.get("group", "TOP")
-
-            signal_id = f"{facility}:{tree_name}/{group.lower()}/{name.lower()}"
-            accessor = f"data({path})"
-
-            display_name = name
-            channel_count = sig.get("channel_count")
-            if channel_count and channel_count > 1:
-                display_name = f"{name} [{channel_count} channels]"
-
-            try:
-                fs = FacilitySignal(
-                    id=signal_id,
-                    facility_id=facility,
-                    status=FacilitySignalStatus.discovered,
-                    physics_domain="general",
-                    name=display_name,
-                    accessor=accessor,
-                    data_access=data_access_nodes.get(tree_name, ""),
-                    tree_name=tree_name,
-                    node_path=path,
-                    unit=sig.get("units") or None,
-                    temporality="dynamic",
-                    discovery_source="tree_traversal",
-                    example_shot=ref_shot,
-                )
-                facility_signals.append(fs)
-            except Exception as e:
-                logger.debug("Could not create FacilitySignal for %s: %s", path, e)
-
-        # Apply limit to dynamic signals
-        if limit and len(facility_signals) > limit:
-            facility_signals = facility_signals[:limit]
-
-        return facility_signals, {
-            "signals_discovered": len(facility_signals),
-            "trees_scanned": len(trees),
-            "reference_shot": ref_shot,
-            "tree_stats": tree_stats,
-        }
 
     async def check(
         self,
