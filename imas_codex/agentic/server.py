@@ -1659,10 +1659,10 @@ class AgentsServer:
                     # Query high-value paths
                     high_value_query = """
                         MATCH (p:FacilityPath {facility_id: $facility})
-                        WHERE p.score > 0.7
+                        WHERE coalesce(p.score_composite, p.triage_composite) > 0.7
                         RETURN p.path AS path, p.path_purpose AS purpose,
-                               p.score AS score, p.description AS description
-                        ORDER BY p.score DESC LIMIT 15
+                               coalesce(p.score_composite, p.triage_composite) AS score, p.description AS description
+                        ORDER BY score DESC LIMIT 15
                     """
                     high_value_paths = client.query(high_value_query, facility=facility)
 
@@ -1679,11 +1679,11 @@ class AgentsServer:
                     unexplored_query = """
                         MATCH (p:FacilityPath {facility_id: $facility})
                         WHERE p.path_purpose = 'container'
-                              AND p.score > 0.4
+                              AND coalesce(p.score_composite, p.triage_composite) > 0.4
                               AND p.should_expand = false
                               AND p.terminal_reason IS NULL
-                        RETURN p.path AS path, p.score AS score, p.description AS description
-                        ORDER BY p.score DESC LIMIT 10
+                        RETURN p.path AS path, coalesce(p.score_composite, p.triage_composite) AS score, p.description AS description
+                        ORDER BY score DESC LIMIT 10
                     """
                     unexplored_containers = client.query(
                         unexplored_query, facility=facility

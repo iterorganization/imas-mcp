@@ -68,7 +68,7 @@ enums:
       Pipeline: discovered → scanned → triaged → scored → skipped/excluded/stale
       
       Triage is an initial LLM classification using directory structure only.
-      Paths with triage_score >= threshold proceed to enrichment (du/tokei/patterns)
+      Paths with triage_composite >= threshold proceed to enrichment (du/tokei/patterns)
       and then scoring (independent LLM evaluation with enrichment evidence).
       Paths below threshold remain in triaged state (terminal).
     permissible_values:
@@ -78,7 +78,7 @@ enums:
         description: Enumerated (total_files, total_dirs set), awaiting LLM triage
       triaged:
         description: >-
-          LLM triaged with initial classification and triage_score.
+          LLM triaged with initial classification and triage_composite.
           Paths above threshold proceed to enrichment and scoring.
           Paths below threshold are terminal in this state.
       scored:
@@ -234,6 +234,16 @@ enums:
         description: Filtered out by scoring (too low value to process)
       failed:
         description: Error during processing (check error field)
+
+  SignalTemporality:
+    description: >-
+      Whether a signal's data is time-varying (dynamic, shot-scoped) or
+      time-invariant (static, versioned by machine configuration).
+    permissible_values:
+      dynamic:
+        description: Shot-scoped measurement or analysis output
+      static:
+        description: Machine-description / constructional data, versioned by configuration
 
   FacilitySignalStatus:
     description: >-
