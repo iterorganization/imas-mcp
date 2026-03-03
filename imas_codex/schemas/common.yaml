@@ -428,6 +428,8 @@ enums:
         description: Generated/cached files (__pycache__, .venv, node_modules)
       system:
         description: OS/infrastructure resources (/var, /tmp, /opt/modules)
+      software_project:
+        description: VCS repository obtainable from a remote (GitHub, GitLab, SVN)
       empty:
         description: Empty resource with no content (empty directories, blank pages)
 

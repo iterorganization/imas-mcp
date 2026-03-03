@@ -1087,6 +1087,8 @@ classes:
       ingested_at:
         description: When repository was ingested (locally or via API)
         range: datetime
+      vcs_type:
+        description: Version control system type (git, svn, hg, bzr)
 
 # =============================================================================
 # User Classes
@@ -2061,7 +2063,6 @@ classes:
           MDSplus: "tree = MDSplus.Tree('{data_source}', {shot}, 'readonly')"
           IMAS: "entry = imas.DBEntry(imas.imasdef.MDSPLUS_BACKEND, '{database}', {shot}, 1)"
           HDF5: "f = h5py.File('{data_source}'.format(shot={shot}), 'r')"
-        required: true
       data_template:
         description: >-
           Python code to retrieve data array.
