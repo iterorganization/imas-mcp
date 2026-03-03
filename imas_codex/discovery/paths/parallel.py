@@ -65,6 +65,7 @@ class DiscoveryState:
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
     score_stats: WorkerStats = field(default_factory=WorkerStats)
     dedup_stats: WorkerStats = field(default_factory=WorkerStats)
+    user_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
@@ -75,6 +76,7 @@ class DiscoveryState:
     triage_phase: PipelinePhase = field(init=False)
     enrich_phase: PipelinePhase = field(init=False)
     score_phase: PipelinePhase = field(init=False)
+    user_phase: PipelinePhase = field(init=False)
 
     def __post_init__(self) -> None:
         self.scan_phase = PipelinePhase("scan")
@@ -82,13 +84,14 @@ class DiscoveryState:
         self.triage_phase = PipelinePhase("triage")
         self.enrich_phase = PipelinePhase("enrich")
         self.score_phase = PipelinePhase("score")
+        self.user_phase = PipelinePhase("user")
 
     # SSH retry tracking for exponential backoff
     ssh_retry_count: int = 0
     max_ssh_retries: int = 5
     ssh_error_message: str | None = None
 
-    # Session tracking for --limit
+    # Session tracking for --path-limit
     initial_terminal_count: int | None = None
 
     @property
@@ -103,7 +106,7 @@ class DiscoveryState:
     def terminal_count(self) -> int:
         """Count of paths in terminal states (triaged or scored, not pending work).
 
-        For --limit purposes, count paths that have completed their pipeline:
+        For --path-limit purposes, count paths that have completed their pipeline:
         - triaged: below threshold, terminal after 1st pass
         - scored: completed 2nd pass scoring with enrichment evidence
         Both must not be awaiting expansion or enrichment.
@@ -150,7 +153,7 @@ class DiscoveryState:
         """Check if path limit reached using session terminal count.
 
         Uses paths completed in THIS SESSION, not cumulative graph total.
-        E.g., with 28 existing paths and --limit 30, we process 30 more.
+        E.g., with 28 existing paths and --path-limit 30, we process 30 more.
         """
         if self.path_limit is None:
             return False
@@ -362,6 +365,62 @@ def _has_pending_score_work(facility: str) -> bool:
             facility=facility,
         )
         return bool(result and result[0]["has_work"])
+
+
+def _has_pending_user_work(facility: str) -> bool:
+    """Check if there are FacilityUser nodes without Person links.
+
+    Users are created by persist_scan_results() during scanning.  Person
+    linking (ORCID lookup) is handled asynchronously by user_worker.
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (u:FacilityUser)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE u.person_id IS NULL
+              AND (u.claimed_at IS NULL
+                   OR u.claimed_at < datetime() - duration($cutoff))
+            RETURN count(u) > 0 AS has_work
+            """,
+            facility=facility,
+            cutoff=f"PT{CLAIM_TIMEOUT_SECONDS}S",
+        )
+        return bool(result and result[0]["has_work"])
+
+
+def claim_users_for_linking(facility: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Atomically claim FacilityUser nodes for Person linking (ORCID).
+
+    Claims users where person_id IS NULL (no Person link yet).
+    Uses claimed_at for orphan recovery, same pattern as path claiming.
+
+    Args:
+        facility: Facility ID
+        limit: Maximum users to claim per batch
+    """
+    from imas_codex.graph import GraphClient
+
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (u:FacilityUser)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE u.person_id IS NULL
+              AND (u.claimed_at IS NULL
+                   OR u.claimed_at < datetime() - duration($cutoff))
+            WITH u ORDER BY u.discovered_at ASC LIMIT $limit
+            SET u.claimed_at = datetime()
+            RETURN u.id AS id, u.username AS username,
+                   u.name AS name, u.given_name AS given_name,
+                   u.family_name AS family_name, u.email AS email
+            """,
+            facility=facility,
+            limit=limit,
+            cutoff=cutoff,
+        )
+        return list(result)
 
 
 # ============================================================================
@@ -2589,6 +2648,106 @@ def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]
 
 
 # ============================================================================
+# User Worker (async Person linking with ORCID)
+# ============================================================================
+
+
+async def user_worker(
+    state: DiscoveryState,
+    on_progress: Callable[[str, WorkerStats, list[str] | None], None] | None = None,
+    batch_size: int = 10,
+) -> None:
+    """Async user worker — links FacilityUser nodes to Person nodes via ORCID.
+
+    Runs independently of the scan pipeline to avoid blocking path discovery.
+    Claims FacilityUser nodes without person_id and performs ORCID lookups
+    to create cross-facility Person identities.
+
+    This worker is non-critical: if it falls behind, scan/triage/score
+    continue unimpeded. Person links are enrichment, not pipeline-blocking.
+
+    Args:
+        state: Shared discovery state
+        on_progress: Progress callback
+        batch_size: Users per claim batch (default 10)
+    """
+    from datetime import UTC, datetime
+
+    from imas_codex.discovery.paths.frontier import _create_person_link
+    from imas_codex.graph import GraphClient
+
+    loop = asyncio.get_running_loop()
+
+    while not state.should_stop():
+        # Claim unclaimed users from graph
+        users = await loop.run_in_executor(
+            None,
+            lambda: claim_users_for_linking(state.facility, limit=batch_size),
+        )
+
+        if not users:
+            state.user_phase.record_idle()
+            state.user_stats.mark_idle()
+            if on_progress:
+                on_progress("idle", state.user_stats, None)
+            await asyncio.sleep(2.0)
+            continue
+
+        state.user_phase.record_activity(len(users))
+        state.user_stats.mark_active()
+
+        if on_progress:
+            on_progress(f"linking {len(users)} users", state.user_stats, None)
+
+        now = datetime.now(UTC).isoformat()
+        linked = 0
+        errors = 0
+
+        for user in users:
+            if state.should_stop():
+                break
+            try:
+                with GraphClient() as gc:
+                    await _create_person_link(
+                        gc,
+                        facility_user_id=user["id"],
+                        username=user["username"],
+                        name=user.get("name"),
+                        given_name=user.get("given_name"),
+                        family_name=user.get("family_name"),
+                        email=user.get("email"),
+                        now=now,
+                    )
+                linked += 1
+            except Exception as e:
+                logger.debug(f"Person link failed for {user['id']}: {e}")
+                errors += 1
+                # Clear claim so user can be retried
+                try:
+                    with GraphClient() as gc:
+                        gc.query(
+                            "MATCH (u:FacilityUser {id: $id}) SET u.claimed_at = null",
+                            id=user["id"],
+                        )
+                except Exception:
+                    pass
+
+        state.user_stats.processed += linked
+        state.user_stats.errors += errors
+        state.user_stats.record_batch(linked)
+
+        if on_progress:
+            on_progress(
+                f"linked {linked} users",
+                state.user_stats,
+                [u["username"] for u in users[:linked]],
+            )
+
+        # Yield to other workers
+        await asyncio.sleep(0.5)
+
+
+# ============================================================================
 # Main Discovery Loop
 # ============================================================================
 
@@ -2750,6 +2909,9 @@ async def run_parallel_discovery(
     )
     state.score_phase.set_has_work_fn(
         lambda: _has_pending_score_work(facility) or not state.enrich_phase.done
+    )
+    state.user_phase.set_has_work_fn(
+        lambda: _has_pending_user_work(facility) or not state.scan_phase.done
     )
 
     # Mark phases as done for disabled workers so should_stop() works correctly
@@ -2944,17 +3106,38 @@ async def run_parallel_discovery(
             )
         )
 
+        # User worker (async Person linking with ORCID — non-blocking)
+        user_status = worker_group.create_status("user_worker", group="user")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    user_worker,
+                    "user_worker",
+                    state,
+                    state.should_stop,
+                    status_tracker=user_status,
+                )
+            )
+        )
+
         logger.info(
             f"Started {worker_group.get_active_count()} supervised workers: "
             f"scan={num_scan_workers}, expand={num_expand_workers}, "
             f"triage={num_triage_workers}, enrich={num_enrich_workers}, "
-            f"score={num_score_workers}, dedup=1, embed=1"
+            f"score={num_score_workers}, dedup=1, embed=1, user=1"
         )
 
         # Periodic orphan recovery during discovery (every 60s)
         orphan_tick = make_orphan_recovery_tick(
             facility,
-            [OrphanRecoverySpec("FacilityPath", timeout_seconds=CLAIM_TIMEOUT_SECONDS)],
+            [
+                OrphanRecoverySpec(
+                    "FacilityPath", timeout_seconds=CLAIM_TIMEOUT_SECONDS
+                ),
+                OrphanRecoverySpec(
+                    "FacilityUser", timeout_seconds=CLAIM_TIMEOUT_SECONDS
+                ),
+            ],
         )
 
         # Run supervision loop — handles status updates and clean shutdown
@@ -3022,6 +3205,7 @@ async def run_parallel_discovery(
             "enriched": state.enrich_stats.processed,
             "scored": state.score_stats.processed,
             "deduped": state.dedup_stats.processed,
+            "users_linked": state.user_stats.processed,
             "cost": state.total_cost,
             "elapsed_seconds": elapsed,
             "scan_rate": state.scan_stats.rate,
@@ -3034,6 +3218,7 @@ async def run_parallel_discovery(
             "triage_errors": state.triage_stats.errors,
             "enrich_errors": state.enrich_stats.errors,
             "score_errors": state.score_stats.errors,
+            "user_errors": state.user_stats.errors,
         }
     finally:
         # Cancel stop watcher if still running

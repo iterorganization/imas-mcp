@@ -508,7 +508,7 @@ class ProgressConfig:
 
     facility: str
     cost_limit: float = 10.0
-    item_limit: int | None = None  # --limit flag (paths, pages, etc.)
+    item_limit: int | None = None  # --path-limit flag (paths, pages, etc.)
     model: str = ""
     focus: str = ""
 

@@ -2176,24 +2176,8 @@ async def persist_scan_results(
                     users=facility_users,
                 )
 
-                # Create Person nodes for cross-facility identity (with ORCID lookup)
-                for user in facility_users:
-                    try:
-                        await _create_person_link(
-                            gc,
-                            facility_user_id=user["id"],
-                            username=user["username"],
-                            name=user.get("name"),
-                            given_name=user.get("given_name"),
-                            family_name=user.get("family_name"),
-                            email=user.get("email"),
-                            now=now,
-                        )
-                    except Exception as e:
-                        logger.debug(
-                            f"Failed to create Person link for {user['id']}: {e}"
-                        )
-
+                # Person linking (ORCID lookup) is handled asynchronously by
+                # user_worker to avoid blocking scan progression.
                 logger.debug(f"Enriched {len(facility_users)} users for {facility}")
         except Exception as e:
             # User enrichment is non-critical; don't fail scan

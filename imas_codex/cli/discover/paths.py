@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
     help="Maximum LLM spend in USD (default: $10)",
 )
 @click.option(
-    "--limit",
+    "--path-limit",
     "-l",
     type=int,
     default=None,
-    help="Maximum paths to process (for debugging)",
+    help="Stop after this many paths reach terminal state (triaged/scored)",
 )
 @click.option(
     "--focus",
@@ -104,7 +104,7 @@ def paths(
     facility: str,
     root: tuple[str, ...],
     cost_limit: float,
-    limit: int | None,
+    path_limit: int | None,
     focus: str | None,
     threshold: float,
     scan_workers: int,
@@ -146,7 +146,7 @@ def paths(
     _run_iterative_discovery(
         facility=facility,
         budget=cost_limit,
-        limit=limit,
+        path_limit=path_limit,
         focus=focus,
         threshold=threshold,
         num_scan_workers=scan_workers,
@@ -169,7 +169,7 @@ def paths(
 def _run_iterative_discovery(
     facility: str,
     budget: float,
-    limit: int | None,
+    path_limit: int | None,
     focus: str | None,
     threshold: float,
     num_scan_workers: int = 1,
@@ -306,8 +306,8 @@ def _run_iterative_discovery(
     )
     if not scan_only:
         log_print(f"Cost limit: ${budget:.2f}")
-    if limit:
-        log_print(f"Path limit: {limit}")
+    if path_limit:
+        log_print(f"Path limit: {path_limit}")
     if timeout_minutes is not None:
         log_print(f"Time limit: {timeout_minutes} min")
     if not scan_only:
@@ -342,7 +342,7 @@ def _run_iterative_discovery(
             _async_discovery_loop(
                 facility=facility,
                 budget=budget,
-                limit=limit,
+                path_limit=path_limit,
                 focus=focus,
                 threshold=threshold,
                 console=console,
@@ -637,7 +637,7 @@ def _print_discovery_summary(
 async def _async_discovery_loop(
     facility: str,
     budget: float,
-    limit: int | None,
+    path_limit: int | None,
     focus: str | None,
     threshold: float,
     console,
@@ -679,7 +679,7 @@ async def _async_discovery_loop(
         with ParallelProgressDisplay(
             facility=facility,
             cost_limit=budget,
-            path_limit=limit,
+            path_limit=path_limit,
             model=model_name,
             console=console,
             focus=focus or "",
@@ -732,7 +732,7 @@ async def _async_discovery_loop(
                 result = await run_parallel_discovery(
                     facility=facility,
                     cost_limit=budget,
-                    path_limit=limit,
+                    path_limit=path_limit,
                     focus=focus,
                     threshold=threshold,
                     root_filter=root_filter,
@@ -791,7 +791,7 @@ async def _async_discovery_loop(
         result = await run_parallel_discovery(
             facility=facility,
             cost_limit=budget,
-            path_limit=limit,
+            path_limit=path_limit,
             focus=focus,
             threshold=threshold,
             root_filter=root_filter,
