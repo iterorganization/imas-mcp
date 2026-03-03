@@ -78,7 +78,7 @@ export CUDA_VISIBLE_DEVICES=0
 cd ~/Code/imas-codex
 
 # Start embed server on all interfaces
-exec uv run --extra gpu imas-codex serve embed start \
+exec uv run --extra gpu imas-codex embed start \
     --host 0.0.0.0 \
     --port 18765 \
     --gpu 0
@@ -132,7 +132,7 @@ fi
 Add `--location` option to `serve embed start` that records the embed server location:
 
 ```
-imas-codex serve embed start --host 0.0.0.0 --port 18765 --gpu 0 --location titan
+imas-codex embed start --host 0.0.0.0 --port 18765 --gpu 0 --location titan
 ```
 
 The location is exposed in the `/health` and `/info` endpoints so clients can determine where the server is running. This enriches the `hostname` field already present in health responses.

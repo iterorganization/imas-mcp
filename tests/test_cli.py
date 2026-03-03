@@ -141,7 +141,7 @@ class TestCLICommands:
 
         result = runner.invoke(main, ["serve", "--help"])
         assert result.exit_code == 0
-        assert "Start MCP servers" in result.output
+        assert "MCP servers" in result.output
 
     def test_facilities_help(self, runner):
         """facilities group has help."""

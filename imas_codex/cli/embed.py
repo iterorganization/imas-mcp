@@ -1,330 +1,554 @@
-"""Embedding management commands."""
+"""Embedding server management commands."""
 
 import logging
+import os
+import subprocess
+import time
 
 import click
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 logger = logging.getLogger(__name__)
 
 
-def _get_embeddable_labels() -> list[str]:
-    """Get node labels that have both description and embedding slots.
-
-    Derived from LinkML schemas — no hardcoded list.
-    """
-    from imas_codex.graph import get_schema
-
-    schema = get_schema()
-    return schema.description_embeddable_labels
-
-
 @click.group()
 def embed():
-    """Manage embeddings for graph nodes.
+    """Manage GPU embedding server.
+
+    Deploy mode is determined by ``[embedding].scheduler`` in pyproject.toml:
+      slurm → SLURM batch job on GPU compute node
+      (omit) → systemd service on login node
+
+    The embedding location (``[embedding].location``) determines where
+    commands are sent (e.g. ``iter``).
+
+    Override with env vars: IMAS_CODEX_EMBED_SCHEDULER, IMAS_CODEX_EMBEDDING_LOCATION
 
     \b
-    Commands:
-      update       Add embeddings to nodes missing them
-      indexes      Show or create vector indexes
-      status       Show embedding coverage statistics
+      imas-codex embed deploy     Deploy per config
+      imas-codex embed stop       Stop the server
+      imas-codex embed restart    Restart (stop + deploy)
+      imas-codex embed status     Check server and SLURM job status
+      imas-codex embed logs       View SLURM job logs
+      imas-codex embed start      Start embedding server locally
+      imas-codex embed service    Manage systemd service
     """
     pass
 
 
-@embed.command("update")
+@embed.command("start")
 @click.option(
-    "--label",
-    "-l",
-    required=True,
-    type=str,
-    help="Node label to update embeddings for (schema-derived, e.g. FacilitySignal)",
+    "--host",
+    envvar="EMBED_HOST",
+    default="0.0.0.0",
+    help="Host to bind (default: all interfaces for SLURM compute node access)",
 )
 @click.option(
-    "--facility",
-    "-f",
-    type=str,
+    "--port",
+    envvar="EMBED_PORT",
     default=None,
-    help="Restrict to specific facility (optional)",
-)
-@click.option(
-    "--batch-size",
-    "-b",
     type=int,
-    default=100,
-    help="Batch size for embedding (default: 100)",
+    help="Port to bind (default: from config or 18765)",
 )
 @click.option(
-    "--dry-run",
-    is_flag=True,
-    default=False,
-    help="Show what would be embedded without making changes",
+    "--log-level",
+    default="INFO",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
+    help="Set the logging level",
 )
-def update(
-    label: str,
-    facility: str | None,
-    batch_size: int,
-    dry_run: bool,
+@click.option(
+    "--gpu",
+    envvar="CUDA_VISIBLE_DEVICES",
+    default=None,
+    help="CUDA device to use (e.g., 0 or 1)",
+)
+@click.option(
+    "--idle-timeout",
+    default=0,
+    type=int,
+    help="Auto-shutdown after N seconds of inactivity (0=disabled, 1800=30min)",
+)
+@click.option(
+    "--deploy-label",
+    default=None,
+    type=str,
+    help="Deployment label (e.g., 'titan', 'login'). Exposed in /health.",
+)
+@click.option(
+    "--workers",
+    default=1,
+    type=int,
+    help="Number of uvicorn worker processes (default: 1). Use with --gpus for multi-GPU.",
+)
+@click.option(
+    "--gpus",
+    default=None,
+    type=str,
+    help="Comma-separated GPU IDs for multi-worker mode (e.g., '0,1,2,3').",
+)
+def embed_start(
+    host: str,
+    port: int | None,
+    log_level: str,
+    gpu: str | None,
+    idle_timeout: int,
+    deploy_label: str | None,
+    workers: int,
+    gpus: str | None,
 ) -> None:
-    """Update description embeddings for nodes.
+    """Start the embedding server.
 
-    Finds nodes with description but no embedding and
-    generates embeddings in batches.
+    The server provides GPU-accelerated embedding via HTTP API.
+    Access via SSH tunnel for security.
 
-    \b
     Examples:
-        # Dry run to see what would be embedded
-        imas-codex embed update --label FacilitySignal --dry-run
+        # Start with defaults
+        imas-codex embed start
 
-        # Update all FacilitySignal nodes
-        imas-codex embed update --label FacilitySignal
+        # Use specific GPU
+        imas-codex embed start --gpu 1
 
-        # Update only TCV signals
-        imas-codex embed update --label FacilitySignal --facility tcv
+        # Multi-worker on 4 GPUs (Titan)
+        imas-codex embed start --gpus 0,1,2,3 --workers 4
+
+        # Custom port
+        imas-codex embed start --port 18766
+
+        # Auto-shutdown after 30 min idle
+        imas-codex embed start --idle-timeout 1800
     """
-    from imas_codex.embeddings.description import embed_descriptions_batch
-    from imas_codex.graph.client import GraphClient
+    # Configure logging
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level))
+    for handler in root_logger.handlers:
+        handler.setLevel(getattr(logging, log_level))
 
-    # Validate label against schema-derived list
-    valid_labels = _get_embeddable_labels()
-    if label not in valid_labels:
-        raise click.BadParameter(
-            f"'{label}' is not embeddable. Valid labels: {', '.join(valid_labels)}",
-            param_hint="'--label'",
-        )
+    # Set GPU if specified (single-GPU mode, mutually exclusive with --gpus)
+    if gpu is not None and gpus is None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpu
+        logger.info(f"Using CUDA device: {gpu}")
 
-    from imas_codex.cli.rich_output import should_use_rich
+    # Multi-GPU mode: set GPU pool env var for worker processes to claim
+    if gpus is not None:
+        os.environ["IMAS_CODEX_GPU_POOL"] = gpus
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpus
+        if workers <= 1:
+            workers = len(gpus.split(","))
+        logger.info(f"Multi-GPU mode: pool={gpus}, workers={workers}")
 
-    console = Console() if should_use_rich() else None
+    # Get port from settings if not specified
+    if port is None:
+        from imas_codex.settings import get_embed_server_port
 
-    # Build query based on label
-    facility_filter = ""
-    if facility:
-        facility_filter = f"AND n.facility_id = '{facility}'"
+        port = get_embed_server_port()
 
-    count_query = f"""
-        MATCH (n:{label})
-        WHERE n.description IS NOT NULL
-          AND n.description <> ''
-          AND n.embedding IS NULL
-          {facility_filter}
-        RETURN count(n) AS total
-    """
+    # Set idle timeout in server module
+    if idle_timeout > 0:
+        import imas_codex.embeddings.server as embed_server
 
-    fetch_query = f"""
-        MATCH (n:{label})
-        WHERE n.description IS NOT NULL
-          AND n.description <> ''
-          AND n.embedding IS NULL
-          {facility_filter}
-        RETURN n.id AS id, n.description AS description
-        LIMIT $batch_size
-    """
+        embed_server._idle_timeout = idle_timeout
+        logger.info(f"Idle timeout: {idle_timeout}s")
 
-    update_query = f"""
-        UNWIND $items AS item
-        MATCH (n:{label} {{id: item.id}})
-        SET n.embedding = item.embedding
-    """
+    # Set deployment label (exposed in /health)
+    if deploy_label:
+        import imas_codex.embeddings.server as embed_server
 
-    with GraphClient() as gc:
-        # Get total count
-        result = gc.query(count_query)
-        total = result[0]["total"] if result else 0
+        embed_server._location = deploy_label
+        logger.info(f"Deploy label: {deploy_label}")
 
-        if total == 0:
-            msg = f"No {label} nodes need embedding update"
-            if facility:
-                msg += f" (facility={facility})"
-            if console:
-                console.print(f"[green]{msg}[/green]")
-            else:
-                click.echo(msg)
-            return
+    logger.info(f"Starting embedding server on {host}:{port}")
 
-        facility_msg = f" for {facility}" if facility else ""
-        if dry_run:
-            msg = f"[DRY RUN] Would embed {total} {label} descriptions{facility_msg}"
-            if console:
-                console.print(f"[yellow]{msg}[/yellow]")
-            else:
-                click.echo(msg)
-            return
+    try:
+        import uvicorn
 
-        if console:
-            console.print(f"Updating {total} {label} embeddings{facility_msg}...")
-
-        processed = 0
-
-        if console and should_use_rich():
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-            ) as progress:
-                task = progress.add_task(f"Embedding {label}...", total=total)
-
-                while True:
-                    # Fetch batch
-                    rows = gc.query(fetch_query, batch_size=batch_size)
-                    if not rows:
-                        break
-
-                    items = [
-                        {"id": r["id"], "description": r["description"]} for r in rows
-                    ]
-
-                    # Batch embed
-                    items = embed_descriptions_batch(items)
-
-                    # Update graph
-                    gc.query(update_query, items=items)
-
-                    processed += len(items)
-                    progress.update(task, advance=len(items))
-                    progress.update(
-                        task, description=f"Embedded {processed}/{total} {label}"
-                    )
+        if workers > 1:
+            # Multi-worker requires import string (uvicorn forks new processes)
+            uvicorn.run(
+                "imas_codex.embeddings.server:app",
+                host=host,
+                port=port,
+                workers=workers,
+                log_level=log_level.lower(),
+            )
         else:
-            while True:
-                rows = gc.query(fetch_query, batch_size=batch_size)
-                if not rows:
-                    break
+            from imas_codex.embeddings.server import app
 
-                items = [{"id": r["id"], "description": r["description"]} for r in rows]
-                items = embed_descriptions_batch(items)
-                gc.query(update_query, items=items)
-
-                processed += len(items)
-                click.echo(f"Embedded {processed}/{total} {label}")
-
-        msg = f"Updated {processed} {label} description embeddings"
-        if console:
-            console.print(f"[green]{msg}[/green]")
-        else:
-            click.echo(msg)
-
-
-@embed.command("indexes")
-@click.option("--create", is_flag=True, help="Create missing indexes")
-def indexes(create: bool) -> None:
-    """Show or create vector indexes for description embeddings.
-
-    \b
-    Examples:
-        # List current indexes
-        imas-codex embed indexes
-
-        # Create missing indexes
-        imas-codex embed indexes --create
-    """
-    from imas_codex.cli.rich_output import should_use_rich
-    from imas_codex.graph.client import GraphClient
-
-    console = Console() if should_use_rich() else None
-
-    with GraphClient() as gc:
-        # Get existing vector indexes
-        result = gc.query("""
-            SHOW INDEXES
-            YIELD name, type, labelsOrTypes, properties
-            WHERE type = 'VECTOR'
-            RETURN name, labelsOrTypes, properties
-            ORDER BY name
-        """)
-
-        if console:
-            from rich.table import Table
-
-            table = Table(title="Vector Indexes")
-            table.add_column("Name")
-            table.add_column("Label")
-            table.add_column("Property")
-
-            for row in result:
-                table.add_row(
-                    row["name"],
-                    ", ".join(row["labelsOrTypes"]) if row["labelsOrTypes"] else "",
-                    ", ".join(row["properties"]) if row["properties"] else "",
-                )
-            console.print(table)
-        else:
-            click.echo("Vector Indexes:")
-            for row in result:
-                labels = ", ".join(row["labelsOrTypes"]) if row["labelsOrTypes"] else ""
-                props = ", ".join(row["properties"]) if row["properties"] else ""
-                click.echo(f"  {row['name']}: {labels} -> {props}")
-
-        if create:
-            gc.ensure_vector_indexes()
-            if console:
-                console.print("[green]Ensured all vector indexes exist[/green]")
-            else:
-                click.echo("Ensured all vector indexes exist")
+            uvicorn.run(app, host=host, port=port, log_level=log_level.lower())
+    except ImportError as e:
+        raise click.ClickException(
+            f"Missing dependency: {e}. Install with: uv pip install uvicorn"
+        ) from e
 
 
 @embed.command("status")
-def status() -> None:
-    """Show embedding coverage across node types.
+@click.option(
+    "--url",
+    default=None,
+    help="Remote server URL (default: from config)",
+)
+@click.option("--local", is_flag=True, help="Check local embedding capability")
+def embed_status(url: str | None, local: bool) -> None:
+    """Check embedding server status.
 
-    Shows how many nodes have descriptions and how many have been embedded.
+    Shows server health, model info, uptime, SLURM job state, and
+    optionally local GPU capability.
+
+    \b
+    Examples:
+        imas-codex embed status          # Health + SLURM
+        imas-codex embed status --local  # Local GPU capability
     """
-    from imas_codex.cli.rich_output import should_use_rich
-    from imas_codex.graph.client import GraphClient
+    if local:
+        # Check local embedding capability
+        click.echo("Local embedding capability:")
+        try:
+            import torch
 
-    console = Console() if should_use_rich() else None
+            cuda_available = torch.cuda.is_available()
+            click.echo("  PyTorch: installed")
+            click.echo(f"  CUDA available: {cuda_available}")
+            if cuda_available:
+                device_name = torch.cuda.get_device_name(0)
+                memory = torch.cuda.get_device_properties(0).total_memory // (
+                    1024 * 1024
+                )
+                click.echo(f"  GPU: {device_name} ({memory} MB)")
+        except ImportError:
+            click.echo("  PyTorch: not installed")
 
-    labels_with_desc_embedding = _get_embeddable_labels()
+        try:
+            import importlib.util
 
-    stats = []
-    with GraphClient() as gc:
-        for label in labels_with_desc_embedding:
-            result = gc.query(f"""
-                MATCH (n:{label})
-                WITH count(n) AS total,
-                     count(CASE WHEN n.description IS NOT NULL
-                                 AND n.description <> '' THEN 1 END) AS with_desc,
-                     count(CASE WHEN n.embedding IS NOT NULL THEN 1 END) AS with_emb
-                RETURN total, with_desc, with_emb
-            """)
-            if result:
-                r = result[0]
-                stats.append(
-                    {
-                        "label": label,
-                        "total": r["total"],
-                        "with_desc": r["with_desc"],
-                        "with_emb": r["with_emb"],
-                        "needs_update": r["with_desc"] - r["with_emb"],
-                    }
+            if importlib.util.find_spec("sentence_transformers"):
+                click.echo("  SentenceTransformers: installed")
+            else:
+                click.echo("  SentenceTransformers: not installed")
+        except Exception:
+            click.echo("  SentenceTransformers: not installed")
+
+        return
+
+    # Embed service job status
+    try:
+        job = _get_embed_job()
+        if job:
+            for line in _format_service_status(job, "embed"):
+                click.echo(line)
+        else:
+            click.echo(click.style("Embed job: none", dim=True))
+    except Exception:
+        click.echo("Embed job: unavailable")
+
+    # Check remote server health
+    if url is None:
+        from imas_codex.settings import get_embed_remote_url
+
+        url = get_embed_remote_url()
+
+    if not url:
+        click.echo("No remote embedding server configured.")
+        click.echo(
+            "Set embedding_service.backend=remote in facility YAML or IMAS_CODEX_EMBED_REMOTE_URL env var."
+        )
+        return
+
+    click.echo(f"Server ({url}):")
+
+    from imas_codex.embeddings.client import RemoteEmbeddingClient
+
+    client = RemoteEmbeddingClient(url)
+
+    if client.is_available():
+        info = client.get_detailed_info()
+        if info:
+            click.echo("  ✓ Healthy")
+            click.echo(f"  Model: {info['model']['name']}")
+            click.echo(f"  Device: {info['model']['device']}")
+            click.echo(f"  Dimension: {info['model']['embedding_dimension']}")
+            if info["gpu"]["name"]:
+                click.echo(
+                    f"  GPU: {info['gpu']['name']} ({info['gpu']['memory_mb']} MB)"
+                )
+            uptime_h = info["server"]["uptime_seconds"] / 3600
+            idle_s = info["server"].get("idle_seconds", 0)
+            timeout_s = info["server"].get("idle_timeout", 0)
+            location = info["server"].get("location")
+            if location:
+                click.echo(f"  Location: {location}")
+            click.echo(f"  Uptime: {uptime_h:.1f}h")
+            if timeout_s > 0:
+                click.echo(f"  Idle: {idle_s:.0f}s / {timeout_s}s timeout")
+    else:
+        click.echo("  ✗ Not available")
+        click.echo("  Deploy with: imas-codex embed deploy")
+        click.echo("  Check tunnel: imas-codex tunnel status")
+
+
+@embed.command("service")
+@click.argument(
+    "action", type=click.Choice(["install", "uninstall", "status", "start", "stop"])
+)
+@click.option("--gpu", default="1", help="CUDA device to use (default: 1)")
+@click.option(
+    "--deploy-label", default="login", help="Deployment label (default: login)"
+)
+def embed_service(action: str, gpu: str, deploy_label: str) -> None:
+    """Manage embedding server as systemd user service.
+
+    Examples:
+        imas-codex embed service install
+        imas-codex embed service start
+        imas-codex embed service status
+    """
+    import platform
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if platform.system() != "Linux":
+        raise click.ClickException("systemd services only supported on Linux")
+
+    if not shutil.which("systemctl"):
+        raise click.ClickException("systemctl not found")
+
+    service_dir = Path.home() / ".config" / "systemd" / "user"
+    service_file = service_dir / "imas-codex-embed.service"
+
+    if action == "install":
+        service_dir.mkdir(parents=True, exist_ok=True)
+
+        # Find uv path
+        uv_path = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+
+        # Find project directory
+        project_dir = Path.home() / "imas-codex"
+        if not project_dir.exists():
+            # Try current working directory
+            project_dir = Path.cwd()
+            if not (project_dir / "pyproject.toml").exists():
+                raise click.ClickException(
+                    f"Project not found at {Path.home() / 'imas-codex'} or current directory"
                 )
 
-    if console:
-        from rich.table import Table
+        from imas_codex.settings import get_embed_server_port
 
-        table = Table(title="Description Embedding Status")
-        table.add_column("Node Type")
-        table.add_column("Total", justify="right")
-        table.add_column("Has Description", justify="right")
-        table.add_column("Has Embedding", justify="right")
-        table.add_column("Needs Update", justify="right")
+        port = get_embed_server_port()
 
-        for s in stats:
-            needs = s["needs_update"]
-            needs_str = f"[yellow]{needs}[/yellow]" if needs > 0 else str(needs)
-            table.add_row(
-                s["label"],
-                str(s["total"]),
-                str(s["with_desc"]),
-                str(s["with_emb"]),
-                needs_str,
+        env_file = project_dir / ".env"
+
+        service_content = f"""[Unit]
+Description=IMAS Codex Embedding Service (GPU)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory={project_dir}
+EnvironmentFile=-{env_file}
+Environment="PATH={Path.home()}/.local/bin:/usr/local/bin:/usr/bin"
+Environment="CUDA_VISIBLE_DEVICES={gpu}"
+ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex embed start --host 0.0.0.0 --port {port} --deploy-label {deploy_label}
+ExecStop=/bin/kill -15 $MAINPID
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10
+CPUQuota=400%
+MemoryMax=8G
+MemoryHigh=6G
+Nice=5
+
+[Install]
+WantedBy=default.target
+"""
+        service_file.write_text(service_content)
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        subprocess.run(
+            ["systemctl", "--user", "enable", "imas-codex-embed"], check=True
+        )
+        click.echo("✓ Service installed and enabled")
+        click.echo("  Start: systemctl --user start imas-codex-embed")
+        click.echo("  Or:    imas-codex embed service start")
+
+    elif action == "uninstall":
+        if not service_file.exists():
+            click.echo("Service not installed")
+            return
+        subprocess.run(
+            ["systemctl", "--user", "stop", "imas-codex-embed"], capture_output=True
+        )
+        subprocess.run(
+            ["systemctl", "--user", "disable", "imas-codex-embed"], capture_output=True
+        )
+        service_file.unlink()
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        click.echo("Service uninstalled")
+
+    elif action == "status":
+        if not service_file.exists():
+            click.echo("Service not installed")
+            return
+        result = subprocess.run(
+            ["systemctl", "--user", "status", "imas-codex-embed"],
+            capture_output=True,
+            text=True,
+        )
+        click.echo(result.stdout)
+
+    elif action == "start":
+        if not service_file.exists():
+            raise click.ClickException(
+                "Service not installed. Run: imas-codex embed service install"
             )
-        console.print(table)
+        subprocess.run(["systemctl", "--user", "start", "imas-codex-embed"], check=True)
+        click.echo("Service started")
+
+    elif action == "stop":
+        subprocess.run(["systemctl", "--user", "stop", "imas-codex-embed"], check=True)
+        click.echo("Service stopped")
+
+
+# ── Embed deploy/stop/restart/logs commands ──────────────────────────────
+
+from imas_codex.cli.services import (  # noqa: E402
+    _DEFAULT_GPUS,
+    _EMBED_JOB,
+    _SERVICES_DIR,
+    _cancel_service_job,
+    _deploy_login_embed,
+    _embed_port,
+    _format_service_status,
+    _get_embed_job,
+    _is_compute_target,
+    _run_remote,
+    _tail_log,
+    deploy_embed,
+)
+
+
+@embed.command("deploy")
+@click.option(
+    "--gpus",
+    "-g",
+    default=_DEFAULT_GPUS,
+    type=int,
+    help=f"Number of GPUs (default: {_DEFAULT_GPUS}, ignored for login)",
+)
+@click.option(
+    "--workers",
+    "-w",
+    default=None,
+    type=int,
+    help="Worker processes (default: same as gpus)",
+)
+def embed_deploy(gpus: int, workers: int | None) -> None:
+    """Deploy embedding server.
+
+    When ``[embedding].scheduler = "slurm"``, submits a dedicated SLURM
+    job for the embed server with the requested GPU/worker count.
+
+    When scheduler is not set, deploys via systemd on the login node.
+
+    Idempotent: no-op if already running.  Use ``--gpus`` to redeploy
+    with different resources (stops existing job first).
+
+    \b
+    Examples:
+        imas-codex embed deploy          # Deploy per config
+        imas-codex embed deploy -g 2     # 2 GPUs
+    """
+    if _is_compute_target():
+        deploy_embed(gpus, workers)
     else:
-        click.echo("Description Embedding Status:")
-        for s in stats:
-            click.echo(
-                f"  {s['label']}: {s['with_emb']}/{s['with_desc']} embedded "
-                f"({s['needs_update']} need update)"
-            )
+        _deploy_login_embed()
+        click.echo(f"  URL: http://localhost:{_embed_port()}")
+
+
+@embed.command("stop")
+def embed_stop() -> None:
+    """Stop the embedding server.
+
+    Cancels the embed SLURM job (which stops the server process),
+    or stops the systemd service on the login node.
+
+    \b
+    Examples:
+        imas-codex embed stop
+    """
+    stopped = False
+
+    # Cancel embed SLURM job
+    if _cancel_service_job(_EMBED_JOB):
+        click.echo("Stopped embed server (SLURM job cancelled)")
+        stopped = True
+
+    # Stop systemd service
+    try:
+        _run_remote(
+            "systemctl --user stop imas-codex-embed 2>/dev/null",
+            timeout=15,
+            check=True,
+        )
+        click.echo("Stopped login embed service")
+        stopped = True
+    except subprocess.CalledProcessError:
+        pass
+
+    if not stopped:
+        click.echo("No active embed server found")
+
+
+@embed.command("restart")
+@click.option(
+    "--gpus",
+    "-g",
+    default=_DEFAULT_GPUS,
+    type=int,
+    help=f"Number of GPUs (default: {_DEFAULT_GPUS}, ignored for login)",
+)
+@click.option(
+    "--workers",
+    "-w",
+    default=None,
+    type=int,
+    help="Worker processes (default: same as gpus)",
+)
+def embed_restart(gpus: int, workers: int | None) -> None:
+    """Restart the embedding server (stop + deploy).
+
+    Cancels the existing embed SLURM job and submits a new one.
+    Use ``--gpus`` to change GPU allocation on restart.
+
+    \b
+    Examples:
+        imas-codex embed restart         # Restart
+        imas-codex embed restart -g 2    # Restart with 2 GPUs
+    """
+    # Stop
+    _cancel_service_job(_EMBED_JOB)
+    try:
+        _run_remote("systemctl --user stop imas-codex-embed 2>/dev/null", timeout=15)
+    except subprocess.CalledProcessError:
+        pass
+    time.sleep(2)
+
+    # Deploy
+    if _is_compute_target():
+        deploy_embed(gpus, workers)
+    else:
+        _deploy_login_embed()
+
+
+@embed.command("logs")
+@click.option("--follow", "-f", is_flag=True, help="Follow log output (tail -f)")
+@click.option(
+    "--lines", "-n", default=50, type=int, help="Number of lines (default: 50)"
+)
+def embed_logs(follow: bool, lines: int) -> None:
+    """View embedding server logs.
+
+    \b
+    Examples:
+        imas-codex embed logs            # Last 50 lines
+        imas-codex embed logs -f         # Follow live
+        imas-codex embed logs -n 100     # Last 100 lines
+    """
+    log_file = f"{_SERVICES_DIR}/codex-embed.log"
+    _tail_log(log_file, follow, lines)

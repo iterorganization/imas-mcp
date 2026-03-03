@@ -533,13 +533,13 @@ python("print(reload())")  # After editing imas_codex/ source files
 Config lives in `pyproject.toml` under `[tool.imas-codex.embedding]`. Key accessor: `get_embedding_location()` returns the facility name or `"local"`. Port derived from position in shared `locations` list: `18765 + offset`.
 
 ```bash
-imas-codex serve embed deploy    # Deploy per config (slurm or systemd)
-imas-codex serve embed status    # Check server health + SLURM jobs
-imas-codex serve embed restart   # Stop + redeploy
-imas-codex serve embed stop      # Stop all embed processes
-imas-codex serve embed logs      # View SLURM logs
-imas-codex serve embed start     # Start server locally (foreground)
-imas-codex serve embed service install  # Install systemd service
+imas-codex embed deploy    # Deploy per config (slurm or systemd)
+imas-codex embed status    # Check server health + SLURM jobs
+imas-codex embed restart   # Stop + redeploy
+imas-codex embed stop      # Stop all embed processes
+imas-codex embed logs      # View SLURM logs
+imas-codex embed start     # Start server locally (foreground)
+imas-codex embed service install  # Install systemd service
 ```
 
 If embedding fails, check in order:

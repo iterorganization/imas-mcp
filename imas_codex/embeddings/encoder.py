@@ -165,7 +165,7 @@ class Encoder:
                 f"Remote embedding server not available at {self.config.remote_url}. "
                 f"{last_error}.\n"
                 "Ensure SSH tunnel is active: ssh -f -N -L 18765:127.0.0.1:18765 iter\n"
-                "Start server on ITER: imas-codex serve embed start --gpu 1\n"
+                "Start server on ITER: imas-codex embed start --gpu 1\n"
                 "Check server health: curl http://localhost:18765/health"
             )
 
@@ -490,7 +490,7 @@ class Encoder:
                         "config.json",
                         cache_dir=cache_dir,
                     )
-                    if path and isinstance(path, (str, Path)):
+                    if path and isinstance(path, str | Path):
                         # Return the snapshot directory (parent of config.json)
                         return str(Path(path).parent)
                 except (EntryNotFoundError, Exception):
