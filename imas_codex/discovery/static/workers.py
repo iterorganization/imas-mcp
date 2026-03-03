@@ -332,7 +332,7 @@ async def enrich_worker(
     nodes). Then enriches remaining non-pattern nodes individually.
     """
     from imas_codex.discovery.base.llm import call_llm_structured
-    from imas_codex.mdsplus.enrichment import (
+    from imas_codex.discovery.mdsplus.enrichment import (
         StaticNodeBatch,
         _build_system_prompt,
         _build_user_prompt,

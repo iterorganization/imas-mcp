@@ -1,7 +1,7 @@
 ---
 name: discovery/static-enricher
 description: Batch enrichment of static MDSplus tree nodes with physics descriptions
-used_by: imas_codex.mdsplus.enrichment.enrich_static_nodes
+used_by: imas_codex.discovery.mdsplus.enrichment
 task: enrichment
 dynamic: true
 schema_needs:
