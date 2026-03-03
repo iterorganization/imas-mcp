@@ -872,7 +872,7 @@ running it after either discovery completes creates whatever edges are
 possible with current graph state. Re-running after both adds the
 remaining edges.
 
-### Phase 6: Scanner Plugin Simplification
+### Phase 6: Scanner Plugin Simplification ✅
 
 **Goal:** `MDSplusScanner.scan()` becomes a thin loop over `config.trees`.
 

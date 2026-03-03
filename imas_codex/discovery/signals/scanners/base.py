@@ -123,6 +123,7 @@ class DataSourceScanner(Protocol):
 # =============================================================================
 
 _registry: dict[str, DataSourceScanner] = {}
+_auto_registered: bool = False
 
 
 def register_scanner(scanner: DataSourceScanner) -> None:
@@ -149,7 +150,7 @@ def get_scanner(scanner_type: str) -> DataSourceScanner:
     Raises:
         KeyError: If no scanner registered for this type
     """
-    if not _registry:
+    if not _auto_registered:
         _auto_register()
 
     if scanner_type not in _registry:
@@ -164,7 +165,7 @@ def get_scanner(scanner_type: str) -> DataSourceScanner:
 
 def list_scanners() -> list[str]:
     """List all registered scanner types."""
-    if not _registry:
+    if not _auto_registered:
         _auto_register()
     return list(_registry.keys())
 
@@ -187,7 +188,7 @@ def get_scanners_for_facility(facility: str) -> list[DataSourceScanner]:
     """
     from imas_codex.discovery.base.facility import get_facility
 
-    if not _registry:
+    if not _auto_registered:
         _auto_register()
 
     config = get_facility(facility)
@@ -243,6 +244,8 @@ def get_facility_reference_shot(facility: str) -> int | None:
 
 def _auto_register() -> None:
     """Auto-register all built-in scanners."""
+    global _auto_registered  # noqa: PLW0603
+    _auto_registered = True
     # Import triggers module-level registration
     from imas_codex.discovery.signals.scanners import (  # noqa: F401
         edas,
