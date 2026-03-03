@@ -123,14 +123,22 @@ Enrichment often **disproves** triage optimism. Directories that looked promisin
 - **Well-known software clones** confirmed by pattern analysis → 0.05-0.15
 - **Archived/stale directories** — old data, no recent patterns → 0.0-0.1
 
-### Description Rules
+### Description Rules (CRITICAL — description ≠ scoring reason)
+
+**`description` describes WHAT the directory contains — its purpose and content.**
+**`scoring_reason` explains WHY the scores were assigned — the rationale.**
+
+These are SEPARATE fields. Never put scoring justification into the description.
+
+**Good description:** "Custom LIUQE equilibrium reconstruction interface with 2,500 lines of Python and MDSplus data readers"
+**Bad description:** "Analysis code score supported by diagnostic fitting context and operations patterns" ← this is a scoring_reason, not a description
 
 **Write the description from enrichment evidence:**
-- Mention specific data systems found (e.g., "MDSplus access with 15 pattern matches")
-- Include primary language and LOC (e.g., "2,500 lines of Python")
+- Describe what the code does, what tools/frameworks it uses, what data systems it accesses
+- Mention primary language and LOC (e.g., "2,500 lines of Python")
 - Note multiformat capability if detected
-- Reference specific pattern categories found
 - Keep it concise: 1-2 sentences maximum
+- Do NOT mention scores, scoring rationale, or scoring dimensions in the description
 
 ### Combined Score
 
@@ -141,7 +149,7 @@ Enrichment often **disproves** triage optimism. Directories that looked promisin
 Report what informed your scoring:
 1. **primary_evidence**: Pattern categories that most influenced scores (e.g., `["mdsplus", "imas_write"]`)
 2. **evidence_summary**: Brief match count summary (e.g., "15 mdsplus, 3 imas_write, 2500 LOC Python")
-3. **scoring_reason**: One-line explanation of scoring rationale
+3. **scoring_reason**: One-line explanation of WHY scores were assigned (e.g., "High data_access due to 15 MDSplus matches; moderate analysis from profile fitting code"). This is separate from the description.
 
 {% if focus %}
 ## Focus Area
@@ -165,6 +173,10 @@ These are real paths from the knowledge graph showing what scores were assigned 
 {% endfor %}
 {% endif %}
 {% endfor %}
+{% endif %}
+
+{% if dimension_calibration %}
+{% include "schema/dimension-calibration.md" %}
 {% endif %}
 
 ## Expansion Decision

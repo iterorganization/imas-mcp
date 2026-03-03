@@ -2315,7 +2315,10 @@ def _score_with_llm(
     import json
 
     from imas_codex.agentic.prompt_loader import render_prompt
-    from imas_codex.discovery.paths.frontier import sample_enriched_paths
+    from imas_codex.discovery.paths.frontier import (
+        sample_dimension_calibration_examples,
+        sample_enriched_paths,
+    )
     from imas_codex.discovery.paths.models import ScoreBatch
     from imas_codex.settings import get_model
 
@@ -2331,6 +2334,20 @@ def _score_with_llm(
     has_examples = any(enriched_examples.get(cat) for cat in enriched_examples)
     if has_examples:
         context["score_calibration"] = enriched_examples
+
+    # Add per-dimension calibration examples (cached with 5-min TTL)
+    dimension_calibration = sample_dimension_calibration_examples(
+        facility=facility,
+        per_level=5,
+        tolerance=0.1,
+    )
+    has_dim_calibration = any(
+        any(examples for examples in dim_levels.values())
+        for dim_levels in dimension_calibration.values()
+    )
+    if has_dim_calibration:
+        context["dimension_calibration"] = dimension_calibration
+
     if focus:
         context["focus"] = focus
 
@@ -2476,7 +2493,10 @@ async def _async_score_with_llm(
     import json
 
     from imas_codex.agentic.prompt_loader import render_prompt
-    from imas_codex.discovery.paths.frontier import sample_enriched_paths
+    from imas_codex.discovery.paths.frontier import (
+        sample_dimension_calibration_examples,
+        sample_enriched_paths,
+    )
     from imas_codex.discovery.paths.models import ScoreBatch
     from imas_codex.settings import get_model
 
@@ -2492,6 +2512,20 @@ async def _async_score_with_llm(
     has_examples = any(enriched_examples.get(cat) for cat in enriched_examples)
     if has_examples:
         context["score_calibration"] = enriched_examples
+
+    # Add per-dimension calibration examples (cached with 5-min TTL)
+    dimension_calibration = sample_dimension_calibration_examples(
+        facility=facility,
+        per_level=5,
+        tolerance=0.1,
+    )
+    has_dim_calibration = any(
+        any(examples for examples in dim_levels.values())
+        for dim_levels in dimension_calibration.values()
+    )
+    if has_dim_calibration:
+        context["dimension_calibration"] = dimension_calibration
+
     if focus:
         context["focus"] = focus
 
