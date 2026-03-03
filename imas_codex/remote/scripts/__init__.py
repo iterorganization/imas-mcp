@@ -24,7 +24,6 @@
 # - get_user_info.py: User/group information extraction
 # - check_signals.py: Batched MDSplus signal validation
 # - check_signals_batch.py: High-throughput batched signal validation
-# - extract_tdi_functions.py: TDI .fun file metadata extraction
 # - extract_tdi_signals.py: TDI signal extraction with runtime probing
 # - enumerate_ppf.py: JET PPF DDA/Dtype enumeration via ppf library
 # - check_ppf.py: JET PPF signal validation via ppfdata()

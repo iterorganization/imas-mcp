@@ -553,6 +553,7 @@ def extract_all(
             "description": f.description,
             "parameters": f.parameters,
             "function_type": f.function_type,
+            "source_code": f.source_code,
             "mdsplus_trees": f.mdsplus_trees,
             "tdi_dependencies": f.tdi_dependencies,
             "case_quantities": f.case_quantities,
