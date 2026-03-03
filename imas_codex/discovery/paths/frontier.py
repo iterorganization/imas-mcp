@@ -824,10 +824,14 @@ def _parse_vcs_remote_url(
     url_match = re.match(r"(?:https?|svn|svn\+ssh)://([^/]+)/(.+?)/?$", url)
     if url_match:
         host, path = url_match.groups()
-        # Strip common prefixes like "repos/"
         repo_name = path.rsplit("/", 1)[-1]
+        # Owner = host + path prefix (everything before repo name)
+        if "/" in path:
+            owner = f"{host}/{path.rsplit('/', 1)[0]}"
+        else:
+            owner = host
         prefix = vcs_type  # "svn" or "hg"
-        return prefix, f"{host}/{path}", repo_name
+        return prefix, owner, repo_name
 
     return "local", None, None
 

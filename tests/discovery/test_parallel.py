@@ -545,7 +545,7 @@ class TestParseVcsRemoteUrl:
             "https://spcsvn.epfl.ch/repos/CaxeKinx", "svn"
         )
         assert source == "svn"
-        assert owner == "spcsvn.epfl.ch/repos/CaxeKinx"
+        assert owner == "spcsvn.epfl.ch/repos"
         assert name == "CaxeKinx"
 
     def test_svn_protocol(self):
