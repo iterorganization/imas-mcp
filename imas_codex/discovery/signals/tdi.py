@@ -90,6 +90,7 @@ class TDIFunctionMeta:
     tdi_dependencies: list[str] = field(default_factory=list)
     has_shot_conditional: bool = False
     shot_conditionals: list[str] = field(default_factory=list)
+    function_type: str = ""
 
 
 async def extract_tdi_functions(
@@ -97,6 +98,9 @@ async def extract_tdi_functions(
     tdi_path: str,
 ) -> list[TDIFunctionMeta]:
     """Extract TDI function metadata from a remote facility.
+
+    Uses extract_tdi_signals.py which provides richer metadata including
+    function type classification and per-case-block signal extraction.
 
     Args:
         ssh_host: SSH host alias for the facility
@@ -108,15 +112,53 @@ async def extract_tdi_functions(
     # Run the extraction script via run_python_script
     result = await asyncio.to_thread(
         run_python_script,
-        "extract_tdi_functions.py",
+        "extract_tdi_signals.py",
         {"tdi_path": tdi_path},
         ssh_host,
         120,  # timeout
     )
 
-    # Parse the JSON output
-    functions = json.loads(result)
-    return [TDIFunctionMeta(**f) for f in functions]
+    # Parse the structured JSON output
+    data = json.loads(result)
+    functions_data = data.get("functions", [])
+    signals_data = data.get("signals", [])
+
+    # Group signals by function name for quantities
+    signals_by_func: dict[str, list[dict]] = {}
+    for sig in signals_data:
+        fname = sig.get("function_name", "")
+        signals_by_func.setdefault(fname, []).append(sig)
+
+    # Convert to TDIFunctionMeta objects, mapping new format to expected shape
+    result_functions = []
+    for f in functions_data:
+        # Build quantities list from signals for backward compatibility
+        func_signals = signals_by_func.get(f["name"], [])
+        quantities = []
+        for sig in func_signals:
+            q = {
+                "name": sig.get("quantity") or f["name"],
+                "mdsplus_paths": sig.get("build_paths", []),
+                "dependencies": sig.get("tdi_deps", []),
+                "description": sig.get("section_comment", ""),
+            }
+            quantities.append(q)
+
+        meta = TDIFunctionMeta(
+            name=f["name"],
+            path=f["path"],
+            description=f.get("description", ""),
+            signature=f.get("signature", ""),
+            source_code=f.get("source_code", ""),
+            parameters=f.get("parameters", []),
+            quantities=quantities,
+            mdsplus_trees=f.get("mdsplus_trees", []),
+            tdi_dependencies=f.get("tdi_dependencies", []),
+            function_type=f.get("function_type", ""),
+        )
+        result_functions.append(meta)
+
+    return result_functions
 
 
 def classify_tdi_quantity(

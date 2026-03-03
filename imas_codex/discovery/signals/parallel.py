@@ -1129,7 +1129,7 @@ def discover_tdi_signals(
 ) -> list[dict]:
     """Discover signals from TDI function files via SSH.
 
-    Uses the extract_tdi_functions.py script for proper parsing of .fun files.
+    Uses the extract_tdi_signals.py script for proper parsing of .fun files.
     Extracts function metadata, supported quantities, and classifies physics domains.
 
     TDI functions like tcv_get() and tcv_eq() provide:
