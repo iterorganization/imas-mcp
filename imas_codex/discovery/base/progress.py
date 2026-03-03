@@ -478,7 +478,9 @@ class WorkerStats:
 #   gauge_width = term_width - 4 - LABEL_WIDTH - GAUGE_METRICS_WIDTH
 #
 # Pipeline line 1 has just count+pct on the right (METRICS_WIDTH).
-# Rate and cost are right-aligned on line 2 to the same edge.
+# Rate and cost are right-aligned on line 2/3 to the same edge.
+# Text content on lines 2/3 clips at the bar end (LABEL_WIDTH + bar_width)
+# so "..." aligns with the progress bar's right edge.
 # Resource gauges (TIME, COST) keep GAUGE_METRICS_WIDTH for trailing text.
 
 LABEL_WIDTH = 12
@@ -554,8 +556,12 @@ class PipelineRowConfig:
         General documentation for Thomson Scattering        $12.54
 
     Line 1: NAMExN + bar + count + pct
-    Line 2: score + domain + name … rate (right-aligned)
-    Line 3: description … cost (right-aligned below rate)
+    Line 2: score + domain + name … rate (right-aligned in metrics zone)
+    Line 3: description … cost (right-aligned in metrics zone)
+
+    Text on lines 2-3 clips at the progress bar's right edge so "..."
+    aligns with the bar end.  Rate and cost right-align at ``row_width``
+    (past the bar, in the metrics column).
 
     This is the standard layout for discovery CLI tools that want
     integrated per-stage progress and activity display.
@@ -608,16 +614,18 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
 
     Renders 3 lines:
       Line 1: NAMExN + bar + count + pct
-      Line 2: score + domain + name … rate (right-aligned)
-      Line 3: description … cost (right-aligned below rate)
+      Line 2: score + domain + name…  (clips at bar end)  rate
+      Line 3: description…            (clips at bar end)  $cost
 
     Args:
         config: Pipeline row configuration.
         bar_width: Width of the progress bar.
     """
     row = Text()
-    # Total content width for lines 2/3 right-alignment
+    # Total content width for lines 2/3 right-alignment of rate/cost
     row_width = LABEL_WIDTH + bar_width + METRICS_WIDTH
+    # Position where the progress bar visually ends — text clips here
+    bar_end = LABEL_WIDTH + bar_width
 
     if config.disabled:
         row.append(f"  {config.name}".ljust(LABEL_WIDTH), style="dim")
@@ -663,11 +671,10 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     row.append("\n")
     line2 = Text()
 
-    # Pre-compute rate text so we can clip left content to fit
+    # Pre-compute rate text for right-alignment at row_width
     rate_s = ""
     if config.rate and config.rate > 0:
         rate_s = f"{config.rate:.2f}/s"
-    rate_reserve = (len(rate_s) + 4) if rate_s else 0  # 4-char gap
 
     if config.has_content:
         line2.append("  ", style="dim")
@@ -692,7 +699,8 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         if config.terminal_label:
             line2.append(config.terminal_label, style="red dim")
             line2.append("  ", style="dim")
-        max_name = max(10, row_width - cell_len(line2.plain) - rate_reserve)
+        # Clip text at bar end so "..." aligns with progress bar right edge
+        max_name = max(10, bar_end - cell_len(line2.plain))
         line2.append(clip_text(config.primary_text, max_name), style="white")
     else:
         # No content: show status text
@@ -730,10 +738,9 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     if config.has_content and _desc:
         line3.append("  ", style="dim")
         _style = "italic dim" if config.description else "cyan dim italic"
-        # Description extends to full row width, minus indent and cost text.
-        # When clipped, "..." aligns with the cost column.
-        cost_reserve = (len(cost_s) + 1) if cost_s else 0
-        max_desc = max(10, row_width - 2 - cost_reserve)
+        # Clip description at bar end so "..." aligns with progress bar
+        # right edge.  Rate/cost right-align at row_width (metrics zone).
+        max_desc = max(10, bar_end - 2)
         line3.append(clip_text(clean_text(_desc), max_desc), style=_style)
     # Right-align cost on line 3 (below rate on line 2)
     if cost_s:

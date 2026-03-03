@@ -171,7 +171,9 @@ class TestBuildPipelineSection:
                 description="edge Thomson scattering profile",
             ),
         ]
-        result = build_pipeline_section(rows, bar_width=20)
+        # bar_width must be wide enough for prefix + primary text to fit
+        # within bar_end (LABEL_WIDTH + bar_width)
+        result = build_pipeline_section(rows, bar_width=50)
         text = result.plain
         assert "TRIAGE" in text
         assert "50" in text
