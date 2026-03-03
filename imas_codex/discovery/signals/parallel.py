@@ -445,7 +445,8 @@ def claim_signals_for_enrichment(
                        s.node_path AS node_path, s.unit AS unit, s.name AS name,
                        s.tdi_function AS tdi_function,
                        s.discovery_source AS discovery_source,
-                       s.description AS description
+                       s.description AS description,
+                       s.source_node AS source_node
                 """,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
@@ -456,6 +457,77 @@ def claim_signals_for_enrichment(
     except Exception as e:
         logger.warning("Could not claim signals for enrichment: %s", e)
         return []
+
+
+def fetch_tree_context(
+    signal_ids: list[str],
+) -> dict[str, dict]:
+    """Fetch TreeNode context for signals with SOURCE_NODE edges.
+
+    For each signal that has a SOURCE_NODE→TreeNode edge, returns:
+    - tree_path: Full MDSplus path of the TreeNode
+    - parent_path: Parent node's path (one level up)
+    - sibling_paths: List of sibling node paths (same parent, same type)
+    - tdi_source: TDI function source_code if linked via RESOLVES_TO_TREE_NODE
+    - tdi_name: TDI function name
+    - epoch_range: Dict with first_shot/last_shot if versioned
+
+    Args:
+        signal_ids: List of FacilitySignal IDs to fetch context for
+
+    Returns:
+        Dict mapping signal_id → context dict (only for signals with tree context)
+    """
+    if not signal_ids:
+        return {}
+
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                UNWIND $ids AS sid
+                MATCH (s:FacilitySignal {id: sid})-[:SOURCE_NODE]->(n:TreeNode)
+                OPTIONAL MATCH (n)-[:CHILD_OF]->(parent:TreeNode)
+                OPTIONAL MATCH (parent)<-[:CHILD_OF]-(sibling:TreeNode)
+                WHERE sibling.id <> n.id
+                  AND sibling.node_type IN ['NUMERIC', 'SIGNAL']
+                OPTIONAL MATCH (tdi:TDIFunction)-[:RESOLVES_TO_TREE_NODE]->(n)
+                OPTIONAL MATCH (v:TreeModelVersion {
+                    facility_id: n.facility_id, tree_name: n.tree_name
+                })
+                WITH s.id AS signal_id,
+                     n.path AS tree_path,
+                     parent.path AS parent_path,
+                     collect(DISTINCT sibling.path)[..10] AS sibling_paths,
+                     head(collect(DISTINCT tdi.source_code)) AS tdi_source,
+                     head(collect(DISTINCT tdi.name)) AS tdi_name,
+                     min(v.version) AS first_version,
+                     max(v.version) AS last_version
+                RETURN signal_id, tree_path, parent_path, sibling_paths,
+                       tdi_source, tdi_name, first_version, last_version
+                """,
+                ids=signal_ids,
+            )
+            ctx = {}
+            for row in result:
+                entry: dict = {
+                    "tree_path": row["tree_path"],
+                    "parent_path": row.get("parent_path"),
+                    "sibling_paths": row.get("sibling_paths", []),
+                }
+                if row.get("tdi_source"):
+                    entry["tdi_source"] = row["tdi_source"]
+                    entry["tdi_name"] = row.get("tdi_name")
+                if row.get("first_version") and row.get("last_version"):
+                    entry["epoch_range"] = {
+                        "first_version": row["first_version"],
+                        "last_version": row["last_version"],
+                    }
+                ctx[row["signal_id"]] = entry
+            return ctx
+    except Exception as e:
+        logger.warning("Could not fetch tree context: %s", e)
+        return {}
 
 
 def claim_signals_for_check(
@@ -1698,6 +1770,12 @@ async def enrich_worker(
         if on_progress:
             on_progress("enriching batch", state.enrich_stats)
 
+        # Fetch tree context for signals with SOURCE_NODE edges
+        tree_signal_ids = [s["id"] for s in signals if s.get("source_node")]
+        tree_context = {}
+        if tree_signal_ids:
+            tree_context = await asyncio.to_thread(fetch_tree_context, tree_signal_ids)
+
         # Group signals by context source for efficient prompting
         context_groups: dict[str, list[tuple[int, dict]]] = defaultdict(list)
         for i, signal in enumerate(signals):
@@ -1809,6 +1887,28 @@ async def enrich_worker(
                 # Inject existing description from scanner (e.g., EDAS Japanese desc)
                 if signal.get("description"):
                     user_lines.append(f"existing_description: {signal['description']}")
+
+                # Inject tree context if available (SOURCE_NODE traversal)
+                sig_tree_ctx = tree_context.get(signal["id"])
+                if sig_tree_ctx:
+                    if sig_tree_ctx.get("parent_path"):
+                        user_lines.append(f"parent_node: {sig_tree_ctx['parent_path']}")
+                    siblings = sig_tree_ctx.get("sibling_paths", [])
+                    if siblings:
+                        user_lines.append(f"siblings: {', '.join(siblings)}")
+                    if sig_tree_ctx.get("tdi_name"):
+                        user_lines.append(f"tdi_function: {sig_tree_ctx['tdi_name']}")
+                        if sig_tree_ctx.get("tdi_source"):
+                            src = sig_tree_ctx["tdi_source"]
+                            if len(src) > 2000:
+                                src = src[:2000] + "\n... (truncated)"
+                            user_lines.append(f"tdi_source:\n```tdi\n{src}\n```")
+                    epoch = sig_tree_ctx.get("epoch_range")
+                    if epoch:
+                        user_lines.append(
+                            f"applicability: versions "
+                            f"{epoch['first_version']}-{epoch['last_version']}"
+                        )
 
                 # Inject wiki context if available
                 wiki_ctx = _find_wiki_context(signal)
