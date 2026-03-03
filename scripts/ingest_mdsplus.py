@@ -141,7 +141,7 @@ for node in nodes:
         result.append({{
             "path": str(node.path),
             "node_type": node_type,
-            "units": units or "dimensionless",
+            "unit": units or "dimensionless",
             "description": desc,
         }})
     except Exception as e:
@@ -204,7 +204,7 @@ def ingest_tree_nodes(
                 "tree_name": tree_name,
                 "facility_id": facility_id,
                 "node_type": node.get("node_type", "STRUCTURE"),
-                "units": node.get("units", "dimensionless"),
+                "unit": node.get("units", "dimensionless"),
                 "description": node.get("description", ""),
                 "example_shot": shot,
                 "parent_path": compute_parent_path(path),

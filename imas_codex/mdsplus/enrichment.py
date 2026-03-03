@@ -122,8 +122,8 @@ def _build_user_prompt(
                     for s in other_sibs:
                         sib_str = s["path"].rsplit(".", 1)[-1]
                         extras = []
-                        if s.get("units"):
-                            extras.append(s["units"])
+                        if s.get("unit"):
+                            extras.append(s["unit"])
                         if s.get("tags"):
                             t = s["tags"]
                             if isinstance(t, list):
@@ -151,8 +151,8 @@ def _build_user_prompt(
                     node["tags"] if isinstance(node["tags"], list) else [node["tags"]]
                 )
                 lines.append(f"tags: {', '.join(tags)}")
-            if node.get("units"):
-                lines.append(f"units: {node['units']}")
+            if node.get("unit"):
+                lines.append(f"units: {node['unit']}")
             if node.get("dtype"):
                 lines.append(f"dtype: {node['dtype']}")
             if node.get("shape"):

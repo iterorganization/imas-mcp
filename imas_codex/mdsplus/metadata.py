@@ -201,7 +201,7 @@ def enrich_graph_metadata(
             UNWIND $records AS r
             MATCH (n:TreeNode {path: r.path, facility_id: $facility})
             WHERE n.tree_name = $tree
-            SET n.units = r.units
+            SET n.unit = r.units
             """,
             records=units_records,
             facility=facility,

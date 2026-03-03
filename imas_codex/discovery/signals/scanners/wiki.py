@@ -405,7 +405,7 @@ class WikiScanner:
                     data_access=f"{facility}:mdsplus:tree",
                     tree_name=tree,
                     node_path=path_key,
-                    units=units or None,
+                    unit=units or None,
                     description=description or None,
                     discovery_source="wiki_extraction",
                 )

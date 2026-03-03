@@ -428,7 +428,7 @@ async def enrich_worker(
                     "path": p["representative_path"],
                     "node_type": p["node_type"],
                     "tags": p.get("tags"),
-                    "units": p.get("units"),
+                    "unit": p.get("unit"),
                     # Add pattern context for the LLM
                     "_pattern_leaf": p["leaf_name"],
                     "_pattern_grandparent": p["grandparent_path"],
@@ -575,7 +575,7 @@ async def enrich_worker(
                     "path": c["path"],
                     "node_type": c["node_type"],
                     "tags": c.get("tags"),
-                    "units": c.get("units"),
+                    "unit": c.get("unit"),
                 }
             )
 
@@ -680,7 +680,7 @@ async def enrich_worker(
                 "path": o["path"],
                 "node_type": o["node_type"],
                 "tags": o.get("tags"),
-                "units": o.get("units"),
+                "unit": o.get("unit"),
             }
             for o in orphans
         ]

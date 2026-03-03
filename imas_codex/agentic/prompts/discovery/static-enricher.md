@@ -87,7 +87,7 @@ System symbols indicate the physical component:
   meaning of the parameter itself, not the specific index. The description will be
   propagated to all indexed instances.
 - **Do NOT include units in the description text** — units are stored as separate
-  structured data on the node (unit_symbol property and HAS_UNIT relationship).
+  structured data on the node (`unit` property and HAS_UNIT relationship).
   Including units in the description creates noise in vector embeddings.
 
 {{ static_enrichment_schema_fields }}
