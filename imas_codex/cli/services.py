@@ -405,7 +405,7 @@ def _submit_service_job(
     if pre_launch:
         script += f"\n# Pre-launch setup\n{pre_launch}\n"
 
-    script += f"\nexec {service_command}\n"
+    script += f"\n{service_command}\n"
 
     # Cancel any existing job with this name
     _cancel_service_job(job_name)
@@ -457,29 +457,16 @@ def _ensure_service_job(
         pre_launch=pre_launch,
     )
 
-    # Wait for RUNNING state
-    click.echo(f"  Waiting for {job_name} to start...")
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        time.sleep(3)
-        job = _get_service_job(job_name)
-        if job and job["state"] == "RUNNING":
-            click.echo(f"  {job_name} running: job {job['job_id']} on {job['node']}")
-            break
-        remaining = int(deadline - time.time())
-        if remaining > 0 and remaining % 15 < 5:
-            state = job["state"] if job else "UNKNOWN"
-            click.echo(f"    State: {state} ({remaining}s remaining)")
-    else:
+    # Wait for RUNNING state + health check with rich spinner
+    timeout_s = 120
+    job = _wait_for_job(
+        job_name, timeout_s=timeout_s, health_cmd=health_cmd, health_test=health_test
+    )
+    if job is None:
         raise click.ClickException(
-            f"{job_name} did not start within 120s. Check: squeue -u $USER"
+            f"{job_name} did not start within {timeout_s}s. Check: squeue -u $USER"
         )
-
-    # Wait for health if configured
-    if health_cmd and job:
-        _wait_for_health(job_name, health_cmd, success_test=health_test)
-
-    return job  # type: ignore[return-value]
+    return job
 
 
 def _cancel_service_job(job_name: str) -> bool:
@@ -784,7 +771,7 @@ def _neo4j_service_command() -> str:
     base = '"$HOME/.local/share/imas-codex/neo4j"'
 
     return (
-        "apptainer exec "
+        "exec apptainer exec "
         f"--bind {base}/data:/data "
         f"--bind {base}/logs:/logs "
         f"--bind {base}/import:/import "
@@ -850,8 +837,8 @@ def _embed_service_command(gpus: int, workers: int) -> str:
     partition_name = partition["name"]
 
     return (
-        f"CUDA_VISIBLE_DEVICES={gpu_ids} "
-        "uv run --offline --extra gpu imas-codex embed start "
+        f"export CUDA_VISIBLE_DEVICES={gpu_ids}\n"
+        "exec uv run --offline --extra gpu imas-codex embed start -f "
         f"--host 0.0.0.0 --port {port} "
         f"--gpus {gpu_ids} --workers {workers} --deploy-label {partition_name}"
     )
@@ -927,13 +914,236 @@ def deploy_embed(gpus: int = _DEFAULT_GPUS, workers: int | None = None) -> dict:
 # ── Health checks ────────────────────────────────────────────────────────
 
 
+def _wait_for_job(
+    job_name: str,
+    *,
+    timeout_s: int = 120,
+    health_cmd: str | None = None,
+    health_test: str | None = None,
+) -> dict | None:
+    """Wait for a SLURM job to reach RUNNING and optionally pass health check.
+
+    Displays a rich spinner with countdown when the terminal supports it,
+    otherwise falls back to plain text.  Returns the job dict on success,
+    or ``None`` on timeout.
+    """
+    from imas_codex.cli.rich_output import should_use_rich
+
+    use_rich = should_use_rich()
+
+    if use_rich:
+        return _wait_rich(
+            job_name,
+            timeout_s=timeout_s,
+            health_cmd=health_cmd,
+            health_test=health_test,
+        )
+    return _wait_plain(
+        job_name, timeout_s=timeout_s, health_cmd=health_cmd, health_test=health_test
+    )
+
+
+def _wait_rich(
+    job_name: str,
+    *,
+    timeout_s: int,
+    health_cmd: str | None,
+    health_test: str | None,
+) -> dict | None:
+    """Rich spinner + countdown progress for SLURM job startup."""
+    from rich.console import Console
+    from rich.progress import (
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
+
+    console = Console()
+    deadline = time.time() + timeout_s
+    phase = "job"  # "job" → "health"
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Starting {job_name}… [dim]PENDING[/dim]", total=None)
+
+        while time.time() < deadline:
+            time.sleep(3)
+            remaining = max(0, int(deadline - time.time()))
+
+            if phase == "job":
+                job = _get_service_job(job_name)
+                state = job["state"] if job else "PENDING"
+                if job and state == "RUNNING":
+                    progress.update(
+                        task,
+                        description=(
+                            f"[green]✓[/green] {job_name} running — "
+                            f"job {job['job_id']} on {job['node']}"
+                        ),
+                    )
+                    if health_cmd:
+                        phase = "health"
+                        progress.update(
+                            task,
+                            description=(
+                                f"Waiting for {job_name} health check… "
+                                f"[dim]{remaining}s[/dim]"
+                            ),
+                        )
+                        continue
+                    # No health check — done
+                    progress.stop()
+                    console.print(
+                        f"  [green]✓[/green] {job_name} running: "
+                        f"job {job['job_id']} on {job['node']}"
+                    )
+                    return job
+                progress.update(
+                    task,
+                    description=(
+                        f"Starting {job_name}… [dim]{state} · {remaining}s[/dim]"
+                    ),
+                )
+            else:
+                # Health check phase
+                try:
+                    result = _run_remote(health_cmd, timeout=10)
+                    if result and result != "(no output)":
+                        if health_test is None or health_test in result:
+                            progress.stop()
+                            console.print(
+                                f"  [green]✓[/green] {job_name} running: "
+                                f"job {job['job_id']} on {job['node']}"
+                            )
+                            console.print(f"  [green]✓[/green] {job_name} healthy")
+                            return job
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    pass
+                progress.update(
+                    task,
+                    description=(
+                        f"Waiting for {job_name} health check… [dim]{remaining}s[/dim]"
+                    ),
+                )
+
+    return None
+
+
+def _wait_plain(
+    job_name: str,
+    *,
+    timeout_s: int,
+    health_cmd: str | None,
+    health_test: str | None,
+) -> dict | None:
+    """Plain text fallback for non-TTY environments."""
+    deadline = time.time() + timeout_s
+    click.echo(f"  Waiting for {job_name}...")
+
+    # Phase 1: wait for RUNNING
+    while time.time() < deadline:
+        time.sleep(3)
+        job = _get_service_job(job_name)
+        if job and job["state"] == "RUNNING":
+            click.echo(f"  {job_name} running: job {job['job_id']} on {job['node']}")
+            break
+    else:
+        return None
+
+    # Phase 2: health check
+    if health_cmd and job:
+        click.echo(f"  Checking {job_name} health...")
+        while time.time() < deadline:
+            time.sleep(5)
+            try:
+                result = _run_remote(health_cmd, timeout=10)
+                if result and result != "(no output)":
+                    if health_test is None or health_test in result:
+                        click.echo(f"  {job_name} healthy")
+                        return job
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                pass
+
+    return job  # type: ignore[return-value]
+
+
 def _wait_for_health(
     label: str,
     check_cmd: str,
     timeout_s: int = 120,
     success_test: str | None = None,
 ) -> bool:
-    """Wait for a service health check to pass. Returns True on success."""
+    """Wait for a service health check to pass. Returns True on success.
+
+    Uses rich spinner when available, plain text otherwise.
+    """
+    from imas_codex.cli.rich_output import should_use_rich
+
+    if should_use_rich():
+        return _wait_for_health_rich(label, check_cmd, timeout_s, success_test)
+    return _wait_for_health_plain(label, check_cmd, timeout_s, success_test)
+
+
+def _wait_for_health_rich(
+    label: str,
+    check_cmd: str,
+    timeout_s: int,
+    success_test: str | None,
+) -> bool:
+    """Rich spinner health check."""
+    from rich.console import Console
+    from rich.progress import (
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
+
+    console = Console()
+    deadline = time.time() + timeout_s
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(f"Waiting for {label}…", total=None)
+        while time.time() < deadline:
+            time.sleep(5)
+            remaining = max(0, int(deadline - time.time()))
+            try:
+                result = _run_remote(check_cmd, timeout=10)
+                if result and result != "(no output)":
+                    if success_test is None or success_test in result:
+                        progress.stop()
+                        console.print(f"  [green]✓[/green] {label} healthy")
+                        return True
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                pass
+            progress.update(
+                task,
+                description=f"Waiting for {label}… [dim]{remaining}s[/dim]",
+            )
+
+    click.echo(f"  Warning: {label} not healthy after {timeout_s}s")
+    return False
+
+
+def _wait_for_health_plain(
+    label: str,
+    check_cmd: str,
+    timeout_s: int,
+    success_test: str | None,
+) -> bool:
+    """Plain text health check fallback."""
     click.echo(f"  Waiting for {label}...")
     deadline = time.time() + timeout_s
     while time.time() < deadline:
@@ -946,9 +1156,6 @@ def _wait_for_health(
                     return True
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             pass
-        remaining = int(deadline - time.time())
-        if remaining > 0 and remaining % 15 < 5:
-            click.echo(f"    {remaining}s remaining...")
     click.echo(f"  Warning: {label} not healthy after {timeout_s}s")
     return False
 

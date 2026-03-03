@@ -23,12 +23,11 @@ def embed():
     Override: IMAS_CODEX_EMBEDDING_LOCATION env var.
 
     \b
-      imas-codex embed deploy     Deploy per config
+      imas-codex embed start      Start the server (SLURM/systemd/foreground)
       imas-codex embed stop       Stop the server
-      imas-codex embed restart    Restart (stop + deploy)
+      imas-codex embed restart    Restart (stop + start)
       imas-codex embed status     Check server and SLURM job status
       imas-codex embed logs       View SLURM job logs
-      imas-codex embed start      Start embedding server locally
       imas-codex embed service    Manage systemd service
     """
     pass
@@ -36,10 +35,31 @@ def embed():
 
 @embed.command("start")
 @click.option(
+    "--foreground",
+    "-f",
+    is_flag=True,
+    help="Run server in foreground (for debugging or SLURM batch scripts)",
+)
+@click.option(
+    "--gpus",
+    "-g",
+    default=None,
+    type=str,
+    help="GPU allocation: count for deploy (e.g. 4), or comma-separated IDs "
+    "for foreground (e.g. '0,1,2,3'). Default: 4 for deploy.",
+)
+@click.option(
+    "--workers",
+    "-w",
+    default=None,
+    type=int,
+    help="Worker processes (default: same as GPU count)",
+)
+@click.option(
     "--host",
     envvar="EMBED_HOST",
     default="0.0.0.0",
-    help="Host to bind (default: all interfaces for SLURM compute node access)",
+    help="Host to bind [foreground only] (default: 0.0.0.0)",
 )
 @click.option(
     "--port",
@@ -52,39 +72,77 @@ def embed():
     "--log-level",
     default="INFO",
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
-    help="Set the logging level",
+    help="Logging level [foreground only]",
 )
 @click.option(
     "--gpu",
     envvar="CUDA_VISIBLE_DEVICES",
     default=None,
-    help="CUDA device to use (e.g., 0 or 1)",
+    help="Single CUDA device [foreground only] (e.g., 0 or 1)",
 )
 @click.option(
     "--idle-timeout",
     default=0,
     type=int,
-    help="Auto-shutdown after N seconds of inactivity (0=disabled, 1800=30min)",
+    help="Auto-shutdown after N seconds idle [foreground only] (0=disabled)",
 )
 @click.option(
     "--deploy-label",
     default=None,
     type=str,
-    help="Deployment label (e.g., 'titan', 'login'). Exposed in /health.",
-)
-@click.option(
-    "--workers",
-    default=1,
-    type=int,
-    help="Number of uvicorn worker processes (default: 1). Use with --gpus for multi-GPU.",
-)
-@click.option(
-    "--gpus",
-    default=None,
-    type=str,
-    help="Comma-separated GPU IDs for multi-worker mode (e.g., '0,1,2,3').",
+    help="Deployment label exposed in /health [foreground only]",
 )
 def embed_start(
+    foreground: bool,
+    gpus: str | None,
+    workers: int | None,
+    host: str,
+    port: int | None,
+    log_level: str,
+    gpu: str | None,
+    idle_timeout: int,
+    deploy_label: str | None,
+) -> None:
+    """Start the embedding server.
+
+    Auto-detects deployment mode from ``[embedding].location``:
+
+    \b
+    - SLURM compute (e.g. titan): submits a SLURM batch job
+    - Login node: starts via systemd
+    - --foreground: runs server directly (for debugging)
+
+    SLURM batch scripts call this with --foreground internally.
+
+    \b
+    Examples:
+        imas-codex embed start           # Deploy per config
+        imas-codex embed start -g 2      # Deploy with 2 GPUs
+        imas-codex embed start -f        # Run in foreground
+        imas-codex embed start -f --gpu 1  # Foreground on GPU 1
+    """
+    # Auto-detect foreground: if SLURM_JOB_ID is set, we're inside a batch
+    # script and should run the server directly
+    if os.environ.get("SLURM_JOB_ID") and not foreground:
+        foreground = True
+
+    if foreground:
+        _start_foreground(
+            host=host,
+            port=port,
+            log_level=log_level,
+            gpu=gpu,
+            idle_timeout=idle_timeout,
+            deploy_label=deploy_label,
+            workers=workers or 1,
+            gpus=gpus,
+        )
+    else:
+        _start_deploy(gpus=gpus, workers=workers)
+
+
+def _start_foreground(
+    *,
     host: str,
     port: int | None,
     log_level: str,
@@ -94,39 +152,16 @@ def embed_start(
     workers: int,
     gpus: str | None,
 ) -> None:
-    """Start the embedding server.
-
-    The server provides GPU-accelerated embedding via HTTP API.
-    Access via SSH tunnel for security.
-
-    Examples:
-        # Start with defaults
-        imas-codex embed start
-
-        # Use specific GPU
-        imas-codex embed start --gpu 1
-
-        # Multi-worker on 4 GPUs (Titan)
-        imas-codex embed start --gpus 0,1,2,3 --workers 4
-
-        # Custom port
-        imas-codex embed start --port 18766
-
-        # Auto-shutdown after 30 min idle
-        imas-codex embed start --idle-timeout 1800
-    """
-    # Configure logging
+    """Run the embedding server in the foreground."""
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level))
     for handler in root_logger.handlers:
         handler.setLevel(getattr(logging, log_level))
 
-    # Set GPU if specified (single-GPU mode, mutually exclusive with --gpus)
     if gpu is not None and gpus is None:
         os.environ["CUDA_VISIBLE_DEVICES"] = gpu
         logger.info(f"Using CUDA device: {gpu}")
 
-    # Multi-GPU mode: set GPU pool env var for worker processes to claim
     if gpus is not None:
         os.environ["IMAS_CODEX_GPU_POOL"] = gpus
         os.environ["CUDA_VISIBLE_DEVICES"] = gpus
@@ -134,20 +169,17 @@ def embed_start(
             workers = len(gpus.split(","))
         logger.info(f"Multi-GPU mode: pool={gpus}, workers={workers}")
 
-    # Get port from settings if not specified
     if port is None:
         from imas_codex.settings import get_embed_server_port
 
         port = get_embed_server_port()
 
-    # Set idle timeout in server module
     if idle_timeout > 0:
         import imas_codex.embeddings.server as embed_server
 
         embed_server._idle_timeout = idle_timeout
         logger.info(f"Idle timeout: {idle_timeout}s")
 
-    # Set deployment label (exposed in /health)
     if deploy_label:
         import imas_codex.embeddings.server as embed_server
 
@@ -160,7 +192,6 @@ def embed_start(
         import uvicorn
 
         if workers > 1:
-            # Multi-worker requires import string (uvicorn forks new processes)
             uvicorn.run(
                 "imas_codex.embeddings.server:app",
                 host=host,
@@ -176,6 +207,22 @@ def embed_start(
         raise click.ClickException(
             f"Missing dependency: {e}. Install with: uv pip install uvicorn"
         ) from e
+
+
+def _start_deploy(
+    *,
+    gpus: str | None,
+    workers: int | None,
+) -> None:
+    """Deploy the embedding server via SLURM or systemd."""
+    from imas_codex.cli.services import _embed_port
+
+    if _is_compute_target():
+        gpu_count = int(gpus) if gpus else _DEFAULT_GPUS
+        deploy_embed(gpu_count, workers)
+    else:
+        _deploy_login_embed()
+        click.echo(f"  URL: http://localhost:{_embed_port()}")
 
 
 @embed.command("status")
@@ -278,7 +325,7 @@ def embed_status(url: str | None, local: bool) -> None:
                 click.echo(f"  Idle: {idle_s:.0f}s / {timeout_s}s timeout")
     else:
         click.echo("  ✗ Not available")
-        click.echo("  Deploy with: imas-codex embed deploy")
+        click.echo("  Deploy with: imas-codex embed start")
         click.echo("  Check tunnel: imas-codex tunnel status")
 
 
@@ -344,7 +391,7 @@ WorkingDirectory={project_dir}
 EnvironmentFile=-{env_file}
 Environment="PATH={Path.home()}/.local/bin:/usr/local/bin:/usr/bin"
 Environment="CUDA_VISIBLE_DEVICES={gpu}"
-ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex embed start --host 0.0.0.0 --port {port} --deploy-label {deploy_label}
+ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex embed start -f --host 0.0.0.0 --port {port} --deploy-label {deploy_label}
 ExecStop=/bin/kill -15 $MAINPID
 TimeoutStopSec=30
 Restart=on-failure
@@ -404,7 +451,7 @@ WantedBy=default.target
         click.echo("Service stopped")
 
 
-# ── Embed deploy/stop/restart/logs commands ──────────────────────────────
+# ── Embed stop/restart/logs commands ─────────────────────────────────────
 
 from imas_codex.cli.services import (  # noqa: E402
     _DEFAULT_GPUS,
@@ -412,7 +459,6 @@ from imas_codex.cli.services import (  # noqa: E402
     _SERVICES_DIR,
     _cancel_service_job,
     _deploy_login_embed,
-    _embed_port,
     _format_service_status,
     _get_embed_job,
     _is_compute_target,
@@ -420,44 +466,6 @@ from imas_codex.cli.services import (  # noqa: E402
     _tail_log,
     deploy_embed,
 )
-
-
-@embed.command("deploy")
-@click.option(
-    "--gpus",
-    "-g",
-    default=_DEFAULT_GPUS,
-    type=int,
-    help=f"Number of GPUs (default: {_DEFAULT_GPUS}, ignored for login)",
-)
-@click.option(
-    "--workers",
-    "-w",
-    default=None,
-    type=int,
-    help="Worker processes (default: same as gpus)",
-)
-def embed_deploy(gpus: int, workers: int | None) -> None:
-    """Deploy embedding server.
-
-    When ``[embedding].scheduler = "slurm"``, submits a dedicated SLURM
-    job for the embed server with the requested GPU/worker count.
-
-    When scheduler is not set, deploys via systemd on the login node.
-
-    Idempotent: no-op if already running.  Use ``--gpus`` to redeploy
-    with different resources (stops existing job first).
-
-    \b
-    Examples:
-        imas-codex embed deploy          # Deploy per config
-        imas-codex embed deploy -g 2     # 2 GPUs
-    """
-    if _is_compute_target():
-        deploy_embed(gpus, workers)
-    else:
-        _deploy_login_embed()
-        click.echo(f"  URL: http://localhost:{_embed_port()}")
 
 
 @embed.command("stop")
@@ -510,7 +518,7 @@ def embed_stop() -> None:
     help="Worker processes (default: same as gpus)",
 )
 def embed_restart(gpus: int, workers: int | None) -> None:
-    """Restart the embedding server (stop + deploy).
+    """Restart the embedding server (stop + start).
 
     Cancels the existing embed SLURM job and submits a new one.
     Use ``--gpus`` to change GPU allocation on restart.
@@ -528,7 +536,7 @@ def embed_restart(gpus: int, workers: int | None) -> None:
         pass
     time.sleep(2)
 
-    # Deploy
+    # Start
     if _is_compute_target():
         deploy_embed(gpus, workers)
     else:

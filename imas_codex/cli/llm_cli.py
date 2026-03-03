@@ -19,10 +19,9 @@ def llm() -> None:
     Runs on the login node via systemd (needs outbound HTTPS for API providers).
 
     \b
-      imas-codex llm deploy     Deploy per config
+      imas-codex llm start      Start the proxy (systemd or foreground)
       imas-codex llm stop       Stop the proxy
-      imas-codex llm restart    Restart (stop + deploy)
-      imas-codex llm start      Start LiteLLM proxy (foreground)
+      imas-codex llm restart    Restart (stop + start)
       imas-codex llm status     Check proxy health
       imas-codex llm logs       View service logs
       imas-codex llm service    Manage systemd service
@@ -32,10 +31,16 @@ def llm() -> None:
 
 @llm.command("start")
 @click.option(
+    "--foreground",
+    "-f",
+    is_flag=True,
+    help="Run proxy in foreground (for debugging)",
+)
+@click.option(
     "--host",
     envvar="LITELLM_HOST",
     default="0.0.0.0",
-    help="Host to bind (default: all interfaces for compute node access)",
+    help="Host to bind [foreground only] (default: 0.0.0.0)",
 )
 @click.option(
     "--port",
@@ -48,16 +53,17 @@ def llm() -> None:
     "--log-level",
     default="INFO",
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
-    help="Set the logging level",
+    help="Logging level [foreground only]",
 )
 @click.option(
     "--config",
     "config_path",
     default=None,
     type=click.Path(exists=True),
-    help="Path to LiteLLM config YAML (default: bundled config)",
+    help="Path to LiteLLM config YAML [foreground only] (default: bundled config)",
 )
 def llm_start(
+    foreground: bool,
     host: str,
     port: int | None,
     log_level: str,
@@ -65,19 +71,31 @@ def llm_start(
 ) -> None:
     """Start the LiteLLM proxy server.
 
-    Routes all LLM calls through a centralized proxy with Langfuse observability.
+    By default, deploys via systemd on the login node and waits for
+    the health check to pass.  Use ``--foreground`` to run the proxy
+    directly (for debugging).
+
     Requires OPENROUTER_API_KEY and LITELLM_MASTER_KEY environment variables.
 
+    \b
     Examples:
-        # Start with defaults
-        imas-codex llm start
-
-        # Custom port
-        imas-codex llm start --port 19000
-
-        # Custom config
-        imas-codex llm start --config my_config.yaml
+        imas-codex llm start             # Deploy via systemd
+        imas-codex llm start -f          # Run in foreground
+        imas-codex llm start --port 19000  # Custom port
     """
+    if foreground:
+        _start_llm_foreground(host, port, log_level, config_path)
+    else:
+        _start_llm_deploy()
+
+
+def _start_llm_foreground(
+    host: str,
+    port: int | None,
+    log_level: str,
+    config_path: str | None,
+) -> None:
+    """Run the LLM proxy in the foreground."""
     import shutil
     import subprocess
     from pathlib import Path
@@ -93,7 +111,6 @@ def llm_start(
             "uv CLI not found. Install from: https://docs.astral.sh/uv/"
         )
 
-    # Resolve config path
     if config_path is None:
         config_path = str(
             Path(__file__).parent.parent / "config" / "litellm_config.yaml"
@@ -101,7 +118,6 @@ def llm_start(
         if not Path(config_path).exists():
             raise click.ClickException(f"Bundled config not found: {config_path}")
 
-    # Check required env vars
     if not os.environ.get("OPENROUTER_API_KEY"):
         raise click.ClickException(
             "OPENROUTER_API_KEY not set. Add to .env or export in shell."
@@ -117,7 +133,6 @@ def llm_start(
     click.echo(f"Config: {config_path}")
     click.echo(f"Master key: {master_key[:10]}...")
 
-    # Check Langfuse config
     if os.environ.get("LANGFUSE_PUBLIC_KEY"):
         click.echo("Langfuse: configured (cost tracking enabled)")
         os.environ.setdefault("LITELLM_CALLBACKS", "langfuse")
@@ -149,6 +164,20 @@ def llm_start(
         subprocess.run(cmd, check=True)
     except KeyboardInterrupt:
         click.echo("\nProxy stopped")
+
+
+def _start_llm_deploy() -> None:
+    """Deploy LLM proxy via systemd and wait for health."""
+    from imas_codex.cli.services import _llm_port, _wait_for_health
+
+    _deploy_login_llm()
+    port = _llm_port()
+    _wait_for_health(
+        "LLM proxy",
+        f"curl -sf http://localhost:{port}/",
+        timeout_s=60,
+    )
+    click.echo(f"  URL: http://localhost:{port}")
 
 
 @llm.command("status")
@@ -354,7 +383,7 @@ WantedBy=default.target
         click.echo("LLM proxy service stopped")
 
 
-# ── LLM deploy/stop/restart/logs commands ────────────────────────────────
+# ── LLM stop/restart/logs commands ───────────────────────────────────────
 
 from imas_codex.cli.services import (  # noqa: E402
     _PROJECT,
@@ -456,30 +485,6 @@ WantedBy=default.target
         check=True,
     )
     click.echo("  Service installed and enabled")
-
-
-@llm.command("deploy")
-def llm_deploy() -> None:
-    """Deploy LLM proxy on the login node via systemd.
-
-    Installs the systemd user service if needed, then starts it.
-    CPU-only service (~50 MB RAM), no GPU required.
-    Runs on the login node which has outbound HTTPS for API providers.
-
-    Idempotent: no-op if already running.
-
-    \b
-    Examples:
-        imas-codex llm deploy
-    """
-    _deploy_login_llm()
-    port = _llm_port()
-    _wait_for_health(
-        "LLM proxy",
-        f"curl -sf http://localhost:{port}/",
-        timeout_s=60,
-    )
-    click.echo(f"  URL: http://localhost:{port}")
 
 
 @llm.command("stop")
