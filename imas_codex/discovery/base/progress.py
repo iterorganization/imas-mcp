@@ -586,7 +586,6 @@ class PipelineRowConfig:
     # Worker annotation
     worker_count: int = 0  # Number of workers in this group
     worker_annotation: str = ""  # e.g., "(1 backoff)" or "(budget)"
-    aux_workers: list[tuple[str, int]] | None = None  # e.g., [("expand", 1)]
 
     # Activity (current item) — structured fields (preferred)
     primary_text: str = ""  # Resource name (shown on line 2)
@@ -642,10 +641,6 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     label.append(f"  {config.name}", style=config.style)
     if config.worker_count > 0:
         label.append(f"x{config.worker_count}", style="dim")
-    if config.aux_workers:
-        for aux_name, aux_count in config.aux_workers:
-            if aux_count > 0:
-                label.append(f" +{aux_count} {aux_name}", style="dim")
     if config.worker_annotation:
         label.append(f" {config.worker_annotation}", style="dim")
     # Pad to LABEL_WIDTH for aligned bar start
