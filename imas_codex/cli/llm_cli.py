@@ -16,8 +16,7 @@ def llm() -> None:
     Routes all LLM calls through a single proxy with cost tracking via Langfuse.
     Provides OpenAI-compatible endpoint for agent teams and discovery workers.
 
-    Deploy mode is determined by ``[llm].scheduler`` in pyproject.toml:
-      (omit) → systemd service on login node or local start
+    Runs on the login node via systemd (needs outbound HTTPS for API providers).
 
     \b
       imas-codex llm deploy     Deploy per config
