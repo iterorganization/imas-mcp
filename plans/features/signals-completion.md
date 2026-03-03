@@ -25,7 +25,7 @@ Additionally, three pre-existing schema compliance failures exist:
 
 ---
 
-## Phase 1: Delete `mdsplus/enrichment.py`
+## Phase 1: Delete `mdsplus/enrichment.py` ✅
 
 **Goal:** Absorb Pydantic models and prompt builders into the signals
 enrichment pipeline; delete the standalone module.
@@ -45,7 +45,7 @@ Steps:
 5. Delete `mdsplus/enrichment.py`
 6. Run tests, commit
 
-## Phase 2: Retire `extract_tdi_functions.py`
+## Phase 2: Retire `extract_tdi_functions.py` ✅
 
 **Goal:** Make `discovery/signals/tdi.py` use the newer
 `extract_tdi_signals.py` script (which already exists and is more capable),
@@ -60,7 +60,7 @@ Steps:
 4. Delete `remote/scripts/extract_tdi_functions.py`
 5. Run tests, commit
 
-## Phase 3: Remove `TreeNode.is_static`
+## Phase 3: Remove `TreeNode.is_static` ✅
 
 **Goal:** Replace all `is_static` filters with tree-name or version-based
 queries that work identically for all tree types.
@@ -82,7 +82,7 @@ Steps:
    existing graph nodes
 7. Run tests, commit
 
-## Phase 4: Fix Schema Compliance Failures
+## Phase 4: Fix Schema Compliance Failures ✅
 
 **Goal:** Fix the three pre-existing schema compliance test failures.
 
@@ -96,7 +96,7 @@ Steps:
 4. Rebuild models, run `tests/graph/test_schema_compliance.py` until green,
    commit
 
-## Phase 5: Signals CLI Documentation
+## Phase 5: Signals CLI Documentation ✅
 
 **Goal:** Create comprehensive documentation for the signals discovery
 pipeline at `docs/architecture/signals.md`.
@@ -146,7 +146,7 @@ Include working queries for each of these use cases:
 8. **TDI function resolution** — from a TDI function, follow RESOLVES_TO
    edges to the underlying TreeNodes and their signals
 
-## Phase 6: E2E Testing
+## Phase 6: E2E Testing ✅
 
 **Goal:** Validate the full signals pipeline against the live TCV facility
 by processing real data through every stage and verifying graph output.
