@@ -49,6 +49,7 @@ uv run imas-codex neo4j shell
 - **No file editing** - graph operations only
 - **Always dump before destructive operations**
 - Schema changes must be additive (no renames/deletes)
+- **Verify property names** before writing Cypher — WikiChunk text is `text` (not `content`), use `get_graph_schema()` or `agents/schema-reference.md` when unsure
 
 ## Full Instructions
 
