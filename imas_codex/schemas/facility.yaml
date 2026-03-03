@@ -2741,7 +2741,7 @@ classes:
         description: Parent CodeExample
         required: true
         range: CodeExample
-      content:
+      text:
         description: The actual code content
         required: true
       function_name:
@@ -3214,8 +3214,8 @@ classes:
         range: integer
       section:
         description: Section heading this chunk belongs to
-      content:
-        description: The actual text content
+      text:
+        description: The actual text content of this chunk
         required: true
       start_char:
         description: Starting character offset in original page

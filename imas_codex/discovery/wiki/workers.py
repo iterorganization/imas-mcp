@@ -1253,7 +1253,14 @@ async def _ingest_page(
     title = title_match.group(1) if title_match else page_name
 
     # Clean up title (remove wiki suffix)
-    for suffix in [" - SPCwiki", " - Wikipedia", " - Confluence"]:
+    for suffix in [
+        " - SPCwiki",
+        " - Wikipedia",
+        " - Confluence",
+        " - tfwiki",
+        " - tfmwiki",
+        " - openwiki",
+    ]:
         if title.endswith(suffix):
             title = title[: -len(suffix)]
 
@@ -1277,7 +1284,7 @@ async def _ingest_page(
     )
 
     try:
-        stats = await pipeline.ingest_page(page)
+        stats = await pipeline.ingest_page(page, page_id=page_id)
         chunks = stats.get("chunks", 0)
 
         # Extract and persist images from HTML for VLM scoring

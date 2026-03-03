@@ -1260,6 +1260,10 @@ async def scan_worker(
         if not isinstance(scanner_config, dict):
             scanner_config = {}
 
+        # Forward signal_limit to scanner so it can cap discovery scope
+        if state.signal_limit:
+            scanner_config = {**scanner_config, "_scan_limit": state.signal_limit}
+
         try:
             result = await scanner.scan(
                 facility=state.facility,
@@ -1723,7 +1727,7 @@ async def enrich_worker(
                 user_lines.append(f"### From: {chunk['page_title']}")
                 if chunk.get("conventions"):
                     user_lines.append(f"Conventions: {', '.join(chunk['conventions'])}")
-                user_lines.append(chunk["content"])
+                user_lines.append(chunk["text"])
                 user_lines.append("")
 
         signal_index = 0

@@ -145,7 +145,7 @@ def _build_wiki_context(
                 WHERE size(c.mdsplus_paths_mentioned) > 0
                    OR size(c.ppf_paths_mentioned) > 0
                    OR size(c.imas_paths_mentioned) > 0
-                RETURN c.content AS content,
+                RETURN c.text AS text,
                        c.mdsplus_paths_mentioned AS mdsplus_paths,
                        c.ppf_paths_mentioned AS ppf_paths,
                        c.imas_paths_mentioned AS imas_paths,
@@ -156,9 +156,9 @@ def _build_wiki_context(
             )
 
             for row in results:
-                content = row.get("content", "")
+                text = row.get("text", "")
                 page_title = row.get("page_title", "")
-                if not content:
+                if not text:
                     continue
 
                 # Process pre-extracted MDSplus paths
@@ -216,9 +216,9 @@ def _build_wiki_context(
                         "name": name,
                     }
 
-                # Phase 2: Parse content to extract descriptions/units
+                # Phase 2: Parse text to extract descriptions/units
                 # for paths that appear in this chunk's text
-                extracted = _extract_signals_from_chunk(content, facility, page_title)
+                extracted = _extract_signals_from_chunk(text, facility, page_title)
                 for sig in extracted:
                     path_key = sig["path"].upper()
                     existing = context.get(path_key, {})
@@ -292,7 +292,7 @@ def fetch_semantic_wiki_context(
                 YIELD node, score
                 MATCH (p:WikiPage)-[:HAS_CHUNK]->(node)
                 WHERE p.facility_id = $facility AND score >= $min_score
-                RETURN node.content AS content,
+                RETURN node.text AS text,
                        p.title AS page_title,
                        node.conventions_mentioned AS conventions,
                        node.units_mentioned AS units,
@@ -307,12 +307,12 @@ def fetch_semantic_wiki_context(
             )
             chunks = []
             for row in results:
-                content = row.get("content", "")
-                if len(content) > 500:
-                    content = content[:500] + "..."
+                text = row.get("text", "")
+                if len(text) > 500:
+                    text = text[:500] + "..."
                 chunks.append(
                     {
-                        "content": content,
+                        "text": text,
                         "page_title": row.get("page_title", ""),
                         "conventions": row.get("conventions") or [],
                         "units": row.get("units") or [],

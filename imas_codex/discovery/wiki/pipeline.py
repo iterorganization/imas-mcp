@@ -232,7 +232,7 @@ def persist_chunks_batch(chunks: list[dict]) -> int:
             MERGE (c:WikiChunk {id: chunk.id})
             SET c.wiki_page_id = chunk.wiki_page_id,
                 c.facility_id = chunk.facility_id,
-                c.content = chunk.content,
+                c.text = chunk.text,
                 c.embedding = chunk.embedding,
                 c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
                 c.imas_paths_mentioned = chunk.imas_paths,
@@ -833,7 +833,9 @@ class WikiIngestionPipeline:
         """Generate unique ID for a WikiChunk."""
         return f"{page_id}:chunk_{chunk_idx}"
 
-    async def ingest_page(self, page: WikiPage) -> PageIngestionStats:
+    async def ingest_page(
+        self, page: WikiPage, *, page_id: str | None = None
+    ) -> PageIngestionStats:
         """Ingest a single wiki page into the graph.
 
         Deterministic pipeline: fetch → extract → chunk → embed → persist.
@@ -844,6 +846,9 @@ class WikiIngestionPipeline:
 
         Args:
             page: Scraped WikiPage instance
+            page_id: Explicit page ID from the discovery phase. When provided,
+                this is used instead of re-deriving the ID from the URL
+                (which can produce mismatches for non-MediaWiki sites).
 
         Returns:
             Stats dict: {chunks, tree_nodes_linked, imas_paths_linked, conventions,
@@ -867,7 +872,8 @@ class WikiIngestionPipeline:
             "mdsplus_paths": [],
         }
 
-        page_id = self._generate_page_id(page.page_name)
+        if page_id is None:
+            page_id = self._generate_page_id(page.page_name)
 
         # Extract text content (CPU-bound, fast)
         text_content, sections = html_to_text(page.content_html)
@@ -925,7 +931,7 @@ class WikiIngestionPipeline:
                     "wiki_page_id": page_id,
                     "facility_id": self.facility_id,
                     "chunk_index": i,
-                    "content": chunk_text,
+                    "text": chunk_text,
                     "embedding": node.embedding,
                     **props,
                 }
@@ -976,7 +982,7 @@ class WikiIngestionPipeline:
                     SET c.wiki_page_id = chunk.wiki_page_id,
                         c.facility_id = chunk.facility_id,
                         c.chunk_index = chunk.chunk_index,
-                        c.content = chunk.content,
+                        c.text = chunk.text,
                         c.embedding = chunk.embedding,
                         c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
                         c.imas_paths_mentioned = chunk.imas_paths,
@@ -2153,7 +2159,7 @@ class WikiArtifactPipeline:
                     "id": f"{artifact_id}:chunk_{i}",
                     "artifact_id": artifact_id,
                     "facility_id": self.facility_id,
-                    "content": chunk_text,
+                    "text": chunk_text,
                     "embedding": node.embedding,
                     **props,
                 }
@@ -2183,7 +2189,7 @@ class WikiArtifactPipeline:
                     MERGE (c:WikiChunk {id: chunk.id})
                     SET c.artifact_id = chunk.artifact_id,
                         c.facility_id = chunk.facility_id,
-                        c.content = chunk.content,
+                        c.text = chunk.text,
                         c.embedding = chunk.embedding,
                         c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
                         c.imas_paths_mentioned = chunk.imas_paths,
