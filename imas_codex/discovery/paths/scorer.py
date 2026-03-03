@@ -261,7 +261,7 @@ class DirectoryTriager:
             context["dimension_calibration"] = dimension_calibration
 
         # Use render_prompt for proper Jinja2 rendering with schema context
-        return render_prompt("discovery/triage", context)
+        return render_prompt("paths/triage", context)
 
     def _build_user_prompt(self, directories: list[dict[str, Any]]) -> str:
         """Build user prompt with directories to score.

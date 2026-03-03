@@ -1,7 +1,7 @@
 """Prompt loading for agentic workflows.
 
 Prompts are markdown files with YAML frontmatter:
-- name: Prompt identifier (can include path like "discovery/scorer")
+- name: Prompt identifier (can include path like "paths/scorer")
 - description: Short description
 - task: Task type for model selection (optional)
 - schema_needs: List of schema providers to include (optional)
@@ -34,10 +34,16 @@ Directory structure:
     ├── shared/           # Reusable includes
     │   ├── safety.md
     │   └── schema/       # Schema-derived templates
+    ├── paths/            # Path discovery prompts
+    │   ├── triage.md     # Triage directories (first pass)
+    │   └── scorer.md     # Score with enrichment evidence (second pass)
+    ├── code/             # Code file scoring prompts
+    │   ├── triage.md     # Fast keep/skip file triage (first pass)
+    │   └── scorer.md     # Multi-dimensional file scoring (second pass)
+    ├── signals/          # Signal discovery prompts
+    │   └── enrichment.md # Signal enrichment and classification
     ├── discovery/        # Discovery pipeline prompts
     │   ├── roots.md      # Seed discovery frontier
-    │   ├── triage.md     # Triage directories (first pass)
-    │   ├── scorer.md     # Score with enrichment evidence (second pass)
     │   └── enricher.md   # Extract metadata
     ├── exploration/      # Interactive exploration
     │   └── facility.md   # Facility exploration agent
@@ -143,7 +149,7 @@ def load_prompts(prompts_dir: Path | None = None) -> dict[str, PromptDefinition]
     - prompts_dir/*.md (root level prompts)
     - prompts_dir/<subdir>/*.md (categorized prompts, excluding shared/)
 
-    Prompt names include the subdirectory path (e.g., "discovery/scorer").
+    Prompt names include the subdirectory path (e.g., "paths/scorer").
     """
     if prompts_dir is None:
         prompts_dir = Path(__file__).parent / "prompts"
@@ -919,14 +925,14 @@ _SCHEMA_PROVIDERS["file_triage_schema"] = _provide_file_triage_schema
 # Default schema needs per prompt (when not specified in frontmatter)
 # Only load what's actually used by each prompt
 _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
-    "discovery/triage": [
+    "paths/triage": [
         "path_purposes",
         "score_dimensions",
         "scoring_schema",
         "format_patterns",
         "physics_domains",
     ],
-    "discovery/scorer": [
+    "paths/scorer": [
         "score_schema",
         "format_patterns",
         "path_purposes",
@@ -935,7 +941,7 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
     ],
     "discovery/roots": ["discovery_categories"],
     "discovery/data_access": ["data_access_fields"],
-    "discovery/signal-enrichment": [
+    "signals/enrichment": [
         "physics_domains",
         "signal_enrichment_schema",
         "diagnostic_categories",
@@ -962,13 +968,13 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "physics_domains",
     ],
     # File scoring
-    "discovery/file-scorer": [
+    "code/scorer": [
         "file_score_dimensions",
         "file_scoring_schema",
         "format_patterns",
     ],
     # File triage (pass 1)
-    "discovery/file-triage": [
+    "code/triage": [
         "file_triage_schema",
     ],
 }
@@ -983,7 +989,7 @@ def get_schema_for_prompt(
     defaults based on prompt name. Only invokes the required providers.
 
     Args:
-        prompt_name: Prompt identifier (e.g., "discovery/scorer")
+        prompt_name: Prompt identifier (e.g., "paths/scorer")
         schema_needs: Explicit list of needs (overrides frontmatter/defaults)
 
     Returns:
@@ -1095,7 +1101,7 @@ def render_prompt(
     and custom context variables into the prompt template.
 
     Args:
-        name: Prompt name (e.g., "discovery/roots", "discovery/scorer")
+        name: Prompt name (e.g., "discovery/roots", "paths/scorer")
         context: Additional context variables (e.g., {"facility": "tcv"})
         prompts_dir: Base directory for prompts
 
