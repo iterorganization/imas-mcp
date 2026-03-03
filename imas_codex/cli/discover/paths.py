@@ -58,10 +58,10 @@ logger = logging.getLogger(__name__)
     help="Number of scan workers (default: 1, single SSH connection)",
 )
 @click.option(
-    "--score-workers",
+    "--triage-workers",
     default=2,
     type=int,
-    help="Number of score workers (default: 2, parallel LLM calls)",
+    help="Number of triage workers (default: 2, parallel LLM calls)",
 )
 @click.option(
     "--scan-only",
@@ -70,10 +70,10 @@ logger = logging.getLogger(__name__)
     help="SSH scan only, no LLM scoring (fast, requires SSH access)",
 )
 @click.option(
-    "--score-only",
+    "--triage-only",
     is_flag=True,
     default=False,
-    help="LLM scoring only, no SSH scanning (offline, graph-only)",
+    help="LLM triage/scoring only, no SSH scanning (offline, graph-only)",
 )
 @click.option(
     "--add-roots",
@@ -88,10 +88,10 @@ logger = logging.getLogger(__name__)
     help="Auto-enrich paths scoring >= threshold (default: from settings)",
 )
 @click.option(
-    "--reset-refined",
+    "--reset-scored",
     is_flag=True,
     default=False,
-    help="Reset all refined paths so they get re-refined with current prompt",
+    help="Reset all scored paths so they get re-scored with current prompt",
 )
 @click.option(
     "--time",
@@ -108,12 +108,12 @@ def paths(
     focus: str | None,
     threshold: float,
     scan_workers: int,
-    score_workers: int,
+    triage_workers: int,
     scan_only: bool,
-    score_only: bool,
+    triage_only: bool,
     add_roots: bool,
     enrich_threshold: float | None,
-    reset_refined: bool,
+    reset_scored: bool,
     time_limit: int | None,
 ) -> None:
     """Discover and score directory structure at a facility.
@@ -134,9 +134,9 @@ def paths(
     console = Console()
 
     # Validate mutually exclusive flags
-    if scan_only and score_only:
+    if scan_only and triage_only:
         console.print(
-            "[red]Error: --scan-only and --score-only are mutually exclusive[/red]"
+            "[red]Error: --scan-only and --triage-only are mutually exclusive[/red]"
         )
         raise SystemExit(1)
 
@@ -150,13 +150,13 @@ def paths(
         focus=focus,
         threshold=threshold,
         num_scan_workers=scan_workers,
-        num_score_workers=score_workers,
+        num_triage_workers=triage_workers,
         scan_only=scan_only,
-        score_only=score_only,
+        triage_only=triage_only,
         root_filter=root_filter,
         add_roots=add_roots,
         enrich_threshold=enrich_threshold,
-        reset_refined=reset_refined,
+        reset_scored=reset_scored,
         timeout_minutes=time_limit,
     )
 
@@ -173,16 +173,16 @@ def _run_iterative_discovery(
     focus: str | None,
     threshold: float,
     num_scan_workers: int = 1,
-    num_score_workers: int = 3,
+    num_triage_workers: int = 3,
     scan_only: bool = False,
-    score_only: bool = False,
+    triage_only: bool = False,
     root_filter: list[str] | None = None,
     add_roots: bool = False,
     enrich_threshold: float | None = None,
-    reset_refined: bool = False,
+    reset_scored: bool = False,
     timeout_minutes: int | None = None,
 ) -> None:
-    """Run parallel scan/score discovery."""
+    """Run parallel scan/triage/score discovery."""
     import time as time_module
 
     from imas_codex.discovery import (
@@ -243,17 +243,17 @@ def _run_iterative_discovery(
             log_print("[dim]All discovery_roots already in graph[/dim]")
         stats = get_discovery_stats(facility)
 
-    # Handle --reset-refined flag
-    if reset_refined:
-        from imas_codex.discovery.paths.frontier import reset_refined_paths
+    # Handle --reset-scored flag
+    if reset_scored:
+        from imas_codex.discovery.paths.frontier import reset_scored_paths
 
-        reset_count = reset_refined_paths(facility)
+        reset_count = reset_scored_paths(facility)
         if reset_count > 0:
             log_print(
-                f"[green]Reset {reset_count} refined path(s) for re-refinement[/green]"
+                f"[green]Reset {reset_count} scored path(s) for re-scoring[/green]"
             )
         else:
-            log_print("[dim]No refined paths to reset[/dim]")
+            log_print("[dim]No scored paths to reset[/dim]")
         stats = get_discovery_stats(facility)
 
     # Handle targeted deep dive with --root
@@ -266,9 +266,9 @@ def _run_iterative_discovery(
             log_print(f"[green]Added {seeded} new root path(s)[/green]")
         stats = get_discovery_stats(facility)
     elif stats["total"] == 0:
-        if score_only:
+        if triage_only:
             log_print(
-                "[red]Error: --score-only requires existing paths in the graph.[/red]"
+                "[red]Error: --triage-only requires existing paths in the graph.[/red]"
             )
             log_print(
                 f"[yellow]Run 'imas-codex discover paths {facility}' or "
@@ -279,13 +279,15 @@ def _run_iterative_discovery(
         seed_facility_roots(facility)
         stats = get_discovery_stats(facility)
 
-    if score_only and stats.get("scanned", 0) == 0:
-        log_print("[yellow]Warning: No 'scanned' paths available for scoring.[/yellow]")
-        log_print("Checking for already-scored paths to expand...")
+    if triage_only and stats.get("scanned", 0) == 0:
+        log_print(
+            "[yellow]Warning: No 'scanned' paths available for triaging.[/yellow]"
+        )
+        log_print("Checking for already-triaged paths to expand...")
 
     # Adjust worker counts based on mode flags
-    effective_scan_workers = 0 if score_only else num_scan_workers
-    effective_score_workers = 0 if scan_only else num_score_workers
+    effective_scan_workers = 0 if triage_only else num_scan_workers
+    effective_triage_workers = 0 if scan_only else num_triage_workers
 
     # Get model name for display
     model_name = get_model("language")
@@ -296,8 +298,8 @@ def _run_iterative_discovery(
     mode_str = ""
     if scan_only:
         mode_str = " [bold cyan](SCAN ONLY)[/bold cyan]"
-    elif score_only:
-        mode_str = " [bold green](SCORE ONLY)[/bold green]"
+    elif triage_only:
+        mode_str = " [bold green](TRIAGE ONLY)[/bold green]"
 
     log_print(
         f"[bold]Starting parallel discovery for {facility.upper()}[/bold]{mode_str}"
@@ -315,17 +317,17 @@ def _run_iterative_discovery(
     # Defaults from run_parallel_discovery for workers not exposed via CLI:
     num_expand = 1
     num_enrich = 2
-    num_refine = 1
+    num_score = 1
 
     worker_parts = []
-    if not score_only and effective_scan_workers > 0:
+    if not triage_only and effective_scan_workers > 0:
         worker_parts.append(f"{effective_scan_workers} scan")
         worker_parts.append(f"{num_expand} expand")
-    if not scan_only and effective_score_workers > 0:
-        worker_parts.append(f"{effective_score_workers} score")
+    if not scan_only and effective_triage_workers > 0:
+        worker_parts.append(f"{effective_triage_workers} triage")
     if not scan_only:
         worker_parts.append(f"{num_enrich} enrich")
-        worker_parts.append(f"{num_refine} refine")
+        worker_parts.append(f"{num_score} score")
         worker_parts.append("1 dedup")
         worker_parts.append("1 embed")
     log_print(f"Workers: {', '.join(worker_parts)}")
@@ -345,9 +347,9 @@ def _run_iterative_discovery(
                 threshold=threshold,
                 console=console,
                 num_scan_workers=effective_scan_workers,
-                num_score_workers=effective_score_workers,
+                num_triage_workers=effective_triage_workers,
                 scan_only=scan_only,
-                score_only=score_only,
+                triage_only=triage_only,
                 use_rich=use_rich,
                 root_filter=root_filter,
                 auto_enrich_threshold=enrich_threshold,
@@ -407,7 +409,7 @@ def _print_discovery_summary(
         elapsed_str = f"{int(elapsed)}s"
 
     scan_rate = result.get("scan_rate")
-    score_rate = result.get("score_rate")
+    triage_rate = result.get("triage_rate")
 
     # Non-rich mode: log simple summary
     if console is None:
@@ -445,13 +447,13 @@ def _print_discovery_summary(
     if not scan_only:
         scored = result["scored"]
         cost = result.get("cost", 0.0)
-        refined = result.get("refined", 0)
-        summary.append("  SCORE ", style="bold green")
-        summary.append(f"scored={scored:,}", style="white")
-        summary.append(f"  refined={refined:,}", style="white")
+        triaged = result.get("triaged", 0)
+        summary.append("  TRIAGE ", style="bold green")
+        summary.append(f"triaged={triaged:,}", style="white")
+        summary.append(f"  scored={scored:,}", style="white")
         summary.append(f"  cost=${cost:.3f}", style="yellow")
-        if score_rate:
-            summary.append(f"  {score_rate:.1f}/s", style="dim")
+        if triage_rate:
+            summary.append(f"  {triage_rate:.1f}/s", style="dim")
         summary.append("\n")
 
     # Row 3: ENRICH stats
@@ -640,15 +642,15 @@ async def _async_discovery_loop(
     threshold: float,
     console,
     num_scan_workers: int = 2,
-    num_score_workers: int = 2,
+    num_triage_workers: int = 2,
     scan_only: bool = False,
-    score_only: bool = False,
+    triage_only: bool = False,
     use_rich: bool = True,
     root_filter: list[str] | None = None,
     auto_enrich_threshold: float | None = None,
     deadline: float | None = None,
 ) -> tuple[dict, set[str]]:
-    """Async discovery loop with parallel scan/score workers."""
+    """Async discovery loop with parallel scan/triage/score workers."""
     from imas_codex.cli.shutdown import install_shutdown_handlers
     from imas_codex.discovery.paths.parallel import run_parallel_discovery
 
@@ -670,7 +672,7 @@ async def _async_discovery_loop(
             check_graph=True,
             check_embed=not scan_only,
             check_model=not scan_only,
-            check_ssh=not score_only,
+            check_ssh=not triage_only,
             check_auth=False,
         )
 
@@ -682,7 +684,7 @@ async def _async_discovery_loop(
             console=console,
             focus=focus or "",
             scan_only=scan_only,
-            score_only=score_only,
+            triage_only=triage_only,
         ) as display:
             display.service_monitor = service_monitor
             await service_monitor.__aenter__()
@@ -711,14 +713,14 @@ async def _async_discovery_loop(
                     msg, stats, paths=paths, scan_results=scan_results
                 )
 
-            def on_score(msg, stats, results=None):
-                display.update_score(msg, stats, results=results)
+            def on_triage(msg, stats, results=None):
+                display.update_triage(msg, stats, results=results)
 
             def on_enrich(msg, stats, results=None):
                 display.update_enrich(msg, stats, results=results)
 
-            def on_refine(msg, stats, results=None):
-                display.update_refine(msg, stats, results=results)
+            def on_score(msg, stats, results=None):
+                display.update_score(msg, stats, results=results)
 
             def on_dedup(msg, stats, results=None):
                 display.update_dedup(msg, stats, results=results)
@@ -736,12 +738,12 @@ async def _async_discovery_loop(
                     root_filter=root_filter,
                     auto_enrich_threshold=auto_enrich_threshold,
                     num_scan_workers=num_scan_workers,
-                    num_score_workers=num_score_workers,
+                    num_triage_workers=num_triage_workers,
                     on_scan_progress=on_scan,
                     on_expand_progress=on_expand,
-                    on_score_progress=on_score,
+                    on_triage_progress=on_triage,
                     on_enrich_progress=on_enrich,
-                    on_refine_progress=on_refine,
+                    on_score_progress=on_score,
                     on_dedup_progress=on_dedup,
                     on_worker_status=on_worker_status,
                     deadline=deadline,
@@ -774,13 +776,13 @@ async def _async_discovery_loop(
                     f"total: {stats.processed}, rate: {stats.rate:.1f}/s"
                 )
 
-        def on_score_log(msg: str, stats, results=None):
+        def on_triage_log(msg: str, stats, results=None):
             if results and len(results) > 0:
                 for r in results:
                     if r.get("path"):
                         scored_this_run.add(r["path"])
                 disc_logger.info(
-                    f"SCORE batch: {len(results)} paths, "
+                    f"TRIAGE batch: {len(results)} paths, "
                     f"total: {stats.processed}, cost: ${stats.cost:.3f}"
                 )
 
@@ -795,9 +797,9 @@ async def _async_discovery_loop(
             root_filter=root_filter,
             auto_enrich_threshold=auto_enrich_threshold,
             num_scan_workers=num_scan_workers,
-            num_score_workers=num_score_workers,
+            num_triage_workers=num_triage_workers,
             on_scan_progress=on_scan_log,
-            on_score_progress=on_score_log,
+            on_triage_progress=on_triage_log,
             deadline=deadline,
             stop_event=stop_event,
         )
@@ -810,10 +812,11 @@ async def _async_discovery_loop(
             "scored": result["scored"],
             "expanded": result.get("expanded", 0),
             "enriched": result.get("enriched", 0),
-            "refined": result.get("refined", 0),
+            "triaged": result.get("triaged", 0),
             "cost": result["cost"],
             "elapsed_seconds": result["elapsed_seconds"],
             "scan_rate": result.get("scan_rate"),
+            "triage_rate": result.get("triage_rate"),
             "score_rate": result.get("score_rate"),
             "enrichment_aggregates": enrichment_aggregates,
         },

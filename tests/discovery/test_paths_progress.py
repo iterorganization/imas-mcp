@@ -1,7 +1,7 @@
 """Tests for paths discovery progress display.
 
 Covers ProgressState properties, ParallelProgressDisplay pipeline rendering,
-display items (ScanItem, ScoreItem, EnrichItem), and _count_group_workers.
+display items (ScanItem, TriageItem, EnrichItem), and _count_group_workers.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from imas_codex.discovery.paths.progress import (
     ParallelProgressDisplay,
     ProgressState,
     ScanItem,
-    ScoreItem,
+    TriageItem,
 )
 
 # =============================================================================
@@ -45,19 +45,19 @@ class TestProgressStateProperties:
         time.sleep(0.01)
         assert state.elapsed > 0
 
-    def test_run_cost_combines_score_and_refine(self):
-        """Run cost sums score and refine costs."""
-        state = self._state(_run_score_cost=1.50, _run_refine_cost=0.30)
+    def test_run_cost_combines_triage_and_score(self):
+        """Run cost sums triage and score costs."""
+        state = self._state(_run_triage_cost=1.50, _run_score_cost=0.30)
         assert abs(state.run_cost - 1.80) < 1e-10
 
     def test_cost_per_path_none_when_no_scores(self):
-        """cost_per_path is None when no paths scored."""
+        """cost_per_path is None when no paths triaged."""
         state = self._state()
         assert state.cost_per_path is None
 
     def test_cost_per_path_computed(self):
-        """cost_per_path divides score cost by scored count."""
-        state = self._state(_run_score_cost=5.0, run_scored=10)
+        """cost_per_path divides triage cost by triaged count."""
+        state = self._state(_run_triage_cost=5.0, run_triaged=10)
         assert state.cost_per_path == 0.5
 
     def test_coverage_zero_when_no_total(self):
@@ -72,14 +72,14 @@ class TestProgressStateProperties:
 
     def test_frontier_size(self):
         """Frontier combines scan, score, and expand pending."""
-        state = self._state(pending_scan=10, pending_score=20, pending_expand=5)
+        state = self._state(pending_scan=10, pending_triage=20, pending_expand=5)
         assert state.frontier_size == 35
 
     def test_pending_work(self):
         """Pending work combines all pending queues."""
         state = self._state(
             pending_scan=10,
-            pending_score=20,
+            pending_triage=20,
             pending_expand=5,
             pending_enrich=3,
         )
@@ -87,47 +87,47 @@ class TestProgressStateProperties:
 
     def test_cost_limit_reached(self):
         """Cost limit reached when run_cost >= cost_limit."""
-        state = self._state(cost_limit=5.0, _run_score_cost=5.0)
+        state = self._state(cost_limit=5.0, _run_triage_cost=5.0)
         assert state.cost_limit_reached is True
 
     def test_cost_limit_not_reached(self):
         """Cost limit not reached when under budget."""
-        state = self._state(cost_limit=10.0, _run_score_cost=3.0)
+        state = self._state(cost_limit=10.0, _run_triage_cost=3.0)
         assert state.cost_limit_reached is False
 
     def test_cost_limit_zero_never_reached(self):
         """Cost limit of 0 is never reached (unlimited)."""
-        state = self._state(cost_limit=0.0, _run_score_cost=100.0)
+        state = self._state(cost_limit=0.0, _run_triage_cost=100.0)
         assert state.cost_limit_reached is False
 
     def test_path_limit_reached(self):
-        """Path limit reached when scored >= path_limit."""
-        state = self._state(path_limit=50, run_scored=50)
+        """Path limit reached when triaged + scored >= path_limit."""
+        state = self._state(path_limit=50, run_triaged=30, run_scored=20)
         assert state.path_limit_reached is True
 
     def test_path_limit_none_never_reached(self):
         """No path limit means never reached."""
-        state = self._state(path_limit=None, run_scored=1000)
+        state = self._state(path_limit=None, run_triaged=500, run_scored=500)
         assert state.path_limit_reached is False
 
     def test_limit_reason_cost(self):
         """limit_reason is 'cost' when cost limit reached first."""
-        state = self._state(cost_limit=5.0, _run_score_cost=5.0)
+        state = self._state(cost_limit=5.0, _run_triage_cost=5.0)
         assert state.limit_reason == "cost"
 
     def test_limit_reason_path(self):
         """limit_reason is 'path' when path limit reached."""
         state = self._state(
             cost_limit=10.0,
-            _run_score_cost=1.0,
+            _run_triage_cost=1.0,
             path_limit=10,
-            run_scored=10,
+            run_triaged=10,
         )
         assert state.limit_reason == "path"
 
     def test_limit_reason_none(self):
         """limit_reason is None when no limits reached."""
-        state = self._state(cost_limit=10.0, _run_score_cost=1.0)
+        state = self._state(cost_limit=10.0, _run_triage_cost=1.0)
         assert state.limit_reason is None
 
     def test_estimated_total_cost_none_when_no_data(self):
@@ -138,10 +138,10 @@ class TestProgressStateProperties:
     def test_estimated_total_cost_with_data(self):
         """ETC projects remaining cost from cost_per_path."""
         state = self._state(
-            _run_score_cost=5.0,
-            run_scored=10,
+            _run_triage_cost=5.0,
+            run_triaged=10,
             pending_scan=5,
-            pending_score=5,
+            pending_triage=5,
         )
         # cost_per_path = 0.5, remaining = 10 paths, remaining_cost = 5.0
         # ETC = run_cost (5.0) + remaining_score_cost (5.0) = 10.0
@@ -155,7 +155,7 @@ class TestProgressStateProperties:
 
     def test_eta_seconds_cost_based(self):
         """ETA uses cost-based estimate when cost data available."""
-        state = self._state(cost_limit=10.0, _run_score_cost=5.0)
+        state = self._state(cost_limit=10.0, _run_triage_cost=5.0)
         # Force elapsed
         state.start_time = time.time() - 100  # 100s elapsed, 5.0 spent
         eta = state.eta_seconds
@@ -180,7 +180,7 @@ class TestProgressStateProperties:
 
 
 class TestDisplayItems:
-    """Tests for ScanItem, ScoreItem, EnrichItem."""
+    """Tests for ScanItem, TriageItem, EnrichItem."""
 
     def test_scan_item_defaults(self):
         """ScanItem has sensible defaults."""
@@ -190,9 +190,9 @@ class TestDisplayItems:
         assert item.dirs == 0
         assert item.has_code is False
 
-    def test_score_item_defaults(self):
-        """ScoreItem has sensible defaults."""
-        item = ScoreItem(path="/home/user/code")
+    def test_triage_item_defaults(self):
+        """TriageItem has sensible defaults."""
+        item = TriageItem(path="/home/user/code")
         assert item.score is None
         assert item.should_expand is True
         assert item.skipped is False
@@ -248,11 +248,11 @@ class TestParallelProgressDisplay:
         header = display._build_header()
         assert "SCAN ONLY" in header.plain
 
-    def test_header_shows_score_only(self):
-        """Header shows SCORE ONLY mode indicator."""
-        display = self._display(score_only=True)
+    def test_header_shows_triage_only(self):
+        """Header shows TRIAGE ONLY mode indicator."""
+        display = self._display(triage_only=True)
         header = display._build_header()
-        assert "SCORE ONLY" in header.plain
+        assert "TRIAGE ONLY" in header.plain
 
     def test_header_shows_focus(self):
         """Header shows focus string when set."""
@@ -260,21 +260,22 @@ class TestParallelProgressDisplay:
         header = display._build_header()
         assert "equilibrium codes" in header.plain
 
-    def test_pipeline_section_has_scan_score_enrich(self):
-        """Pipeline section contains all three stage labels."""
+    def test_pipeline_section_has_all_stages(self):
+        """Pipeline section contains all four stage labels."""
         display = self._display()
         display.state.total = 100
         display.state.scored = 20
-        display.state.pending_score = 30
+        display.state.pending_triage = 30
         section = display._build_pipeline_section()
         text = section.plain
         assert "SCAN" in text
-        assert "SCORE" in text
+        assert "TRIAGE" in text
         assert "ENRICH" in text
+        assert "SCORE" in text
 
-    def test_pipeline_scan_disabled_in_score_only(self):
-        """SCAN stage is disabled in score_only mode."""
-        display = self._display(score_only=True)
+    def test_pipeline_scan_disabled_in_triage_only(self):
+        """SCAN stage is disabled in triage_only mode."""
+        display = self._display(triage_only=True)
         display.state.total = 100
         section = display._build_pipeline_section()
         text = section.plain
@@ -305,12 +306,12 @@ class TestParallelProgressDisplay:
         assert "3 dirs" in text
         assert "code project" in text
 
-    def test_pipeline_shows_score_activity(self):
-        """Pipeline shows current score item with score value."""
+    def test_pipeline_shows_triage_activity(self):
+        """Pipeline shows current triage item with score value."""
         display = self._display()
         display.state.total = 100
-        display.state.pending_score = 50
-        display.state.current_score = ScoreItem(
+        display.state.pending_triage = 50
+        display.state.current_triage = TriageItem(
             path="/home/codes/chease",
             score=0.85,
             purpose="simulation_code",
@@ -321,12 +322,12 @@ class TestParallelProgressDisplay:
         assert "chease" in text
         assert "0.85" in text
 
-    def test_pipeline_shows_score_skipped(self):
-        """Pipeline shows skipped score item."""
+    def test_pipeline_shows_triage_skipped(self):
+        """Pipeline shows skipped triage item."""
         display = self._display()
         display.state.total = 100
-        display.state.pending_score = 50
-        display.state.current_score = ScoreItem(
+        display.state.pending_triage = 50
+        display.state.current_triage = TriageItem(
             path="/tmp/build",
             skipped=True,
             skip_reason="temporary directory",
@@ -339,8 +340,8 @@ class TestParallelProgressDisplay:
         """Pipeline shows terminal indicator for non-expandable paths."""
         display = self._display()
         display.state.total = 100
-        display.state.pending_score = 50
-        display.state.current_score = ScoreItem(
+        display.state.pending_triage = 50
+        display.state.current_triage = TriageItem(
             path="/home/codes/tool",
             score=0.3,
             should_expand=False,
@@ -412,12 +413,12 @@ class TestParallelProgressDisplay:
         text = section.plain
         assert "multiformat" in text
 
-    def test_pipeline_shows_score_cost(self):
-        """Pipeline shows LLM cost on SCORE stage."""
+    def test_pipeline_shows_triage_cost(self):
+        """Pipeline shows LLM cost on TRIAGE stage."""
         display = self._display()
         display.state.total = 100
-        display.state.pending_score = 50
-        display.state._run_score_cost = 2.50
+        display.state.pending_triage = 50
+        display.state._run_triage_cost = 2.50
         section = display._build_pipeline_section()
         text = section.plain
         assert "$2.50" in text
@@ -440,7 +441,7 @@ class TestParallelProgressDisplay:
     def test_resources_section_has_cost(self):
         """Resources section shows COST when not scan_only."""
         display = self._display()
-        display.state._run_score_cost = 1.50
+        display.state._run_triage_cost = 1.50
         section = display._build_resources_section()
         text = section.plain
         assert "COST" in text
@@ -474,8 +475,8 @@ class TestParallelProgressDisplay:
         display = self._display(facility="iter", focus="equilibrium")
         display.state.total = 100
         display.state.scored = 20
-        display.state.pending_score = 30
-        display.state._run_score_cost = 2.0
+        display.state.pending_triage = 30
+        display.state._run_triage_cost = 2.0
         display.state.max_depth = 5
         panel = display._build_display()
         text = panel.renderable.plain
@@ -596,11 +597,11 @@ class TestCountGroupWorkers:
             "expand_worker_0": WorkerStatus(
                 name="expand_worker_0", group="scan", state=WorkerState.running
             ),
-            "score_worker_0": WorkerStatus(
-                name="score_worker_0", group="score", state=WorkerState.running
+            "triage_worker_0": WorkerStatus(
+                name="triage_worker_0", group="triage", state=WorkerState.running
             ),
-            "refine_worker_0": WorkerStatus(
-                name="refine_worker_0", group="score", state=WorkerState.idle
+            "score_worker_0": WorkerStatus(
+                name="score_worker_0", group="score", state=WorkerState.idle
             ),
             "enrich_worker_0": WorkerStatus(
                 name="enrich_worker_0", group="enrich", state=WorkerState.running
@@ -608,7 +609,8 @@ class TestCountGroupWorkers:
         }
         display = self._display_with_workers(workers)
         assert display._count_group_workers("scan")[0] == 2
-        assert display._count_group_workers("score")[0] == 2
+        assert display._count_group_workers("triage")[0] == 1
+        assert display._count_group_workers("score")[0] == 1
         assert display._count_group_workers("enrich")[0] == 1
 
     def test_backoff_annotation(self):

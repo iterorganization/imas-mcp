@@ -1,7 +1,7 @@
-"""LLM-based directory scoring.
+"""LLM-based directory triage.
 
-This module implements the scoring phase of graph-led discovery:
-1. Query graph for scanned but unscored paths
+This module implements the triage phase of graph-led discovery:
+1. Query graph for scanned but untriaged paths
 2. Build batched prompts with directory context (parent/sibling scores,
    tree structure, file types, quality indicators)
 3. Call LLM with structured output schema for reliable parsing
@@ -25,9 +25,9 @@ from imas_codex.discovery.base.llm import suppress_litellm_noise
 from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
     ResourcePurpose,
-    ScoreBatch,
-    ScoredBatch,
-    ScoredDirectory,
+    TriageBatch,
+    TriagedBatch,
+    TriagedDirectory,
     parse_path_purpose,
 )
 from imas_codex.settings import get_model
@@ -82,7 +82,7 @@ def combined_score(
 
 
 @dataclass
-class DirectoryScorer:
+class DirectoryTriager:
     """Score directories using LLM with grounded evidence.
 
     Implements:
@@ -96,8 +96,8 @@ class DirectoryScorer:
         facility: Facility ID for sampling calibration examples
 
     Example:
-        scorer = DirectoryScorer(facility="tcv")
-        batch = scorer.score_batch(
+        triager = DirectoryTriager(facility="tcv")
+        batch = triager.triage_batch(
             directories=[...],
             focus="equilibrium codes",
             threshold=0.7,
@@ -112,12 +112,12 @@ class DirectoryScorer:
         if self.model is None:
             self.model = get_model("language")
 
-    def score_batch(
+    def triage_batch(
         self,
         directories: list[dict[str, Any]],
         focus: str | None = None,
         threshold: float = 0.7,
-    ) -> ScoredBatch:
+    ) -> TriagedBatch:
         """Score a batch of directories using LLM with structured output.
 
         Args:
@@ -134,13 +134,13 @@ class DirectoryScorer:
             threshold: Min score to expand (0.0-1.0)
 
         Returns:
-            ScoredBatch with results and cost
+            TriagedBatch with results and cost
         """
         from imas_codex.discovery.base.llm import call_llm_structured
 
         if not directories:
-            return ScoredBatch(
-                scored_dirs=[],
+            return TriagedBatch(
+                triaged_dirs=[],
                 total_cost=0.0,
                 model=self.model,
                 tokens_used=0,
@@ -159,39 +159,39 @@ class DirectoryScorer:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_model=ScoreBatch,
+            response_model=TriageBatch,
         )
 
         # Calculate cost per path for tracking
         cost_per_path = cost / len(directories) if directories else 0.0
 
-        # Map parsed results to ScoredDirectory objects
-        scored_dirs = self._map_scored_directories(
+        # Map parsed results to TriagedDirectory objects
+        triaged_dirs = self._map_triaged_directories(
             batch, directories, threshold, cost_per_path
         )
 
-        return ScoredBatch(
-            scored_dirs=scored_dirs,
+        return TriagedBatch(
+            triaged_dirs=triaged_dirs,
             total_cost=cost,
             model=self.model,
             tokens_used=total_tokens,
         )
 
-    async def async_score_batch(
+    async def async_triage_batch(
         self,
         directories: list[dict[str, Any]],
         focus: str | None = None,
         threshold: float = 0.7,
-    ) -> ScoredBatch:
-        """Async version of score_batch using acall_llm_structured.
+    ) -> TriagedBatch:
+        """Async version of triage_batch using acall_llm_structured.
 
         Fully cancellable — no thread executors, uses litellm.acompletion().
         """
         from imas_codex.discovery.base.llm import acall_llm_structured
 
         if not directories:
-            return ScoredBatch(
-                scored_dirs=[],
+            return TriagedBatch(
+                triaged_dirs=[],
                 total_cost=0.0,
                 model=self.model,
                 tokens_used=0,
@@ -206,26 +206,26 @@ class DirectoryScorer:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_model=ScoreBatch,
+            response_model=TriageBatch,
         )
 
         cost_per_path = cost / len(directories) if directories else 0.0
-        scored_dirs = self._map_scored_directories(
+        triaged_dirs = self._map_triaged_directories(
             batch, directories, threshold, cost_per_path
         )
 
-        return ScoredBatch(
-            scored_dirs=scored_dirs,
+        return TriagedBatch(
+            triaged_dirs=triaged_dirs,
             total_cost=cost,
             model=self.model,
             tokens_used=total_tokens,
         )
 
     def _build_system_prompt(self, focus: str | None = None) -> str:
-        """Build system prompt for directory scoring.
+        """Build system prompt for directory triage.
 
         Uses render_prompt() for proper Jinja2 rendering with schema context.
-        The scorer.md prompt is dynamic=true, so schema-derived values
+        The triage.md prompt is dynamic=true, so schema-derived values
         (path_purposes, score_dimensions) are injected automatically.
 
         Injects:
@@ -261,7 +261,7 @@ class DirectoryScorer:
             context["dimension_calibration"] = dimension_calibration
 
         # Use render_prompt for proper Jinja2 rendering with schema context
-        return render_prompt("discovery/scorer", context)
+        return render_prompt("discovery/triage", context)
 
     def _build_user_prompt(self, directories: list[dict[str, Any]]) -> str:
         """Build user prompt with directories to score.
@@ -394,33 +394,33 @@ class DirectoryScorer:
 
         return "\n".join(lines)
 
-    def _map_scored_directories(
+    def _map_triaged_directories(
         self,
-        batch: ScoreBatch,
+        batch: TriageBatch,
         directories: list[dict[str, Any]],
         threshold: float,
         cost_per_path: float = 0.0,
-    ) -> list[ScoredDirectory]:
-        """Map parsed ScoreBatch to ScoredDirectory objects.
+    ) -> list[TriagedDirectory]:
+        """Map parsed TriageBatch to TriagedDirectory objects.
 
         JSON parsing and sanitization are handled by call_llm_structured().
         This method applies combined scoring, expansion logic, and enrichment
         decisions to the already-validated Pydantic model.
 
         Args:
-            batch: Parsed ScoreBatch from LLM response
+            batch: Parsed TriageBatch from LLM response
             directories: Input directory info dicts
             threshold: Minimum score to expand
             cost_per_path: LLM cost per path (batch_cost / batch_size)
 
         Returns:
-            List of ScoredDirectory objects with scores and cost_per_path set
+            List of TriagedDirectory objects with scores and cost_per_path set
         """
         import json as json_module
 
         results = batch.results
 
-        scored = []
+        triaged = []
         for i, result in enumerate(results[: len(directories)]):
             path = directories[i]["path"]
 
@@ -490,7 +490,7 @@ class DirectoryScorer:
 
             # Pass through LLM decisions directly — structural overrides
             # (VCS accessibility, data containers) are applied in
-            # mark_paths_scored() at persistence time.
+            # mark_paths_triaged() at persistence time.
             should_expand = result.should_expand
             should_enrich = result.should_enrich
             enrich_skip_reason = result.enrich_skip_reason
@@ -499,7 +499,7 @@ class DirectoryScorer:
             # from has_git, path_purpose, score. Only set for non-derivable cases
             # (access_denied, empty, parent_terminal, etc.)
 
-            scored_dir = ScoredDirectory(
+            triaged_dir = TriagedDirectory(
                 path=path,
                 path_purpose=purpose,
                 description=result.description,
@@ -525,16 +525,16 @@ class DirectoryScorer:
                 score_cost=cost_per_path,
             )
 
-            scored.append(scored_dir)
+            triaged.append(triaged_dir)
 
-        return scored
+        return triaged
 
     def _parse_response(
         self,
         response_text: str,
         directories: list[dict[str, Any]],
         threshold: float,
-    ) -> list[ScoredDirectory]:
+    ) -> list[TriagedDirectory]:
         """Parse unstructured LLM response (legacy fallback)."""
         import json
 
@@ -551,7 +551,7 @@ class DirectoryScorer:
             logger.warning(f"Failed to parse LLM response: {e}")
             # Fallback: return empty scores for all (use container as neutral purpose)
             return [
-                ScoredDirectory(
+                TriagedDirectory(
                     path=d["path"],
                     path_purpose=ResourcePurpose.container,
                     description="Parse error",
@@ -563,7 +563,7 @@ class DirectoryScorer:
                 for d in directories
             ]
 
-        scored = []
+        triaged = []
         for i, result in enumerate(results[: len(directories)]):
             path = directories[i]["path"]
 
@@ -632,12 +632,12 @@ class DirectoryScorer:
             combined = combined_score(scores, directories[i], purpose)
 
             # Pass through LLM decisions directly — structural overrides
-            # applied in mark_paths_scored() at persistence time.
+            # applied in mark_paths_triaged() at persistence time.
             should_expand = result.get("should_expand", False)
             should_enrich = result.get("should_enrich", True)
             enrich_skip_reason = result.get("enrich_skip_reason")
 
-            scored_dir = ScoredDirectory(
+            triaged_dir = TriagedDirectory(
                 path=path,
                 path_purpose=purpose,
                 description=result.get("description", ""),
@@ -662,6 +662,6 @@ class DirectoryScorer:
                 enrich_skip_reason=enrich_skip_reason,
             )
 
-            scored.append(scored_dir)
+            triaged.append(triaged_dir)
 
-        return scored
+        return triaged

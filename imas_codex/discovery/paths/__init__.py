@@ -1,17 +1,17 @@
 """Path discovery for remote facility filesystems.
 
-Provides parallel discovery workers for scanning, scoring, and enriching
-directory structures at fusion facilities.
+Provides parallel discovery workers for scanning, triaging, enriching,
+and scoring directory structures at fusion facilities.
 
 Pipeline:
-    seed → scan → score → enrich → refine
+    seed → scan → triage → enrich → score
 
 Workers:
     - scan_worker: SSH directory enumeration
     - expand_worker: Create child paths from scan results
-    - score_worker: LLM classification and scoring
+    - triage_worker: LLM classification and initial scoring
     - enrich_worker: Deep analysis (du, tokei, patterns)
-    - refine_worker: Refinement with enrichment data
+    - score_worker: Independent scoring with enrichment evidence
 """
 
 from imas_codex.discovery.paths.frontier import (
@@ -28,15 +28,15 @@ from imas_codex.discovery.paths.frontier import (
 from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
     ResourcePurpose,
-    ScoreBatch,
-    ScoredBatch,
-    ScoredDirectory,
-    ScoreResult,
     TerminalReason,
+    TriageBatch,
+    TriagedBatch,
+    TriagedDirectory,
+    TriageResult,
 )
 from imas_codex.discovery.paths.parallel import run_parallel_discovery
 from imas_codex.discovery.paths.progress import ParallelProgressDisplay
-from imas_codex.discovery.paths.scorer import DirectoryScorer, combined_score
+from imas_codex.discovery.paths.scorer import DirectoryTriager, combined_score
 
 __all__ = [
     # Frontier management
@@ -53,12 +53,12 @@ __all__ = [
     "ResourcePurpose",
     "TerminalReason",
     "DirectoryEvidence",
-    "ScoredDirectory",
-    "ScoredBatch",
-    "ScoreResult",
-    "ScoreBatch",
-    # Scoring
-    "DirectoryScorer",
+    "TriagedDirectory",
+    "TriagedBatch",
+    "TriageResult",
+    "TriageBatch",
+    # Triage
+    "DirectoryTriager",
     "combined_score",
     # Parallel discovery
     "run_parallel_discovery",

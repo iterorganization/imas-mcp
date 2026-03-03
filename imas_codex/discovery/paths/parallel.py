@@ -34,7 +34,7 @@ from imas_codex.discovery.base.supervision import (
     run_supervised_loop,
     supervised_worker,
 )
-from imas_codex.discovery.paths.models import RefineBatch
+from imas_codex.discovery.paths.models import ScoreBatch
 from imas_codex.graph.models import PathStatus, TerminalReason
 
 if TYPE_CHECKING:
@@ -61,9 +61,9 @@ class DiscoveryState:
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
     expand_stats: WorkerStats = field(default_factory=WorkerStats)
-    score_stats: WorkerStats = field(default_factory=WorkerStats)
+    triage_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
-    refine_stats: WorkerStats = field(default_factory=WorkerStats)
+    score_stats: WorkerStats = field(default_factory=WorkerStats)
     dedup_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
@@ -72,16 +72,16 @@ class DiscoveryState:
     # Pipeline phases (initialized in __post_init__)
     scan_phase: PipelinePhase = field(init=False)
     expand_phase: PipelinePhase = field(init=False)
-    score_phase: PipelinePhase = field(init=False)
+    triage_phase: PipelinePhase = field(init=False)
     enrich_phase: PipelinePhase = field(init=False)
-    refine_phase: PipelinePhase = field(init=False)
+    score_phase: PipelinePhase = field(init=False)
 
     def __post_init__(self) -> None:
         self.scan_phase = PipelinePhase("scan")
         self.expand_phase = PipelinePhase("expand")
-        self.score_phase = PipelinePhase("score")
+        self.triage_phase = PipelinePhase("triage")
         self.enrich_phase = PipelinePhase("enrich")
-        self.refine_phase = PipelinePhase("refine")
+        self.score_phase = PipelinePhase("score")
 
     # SSH retry tracking for exponential backoff
     ssh_retry_count: int = 0
@@ -93,7 +93,7 @@ class DiscoveryState:
 
     @property
     def total_cost(self) -> float:
-        return self.score_stats.cost + self.refine_stats.cost
+        return self.triage_stats.cost + self.score_stats.cost
 
     @property
     def total_processed(self) -> int:
@@ -101,10 +101,12 @@ class DiscoveryState:
 
     @property
     def terminal_count(self) -> int:
-        """Count of paths in terminal states (scored, not pending expand/enrich).
+        """Count of paths in terminal states (triaged or scored, not pending work).
 
-        For --limit purposes, we only count paths that have completed their
-        pipeline: scored and not awaiting expansion or enrichment.
+        For --limit purposes, count paths that have completed their pipeline:
+        - triaged: below threshold, terminal after 1st pass
+        - scored: completed 2nd pass scoring with enrichment evidence
+        Both must not be awaiting expansion or enrichment.
         """
         from imas_codex.graph import GraphClient
 
@@ -112,12 +114,13 @@ class DiscoveryState:
             result = gc.query(
                 """
                 MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-                WHERE p.status = $scored
+                WHERE p.status IN [$triaged, $scored]
                   AND (p.should_expand = false OR p.expanded_at IS NOT NULL)
                   AND (p.should_enrich = false OR p.is_enriched = true)
                 RETURN count(p) AS terminal_count
                 """,
                 facility=self.facility,
+                triaged=PathStatus.triaged.value,
                 scored=PathStatus.scored.value,
             )
             return result[0]["terminal_count"] if result else 0
@@ -173,9 +176,9 @@ class DiscoveryState:
         all_done = (
             self.scan_phase.done
             and self.expand_phase.done
-            and self.score_phase.done
+            and self.triage_phase.done
             and self.enrich_phase.done
-            and self.refine_phase.done
+            and self.score_phase.done
         )
         if all_done:
             # Final confirmation: no pending work at all
@@ -183,9 +186,9 @@ class DiscoveryState:
                 # Graph has work — reset all phases so workers re-poll
                 self.scan_phase.reset()
                 self.expand_phase.reset()
-                self.score_phase.reset()
+                self.triage_phase.reset()
                 self.enrich_phase.reset()
-                self.refine_phase.reset()
+                self.score_phase.reset()
                 return False
             logger.debug(
                 f"Terminating: all phases done, no pending work "
@@ -205,9 +208,9 @@ def has_pending_work(facility: str) -> bool:
     Returns True if any of:
     - Discovered paths awaiting first scan (including actively claimed)
     - Scanned paths awaiting scoring (including actively claimed)
-    - Scored paths with should_expand=true that haven't been expanded yet
-    - Scored paths with should_enrich=true that haven't been enriched yet
-    - Enriched paths that haven't been refined yet
+    - Triaged paths with should_expand=true that haven't been expanded yet
+    - Triaged paths with should_enrich=true that haven't been enriched yet
+    - Enriched paths that haven't been scored yet
 
     Note: Unlike claim functions, this does NOT filter out claimed paths.
     Claimed paths represent active work in progress and must count as
@@ -224,16 +227,16 @@ def has_pending_work(facility: str) -> bool:
                       THEN 'discovered' ELSE null END AS disc,
                  CASE WHEN p.status = $scanned AND p.score IS NULL
                       THEN 'scanned' ELSE null END AS scn,
-                 CASE WHEN p.status = $scored AND p.should_expand = true
+                 CASE WHEN p.status = $triaged AND p.should_expand = true
                       AND p.expanded_at IS NULL
                       THEN 'expand' ELSE null END AS exp,
-                 CASE WHEN p.status = $scored AND p.should_enrich = true
-                      AND p.score >= 0.15
+                 CASE WHEN p.status = $triaged AND p.should_enrich = true
+                      AND p.triage_score >= 0.15
                       AND (p.is_enriched IS NULL OR p.is_enriched = false)
                       THEN 'enrich' ELSE null END AS enr,
                  CASE WHEN p.is_enriched = true
-                      AND p.refined_at IS NULL
-                      THEN 'refine' ELSE null END AS rsc
+                      AND p.scored_at IS NULL
+                      THEN 'score' ELSE null END AS rsc
             WHERE disc IS NOT NULL OR scn IS NOT NULL OR exp IS NOT NULL
                   OR enr IS NOT NULL OR rsc IS NOT NULL
             RETURN count(p) AS pending,
@@ -241,12 +244,12 @@ def has_pending_work(facility: str) -> bool:
                    count(scn) AS pending_scanned,
                    count(exp) AS pending_expand,
                    count(enr) AS pending_enrich,
-                   count(rsc) AS pending_refine
+                   count(rsc) AS pending_score
             """,
             facility=facility,
             discovered=PathStatus.discovered.value,
             scanned=PathStatus.scanned.value,
-            scored=PathStatus.scored.value,
+            triaged=PathStatus.triaged.value,
         )
         if result:
             pending = result[0]["pending"]
@@ -256,7 +259,7 @@ def has_pending_work(facility: str) -> bool:
                     f"scanned={result[0]['pending_scanned']}, "
                     f"expand={result[0]['pending_expand']}, "
                     f"enrich={result[0]['pending_enrich']}, "
-                    f"refine={result[0]['pending_refine']}"
+                    f"score={result[0]['pending_score']}"
                 )
             return pending > 0
         return False
@@ -285,26 +288,26 @@ def _has_pending_scan_work(facility: str) -> bool:
 
 
 def _has_pending_expand_work(facility: str) -> bool:
-    """Check if there are scored paths awaiting expansion."""
+    """Check if there are triaged paths awaiting expansion."""
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.status = $scored
+            WHERE p.status = $triaged
               AND p.should_expand = true
               AND p.expanded_at IS NULL
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,
-            scored=PathStatus.scored.value,
+            triaged=PathStatus.triaged.value,
         )
         return bool(result and result[0]["has_work"])
 
 
-def _has_pending_score_work(facility: str) -> bool:
-    """Check if there are scanned paths awaiting scoring."""
+def _has_pending_triage_work(facility: str) -> bool:
+    """Check if there are scanned paths awaiting triage."""
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
@@ -321,30 +324,30 @@ def _has_pending_score_work(facility: str) -> bool:
 
 
 def _has_pending_enrich_work(facility: str) -> bool:
-    """Check if there are scored paths awaiting enrichment."""
+    """Check if there are triaged paths awaiting enrichment."""
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE p.status = $scored
+            WHERE p.status = $triaged
               AND p.should_enrich = true
-              AND p.score >= 0.15
+              AND p.triage_score >= 0.15
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,
-            scored=PathStatus.scored.value,
+            triaged=PathStatus.triaged.value,
         )
         return bool(result and result[0]["has_work"])
 
 
-def _has_pending_refine_work(facility: str) -> bool:
-    """Check if there are enriched paths awaiting refinement.
+def _has_pending_score_work(facility: str) -> bool:
+    """Check if there are enriched paths awaiting scoring (2nd pass).
 
-    Matches the same criteria as claim_paths_for_refining:
-    all enriched paths that haven't been refined yet.
+    Matches the same criteria as claim_paths_for_scoring:
+    all enriched paths that haven't been scored yet.
     """
     from imas_codex.graph import GraphClient
 
@@ -353,7 +356,7 @@ def _has_pending_refine_work(facility: str) -> bool:
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.is_enriched = true
-              AND p.refined_at IS NULL
+              AND p.scored_at IS NULL
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,
@@ -445,10 +448,10 @@ def claim_paths_for_scanning(
 def claim_paths_for_expanding(
     facility: str, limit: int = 50, root_filter: list[str] | None = None
 ) -> list[dict[str, Any]]:
-    """Atomically claim scored paths for expansion scanning.
+    """Atomically claim triaged paths for expansion scanning.
 
     Claims paths with should_expand=true that haven't been expanded yet.
-    These are scored high-value directories that need child enumeration.
+    These are triaged high-value directories that need child enumeration.
 
     Uses claimed_at timestamp for coordination (no status change during claim).
 
@@ -470,28 +473,28 @@ def claim_paths_for_expanding(
         result = gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
-            WHERE p.status = $scored
+            WHERE p.status = $triaged
               AND p.should_expand = true
               AND p.expanded_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
-            WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
+            WITH p ORDER BY p.triage_score DESC, p.depth ASC LIMIT $limit
             SET p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
             """,
             facility=facility,
             limit=limit,
-            scored=PathStatus.scored.value,
+            triaged=PathStatus.triaged.value,
             cutoff=cutoff,
             root_filter=root_filter or [],
         )
         return list(result)
 
 
-def claim_paths_for_scoring(
+def claim_paths_for_triaging(
     facility: str, limit: int = 25, root_filter: list[str] | None = None
 ) -> list[dict[str, Any]]:
-    """Atomically claim scanned paths for scoring.
+    """Atomically claim scanned paths for triage.
 
     Uses claimed_at timestamp for coordination (no status change during claim).
     Returns paths that this worker now owns.
@@ -559,21 +562,21 @@ async def mark_scan_complete(
     return await persist_scan_results(facility, scan_results, excluded=excluded)
 
 
-def mark_score_complete(
+def mark_triage_complete(
     facility: str,
     score_data: list[dict[str, Any]],
 ) -> int:
-    """Apply structural expansion overrides and persist scored paths.
+    """Apply structural expansion overrides and persist triaged paths.
 
-    Transition: scoring → scored
+    Transition: scanned → triaged
     """
     from imas_codex.discovery.paths.frontier import (
         apply_expansion_overrides,
-        mark_paths_scored,
+        mark_paths_triaged,
     )
 
     apply_expansion_overrides(facility, score_data)
-    return mark_paths_scored(facility, score_data)
+    return mark_paths_triaged(facility, score_data)
 
 
 def claim_paths_for_enriching(
@@ -582,11 +585,11 @@ def claim_paths_for_enriching(
     root_filter: list[str] | None = None,
     auto_enrich_threshold: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Atomically claim scored paths for enrichment.
+    """Atomically claim triaged paths for enrichment.
 
     Claims paths where:
-    - status = 'scored'
-    - should_enrich = true OR score >= auto_enrich_threshold
+    - status = 'triaged'
+    - should_enrich = true OR triage_score >= auto_enrich_threshold
     - is_enriched is null or false
 
     Uses claimed_at timestamp for orphan recovery.
@@ -610,7 +613,9 @@ def claim_paths_for_enriching(
     # (e.g. empty dirs where should_enrich defaulted to true)
     min_enrich_score = 0.15
     if auto_enrich_threshold is not None:
-        enrich_clause = "(p.should_enrich = true OR p.score >= $auto_enrich_threshold)"
+        enrich_clause = (
+            "(p.should_enrich = true OR p.triage_score >= $auto_enrich_threshold)"
+        )
     else:
         enrich_clause = "p.should_enrich = true"
 
@@ -619,21 +624,21 @@ def claim_paths_for_enriching(
         result = gc.query(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
-            WHERE p.status = $scored
+            WHERE p.status = $triaged
               AND {enrich_clause}
-              AND p.score >= $min_enrich_score
+              AND p.triage_score >= $min_enrich_score
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
               AND (p.total_dirs IS NULL OR p.total_dirs <= 500)
             {root_clause}
-            WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
+            With p ORDER BY p.triage_score DESC, p.depth ASC LIMIT $limit
             SET p.claimed_at = datetime()
-            RETURN p.id AS id, p.path AS path, p.depth AS depth, p.score AS score,
+            RETURN p.id AS id, p.path AS path, p.depth AS depth, p.triage_score AS triage_score,
                    p.path_purpose AS path_purpose
             """,
             facility=facility,
             limit=limit,
-            scored=PathStatus.scored.value,
+            triaged=PathStatus.triaged.value,
             cutoff=cutoff,
             root_filter=root_filter or [],
             auto_enrich_threshold=auto_enrich_threshold,
@@ -642,21 +647,21 @@ def claim_paths_for_enriching(
         return list(result)
 
 
-def claim_paths_for_refining(
+def claim_paths_for_scoring(
     facility: str,
     limit: int = 10,
     root_filter: list[str] | None = None,
     min_score: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Atomically claim enriched paths for rescoring.
+    """Atomically claim enriched paths for 2nd-pass scoring.
 
     Claims paths where:
     - is_enriched = true
-    - refined_at is null
+    - scored_at is null
 
-    All enriched paths are refined — we've already invested in
-    enrichment, so use the data. Refinement can raise OR lower
-    scores based on concrete evidence (LOC, patterns, size).
+    All enriched paths are scored — we've already invested in
+    enrichment, so use the data. Scoring can raise OR lower
+    triage scores based on concrete evidence (LOC, patterns, size).
 
     Returns paths that this worker now owns.
 
@@ -664,7 +669,7 @@ def claim_paths_for_refining(
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
-        min_score: Minimum score for refinement (default: 0.0 = refine all)
+        min_score: Minimum triage_score for scoring (default: 0.0 = score all)
     """
     from imas_codex.graph import GraphClient
 
@@ -681,14 +686,14 @@ def claim_paths_for_refining(
             f"""
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
-              AND p.score >= $min_score
-              AND p.refined_at IS NULL
+              AND p.triage_score >= $min_score
+              AND p.scored_at IS NULL
               AND (p.claimed_at IS NULL OR p.claimed_at < datetime() - duration($cutoff))
             {root_clause}
-            WITH p ORDER BY p.score DESC LIMIT $limit
+            WITH p ORDER BY p.triage_score DESC LIMIT $limit
             SET p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
-                   p.score AS score,
+                   p.triage_score AS triage_score,
                    p.score_modeling_code AS score_modeling_code,
                    p.score_analysis_code AS score_analysis_code,
                    p.score_operations_code AS score_operations_code,
@@ -815,17 +820,18 @@ def mark_enrichment_complete(
     return updated
 
 
-def mark_refine_complete(
+def mark_score_complete(
     facility: str,
-    refine_results: list[dict[str, Any]],
+    score_results: list[dict[str, Any]],
 ) -> int:
-    """Mark paths with refined scores after rescoring.
+    """Mark paths with scored results after 2nd-pass scoring.
 
     Persists adjusted scores and evidence from pattern matching.
+    Sets status to 'scored'.
 
     Args:
         facility: Facility ID
-        refine_results: List of dicts with path, new scores, and evidence
+        score_results: List of dicts with path, new scores, and evidence
 
     Returns:
         Number of paths updated
@@ -839,7 +845,7 @@ def mark_refine_complete(
     updated = 0
 
     with GraphClient() as gc:
-        for result in refine_results:
+        for result in score_results:
             path_id = f"{facility}:{result['path']}"
 
             # Serialize evidence lists to JSON
@@ -871,10 +877,11 @@ def mark_refine_complete(
             gc.query(
                 f"""
                 MATCH (p:FacilityPath {{id: $id}})
-                SET p.refined_at = $now,
+                SET p.status = $scored,
+                    p.scored_at = $now,
                     p.score = $score,
                     p.score_cost = coalesce(p.score_cost, 0) + $score_cost,
-                    p.refine_reason = $adjustment_reason,
+                    p.score_reason = $adjustment_reason,
                     p.primary_evidence = $primary_evidence,
                     p.evidence_summary = $evidence_summary,
                     p.description = $description,
@@ -888,6 +895,7 @@ def mark_refine_complete(
                 now=now,
                 score=result.get("score"),
                 score_cost=result.get("score_cost", 0.0),
+                scored=PathStatus.scored.value,
                 adjustment_reason=result.get("adjustment_reason", ""),
                 primary_evidence=primary_evidence,
                 evidence_summary=result.get("evidence_summary", ""),
@@ -900,7 +908,7 @@ def mark_refine_complete(
             )
             updated += 1
 
-            # Data container child-skip: if refine marked this as a data
+            # Data container child-skip: if scoring marked this as a data
             # container that shouldn't expand, mark children as terminal
             path_purpose = result.get("path_purpose")
             should_expand = result.get("should_expand", True)
@@ -928,7 +936,7 @@ def mark_refine_complete(
                 )
                 if skipped_count > 0:
                     logger.debug(
-                        f"Refine: skipped {skipped_count} children of "
+                        f"Score: skipped {skipped_count} children of "
                         f"{path_purpose}: {result['path']}"
                     )
 
@@ -1306,7 +1314,7 @@ async def dedup_worker(
     - Paths scoring (claim_paths_for_scoring requires status=scanned)
     - Path expansion (claim_paths_for_expanding requires status=scored)
     - Path enrichment (claim_paths_for_enriching requires status=scored)
-    - Score refinement (claim_paths_for_refining requires is_enriched=true)
+    - Score phase (claim_paths_for_scoring requires is_enriched=true)
     - Code file scanning (claim_paths_for_file_scan requires status=scored)
     - Ingestion pipeline (queue_files requires scored FacilityPath parent)
 
@@ -1526,14 +1534,14 @@ async def expand_worker(
         await asyncio.sleep(0.1)
 
 
-async def score_worker(
+async def triage_worker(
     state: DiscoveryState,
     on_progress: Callable[[str, WorkerStats, list[dict] | None], None] | None = None,
     batch_size: int = 25,
 ) -> None:
-    """Async scorer worker.
+    """Async triage worker.
 
-    Continuously claims scanned paths, scores via LLM, marks complete.
+    Continuously claims scanned paths, triages via LLM, marks complete.
     Runs until stop_requested, budget exhausted, or no more scanned paths.
 
     Optimization: Empty directories (total_files=0 AND total_dirs=0) are
@@ -1544,43 +1552,43 @@ async def score_worker(
         on_progress: Progress callback
         batch_size: Paths per LLM call (default 25)
     """
-    from imas_codex.discovery.paths.scorer import DirectoryScorer
+    from imas_codex.discovery.paths.scorer import DirectoryTriager
 
-    scorer = DirectoryScorer(facility=state.facility)
+    scorer = DirectoryTriager(facility=state.facility)
     loop = asyncio.get_running_loop()
 
     while not state.should_stop():
         # Check budget before claiming work
         if state.budget_exhausted:
             if on_progress:
-                on_progress("budget exhausted", state.score_stats, None)
+                on_progress("budget exhausted", state.triage_stats, None)
             break
 
         # Claim work from graph (run in executor to avoid blocking event loop)
         paths = await loop.run_in_executor(
             None,
-            lambda: claim_paths_for_scoring(
+            lambda: claim_paths_for_triaging(
                 state.facility, limit=batch_size, root_filter=state.root_filter
             ),
         )
 
         if not paths:
-            state.score_phase.record_idle()
-            state.score_stats.mark_idle()
-            if state.score_phase.idle_count <= 3:
+            state.triage_phase.record_idle()
+            state.triage_stats.mark_idle()
+            if state.triage_phase.idle_count <= 3:
                 logger.debug(
-                    f"Score worker idle ({state.score_phase.idle_count}), "
+                    f"Triage worker idle ({state.triage_phase.idle_count}), "
                     f"scan_processed={state.scan_stats.processed}"
                 )
             if on_progress:
-                on_progress("waiting for scanned paths", state.score_stats, None)
+                on_progress("waiting for scanned paths", state.triage_stats, None)
             # Wait before polling again
             await asyncio.sleep(2.0)
             continue
 
-        state.score_phase.record_activity(len(paths))
-        state.score_stats.mark_active()
-        logger.debug(f"Score worker claimed {len(paths)} paths")
+        state.triage_phase.record_activity(len(paths))
+        state.triage_stats.mark_active()
+        logger.debug(f"Triage worker claimed {len(paths)} paths")
 
         # Split paths into auto-skip categories and paths needing LLM
         empty_paths = []
@@ -1634,9 +1642,9 @@ async def score_worker(
                 for p in empty_paths
             ]
             await loop.run_in_executor(
-                None, lambda sd=skip_data: mark_score_complete(state.facility, sd)
+                None, lambda sd=skip_data: mark_triage_complete(state.facility, sd)
             )
-            state.score_stats.processed += len(empty_paths)
+            state.triage_stats.processed += len(empty_paths)
 
             skipped_results = [
                 {
@@ -1658,7 +1666,7 @@ async def score_worker(
                 # Only skipped paths, show progress
                 on_progress(
                     f"skipped {len(empty_paths)} empty",
-                    state.score_stats,
+                    state.triage_stats,
                     skipped_results,
                 )
                 if not accessible_vcs_paths and not paths_to_score:
@@ -1700,9 +1708,9 @@ async def score_worker(
             ]
             await loop.run_in_executor(
                 None,
-                lambda sd=vcs_skip_data: mark_score_complete(state.facility, sd),
+                lambda sd=vcs_skip_data: mark_triage_complete(state.facility, sd),
             )
-            state.score_stats.processed += len(accessible_vcs_paths)
+            state.triage_stats.processed += len(accessible_vcs_paths)
 
             vcs_results = [
                 {
@@ -1733,7 +1741,7 @@ async def score_worker(
                 )
                 on_progress(
                     f"{skipped_msg}{len(accessible_vcs_paths)} accessible VCS repos",
-                    state.score_stats,
+                    state.triage_stats,
                     skipped_results,
                 )
                 continue
@@ -1742,28 +1750,30 @@ async def score_worker(
             continue
 
         if on_progress:
-            on_progress(f"scoring {len(paths_to_score)} paths", state.score_stats, None)
+            on_progress(
+                f"triaging {len(paths_to_score)} paths", state.triage_stats, None
+            )
 
-        # Async LLM scoring — fully cancellable
+        # Async LLM triage — fully cancellable
         start = time.time()
         try:
-            result = await scorer.async_score_batch(
+            result = await scorer.async_triage_batch(
                 directories=paths_to_score,
                 focus=state.focus,
                 threshold=state.threshold,
             )
-            state.score_stats.last_batch_time = time.time() - start
-            state.score_stats.cost += result.total_cost
+            state.triage_stats.last_batch_time = time.time() - start
+            state.triage_stats.cost += result.total_cost
 
-            # Persist results (marks scoring → scored)
+            # Persist results (marks scanned → triaged)
             # Run in executor to avoid blocking event loop
-            score_data = [d.to_graph_dict() for d in result.scored_dirs]
+            score_data = [d.to_graph_dict() for d in result.triaged_dirs]
             await loop.run_in_executor(
-                None, lambda sd=score_data: mark_score_complete(state.facility, sd)
+                None, lambda sd=score_data: mark_triage_complete(state.facility, sd)
             )
 
-            state.score_stats.processed += len(result.scored_dirs)
-            state.score_stats.record_batch(len(result.scored_dirs))
+            state.triage_stats.processed += len(result.triaged_dirs)
+            state.triage_stats.record_batch(len(result.triaged_dirs))
 
             # Build detailed score results for progress callback
             detailed_results = [
@@ -1779,10 +1789,10 @@ async def score_worker(
                     "score_imas": d.score_imas,
                     "skip_reason": d.skip_reason or "",
                     "should_expand": d.should_expand,
-                    "terminal_reason": d.terminal_reason or "",
+                    "terminal_reason": d.skip_reason or "",
                     "total_files": 0,  # Not available at score time
                 }
-                for d in result.scored_dirs
+                for d in result.triaged_dirs
             ]
             # Combine with any skipped results
             all_results = skipped_results + detailed_results
@@ -1791,8 +1801,8 @@ async def score_worker(
                     f" (+{len(skipped_results)} skipped)" if skipped_results else ""
                 )
                 on_progress(
-                    f"scored {len(result.scored_dirs)} (${result.total_cost:.3f}){skipped_msg}",
-                    state.score_stats,
+                    f"triaged {len(result.triaged_dirs)} (${result.total_cost:.3f}){skipped_msg}",
+                    state.triage_stats,
                     all_results,
                 )
 
@@ -1807,8 +1817,8 @@ async def score_worker(
             # Don't show validation errors in progress display
         except Exception as e:
             # Other errors - increment error count and revert
-            logger.exception(f"Score error: {e}")
-            state.score_stats.errors += len(paths_to_score)
+            logger.exception(f"Triage error: {e}")
+            state.triage_stats.errors += len(paths_to_score)
             _revert_path_claims(state.facility, [p["path"] for p in paths_to_score])
 
         # Brief yield
@@ -1940,23 +1950,23 @@ async def enrich_worker(
         await asyncio.sleep(0.1)
 
 
-async def refine_worker(
+async def score_worker(
     state: DiscoveryState,
     on_progress: Callable[[str, WorkerStats, list[dict] | None], None] | None = None,
     batch_size: int = 10,
 ) -> None:
-    """Async refine worker.
+    """Async score worker (2nd pass).
 
-    Continuously claims enriched paths, refines using enrichment data
-    (total_bytes, total_lines, language_breakdown) for refined scoring.
-    Cheaper LLM call since we use a simpler prompt with concrete metrics.
+    Continuously claims enriched paths, scores using enrichment data
+    (total_bytes, total_lines, language_breakdown) for authoritative scoring.
+    Does NOT see numeric triage scores to avoid anchoring bias.
 
     Args:
         state: Shared discovery state
         on_progress: Progress callback
-        batch_size: Paths per refine operation (default 10)
+        batch_size: Paths per score operation (default 10)
     """
-    # Use local claim_paths_for_refining and mark_refine_complete
+    # Use local claim_paths_for_scoring and mark_score_complete
     # (defined above in this module with root_filter support)
 
     loop = asyncio.get_running_loop()
@@ -1965,43 +1975,43 @@ async def refine_worker(
         # Check budget before claiming work
         if state.budget_exhausted:
             if on_progress:
-                on_progress("budget exhausted", state.refine_stats, None)
+                on_progress("budget exhausted", state.score_stats, None)
             break
 
         # Claim work from graph (run in executor to avoid blocking event loop)
         paths = await loop.run_in_executor(
             None,
-            lambda: claim_paths_for_refining(
+            lambda: claim_paths_for_scoring(
                 state.facility, limit=batch_size, root_filter=state.root_filter
             ),
         )
 
         if not paths:
-            state.refine_phase.record_idle()
-            state.refine_stats.mark_idle()
+            state.score_phase.record_idle()
+            state.score_stats.mark_idle()
             if on_progress:
-                on_progress("waiting for enriched paths", state.refine_stats, None)
+                on_progress("waiting for enriched paths", state.score_stats, None)
             # Wait before polling again
             await asyncio.sleep(2.0)
             continue
 
-        state.refine_phase.record_activity(len(paths))
-        state.refine_stats.mark_active()
+        state.score_phase.record_activity(len(paths))
+        state.score_stats.mark_active()
 
         if on_progress:
-            on_progress(f"rescoring {len(paths)} paths", state.refine_stats, None)
+            on_progress(f"scoring {len(paths)} paths", state.score_stats, None)
 
-        # Run LLM-based rescoring in thread pool
+        # Run LLM-based scoring in thread pool
         start = time.time()
         try:
-            # LLM rescoring uses enrichment data for intelligent score refinement
+            # LLM scoring uses enrichment data for authoritative scoring
             # Pass facility for cross-facility example injection
-            llm_results, cost = await _async_refine_with_llm(
+            llm_results, cost = await _async_score_with_llm(
                 paths, state.facility, focus=state.focus
             )
 
             # Add should_expand from original data and cost tracking
-            refine_results = []
+            score_results = []
             failed_count = 0
             cost_per_path = cost / len(paths) if paths else 0.0
             for llm_r in llm_results:
@@ -2043,50 +2053,50 @@ async def refine_worker(
                 ]:
                     if dim in llm_r:
                         result[dim] = llm_r[dim]
-                refine_results.append(result)
+                score_results.append(result)
 
             if failed_count:
                 logger.warning(
-                    "Skipped %d/%d failed refinements (not written to graph)",
+                    "Skipped %d/%d failed scores (not written to graph)",
                     failed_count,
                     len(llm_results),
                 )
-                state.refine_stats.errors += failed_count
+                state.score_stats.errors += failed_count
 
-            state.refine_stats.last_batch_time = time.time() - start
-            state.refine_stats.cost += cost
+            state.score_stats.last_batch_time = time.time() - start
+            state.score_stats.cost += cost
 
             # Programmatic data directory detection: override should_expand
             # for paths that structurally look like data containers
-            _apply_refine_data_dir_overrides(refine_results, paths)
+            _apply_score_data_dir_overrides(score_results, paths)
 
             # Persist only successful results
-            refined = 0
-            if refine_results:
-                refined = await loop.run_in_executor(
+            scored = 0
+            if score_results:
+                scored = await loop.run_in_executor(
                     None,
-                    lambda rr=refine_results: mark_refine_complete(state.facility, rr),
+                    lambda rr=score_results: mark_score_complete(state.facility, rr),
                 )
 
-            state.refine_stats.processed += refined
-            state.refine_stats.record_batch(refined)
+            state.score_stats.processed += scored
+            state.score_stats.record_batch(scored)
 
             if on_progress:
-                on_progress(f"refined {refined}", state.refine_stats, refine_results)
+                on_progress(f"scored {scored}", state.score_stats, score_results)
 
         except Exception as e:
-            logger.exception(f"Refine error: {e}")
-            state.refine_stats.errors += len(paths)
+            logger.exception(f"Score error: {e}")
+            state.score_stats.errors += len(paths)
 
         # Brief yield
         await asyncio.sleep(0.1)
 
 
-def _apply_refine_data_dir_overrides(
-    refine_results: list[dict],
+def _apply_score_data_dir_overrides(
+    score_results: list[dict],
     orig_paths: list[dict],
 ) -> None:
-    """Programmatic data directory detection for refine results.
+    """Programmatic data directory detection for score results.
 
     Overrides should_expand=false for paths that structurally look like
     data containers based on enrichment metadata, even if the LLM didn't
@@ -2095,12 +2105,12 @@ def _apply_refine_data_dir_overrides(
     2. Directories with mostly numeric child names (shot numbers)
     3. path_purpose already set to data types by LLM
 
-    Mutates refine_results in place.
+    Mutates score_results in place.
     """
     data_purposes = {"modeling_data", "experimental_data"}
     orig_by_path = {p["path"]: p for p in orig_paths}
 
-    for result in refine_results:
+    for result in score_results:
         if not result.get("should_expand", True):
             continue  # Already marked terminal
 
@@ -2114,7 +2124,7 @@ def _apply_refine_data_dir_overrides(
         if path_purpose in data_purposes:
             result["should_expand"] = False
             logger.debug(
-                "Refine data-dir override: %s (purpose=%s)",
+                "Score data-dir override: %s (purpose=%s)",
                 result["path"],
                 path_purpose,
             )
@@ -2139,7 +2149,7 @@ def _apply_refine_data_dir_overrides(
                     if not path_purpose:
                         result["path_purpose"] = "experimental_data"
                     logger.debug(
-                        "Refine data-dir override (numeric children): %s "
+                        "Score data-dir override (numeric children): %s "
                         "(%d/%d numeric)",
                         result["path"],
                         numeric_count,
@@ -2153,17 +2163,17 @@ def _apply_refine_data_dir_overrides(
             if not path_purpose:
                 result["path_purpose"] = "experimental_data"
             logger.debug(
-                "Refine data-dir override (large no-code): %s (%d bytes)",
+                "Score data-dir override (large no-code): %s (%d bytes)",
                 result["path"],
                 total_bytes,
             )
 
 
-def _build_refine_results(
-    batch: RefineBatch,
+def _build_score_results(
+    batch: ScoreBatch,
     paths: list[dict],
 ) -> list[dict]:
-    """Build results dict from LLM refine batch (shared by sync/async)."""
+    """Build results dict from LLM score batch (shared by sync/async)."""
     path_to_result = {r.path: r for r in batch.results}
     results = []
 
@@ -2173,7 +2183,7 @@ def _build_refine_results(
             result: dict = {
                 "path": p["path"],
                 "score": max(0.0, min(1.0, r.new_score)),
-                "adjustment_reason": r.adjustment_reason or "",
+                "adjustment_reason": r.scoring_reason or "",
                 "primary_evidence": r.primary_evidence or [],
                 "evidence_summary": r.evidence_summary or "",
                 "description": r.description or p.get("description", ""),
@@ -2219,15 +2229,18 @@ def _build_refine_results(
     return results
 
 
-def _refine_with_llm(
+def _score_with_llm(
     paths: list[dict],
     facility: str | None = None,
     focus: str | None = None,
 ) -> tuple[list[dict], float]:
-    """Refine paths using LLM with enrichment data.
+    """Score paths using LLM with enrichment data.
 
     Injects cross-facility enriched examples into the prompt for
     consistent scoring calibration across facilities.
+
+    CRITICAL: Does NOT show numeric triage scores to the LLM — only
+    enrichment evidence. This eliminates anchoring bias.
 
     Args:
         paths: List of path dicts with enrichment data
@@ -2235,13 +2248,13 @@ def _refine_with_llm(
         focus: Optional focus string for scoring
 
     Returns:
-        Tuple of (refine_results, cost)
+        Tuple of (score_results, cost)
     """
     import json
 
     from imas_codex.agentic.prompt_loader import render_prompt
     from imas_codex.discovery.paths.frontier import sample_enriched_paths
-    from imas_codex.discovery.paths.models import RefineBatch
+    from imas_codex.discovery.paths.models import ScoreBatch
     from imas_codex.settings import get_model
 
     # Build prompt context with enriched examples
@@ -2260,10 +2273,10 @@ def _refine_with_llm(
         context["focus"] = focus
 
     # Render prompt with examples
-    system_prompt = render_prompt("discovery/refiner", context)
+    system_prompt = render_prompt("discovery/scorer", context)
 
-    # Build user prompt with FULL context: initial scoring + enrichment data
-    lines = ["Refine these directories using their enrichment metrics:\n"]
+    # Build user prompt with enrichment data but NO numeric triage scores
+    lines = ["Score these directories using their enrichment evidence:\n"]
     for p in paths:
         # Parse language breakdown if it's a JSON string
         lang = p.get("language_breakdown")
@@ -2276,7 +2289,7 @@ def _refine_with_llm(
         lines.append(f"\n## Path: {p['path']}")
         lines.append(f"Depth: {p.get('depth', 0)}")
 
-        # Initial scoring context (what the scorer saw and decided)
+        # Qualitative context from triage (no numeric scores)
         lines.append(f"Purpose: {p.get('path_purpose', 'unknown')}")
         if p.get("physics_domain"):
             lines.append(f"Physics domain: {p['physics_domain']}")
@@ -2315,14 +2328,14 @@ def _refine_with_llm(
                     child_names = child_names[:200] + "..."
             lines.append(f"Contents: {child_names}")
 
-        # Enrichment metrics (new data from deep analysis)
+        # Enrichment metrics (concrete evidence for scoring)
         lines.append("\nEnrichment data:")
         lines.append(f"  Total lines: {p.get('total_lines') or 0}")
         lines.append(f"  Total bytes: {p.get('total_bytes') or 0}")
         lines.append(f"  Language breakdown: {lang or {}}")
         lines.append(f"  Is multiformat: {p.get('is_multiformat', False)}")
 
-        # Pattern match evidence (key data for rescoring)
+        # Pattern match evidence (key data for scoring)
         pattern_cats = p.get("pattern_categories")
         if isinstance(pattern_cats, str):
             try:
@@ -2343,40 +2356,10 @@ def _refine_with_llm(
                     "  Note: Some metrics may be incomplete due to timeouts on large directories."
                 )
 
-        # Initial per-dimension scores (what we're potentially adjusting)
-        # Use `or 0.0` since .get() returns None if key exists with None value
-        lines.append("\nInitial scores:")
-        lines.append(
-            f"  score_modeling_code: {p.get('score_modeling_code') or 0.0:.2f}"
-        )
-        lines.append(
-            f"  score_analysis_code: {p.get('score_analysis_code') or 0.0:.2f}"
-        )
-        lines.append(
-            f"  score_operations_code: {p.get('score_operations_code') or 0.0:.2f}"
-        )
-        lines.append(
-            f"  score_modeling_data: {p.get('score_modeling_data') or 0.0:.2f}"
-        )
-        lines.append(
-            f"  score_experimental_data: {p.get('score_experimental_data') or 0.0:.2f}"
-        )
-        lines.append(f"  score_data_access: {p.get('score_data_access') or 0.0:.2f}")
-        lines.append(f"  score_workflow: {p.get('score_workflow') or 0.0:.2f}")
-        lines.append(
-            f"  score_visualization: {p.get('score_visualization') or 0.0:.2f}"
-        )
-        lines.append(
-            f"  score_documentation: {p.get('score_documentation') or 0.0:.2f}"
-        )
-        lines.append(f"  score_imas: {p.get('score_imas') or 0.0:.2f}")
-        lines.append(f"  score_convention: {p.get('score_convention') or 0.0:.2f}")
-        lines.append(f"  combined_score: {p.get('score') or 0.0:.2f}")
-
     user_prompt = "\n".join(lines)
 
     # Get model
-    model = get_model("language")  # Use same model as scorer
+    model = get_model("language")
 
     # Call LLM with shared retry+parse loop — retries on both API errors
     # and JSON/validation errors (same resilience as wiki pipeline).
@@ -2389,7 +2372,7 @@ def _refine_with_llm(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_model=RefineBatch,
+            response_model=ScoreBatch,
         )
     except ValueError:
         # All retries exhausted — mark all as failed so they're skipped
@@ -2403,22 +2386,22 @@ def _refine_with_llm(
             for p in paths
         ], 0.0
 
-    results = _build_refine_results(batch, paths)
+    results = _build_score_results(batch, paths)
     return results, cost
 
 
-async def _async_refine_with_llm(
+async def _async_score_with_llm(
     paths: list[dict],
     facility: str | None = None,
     focus: str | None = None,
 ) -> tuple[list[dict], float]:
-    """Refine paths using LLM with enrichment data (async/cancellable).
+    """Score paths using LLM with enrichment data (async/cancellable).
 
-    Async version of _refine_with_llm using acall_llm_structured for
+    Async version of _score_with_llm using acall_llm_structured for
     native async LLM calls that respond to asyncio.cancel().
 
-    Injects cross-facility enriched examples into the prompt for
-    consistent scoring calibration across facilities.
+    CRITICAL: Does NOT show numeric triage scores to the LLM — only
+    enrichment evidence. This eliminates anchoring bias.
 
     Args:
         paths: List of path dicts with enrichment data
@@ -2426,13 +2409,13 @@ async def _async_refine_with_llm(
         focus: Optional focus string for scoring
 
     Returns:
-        Tuple of (refine_results, cost)
+        Tuple of (score_results, cost)
     """
     import json
 
     from imas_codex.agentic.prompt_loader import render_prompt
     from imas_codex.discovery.paths.frontier import sample_enriched_paths
-    from imas_codex.discovery.paths.models import RefineBatch
+    from imas_codex.discovery.paths.models import ScoreBatch
     from imas_codex.settings import get_model
 
     # Build prompt context with enriched examples
@@ -2451,10 +2434,10 @@ async def _async_refine_with_llm(
         context["focus"] = focus
 
     # Render prompt with examples
-    system_prompt = render_prompt("discovery/refiner", context)
+    system_prompt = render_prompt("discovery/scorer", context)
 
-    # Build user prompt with FULL context: initial scoring + enrichment data
-    lines_prompt = ["Refine these directories using their enrichment metrics:\n"]
+    # Build user prompt with enrichment data but NO numeric triage scores
+    lines_prompt = ["Score these directories using their enrichment evidence:\n"]
     for p in paths:
         # Parse language breakdown if it's a JSON string
         lang = p.get("language_breakdown")
@@ -2467,7 +2450,7 @@ async def _async_refine_with_llm(
         lines_prompt.append(f"\n## Path: {p['path']}")
         lines_prompt.append(f"Depth: {p.get('depth', 0)}")
 
-        # Initial scoring context (what the scorer saw and decided)
+        # Qualitative context from triage (no numeric scores)
         lines_prompt.append(f"Purpose: {p.get('path_purpose', 'unknown')}")
         if p.get("physics_domain"):
             lines_prompt.append(f"Physics domain: {p['physics_domain']}")
@@ -2506,14 +2489,14 @@ async def _async_refine_with_llm(
                     child_names = child_names[:200] + "..."
             lines_prompt.append(f"Contents: {child_names}")
 
-        # Enrichment metrics (new data from deep analysis)
+        # Enrichment metrics (concrete evidence for scoring)
         lines_prompt.append("\nEnrichment data:")
         lines_prompt.append(f"  Total lines: {p.get('total_lines') or 0}")
         lines_prompt.append(f"  Total bytes: {p.get('total_bytes') or 0}")
         lines_prompt.append(f"  Language breakdown: {lang or {}}")
         lines_prompt.append(f"  Is multiformat: {p.get('is_multiformat', False)}")
 
-        # Pattern match evidence (key data for rescoring)
+        # Pattern match evidence (key data for scoring)
         pattern_cats = p.get("pattern_categories")
         if isinstance(pattern_cats, str):
             try:
@@ -2534,44 +2517,10 @@ async def _async_refine_with_llm(
                     "  Note: Some metrics may be incomplete due to timeouts on large directories."
                 )
 
-        # Initial per-dimension scores (what we're potentially adjusting)
-        # Use `or 0.0` since .get() returns None if key exists with None value
-        lines_prompt.append("\nInitial scores:")
-        lines_prompt.append(
-            f"  score_modeling_code: {p.get('score_modeling_code') or 0.0:.2f}"
-        )
-        lines_prompt.append(
-            f"  score_analysis_code: {p.get('score_analysis_code') or 0.0:.2f}"
-        )
-        lines_prompt.append(
-            f"  score_operations_code: {p.get('score_operations_code') or 0.0:.2f}"
-        )
-        lines_prompt.append(
-            f"  score_modeling_data: {p.get('score_modeling_data') or 0.0:.2f}"
-        )
-        lines_prompt.append(
-            f"  score_experimental_data: {p.get('score_experimental_data') or 0.0:.2f}"
-        )
-        lines_prompt.append(
-            f"  score_data_access: {p.get('score_data_access') or 0.0:.2f}"
-        )
-        lines_prompt.append(f"  score_workflow: {p.get('score_workflow') or 0.0:.2f}")
-        lines_prompt.append(
-            f"  score_visualization: {p.get('score_visualization') or 0.0:.2f}"
-        )
-        lines_prompt.append(
-            f"  score_documentation: {p.get('score_documentation') or 0.0:.2f}"
-        )
-        lines_prompt.append(f"  score_imas: {p.get('score_imas') or 0.0:.2f}")
-        lines_prompt.append(
-            f"  score_convention: {p.get('score_convention') or 0.0:.2f}"
-        )
-        lines_prompt.append(f"  combined_score: {p.get('score') or 0.0:.2f}")
-
     user_prompt = "\n".join(lines_prompt)
 
     # Get model
-    model = get_model("language")  # Use same model as scorer
+    model = get_model("language")
 
     # Call LLM with shared retry+parse loop — retries on both API errors
     # and JSON/validation errors (same resilience as wiki pipeline).
@@ -2584,7 +2533,7 @@ async def _async_refine_with_llm(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            response_model=RefineBatch,
+            response_model=ScoreBatch,
         )
     except ValueError:
         # All retries exhausted — mark all as failed so they're skipped
@@ -2598,7 +2547,7 @@ async def _async_refine_with_llm(
             for p in paths
         ], 0.0
 
-    results = _build_refine_results(batch, paths)
+    results = _build_score_results(batch, paths)
     return results, cost
 
 
@@ -2654,14 +2603,14 @@ async def run_parallel_discovery(
     auto_enrich_threshold: float | None = None,
     num_scan_workers: int = 1,
     num_expand_workers: int = 1,
-    num_score_workers: int = 1,  # Single scorer: refine also uses LLM (total=2)
+    num_triage_workers: int = 1,  # Single triage worker (LLM)
     num_enrich_workers: int = 2,  # Two enrichment workers for parallel SSH
-    num_refine_workers: int = 1,  # Enabled by default for score refinement
+    num_score_workers: int = 1,  # Score worker uses enrichment evidence (LLM)
     scan_batch_size: int = 20,  # 20 paths per SSH call (amortize connection overhead)
     expand_batch_size: int = 25,  # Expansion needs child enumeration
-    score_batch_size: int = 50,  # More work per API call
+    triage_batch_size: int = 50,  # More work per API call
     enrich_batch_size: int = 25,  # Larger batches: amortize SSH connection cost
-    refine_batch_size: int = 10,  # Smaller batches: 20+ fields per path in structured output
+    score_batch_size: int = 10,  # Smaller batches: 20+ fields per path in structured output
     dedup_batch_size: int = 50,  # Repos to check per dedup cycle
     on_scan_progress: Callable[
         [str, WorkerStats, list[str] | None, list[dict] | None], None
@@ -2671,11 +2620,11 @@ async def run_parallel_discovery(
         [str, WorkerStats, list[str] | None, list[dict] | None], None
     ]
     | None = None,
-    on_score_progress: Callable[[str, WorkerStats, list[dict] | None], None]
+    on_triage_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
     on_enrich_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
-    on_refine_progress: Callable[[str, WorkerStats, list[dict] | None], None]
+    on_score_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
     on_dedup_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
@@ -2688,10 +2637,10 @@ async def run_parallel_discovery(
 
     Workers:
     - scan: Lists directories, discovers child paths (SSH-bound)
-    - expand: Expands scored high-value paths (should_expand=true)
-    - score: LLM-based scoring with should_expand/should_enrich decisions
+    - expand: Expands triaged high-value paths (should_expand=true)
+    - triage: LLM-based triage with should_expand/should_enrich decisions
     - enrich: Deep analysis (du/tokei/patterns) for should_enrich=true paths
-    - refine: Refines scores using enrichment data (optional)
+    - score: Scores using enrichment data (no numeric triage scores shown to LLM)
     - dedup: Marks clone paths terminal using SoftwareRepo identity (graph-only)
 
     All workers run in PARALLEL - expand/enrich do not wait for each other.
@@ -2705,20 +2654,20 @@ async def run_parallel_discovery(
         root_filter: Restrict work to paths under these roots (optional)
         num_scan_workers: Number of concurrent scan workers (default: 1)
         num_expand_workers: Number of concurrent expand workers (default: 1)
-        num_score_workers: Number of concurrent score workers (default: 2)
-        num_enrich_workers: Number of concurrent enrich workers (default: 1)
-        num_refine_workers: Number of concurrent refine workers (default: 1)
-        scan_batch_size: Paths per SSH call (default: 5)
-        expand_batch_size: Paths per expand SSH call (default: 10)
-        score_batch_size: Paths per LLM call (default: 50)
-        enrich_batch_size: Paths per SSH call (default: 10)
-        refine_batch_size: Paths per refine (default: 50)
+        num_triage_workers: Number of concurrent triage workers (default: 1)
+        num_enrich_workers: Number of concurrent enrich workers (default: 2)
+        num_score_workers: Number of concurrent score workers (default: 1)
+        scan_batch_size: Paths per SSH call (default: 20)
+        expand_batch_size: Paths per expand SSH call (default: 25)
+        triage_batch_size: Paths per triage LLM call (default: 50)
+        enrich_batch_size: Paths per SSH call (default: 25)
+        score_batch_size: Paths per score LLM call (default: 10)
         dedup_batch_size: SoftwareRepo clone groups per dedup cycle (default: 50)
         on_scan_progress: Callback for scan progress
         on_expand_progress: Callback for expand progress
-        on_score_progress: Callback for score progress
+        on_triage_progress: Callback for triage progress
         on_enrich_progress: Callback for enrich progress
-        on_refine_progress: Callback for refine progress
+        on_score_progress: Callback for score progress
         on_dedup_progress: Callback for dedup progress
         on_worker_status: Callback for worker status changes. Called with
             SupervisedWorkerGroup for display integration.
@@ -2736,7 +2685,7 @@ async def run_parallel_discovery(
     - All workers idle (no more work)
 
     Returns:
-        Summary dict with scanned, expanded, scored, enriched, refined, deduped, cost, elapsed, rates
+        Summary dict with scanned, expanded, triaged, enriched, scored, deduped, cost, elapsed, rates
     """
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
@@ -2789,18 +2738,18 @@ async def run_parallel_discovery(
     # is done, so it stays alive until the upstream finishes.
     state.scan_phase.set_has_work_fn(lambda: _has_pending_scan_work(facility))
     state.expand_phase.set_has_work_fn(lambda: _has_pending_expand_work(facility))
-    state.score_phase.set_has_work_fn(
+    state.triage_phase.set_has_work_fn(
         lambda: (
-            _has_pending_score_work(facility)
+            _has_pending_triage_work(facility)
             or not state.scan_phase.done
             or not state.expand_phase.done
         )
     )
     state.enrich_phase.set_has_work_fn(
-        lambda: _has_pending_enrich_work(facility) or not state.score_phase.done
+        lambda: _has_pending_enrich_work(facility) or not state.triage_phase.done
     )
-    state.refine_phase.set_has_work_fn(
-        lambda: _has_pending_refine_work(facility) or not state.enrich_phase.done
+    state.score_phase.set_has_work_fn(
+        lambda: _has_pending_score_work(facility) or not state.enrich_phase.done
     )
 
     # Mark phases as done for disabled workers so should_stop() works correctly
@@ -2809,12 +2758,12 @@ async def run_parallel_discovery(
         state.scan_phase.mark_done()
     if num_expand_workers == 0:
         state.expand_phase.mark_done()
-    if num_score_workers == 0:
-        state.score_phase.mark_done()
+    if num_triage_workers == 0:
+        state.triage_phase.mark_done()
     if num_enrich_workers == 0:
         state.enrich_phase.mark_done()
-    if num_refine_workers == 0:
-        state.refine_phase.mark_done()
+    if num_score_workers == 0:
+        state.score_phase.mark_done()
 
     # Capture initial terminal count for session-based --limit tracking
     state.initial_terminal_count = state.terminal_count
@@ -2907,19 +2856,19 @@ async def run_parallel_discovery(
                 )
             )
 
-        # Score workers (group="score")
-        for i in range(num_score_workers):
-            worker_name = f"score_worker_{i}"
-            status = worker_group.create_status(worker_name, group="score")
+        # Triage workers (group="triage")
+        for i in range(num_triage_workers):
+            worker_name = f"triage_worker_{i}"
+            status = worker_group.create_status(worker_name, group="triage")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
-                        score_worker,
+                        triage_worker,
                         worker_name,
                         state,
                         state.should_stop,
-                        on_progress=on_score_progress,
-                        batch_size=score_batch_size,
+                        on_progress=on_triage_progress,
+                        batch_size=triage_batch_size,
                         status_tracker=status,
                     )
                 )
@@ -2944,19 +2893,19 @@ async def run_parallel_discovery(
                 )
             )
 
-        # Refine workers (group="refine" — own display row)
-        for i in range(num_refine_workers):
-            worker_name = f"refine_worker_{i}"
-            status = worker_group.create_status(worker_name, group="refine")
+        # Score workers (group="score" — uses enrichment evidence)
+        for i in range(num_score_workers):
+            worker_name = f"score_worker_{i}"
+            status = worker_group.create_status(worker_name, group="score")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
-                        refine_worker,
+                        score_worker,
                         worker_name,
                         state,
                         state.should_stop,
-                        on_progress=on_refine_progress,
-                        batch_size=refine_batch_size,
+                        on_progress=on_score_progress,
+                        batch_size=score_batch_size,
                         status_tracker=status,
                     )
                 )
@@ -2998,8 +2947,8 @@ async def run_parallel_discovery(
         logger.info(
             f"Started {worker_group.get_active_count()} supervised workers: "
             f"scan={num_scan_workers}, expand={num_expand_workers}, "
-            f"score={num_score_workers}, enrich={num_enrich_workers}, "
-            f"refine={num_refine_workers}, dedup=1, embed=1"
+            f"triage={num_triage_workers}, enrich={num_enrich_workers}, "
+            f"score={num_score_workers}, dedup=1, embed=1"
         )
 
         # Periodic orphan recovery during discovery (every 60s)
@@ -3060,31 +3009,31 @@ async def run_parallel_discovery(
         elapsed = max(
             state.scan_stats.elapsed,
             state.expand_stats.elapsed,
-            state.score_stats.elapsed,
+            state.triage_stats.elapsed,
             state.enrich_stats.elapsed,
-            state.refine_stats.elapsed,
+            state.score_stats.elapsed,
             state.dedup_stats.elapsed,
         )
 
         return {
             "scanned": state.scan_stats.processed,
             "expanded": state.expand_stats.processed,
-            "scored": state.score_stats.processed,
+            "triaged": state.triage_stats.processed,
             "enriched": state.enrich_stats.processed,
-            "refined": state.refine_stats.processed,
+            "scored": state.score_stats.processed,
             "deduped": state.dedup_stats.processed,
             "cost": state.total_cost,
             "elapsed_seconds": elapsed,
             "scan_rate": state.scan_stats.rate,
             "expand_rate": state.expand_stats.rate,
-            "score_rate": state.score_stats.rate,
+            "triage_rate": state.triage_stats.rate,
             "enrich_rate": state.enrich_stats.rate,
-            "refine_rate": state.refine_stats.rate,
+            "score_rate": state.score_stats.rate,
             "scan_errors": state.scan_stats.errors,
             "expand_errors": state.expand_stats.errors,
-            "score_errors": state.score_stats.errors,
+            "triage_errors": state.triage_stats.errors,
             "enrich_errors": state.enrich_stats.errors,
-            "refine_errors": state.refine_stats.errors,
+            "score_errors": state.score_stats.errors,
         }
     finally:
         # Cancel stop watcher if still running
