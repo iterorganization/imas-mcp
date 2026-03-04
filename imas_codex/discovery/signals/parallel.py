@@ -2404,7 +2404,10 @@ async def enrich_worker(
     from collections import defaultdict
 
     from imas_codex.agentic.prompt_loader import render_prompt
-    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.discovery.base.llm import (
+        ProviderBudgetExhausted,
+        acall_llm_structured,
+    )
     from imas_codex.discovery.signals.models import SignalEnrichmentBatch
     from imas_codex.settings import get_model
 
@@ -2692,6 +2695,11 @@ async def enrich_worker(
             code_context_cache[group_key] = []
             return []
 
+    # Circuit breaker: stop after consecutive batch failures to avoid
+    # infinite claim/fail/release loops when LLM service is degraded.
+    MAX_CONSECUTIVE_FAILURES = 3
+    consecutive_failures = 0
+
     while not state.should_stop_enriching():
         # --- Pattern detection phase ---
         # On each idle cycle, detect indexed signal patterns and mark
@@ -2894,23 +2902,50 @@ async def enrich_worker(
                 response_model=SignalEnrichmentBatch,
                 temperature=0.3,
             )
-        except ValueError as e:
+        except ProviderBudgetExhausted as e:
+            logger.error("LLM provider budget exhausted — stopping enrichment: %s", e)
+            for signal in signals:
+                await asyncio.to_thread(release_signal_claim, signal["id"])
+            state.enrich_phase.mark_done()
+            if on_progress:
+                on_progress("provider budget exhausted", state.enrich_stats)
+            break
+        except (ValueError, Exception) as e:
+            consecutive_failures += 1
+            for signal in signals:
+                await asyncio.to_thread(release_signal_claim, signal["id"])
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                logger.error(
+                    "Enrichment stopped: %d consecutive batch failures. Last error: %s",
+                    consecutive_failures,
+                    e,
+                )
+                state.enrich_phase.mark_done()
+                if on_progress:
+                    on_progress(
+                        f"stopped: {consecutive_failures} consecutive failures",
+                        state.enrich_stats,
+                    )
+                break
+            backoff = min(60.0, 5.0 * (2 ** (consecutive_failures - 1)))
             logger.warning(
-                "LLM enrichment failed for batch of %d signals: %s",
-                len(signals),
+                "Batch failure %d/%d: %s — backing off %.0fs",
+                consecutive_failures,
+                MAX_CONSECUTIVE_FAILURES,
                 e,
+                backoff,
             )
-            for signal in signals:
-                await asyncio.to_thread(release_signal_claim, signal["id"])
-            continue
-        except Exception as e:
-            logger.warning("LLM error (non-retryable): %s", e)
-            for signal in signals:
-                await asyncio.to_thread(release_signal_claim, signal["id"])
+            if on_progress:
+                on_progress(
+                    f"LLM error ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})",
+                    state.enrich_stats,
+                )
+            await asyncio.sleep(backoff)
             continue
 
         # Track cost
         state.enrich_stats.cost += batch_cost
+        consecutive_failures = 0  # Reset circuit breaker on success
 
         logger.debug(
             "LLM response: %d tokens for %d signals (cost=$%.4f)",
