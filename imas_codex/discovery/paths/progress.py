@@ -168,6 +168,9 @@ class ProgressState:
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
 
+    # Provider budget exhaustion (API key credit limit hit)
+    provider_budget_exhausted: bool = False
+
     # Current items (and their processing state)
     current_scan: ScanItem | None = None
     current_triage: TriageItem | None = None
@@ -295,6 +298,8 @@ class ProgressState:
     @property
     def limit_reason(self) -> str | None:
         """Return which limit was reached, or None if no limit reached."""
+        if self.provider_budget_exhausted:
+            return "provider budget"
         if self.cost_limit_reached:
             return "cost"
         if self.path_limit_reached:
@@ -842,6 +847,11 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.triage_rate = stats.ema_rate or stats.active_rate
         self.state._run_triage_cost = stats.cost
 
+        if "provider budget" in message.lower():
+            self.state.provider_budget_exhausted = True
+            self._refresh()
+            return
+
         # Track processing state for display
         # Don't clear current_triage when waiting - let queue drain naturally
         # via tick(). Only update the processing counter.
@@ -1036,6 +1046,11 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.score_rate = stats.ema_rate or stats.active_rate
         # Track score cost separately (cumulative from score worker)
         self.state._run_score_cost = stats.cost
+
+        if "provider budget" in message.lower():
+            self.state.provider_budget_exhausted = True
+            self._refresh()
+            return
 
         # Track processing state for display
         if "waiting" in message.lower():

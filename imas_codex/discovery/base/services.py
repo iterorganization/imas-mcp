@@ -300,8 +300,14 @@ def _probe_litellm_proxy(location: str) -> tuple[bool, str]:
             if healthy_count > 0 and unhealthy_count == 0:
                 return True, location
             if healthy_count > 0:
+                # Check unhealthy reasons for budget/credit exhaustion
+                reason = _classify_unhealthy_reason(data)
+                if reason:
+                    return True, f"{location} ({unhealthy_count} {reason})"
                 return True, f"{location} ({unhealthy_count} degraded)"
-            return False, "no healthy models"
+            # No healthy models — check if budget is the cause
+            reason = _classify_unhealthy_reason(data)
+            return False, reason or "no healthy models"
     except urllib.error.HTTPError as e:
         if e.code == 401:
             return False, "auth error (401)"
@@ -315,6 +321,47 @@ def _probe_litellm_proxy(location: str) -> tuple[bool, str]:
         return False, str(e.reason)[:60]
     except Exception as e:
         return False, str(e)[:80]
+
+
+def _classify_unhealthy_reason(data: dict) -> str | None:
+    """Extract a human-readable reason from proxy ``/health`` unhealthy endpoints.
+
+    Checks ``unhealthy_endpoints`` for common error patterns (budget exhaustion,
+    rate limiting, auth errors) and returns a concise label. Returns None if
+    no specific reason can be identified.
+    """
+    unhealthy = data.get("unhealthy_endpoints") or []
+    if not unhealthy:
+        return None
+
+    # Collect error messages from unhealthy endpoints
+    errors = []
+    for ep in unhealthy:
+        error = ""
+        if isinstance(ep, dict):
+            error = str(ep.get("error", "") or ep.get("error_message", "")).lower()
+        elif isinstance(ep, str):
+            error = ep.lower()
+        if error:
+            errors.append(error)
+
+    if not errors:
+        return None
+
+    # Check for budget/credit exhaustion (most actionable)
+    budget_keywords = ("402", "credit", "budget", "quota", "payment required", "afford")
+    if any(kw in err for err in errors for kw in budget_keywords):
+        return "no credit"
+
+    # Rate limiting
+    if any("429" in err or "rate limit" in err for err in errors):
+        return "rate limited"
+
+    # Auth errors
+    if any("401" in err or "auth" in err or "api_key" in err for err in errors):
+        return "auth error"
+
+    return None
 
 
 def _probe_litellm_local(section: str) -> tuple[bool, str]:
