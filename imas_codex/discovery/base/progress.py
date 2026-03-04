@@ -1181,6 +1181,7 @@ class BaseProgressDisplay(ABC):
 
         Each worker group gets a status indicator:
           SHUTDOWN  scan done  score draining (2)  enrich done  3.2s
+        After 15s, a hint is shown to press Ctrl+C again for forced exit.
         """
         section = Text()
         section.append("  SHUTDOWN", style="bold yellow")
@@ -1197,6 +1198,7 @@ class BaseProgressDisplay(ABC):
             seen.setdefault(grp, None)
         groups = list(seen)
 
+        any_draining = False
         for grp in groups:
             workers = [
                 s
@@ -1211,6 +1213,7 @@ class BaseProgressDisplay(ABC):
                 section.append(f"  {grp} ", style="dim")
                 section.append("done", style="green")
             else:
+                any_draining = True
                 section.append(f"  {grp} ", style="white")
                 section.append(f"draining ({active}/{total})", style="yellow")
 
@@ -1218,6 +1221,12 @@ class BaseProgressDisplay(ABC):
         if self._shutdown_start is not None:
             shutdown_elapsed = time.time() - self._shutdown_start
             section.append(f"  {shutdown_elapsed:.1f}s", style="dim")
+
+            # After 15s of draining, show hint about forced shutdown
+            if any_draining and shutdown_elapsed > 15:
+                section.append(
+                    "\n  Press Ctrl+C again to force exit", style="dim italic"
+                )
 
         return section
 

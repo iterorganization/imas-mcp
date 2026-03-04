@@ -37,10 +37,21 @@ import logging
 import os
 import signal
 import sys
+import threading
 from collections.abc import Coroutine
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# Default timeout for the executor shutdown after asyncio.run() completes.
+# Threads blocked on SSH subprocesses or LLM HTTP calls may outlive the
+# event loop; a short timeout prevents the process from hanging.
+_EXECUTOR_SHUTDOWN_TIMEOUT = 5
+
+# Grace period after safe_asyncio_run returns before force-exiting.
+# This gives the CLI time to print summary output.
+_EXIT_WATCHDOG_GRACE = 10
 
 
 def safe_asyncio_run[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -54,6 +65,16 @@ def safe_asyncio_run[T](coro: Coroutine[Any, Any, T]) -> T:
 
     This wrapper installs a temporary ``sys.unraisablehook`` that
     silences only that specific error, then restores the original hook.
+
+    It also ensures the default executor is shut down with a short
+    timeout so that leaked threads (from ``asyncio.to_thread()`` calls
+    to SSH subprocesses or LLM HTTP calls) do not prevent the process
+    from exiting.
+
+    A daemon watchdog thread is started that will force-exit the process
+    if it hasn't terminated within a grace period after the coroutine
+    completes. This prevents the process from hanging on Python's atexit
+    thread join when SSH subprocess threads are still alive.
     """
     old_hook = sys.unraisablehook
 
@@ -67,9 +88,67 @@ def safe_asyncio_run[T](coro: Coroutine[Any, Any, T]) -> T:
 
     sys.unraisablehook = _suppress_closed_loop
     try:
-        return asyncio.run(coro)
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(coro)
+        finally:
+            try:
+                # Cancel any straggling tasks
+                _cancel_remaining_tasks(loop)
+            finally:
+                # Shut down the executor with a short timeout so leaked
+                # threads from to_thread() don't block exit.
+                loop.run_until_complete(
+                    loop.shutdown_default_executor(timeout=_EXECUTOR_SHUTDOWN_TIMEOUT)
+                )
+                # Force-kill SSH subprocess pools to unblock any
+                # remaining executor threads waiting on SSH I/O, so
+                # the thread.join() in Python's atexit handler returns.
+                _force_kill_ssh_pools()
+                loop.close()
+
+        # Start a daemon watchdog: if the process hasn't exited within
+        # the grace period (e.g. because atexit is joining leaked
+        # threads), force-exit so the terminal is returned.
+        _start_exit_watchdog(_EXIT_WATCHDOG_GRACE)
+
+        return result
     finally:
         sys.unraisablehook = old_hook
+
+
+def _start_exit_watchdog(grace_seconds: float) -> None:
+    """Start a daemon thread that force-exits after a grace period.
+
+    Python's ``concurrent.futures.thread._python_exit`` atexit handler
+    joins all executor threads.  If an SSH subprocess is still running,
+    ``thread.join()`` blocks forever.  This watchdog ensures the process
+    exits cleanly after the CLI has printed its output.
+    """
+
+    def _watchdog() -> None:
+        threading.Event().wait(timeout=grace_seconds)
+        # If we're still alive, flush and hard-exit
+        _force_kill_ssh_pools()
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        os._exit(0)
+
+    t = threading.Thread(target=_watchdog, daemon=True)
+    t.start()
+
+
+def _cancel_remaining_tasks(loop: asyncio.AbstractEventLoop) -> None:
+    """Cancel and gather all remaining tasks on the loop."""
+    tasks = asyncio.all_tasks(loop)
+    if not tasks:
+        return
+    for task in tasks:
+        task.cancel()
+    loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
 
 
 def install_shutdown_handlers(
@@ -114,16 +193,12 @@ def install_shutdown_handlers(
                     pass
         elif sigint_count == 2:
             logger.warning("Forced shutdown (second Ctrl+C)")
-            # Stop Rich display immediately so terminal is usable
-            live = getattr(display, "_live", None) if display else None
-            if live is not None and getattr(live, "is_started", False):
-                try:
-                    live.stop()
-                except Exception:
-                    pass
-            # Keep our signal handler installed so the third Ctrl+C
-            # reaches os._exit(130) below.  Cancel all running tasks
-            # from the event loop so the coroutine chain unwinds.
+            _force_stop_display(display)
+            # Force-kill SSH worker pools so leaked threads don't
+            # block process exit.
+            _force_kill_ssh_pools()
+            # Cancel all running tasks from the event loop so the
+            # coroutine chain unwinds.
             for task in asyncio.all_tasks(loop):
                 task.cancel()
         else:
@@ -131,6 +206,31 @@ def install_shutdown_handlers(
             os._exit(130)
 
     loop.add_signal_handler(signal.SIGINT, _handle_sigint)
+
+
+def _force_stop_display(display: object | None) -> None:
+    """Stop Rich display immediately so terminal is usable."""
+    live = getattr(display, "_live", None) if display else None
+    if live is not None and getattr(live, "is_started", False):
+        try:
+            live.stop()
+        except Exception:
+            pass
+
+
+def _force_kill_ssh_pools() -> None:
+    """Synchronously force-kill all SSH worker pools.
+
+    Called on forced shutdown to ensure leaked threads from
+    ``asyncio.to_thread()`` SSH subprocess calls don't block
+    process exit.
+    """
+    try:
+        from imas_codex.remote.ssh_worker import force_kill_all_pools
+
+        force_kill_all_pools()
+    except Exception:
+        pass
 
 
 async def watch_stop_event(
@@ -150,3 +250,27 @@ async def watch_stop_event(
     await stop_event.wait()
     state.stop_requested = True
     logger.info("Stop event received -- workers will finish current batch")
+
+
+def force_exit() -> None:
+    """Force process exit, cleaning up SSH resources.
+
+    Called after all CLI output has been printed to prevent the
+    process from hanging on leaked executor threads (non-daemon
+    threads spawned by ``asyncio.to_thread()`` for SSH subprocess
+    calls). Python's atexit handler waits for ALL threads to
+    ``join()`` which blocks indefinitely if a subprocess is still
+    running on a remote host.
+
+    This function:
+    1. Force-kills all SSH worker pool subprocesses
+    2. Flushes stdout/stderr
+    3. Calls ``os._exit(0)`` to bypass atexit thread joins
+    """
+    _force_kill_ssh_pools()
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(0)
