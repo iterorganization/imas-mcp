@@ -476,10 +476,12 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         scan_text = ""
         scan_desc = ""
         # When all known paths are scanned (100%) but workers are still
-        # alive waiting for expand dirs, suppress stale content so the
-        # base row renderer shows "waiting" instead of the last item.
+        # alive waiting for expand dirs, let the queue drain naturally
+        # before switching to "waiting" status.  Only suppress content
+        # once the queue is empty so the last batch fully unwinds.
         scan_at_capacity = scanned_paths >= scan_total and not scan_complete
-        if scan and not scan_at_capacity:
+        scan_queue_drained = self.state.scan_queue.is_empty()
+        if scan and not (scan_at_capacity and scan_queue_drained):
             scan_text = scan.path
             scan_parts = [f"{scan.files} files, {scan.dirs} dirs"]
             if scan.has_code:
@@ -650,10 +652,13 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 disabled=self.state.triage_only,
                 primary_text=scan_text,
                 description=scan_desc,
-                is_processing=self.state.scan_processing > 0 or scan_at_capacity,
+                is_processing=self.state.scan_processing > 0
+                or (scan_at_capacity and scan_queue_drained),
                 processing_label=(
                     "waiting for expand..."
-                    if scan_at_capacity and self.state.scan_processing == 0
+                    if scan_at_capacity
+                    and scan_queue_drained
+                    and self.state.scan_processing == 0
                     else "processing..."
                 ),
                 is_complete=scan_complete,
