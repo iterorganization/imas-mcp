@@ -92,8 +92,13 @@ def safe_asyncio_run[T](coro: Coroutine[Any, Any, T]) -> T:
         try:
             result = loop.run_until_complete(coro)
         finally:
+            # Start the watchdog BEFORE cleanup — if task cancellation
+            # hangs (e.g. to_thread blocked on LLM/SSH I/O), the
+            # watchdog guarantees the process exits.
+            _start_exit_watchdog(_EXIT_WATCHDOG_GRACE)
             try:
-                # Cancel any straggling tasks
+                # Cancel any straggling tasks (with timeout so we
+                # don't hang on threads blocked in to_thread)
                 _cancel_remaining_tasks(loop)
             finally:
                 # Shut down the executor with a short timeout so leaked
@@ -106,11 +111,6 @@ def safe_asyncio_run[T](coro: Coroutine[Any, Any, T]) -> T:
                 # the thread.join() in Python's atexit handler returns.
                 _force_kill_ssh_pools()
                 loop.close()
-
-        # Start a daemon watchdog: if the process hasn't exited within
-        # the grace period (e.g. because atexit is joining leaked
-        # threads), force-exit so the terminal is returned.
-        _start_exit_watchdog(_EXIT_WATCHDOG_GRACE)
 
         return result
     finally:
@@ -141,14 +141,37 @@ def _start_exit_watchdog(grace_seconds: float) -> None:
     t.start()
 
 
+# Timeout for _cancel_remaining_tasks — must be shorter than the
+# exit watchdog grace period so we proceed to executor shutdown
+# rather than hanging on unkillable to_thread tasks.
+_CANCEL_TASKS_TIMEOUT = 5
+
+
 def _cancel_remaining_tasks(loop: asyncio.AbstractEventLoop) -> None:
-    """Cancel and gather all remaining tasks on the loop."""
+    """Cancel remaining tasks on the loop with a timeout.
+
+    Tasks stuck in ``asyncio.to_thread()`` cannot be cancelled until
+    the underlying thread finishes.  A bounded ``asyncio.wait()``
+    prevents the process from hanging indefinitely.
+    """
     tasks = asyncio.all_tasks(loop)
     if not tasks:
         return
     for task in tasks:
         task.cancel()
-    loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+
+    async def _wait() -> None:
+        _, still_pending = await asyncio.wait(tasks, timeout=_CANCEL_TASKS_TIMEOUT)
+        if still_pending:
+            logger.warning(
+                "%d task(s) still pending after %ss cancel timeout "
+                "— forcing SSH pool shutdown",
+                len(still_pending),
+                _CANCEL_TASKS_TIMEOUT,
+            )
+            _force_kill_ssh_pools()
+
+    loop.run_until_complete(_wait())
 
 
 def install_shutdown_handlers(
