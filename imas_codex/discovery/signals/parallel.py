@@ -529,6 +529,7 @@ def claim_signals_for_enrichment(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $discovered
+                  AND s.pattern_representative_id IS NULL
                   AND (s.claimed_at IS NULL
                        OR s.claimed_at < datetime() - duration($cutoff))
                 WITH s ORDER BY s.tdi_function, s.id LIMIT $batch_size
@@ -901,12 +902,21 @@ def detect_signal_patterns(
     Scans discovered FacilitySignals for accessor patterns where numeric
     segments vary (e.g., CALIB_GAS_010:...:PARAM_048:LIM). For each
     pattern with >= min_instances, one signal is kept as the representative
-    (status stays 'discovered') and all others are marked as 'pattern_pending'
-    with skip_reason = 'pattern_follower' and a pattern_representative_id
-    linking to the representative signal.
+    and all others get ``pattern_representative_id`` set to the
+    representative's ID.  Status stays ``discovered`` — no transient
+    status is introduced.  ``claim_signals_for_enrichment`` skips
+    signals with ``pattern_representative_id IS NOT NULL`` so only
+    representatives are sent to the LLM.
 
-    After the representative is enriched, propagate_pattern_enrichment()
-    copies the LLM-generated metadata to all followers.
+    After the representative is enriched, ``propagate_pattern_enrichment()``
+    copies the LLM-generated metadata to all followers and moves them
+    straight to ``enriched``.
+
+    Idempotent: signals already tagged with a pattern_representative_id
+    are excluded from the initial query.  If the process crashes after
+    tagging but before propagation, followers remain ``discovered`` and
+    the next run will re-detect them (or, if the representative has
+    already been enriched, propagate immediately).
 
     Args:
         facility: Facility ID
@@ -915,7 +925,7 @@ def detect_signal_patterns(
     Returns:
         Tuple of (patterns_detected, signals_marked_as_followers)
     """
-    # Fetch all discovered signal accessors
+    # Fetch all discovered signal accessors that are not yet part of a pattern
     with GraphClient() as gc:
         results = gc.query(
             """
@@ -947,7 +957,8 @@ def detect_signal_patterns(
     if not multi_groups:
         return 0, 0
 
-    # For each pattern group, pick one representative and mark the rest
+    # For each pattern group, pick one representative and tag the rest.
+    # Status stays 'discovered' — coordination uses pattern_representative_id.
     total_followers = 0
     with GraphClient() as gc:
         for pattern, sigs in multi_groups.items():
@@ -961,15 +972,13 @@ def detect_signal_patterns(
 
             follower_ids = [f["id"] for f in followers]
 
-            # Mark followers as pattern_pending with reference to representative
+            # Tag followers — status stays 'discovered'
             gc.query(
                 """
                 UNWIND $follower_ids AS fid
                 MATCH (s:FacilitySignal {id: fid})
                 WHERE s.status = $discovered
-                SET s.status = 'pattern_pending',
-                    s.skip_reason = 'pattern_follower',
-                    s.pattern_representative_id = $rep_id,
+                SET s.pattern_representative_id = $rep_id,
                     s.pattern_template = $pattern
                 """,
                 follower_ids=follower_ids,
@@ -1001,6 +1010,9 @@ def propagate_pattern_enrichment(
     the physics_domain, description, name, diagnostic, keywords, etc.
     to all signals that share the same pattern_representative_id.
 
+    Followers are still ``discovered`` (no transient status).  This
+    function transitions them directly to ``enriched``.
+
     Args:
         representative_id: ID of the enriched representative signal
         enrichment: Dict with enrichment fields (physics_domain, description, etc.)
@@ -1015,10 +1027,11 @@ def propagate_pattern_enrichment(
             """
             MATCH (s:FacilitySignal)
             WHERE s.pattern_representative_id = $rep_id
-              AND s.status = 'pattern_pending'
+              AND s.status = $discovered
             RETURN count(s) AS cnt
             """,
             rep_id=representative_id,
+            discovered=FacilitySignalStatus.discovered.value,
         )
         follower_count = count_result[0]["cnt"] if count_result else 0
 
@@ -1028,12 +1041,12 @@ def propagate_pattern_enrichment(
         # Cost per signal (representative + followers)
         per_signal_cost = batch_cost / (follower_count + 1) if batch_cost > 0 else 0.0
 
-        # Propagate enrichment to all followers
+        # Propagate enrichment: discovered → enriched
         result = gc.query(
             """
             MATCH (s:FacilitySignal)
             WHERE s.pattern_representative_id = $rep_id
-              AND s.status = 'pattern_pending'
+              AND s.status = $discovered
             SET s.status = $enriched,
                 s.physics_domain = $physics_domain,
                 s.description = $description,
@@ -1045,11 +1058,11 @@ def propagate_pattern_enrichment(
                 s.llm_cost = $per_signal_cost,
                 s.enriched_at = datetime(),
                 s.claimed_at = null,
-                s.skip_reason = null,
                 s.enrichment_source = 'pattern_propagation'
             RETURN count(s) AS updated
             """,
             rep_id=representative_id,
+            discovered=FacilitySignalStatus.discovered.value,
             enriched=FacilitySignalStatus.enriched.value,
             physics_domain=enrichment.get("physics_domain", ""),
             description=enrichment.get("description", ""),
