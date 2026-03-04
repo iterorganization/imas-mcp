@@ -54,6 +54,22 @@ DATA_ACCESS_PATTERNS = {
     "uda": r"(uda\.|pyuda|UDA_client|getdata|getData|getIdamData|Client\(\)\.get)",
     # EDAS - JT-60SA Experimental Data Acquisition System
     "edas": r"(eddb\.|eGIS|eSLICE|eSURF|EDASDB|edas_read|edas\.get|labcom)",
+    # TDI function calls (conn.tdi, tdi())
+    "mdsplus_tdi": r"(\.tdi\(|conn\.tdi|connection\.tdi|tdi\s*\()",
+    # MATLAB MDSplus access
+    "mdsplus_matlab": r"(mdsopen|mdsclose|mdsvalue|mdsdisconnect|mdsconnect)",
+    # TCV-specific Python wrappers
+    "tcvpy": r"(tcvpy|tcv\.shot|from\s+tcvpy|import\s+tcv)",
+    # TCV-specific TDI functions
+    "tcv_wrappers": r"(tcv_eq|tcv_get|tcv_psitbx|tcv_ip|tcv_bt|tcv_ne|tcv_te)",
+    # Equilibrium tools (eqtools)
+    "eqtools": r"(eqtools|EqdskReader|CModTCVMachine|TRIPPYMachine)",
+    # AUG shotfile access
+    "aug_shotfile": r"(dd\.open|sf\.getSignal|sf\.getParameter|AUGshotfile)",
+    # JET-specific access
+    "jet_access": r"(jet\.ppf|jpf\.read|jet\.data|sal\.get|sal\.list)",
+    # Shot number references
+    "shot_reference": r"(shot\s*=\s*\d{4,6}|pulse\s*=\s*\d{4,6}|pulno\s*=\s*\d{4,6}|shot_number|pulse_number)",
 }
 
 # -- IMAS Patterns (score_imas) --
