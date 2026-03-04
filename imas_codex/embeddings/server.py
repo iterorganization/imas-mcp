@@ -49,6 +49,9 @@ _encode_timeout: float = 300.0  # 5 minutes max per embed request
 _location: str | None = None  # Deployment location label (e.g. "titan")
 _worker_gpu: int | None = None  # GPU index claimed by this worker
 _gpu_pool: list[int] = []  # Available GPU indices for multi-worker
+_request_count: int = 0  # Total embed requests served
+_total_texts: int = 0  # Total texts embedded
+_total_elapsed_ms: float = 0.0  # Total encoding time in ms
 
 
 class EmbedRequest(BaseModel):
@@ -394,7 +397,7 @@ def create_app() -> FastAPI:
         Runs encoding in a thread pool to avoid blocking the async event
         loop (which would make /health unresponsive during encoding).
         """
-        global _last_request_time
+        global _last_request_time, _request_count, _total_texts, _total_elapsed_ms
 
         if _encoder is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
@@ -414,6 +417,9 @@ def create_app() -> FastAPI:
             )
 
             elapsed_ms = (time.time() - start) * 1000
+            _request_count += 1
+            _total_texts += len(request.texts)
+            _total_elapsed_ms += elapsed_ms
 
             return EmbedResponse(
                 embeddings=embeddings.tolist(),
@@ -443,17 +449,35 @@ def create_app() -> FastAPI:
         if _encoder is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
 
+        gpu_info: dict[str, Any] = {
+            "name": _gpu_name,
+            "memory_mb": _gpu_memory_mb,
+            "cuda_available": _cuda_available(),
+        }
+        # Add live GPU memory usage
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                gpu_info["memory_used_mb"] = int(
+                    torch.cuda.memory_allocated() / (1024 * 1024)
+                )
+                gpu_info["memory_reserved_mb"] = int(
+                    torch.cuda.memory_reserved() / (1024 * 1024)
+                )
+                free, total = torch.cuda.mem_get_info()
+                gpu_info["memory_free_mb"] = int(free / (1024 * 1024))
+                gpu_info["memory_total_mb"] = int(total / (1024 * 1024))
+        except Exception:
+            pass
+
         return {
             "model": {
                 "name": _encoder.config.model_name,
                 "device": _cached_device_info,
                 "embedding_dimension": _cached_embedding_dim,
             },
-            "gpu": {
-                "name": _gpu_name,
-                "memory_mb": _gpu_memory_mb,
-                "cuda_available": _cuda_available(),
-            },
+            "gpu": gpu_info,
             "config": {
                 "normalize_embeddings": _encoder.config.normalize_embeddings,
                 "batch_size": _encoder.config.batch_size,
@@ -467,6 +491,14 @@ def create_app() -> FastAPI:
                 "worker_gpu": _worker_gpu,
                 "worker_pid": os.getpid(),
                 "version": "2.0.0",
+            },
+            "stats": {
+                "request_count": _request_count,
+                "total_texts": _total_texts,
+                "total_elapsed_ms": _total_elapsed_ms,
+                "avg_ms_per_request": (
+                    _total_elapsed_ms / _request_count if _request_count > 0 else 0
+                ),
             },
         }
 

@@ -311,18 +311,48 @@ def embed_status(url: str | None, local: bool) -> None:
             click.echo(f"  Device: {info['model']['device']}")
             click.echo(f"  Dimension: {info['model']['embedding_dimension']}")
             if info["gpu"]["name"]:
-                click.echo(
-                    f"  GPU: {info['gpu']['name']} ({info['gpu']['memory_mb']} MB)"
-                )
+                gpu = info["gpu"]
+                click.echo(f"  GPU: {gpu['name']} ({gpu['memory_mb']} MB)")
+                # GPU memory bar from live torch stats
+                gpu_used = gpu.get("memory_used_mb")
+                gpu_total = gpu.get("memory_total_mb")
+                if gpu_used is not None and gpu_total:
+                    from imas_codex.cli.services import _colored_bar
+
+                    gpu_bar = _colored_bar(gpu_used, gpu_total)
+                    click.echo(f"  VRAM: {gpu_bar}  {gpu_used} MB / {gpu_total} MB")
+            location = info["server"].get("location")
+            hostname = info["server"].get("hostname")
+            if location:
+                loc_str = f"  Location: {location}"
+                if hostname:
+                    loc_str += f" ({hostname})"
+                click.echo(loc_str)
             uptime_h = info["server"]["uptime_seconds"] / 3600
+            click.echo(f"  Uptime: {uptime_h:.1f}h")
             idle_s = info["server"].get("idle_seconds", 0)
             timeout_s = info["server"].get("idle_timeout", 0)
-            location = info["server"].get("location")
-            if location:
-                click.echo(f"  Location: {location}")
-            click.echo(f"  Uptime: {uptime_h:.1f}h")
             if timeout_s > 0:
-                click.echo(f"  Idle: {idle_s:.0f}s / {timeout_s}s timeout")
+                from imas_codex.cli.services import _colored_bar
+
+                idle_bar = _colored_bar(idle_s, timeout_s)
+                click.echo(f"  Idle: {idle_bar}  {idle_s:.0f}s / {timeout_s}s timeout")
+            elif idle_s > 0:
+                idle_min = idle_s / 60
+                if idle_min > 60:
+                    click.echo(f"  Idle: {idle_min / 60:.1f}h")
+                elif idle_min > 1:
+                    click.echo(f"  Idle: {idle_min:.0f}m")
+                else:
+                    click.echo(f"  Idle: {idle_s:.0f}s")
+            # Request statistics
+            stats = info.get("stats", {})
+            if stats.get("request_count", 0) > 0:
+                click.echo(
+                    f"  Requests: {stats['request_count']} "
+                    f"({stats['total_texts']} texts, "
+                    f"avg {stats['avg_ms_per_request']:.0f}ms)"
+                )
     else:
         click.echo("  ✗ Not available")
         click.echo("  Deploy with: imas-codex embed start")
