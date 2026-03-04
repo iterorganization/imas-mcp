@@ -257,7 +257,34 @@ def _generate_api_reference() -> str:
     import importlib
     import inspect
 
-    lines = ["Available functions (with exact signatures):", ""]
+    # Task mapping — put this first so agents see it before signatures
+    lines = [
+        "Pick the right function for your task:",
+        "",
+        "  Wiki/documentation search  -> find_wiki() or wiki_page_chunks()",
+        "  Signal/diagnostic search   -> find_signals()",
+        "  IMAS data dictionary       -> find_imas() or search_imas()",
+        "  Code/analysis search       -> find_code()",
+        "  MDSplus tree nodes         -> find_tree_nodes()",
+        "  Signal-to-IMAS mapping     -> map_signals_to_imas()",
+        "  Facility overview          -> facility_overview()",
+        "  Flexible node query        -> graph_search()",
+        "",
+        "  Never write raw Cypher when a domain function exists.",
+        "  Chain multiple calls in one python() invocation.",
+        "",
+        "Example (wiki research — do this):",
+        "  results = find_wiki('fishbone instabilities', facility='jet')",
+        "  chunks = wiki_page_chunks('fishbone', facility='jet')",
+        "  signals = find_signals('fishbone', facility='jet')",
+        "  print(as_table(pick(results, 'page_title', 'section', 'score')))",
+        "  print(as_table(pick(chunks, 'page_title', 'section', 'text')))",
+        "",
+    ]
+
+    # Function signatures
+    lines.append("Function signatures:")
+    lines.append("")
 
     for cat, entries in _API_REGISTRY:
         lines.append(f"  {cat}:")
@@ -284,17 +311,8 @@ def _generate_api_reference() -> str:
                     lines.append(f"    {func_name}(...)")
         lines.append("")
 
-    lines.extend(
-        [
-            "  Also: repl_help() for full reference, reload() to reinitialize",
-            "",
-            "  Tips:",
-            "  - Chain queries in a single python() call",
-            "  - Call schema_for(task='wiki') before writing raw Cypher",
-            "  - Use as_table(pick(results, 'col1', 'col2')) for output",
-            "",
-        ]
-    )
+    lines.append("  Also: repl_help() for full reference, reload() to reinitialize")
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -1438,13 +1456,9 @@ class AgentsServer:
         # Set the docstring dynamically so it's always in sync with
         # the actual registered functions (generated from introspection)
         python.__doc__ = (
-            "Execute Python code in a persistent REPL with pre-loaded "
-            "graph utilities. Variables persist across calls.\n\n"
-            "Chain multiple operations in a single call to minimize "
-            "round-trips.\n\n"
-            "Use domain query functions instead of raw Cypher. For raw "
-            "Cypher, call schema_for(task='wiki') first to get node "
-            "labels, properties, and enums.\n\n"
+            "Execute Python in a persistent REPL with pre-loaded graph, "
+            "wiki, signal, and IMAS utilities. Variables persist across "
+            "calls.\n\n"
             f"{api_reference}\n"
             "Args:\n"
             "    code: Python code to execute (multi-line supported)\n\n"

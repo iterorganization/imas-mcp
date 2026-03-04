@@ -644,9 +644,9 @@ The `python()` MCP tool provides a persistent REPL with pre-loaded utilities. Th
 
 ### REPL Workflow
 
-1. **Use domain query functions** (`find_wiki`, `find_signals`, `graph_search`, etc.) instead of raw Cypher. They handle embeddings, schema validation, and relationship traversal internally.
-2. **For raw Cypher**, call `schema_for(task='wiki')` first to get node labels, properties, relationships, and enums derived from the LinkML schemas. Never guess property names — they are code-generated.
-3. **Chain operations** in a single `python()` call to minimize round-trips. Each call has overhead.
+1. **Use domain query functions** (`find_wiki`, `find_signals`, `graph_search`, etc.) instead of raw Cypher. They handle embeddings, schema validation, and relationship traversal internally. Never write raw Cypher when a domain function covers your task.
+2. **Chain operations** in a single `python()` call to minimize round-trips. Each call has overhead.
+3. **For raw Cypher** (only when no domain function fits), call `schema_for(task='wiki')` first to get node labels, properties, relationships, and enums derived from the LinkML schemas. Never guess property names — they are code-generated.
 4. **Format output** with `as_table(pick(results, 'col1', 'col2'))` for structured results.
 
 ### Schema-First Queries
@@ -658,15 +658,26 @@ All graph node types, properties, enums, and relationships are derived from Link
 - `get_schema()` — full `GraphSchema` object with `node_labels`, `get_model()`, `get_properties()`
 - `repl_help()` — auto-generated API reference with all function signatures
 
-**Never hardcode property names.** Before writing Cypher, verify against the schema:
+**Never hardcode property names.** Before writing raw Cypher, verify against the schema:
 
 ```python
 python('''
-# Get schema context for wiki queries
+# Use domain functions — not raw Cypher
+results = find_wiki('fishbone instabilities', facility='jet')
+chunks = wiki_page_chunks('fishbone', facility='jet', text_contains='ICRH')
+signals = find_signals('fishbone', facility='jet')
+print(as_table(pick(results, 'page_title', 'section', 'score')))
+print(as_table(pick(chunks, 'page_title', 'section', 'text')))
+print(as_table(pick(signals, 'id', 'description', 'score')))
+''')
+```
+
+For queries not covered by domain functions, use `schema_for()` first:
+
+```python
+python('''
 print(schema_for(task="wiki"))
-# Then write the query using verified properties
-results = query("MATCH (c:WikiChunk) WHERE c.text CONTAINS 'fishbone' RETURN c.text, c.section LIMIT 5")
-print(as_table(results))
+# Then write Cypher using verified property names
 ''')
 ```
 
@@ -682,21 +693,21 @@ python("print(schema_for())")        # Graph schema overview
 
 | Task | Command |
 |------|---------|
-| Graph query | `python("print(query('MATCH (n) RETURN n.id LIMIT 5'))")` |
-| IMAS search | `python("print(search_imas('electron temperature'))")` |
 | Wiki search | `python("print(find_wiki('plasma control', facility='jet'))")` |
 | Wiki keyword | `python("print(find_wiki(text_contains='fishbone'))")` |
 | Page chunks | `python("print(wiki_page_chunks('equilibrium', facility='tcv'))")` |
 | Signal search | `python("print(find_signals('electron density', facility='tcv'))")` |
+| IMAS search | `python("print(search_imas('electron temperature'))")` |
 | Code search | `python("print(find_code('equilibrium', facility='tcv'))")` |
 | Graph search | `python("print(graph_search('WikiChunk', where={'text__contains': 'IMAS'}))")` |
 | Format table | `python("print(as_table(find_signals('ip', facility='tcv')))")` |
 | Facility info | `python("print(get_facility('tcv'))")` |
+| Raw Cypher | `python("print(query('MATCH (n) RETURN n.id LIMIT 5'))")` |
 | Add to graph | `add_to_graph('SourceFile', [...])` |
 | Update infra | `update_facility_infrastructure('tcv', {...})` |
 | Remote command | `ssh facility "rg pattern /path"` |
 
-**IMPORTANT:** Chain multiple operations in a single `python()` call to minimize round-trips:
+Chain multiple operations in a single `python()` call to minimize round-trips:
 
 ```python
 python('''
