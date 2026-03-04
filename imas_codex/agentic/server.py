@@ -122,6 +122,7 @@ def _neo4j_error_message(e: Exception) -> str:
 
 _repl_globals: dict[str, Any] | None = None
 _repl_lock = threading.Lock()
+_repl_first_call = True
 _imas_tools_instance = None
 
 
@@ -957,6 +958,83 @@ def _init_repl() -> dict[str, Any]:
     graph_search = _bind_dq(_graph_search)
 
     # =========================================================================
+    # REPL help — auto-generated from introspection
+    # =========================================================================
+
+    def _generate_repl_help() -> str:
+        """Generate compact API reference from registered functions."""
+        import inspect
+
+        # Functions to document, grouped by category
+        categories = {
+            "DOMAIN QUERIES (prefer over raw Cypher)": [
+                find_signals,
+                find_wiki,
+                wiki_page_chunks,
+                find_code,
+                find_imas,
+                find_tree_nodes,
+                map_signals_to_imas,
+                facility_overview,
+            ],
+            "QUERY BUILDER": [graph_search],
+            "FORMATTERS": [as_table, as_summary, pick],
+            "SCHEMA (call before writing Cypher)": [_schema_for, get_schema],
+            "GRAPH": [query, semantic_search, embed],
+            "FACILITY": [
+                get_facility,
+                get_facility_infrastructure,
+                update_infrastructure,
+                get_exploration_targets,
+                get_tree_structure,
+            ],
+            "REMOTE": [run, check_tools],
+            "IMAS DD": [search_imas, fetch_imas, list_imas, check_imas],
+            "COCOS": [validate_cocos, determine_cocos, cocos_info],
+        }
+
+        # Internal params injected by REPL binding
+        _internal = {"gc", "embed_fn"}
+
+        lines = ["=== CODEX REPL API ===", ""]
+
+        for cat, funcs in categories.items():
+            lines.append(f"  {cat}:")
+            for fn in funcs:
+                name = fn.__name__
+                if name.startswith("_"):
+                    name = name.lstrip("_")
+                try:
+                    sig = inspect.signature(fn)
+                    params = {
+                        k: v for k, v in sig.parameters.items() if k not in _internal
+                    }
+                    clean_sig = sig.replace(parameters=list(params.values()))
+                    lines.append(f"    {name}{clean_sig}")
+                except (ValueError, TypeError):
+                    lines.append(f"    {name}(...)")
+            lines.append("")
+
+        lines.extend(
+            [
+                "  TIPS:",
+                "  - Chain queries in a single python() call",
+                "  - Call schema_for(task='wiki') before raw Cypher",
+                "  - Use as_table(pick(results, 'col1', 'col2')) for output",
+                "  - Call help(fn) for full docstring",
+                "",
+            ]
+        )
+
+        return "\n".join(lines)
+
+    def repl_help() -> str:
+        """Print auto-generated API reference for all REPL functions."""
+        ref = _generate_repl_help()
+        print(ref)
+        return ref
+
+    # =========================================================================
     # Build REPL globals
     # =========================================================================
 
@@ -1014,6 +1092,7 @@ def _init_repl() -> dict[str, Any]:
         "schema_for": _schema_for,
         # REPL management
         "reload": _reload_repl,
+        "repl_help": repl_help,
         # Standard library
         "subprocess": subprocess,
         # Result storage
@@ -1051,11 +1130,12 @@ def _reload_repl() -> str:
     Returns:
         Status message
     """
-    global _repl_globals, _imas_tools_instance
+    global _repl_globals, _imas_tools_instance, _repl_first_call
 
     # Clear REPL state
     _repl_globals = None
     _imas_tools_instance = None
+    _repl_first_call = True
 
     # Invalidate imas_codex module cache
     modules_to_reload = [name for name in sys.modules if name.startswith("imas_codex")]
@@ -1137,94 +1217,43 @@ class AgentsServer:
         @self.mcp.tool()
         def python(code: str) -> str:
             """
-            Execute Python code in a persistent REPL with rich pre-loaded utilities.
+            Execute Python code in a persistent REPL with pre-loaded graph
+            utilities. Variables persist across calls.
 
-            The REPL maintains state between calls - variables persist across invocations.
-            All utilities are loaded at server startup for instant response.
+            FIRST CALL returns the full API reference automatically.
+            Subsequent calls: use repl_help() to see it again.
 
-            IMPORTANT: Chain multiple operations in a single call to minimize
-            round-trips. Each python() invocation has overhead — combine related
-            queries and processing into one call.
+            WORKFLOW:
+            1. Use domain query functions (find_wiki, find_signals, etc.)
+               instead of raw Cypher — they handle embeddings and schema.
+            2. For raw Cypher, call schema_for(task='wiki') first to get
+               node labels, properties, relationships, and enums.
+            3. Chain multiple operations in a single python() call.
+            4. Use as_table(pick(results, 'col1', 'col2')) for output.
 
-            === DISCOVERY ===
-            List all functions: dir()
-            Get help: help(function_name)
-            Get signature: import inspect; inspect.signature(function_name)
-
-            === DOMAIN QUERIES (pre-composed, one-call solutions) ===
-            find_wiki(query, text_contains, page_title_contains, facility, k)
-            wiki_page_chunks(title_contains, facility, text_contains, limit)
-            find_signals(query, facility, diagnostic, physics_domain)
-            find_imas(query, ids_filter, limit)
-            find_code(query, facility, limit)
-            find_tree_nodes(query, facility, tree_name, path_prefix)
-            map_signals_to_imas(facility, diagnostic, physics_domain)
-            facility_overview(facility)
-
-            === QUERY BUILDER (schema-validated, flexible) ===
-            graph_search(label, where, semantic, traverse, return_props, limit)
-              Filter operators: prop__contains, prop__starts_with,
-              prop__ends_with, prop__in, prop__gt, prop__gte, prop__lt,
-              prop__lte, prop__ne
-
-            === FORMATTERS ===
-            as_table(results, columns) - Markdown table
-            as_summary(results, group_by) - Count summary
-            pick(results, *fields) - Project to specific fields
-
-            === GRAPH OPERATIONS ===
-            query(cypher, **params) - Execute Cypher query, return list of dicts
-            semantic_search(text, index, k, include_deprecated) - Vector search
-            embed(text) - Get embedding vector
-
-            === FACILITY CONFIGURATION ===
-            get_facility(facility) - Load complete config
-            get_facility_infrastructure(facility) - Load private infra only
-            update_infrastructure(facility, data) - Update private config
-            get_exploration_targets(facility, limit) - Prioritized work items
-            get_tree_structure(tree, prefix, limit) - TreeNode hierarchy
-
-            === REMOTE EXECUTION ===
-            run(cmd, facility, timeout) - Execute command (local/SSH)
-            check_tools(facility) - Check tool availability
-
-            === IMAS DATA DICTIONARY ===
-            search_imas(query, ids_filter, max_results)
-            fetch_imas(paths)
-            list_imas(paths, leaf_only, max_paths)
-            check_imas(paths)
-
-            === COCOS ===
-            validate_cocos(cocos), determine_cocos(...), cocos_info(cocos)
+            KEY FUNCTIONS:
+            - find_wiki, find_signals, find_code, find_imas, find_tree_nodes
+            - wiki_page_chunks, map_signals_to_imas, facility_overview
+            - graph_search (schema-validated, supports filter operators)
+            - schema_for, get_schema (LinkML-derived graph schema)
+            - query, semantic_search, embed (low-level graph access)
+            - as_table, as_summary, pick (formatters)
+            - repl_help() (full API with signatures)
 
             Args:
                 code: Python code to execute (multi-line supported)
 
             Returns:
                 stdout output, or repr of last expression if no print
-
-            Examples:
-                # Chain multiple queries in one call:
-                python('''
-                pages = find_wiki(text_contains="fishbone", facility="jet")
-                chunks = wiki_page_chunks("fishbone", facility="jet")
-                print(as_table(pick(pages, "page_title", "score")))
-                print(f"\\n{len(chunks)} chunks from matching pages")
-                ''')
-
-                # Schema-aware search with filter operators:
-                python('''
-                results = graph_search("WikiChunk",
-                    where={"text__contains": "equilibrium"},
-                    return_props=["id", "text", "section"])
-                print(as_table(results))
-                ''')
-
-                # Variables persist across calls
-                python("x = 42")
-                python("print(x * 2)")  # prints 84
             """
+            global _repl_first_call
             repl = _get_repl()
+
+            # On first call, prepend orientation with API reference
+            orientation = ""
+            if _repl_first_call:
+                _repl_first_call = False
+                orientation = repl["repl_help"]() + "\n"
 
             stdout_capture = io.StringIO()
 
@@ -1239,7 +1268,9 @@ class AgentsServer:
                         exec(code, repl)
 
                 output = stdout_capture.getvalue()
-                return output if output else "(no output)"
+                if not output:
+                    output = "(no output)"
+                return orientation + output
 
             except Exception as e:
                 import traceback
