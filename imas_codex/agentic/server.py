@@ -1834,7 +1834,11 @@ class AgentsServer:
         # Unified search tools — multi-index vector search + graph enrichment
         # =====================================================================
 
-        from imas_codex.agentic.search_tools import _search_docs, _search_signals
+        from imas_codex.agentic.search_tools import (
+            _search_code,
+            _search_docs,
+            _search_signals,
+        )
 
         @self.mcp.tool()
         def search_signals(
@@ -1895,6 +1899,31 @@ class AgentsServer:
                 cross-links to signals/IMAS paths, and related documents.
             """
             return _search_docs(query, facility, k=k)
+
+        @self.mcp.tool()
+        def search_code(
+            query: str,
+            facility: str | None = None,
+            k: int = 5,
+        ) -> str:
+            """Search ingested code with data reference enrichment.
+
+            Performs semantic search on code chunks, enriched with MDSplus
+            paths, TDI function calls, IMAS path references, and directory
+            context.
+
+            Use this for: "Show me code that does [task] at [facility]"
+
+            Args:
+                query: Natural language search text (e.g. "equilibrium reconstruction")
+                facility: Optional facility filter (e.g. "tcv")
+                k: Number of results (default 5)
+
+            Returns:
+                Formatted report with code examples, data references,
+                and directory context.
+            """
+            return _search_code(query, facility=facility, k=k)
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files.
