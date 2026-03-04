@@ -1730,3 +1730,127 @@ def promote_leaf_nodes_to_signals(
             tree_name,
         )
         return promoted
+
+
+# ---------------------------------------------------------------------------
+# Facility-wide queries — used by top-level pipeline workers
+# ---------------------------------------------------------------------------
+
+
+def has_pending_extract_work_facility(facility: str) -> bool:
+    """Check if any TreeModelVersions across all trees need extraction."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (v:TreeModelVersion {facility_id: $facility})
+            WHERE v.status = 'discovered'
+            RETURN count(v) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def claim_version_for_extraction_facility(facility: str) -> dict | None:
+    """Claim a pending TreeModelVersion for extraction across all trees.
+
+    Returns lowest-version unclaimed node with status=discovered.
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (v:TreeModelVersion {facility_id: $facility})
+            WHERE v.status = 'discovered'
+              AND (v.claimed_at IS NULL
+                   OR v.claimed_at < datetime() - duration($cutoff))
+            WITH v ORDER BY v.version ASC LIMIT 1
+            SET v.claimed_at = datetime()
+            RETURN v.id AS id, v.version AS version,
+                   v.first_shot AS first_shot, v.tree_name AS tree_name
+            """,
+            facility=facility,
+            cutoff=cutoff,
+        )
+        if result:
+            return dict(result[0])
+        return None
+
+
+def has_pending_units_work_facility(facility: str) -> bool:
+    """Check if any ingested tree versions need unit extraction (facility-wide)."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (v:TreeModelVersion {facility_id: $facility})
+            WHERE v.status = 'ingested'
+              AND (v.units_extracted IS NULL OR v.units_extracted = false)
+            RETURN count(v) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def claim_tree_for_units(facility: str) -> dict | None:
+    """Claim a tree that needs unit extraction (facility-wide).
+
+    Returns one tree_name with at least one ingested version that
+    hasn't had units extracted yet.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (v:TreeModelVersion {facility_id: $facility})
+            WHERE v.status = 'ingested'
+              AND (v.units_extracted IS NULL OR v.units_extracted = false)
+            WITH v.tree_name AS tree_name, max(v.version) AS latest_version
+            RETURN tree_name, latest_version
+            LIMIT 1
+            """,
+            facility=facility,
+        )
+        if result:
+            return dict(result[0])
+        return None
+
+
+def has_pending_promote_work_facility(facility: str) -> bool:
+    """Check if any trees have leaf TreeNodes not yet promoted to FacilitySignal."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility})
+            WHERE n.node_type IN ['NUMERIC', 'SIGNAL']
+              AND NOT EXISTS {
+                  MATCH (n)<-[:SOURCE_NODE]-(:FacilitySignal)
+              }
+            RETURN count(n) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def claim_tree_for_promote(facility: str) -> str | None:
+    """Claim a tree that has un-promoted leaf TreeNodes.
+
+    Returns the tree_name for a tree with NUMERIC/SIGNAL nodes
+    that don't yet have a FacilitySignal backed by SOURCE_NODE.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility})
+            WHERE n.node_type IN ['NUMERIC', 'SIGNAL']
+              AND NOT EXISTS {
+                  MATCH (n)<-[:SOURCE_NODE]-(:FacilitySignal)
+              }
+            RETURN DISTINCT n.tree_name AS tree_name
+            LIMIT 1
+            """,
+            facility=facility,
+        )
+        if result:
+            return result[0]["tree_name"]
+        return None
