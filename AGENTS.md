@@ -539,7 +539,7 @@ Install on any facility: `uv run imas-codex tools install <facility>`
 ## Commit Workflow
 
 ```bash
-# 1. Lint and format
+# 1. Lint and format (Python files only — ruff does not support other formats)
 uv run ruff check --fix .
 uv run ruff format .
 
