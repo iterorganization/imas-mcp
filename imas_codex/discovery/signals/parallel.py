@@ -875,6 +875,67 @@ def release_signal_claim(signal_id: str) -> None:
     release_claim("FacilitySignal", signal_id)
 
 
+# Maximum number of crash retries before marking a signal as checked-failed.
+# Covers core dumps, timeouts, and other transient script failures.
+MAX_CRASH_RETRIES = 3
+
+
+def release_or_fail_after_crash(
+    signal_id: str,
+    error_type: str = "segfault",
+    error_msg: str = "MDSplus process crash",
+) -> bool:
+    """Increment crash retry counter and either release or fail the signal.
+
+    Tracks how many times a signal has caused a process crash (core dump,
+    timeout, etc.) via the ``check_retries`` property.  After
+    ``MAX_CRASH_RETRIES`` crashes, marks the signal as ``checked`` with
+    ``success=false`` so it stops being retried.
+
+    Returns True if the signal was marked as checked-failed (max retries
+    exceeded), False if it was released for another attempt.
+    """
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (s:FacilitySignal {id: $id})
+                SET s.check_retries = coalesce(s.check_retries, 0) + 1,
+                    s.claimed_at = null
+                RETURN s.check_retries AS retries
+                """,
+                id=signal_id,
+            )
+            retries = result[0]["retries"] if result else 0
+            if retries >= MAX_CRASH_RETRIES:
+                gc.query(
+                    """
+                    MATCH (s:FacilitySignal {id: $id})
+                    SET s.status = $checked,
+                        s.checked = true,
+                        s.checked_at = datetime()
+                    """,
+                    id=signal_id,
+                    checked=FacilitySignalStatus.checked.value,
+                )
+                logger.info(
+                    "Signal %s marked checked-failed after %d crash retries (%s)",
+                    signal_id,
+                    retries,
+                    error_type,
+                )
+                return True
+            return False
+    except Exception as e:
+        logger.warning(
+            "Could not update crash retry for %s: %s — releasing claim",
+            signal_id,
+            e,
+        )
+        release_signal_claim(signal_id)
+        return False
+
+
 # =============================================================================
 # Signal Pattern Detection & Propagation
 # =============================================================================
@@ -3341,36 +3402,61 @@ async def check_worker(
                         str(e)[:200],
                     )
                     for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                        await asyncio.to_thread(
+                            release_or_fail_after_crash,
+                            sig["id"],
+                            "parse_error",
+                            f"Failed to parse check response: {e}",
+                        )
                 except subprocess.CalledProcessError as e:
                     stderr = e.stderr[:200] if e.stderr else str(e)
                     # Core dumps indicate MDSplus segfault — log clearly
                     if "dumped core" in stderr or e.returncode < 0:
                         logger.warning(
                             "MDSplus core dump checking %d signals (exit %d) — "
-                            "batch released for retry",
+                            "tracking retries (max %d)",
                             len(batch_input),
                             e.returncode,
+                            MAX_CRASH_RETRIES,
                         )
+                        error_type = "segfault"
+                        error_msg = "MDSplus process crash (core dump)"
                     else:
                         logger.warning(
                             "Check script failed (exit %d): %s",
                             e.returncode,
                             stderr,
                         )
+                        error_type = "script_crash"
+                        error_msg = f"Check script failed (exit {e.returncode})"
                     for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                        await asyncio.to_thread(
+                            release_or_fail_after_crash,
+                            sig["id"],
+                            error_type,
+                            error_msg,
+                        )
                 except subprocess.TimeoutExpired:
                     logger.warning(
                         "Check script timed out for batch of %d signals",
                         len(batch_input),
                     )
                     for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                        await asyncio.to_thread(
+                            release_or_fail_after_crash,
+                            sig["id"],
+                            "timeout",
+                            "Check script timed out",
+                        )
                 except Exception as e:
                     logger.warning("Failed to run check: %s", e)
                     for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                        await asyncio.to_thread(
+                            release_or_fail_after_crash,
+                            sig["id"],
+                            "infrastructure",
+                            str(e)[:200],
+                        )
 
         # All results go through mark_signals_checked
         if checked:
