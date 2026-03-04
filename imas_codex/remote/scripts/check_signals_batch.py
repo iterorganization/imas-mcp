@@ -287,7 +287,7 @@ def main() -> None:
     # Retry failed signals on remaining check_shots (shot-dependent errors only)
     retry_groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
     final_results: list[dict] = []
-    failed_for_retry: dict[str, dict] = {}  # signal_id -> original result
+    failed_for_retry: dict[str, list[int]] = {}  # signal_id -> list of failed shots
 
     for result in all_results:
         sig_id = result["id"]
@@ -296,8 +296,8 @@ def main() -> None:
         elif sig_id in signal_remaining_shots and _is_shot_dependent_error(
             result.get("error", "")
         ):
-            # Queue for retry on remaining check_shots
-            failed_for_retry[sig_id] = result
+            # Track the failed shot and queue for retry
+            failed_for_retry.setdefault(sig_id, []).append(result["checked_shot"])
             # Find original signal data
             orig_sig = None
             for sig in signals:
@@ -316,7 +316,7 @@ def main() -> None:
         # Track which signals have already succeeded during retries
         succeeded: set[str] = set()
         for (tree_name, shot), group_signals in retry_groups.items():
-            # Skip signals that already succeeded on an earlier fallback
+            # Skip signals that already succeeded on an earlier retry
             pending = [s for s in group_signals if s["id"] not in succeeded]
             if not pending:
                 continue
@@ -328,13 +328,21 @@ def main() -> None:
                 if r.get("success") and sig_id not in succeeded:
                     succeeded.add(sig_id)
                     r["checked_shot"] = shot
-                    r["failed_shots"] = [failed_for_retry[sig_id]["checked_shot"]]
+                    r["failed_shots"] = failed_for_retry.get(sig_id, [])
                     final_results.append(r)
+                elif not r.get("success") and sig_id not in succeeded:
+                    # Track this shot as failed too
+                    failed_for_retry.setdefault(sig_id, []).append(shot)
 
         # Add remaining failures (never succeeded on any shot)
-        for sig_id, orig_result in failed_for_retry.items():
+        for sig_id, failed_shots in failed_for_retry.items():
             if sig_id not in succeeded:
-                final_results.append(orig_result)
+                # Find original signal to get error from primary attempt
+                for result in all_results:
+                    if result["id"] == sig_id:
+                        result["failed_shots"] = failed_shots
+                        final_results.append(result)
+                        break
 
     # Compute stats
     success_count = sum(1 for r in final_results if r.get("success"))
