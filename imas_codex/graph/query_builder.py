@@ -7,6 +7,27 @@ predictable, no hallucination risk.
 Uses auto-generated ``NODE_LABEL_PROPS`` and ``VECTOR_INDEXES`` from
 ``schema_context_data.py`` to validate labels, property names, and resolve
 vector indexes at call time.
+
+Filter operators in ``where`` dict
+-----------------------------------
+
+Plain keys use equality (``n.prop = $val``).  Append a double-underscore
+suffix for richer predicates:
+
+========== ============================== ============================
+Suffix     Cypher                          Example value
+========== ============================== ============================
+(none)     ``n.prop = $val``               ``"value"``
+__contains ``n.prop CONTAINS $val``        ``"fishbone"``
+__starts_with ``n.prop STARTS WITH $val``  ``"\\\\RESULTS"``
+__ends_with ``n.prop ENDS WITH $val``      ``".py"``
+__in       ``n.prop IN $val``              ``["discovered", "ingested"]``
+__gt       ``n.prop > $val``               ``0.7``
+__gte      ``n.prop >= $val``              ``0.7``
+__lt       ``n.prop < $val``               ``0.3``
+__lte      ``n.prop <= $val``              ``0.3``
+__ne       ``n.prop <> $val``              ``"failed"``
+========== ============================== ============================
 """
 
 from __future__ import annotations
@@ -19,6 +40,28 @@ from imas_codex.graph.schema_context_data import NODE_LABEL_PROPS, VECTOR_INDEXE
 _LABEL_TO_INDEX: dict[str, str] = {
     meta[0]: name for name, meta in VECTOR_INDEXES.items()
 }
+
+# Supported filter operators: suffix -> Cypher operator template
+_FILTER_OPS: dict[str, str] = {
+    "contains": "CONTAINS",
+    "starts_with": "STARTS WITH",
+    "ends_with": "ENDS WITH",
+    "in": "IN",
+    "gt": ">",
+    "gte": ">=",
+    "lt": "<",
+    "lte": "<=",
+    "ne": "<>",
+}
+
+
+def _parse_filter_key(key: str) -> tuple[str, str]:
+    """Parse ``prop__op`` into ``(prop, op)`` or ``(prop, "eq")``."""
+    for suffix in _FILTER_OPS:
+        tag = f"__{suffix}"
+        if key.endswith(tag):
+            return key[: -len(tag)], suffix
+    return key, "eq"
 
 
 def graph_search(
@@ -69,7 +112,8 @@ def graph_search(
 
     # --- validate where properties ---------------------------------------
     if where:
-        for prop in where:
+        for key in where:
+            prop, _op = _parse_filter_key(key)
             if prop not in valid_props:
                 raise ValueError(
                     f"Unknown property '{prop}' on {label}. "
@@ -102,9 +146,19 @@ def graph_search(
     # --- where clause ----------------------------------------------------
     if where:
         conditions = []
-        for i, (prop, value) in enumerate(where.items()):
+        for i, (key, value) in enumerate(where.items()):
+            prop, op = _parse_filter_key(key)
             pname = f"w_{i}"
-            conditions.append(f"n.{prop} = ${pname}")
+            if op == "eq":
+                conditions.append(f"n.{prop} = ${pname}")
+            else:
+                cypher_op = _FILTER_OPS[op]
+                if op == "in":
+                    conditions.append(f"n.{prop} IN ${pname}")
+                elif op in ("contains", "starts_with", "ends_with"):
+                    conditions.append(f"n.{prop} {cypher_op} ${pname}")
+                else:
+                    conditions.append(f"n.{prop} {cypher_op} ${pname}")
             params[pname] = value
         lines.append("WHERE " + " AND ".join(conditions))
 

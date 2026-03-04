@@ -17,6 +17,7 @@ from imas_codex.graph.domain_queries import (
     find_tree_nodes,
     find_wiki,
     map_signals_to_imas,
+    wiki_page_chunks,
 )
 
 
@@ -96,8 +97,8 @@ class TestFindWiki:
         result = find_wiki(query="equilibrium", gc=mock_gc, embed_fn=mock_embed)
         assert isinstance(result, list)
 
-    def test_requires_query(self, mock_gc, mock_embed):
-        with pytest.raises(TypeError):
+    def test_requires_query_or_keyword(self, mock_gc, mock_embed):
+        with pytest.raises(ValueError, match="query.*keyword"):
             find_wiki(gc=mock_gc, embed_fn=mock_embed)
 
     def test_calls_embedding(self, mock_gc, mock_embed):
@@ -116,6 +117,88 @@ class TestFindWiki:
         find_wiki(query="test", gc=mock_gc, embed_fn=mock_embed)
         cypher = mock_gc.query.call_args[0][0]
         assert "WikiPage" in cypher
+
+    def test_text_contains_keyword_only(self, mock_gc, mock_embed):
+        """Keyword-only search without semantic query."""
+        find_wiki(text_contains="fishbone", gc=mock_gc, embed_fn=mock_embed)
+        mock_embed.assert_not_called()
+        cypher = mock_gc.query.call_args[0][0]
+        assert "CONTAINS" in cypher
+
+    def test_page_title_contains(self, mock_gc, mock_embed):
+        """Filter by page title substring."""
+        find_wiki(page_title_contains="fishbone", gc=mock_gc, embed_fn=mock_embed)
+        cypher = mock_gc.query.call_args[0][0]
+        assert "title" in cypher.lower()
+        assert "CONTAINS" in cypher
+
+    def test_semantic_with_text_filter(self, mock_gc, mock_embed):
+        """Combined semantic + keyword filtering."""
+        find_wiki(
+            query="instabilities",
+            text_contains="fishbone",
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        mock_embed.assert_called_once()
+        cypher = mock_gc.query.call_args[0][0]
+        assert "queryNodes" in cypher
+        assert "CONTAINS" in cypher
+
+    def test_semantic_with_title_filter(self, mock_gc, mock_embed):
+        """Semantic search filtered by page title."""
+        find_wiki(
+            query="kink mode",
+            page_title_contains="fishbone",
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        assert "queryNodes" in cypher
+        assert "title" in cypher.lower()
+
+
+class TestWikiPageChunks:
+    """Test wiki_page_chunks helper."""
+
+    def test_returns_list(self, mock_gc, mock_embed):
+        result = wiki_page_chunks("fishbone", gc=mock_gc, embed_fn=mock_embed)
+        assert isinstance(result, list)
+
+    def test_filters_by_title(self, mock_gc, mock_embed):
+        wiki_page_chunks("fishbone", gc=mock_gc, embed_fn=mock_embed)
+        cypher = mock_gc.query.call_args[0][0]
+        assert "title" in cypher.lower()
+        assert "CONTAINS" in cypher
+
+    def test_with_facility(self, mock_gc, mock_embed):
+        wiki_page_chunks("fishbone", facility="jet", gc=mock_gc, embed_fn=mock_embed)
+        call_kwargs = mock_gc.query.call_args
+        assert "jet" in str(call_kwargs)
+
+    def test_with_text_contains(self, mock_gc, mock_embed):
+        wiki_page_chunks(
+            "fishbone",
+            text_contains="team",
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        # Should have two CONTAINS conditions
+        assert cypher.count("CONTAINS") >= 2
+
+    def test_returns_page_context(self, mock_gc, mock_embed):
+        mock_gc.query.return_value = [
+            {
+                "page_title": "Controlling fishbones",
+                "page_url": "http://...",
+                "facility": "jet",
+                "section": "Team",
+                "text": "content",
+            }
+        ]
+        result = wiki_page_chunks("fishbone", gc=mock_gc, embed_fn=mock_embed)
+        assert result[0]["page_title"] == "Controlling fishbones"
 
 
 class TestFindImas:
