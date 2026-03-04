@@ -1737,6 +1737,50 @@ def promote_leaf_nodes_to_signals(
 # ---------------------------------------------------------------------------
 
 
+def get_version_counts(facility: str) -> dict[str, int]:
+    """Get TreeModelVersion counts by status for a facility.
+
+    Returns:
+        Dict with keys: total, discovered, ingested, failed
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (v:TreeModelVersion {facility_id: $facility})
+            RETURN count(v) AS total,
+                   sum(CASE WHEN v.status = 'discovered' THEN 1 ELSE 0 END) AS discovered,
+                   sum(CASE WHEN v.status = 'ingested' THEN 1 ELSE 0 END) AS ingested,
+                   sum(CASE WHEN v.status = 'failed' THEN 1 ELSE 0 END) AS failed
+            """,
+            facility=facility,
+        )
+        if result:
+            return dict(result[0])
+        return {"total": 0, "discovered": 0, "ingested": 0, "failed": 0}
+
+
+def get_signal_counts(facility: str) -> dict[str, int]:
+    """Get FacilitySignal counts by status for a facility.
+
+    Returns:
+        Dict with keys: total, discovered, enriched, checked
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (s:FacilitySignal {facility_id: $facility})
+            RETURN count(s) AS total,
+                   sum(CASE WHEN s.status = 'discovered' THEN 1 ELSE 0 END) AS discovered,
+                   sum(CASE WHEN s.status = 'enriched' THEN 1 ELSE 0 END) AS enriched,
+                   sum(CASE WHEN s.status = 'checked' THEN 1 ELSE 0 END) AS checked
+            """,
+            facility=facility,
+        )
+        if result:
+            return dict(result[0])
+        return {"total": 0, "discovered": 0, "enriched": 0, "checked": 0}
+
+
 def has_pending_extract_work_facility(facility: str) -> bool:
     """Check if any TreeModelVersions across all trees need extraction."""
     with GraphClient() as gc:

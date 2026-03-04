@@ -45,7 +45,7 @@ def _create_vector_store(
         embedding_dimension=get_embedding_dimension(),
         index_name="code_chunk_embedding",
         node_label="CodeChunk",
-        text_node_property="content",
+        text_node_property="text",
         embedding_node_property="embedding",
     )
 
