@@ -4,7 +4,7 @@
 > with example graph queries, and validate the full pipeline end-to-end
 > against the live TCV facility with schema compliance checks.
 
-## Status: Planning
+## Status: Done
 
 ## Context
 
@@ -231,7 +231,7 @@ After each E2E test, run validation queries:
 Run `tests/graph/test_schema_compliance.py` after each E2E test to verify
 the generated data is schema-compliant. All 9 compliance tests must pass.
 
-## Phase 7: Fix All Errors
+## Phase 7: Fix All Errors ✅
 
 **Goal:** Iterative bug-fixing phase. Run each E2E test, fix failures,
 re-clear and re-run until all 50 items process to completion. Then run the
