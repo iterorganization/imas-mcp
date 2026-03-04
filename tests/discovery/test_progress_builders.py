@@ -20,7 +20,53 @@ from imas_codex.discovery.base.progress import (
     build_pipeline_section,
     build_resource_section,
     build_servers_section,
+    format_rate,
 )
+
+# =============================================================================
+# format_rate
+# =============================================================================
+
+
+class TestFormatRate:
+    """Tests for adaptive rate formatting."""
+
+    def test_small_rate(self):
+        assert format_rate(0.5) == "0.5/s"
+
+    def test_single_digit(self):
+        assert format_rate(3.7) == "3.7/s"
+
+    def test_tens(self):
+        assert format_rate(83.4) == "83/s"
+
+    def test_hundreds(self):
+        assert format_rate(456.0) == "456/s"
+
+    def test_low_thousands(self):
+        assert format_rate(1_500.0) == "1.5K/s"
+
+    def test_high_thousands(self):
+        assert format_rate(84_000.0) == "84K/s"
+
+    def test_millions(self):
+        assert format_rate(2_500_000.0) == "2M/s"
+
+    def test_zero(self):
+        assert format_rate(0.0) == "0.0/s"
+
+    def test_boundary_ten(self):
+        assert format_rate(10.0) == "10/s"
+
+    def test_boundary_thousand(self):
+        assert format_rate(1_000.0) == "1.0K/s"
+
+    def test_boundary_ten_thousand(self):
+        assert format_rate(10_000.0) == "10K/s"
+
+    def test_boundary_million(self):
+        assert format_rate(1_000_000.0) == "1M/s"
+
 
 # =============================================================================
 # build_resource_section (ResourceConfig)
@@ -365,7 +411,7 @@ class TestBuildPipelineSection:
         assert row_empty.has_content is False
 
     def test_rate_displayed(self):
-        """Rate appears as N.NN/s (2 decimal places)."""
+        """Rate appears with adaptive formatting via format_rate."""
         rows = [
             PipelineRowConfig(
                 name="TRIAGE",
@@ -376,7 +422,7 @@ class TestBuildPipelineSection:
             ),
         ]
         result = build_pipeline_section(rows, bar_width=20)
-        assert "3.70/s" in result.plain
+        assert "3.7/s" in result.plain
 
     def test_percentage_displayed(self):
         """Percentage is shown when show_pct=True (default)."""

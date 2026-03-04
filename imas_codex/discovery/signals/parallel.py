@@ -1234,6 +1234,13 @@ def ingest_epochs(
                              v.nodes_removed = ep.nodes_removed,
                              v.added_subtrees = ep.added_subtrees,
                              v.removed_subtrees = ep.removed_subtrees
+                WITH v, ep
+                MATCH (f:Facility {id: ep.facility_id})
+                MERGE (v)-[:AT_FACILITY]->(f)
+                WITH v, ep
+                MERGE (t:MDSplusTree {name: ep.tree_name})
+                ON CREATE SET t.facility_id = ep.facility_id
+                MERGE (v)-[:TREE_NAME]->(t)
                 """,
                 epochs=clean_epochs,
             )

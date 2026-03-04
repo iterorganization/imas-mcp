@@ -139,6 +139,19 @@ def format_count(count: int) -> str:
     return str(count)
 
 
+def format_rate(rate: float) -> str:
+    """Format items/second with adaptive units: 1.2M/s, 84K/s, 3.5/s"""
+    if rate >= 1_000_000:
+        return f"{rate / 1_000_000:.0f}M/s"
+    if rate >= 10_000:
+        return f"{rate / 1_000:.0f}K/s"
+    if rate >= 1_000:
+        return f"{rate / 1_000:.1f}K/s"
+    if rate >= 10:
+        return f"{rate:.0f}/s"
+    return f"{rate:.1f}/s"
+
+
 # =============================================================================
 # Progress Bar Utilities
 # =============================================================================
@@ -679,7 +692,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     # Pre-compute rate text for right-alignment at row_width
     rate_s = ""
     if config.rate and config.rate > 0:
-        rate_s = f"{config.rate:.2f}/s"
+        rate_s = format_rate(config.rate)
 
     if config.has_content:
         line2.append("  ", style="dim")
