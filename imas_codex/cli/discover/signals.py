@@ -438,6 +438,12 @@ def signals(
         )
         log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
 
+    except KeyboardInterrupt:
+        log_print("\n[yellow]Discovery interrupted by user[/yellow]")
+        from imas_codex.remote.executor import cleanup_ssh_on_exit
+
+        cleanup_ssh_on_exit()
+        raise SystemExit(130) from None
     except Exception as e:
         log_print(f"[red]Error: {e}[/red]")
         import traceback

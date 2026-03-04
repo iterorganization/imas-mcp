@@ -287,6 +287,14 @@ class TestSeedWorker:
                 return_value=3,
             ) as mock_seed,
             patch("imas_codex.graph.GraphClient") as mock_gc_class,
+            patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_version_counts",
+                return_value={"total": 0, "discovered": 0, "ingested": 0, "failed": 0},
+            ),
+            patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
+                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
+            ),
         ):
             mock_gc = MagicMock()
             mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
@@ -324,6 +332,14 @@ class TestSeedWorker:
                 return_value=1,
             ) as mock_seed,
             patch("imas_codex.graph.GraphClient") as mock_gc_class,
+            patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_version_counts",
+                return_value={"total": 0, "discovered": 0, "ingested": 0, "failed": 0},
+            ),
+            patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
+                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
+            ),
         ):
             mock_gc = MagicMock()
             mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
@@ -511,6 +527,10 @@ class TestExtractWorker:
             patch(
                 "imas_codex.discovery.mdsplus.graph_ops.mark_version_extracted",
             ),
+            patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_version_counts",
+                return_value={"total": 0, "discovered": 0, "ingested": 0, "failed": 0},
+            ),
         ):
             await mdsplus_extract_worker(state)
 
@@ -554,6 +574,10 @@ class TestPromoteWorker:
             patch(
                 "imas_codex.discovery.mdsplus.graph_ops.promote_leaf_nodes_to_signals",
                 return_value=25,
+            ),
+            patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
+                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
             ),
         ):
             # Suppress TDI linkage import
@@ -734,6 +758,14 @@ class TestPipelineE2E:
             "has_pending_promote": patch(
                 "imas_codex.discovery.mdsplus.graph_ops.has_pending_promote_work_facility",
                 return_value=False,
+            ),
+            "get_version_counts": patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_version_counts",
+                return_value={"total": 0, "discovered": 0, "ingested": 0, "failed": 0},
+            ),
+            "get_signal_counts": patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
+                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
             ),
             # --- Module-level imports in parallel.py ---
             "gc_module": patch(

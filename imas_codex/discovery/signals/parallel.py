@@ -1359,18 +1359,36 @@ async def seed_worker(
     For other scanners (TDI, PPF, EDAS, wiki): runs scanner.scan() and
     ingests signals directly to graph.
 
-    This worker exits quickly — it only creates the initial work items
-    for downstream workers to claim.
+    Idempotent: uses MERGE so re-runs detect existing work. Reports
+    both new and pre-existing items so the display reflects total state.
     """
     from imas_codex.discovery.base.facility import get_facility
-    from imas_codex.discovery.mdsplus.graph_ops import seed_versions
+    from imas_codex.discovery.mdsplus.graph_ops import (
+        get_signal_counts,
+        get_version_counts,
+        seed_versions,
+    )
     from imas_codex.discovery.signals.scanners.base import get_scanner
 
     facility_config = get_facility(state.facility)
     data_sources = facility_config.get("data_sources", {})
     ssh_host = state.ssh_host or facility_config.get("ssh_host", state.facility)
 
-    total_discovered = 0
+    # Check existing graph state to report resumed progress
+    existing_versions = get_version_counts(state.facility)
+    existing_signals = get_signal_counts(state.facility)
+    existing_total = existing_versions["total"] + existing_signals["total"]
+
+    if existing_total > 0:
+        state.discover_stats.processed = existing_versions["total"]
+        if on_progress:
+            on_progress(
+                f"resumed: {existing_versions['total']} versions, "
+                f"{existing_signals['total']} signals in graph",
+                state.discover_stats,
+            )
+
+    total_discovered = existing_versions["total"]
 
     for scanner_type in state.scanner_types:
         if state.stop_requested:
@@ -1707,6 +1725,18 @@ async def mdsplus_extract_worker(
         state.extract_phase.mark_done()
         return
 
+    # Report existing extracted versions for idempotent restart
+    from imas_codex.discovery.mdsplus.graph_ops import get_version_counts
+
+    existing = get_version_counts(state.facility)
+    if existing["ingested"] > 0:
+        state.extract_stats.processed = existing["ingested"]
+        if on_progress:
+            on_progress(
+                f"resumed: {existing['ingested']} versions already extracted",
+                state.extract_stats,
+            )
+
     ssh_retry_count = 0
     max_ssh_retries = 5
 
@@ -1927,6 +1957,18 @@ async def mdsplus_promote_worker(
     if not has_mdsplus:
         state.promote_phase.mark_done()
         return
+
+    # Report existing promoted signals for idempotent restart
+    from imas_codex.discovery.mdsplus.graph_ops import get_signal_counts
+
+    existing = get_signal_counts(state.facility)
+    if existing["total"] > 0:
+        state.promote_stats.processed = existing["total"]
+        if on_progress:
+            on_progress(
+                f"resumed: {existing['total']} signals already promoted",
+                state.promote_stats,
+            )
 
     # Wait for at least one extraction
     while not state.stop_requested:
@@ -2285,7 +2327,7 @@ async def enrich_worker(
                     WHERE score >= $min_score
                     OPTIONAL MATCH (src)-[:HAS_CHUNK]->(node)
                     WHERE src.facility_id = $facility
-                    RETURN node.content AS content,
+                    RETURN node.text AS text,
                            src.path AS source_path,
                            node.chunk_type AS chunk_type,
                            score
@@ -2298,12 +2340,12 @@ async def enrich_worker(
                 )
                 chunks = []
                 for row in results:
-                    content = row.get("content", "")
-                    if len(content) > 600:
-                        content = content[:600] + "..."
+                    text = row.get("text", "")
+                    if len(text) > 600:
+                        text = text[:600] + "..."
                     chunks.append(
                         {
-                            "content": content,
+                            "text": text,
                             "source_path": row.get("source_path", ""),
                             "chunk_type": row.get("chunk_type", ""),
                         }
@@ -2434,7 +2476,7 @@ async def enrich_worker(
                     ctype = chunk.get("chunk_type", "")
                     label = f"{path} ({ctype})" if ctype else path
                     user_lines.append(f"\n```python  # {label}")
-                    user_lines.append(chunk["content"])
+                    user_lines.append(chunk["text"])
                     user_lines.append("```")
 
             # Add individual signal entries
