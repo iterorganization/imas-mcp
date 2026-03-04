@@ -2,23 +2,32 @@
 Parallel data signal discovery engine with async workers.
 
 Architecture:
-- Three async workers: Discover, Enrich, Check
+- Independent async workers, each claiming batches from the graph:
+  - seed: Seeds TreeModelVersion nodes from config (fast, exits immediately)
+  - epoch: Detects structural epochs for dynamic trees (runs independently)
+  - extract: Claims TreeModelVersion, SSH extract + ingest TreeNodes
+  - units: Extracts units for trees with ingested versions
+  - promote: Creates FacilitySignal from leaf TreeNodes
+  - enrich: LLM classification of physics_domain, description generation
+  - check: Test data access with example_shot, verify units/sign
+  - embed: Embeds FacilitySignal descriptions for vector search
 - Graph + claimed_at timestamp for coordination (same pattern as wiki/paths)
 - Status transitions:
-  - discovered → enriched (LLM classification)
-  - enriched → checked (data access test)
-- Workers claim signals by setting claimed_at, release by clearing it
-- Orphan recovery: signals with claimed_at > 5 min old are reclaimed
+  - TreeModelVersion: discovered → ingested
+  - FacilitySignal: discovered → enriched → checked
+- Workers claim items by setting claimed_at, release by clearing it
+- Orphan recovery: items claimed longer than 5 min are reclaimed
 
 Resilience:
 - Supervised workers with automatic restart on crash (via base.supervision)
 - Exponential backoff on infrastructure errors (Neo4j, network, SSH)
 - Graceful degradation when services are temporarily unavailable
 
-Workflow:
-1. SCAN: Enumerate signals from data sources (MDSplus trees, TDI functions)
-2. ENRICH: LLM classification of physics_domain, description generation
-3. CHECK: Test data access with example_shot, verify units/sign conventions
+Key design principle:
+- No stage blocking. Downstream workers start as soon as the first batch
+  of upstream work is available. The epoch worker can take 15 minutes to
+  detect all epochs, but extract/units/promote/enrich start immediately
+  with the first seeded version (e.g., version 1 / shot 1).
 """
 
 from __future__ import annotations
@@ -93,8 +102,11 @@ class DataDiscoveryState:
     focus: str | None = None
     deadline: float | None = None  # Unix timestamp when discovery should stop
 
-    # Worker stats
+    # Worker stats — one per worker group for accurate display
     discover_stats: WorkerStats = field(default_factory=WorkerStats)
+    extract_stats: WorkerStats = field(default_factory=WorkerStats)
+    units_stats: WorkerStats = field(default_factory=WorkerStats)
+    promote_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
     check_stats: WorkerStats = field(default_factory=WorkerStats)
 
@@ -103,14 +115,43 @@ class DataDiscoveryState:
     enrich_only: bool = False  # When True, discover/check workers not started
 
     # Pipeline phases (initialized in __post_init__)
-    scan_phase: PipelinePhase = field(init=False)
+    # Scan sub-phases: seed, epoch, extract, units, promote
+    seed_phase: PipelinePhase = field(init=False)
+    epoch_phase: PipelinePhase = field(init=False)
+    extract_phase: PipelinePhase = field(init=False)
+    units_phase: PipelinePhase = field(init=False)
+    promote_phase: PipelinePhase = field(init=False)
+    # Top-level phases
     enrich_phase: PipelinePhase = field(init=False)
     check_phase: PipelinePhase = field(init=False)
 
+    # Backward-compat alias
+    @property
+    def scan_phase(self) -> PipelinePhase:
+        """Scan is done when all scan sub-phases are done."""
+        return self._scan_phase
+
     def __post_init__(self) -> None:
-        self.scan_phase = PipelinePhase(
-            "scan"
-        )  # No graph check — scan is deterministic
+        from imas_codex.discovery.mdsplus.graph_ops import (
+            has_pending_extract_work_facility,
+            has_pending_promote_work_facility,
+            has_pending_units_work_facility,
+        )
+
+        self.seed_phase = PipelinePhase("seed")  # deterministic — no graph check
+        self.epoch_phase = PipelinePhase("epoch")  # deterministic — no graph check
+        self.extract_phase = PipelinePhase(
+            "extract",
+            has_work_fn=lambda: has_pending_extract_work_facility(self.facility),
+        )
+        self.units_phase = PipelinePhase(
+            "units",
+            has_work_fn=lambda: has_pending_units_work_facility(self.facility),
+        )
+        self.promote_phase = PipelinePhase(
+            "promote",
+            has_work_fn=lambda: has_pending_promote_work_facility(self.facility),
+        )
         self.enrich_phase = PipelinePhase(
             "enrich",
             has_work_fn=lambda: has_pending_enrich_work(self.facility),
@@ -119,6 +160,19 @@ class DataDiscoveryState:
             "check",
             has_work_fn=lambda: has_pending_check_work(self.facility),
         )
+        # Composite scan phase — done when all sub-phases are done
+        self._scan_phase = PipelinePhase("scan")
+
+    def _update_scan_phase(self) -> None:
+        """Update composite scan phase from sub-phases."""
+        if (
+            self.seed_phase.done
+            and self.epoch_phase.done
+            and self.extract_phase.done
+            and self.units_phase.done
+            and self.promote_phase.done
+        ):
+            self._scan_phase.mark_done()
 
     @property
     def total_cost(self) -> float:
@@ -145,8 +199,7 @@ class DataDiscoveryState:
         """Check if ALL workers should terminate.
 
         Uses PipelinePhase.done which combines idle detection with
-        graph-level pending work checks.  This replaces the old
-        idle-counter approach that was prone to race conditions.
+        graph-level pending work checks.
         """
         if self.stop_requested:
             return True
@@ -155,6 +208,9 @@ class DataDiscoveryState:
 
         limit_done = self.budget_exhausted or self.signal_limit_reached
 
+        # Update composite scan phase
+        self._update_scan_phase()
+
         # LLM workers: phase done OR limit-stopped counts as "done"
         enrich_done = self.enrich_phase.done or limit_done
 
@@ -162,7 +218,7 @@ class DataDiscoveryState:
         check_done = self.check_phase.done
 
         # In enrich_only mode, scan and check phases are pre-marked done
-        all_done = self.scan_phase.done and enrich_done and check_done
+        all_done = self._scan_phase.done and enrich_done and check_done
         if all_done:
             if self.enrich_only:
                 return limit_done or self.enrich_phase.done
@@ -173,7 +229,8 @@ class DataDiscoveryState:
         """Check if discover workers should stop."""
         if self.stop_requested:
             return True
-        return self.scan_phase.done
+        self._update_scan_phase()
+        return self._scan_phase.done
 
     def should_stop_enriching(self) -> bool:
         """Check if enrich workers should stop."""
@@ -191,8 +248,7 @@ class DataDiscoveryState:
         """Check if check workers should stop.
 
         Check workers must wait for both upstream phases (scan + enrich)
-        to finish producing work before exiting.  Uses PipelinePhase.done
-        which checks the graph for remaining unclaimed/claimed items.
+        to finish producing work before exiting.
         """
         if self.stop_requested:
             return True
@@ -201,7 +257,8 @@ class DataDiscoveryState:
         if not self.check_phase.idle:
             return False
         # Idle — but don't exit if upstream is still producing
-        if not self.scan_phase.done:
+        self._update_scan_phase()
+        if not self._scan_phase.done:
             return False
         # Scan done — wait for enrichment to drain too
         enriching_done = self.enrich_phase.done or self.budget_exhausted
@@ -1291,18 +1348,22 @@ def ingest_discovered_signals(signals: list[dict]) -> int:
 # =============================================================================
 
 
-async def scan_worker(
+async def seed_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
+    **_kwargs,
 ) -> None:
-    """Worker that dispatches to registered scanner plugins.
+    """Worker that seeds discovery work into the graph.
 
-    Iterates through configured scanner_types, calling each scanner's scan()
-    method and ingesting the discovered signals into the graph. Falls back
-    to TDI-specific discovery if scanner_types includes 'tdi' and the
-    legacy tdi_path is set.
+    For MDSplus: creates TreeModelVersion nodes from config (fast).
+    For other scanners (TDI, PPF, EDAS, wiki): runs scanner.scan() and
+    ingests signals directly to graph.
+
+    This worker exits quickly — it only creates the initial work items
+    for downstream workers to claim.
     """
     from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.mdsplus.graph_ops import seed_versions
     from imas_codex.discovery.signals.scanners.base import get_scanner
 
     facility_config = get_facility(state.facility)
@@ -1312,14 +1373,100 @@ async def scan_worker(
     total_discovered = 0
 
     for scanner_type in state.scanner_types:
-        if state.should_stop_discovering():
+        if state.stop_requested:
             break
 
-        if on_progress:
-            on_progress(
-                f"scanning {scanner_type}",
-                state.discover_stats,
+        if scanner_type == "mdsplus":
+            # MDSplus: seed TreeModelVersion nodes for each tree
+            mdsplus_config = data_sources.get("mdsplus", {})
+            if not isinstance(mdsplus_config, dict):
+                continue
+
+            for tree_config in mdsplus_config.get("trees", []):
+                tree_name = tree_config.get("tree_name")
+                if not tree_name:
+                    continue
+
+                # Expand subtrees
+                subtrees = tree_config.get("subtrees", [])
+                trees_to_process = (
+                    [
+                        (st["tree_name"], {**tree_config, **st})
+                        for st in subtrees
+                        if st.get("tree_name")
+                    ]
+                    if subtrees
+                    else [(tree_name, tree_config)]
+                )
+
+                for sub_name, sub_config in trees_to_process:
+                    versions = sub_config.get("versions", [])
+                    ver_list = [v["version"] for v in versions if "version" in v]
+                    if not ver_list and state.reference_shot:
+                        ver_list = [state.reference_shot]
+
+                    if ver_list:
+                        seeded = seed_versions(
+                            state.facility, sub_name, ver_list, versions
+                        )
+                        total_discovered += seeded
+                        state.discover_stats.processed += seeded
+                        if on_progress and seeded:
+                            on_progress(
+                                f"seeded {sub_name}: {seeded} versions",
+                                state.discover_stats,
+                                [
+                                    {
+                                        "id": f"{state.facility}:{sub_name}",
+                                        "tree_name": sub_name,
+                                        "signals_in_tree": seeded,
+                                    }
+                                ],
+                            )
+
+                        # Merge setup_commands
+                        if "setup_commands" not in sub_config:
+                            sub_config["setup_commands"] = mdsplus_config.get(
+                                "setup_commands", []
+                            )
+
+            # Create DataAccess node for MDSplus
+            connection_tree = mdsplus_config.get("connection_tree")
+            first_tree = next(
+                (
+                    t["tree_name"]
+                    for t in mdsplus_config.get("trees", [])
+                    if t.get("tree_name")
+                ),
+                None,
             )
+            primary_tree = connection_tree or first_tree
+            if primary_tree:
+                try:
+                    with GraphClient() as gc:
+                        gc.query(
+                            """
+                            MERGE (da:DataAccess {id: $id})
+                            SET da.facility_id = $facility,
+                                da.method_type = 'mdsplus',
+                                da.library = 'MDSplus',
+                                da.access_type = 'local',
+                                da.data_source = 'mdsplus'
+                            WITH da
+                            MATCH (f:Facility {id: $facility})
+                            MERGE (da)-[:AT_FACILITY]->(f)
+                            """,
+                            id=f"{state.facility}:mdsplus:tree_tdi",
+                            facility=state.facility,
+                        )
+                except Exception as e:
+                    logger.warning("Failed to create MDSplus DataAccess: %s", e)
+
+            continue
+
+        # Non-MDSplus scanners: run scan() and ingest signals directly
+        if on_progress:
+            on_progress(f"scanning {scanner_type}", state.discover_stats)
 
         try:
             scanner = get_scanner(scanner_type)
@@ -1327,12 +1474,10 @@ async def scan_worker(
             logger.warning("Scanner '%s' not registered, skipping", scanner_type)
             continue
 
-        # Get scanner-specific config from facility data_sources
         scanner_config = data_sources.get(scanner_type, {})
         if not isinstance(scanner_config, dict):
             scanner_config = {}
 
-        # Forward signal_limit to scanner so it can cap discovery scope
         if state.signal_limit:
             scanner_config = {**scanner_config, "_scan_limit": state.signal_limit}
 
@@ -1344,24 +1489,16 @@ async def scan_worker(
                 reference_shot=state.reference_shot,
             )
 
-            # Store wiki context for use by enrich_worker
             if result.wiki_context:
                 state.wiki_context.update(result.wiki_context)
-                logger.info(
-                    "Wiki context: %d entries for %s",
-                    len(result.wiki_context),
-                    state.facility,
-                )
 
             if result.signals:
-                # Ingest signals to graph
                 count = ingest_discovered_signals(
                     [s.model_dump(exclude_none=True) for s in result.signals]
                 )
                 total_discovered += count
                 state.discover_stats.processed += count
 
-                # Ingest DataAccess node if provided
                 if result.data_access:
                     try:
                         with GraphClient() as gc:
@@ -1398,17 +1535,7 @@ async def scan_worker(
                             for s in result.signals[:20]
                         ],
                     )
-            else:
-                logger.info(
-                    "No signals from %s scanner for %s", scanner_type, state.facility
-                )
-                if on_progress:
-                    on_progress(
-                        f"{scanner_type}: no signals found",
-                        state.discover_stats,
-                    )
 
-            # Handle scanner-specific metadata (e.g., TDI function ingestion)
             if scanner_type == "tdi" and result.metadata.get("functions"):
                 try:
                     from imas_codex.discovery.signals.tdi import ingest_tdi_functions
@@ -1423,20 +1550,465 @@ async def scan_worker(
 
         except Exception as e:
             logger.error("%s scan failed for %s: %s", scanner_type, state.facility, e)
+
+    state.seed_phase.mark_done()
+    if on_progress:
+        on_progress(
+            f"seed complete: {total_discovered} items from {len(state.scanner_types)} sources",
+            state.discover_stats,
+        )
+
+
+async def epoch_worker(
+    state: DataDiscoveryState,
+    on_progress: Callable | None = None,
+    **_kwargs,
+) -> None:
+    """Worker that detects structural epochs for dynamic MDSplus trees.
+
+    Runs independently from seed — can take 15+ minutes for large trees.
+    Seeds additional TreeModelVersion nodes as epochs are detected.
+    """
+    from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.mdsplus.epochs import detect_epochs_for_tree
+    from imas_codex.discovery.mdsplus.graph_ops import seed_versions
+
+    facility_config = get_facility(state.facility)
+    data_sources = facility_config.get("data_sources", {})
+    mdsplus_config = data_sources.get("mdsplus", {})
+    if not isinstance(mdsplus_config, dict):
+        state.epoch_phase.mark_done()
+        return
+
+    ssh_host = state.ssh_host or facility_config.get("ssh_host", state.facility)
+    has_mdsplus = "mdsplus" in state.scanner_types
+
+    if not has_mdsplus:
+        state.epoch_phase.mark_done()
+        return
+
+    trees_with_epochs = []
+    for tree_config in mdsplus_config.get("trees", []):
+        tree_name = tree_config.get("tree_name")
+        if not tree_name:
+            continue
+        # Only detect epochs for trees without static versions
+        versions = tree_config.get("versions", [])
+        if not versions and state.reference_shot:
+            trees_with_epochs.append((tree_name, tree_config))
+
+    if not trees_with_epochs:
+        state.epoch_phase.mark_done()
+        if on_progress:
+            on_progress("no dynamic trees", state.discover_stats)
+        return
+
+    for tree_name, tree_config in trees_with_epochs:
+        if state.stop_requested:
+            break
+
+        if on_progress:
+            on_progress(
+                f"detecting epochs for {tree_name}",
+                state.discover_stats,
+                [{"tree_name": tree_name, "epoch_progress": {"phase": "coarse"}}],
+            )
+
+        try:
+            setup_commands = tree_config.get(
+                "setup_commands", mdsplus_config.get("setup_commands", [])
+            )
+            epochs = await asyncio.to_thread(
+                detect_epochs_for_tree,
+                facility=state.facility,
+                ssh_host=ssh_host,
+                tree_name=tree_name,
+                reference_shot=state.reference_shot,
+                setup_commands=setup_commands,
+            )
+
+            if epochs:
+                # Ingest epoch TreeModelVersion nodes
+                ingest_epochs(
+                    epochs,
+                    data_access_id=f"{state.facility}:mdsplus:tree_tdi",
+                    reference_shot=state.reference_shot,
+                )
+                # Also seed versions from detected epochs for extraction
+                epoch_versions = [e["version"] for e in epochs if "version" in e]
+                if epoch_versions:
+                    seed_versions(
+                        state.facility,
+                        tree_name,
+                        epoch_versions,
+                        [],
+                    )
+
+                if on_progress:
+                    on_progress(
+                        f"{tree_name}: {len(epochs)} epochs detected",
+                        state.discover_stats,
+                        [
+                            {
+                                "tree_name": tree_name,
+                                "epoch_progress": {
+                                    "phase": "complete",
+                                    "boundaries_found": len(epochs),
+                                },
+                            }
+                        ],
+                    )
+            else:
+                if on_progress:
+                    on_progress(f"{tree_name}: no epochs", state.discover_stats)
+
+        except Exception as e:
+            logger.error("Epoch detection failed for %s: %s", tree_name, e)
             if on_progress:
                 on_progress(
-                    f"{scanner_type}: failed - {e}",
+                    f"{tree_name}: epoch detection failed - {e}",
                     state.discover_stats,
                 )
 
-    # Mark scan as complete
-    state.scan_phase.mark_done()
-
+    state.epoch_phase.mark_done()
     if on_progress:
-        on_progress(
-            f"scan complete: {total_discovered} signals from {len(state.scanner_types)} scanners",
-            state.discover_stats,
+        on_progress("epoch detection complete", state.discover_stats)
+
+
+async def mdsplus_extract_worker(
+    state: DataDiscoveryState,
+    on_progress: Callable | None = None,
+    **_kwargs,
+) -> None:
+    """Worker that extracts MDSplus tree versions via SSH (facility-wide).
+
+    Claims TreeModelVersion nodes with status=discovered across ALL trees,
+    runs SSH extraction, and ingests TreeNodes into the graph.
+    """
+    from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.mdsplus.graph_ops import (
+        claim_version_for_extraction_facility,
+        mark_version_extracted,
+        release_version_claim,
+    )
+    from imas_codex.mdsplus.extraction import (
+        async_extract_tree_version,
+        ingest_static_tree,
+        merge_version_results,
+    )
+
+    facility_config = get_facility(state.facility)
+    data_sources = facility_config.get("data_sources", {})
+    mdsplus_config = data_sources.get("mdsplus", {})
+    node_usages = None
+    if isinstance(mdsplus_config, dict):
+        # Find node_usages from first tree config
+        for tc in mdsplus_config.get("trees", []):
+            if tc.get("node_usages"):
+                node_usages = tc["node_usages"]
+                break
+
+    has_mdsplus = "mdsplus" in state.scanner_types
+    if not has_mdsplus:
+        state.extract_phase.mark_done()
+        return
+
+    ssh_retry_count = 0
+    max_ssh_retries = 5
+
+    while not state.stop_requested:
+        claimed = await asyncio.to_thread(
+            claim_version_for_extraction_facility,
+            state.facility,
         )
+
+        if not claimed:
+            state.extract_phase.record_idle()
+            if state.extract_phase.done:
+                break
+            if on_progress:
+                on_progress("idle", state.extract_stats)
+            await asyncio.sleep(2.0)
+            continue
+
+        state.extract_phase.record_activity(1)
+        version = claimed["version"]
+        version_id = claimed["id"]
+        tree_name = claimed["tree_name"]
+
+        if on_progress:
+            on_progress(
+                f"extracting v{version} {state.facility}:{tree_name}",
+                state.extract_stats,
+                [
+                    {
+                        "id": version_id,
+                        "tree_name": tree_name,
+                        "node_path": f"v{version}",
+                        "signals_in_tree": 0,
+                    }
+                ],
+            )
+
+        try:
+            data = await async_extract_tree_version(
+                facility=state.facility,
+                tree_name=tree_name,
+                shot=version,
+                timeout=600,
+                node_usages=node_usages,
+            )
+            ssh_retry_count = 0
+
+            ver_data = data.get("versions", {}).get(str(version), {})
+            if "error" in ver_data:
+                logger.warning(
+                    "Extraction error for v%d %s: %s",
+                    version,
+                    tree_name,
+                    ver_data["error"][:100],
+                )
+                await asyncio.to_thread(release_version_claim, version_id)
+                state.extract_stats.errors += 1
+                continue
+
+            node_count = ver_data.get("node_count", 0)
+
+            merged = merge_version_results([data])
+            from imas_codex.graph import GraphClient as GC2
+
+            with GC2() as client:
+                ingest_static_tree(client, state.facility, merged)
+
+            await asyncio.to_thread(mark_version_extracted, version_id, node_count)
+            state.extract_stats.processed += 1
+            state.extract_stats.record_batch(1)
+
+            if on_progress:
+                on_progress(
+                    f"v{version} {tree_name} — {node_count:,} nodes",
+                    state.extract_stats,
+                    [
+                        {
+                            "id": version_id,
+                            "tree_name": tree_name,
+                            "node_path": f"v{version}",
+                            "signals_in_tree": node_count,
+                        }
+                    ],
+                )
+
+        except Exception as e:
+            ssh_retry_count += 1
+            logger.warning(
+                "Extract v%d %s failed (%d/%d): %s",
+                version,
+                tree_name,
+                ssh_retry_count,
+                max_ssh_retries,
+                e,
+            )
+            state.extract_stats.errors += 1
+            await asyncio.to_thread(release_version_claim, version_id)
+
+            if ssh_retry_count >= max_ssh_retries:
+                logger.error("SSH failed after %d attempts — stopping", max_ssh_retries)
+                state.extract_phase.mark_done()
+                break
+
+            backoff = min(2**ssh_retry_count, 32)
+            await asyncio.sleep(backoff)
+            continue
+
+        await asyncio.sleep(0.1)
+
+
+async def mdsplus_units_worker(
+    state: DataDiscoveryState,
+    on_progress: Callable | None = None,
+    **_kwargs,
+) -> None:
+    """Worker that extracts units for trees with ingested versions (facility-wide).
+
+    Claims trees needing unit extraction, runs batched SSH extraction,
+    and creates Unit nodes + HAS_UNIT relationships.
+    """
+    from imas_codex.discovery.mdsplus.graph_ops import (
+        claim_tree_for_units,
+        mark_all_versions_units_extracted,
+        merge_units_to_graph,
+    )
+    from imas_codex.mdsplus.extraction import async_extract_units_for_version
+
+    has_mdsplus = "mdsplus" in state.scanner_types
+    if not has_mdsplus:
+        state.units_phase.mark_done()
+        return
+
+    # Wait for at least one extraction before trying units
+    while not state.stop_requested:
+        if state.extract_stats.processed > 0:
+            break
+        if state.extract_phase.done:
+            break
+        if on_progress:
+            on_progress("awaiting extract", state.units_stats)
+        await asyncio.sleep(2.0)
+
+    if state.stop_requested:
+        return
+
+    while not state.stop_requested:
+        claimed = await asyncio.to_thread(
+            claim_tree_for_units,
+            state.facility,
+        )
+
+        if not claimed:
+            state.units_phase.record_idle()
+            if state.units_phase.done:
+                break
+            await asyncio.sleep(2.0)
+            continue
+
+        state.units_phase.record_activity(1)
+        tree_name = claimed["tree_name"]
+        latest_version = claimed["latest_version"]
+
+        if on_progress:
+            on_progress(
+                f"extracting units for {tree_name} v{latest_version}",
+                state.units_stats,
+            )
+
+        try:
+            units = await async_extract_units_for_version(
+                state.facility,
+                tree_name,
+                latest_version,
+                timeout=600,
+                batch_size=500,
+            )
+
+            if units:
+                await asyncio.to_thread(
+                    merge_units_to_graph, state.facility, tree_name, units
+                )
+                state.units_stats.processed += 1
+                if on_progress:
+                    on_progress(
+                        f"{tree_name}: {len(units)} paths with units",
+                        state.units_stats,
+                    )
+
+            await asyncio.to_thread(
+                mark_all_versions_units_extracted,
+                state.facility,
+                tree_name,
+                len(units) if units else 0,
+            )
+
+        except Exception as e:
+            logger.error("Units extraction failed for %s: %s", tree_name, e)
+            state.units_stats.errors += 1
+
+    state.units_phase.mark_done()
+
+
+async def mdsplus_promote_worker(
+    state: DataDiscoveryState,
+    on_progress: Callable | None = None,
+    **_kwargs,
+) -> None:
+    """Worker that creates FacilitySignals from leaf TreeNodes (facility-wide).
+
+    Claims trees with un-promoted leaf nodes and runs promote_leaf_nodes_to_signals.
+    """
+    from imas_codex.discovery.mdsplus.graph_ops import (
+        claim_tree_for_promote,
+        promote_leaf_nodes_to_signals,
+    )
+
+    has_mdsplus = "mdsplus" in state.scanner_types
+    if not has_mdsplus:
+        state.promote_phase.mark_done()
+        return
+
+    # Wait for at least one extraction
+    while not state.stop_requested:
+        if state.extract_stats.processed > 0:
+            break
+        if state.extract_phase.done:
+            break
+        if on_progress:
+            on_progress("awaiting extract", state.promote_stats)
+        await asyncio.sleep(2.0)
+
+    if state.stop_requested:
+        return
+
+    while not state.stop_requested:
+        tree_name = await asyncio.to_thread(
+            claim_tree_for_promote,
+            state.facility,
+        )
+
+        if not tree_name:
+            state.promote_phase.record_idle()
+            # Wait for extract and units to finish before declaring done
+            if state.extract_phase.done and state.units_phase.done:
+                if state.promote_phase.done:
+                    break
+            await asyncio.sleep(2.0)
+            continue
+
+        state.promote_phase.record_activity(1)
+
+        if on_progress:
+            on_progress(
+                f"promoting {tree_name}",
+                state.promote_stats,
+            )
+
+        try:
+            promoted = await asyncio.to_thread(
+                promote_leaf_nodes_to_signals,
+                state.facility,
+                tree_name,
+            )
+            state.promote_stats.processed += promoted
+            state.promote_stats.record_batch(promoted)
+
+            if on_progress:
+                on_progress(
+                    f"{tree_name}: {promoted} signals promoted",
+                    state.promote_stats,
+                    [
+                        {
+                            "id": f"{state.facility}:{tree_name}",
+                            "tree_name": tree_name,
+                            "signals_in_tree": promoted,
+                        }
+                    ],
+                )
+
+            # Run TDI linkage after promotion
+            try:
+                from imas_codex.discovery.mdsplus.tdi_linkage import (
+                    link_tdi_to_tree_nodes,
+                )
+
+                tdi_links = link_tdi_to_tree_nodes(state.facility)
+                if tdi_links:
+                    logger.info("TDI linkage: %d edges for %s", tdi_links, tree_name)
+            except Exception as e:
+                logger.warning("TDI linkage failed: %s", e)
+
+        except Exception as e:
+            logger.error("Promote failed for %s: %s", tree_name, e)
+            state.promote_stats.errors += 1
+
+    state.promote_phase.mark_done()
 
 
 async def enrich_worker(
@@ -2377,29 +2949,20 @@ async def run_parallel_data_discovery(
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     stop_event: asyncio.Event | None = None,
 ) -> dict[str, Any]:
-    """Run parallel data discovery with async workers.
+    """Run parallel data discovery with independent async workers.
 
-    Dispatches to registered scanner plugins for signal discovery, enriches
-    with LLM classification, and validates data access.
+    All workers start simultaneously and claim work from the graph:
+    - seed: Seeds TreeModelVersion nodes from config (exits fast)
+    - epoch: Detects structural epochs independently
+    - extract: Claims TreeModelVersion, SSH extract TreeNodes
+    - units: Extracts units for ingested tree versions
+    - promote: Creates FacilitySignal from leaf TreeNodes
+    - enrich: LLM classification (claims discovered FacilitySignals)
+    - check: Test data access (claims enriched FacilitySignals)
+    - embed: Embed descriptions for vector search
 
-    Args:
-        facility: Facility ID (e.g., "tcv")
-        ssh_host: SSH host for remote discovery
-        scanner_types: Scanner types to run (e.g., ["tdi", "ppf"]).
-            Auto-detected from facility config if not specified.
-        tdi_path: Legacy path to TDI directory (deprecated, use scanner config)
-        reference_shot: Reference shot for validation
-        cost_limit: Maximum LLM cost in USD
-        signal_limit: Maximum signals to process
-        focus: Focus area for discovery
-        num_enrich_workers: Number of enrich workers
-        num_check_workers: Number of check workers
-        discover_only: Only discover, don't enrich
-        enrich_only: Only enrich discovered signals
-        on_*_progress: Progress callbacks
-
-    Returns:
-        Dict with discovery statistics
+    No stage blocking — downstream workers start as soon as the
+    first batch of upstream work is available.
     """
     start_time = time.time()
 
@@ -2452,34 +3015,106 @@ async def run_parallel_data_discovery(
 
         stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
 
-    # Start scan worker (unless enrich_only)
+    # Periodic orphan recovery during discovery (every 60s)
+    orphan_tick = make_orphan_recovery_tick(
+        facility,
+        [
+            OrphanRecoverySpec("FacilitySignal", timeout_seconds=CLAIM_TIMEOUT_SECONDS),
+            OrphanRecoverySpec("TreeModelVersion"),
+        ],
+    )
+
+    # --- Scan workers (unless enrich_only) ---
     if not enrich_only:
-        worker_name = "scan_worker_0"
-        status = worker_group.create_status(worker_name, group="scan")
+        # Seed worker: seeds TreeModelVersions + runs non-MDSplus scanners
+        seed_status = worker_group.create_status("seed_worker_0", group="scan")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
-                    scan_worker,
-                    worker_name,
+                    seed_worker,
+                    "seed_worker_0",
                     state,
-                    state.should_stop_discovering,
+                    lambda: state.stop_requested,
                     on_progress=on_discover_progress,
-                    status_tracker=status,
+                    status_tracker=seed_status,
                 )
             )
         )
 
-    # Periodic orphan recovery during discovery (every 60s)
-    orphan_tick = make_orphan_recovery_tick(
-        facility,
-        [OrphanRecoverySpec("FacilitySignal", timeout_seconds=CLAIM_TIMEOUT_SECONDS)],
-    )
+        # Epoch worker: independently detects epochs for dynamic trees
+        epoch_status = worker_group.create_status("epoch_worker_0", group="scan")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    epoch_worker,
+                    "epoch_worker_0",
+                    state,
+                    lambda: state.stop_requested,
+                    on_progress=on_discover_progress,
+                    status_tracker=epoch_status,
+                )
+            )
+        )
+
+        # Extract worker: claims TreeModelVersions facility-wide
+        extract_status = worker_group.create_status("extract_worker_0", group="extract")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    mdsplus_extract_worker,
+                    "extract_worker_0",
+                    state,
+                    lambda: state.stop_requested,
+                    on_progress=on_discover_progress,
+                    status_tracker=extract_status,
+                )
+            )
+        )
+
+        # Units worker: extracts units for ingested trees
+        units_status = worker_group.create_status("units_worker_0", group="extract")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    mdsplus_units_worker,
+                    "units_worker_0",
+                    state,
+                    lambda: state.stop_requested,
+                    on_progress=on_discover_progress,
+                    status_tracker=units_status,
+                )
+            )
+        )
+
+        # Promote worker: creates FacilitySignals from leaf TreeNodes
+        promote_status = worker_group.create_status("promote_worker_0", group="extract")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    mdsplus_promote_worker,
+                    "promote_worker_0",
+                    state,
+                    lambda: state.stop_requested,
+                    on_progress=on_discover_progress,
+                    status_tracker=promote_status,
+                )
+            )
+        )
+    else:
+        # In enrich_only mode, mark all scan sub-phases as done
+        state.seed_phase.mark_done()
+        state.epoch_phase.mark_done()
+        state.extract_phase.mark_done()
+        state.units_phase.mark_done()
+        state.promote_phase.mark_done()
+        state._scan_phase.mark_done()
+        state.check_phase.mark_done()
 
     if discover_only:
-        # Run supervision loop — scan worker only
+        # Run supervision loop — scan workers only
         await run_supervised_loop(
             worker_group,
-            lambda: state.scan_phase.done,
+            lambda: state._scan_phase.done,
             on_worker_status=on_worker_status,
             on_tick=orphan_tick,
         )
@@ -2489,14 +3124,18 @@ async def run_parallel_data_discovery(
 
         return {
             "scanned": state.discover_stats.processed,
-            "discovered": state.discover_stats.processed,
+            "discovered": state.discover_stats.processed
+            + state.promote_stats.processed,
             "enriched": 0,
             "checked": 0,
             "cost": 0.0,
             "elapsed_seconds": time.time() - start_time,
+            "extract_count": state.extract_stats.processed,
+            "units_count": state.units_stats.processed,
+            "promote_count": state.promote_stats.processed,
         }
 
-    # Start enrich workers
+    # --- Enrich workers ---
     for i in range(num_enrich_workers):
         worker_name = f"enrich_worker_{i}"
         status = worker_group.create_status(worker_name, group="enrich")
@@ -2513,7 +3152,7 @@ async def run_parallel_data_discovery(
             )
         )
 
-    # Start check workers (unless enrich_only)
+    # --- Check workers (unless enrich_only) ---
     if not enrich_only:
         for i in range(num_check_workers):
             worker_name = f"check_worker_{i}"
@@ -2530,21 +3169,11 @@ async def run_parallel_data_discovery(
                     )
                 )
             )
-    else:
-        # In enrich_only mode, discover and check workers are not started.
-        # Mark their phases as done so should_stop() doesn't block on them.
-        state.scan_phase.mark_done()
-        state.check_phase.mark_done()
 
-    # In enrich_only mode, scan worker was already skipped above.
-    # Mark scan phase done for the general case too.
-    if enrich_only:
-        state.scan_phase.mark_done()
-
-    # Embed description worker: embeds FacilitySignal descriptions as they are enriched
+    # --- Embed worker ---
     from imas_codex.discovery.base.embed_worker import embed_description_worker
 
-    embed_status = worker_group.create_status("embed_worker", group="scan")
+    embed_status = worker_group.create_status("embed_worker", group="embed")
     worker_group.add_task(
         asyncio.create_task(
             supervised_worker(
@@ -2572,12 +3201,12 @@ async def run_parallel_data_discovery(
     elapsed = time.time() - start_time
     return {
         "scanned": state.discover_stats.processed,
-        "discovered": state.discover_stats.processed,
+        "discovered": state.discover_stats.processed + state.promote_stats.processed,
         "enriched": state.enrich_stats.processed,
         "checked": state.check_stats.processed,
         "cost": state.enrich_stats.cost,
         "elapsed_seconds": elapsed,
-        "discover_rate": state.discover_stats.processed / elapsed if elapsed > 0 else 0,
-        "enrich_rate": state.enrich_stats.processed / elapsed if elapsed > 0 else 0,
-        "check_rate": state.check_stats.processed / elapsed if elapsed > 0 else 0,
+        "extract_count": state.extract_stats.processed,
+        "units_count": state.units_stats.processed,
+        "promote_count": state.promote_stats.processed,
     }

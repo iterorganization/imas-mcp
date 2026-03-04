@@ -10,7 +10,8 @@ Design principles (matching wiki and paths progress displays):
 - Minimal visual clutter (no emojis, thin progress bars)
 
 Display layout: PIPELINE → RESOURCES
-- SCAN: MDSplus tree traversal, TDI introspection
+- SCAN: Seed versions, epoch detection (seed+epoch workers)
+- EXTRACT: SSH tree extraction, units, promotion (extract+units+promote workers)
 - ENRICH: LLM classification of physics domain, description
 - CHECK: Test data access, verify units/sign
 
@@ -275,7 +276,7 @@ class DataProgressDisplay(BaseProgressDisplay):
           Line 2:        \\HYBRID::PID_I                      ×1
           Line 3:        tree=hybrid  2944 signals discovered
 
-        Stages: SCAN → ENRICH → CHECK
+        Stages: SCAN → EXTRACT → ENRICH → CHECK
         """
 
         # --- Compute progress data ---
@@ -287,6 +288,7 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         # Worker counts per group
         scan_count, scan_ann = self._count_group_workers("scan")
+        extract_count, extract_ann = self._count_group_workers("extract")
         enrich_count, enrich_ann = self._count_group_workers("enrich")
         check_count, check_ann = self._count_group_workers("check")
 
@@ -299,12 +301,15 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         # Worker completion detection
         scan_complete = self._worker_complete("scan") and not self.state.current_scan
+        extract_complete = (
+            self._worker_complete("extract") and not self.state.current_scan
+        )
         enrich_complete = (
             self._worker_complete("enrich") and not self.state.current_enrich
         )
         check_complete = self._worker_complete("check") and not self.state.current_check
 
-        # SCAN activity
+        # SCAN activity (seed + epoch workers)
         scan = self.state.current_scan
         scan_text = ""
         scan_desc = ""
@@ -337,7 +342,7 @@ class DataProgressDisplay(BaseProgressDisplay):
             if scan.epoch_phase and scan.epoch_boundaries_found > 0:
                 desc_parts.append(f"{scan.epoch_boundaries_found} epochs detected")
             elif scan.signals_in_tree > 0:
-                desc_parts.append(f"{scan.signals_in_tree:,} nodes scanned")
+                desc_parts.append(f"{scan.signals_in_tree:,} versions seeded")
             scan_desc = "  ".join(desc_parts)
         elif self.state.scan_processing and self.state.current_tree:
             scan_text = f"tree={self.state.current_tree}"
@@ -378,8 +383,8 @@ class DataProgressDisplay(BaseProgressDisplay):
             PipelineRowConfig(
                 name="SCAN",
                 style="bold blue",
-                completed=total,
-                total=total,
+                completed=self.state.run_discovered,
+                total=max(self.state.run_discovered, 1),
                 rate=self.state.discover_rate,
                 show_pct=False,
                 worker_count=scan_count,
@@ -388,7 +393,22 @@ class DataProgressDisplay(BaseProgressDisplay):
                 description=scan_desc,
                 is_processing=self.state.scan_processing,
                 is_complete=scan_complete,
-                processing_label="scanning...",
+                processing_label="seeding...",
+            ),
+            PipelineRowConfig(
+                name="EXTRACT",
+                style="bold cyan",
+                completed=total,
+                total=total,
+                rate=self.state.discover_rate,
+                show_pct=False,
+                worker_count=extract_count,
+                worker_annotation=extract_ann,
+                primary_text=scan_text if not scan_complete else "",
+                description=scan_desc if not scan_complete else "",
+                is_processing=not extract_complete,
+                is_complete=extract_complete,
+                processing_label="extracting...",
             ),
             PipelineRowConfig(
                 name="ENRICH",
