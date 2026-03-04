@@ -388,11 +388,14 @@ def _claim_code_files_for_ingestion(
     facility: str,
     limit: int = 20,
     min_score: float = 0.75,
+    max_line_count: int = 10000,
 ) -> list[dict[str, Any]]:
     """Claim scored CodeFiles for ingestion.
 
     Claims CodeFiles with status='discovered' that have been scored
     above the minimum interest score threshold (default: 0.75).
+    Skips files exceeding max_line_count to avoid tree-sitter hangs
+    on very large auto-generated files.
     """
     from imas_codex.discovery.base.claims import DEFAULT_CLAIM_TIMEOUT_SECONDS
     from imas_codex.graph import GraphClient
@@ -405,6 +408,7 @@ def _claim_code_files_for_ingestion(
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NOT NULL
               AND sf.interest_score >= $min_score
+              AND coalesce(sf.line_count, 0) <= $max_line_count
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
             WITH sf ORDER BY sf.interest_score DESC LIMIT $limit
@@ -414,6 +418,7 @@ def _claim_code_files_for_ingestion(
             """,
             facility=facility,
             min_score=min_score,
+            max_line_count=max_line_count,
             limit=limit,
             cutoff=cutoff,
         )

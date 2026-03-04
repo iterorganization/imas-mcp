@@ -10,6 +10,7 @@ Graph-driven ingestion via CodeFile queue:
 Replaces code_examples.pipeline.
 """
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -351,7 +352,36 @@ async def ingest_files(
             )
 
             try:
-                nodes = await pipeline.arun(documents=batch_docs)
+                nodes = await asyncio.wait_for(
+                    pipeline.arun(documents=batch_docs), timeout=120
+                )
+            except TimeoutError:
+                logger.warning(
+                    "Tree-sitter parsing timed out for %s batch (%d docs), "
+                    "falling back to text splitter",
+                    language,
+                    len(batch_docs),
+                )
+                try:
+                    fallback_pipeline = create_pipeline(
+                        vector_store=vector_store,
+                        language=language,
+                        use_text_splitter=True,
+                    )
+                    nodes = await asyncio.wait_for(
+                        fallback_pipeline.arun(documents=batch_docs), timeout=120
+                    )
+                except (TimeoutError, Exception) as e2:
+                    logger.error("Fallback also failed for %s batch: %s", language, e2)
+                    for doc in batch_docs:
+                        example_id = doc.metadata.get("code_example_id")
+                        meta = file_metadata.get(example_id, {})
+                        sf_id = meta.get("_source_file_id")
+                        if sf_id:
+                            update_source_file_status(
+                                sf_id, "failed", error=f"Timeout: {e2}"
+                            )
+                    continue
             except Exception as e:
                 logger.warning(
                     "Failed to parse %s batch with tree-sitter, trying text splitter: %s",
