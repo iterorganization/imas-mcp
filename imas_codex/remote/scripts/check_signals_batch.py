@@ -64,13 +64,14 @@ def timeout_handler(signum: int, frame: Any) -> None:
     raise TimeoutError("Group processing timed out")
 
 
-# Errors that are shot-dependent and worth retrying on fallback shots
+# Errors that are shot-dependent and worth retrying on other check_shots
 _SHOT_DEPENDENT_ERRORS = (
     "NODATA",  # No data for this shot
     "NNF",  # Node not found (may exist in other tree version)
     "KEYNOTFOU",  # Key not found (shot-dependent lookup)
     "TreeNOT_OPEN",  # Tree not available for this shot
     "Unable to change",  # Unable to change current shot
+    "ROPRAND",  # Expression produced invalid result (may resolve at other version)
 )
 
 # Errors that are structural and never resolve by changing shots
@@ -80,11 +81,20 @@ _STRUCTURAL_ERRORS = (
     "INVCLADSC",  # Invalid class descriptor
     "INVDTYDSC",  # Invalid data type descriptor
     "SYNTAX",  # TDI syntax error
+    "EXTRA_ARG",  # Too many arguments (expression error)
+    "Error loading",  # Missing shared library
+    "cannot open shared object",  # Missing shared library (variant)
 )
 
 
 def _is_shot_dependent_error(error: str) -> bool:
-    """Check if an error might resolve on a different shot."""
+    """Check if an error might resolve on a different shot.
+
+    Structural errors take precedence — if an error matches both
+    structural and shot-dependent patterns, it is NOT retried.
+    """
+    if any(tag in error for tag in _STRUCTURAL_ERRORS):
+        return False
     return any(tag in error for tag in _SHOT_DEPENDENT_ERRORS)
 
 

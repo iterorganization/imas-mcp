@@ -423,6 +423,61 @@ class TestBatchRetryLogic:
 
 
 # =============================================================================
+# Phase 3: Expression node error handling
+# =============================================================================
+
+
+class TestExpressionNodeErrors:
+    """Test that expression node errors are classified correctly for retry."""
+
+    def test_roprand_is_shot_dependent(self):
+        """$ROPRAND may resolve at different versions — should be retried."""
+        from imas_codex.remote.scripts.check_signals_batch import (
+            _is_shot_dependent_error,
+        )
+
+        assert _is_shot_dependent_error("$ROPRAND")
+
+    def test_extra_arg_is_structural(self):
+        """EXTRA_ARG is a function signature error — no retry."""
+        from imas_codex.remote.scripts.check_signals_batch import (
+            _is_shot_dependent_error,
+        )
+
+        assert not _is_shot_dependent_error("%TDI-E-EXTRA_ARG, Too many arguments")
+
+    def test_missing_library_is_structural(self):
+        """Missing shared library errors should never be retried."""
+        from imas_codex.remote.scripts.check_signals_batch import (
+            _is_shot_dependent_error,
+        )
+
+        assert not _is_shot_dependent_error(
+            "Error loading libjmmshr_gsl.so: cannot open shared object"
+        )
+
+    def test_missing_library_is_classified_by_parallel(self):
+        """parallel.py classifies missing library consistently."""
+        assert (
+            _classify_check_error(
+                "Error loading libjmmshr_gsl.so: cannot open shared object"
+            )
+            == "missing_library"
+        )
+
+    def test_roprand_classified_as_expression_error(self):
+        """parallel.py classifies $ROPRAND as expression error."""
+        assert _classify_check_error("$ROPRAND") == "expression_error"
+
+    def test_extra_arg_classified_as_expression_error(self):
+        """parallel.py classifies EXTRA_ARG as expression error."""
+        assert (
+            _classify_check_error("%TDI-E-EXTRA_ARG, Too many arguments")
+            == "expression_error"
+        )
+
+
+# =============================================================================
 # Phase 4: TDI function categorization
 # =============================================================================
 
