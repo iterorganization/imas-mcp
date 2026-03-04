@@ -11,10 +11,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from imas_codex.agentic.search_formatters import (
+    format_code_report,
     format_docs_report,
     format_signals_report,
 )
-from imas_codex.agentic.search_tools import _search_docs, _search_signals
+from imas_codex.agentic.search_tools import _search_code, _search_docs, _search_signals
 
 # ---------------------------------------------------------------------------
 # search_signals
@@ -479,3 +480,140 @@ class TestFormatDocsReport:
         assert "Related Documents" in result
         assert "Analysis Report.pdf" in result
         assert "MHD diagnostics" in result
+
+
+# ---------------------------------------------------------------------------
+# search_code
+# ---------------------------------------------------------------------------
+
+
+class TestSearchCode:
+    """Unit tests for search_code tool."""
+
+    @pytest.fixture()
+    def mock_gc(self):
+        gc = MagicMock()
+        gc.query = MagicMock(return_value=[])
+        return gc
+
+    @pytest.fixture()
+    def mock_encoder(self):
+        enc = MagicMock()
+        enc.embed_texts = MagicMock(return_value=[[0.1] * 1024])
+        return enc
+
+    def test_empty_results(self, mock_gc, mock_encoder):
+        """Empty results produce a descriptive message."""
+        mock_gc.query.side_effect = [[]]
+        result = _search_code(
+            query="equilibrium reconstruction",
+            facility="tcv",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        assert "No code examples found" in result
+
+    def test_code_results_formatted(self, mock_gc, mock_encoder):
+        """Code results are formatted with data references."""
+        vector_results = [{"id": "chunk:1", "score": 0.89}]
+        enrichment = [
+            {
+                "id": "chunk:1",
+                "text": "def read_equilibrium(shot):\n    tree = MDSplus.Tree('tcv_shot', shot)\n    psi = tree.getNode('\\\\results::psi').data()",
+                "function_name": "read_equilibrium",
+                "source_file": "/home/codes/liuqe/liuqe_reader.py",
+                "facility_id": "tcv",
+                "data_refs": [
+                    {
+                        "type": "mdsplus",
+                        "raw": "\\RESULTS::PSI",
+                        "tree": "\\RESULTS::PSI",
+                        "imas": "equilibrium.time_slice[:].profiles_2d[:].psi",
+                        "tdi": None,
+                    }
+                ],
+                "directory": "/home/codes/liuqe",
+                "dir_description": "LIUQE equilibrium reconstruction code",
+            },
+        ]
+        mock_gc.query.side_effect = [vector_results, enrichment]
+
+        result = _search_code(
+            query="equilibrium",
+            facility="tcv",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        assert "Code Examples" in result
+        assert "read_equilibrium" in result
+        assert "liuqe_reader.py" in result
+        assert "Data references" in result
+
+    def test_facility_filter(self, mock_gc, mock_encoder):
+        """facility parameter filters code chunks."""
+        mock_gc.query.side_effect = [[]]
+        _search_code(
+            query="test",
+            facility="tcv",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        first_call = mock_gc.query.call_args_list[0]
+        cypher = first_call[0][0]
+        assert "facility" in cypher.lower()
+
+    def test_no_facility_filter(self, mock_gc, mock_encoder):
+        """Without facility, no facility filter in query."""
+        mock_gc.query.side_effect = [[]]
+        _search_code(
+            query="test",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        first_call = mock_gc.query.call_args_list[0]
+        assert "facility" not in first_call[1]  # kwargs
+
+    def test_embedding_unavailable(self, mock_gc):
+        """When encoder is unavailable, return helpful message."""
+        from imas_codex.embeddings.encoder import EmbeddingBackendError
+
+        bad_encoder = MagicMock()
+        bad_encoder.embed_texts.side_effect = EmbeddingBackendError("unavailable")
+
+        result = _search_code(query="test", gc=mock_gc, encoder=bad_encoder)
+        assert "Embedding" in result or "unavailable" in result.lower()
+
+
+class TestFormatCodeReport:
+    """Unit tests for the code report formatter."""
+
+    def test_empty_code(self):
+        result = format_code_report([], {})
+        assert "No code examples found" in result
+
+    def test_data_refs_shown(self):
+        """Data references appear in output."""
+        code_results = [
+            {
+                "id": "c1",
+                "text": "tree.getNode('psi').data()",
+                "function_name": "read_psi",
+                "source_file": "/code/reader.py",
+                "facility_id": "tcv",
+                "data_refs": [
+                    {
+                        "type": "mdsplus",
+                        "raw": "\\PSI",
+                        "tree": "\\PSI",
+                        "imas": None,
+                        "tdi": None,
+                    }
+                ],
+                "directory": "/code",
+                "dir_description": "Analysis code",
+            }
+        ]
+        result = format_code_report(code_results, {"c1": 0.85})
+        assert "read_psi" in result
+        assert "\\PSI" in result
+        assert "Data references" in result
