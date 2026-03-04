@@ -26,15 +26,48 @@ When the checker opens `Tree("tcv_shot", 85000)` and calls `tdiExecute("\STATIC:
 
 **Impact**: 34,002 total static signals (100% of static tree signals), all failing
 
-#### 2. Missing Shared Libraries (libblas.so, libvaccess.so)
+#### 2. Missing Shared Libraries (libjmmshr_gsl.so, libblas.so)
 
-Multiple MDSplus TDI functions depend on shared libraries not installed on the login nodes:
-- `libblas.so` — Required by `staticgreen()` for Green's function computation
-- `libvaccess.so` — Required by `magnetics_dependencies`, `mag_gains_helper`, and others
+Static tree GREENS computation requires TWO missing libraries:
 
-These cause expression nodes to fail even when accessed correctly. The errors appear as NNF (because the expression chain can't resolve) rather than a clear library error.
+- **`libjmmshr_gsl.so`** — Custom Green's function computation library used by `greenem.fun` (calls `jmmshr_gsl->greenem()`). NOT installed anywhere on the system. This is the primary blocker for GREENS data.
+- **`libblas.so`** — BLAS matrix multiply used by `_matmul.fun` (calls `blas->sgemm_()`). System has `libblas.so.3` at `/usr/lib64/` but the unversioned symlink `libblas.so` is missing. MDSplus TDI dlopen resolves `blas` → `libblas.so`.
+- **`libvaccess.so`** — Old VMS access library, only referenced in deprecated `HIDE_2011/` functions. Not a current blocker.
 
-**Impact**: Unknown number of signals affected beyond static tree; at minimum affects magnetics expression nodes
+The TDI shared library call syntax (`libname->function()`) resolves to `dlopen("lib<libname>.so")`. Without the exact filename, the call silently fails and returns `$ROPRAND`, which cascades to TreeNODATA.
+
+**Verified via SSH testing**: Even with `libblas.so` symlink created in user dir + LD_LIBRARY_PATH, GREENS still fail because `libjmmshr_gsl.so` is the deeper dependency. BLAS alone isn't sufficient.
+
+**Impact**: All GREENS expression nodes (702 systems × multiple functions each). MECHANICAL geometry data is partially accessible without these libraries (stored data nodes work fine).
+
+#### 2b. Static Tree Data Reality (New Finding)
+
+Deep scan at shot=1 reveals the static tree has a clear data classification:
+
+| Subtree | Stored Data | Expression Nodes | Empty | Notes |
+|---------|------------|-----------------|-------|-------|
+| MECHANICAL | 135 | 567 | 54 | Geometry: COIL R/Z shape=(32,), MESH R/Z shape=(462+,) |
+| GREENS | 0 | ~all | 0 | 702 child systems, all computed via greenem/staticgreen |
+| VERSION | 0 | 0 | 1 | Structure node only |
+
+Key findings:
+- MECHANICAL stored data **IS readable** at shot=1: coil positions, mesh coordinates, transformation matrices
+- MECHANICAL expressions reference `:VAL:X` sub-nodes; many fail with NNF due to version-dependent availability
+- GREENS data is **fully computed on-demand** — no stored values, no pre-calculated cache (`:PRE` nodes are empty)
+- Even with all libraries installed, GREENS would compute transiently (expensive, not suitable for batch checking)
+
+#### 2c. DataAccess Node Gap (New Finding)
+
+Only 2 DataAccess nodes exist for TCV, both incomplete:
+
+| DataAccess ID | Signals Linked | Has Templates | Has Setup | Issue |
+|--------------|---------------|--------------|-----------|-------|
+| `tcv:mdsplus:tree_tdi` | 60,256 | No | No | Missing connection/data templates, no env setup |
+| `tcv:tdi:functions` | 338 | Yes | No | Has templates but no setup_commands or env vars |
+
+**Critical gap**: ALL 34,002 static tree signals point to `tcv:mdsplus:tree_tdi` which encodes tcv_shot access. The DataAccess node doesn't distinguish between tcv_shot subtrees and independent trees like static. This is why `check_worker()` routes everything through tcv_shot — the DataAccess node doesn't encode the correct tree name.
+
+**Root cause in code**: `graph_ops.py:promote_leaf_nodes_to_signals()` hardcodes `da_id = f"{facility}:mdsplus:tree_tdi"` for ALL trees, regardless of whether the tree is a tcv_shot subtree or independent.
 
 #### 3. Dynamic Tree no_data (5,701 failures)
 
@@ -404,14 +437,151 @@ data_sources:
 
 5. **Tree structure caching**: Cache tree node listings so repeated check runs don't re-open trees. The extract phase already does this, but the check phase opens trees independently.
 
+### Phase 9: DataAccess-Driven Signal Checking (Critical — New)
+
+**Problem**: Signal checking currently hardcodes routing logic (all tree_traversal → tcv_shot). DataAccess nodes should be the authoritative source for _how_ to access each signal, but they're unpopulated and unused during checking.
+
+**Goal**: Every FacilitySignal has a properly-linked DataAccess node that tells the check worker exactly how to open the tree, what shot to use, and what environment is needed.
+
+#### 9a. DataAccess Taxonomy for TCV
+
+Create separate DataAccess nodes per access pattern:
+
+| DataAccess ID | data_source | Shot | Signals | Purpose |
+|--------------|-------------|------|---------|---------|
+| `tcv:mdsplus:tree_tdi` | `tcv_shot` | `reference_shot` | ~26K | Subtree signals (results, hybrid, magnetics, base, diagz, ecrh, power) |
+| `tcv:mdsplus:static` | `static` | `1` (version) | ~34K | Independent static tree (geometry, GREENS) |
+| `tcv:mdsplus:vsystem` | `vsystem` | `reference_shot` | ~561 | Independent vsystem tree |
+| `tcv:tdi:functions` | `tcv_shot` | `reference_shot` | ~338 | TDI function evaluation |
+
+Each DataAccess node should have:
+```yaml
+# tcv:mdsplus:static
+id: "tcv:mdsplus:static"
+facility_id: "tcv"
+name: "Static Tree (Machine Geometry)"
+method_type: "mdsplus"
+library: "MDSplus"
+access_type: "local"
+data_source: "static"
+discovery_shot: 1
+setup_commands:
+  - "source /etc/profile.d/mdsplus.sh"
+environment_variables: '{"MDSPLUS_DIR": "/usr/local/mdsplus"}'
+imports_template: "import MDSplus"
+connection_template: "tree = MDSplus.Tree('static', {shot}, 'readonly')"
+data_template: "data = tree.getNode('{node_path}').data()"
+time_template: null  # Static data has no time dimension
+cleanup_template: "tree.close()"
+full_example: |
+  import MDSplus
+  tree = MDSplus.Tree('static', 1, 'readonly')
+  # Mechanical geometry (stored data)
+  coil_r = tree.getNode('\\STATIC::TOP.MECHANICAL.COIL:R').data()
+  coil_z = tree.getNode('\\STATIC::TOP.MECHANICAL.COIL:Z').data()
+  # Note: GREENS nodes require libjmmshr_gsl.so (not installed)
+  tree.close()
+```
+
+#### 9b. Fix Signal → DataAccess Linkage
+
+**Current bug**: `graph_ops.py:promote_leaf_nodes_to_signals()` hardcodes `da_id = f"{facility}:mdsplus:tree_tdi"` for ALL trees.
+
+**Fix**: Route to the correct DataAccess based on tree independence:
+
+```python
+# Determine DataAccess based on tree name and config
+independent_trees = {"static", "vsystem"}  # From facility YAML
+if tree_name in independent_trees:
+    da_id = f"{facility}:mdsplus:{tree_name}"
+else:
+    da_id = f"{facility}:mdsplus:tree_tdi"
+```
+
+The list of independent trees should come from facility YAML config, not be hardcoded.
+
+#### 9c. DataAccess-Driven Check Routing
+
+**Current code** in `check_worker()`:
+```python
+if node_path and signal.get("discovery_source") == "tree_traversal":
+    accessor = node_path
+    tree_name = "tcv_shot"  # Hardcoded!
+```
+
+**New code**: Read the DataAccess node to determine tree_name and shot:
+```python
+# Load DataAccess node to determine how to check
+da_id = signal.get("data_access")
+if da_id:
+    # Cache DataAccess nodes to avoid repeated queries
+    da_info = data_access_cache.get(da_id)
+    if da_info:
+        tree_name = da_info.get("data_source", "tcv_shot")
+        if da_info.get("discovery_shot"):
+            shot = da_info["discovery_shot"]
+```
+
+This makes the check worker fully data-driven rather than hardcoded.
+
+#### 9d. Routine DataAccess Population Strategy
+
+DataAccess nodes should be populated automatically during signal discovery:
+
+1. **During tree extraction** (`discover signals`):
+   - For each tree in facility YAML: create a DataAccess node
+   - Independent trees (not in `connection_tree`'s subtrees): separate DataAccess with `data_source = tree_name`
+   - Subtrees: link to the connection tree DataAccess
+   - Populate `setup_commands` from facility YAML `data_access_patterns.environment`
+   - Populate templates from facility YAML `data_access_patterns.templates`
+
+2. **During TDI scanning**:
+   - Create/update `{facility}:tdi:functions` DataAccess
+   - Populate with TDI-specific templates
+
+3. **Facility YAML schema addition** (`facility_config.yaml`):
+```yaml
+data_access_patterns:
+  mdsplus:
+    independent_trees:
+      - static
+      - vsystem
+    setup_commands:
+      - "source /etc/profile.d/mdsplus.sh"
+    environment_variables:
+      MDSPLUS_DIR: "/usr/local/mdsplus"
+    known_missing_libraries:
+      - library: "libjmmshr_gsl.so"
+        impact: "GREENS computation in static tree"
+        severity: "blocks_data"
+      - library: "libblas.so"
+        impact: "Matrix multiply (_matmul) used by staticgreen"
+        severity: "blocks_data"
+        workaround: "Symlink libblas.so.3 -> libblas.so"
+```
+
+4. **Cross-facility generalization**:
+   - Every facility defines its `data_access_patterns` in YAML
+   - The pattern is generic: method_type, library, setup_commands, templates
+   - JET would have PPF DataAccess, SAL DataAccess
+   - ITER would have IMAS DataAccess, MDSplus DataAccess
+   - Discovery pipeline reads these patterns and creates DataAccess nodes automatically
+
+5. **Validation**: After creating DataAccess nodes, test one signal per access method:
+   ```bash
+   imas-codex discover signals tcv --validate-access
+   ```
+   This opens each DataAccess's data_source with the discovery_shot and tries one tdiExecute.
+
 ---
 
 ## Implementation Priority
 
 | Phase | Priority | Effort | Impact |
 |-------|----------|--------|--------|
-| 1. Fix static routing | **Critical** | Small | Fixes 34K signals (51% of all TCV signals) |
-| 5. Missing library detection | **High** | Small | Better error classification |
+| 9. DataAccess-driven checking | **Critical** | Medium | Fixes root cause: hardcoded routing for 34K static + all future trees |
+| 1. Fix static routing | **Critical** | Small | Immediate fix for 34K signals (quick-win before Phase 9) |
+| 5. Missing library detection | **High** | Small | Better error classification, known blockers documented |
 | 6. TDI function categorization | **High** | Small | Reduces wasted check cycles |
 | 2. Expression node classification | **High** | Medium | Accurate data availability reporting |
 | 4. Smart check by tree type | **Medium** | Medium | Reduces false failures |
@@ -421,8 +591,12 @@ data_sources:
 
 ## Immediate Actions
 
-1. **Fix static tree routing** in `check_worker()` — open static directly with shot=1
-2. **Update `exclude_functions`** in tcv.yaml with hardware/control functions  
-3. **Add `missing_library` error classification** in `_classify_check_error()`
-4. **Reset 8,538 static NNF signals** to `enriched` for re-checking after fix
-5. **Check vsystem tree** — 561 discovered signals never checked
+1. **Create DataAccess nodes** for static and vsystem trees with proper templates and setup_commands
+2. **Fix DataAccess linkage** in `graph_ops.py`: static signals → `tcv:mdsplus:static`, not `tcv:mdsplus:tree_tdi`
+3. **Fix check_worker routing** to read `data_source` from DataAccess node instead of hardcoding `tree_name = "tcv_shot"`
+4. **Populate existing DataAccess nodes** (`tree_tdi`, `tdi:functions`) with setup_commands and templates
+5. **Add `independent_trees`** to facility YAML config under `data_access_patterns`
+6. **Update exclude_functions** in tcv.yaml with hardware/control functions
+7. **Add `missing_library` error classification** in `_classify_check_error()`
+8. **Reset 8,538 static NNF signals** to `enriched` for re-checking after fix
+9. **Record missing libraries** in tcv_private.yaml infrastructure section
