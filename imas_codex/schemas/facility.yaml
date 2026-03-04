@@ -1280,6 +1280,8 @@ classes:
         description: Parent tree name
         required: true
         range: MDSplusTree
+        annotations:
+          relationship_type: IN_TREE
       facility_id:
         description: Parent facility ID
         required: true
@@ -1368,6 +1370,8 @@ classes:
         description: Parent tree name
         required: true
         range: MDSplusTree
+        annotations:
+          relationship_type: IN_TREE
       facility_id:
         description: Parent facility ID
         required: true
