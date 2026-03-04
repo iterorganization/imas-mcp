@@ -455,7 +455,7 @@ def _enrich_code_chunks(
         OPTIONAL MATCH (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip:IMASPath)
         OPTIONAL MATCH (dr)-[:CALLS_TDI_FUNCTION]->(tdi:TDIFunction)
         OPTIONAL MATCH (cf)-[:IN_DIRECTORY]->(fp:FacilityPath)
-        RETURN cc.id AS id, substring(cc.text, 0, 1000) AS text,
+        RETURN cc.id AS id, cc.text AS text,
                cc.function_name AS function_name, ce.source_file AS source_file,
                cf.facility_id AS facility_id,
                collect(DISTINCT {type: dr.ref_type, raw: dr.raw_string,
@@ -526,10 +526,10 @@ def _search_imas(
         if facility and path_ids:
             facility_xrefs = _get_facility_crossrefs(gc, path_ids, facility)
 
-        # Step 5: Version context (optional, top 5 only)
+        # Step 5: Version context (optional)
         version_context: dict[str, dict[str, Any]] = {}
         if include_version_context and path_ids:
-            version_context = _get_version_context(gc, path_ids[:5])
+            version_context = _get_version_context(gc, path_ids)
 
         # Step 6: Format
         return format_imas_report(

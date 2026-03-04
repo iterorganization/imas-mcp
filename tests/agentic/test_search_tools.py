@@ -289,8 +289,8 @@ class TestFormatSignalsReport:
         assert "Related Tree Nodes" in result
         assert "\\RESULTS::I_P" in result
 
-    def test_access_template_truncation(self):
-        """Long access templates are truncated."""
+    def test_long_access_template_rendered_fully(self):
+        """Long access templates are rendered without truncation."""
         long_template = "x = 1\n" * 100
         signals = [
             {
@@ -315,8 +315,8 @@ class TestFormatSignalsReport:
             }
         ]
         result = format_signals_report(signals, [], {"tcv:test/sig": 0.5})
-        # Template should be truncated - total result should be reasonable
-        assert len(result) < 5000
+        # Full template should be present — no truncation
+        assert long_template.strip() in result
 
 
 # ---------------------------------------------------------------------------
