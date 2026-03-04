@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -871,6 +872,226 @@ def release_signal_claim(signal_id: str) -> None:
     from imas_codex.discovery.base.claims import release_claim
 
     release_claim("FacilitySignal", signal_id)
+
+
+# =============================================================================
+# Signal Pattern Detection & Propagation
+# =============================================================================
+
+# Regex to replace numeric segments (2+ digits) with NNN for pattern grouping.
+# Matches: _007, _010, :003, pure digits at segment boundaries.
+_PATTERN_RE = re.compile(r"\d{2,}")
+
+
+def _accessor_to_pattern(accessor: str) -> str:
+    """Convert a signal accessor to its pattern template.
+
+    Replaces numeric segments (2+ digits) with NNN.
+    E.g., 'CALIB_GAS_010:PROPERTIES:PARAM_048:LIM' -> 'CALIB_GAS_NNN:PROPERTIES:PARAM_NNN:LIM'
+    """
+    return _PATTERN_RE.sub("NNN", accessor)
+
+
+def detect_signal_patterns(
+    facility: str,
+    min_instances: int = 3,
+) -> tuple[int, int]:
+    """Detect indexed signal groups and skip non-representative signals.
+
+    Scans discovered FacilitySignals for accessor patterns where numeric
+    segments vary (e.g., CALIB_GAS_010:...:PARAM_048:LIM). For each
+    pattern with >= min_instances, one signal is kept as the representative
+    (status stays 'discovered') and all others are marked as 'pattern_pending'
+    with skip_reason = 'pattern_follower' and a pattern_representative_id
+    linking to the representative signal.
+
+    After the representative is enriched, propagate_pattern_enrichment()
+    copies the LLM-generated metadata to all followers.
+
+    Args:
+        facility: Facility ID
+        min_instances: Minimum signals in a group to form a pattern
+
+    Returns:
+        Tuple of (patterns_detected, signals_marked_as_followers)
+    """
+    # Fetch all discovered signal accessors
+    with GraphClient() as gc:
+        results = gc.query(
+            """
+            MATCH (s:FacilitySignal {facility_id: $facility})
+            WHERE s.status = $discovered
+              AND s.pattern_representative_id IS NULL
+            RETURN s.id AS id, s.accessor AS accessor
+            """,
+            facility=facility,
+            discovered=FacilitySignalStatus.discovered.value,
+        )
+
+    if not results:
+        return 0, 0
+
+    # Group signals by pattern template
+    pattern_groups: dict[str, list[dict]] = {}
+    for r in results:
+        pattern = _accessor_to_pattern(r["accessor"])
+        pattern_groups.setdefault(pattern, []).append(
+            {"id": r["id"], "accessor": r["accessor"]}
+        )
+
+    # Filter to groups with enough instances
+    multi_groups = {
+        p: sigs for p, sigs in pattern_groups.items() if len(sigs) >= min_instances
+    }
+
+    if not multi_groups:
+        return 0, 0
+
+    # For each pattern group, pick one representative and mark the rest
+    total_followers = 0
+    with GraphClient() as gc:
+        for pattern, sigs in multi_groups.items():
+            # Representative = first signal alphabetically (deterministic)
+            sigs.sort(key=lambda s: s["accessor"])
+            representative = sigs[0]
+            followers = sigs[1:]
+
+            if not followers:
+                continue
+
+            follower_ids = [f["id"] for f in followers]
+
+            # Mark followers as pattern_pending with reference to representative
+            gc.query(
+                """
+                UNWIND $follower_ids AS fid
+                MATCH (s:FacilitySignal {id: fid})
+                WHERE s.status = $discovered
+                SET s.status = 'pattern_pending',
+                    s.skip_reason = 'pattern_follower',
+                    s.pattern_representative_id = $rep_id,
+                    s.pattern_template = $pattern
+                """,
+                follower_ids=follower_ids,
+                discovered=FacilitySignalStatus.discovered.value,
+                rep_id=representative["id"],
+                pattern=pattern,
+            )
+            total_followers += len(followers)
+
+    patterns_detected = len(multi_groups)
+    logger.info(
+        "Detected %d signal patterns for %s: %d followers, %d representatives",
+        patterns_detected,
+        facility,
+        total_followers,
+        patterns_detected,
+    )
+    return patterns_detected, total_followers
+
+
+def propagate_pattern_enrichment(
+    representative_id: str,
+    enrichment: dict,
+    batch_cost: float = 0.0,
+) -> int:
+    """Propagate enrichment from a representative signal to all pattern followers.
+
+    After the representative signal is enriched by the LLM, this copies
+    the physics_domain, description, name, diagnostic, keywords, etc.
+    to all signals that share the same pattern_representative_id.
+
+    Args:
+        representative_id: ID of the enriched representative signal
+        enrichment: Dict with enrichment fields (physics_domain, description, etc.)
+        batch_cost: LLM cost to distribute across all propagated signals
+
+    Returns:
+        Number of follower signals updated
+    """
+    with GraphClient() as gc:
+        # Count followers first for cost distribution
+        count_result = gc.query(
+            """
+            MATCH (s:FacilitySignal)
+            WHERE s.pattern_representative_id = $rep_id
+              AND s.status = 'pattern_pending'
+            RETURN count(s) AS cnt
+            """,
+            rep_id=representative_id,
+        )
+        follower_count = count_result[0]["cnt"] if count_result else 0
+
+        if follower_count == 0:
+            return 0
+
+        # Cost per signal (representative + followers)
+        per_signal_cost = batch_cost / (follower_count + 1) if batch_cost > 0 else 0.0
+
+        # Propagate enrichment to all followers
+        result = gc.query(
+            """
+            MATCH (s:FacilitySignal)
+            WHERE s.pattern_representative_id = $rep_id
+              AND s.status = 'pattern_pending'
+            SET s.status = $enriched,
+                s.physics_domain = $physics_domain,
+                s.description = $description,
+                s.name = $name,
+                s.diagnostic = CASE WHEN $diagnostic <> '' THEN $diagnostic ELSE s.diagnostic END,
+                s.analysis_code = CASE WHEN $analysis_code <> '' THEN $analysis_code ELSE s.analysis_code END,
+                s.keywords = $keywords,
+                s.sign_convention = CASE WHEN $sign_convention <> '' THEN $sign_convention ELSE s.sign_convention END,
+                s.llm_cost = $per_signal_cost,
+                s.enriched_at = datetime(),
+                s.claimed_at = null,
+                s.skip_reason = null,
+                s.enrichment_source = 'pattern_propagation'
+            RETURN count(s) AS updated
+            """,
+            rep_id=representative_id,
+            enriched=FacilitySignalStatus.enriched.value,
+            physics_domain=enrichment.get("physics_domain", ""),
+            description=enrichment.get("description", ""),
+            name=enrichment.get("name", ""),
+            diagnostic=enrichment.get("diagnostic", ""),
+            analysis_code=enrichment.get("analysis_code", ""),
+            keywords=enrichment.get("keywords", []),
+            sign_convention=enrichment.get("sign_convention", ""),
+            per_signal_cost=per_signal_cost,
+        )
+
+        updated = result[0]["updated"] if result else 0
+
+        # Also create Diagnostic nodes for followers
+        if enrichment.get("diagnostic"):
+            gc.query(
+                """
+                MATCH (s:FacilitySignal)
+                WHERE s.pattern_representative_id = $rep_id
+                  AND s.status = $enriched
+                WITH s, toLower(trim($diagnostic)) AS diag_name
+                WHERE diag_name <> ''
+                MERGE (d:Diagnostic {name: diag_name})
+                ON CREATE SET d.facility_id = s.facility_id
+                MERGE (s)-[:BELONGS_TO_DIAGNOSTIC]->(d)
+                WITH d, s
+                MATCH (f:Facility {id: s.facility_id})
+                MERGE (d)-[:AT_FACILITY]->(f)
+                """,
+                rep_id=representative_id,
+                enriched=FacilitySignalStatus.enriched.value,
+                diagnostic=enrichment.get("diagnostic", ""),
+            )
+
+        if updated > 0:
+            logger.info(
+                "Propagated enrichment from %s to %d followers",
+                representative_id,
+                updated,
+            )
+
+        return updated
 
 
 # =============================================================================
@@ -2452,6 +2673,20 @@ async def enrich_worker(
             return []
 
     while not state.should_stop_enriching():
+        # --- Pattern detection phase ---
+        # On each idle cycle, detect indexed signal patterns and mark
+        # followers so they skip individual LLM enrichment. Once a
+        # representative is enriched, its metadata is propagated.
+        patterns_detected, followers_marked = await asyncio.to_thread(
+            detect_signal_patterns,
+            state.facility,
+        )
+        if patterns_detected > 0 and on_progress:
+            on_progress(
+                f"detected {patterns_detected} patterns ({followers_marked} followers)",
+                state.enrich_stats,
+            )
+
         # Claim batch of signals (sorted by tdi_function)
         # Batch size 50 - signals grouped by function so one source code per group
         signals = await asyncio.to_thread(
@@ -2696,6 +2931,26 @@ async def enrich_worker(
         if enriched:
             await asyncio.to_thread(mark_signals_enriched, enriched, batch_cost)
             state.enrich_stats.processed += len(enriched)
+
+            # Propagate enrichment from representative signals to pattern followers
+            total_propagated = 0
+            for e in enriched:
+                propagated = await asyncio.to_thread(
+                    propagate_pattern_enrichment,
+                    e["id"],
+                    e,
+                    batch_cost / len(enriched) if batch_cost > 0 else 0.0,
+                )
+                total_propagated += propagated
+
+            if total_propagated > 0:
+                state.enrich_stats.processed += total_propagated
+                if on_progress:
+                    on_progress(
+                        f"propagated to {total_propagated} pattern followers",
+                        state.enrich_stats,
+                        enriched,
+                    )
 
             if on_progress:
                 on_progress("enriched batch", state.enrich_stats, enriched)
