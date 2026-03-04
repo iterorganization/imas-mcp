@@ -119,6 +119,78 @@ ip = tcv_eq("I_P")
         types = {r.ref_type for r in refs}
         assert types == {"mdsplus_path", "tdi_call"}
 
+    # --- MATLAB patterns ---
+
+    def test_matlab_tdi_path(self) -> None:
+        """Should extract MDSplus paths from MATLAB tdi() calls."""
+        code = "data = tdi('\\results::thomson:te');"
+        refs = extract_mdsplus_paths(code)
+        paths = {r.path for r in refs}
+        assert "\\RESULTS::THOMSON:TE" in paths
+
+    def test_matlab_mdsvalue_path(self) -> None:
+        """Should extract MDSplus paths from MATLAB mdsvalue() calls."""
+        code = "ip = mdsvalue('\\results::i_p');"
+        refs = extract_mdsplus_paths(code)
+        paths = {r.path for r in refs}
+        assert "\\RESULTS::I_P" in paths
+
+    def test_matlab_mdsvalue_concat(self) -> None:
+        """Should extract base path from MATLAB mdsvalue with concatenation."""
+        code = "data = mdsvalue(['\\results::ece_lfs:channel_00' int2str(i)]);"
+        refs = extract_mdsplus_paths(code)
+        paths = {r.path for r in refs}
+        assert "\\RESULTS::ECE_LFS:CHANNEL_00" in paths
+
+    def test_matlab_tdi_function(self) -> None:
+        """Should extract TDI function from MATLAB tdi() call."""
+        code = "ip = tdi('tcv_ip()');"
+        refs = extract_mdsplus_paths(code)
+        tdi_refs = [r for r in refs if r.ref_type == "tdi_call"]
+        assert len(tdi_refs) >= 1
+        assert any("TCV_IP" in r.path for r in tdi_refs)
+
+    # --- Python wrapper patterns ---
+
+    def test_conn_tdi_path(self) -> None:
+        """Should extract paths from conn.tdi() calls."""
+        code = "data = conn.tdi(r'\\results::psi')"
+        refs = extract_mdsplus_paths(code)
+        paths = {r.path for r in refs}
+        assert "\\RESULTS::PSI" in paths
+
+    def test_shot_tdi_function(self) -> None:
+        """Should extract TDI function from .tdi() method call."""
+        code = "ip = tcv.shot(shot).tdi('tcv_ip()')"
+        refs = extract_mdsplus_paths(code)
+        tdi_refs = [r for r in refs if r.ref_type == "tdi_call"]
+        assert any("TCV_IP" in r.path for r in tdi_refs)
+
+    # --- Fortran patterns ---
+
+    def test_fortran_mds_get(self) -> None:
+        """Should extract paths from Fortran MDS_GET calls."""
+        code = "call MDS_GET('\\results::i_p')"
+        refs = extract_mdsplus_paths(code)
+        paths = {r.path for r in refs}
+        assert "\\RESULTS::I_P" in paths
+
+    # --- IDL patterns ---
+
+    def test_idl_mdsvalue(self) -> None:
+        """Should extract paths from IDL mdsvalue, syntax."""
+        code = "ip = mdsvalue, '\\results::i_p'"
+        refs = extract_mdsplus_paths(code)
+        paths = {r.path for r in refs}
+        assert "\\RESULTS::I_P" in paths
+
+    def test_getnode_path(self) -> None:
+        """Should extract paths from tree.getNode() calls."""
+        code = "node = self._MDSTree.getNode('\\results::psi')"
+        refs = extract_mdsplus_paths(code)
+        paths = {r.path for r in refs}
+        assert "\\RESULTS::PSI" in paths
+
     def test_ignores_non_mdsplus_strings(self) -> None:
         """Should not extract regular strings."""
         code = """
