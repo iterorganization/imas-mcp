@@ -184,30 +184,9 @@ The build pipeline validates all vector indexes and generates them into `schema_
 
 Define status enums in the same schema file as the class. Statuses must represent **durable states only** — no transient states like `scanning` or `processing`. Worker coordination uses `claimed_at` timestamps, not status values.
 
-```yaml
-enums:
-  MyNewNodeStatus:
-    permissible_values:
-      discovered:
-        description: Initial state after creation
-      processed:
-        description: Successfully processed
-      failed:
-        description: Processing failed
-      stale:
-        description: May have changed, needs re-processing
-```
-
 #### Private Fields
 
-Slots annotated with `is_private: true` are excluded from the graph — they exist only in facility YAML configs:
-
-```yaml
-ssh_host:
-  description: SSH host alias
-  annotations:
-    is_private: true
-```
+Slots annotated with `is_private: true` are excluded from the graph — they exist only in facility YAML configs.
 
 #### What NOT to Do in Schemas
 
@@ -242,16 +221,7 @@ Per-facility YAML configs define discovery roots, wiki sites, data sources, and 
 - Login node names, local host overrides
 - User-specific paths, tool locations
 
-**How to load config in Python:**
-
-```python
-from imas_codex.discovery.base.facility import get_facility
-
-config = get_facility(facility)  # Loads <facility>.yaml + <facility>_private.yaml
-mdsplus = config.get("data_sources", {}).get("mdsplus", {})
-setup_commands = mdsplus.get("setup_commands", [])
-static_trees = mdsplus.get("static_trees", [])
-```
+**How to load config:** `get_facility(facility)` from `imas_codex.discovery.base.facility` loads both public + private YAML and returns a dict.
 
 **When adding a new discovery pipeline or data source**, add the required config fields to the facility YAML schema (`imas_codex/schemas/facility_config.yaml`) and load them via `get_facility()`. The Python code should work unchanged across all facilities — only the YAML differs.
 
@@ -263,14 +233,7 @@ update_facility_infrastructure('tcv', {'discovery_roots': ['/new/path']})
 add_exploration_note('tcv', 'Found equilibrium codes at /home/codes/liuqe')
 ```
 
-**Validation:** Configs are validated against schema at load time. Check compliance:
-
-```python
-from imas_codex.discovery.base.facility import validate_facility_config
-errors = validate_facility_config('tcv')  # Returns list of error strings
-```
-
-**Schema access:** The config schema is exposed via `get_graph_schema()` MCP tool — agents can query it to understand required/optional fields before editing.
+**Validation:** `validate_facility_config('tcv')` returns a list of error strings. The config schema is also exposed via the `get_graph_schema()` MCP tool.
 
 ## Graph State Machine
 
@@ -533,28 +496,14 @@ Install on any facility: `uv run imas-codex tools install <facility>`
 ## Commit Workflow
 
 ```bash
-# 1. Lint and format (Python files only — ruff does not support other formats)
-uv run ruff check --fix .
-uv run ruff format .
-
-# 2. Stage specific files (never git add -A)
-# NEVER stage auto-generated files (models.py, dd_models.py, physics_domain.py)
-# NEVER stage gitignored files — run `git status --ignored` to check
-# NEVER commit *_private.yaml files — they contain sensitive infrastructure data
-git add <file1> <file2> ...
-
-# 3. Commit with conventional format
-uv run git commit -m "type: concise summary
-
-Detailed explanation.
-- Key changes
-
-BREAKING CHANGE: description (if applicable)"
-
-# 4. If pre-commit fails, fix and repeat 2-3
-# 5. Push
+uv run ruff check --fix .           # Lint (Python only)
+uv run ruff format .                # Format
+git add <file1> <file2> ...         # Stage specific files (never git add -A)
+uv run git commit -m "type: concise summary"  # Conventional format
 git push origin main
 ```
+
+**Never stage:** auto-generated files (models.py, dd_models.py, physics_domain.py), gitignored files, `*_private.yaml` files.
 
 | Type | Purpose |
 |------|---------|
