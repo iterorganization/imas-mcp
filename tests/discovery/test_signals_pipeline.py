@@ -1334,8 +1334,8 @@ class TestSignalPatternDetection:
         mock_gc = MagicMock()
         mock_gc.__enter__ = MagicMock(return_value=mock_gc)
         mock_gc.__exit__ = MagicMock(return_value=False)
-        # First call: count followers -> 5
-        # Second call: propagate -> 5 updated
+        # First call: count discovered followers -> 5
+        # Second call: propagate discovered → enriched -> 5 updated
         mock_gc.query = MagicMock(
             side_effect=[
                 [{"cnt": 5}],
