@@ -1235,3 +1235,131 @@ class TestCLISignals:
 
         # CLI should complete successfully
         assert result.exit_code == 0, f"CLI failed: {result.output}"
+
+
+# ── Signal Pattern Detection Tests ───────────────────────────────────────
+
+
+class TestSignalPatternDetection:
+    """Tests for indexed signal pattern detection and propagation."""
+
+    def test_accessor_to_pattern(self):
+        """Numeric segments are replaced with NNN."""
+        from imas_codex.discovery.signals.parallel import _accessor_to_pattern
+
+        assert (
+            _accessor_to_pattern("CALIB_GAS_010:PROPERTIES:PARAM_048:LIM")
+            == "CALIB_GAS_NNN:PROPERTIES:PARAM_NNN:LIM"
+        )
+        assert (
+            _accessor_to_pattern("WAVE_GEN_A:OUTPUT_064:OFFSET")
+            == "WAVE_GEN_A:OUTPUT_NNN:OFFSET"
+        )
+        assert (
+            _accessor_to_pattern("TOP.INPUTS.S_DSP_003:ADC_GAIN")
+            == "TOP.INPUTS.S_DSP_NNN:ADC_GAIN"
+        )
+        # Single digit should NOT be replaced (min 2 digits)
+        assert _accessor_to_pattern("COIL_R:S1") == "COIL_R:S1"
+        # No numbers should be unchanged
+        assert _accessor_to_pattern("IP:VALUE") == "IP:VALUE"
+
+    def test_detect_signal_patterns(self):
+        """Pattern detection groups indexed signals and marks followers."""
+        from imas_codex.discovery.signals.parallel import detect_signal_patterns
+
+        # Mock GraphClient to return indexed signals
+        mock_results = [
+            {"id": f"tcv:sig_{i:03d}_param_a", "accessor": f"GAS_{i:03d}:PARAM:A"}
+            for i in range(10)
+        ] + [
+            {"id": "tcv:unique_signal", "accessor": "UNIQUE:SIGNAL"},
+        ]
+
+        mock_gc = MagicMock()
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        mock_gc.query = MagicMock(return_value=mock_results)
+
+        with patch(
+            "imas_codex.discovery.signals.parallel.GraphClient",
+            return_value=mock_gc,
+        ):
+            patterns, followers = detect_signal_patterns("tcv", min_instances=3)
+
+        # Should detect 1 pattern (GAS_NNN:PARAM:A) with 10 signals
+        assert patterns == 1
+        assert followers == 9  # 10 signals - 1 representative
+
+        # Second query should mark followers
+        assert mock_gc.query.call_count == 2
+        second_call_kwargs = mock_gc.query.call_args_list[1]
+        # Verify follower IDs were passed (9 of 10)
+        follower_ids = second_call_kwargs.kwargs.get(
+            "follower_ids"
+        ) or second_call_kwargs[1].get("follower_ids")
+        assert len(follower_ids) == 9
+
+    def test_detect_patterns_below_threshold(self):
+        """Groups below min_instances threshold are not detected as patterns."""
+        from imas_codex.discovery.signals.parallel import detect_signal_patterns
+
+        # Only 2 signals in the group (below default min_instances=3)
+        mock_results = [
+            {"id": "tcv:sig_01_a", "accessor": "GAS_01:A"},
+            {"id": "tcv:sig_02_a", "accessor": "GAS_02:A"},
+            {"id": "tcv:unique", "accessor": "UNIQUE:SIGNAL"},
+        ]
+
+        mock_gc = MagicMock()
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        mock_gc.query = MagicMock(return_value=mock_results)
+
+        with patch(
+            "imas_codex.discovery.signals.parallel.GraphClient",
+            return_value=mock_gc,
+        ):
+            patterns, followers = detect_signal_patterns("tcv", min_instances=3)
+
+        assert patterns == 0
+        assert followers == 0
+
+    def test_propagate_pattern_enrichment(self):
+        """Enrichment is propagated from representative to followers."""
+        from imas_codex.discovery.signals.parallel import (
+            propagate_pattern_enrichment,
+        )
+
+        mock_gc = MagicMock()
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        # First call: count followers -> 5
+        # Second call: propagate -> 5 updated
+        mock_gc.query = MagicMock(
+            side_effect=[
+                [{"cnt": 5}],
+                [{"updated": 5}],
+                [],  # diagnostic creation
+            ]
+        )
+
+        enrichment = {
+            "physics_domain": "plasma_control",
+            "description": "Gas injection parameter limit",
+            "name": "Gas Calibration Limit",
+            "diagnostic": "gas_injection",
+            "analysis_code": "",
+            "keywords": ["gas", "calibration", "limit"],
+            "sign_convention": "",
+        }
+
+        with patch(
+            "imas_codex.discovery.signals.parallel.GraphClient",
+            return_value=mock_gc,
+        ):
+            result = propagate_pattern_enrichment(
+                "tcv:rep_signal", enrichment, batch_cost=0.01
+            )
+
+        assert result == 5

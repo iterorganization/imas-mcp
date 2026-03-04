@@ -294,6 +294,31 @@ The signal enrichment worker injects **five levels of context** into each LLM ca
 
 IMAS mapping context is intentionally excluded from signal enrichment — signal description and IMAS mapping are separate concerns. Signals should be accurately described before being mapped to IMAS paths.
 
+#### Indexed Signal Pattern Matching
+
+Many facility signals follow **indexed patterns** — structurally identical signals differing only in numeric indices. For example, TCV's `hybrid` tree has 252 signals matching `CALIB_GAS_NNN:PROPERTIES:PARAM_NNN:LIM` that all share the same semantic meaning ("operational limit for gas injection parameter").
+
+The enrichment worker detects these patterns automatically and enriches **one representative per pattern**, then propagates the LLM-generated description to all instances. This reduces LLM calls by 10-50x for indexed trees.
+
+**How it works:**
+1. Before claiming signals, `detect_signal_patterns()` scans all `discovered` signals
+2. Accessor paths are normalized by replacing numeric segments (2+ digits) with `NNN`
+3. Groups with ≥ 3 instances form a pattern — one signal is the representative, the rest are marked `pattern_pending`
+4. The representative is enriched normally via the LLM
+5. `propagate_pattern_enrichment()` copies the description, physics_domain, diagnostic, keywords, etc. to all followers
+
+**Pattern examples observed in TCV:**
+
+| Pattern Template | Instances | Tree |
+|---|---|---|
+| `CALIB_GAS_NNN:PROPERTIES:PARAM_NNN:LIM` | 252 | hybrid |
+| `CALIB_GAS_NNN:PROPERTIES:PARAM_NNN:VAL` | 252 | hybrid |
+| `WAVE_GEN_A:OUTPUT_NNN:OFFSET` | 64 | hybrid |
+| `TOP.INPUTS.S_DSP_NNN:ADC_GAIN` | 36 | hybrid |
+| `DRAW_PERTS:PERT_NNN:CONTROL` | 24 | hybrid |
+
+**Savings:** For TCV, pattern matching reduces ~7,300 LLM enrichment calls to ~2,500 (66% reduction).
+
 ```bash
 imas-codex discover signals tcv                            # Full pipeline
 imas-codex discover signals tcv --scan-only                # Enumerate only
