@@ -20,6 +20,7 @@ from neo4j.exceptions import ServiceUnavailable
 from imas_codex.agentic.search_formatters import (
     format_code_report,
     format_docs_report,
+    format_fetch_report,
     format_imas_report,
     format_signals_report,
 )
@@ -294,7 +295,7 @@ def _enrich_wiki_chunks(
         OPTIONAL MATCH (c)-[:DOCUMENTS]->(tn:TreeNode)
         OPTIONAL MATCH (c)-[:MENTIONS_IMAS]->(ip:IMASPath)
         RETURN c.id AS id, c.text AS text, c.section AS section,
-               p.title AS page_title, p.url AS page_url,
+               p.id AS page_id, p.title AS page_title, p.url AS page_url,
                collect(DISTINCT sig.id) AS linked_signals,
                collect(DISTINCT tn.path) AS linked_tree_nodes,
                collect(DISTINCT ip.id) AS imas_refs
@@ -349,6 +350,176 @@ def _vector_search_artifacts(
         logger.debug("image_desc_embedding index not available", exc_info=True)
 
     return results, scores
+
+
+# ---------------------------------------------------------------------------
+# fetch — retrieve full content for any graph resource by ID or URL
+# ---------------------------------------------------------------------------
+
+
+def _fetch(
+    resource: str,
+    *,
+    gc: GraphClient | None = None,
+) -> str:
+    """Fetch full content for a graph resource identified by ID or URL.
+
+    Use after search_* tools identify resources of interest. Resolves the
+    resource to its node type and returns all available content.
+
+    Supported node types (resolved in order):
+    - WikiPage: all chunks in reading order
+    - WikiArtifact: all parsed document chunks
+    - CodeFile: all code chunks with function names
+    - Image: description, OCR text, and source URL
+
+    The resource parameter can be:
+    - A graph node ID (e.g., "jet:Fishbone_proposal_2018.ppt")
+    - A URL (e.g., "https://wiki.jetdata.eu/tf/...")
+    - A partial title/filename for fuzzy matching
+    """
+    try:
+        if gc is None:
+            gc = GraphClient()
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        return f"Error connecting to graph: {e}"
+
+    try:
+        # Try each node type in order until we find a match
+        for resolver in [
+            _fetch_wiki_page,
+            _fetch_wiki_artifact,
+            _fetch_code_file,
+            _fetch_image,
+        ]:
+            result = resolver(gc, resource)
+            if result is not None:
+                return result
+
+        return (
+            f"No resource found matching '{resource}'. "
+            "Use search_docs(), search_code(), or search_signals() to discover resources first."
+        )
+
+    except ServiceUnavailable:
+        return NEO4J_NOT_RUNNING_MSG
+    except Exception as e:
+        logger.exception("fetch failed")
+        return f"Error: {_neo4j_error_message(e)}"
+
+
+def _fetch_wiki_page(gc: GraphClient, resource: str) -> str | None:
+    """Resolve and fetch a WikiPage by ID, URL, or title substring."""
+    chunks = gc.query(
+        "MATCH (p:WikiPage)-[:HAS_CHUNK]->(c:WikiChunk) "
+        "WHERE p.id = $resource OR p.url = $resource "
+        "   OR toLower(p.title) CONTAINS toLower($resource) "
+        "RETURN 'wiki_page' AS source_type, "
+        "p.title AS title, p.url AS url, p.id AS source_id, "
+        "c.section AS section, c.text AS text, "
+        "c.chunk_index AS chunk_index, "
+        "c.mdsplus_paths_mentioned AS mdsplus_paths, "
+        "c.imas_paths_mentioned AS imas_paths "
+        "ORDER BY p.title, c.chunk_index",
+        resource=resource,
+    )
+    if not chunks:
+        return None
+    return format_fetch_report(chunks)
+
+
+def _fetch_wiki_artifact(gc: GraphClient, resource: str) -> str | None:
+    """Resolve and fetch a WikiArtifact by ID, URL, or filename."""
+    chunks = gc.query(
+        "MATCH (a:WikiArtifact)-[:HAS_CHUNK]->(c:WikiChunk) "
+        "WHERE a.id = $resource OR a.url = $resource "
+        "   OR toLower(a.filename) CONTAINS toLower($resource) "
+        "   OR toLower(a.title) CONTAINS toLower($resource) "
+        "RETURN 'artifact' AS source_type, "
+        "a.title AS title, a.url AS url, a.id AS source_id, "
+        "c.section AS section, c.text AS text, "
+        "c.chunk_index AS chunk_index, "
+        "c.mdsplus_paths_mentioned AS mdsplus_paths, "
+        "c.imas_paths_mentioned AS imas_paths "
+        "ORDER BY a.title, c.chunk_index",
+        resource=resource,
+    )
+    if not chunks:
+        return None
+    return format_fetch_report(chunks)
+
+
+def _fetch_code_file(gc: GraphClient, resource: str) -> str | None:
+    """Resolve and fetch a CodeFile by ID or path."""
+    chunks = gc.query(
+        "MATCH (cf:CodeFile)-[:PRODUCED]->(ce:CodeExample)-[:HAS_CHUNK]->(cc:CodeChunk) "
+        "WHERE cf.id = $resource OR cf.path = $resource "
+        "RETURN 'code' AS source_type, "
+        "cf.path AS title, cf.id AS source_id, "
+        "cf.path AS url, "
+        "cc.function_name AS section, cc.text AS text, "
+        "cc.start_line AS chunk_index, "
+        "null AS mdsplus_paths, null AS imas_paths "
+        "ORDER BY cc.start_line",
+        resource=resource,
+    )
+    if not chunks:
+        return None
+    return format_fetch_report(chunks)
+
+
+def _fetch_image(gc: GraphClient, resource: str) -> str | None:
+    """Resolve and fetch an Image by ID, URL, or description substring."""
+    results = gc.query(
+        "MATCH (img:Image) "
+        "WHERE img.id = $resource OR img.source_url = $resource "
+        "OPTIONAL MATCH (p)-[:HAS_IMAGE]->(img) "
+        "WHERE p:WikiPage OR p:WikiArtifact "
+        "RETURN 'image' AS source_type, "
+        "coalesce(img.description, img.alt_text, img.filename, 'Untitled') AS title, "
+        "img.source_url AS url, img.id AS source_id, "
+        "img.description AS description, "
+        "img.ocr_text AS ocr_text, "
+        "img.mermaid_diagram AS mermaid, "
+        "img.keywords AS keywords, "
+        "img.width AS width, img.height AS height, "
+        "collect(DISTINCT p.title) AS parent_pages",
+        resource=resource,
+    )
+    if not results:
+        return None
+
+    img = results[0]
+    parts: list[str] = []
+    title = img.get("title") or "Untitled"
+    url = img.get("url") or ""
+    parts.append(f"## Image: {title}")
+    if url:
+        parts.append(f"Source: {url}")
+    w, h = img.get("width"), img.get("height")
+    if w and h:
+        parts.append(f"Dimensions: {w}×{h}")
+    parents = img.get("parent_pages") or []
+    if parents:
+        parts.append(f"Found in: {', '.join(parents)}")
+    keywords = img.get("keywords") or []
+    if keywords:
+        kw = keywords if isinstance(keywords, list) else [keywords]
+        parts.append(f"Keywords: {', '.join(kw)}")
+    desc = img.get("description") or ""
+    if desc:
+        parts.append(f"\n### Description\n{desc}")
+    ocr = img.get("ocr_text") or ""
+    if ocr:
+        parts.append(f"\n### OCR Text\n{ocr}")
+    mermaid = img.get("mermaid") or ""
+    if mermaid:
+        parts.append(f"\n### Diagram\n```mermaid\n{mermaid}\n```")
+    if not desc and not ocr:
+        parts.append(f"\nNo extracted content available. Fetch from source: {url}")
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +628,7 @@ def _enrich_code_chunks(
         OPTIONAL MATCH (cf)-[:IN_DIRECTORY]->(fp:FacilityPath)
         RETURN cc.id AS id, cc.text AS text,
                cc.function_name AS function_name, ce.source_file AS source_file,
-               cf.facility_id AS facility_id,
+               cf.id AS source_file_id, cf.facility_id AS facility_id,
                collect(DISTINCT {type: dr.ref_type, raw: dr.raw_string,
                        tree: tn.path, imas: ip.id, tdi: tdi.id}) AS data_refs,
                fp.path AS directory, fp.description AS dir_description

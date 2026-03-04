@@ -9,14 +9,17 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from neo4j.exceptions import ServiceUnavailable
 
 from imas_codex.agentic.search_formatters import (
     format_code_report,
     format_docs_report,
+    format_fetch_report,
     format_imas_report,
     format_signals_report,
 )
 from imas_codex.agentic.search_tools import (
+    _fetch,
     _search_code,
     _search_docs,
     _search_imas,
@@ -920,3 +923,262 @@ class TestFormatImasReport:
         assert "tcv:magnetics/ip" in result
         assert "Current Measurements" in result
         assert "/codes/ip.py" in result
+
+
+# ---------------------------------------------------------------------------
+# fetch
+# ---------------------------------------------------------------------------
+
+
+class TestFetch:
+    """Unit tests for the fetch tool."""
+
+    @pytest.fixture()
+    def mock_gc(self):
+        gc = MagicMock()
+        gc.query = MagicMock(return_value=[])
+        return gc
+
+    def test_wiki_page_fetch(self, mock_gc):
+        """Fetch a wiki page by ID returns all chunks."""
+        wiki_chunks = [
+            {
+                "source_type": "wiki_page",
+                "title": "Equilibrium",
+                "url": "https://wiki.example.com/Equilibrium",
+                "source_id": "tcv:Equilibrium",
+                "section": "Introduction",
+                "text": "This page describes equilibrium reconstruction.",
+                "chunk_index": 0,
+                "mdsplus_paths": None,
+                "imas_paths": None,
+            },
+            {
+                "source_type": "wiki_page",
+                "title": "Equilibrium",
+                "url": "https://wiki.example.com/Equilibrium",
+                "source_id": "tcv:Equilibrium",
+                "section": "Methods",
+                "text": "LIUQE is the main equilibrium code at TCV.",
+                "chunk_index": 1,
+                "mdsplus_paths": ["\\results::i_p"],
+                "imas_paths": ["equilibrium.time_slice[:].global_quantities.ip"],
+            },
+        ]
+        # WikiPage query returns chunks; others return empty
+        mock_gc.query.side_effect = [wiki_chunks, [], [], []]
+
+        result = _fetch("tcv:Equilibrium", gc=mock_gc)
+
+        assert "Wiki Page: Equilibrium" in result
+        assert "Chunks: 2" in result
+        assert "equilibrium reconstruction" in result
+        assert "LIUQE" in result
+        assert "MDSplus paths" in result
+        assert "IMAS paths" in result
+
+    def test_code_file_fetch(self, mock_gc):
+        """Fetch a code file by ID returns code chunks."""
+        code_chunks = [
+            {
+                "source_type": "code",
+                "title": "/home/codes/liuqe.py",
+                "source_id": "tcv:/home/codes/liuqe.py",
+                "url": "/home/codes/liuqe.py",
+                "section": "solve_equilibrium",
+                "text": "def solve_equilibrium(shot):\n    pass",
+                "chunk_index": 10,
+                "mdsplus_paths": None,
+                "imas_paths": None,
+            },
+        ]
+        # WikiPage empty, artifact empty, code returns chunks
+        mock_gc.query.side_effect = [[], [], code_chunks, []]
+
+        result = _fetch("tcv:/home/codes/liuqe.py", gc=mock_gc)
+
+        assert "Code File" in result
+        assert "solve_equilibrium" in result
+        assert "def solve_equilibrium" in result
+
+    def test_image_fetch(self, mock_gc):
+        """Fetch an image returns description and metadata."""
+        image_results = [
+            {
+                "source_type": "image",
+                "title": "Magnetic field topology",
+                "url": "https://wiki.example.com/images/topo.png",
+                "source_id": "tcv:topo.png",
+                "description": "Diagram showing the magnetic field line topology.",
+                "ocr_text": "B_pol = 1.5 T",
+                "mermaid": None,
+                "keywords": ["magnetics", "topology"],
+                "width": 800,
+                "height": 600,
+                "parent_pages": ["Magnetics Overview"],
+            },
+        ]
+        # WikiPage, artifact, code all empty; image returns results
+        mock_gc.query.side_effect = [[], [], [], image_results]
+
+        result = _fetch("tcv:topo.png", gc=mock_gc)
+
+        assert "Image: Magnetic field topology" in result
+        assert "800×600" in result
+        assert "Magnetics Overview" in result
+        assert "magnetic field line topology" in result
+        assert "B_pol = 1.5 T" in result
+
+    def test_no_match(self, mock_gc):
+        """No matches returns guidance message."""
+        mock_gc.query.side_effect = [[], [], [], []]
+
+        result = _fetch("nonexistent", gc=mock_gc)
+
+        assert "No resource found" in result
+        assert "search_docs" in result
+
+    def test_neo4j_not_running(self):
+        """ServiceUnavailable returns descriptive message."""
+        with patch(
+            "imas_codex.agentic.search_tools.GraphClient",
+            side_effect=ServiceUnavailable("Connection refused"),
+        ):
+            result = _fetch("anything")
+            assert "Neo4j is not running" in result
+
+
+class TestFormatFetchReport:
+    """Tests for format_fetch_report formatter."""
+
+    def test_empty_chunks(self):
+        assert format_fetch_report([]) == "No content found."
+
+    def test_wiki_page_format(self):
+        chunks = [
+            {
+                "source_type": "wiki_page",
+                "title": "Diagnostics",
+                "url": "https://wiki.example.com/Diagnostics",
+                "source_id": "tcv:Diagnostics",
+                "section": "Overview",
+                "text": "TCV has many diagnostics.",
+                "chunk_index": 0,
+                "mdsplus_paths": None,
+                "imas_paths": ["diagnostics"],
+            },
+        ]
+        result = format_fetch_report(chunks)
+        assert "Wiki Page: Diagnostics" in result
+        assert "ID: tcv:Diagnostics" in result
+        assert "URL: https://wiki.example.com/Diagnostics" in result
+        assert "TCV has many diagnostics" in result
+        assert "IMAS paths: diagnostics" in result
+
+    def test_code_format_with_line_numbers(self):
+        chunks = [
+            {
+                "source_type": "code",
+                "title": "/codes/eq.py",
+                "source_id": "tcv:/codes/eq.py",
+                "url": "/codes/eq.py",
+                "section": "main",
+                "text": "import sys",
+                "chunk_index": 1,
+                "mdsplus_paths": None,
+                "imas_paths": None,
+            },
+        ]
+        result = format_fetch_report(chunks)
+        assert "Code File" in result
+        assert "Line 1" in result
+        assert "```\nimport sys\n```" in result
+
+    def test_cross_references_aggregated(self):
+        """MDSplus and IMAS paths are aggregated across all chunks."""
+        chunks = [
+            {
+                "source_type": "wiki_page",
+                "title": "Signals",
+                "url": "",
+                "source_id": "tcv:Signals",
+                "section": "Section A",
+                "text": "First chunk.",
+                "chunk_index": 0,
+                "mdsplus_paths": ["\\results::i_p"],
+                "imas_paths": ["magnetics.ip"],
+            },
+            {
+                "source_type": "wiki_page",
+                "title": "Signals",
+                "url": "",
+                "source_id": "tcv:Signals",
+                "section": "Section B",
+                "text": "Second chunk.",
+                "chunk_index": 1,
+                "mdsplus_paths": ["\\results::b_tor"],
+                "imas_paths": ["magnetics.ip"],
+            },
+        ]
+        result = format_fetch_report(chunks)
+        assert "Cross-references" in result
+        assert "\\results::i_p" in result
+        assert "\\results::b_tor" in result
+        assert "magnetics.ip" in result
+
+
+class TestDocsFetchHints:
+    """Tests that search_docs results include fetch hints."""
+
+    def test_page_includes_fetch_hint(self):
+        chunks = [
+            {
+                "id": "tcv:Diagnostics:chunk_0",
+                "text": "Some text",
+                "section": "Overview",
+                "page_id": "tcv:Diagnostics",
+                "page_title": "Diagnostics",
+                "page_url": "https://wiki.example.com",
+                "linked_signals": [],
+                "linked_tree_nodes": [],
+                "imas_refs": [],
+            },
+        ]
+        scores = {"tcv:Diagnostics:chunk_0": 0.9}
+        result = format_docs_report(chunks, [], scores)
+        assert "fetch('tcv:Diagnostics')" in result
+
+    def test_artifact_includes_fetch_hint(self):
+        artifacts = [
+            {
+                "id": "jet:fishbone.ppt",
+                "title": "Fishbone Presentation",
+                "page_title": "Instabilities",
+                "description": "A presentation",
+            },
+        ]
+        scores = {"jet:fishbone.ppt": 0.88}
+        result = format_docs_report([], artifacts, scores)
+        assert "fetch('jet:fishbone.ppt')" in result
+
+
+class TestCodeFetchHints:
+    """Tests that search_code results include fetch hints."""
+
+    def test_code_includes_source_file_fetch_hint(self):
+        code_results = [
+            {
+                "id": "tcv:liuqe:chunk_0",
+                "text": "def solve(): pass",
+                "function_name": "solve",
+                "source_file": "/codes/liuqe.py",
+                "source_file_id": "tcv:/codes/liuqe.py",
+                "facility_id": "tcv",
+                "data_refs": [],
+                "directory": "/codes",
+                "dir_description": None,
+            },
+        ]
+        scores = {"tcv:liuqe:chunk_0": 0.85}
+        result = format_code_report(code_results, scores)
+        assert "fetch('tcv:/codes/liuqe.py')" in result
