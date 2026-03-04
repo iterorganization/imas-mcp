@@ -1,24 +1,14 @@
 """Formatters for unified MCP search tool output.
 
 Pure functions that take structured query results and produce
-formatted text reports for agent consumption. Each formatter
-targets ~8000 tokens max output — rich enough that agents can
-answer directly without follow-up REPL queries.
+formatted text reports for agent consumption. Output size is
+controlled by the caller via the ``k`` parameter — formatters
+render all results they receive without artificial truncation.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-
-def _truncate(text: str | None, max_len: int) -> str:
-    """Truncate text to max_len, appending '...' if needed."""
-    if not text:
-        return ""
-    if len(text) <= max_len:
-        return text
-    return text[:max_len] + "..."
-
 
 # ---------------------------------------------------------------------------
 # search_signals formatter
@@ -48,7 +38,7 @@ def format_signals_report(
     if signals:
         parts.append(f"## Signals ({len(signals)} matches)\n")
 
-        for sig in signals[:10]:  # Cap at 10
+        for sig in signals:
             sid = sig.get("id", "?")
             score = scores.get(sid)
             score_str = f" (score: {score:.2f})" if score is not None else ""
@@ -56,7 +46,7 @@ def format_signals_report(
 
             desc = sig.get("description") or ""
             if desc:
-                parts.append(f"  {_truncate(desc, 400)}")
+                parts.append(f"  {desc}")
 
             # Metadata line
             meta_parts: list[str] = []
@@ -88,7 +78,7 @@ def format_signals_report(
                 connection = sig.get("connection_template")
                 if connection:
                     parts.append(f"    {connection}")
-                parts.append(f"    {_truncate(access_template, 500)}")
+                parts.append(f"    {access_template}")
 
             # IMAS mapping section
             imas_path = sig.get("imas_path")
@@ -96,7 +86,7 @@ def format_signals_report(
                 parts.append(f"\n  **IMAS mapping**: {imas_path}")
                 imas_docs = sig.get("imas_docs")
                 if imas_docs:
-                    parts.append(f'    "{_truncate(imas_docs, 300)}"')
+                    parts.append(f'    "{imas_docs}"')
                 imas_unit = sig.get("imas_unit")
                 if imas_unit:
                     parts.append(f"    Unit: {imas_unit}")
@@ -114,7 +104,7 @@ def format_signals_report(
 
     if tree_nodes:
         parts.append(f"\n## Related Tree Nodes ({len(tree_nodes)} matches)")
-        for tn in tree_nodes[:10]:
+        for tn in tree_nodes:
             path = tn.get("path", "?")
             desc = tn.get("description") or ""
             tree = tn.get("tree_name") or ""
@@ -127,7 +117,7 @@ def format_signals_report(
             meta_str = f" ({', '.join(meta)})" if meta else ""
             line = f"  {path}{meta_str}"
             if desc:
-                line += f" — {_truncate(desc, 100)}"
+                line += f" — {desc}"
             parts.append(line)
 
     return "\n".join(parts)
@@ -163,7 +153,7 @@ def format_docs_report(
     if chunks:
         # Group by page
         pages: dict[str, list[dict[str, Any]]] = {}
-        for chunk in chunks[:10]:
+        for chunk in chunks:
             page_title = chunk.get("page_title") or "Unknown Page"
             pages.setdefault(page_title, []).append(chunk)
 
@@ -186,26 +176,26 @@ def format_docs_report(
                 parts.append(f"**Section: {section}**{score_str}")
 
                 text = chunk.get("text") or ""
-                parts.append(f"  {_truncate(text, 800)}")
+                parts.append(f"  {text}")
 
                 # Cross-links
                 linked_signals = chunk.get("linked_signals") or []
                 if linked_signals:
-                    parts.append(f"  Signals: {', '.join(linked_signals[:5])}")
+                    parts.append(f"  Signals: {', '.join(linked_signals)}")
 
                 imas_refs = chunk.get("imas_refs") or []
                 if imas_refs:
-                    parts.append(f"  IMAS: {', '.join(imas_refs[:5])}")
+                    parts.append(f"  IMAS: {', '.join(imas_refs)}")
 
                 linked_tree_nodes = chunk.get("linked_tree_nodes") or []
                 if linked_tree_nodes:
-                    parts.append(f"  Tree nodes: {', '.join(linked_tree_nodes[:5])}")
+                    parts.append(f"  Tree nodes: {', '.join(linked_tree_nodes)}")
 
                 parts.append("")
 
     if artifacts:
         parts.append(f"\n## Related Documents ({len(artifacts)} items)")
-        for art in artifacts[:15]:
+        for art in artifacts:
             title = art.get("title") or art.get("id", "?")
             page = art.get("page_title") or ""
             desc = art.get("description") or ""
@@ -215,7 +205,7 @@ def format_docs_report(
             if page:
                 line += f' — from "{page}"'
             if desc:
-                line += f" ({_truncate(desc, 300)})"
+                line += f" ({desc})"
             parts.append(line)
 
     return "\n".join(parts)
@@ -245,7 +235,7 @@ def format_code_report(
     parts: list[str] = []
     parts.append(f"## Code Examples ({len(code_results)} matches)\n")
 
-    for chunk in code_results[:5]:
+    for chunk in code_results:
         cid = chunk.get("id", "?")
         func_name = chunk.get("function_name") or "module-level"
         source = chunk.get("source_file") or "unknown"
@@ -259,13 +249,13 @@ def format_code_report(
 
         text = chunk.get("text") or ""
         if text:
-            parts.append(f"  ```python\n  {_truncate(text, 1000)}\n  ```")
+            parts.append(f"  ```python\n  {text}\n  ```")
 
         # Data references
         data_refs = chunk.get("data_refs") or []
         if data_refs:
             parts.append("  **Data references**:")
-            for ref in data_refs[:10]:
+            for ref in data_refs:
                 if isinstance(ref, dict):
                     ref_type = ref.get("type") or "unknown"
                     raw = ref.get("raw") or ""
@@ -287,7 +277,7 @@ def format_code_report(
         if directory:
             line = f"  **Directory**: {directory}"
             if dir_desc:
-                line += f' — "{_truncate(dir_desc, 100)}"'
+                line += f' — "{dir_desc}"'
             parts.append(line)
 
         parts.append("")
@@ -327,7 +317,7 @@ def format_imas_report(
     if paths:
         parts.append(f"## IMAS Paths ({len(paths)} matches)\n")
 
-        for p in paths[:10]:
+        for p in paths:
             pid = p.get("id", "?")
             score = scores.get(pid)
             score_str = f" (score: {score:.2f})" if score is not None else ""
@@ -335,7 +325,7 @@ def format_imas_report(
 
             doc = p.get("documentation") or ""
             if doc:
-                parts.append(f'  "{_truncate(doc, 300)}"')
+                parts.append(f'  "{doc}"')
 
             # Metadata line
             meta_parts: list[str] = []
@@ -358,12 +348,12 @@ def format_imas_report(
             clusters_list = p.get("clusters") or []
             if clusters_list:
                 parts.append(
-                    f"  Clusters: {', '.join(f'"{c}"' for c in clusters_list[:3])}"
+                    f"  Clusters: {', '.join(f'"{c}"' for c in clusters_list)}"
                 )
 
             coords = p.get("coordinates") or []
             if coords:
-                parts.append(f"  Coordinates: {', '.join(coords[:5])}")
+                parts.append(f"  Coordinates: {', '.join(coords)}")
 
             introduced = p.get("introduced_in")
             if introduced:
@@ -381,15 +371,15 @@ def format_imas_report(
                 parts.append("")
                 facility_sigs = xref.get("facility_signals") or []
                 if facility_sigs:
-                    parts.append(f"  Signals: {', '.join(facility_sigs[:5])}")
+                    parts.append(f"  Signals: {', '.join(facility_sigs)}")
                 wiki_mentions = xref.get("wiki_mentions") or []
                 if wiki_mentions:
                     parts.append(
-                        f"  Wiki: mentioned in {', '.join(f'"{s}"' for s in wiki_mentions[:3])}"
+                        f"  Wiki: mentioned in {', '.join(f'"{s}"' for s in wiki_mentions)}"
                     )
                 code_files = xref.get("code_files") or []
                 if code_files:
-                    parts.append(f"  Code: {', '.join(code_files[:3])}")
+                    parts.append(f"  Code: {', '.join(code_files)}")
 
             # Version context
             vctx = version_context.get(pid, {})
@@ -398,20 +388,18 @@ def format_imas_report(
                 parts.append(
                     f"\n  **Version history** ({vctx.get('change_count', 0)} changes):"
                 )
-                for ch in changes[:3]:
+                for ch in changes:
                     if isinstance(ch, dict):
                         ver = ch.get("version", "?")
                         ctype = ch.get("type", "")
                         summary = ch.get("summary", "")
-                        parts.append(
-                            f"    DD {ver} [{ctype}]: {_truncate(summary, 100)}"
-                        )
+                        parts.append(f"    DD {ver} [{ctype}]: {summary}")
 
             parts.append("")
 
     if clusters:
         parts.append(f"\n## Related Clusters ({len(clusters)} matches)")
-        for cl in clusters[:3]:
+        for cl in clusters:
             label = cl.get("label") or cl.get("id", "?")
             score = scores.get(cl.get("id", ""))
             score_str = f" (score: {score:.2f})" if score is not None else ""
@@ -427,6 +415,6 @@ def format_imas_report(
                 parts.append(f"    {' | '.join(meta)}")
             sample = cl.get("sample_paths") or []
             if sample:
-                parts.append(f"    Sample: {', '.join(sample[:5])}")
+                parts.append(f"    Sample: {', '.join(sample)}")
 
     return "\n".join(parts)
