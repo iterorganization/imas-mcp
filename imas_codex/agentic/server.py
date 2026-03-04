@@ -126,195 +126,48 @@ _imas_tools_instance = None
 
 
 # =============================================================================
-# API Reference — generated from source function signatures at import time
+# API Reference — compact task-to-function mapping for python() docstring
 # =============================================================================
-
-# Registry entries: (func_name, module_path) for importable functions, or
-# (func_name, None, static_sig) for functions defined inside _init_repl().
-# The module-level _API_REGISTRY intentionally mirrors the category order
-# of _REPL_REGISTRY inside _init_repl() — keep them in sync when adding
-# new functions.
-type _ApiEntry = tuple[str, str] | tuple[str, None, str]
-
-_API_REGISTRY: list[tuple[str, list[_ApiEntry]]] = [
-    (
-        "DOMAIN QUERIES (prefer over raw Cypher)",
-        [
-            ("find_signals", "imas_codex.graph.domain_queries"),
-            ("find_wiki", "imas_codex.graph.domain_queries"),
-            ("wiki_page_chunks", "imas_codex.graph.domain_queries"),
-            ("find_code", "imas_codex.graph.domain_queries"),
-            ("find_imas", "imas_codex.graph.domain_queries"),
-            ("find_tree_nodes", "imas_codex.graph.domain_queries"),
-            ("map_signals_to_imas", "imas_codex.graph.domain_queries"),
-            ("facility_overview", "imas_codex.graph.domain_queries"),
-        ],
-    ),
-    (
-        "QUERY BUILDER",
-        [("graph_search", "imas_codex.graph.query_builder")],
-    ),
-    (
-        "FORMATTERS",
-        [
-            ("as_table", "imas_codex.graph.formatters"),
-            ("as_summary", "imas_codex.graph.formatters"),
-            ("pick", "imas_codex.graph.formatters"),
-        ],
-    ),
-    (
-        "SCHEMA (call before writing Cypher)",
-        [
-            ("schema_for", "imas_codex.graph.schema_context"),
-            ("get_schema", "imas_codex.graph"),
-        ],
-    ),
-    (
-        "GRAPH",
-        [
-            ("query", None, "(cypher: str, **params) -> list[dict]"),
-            (
-                "semantic_search",
-                None,
-                "(text: str, index: str = 'imas_path_embedding', k: int = 5, include_deprecated: bool = False) -> list[dict]",
-            ),
-            ("embed", None, "(text: str) -> list[float]"),
-        ],
-    ),
-    (
-        "FACILITY",
-        [
-            ("get_facility", None, "(facility: str) -> dict"),
-            (
-                "get_exploration_targets",
-                None,
-                "(facility: str, limit: int = 10) -> list[dict]",
-            ),
-            (
-                "get_tree_structure",
-                None,
-                "(facility: str, tree_name: str, version: int | None = None, subtree: str | None = None) -> dict",
-            ),
-        ],
-    ),
-    (
-        "REMOTE",
-        [
-            (
-                "run",
-                None,
-                "(cmd: str, facility: str | None = None, timeout: int = 60) -> str",
-            ),
-            ("check_tools", None, "(facility: str | None = None) -> dict"),
-        ],
-    ),
-    (
-        "IMAS DD",
-        [
-            (
-                "search_imas",
-                None,
-                "(query: str, *, max_results: int = 20, method: str = 'hybrid') -> str",
-            ),
-            ("fetch_imas", None, "(paths: str) -> str"),
-            (
-                "list_imas",
-                None,
-                "(paths: str, leaf_only: bool = True, max_paths: int = 100) -> str",
-            ),
-            ("check_imas", None, "(paths: str) -> str"),
-        ],
-    ),
-    (
-        "COCOS",
-        [
-            (
-                "validate_cocos",
-                None,
-                "(cocos_value: int, data: dict, facility: str | None = None) -> dict",
-            ),
-            (
-                "determine_cocos",
-                None,
-                "(data: dict, facility: str | None = None) -> dict",
-            ),
-            ("cocos_info", None, "(cocos_value: int) -> dict"),
-        ],
-    ),
-]
-
-# Params injected by REPL binding — hidden from the API reference
-_INTERNAL_PARAMS = {"gc", "embed_fn"}
 
 
 def _generate_api_reference() -> str:
-    """Generate compact API reference by introspecting source functions.
+    """Generate compact API reference with inline parameter names.
 
     This runs at tool registration time — no REPL init needed.
-    Importable functions are introspected via inspect.signature().
-    Locally-defined functions use static signatures from the registry.
+    Keeps the reference short so agents actually read it.
     """
-    import importlib
-    import inspect
-
-    # Task mapping — put this first so agents see it before signatures
-    lines = [
-        "Pick the right function for your task:",
-        "",
-        "  Wiki/documentation search  -> find_wiki() or wiki_page_chunks()",
-        "  Signal/diagnostic search   -> find_signals()",
-        "  IMAS data dictionary       -> find_imas() or search_imas()",
-        "  Code/analysis search       -> find_code()",
-        "  MDSplus tree nodes         -> find_tree_nodes()",
-        "  Signal-to-IMAS mapping     -> map_signals_to_imas()",
-        "  Facility overview          -> facility_overview()",
-        "  Flexible node query        -> graph_search()",
-        "",
-        "  Never write raw Cypher when a domain function exists.",
-        "  Chain multiple calls in one python() invocation.",
-        "",
-        "Example (wiki research — do this):",
-        "  results = find_wiki('fishbone instabilities', facility='jet')",
-        "  chunks = wiki_page_chunks('fishbone', facility='jet')",
-        "  signals = find_signals('fishbone', facility='jet')",
-        "  print(as_table(pick(results, 'page_title', 'section', 'score')))",
-        "  print(as_table(pick(chunks, 'page_title', 'section', 'text')))",
-        "",
-    ]
-
-    # Function signatures
-    lines.append("Function signatures:")
-    lines.append("")
-
-    for cat, entries in _API_REGISTRY:
-        lines.append(f"  {cat}:")
-        for entry in entries:
-            if len(entry) == 3:
-                # Static signature for locally-defined function
-                func_name, _, sig_str = entry
-                lines.append(f"    {func_name}{sig_str}")
-            else:
-                # Introspect importable function
-                func_name, module_path = entry
-                try:
-                    mod = importlib.import_module(module_path)
-                    fn = getattr(mod, func_name)
-                    sig = inspect.signature(fn)
-                    params = {
-                        k: v
-                        for k, v in sig.parameters.items()
-                        if k not in _INTERNAL_PARAMS
-                    }
-                    clean_sig = sig.replace(parameters=list(params.values()))
-                    lines.append(f"    {func_name}{clean_sig}")
-                except Exception:
-                    lines.append(f"    {func_name}(...)")
-        lines.append("")
-
-    lines.append("  Also: repl_help() for full reference, reload() to reinitialize")
-    lines.append("")
-
-    return "\n".join(lines)
+    return "\n".join(
+        [
+            "Combine ALL related queries in a SINGLE python() call.",
+            "Variables persist across calls, so store results and keep going.",
+            "",
+            "Task -> Function:",
+            "  Wiki/docs       -> find_wiki(query, facility=, text_contains=, page_title_contains=, k=10)",
+            "  Wiki full pages  -> wiki_page_chunks(title_contains, facility=, text_contains=, limit=50)",
+            "  Signals          -> find_signals(query, facility=, diagnostic=, physics_domain=, limit=20)",
+            "  IMAS DD          -> find_imas(query) or search_imas(query)",
+            "  Code             -> find_code(query, facility=, limit=10)",
+            "  Tree nodes       -> find_tree_nodes(query, facility=, tree_name=)",
+            "  Signal->IMAS map -> map_signals_to_imas(facility, diagnostic=, physics_domain=)",
+            "  Facility info    -> facility_overview(facility)",
+            "  Flexible query   -> graph_search(label, where={}, semantic=, traverse=[], return_props=[], limit=25)",
+            "  Raw Cypher       -> query(cypher, **params)  (only if no domain function fits)",
+            "  Vector search    -> semantic_search(text, index=, k=5)",
+            "",
+            "  Format: as_table(pick(results, 'col1', 'col2'))",
+            "  Schema: schema_for(task='wiki') before raw Cypher",
+            "  Full API: repl_help()",
+            "",
+            "Example — combine wiki + signal search in ONE call:",
+            "  wiki = find_wiki('fishbone instabilities', facility='jet')",
+            "  chunks = wiki_page_chunks('fishbone', facility='jet')",
+            "  signals = find_signals('fishbone', facility='jet')",
+            "  print(as_table(pick(wiki, 'page_title', 'section', 'score')))",
+            "  print(as_table(pick(chunks, 'page_title', 'section', 'text')))",
+            "  print(as_table(pick(signals, 'id', 'description', 'score')))",
+            "",
+        ]
+    )
 
 
 def _get_imas_tools(gc: GraphClient | None = None):
@@ -1426,6 +1279,12 @@ class AgentsServer:
         # Tool 1: python - Persistent REPL (primary interface)
         # =====================================================================
 
+        _CHAIN_NUDGE = (
+            "\n---\n"
+            "Tip: combine related queries in a single python() call.\n"
+            "  e.g. results=find_wiki(...); sigs=find_signals(...); print(as_table(pick(results,'page_title','score')))"
+        )
+
         @self.mcp.tool()
         def python(code: str) -> str:
             repl = _get_repl()
@@ -1445,7 +1304,7 @@ class AgentsServer:
                 output = stdout_capture.getvalue()
                 if not output:
                     output = "(no output)"
-                return output
+                return output + _CHAIN_NUDGE
 
             except Exception as e:
                 import traceback
