@@ -353,7 +353,8 @@ async def ingest_files(
 
             try:
                 nodes = await asyncio.wait_for(
-                    pipeline.arun(documents=batch_docs), timeout=120
+                    asyncio.to_thread(pipeline.run, documents=batch_docs),
+                    timeout=120,
                 )
             except TimeoutError:
                 logger.warning(
@@ -369,7 +370,8 @@ async def ingest_files(
                         use_text_splitter=True,
                     )
                     nodes = await asyncio.wait_for(
-                        fallback_pipeline.arun(documents=batch_docs), timeout=120
+                        asyncio.to_thread(fallback_pipeline.run, documents=batch_docs),
+                        timeout=120,
                     )
                 except (TimeoutError, Exception) as e2:
                     logger.error("Fallback also failed for %s batch: %s", language, e2)
@@ -394,7 +396,9 @@ async def ingest_files(
                         language=language,
                         use_text_splitter=True,
                     )
-                    nodes = await fallback_pipeline.arun(documents=batch_docs)
+                    nodes = await asyncio.to_thread(
+                        fallback_pipeline.run, documents=batch_docs
+                    )
                 except Exception as e2:
                     logger.error("Failed to process %s batch: %s", language, e2)
                     for doc in batch_docs:
