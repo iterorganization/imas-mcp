@@ -1,13 +1,16 @@
 """
 Agents MCP Server - Streamlined tools for LLM-driven facility exploration.
 
-This server provides 12 MCP tools organized by purpose:
+This server provides 13 MCP tools organized by purpose:
 
 Unified Search (primary interface):
 - search_signals: Signal search with data access and IMAS enrichment
 - search_docs: Wiki/artifact/image search with cross-links
 - search_code: Code search with data reference enrichment
 - search_imas: IMAS DD search with cluster and facility cross-refs
+
+Retrieval:
+- fetch: Full content retrieval by ID or URL (WikiPage, WikiArtifact, CodeFile, Image)
 
 Graph Operations:
 - get_graph_schema: Schema introspection for query generation
@@ -1835,6 +1838,7 @@ class AgentsServer:
         # =====================================================================
 
         from imas_codex.agentic.search_tools import (
+            _fetch,
             _search_code,
             _search_docs,
             _search_imas,
@@ -1960,6 +1964,30 @@ class AgentsServer:
                 include_version_context=include_version_context,
                 k=k,
             )
+
+        @self.mcp.tool()
+        def fetch(resource: str) -> str:
+            """Fetch the full content of a graph resource by ID or URL.
+
+            Use after search_docs, search_code, or search_signals
+            identifies a resource of interest. Returns all chunks
+            or content for the resource.
+
+            Supported types: WikiPage, WikiArtifact, CodeFile, Image.
+
+            The resource parameter can be:
+            - A graph node ID from search results (e.g. "jet:Fishbone_proposal_2018.ppt")
+            - A URL (e.g. "https://wiki.jetdata.eu/tf/...")
+            - A partial title for fuzzy matching
+
+            Args:
+                resource: Node ID, URL, or title substring to fetch.
+
+            Returns:
+                Full content report with all chunks in reading order,
+                or image description/OCR text for images.
+            """
+            return _fetch(resource)
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files.

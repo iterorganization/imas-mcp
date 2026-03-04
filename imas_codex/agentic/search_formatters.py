@@ -165,8 +165,11 @@ def format_docs_report(
 
         for title, page_chunks in pages.items():
             url = page_chunks[0].get("page_url") or ""
+            page_id = page_chunks[0].get("page_id") or ""
             url_str = f" ({url})" if url else ""
             parts.append(f'### Page: "{title}"{url_str}')
+            if page_id:
+                parts.append(f"  fetch('{page_id}') for full content")
 
             for chunk in page_chunks:
                 section = chunk.get("section") or "General"
@@ -196,10 +199,11 @@ def format_docs_report(
     if artifacts:
         parts.append(f"\n## Related Documents ({len(artifacts)} items)")
         for art in artifacts:
-            title = art.get("title") or art.get("id", "?")
+            aid = art.get("id", "?")
+            title = art.get("title") or aid
             page = art.get("page_title") or ""
             desc = art.get("description") or ""
-            score = scores.get(art.get("id", ""))
+            score = scores.get(aid)
             score_str = f" [score: {score:.2f}]" if score is not None else ""
             line = f'  - "{title}"{score_str}'
             if page:
@@ -207,6 +211,7 @@ def format_docs_report(
             if desc:
                 line += f" ({desc})"
             parts.append(line)
+            parts.append(f"    fetch('{aid}') for full content")
 
     return "\n".join(parts)
 
@@ -243,7 +248,10 @@ def format_code_report(
         score = scores.get(cid)
         score_str = f" (score: {score:.2f})" if score is not None else ""
 
+        source_id = chunk.get("source_file_id") or ""
         parts.append(f"### {func_name} — {source}{score_str}")
+        if source_id:
+            parts.append(f"  fetch('{source_id}') for full file")
         if facility:
             parts.append(f"  Facility: {facility}")
 
@@ -416,5 +424,93 @@ def format_imas_report(
             sample = cl.get("sample_paths") or []
             if sample:
                 parts.append(f"    Sample: {', '.join(sample)}")
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# fetch formatter
+# ---------------------------------------------------------------------------
+
+
+def format_fetch_report(chunks: list[dict[str, Any]]) -> str:
+    """Format fetched resource chunks into a full-content report.
+
+    Used by the ``fetch`` tool for WikiPage, WikiArtifact, and CodeFile
+    results. Chunks are expected to be pre-sorted by chunk_index.
+
+    Args:
+        chunks: Ordered chunk records with keys: source_type, title,
+            url, source_id, section, text, chunk_index, plus optional
+            mdsplus_paths and imas_paths.
+
+    Returns:
+        Formatted text report with all chunks in reading order.
+    """
+    if not chunks:
+        return "No content found."
+
+    first = chunks[0]
+    source_type = first.get("source_type", "document")
+    title = first.get("title") or first.get("source_id") or "Untitled"
+    url = first.get("url") or ""
+    source_id = first.get("source_id") or ""
+
+    type_label = {
+        "wiki_page": "Wiki Page",
+        "artifact": "Wiki Artifact",
+        "code": "Code File",
+    }.get(source_type, source_type.title())
+
+    parts: list[str] = [f"## {type_label}: {title}"]
+    if source_id:
+        parts.append(f"ID: {source_id}")
+    if url:
+        parts.append(f"URL: {url}")
+    parts.append(f"Chunks: {len(chunks)}")
+
+    # Collect cross-referenced paths across all chunks
+    all_mdsplus: set[str] = set()
+    all_imas: set[str] = set()
+
+    current_section = None
+    for chunk in chunks:
+        section = chunk.get("section") or ""
+        text = chunk.get("text") or ""
+        idx = chunk.get("chunk_index")
+
+        if section and section != current_section:
+            current_section = section
+            parts.append(f"\n### {section}")
+
+        if source_type == "code":
+            fn_name = section or ""
+            line = idx or 0
+            header = f"\n#### {fn_name}" if fn_name else ""
+            if header:
+                parts.append(header)
+            if line:
+                parts.append(f"Line {line}:")
+            parts.append(f"```\n{text}\n```")
+        else:
+            parts.append(f"\n{text}")
+
+        # Accumulate cross-references
+        mds = chunk.get("mdsplus_paths") or []
+        if isinstance(mds, str):
+            mds = [mds]
+        all_mdsplus.update(p for p in mds if p)
+
+        imas = chunk.get("imas_paths") or []
+        if isinstance(imas, str):
+            imas = [imas]
+        all_imas.update(p for p in imas if p)
+
+    if all_mdsplus or all_imas:
+        parts.append("\n---\n### Cross-references")
+        if all_mdsplus:
+            parts.append(f"MDSplus paths: {', '.join(sorted(all_mdsplus))}")
+        if all_imas:
+            parts.append(f"IMAS paths: {', '.join(sorted(all_imas))}")
 
     return "\n".join(parts)
