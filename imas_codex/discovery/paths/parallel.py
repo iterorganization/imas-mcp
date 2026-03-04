@@ -820,15 +820,24 @@ def mark_enrichment_complete(
             path_id = f"{facility}:{result['path']}"
 
             if result.get("error"):
-                # Clear claimed_at so path can be retried, and store error
+                error_msg = result["error"][:200]
+                # Permanent errors: path won't succeed on retry, so stop
+                # re-claiming it by setting should_enrich = false.
+                permanent = error_msg in (
+                    "not a directory",
+                    "permission denied",
+                )
                 gc.query(
                     """
                     MATCH (p:FacilityPath {id: $id})
                     SET p.claimed_at = null,
-                        p.enrich_error = $error
+                        p.enrich_error = $error,
+                        p.should_enrich = CASE WHEN $permanent
+                            THEN false ELSE p.should_enrich END
                     """,
                     id=path_id,
-                    error=result["error"][:200],
+                    error=error_msg,
+                    permanent=permanent,
                 )
                 continue
 
