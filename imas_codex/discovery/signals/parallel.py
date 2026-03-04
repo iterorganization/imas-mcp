@@ -1580,7 +1580,6 @@ async def epoch_worker(
         state.epoch_phase.mark_done()
         return
 
-    ssh_host = state.ssh_host or facility_config.get("ssh_host", state.facility)
     has_mdsplus = "mdsplus" in state.scanner_types
 
     if not has_mdsplus:
@@ -1615,16 +1614,11 @@ async def epoch_worker(
             )
 
         try:
-            setup_commands = tree_config.get(
-                "setup_commands", mdsplus_config.get("setup_commands", [])
-            )
             epochs = await asyncio.to_thread(
                 detect_epochs_for_tree,
-                facility=state.facility,
-                ssh_host=ssh_host,
+                facility=state.ssh_host or state.facility,
                 tree_name=tree_name,
-                reference_shot=state.reference_shot,
-                setup_commands=setup_commands,
+                tree_config=tree_config,
             )
 
             if epochs:
@@ -2429,7 +2423,7 @@ async def enrich_worker(
             if group_wiki:
                 user_lines.append("\n**Relevant wiki documentation:**")
                 for chunk in group_wiki:
-                    user_lines.append(f"- [{chunk['page_title']}] {chunk['content']}")
+                    user_lines.append(f"- [{chunk['page_title']}] {chunk['text']}")
 
             # Fetch relevant source code chunks via code_chunk_embedding
             code_chunks = await _fetch_code_context(group_key, indexed_signals)
