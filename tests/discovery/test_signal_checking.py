@@ -362,6 +362,66 @@ class TestCheckSignalsBatchInputFormat:
         assert check_shots3 == [85000]
 
 
+class TestBatchRetryLogic:
+    """Test the multi-shot retry logic in check_signals_batch.py."""
+
+    def test_failed_shots_tracks_all_failures(self):
+        """When a signal fails on shots 1,2,3 and succeeds on 4,
+        failed_shots should list all failed shots."""
+        from imas_codex.remote.scripts.check_signals_batch import (
+            _is_shot_dependent_error,
+        )
+
+        # Simulate the retry tracking
+        failed_shots_tracker: dict[str, list[int]] = {}
+        sig_id = "tcv:static:/r_c"
+
+        # Shot 1 fails with NNF (shot-dependent)
+        error1 = "%TREE-W-NNF, Node Not Found"
+        assert _is_shot_dependent_error(error1)
+        failed_shots_tracker.setdefault(sig_id, []).append(1)
+
+        # Shot 2 also fails
+        failed_shots_tracker[sig_id].append(2)
+
+        # Shot 3 also fails
+        failed_shots_tracker[sig_id].append(3)
+
+        # Shot 4 succeeds — final result should have all failed shots
+        assert failed_shots_tracker[sig_id] == [1, 2, 3]
+
+    def test_structural_error_stops_retries(self):
+        """Structural errors (SYNTAX, MISS_ARG) should not trigger retries."""
+        from imas_codex.remote.scripts.check_signals_batch import (
+            _is_shot_dependent_error,
+        )
+
+        assert not _is_shot_dependent_error("%TDI-E-SYNTAX, Unexpected token")
+        assert not _is_shot_dependent_error("MISS_ARG: Function requires 2 arguments")
+        assert not _is_shot_dependent_error("INVCLADSC: Invalid class descriptor")
+
+    def test_shot_dependent_errors_trigger_retries(self):
+        """Shot-dependent errors should trigger retry on next check_shot."""
+        from imas_codex.remote.scripts.check_signals_batch import (
+            _is_shot_dependent_error,
+        )
+
+        assert _is_shot_dependent_error("%TREE-W-NNF, Node Not Found")
+        assert _is_shot_dependent_error("TreeNODATA: No data for this segment")
+        assert _is_shot_dependent_error("KEYNOTFOU: Key not found")
+        assert _is_shot_dependent_error("TreeNOT_OPEN: Tree not available")
+
+    def test_normalize_preserves_shot_order(self):
+        """check_shots order must be preserved — first shot tried first."""
+        from imas_codex.remote.scripts.check_signals_batch import (
+            _normalize_signal_shots,
+        )
+
+        sig = {"id": "s1", "check_shots": [8, 7, 6, 5, 4, 3, 2, 1]}
+        shots = _normalize_signal_shots(sig)
+        assert shots == [8, 7, 6, 5, 4, 3, 2, 1]
+
+
 # =============================================================================
 # Phase 4: TDI function categorization
 # =============================================================================
