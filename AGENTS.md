@@ -614,6 +614,7 @@ All graph node types, properties, enums, and relationships are derived from Link
 | Documentation | `search_docs("fishbone instabilities", facility="jet")` |
 | Code examples | `search_code("equilibrium reconstruction", facility="tcv")` |
 | IMAS DD paths | `search_imas("electron temperature", facility="tcv")` |
+| Full content | `fetch("jet:Fishbone_proposal_2018.ppt")` — use IDs/URLs from search results |
 
 **python() REPL** — for custom queries not covered by the search tools:
 
