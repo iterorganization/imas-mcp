@@ -1,0 +1,58 @@
+# Task group definitions for schema_for() — defines schema slices by domain.
+#
+# Each group maps a task name to the set of node labels relevant for that
+# domain. The build script validates at generation time that all referenced
+# labels exist in the LinkML schemas.
+#
+# Used by: schema_for(task="signals") → returns only schema context for
+# FacilitySignal, DataAccess, Diagnostic, AccessCheck.
+
+signals:
+  labels:
+    - FacilitySignal
+    - DataAccess
+    - Diagnostic
+    - AccessCheck
+  description: Signal discovery, data access patterns, and diagnostics
+
+wiki:
+  labels:
+    - WikiPage
+    - WikiChunk
+    - WikiArtifact
+    - Image
+  description: Wiki content search and page navigation
+
+imas:
+  labels:
+    - IMASPath
+    - IDS
+    - IMASSemanticCluster
+    - DDVersion
+    - Unit
+    - IMASPathChange
+    - IMASCoordinateSpec
+  description: IMAS Data Dictionary paths, versions, and semantic clusters
+
+code:
+  labels:
+    - CodeFile
+    - CodeChunk
+    - CodeExample
+  description: Ingested source code and code examples
+
+facility:
+  labels:
+    - Facility
+    - FacilityPath
+    - FacilitySignal
+    - TreeNode
+    - Diagnostic
+  description: Facility infrastructure and discovery paths
+
+trees:
+  labels:
+    - TreeNode
+    - MDSplusTree
+    - TreeNodePattern
+  description: MDSplus tree structure and node patterns
