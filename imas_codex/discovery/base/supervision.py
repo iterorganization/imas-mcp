@@ -635,10 +635,19 @@ class SupervisedWorkerGroup:
             _, still_pending = await asyncio.wait(pending, timeout=timeout)
             if still_pending:
                 logger.warning(
-                    "%d task(s) did not finish within %ss, abandoning",
+                    "%d task(s) did not finish within %ss — force-killing SSH pools",
                     len(still_pending),
                     timeout,
                 )
+                # Force-kill SSH subprocess pools so that threads
+                # blocked on to_thread(run_python_script, ...) can
+                # unblock when the underlying process is killed.
+                try:
+                    from imas_codex.remote.ssh_worker import force_kill_all_pools
+
+                    force_kill_all_pools()
+                except Exception:
+                    pass
         # Force-stop status for any workers still active so the display
         # transitions from "draining" to "done" immediately.
         for status in self._workers.values():
