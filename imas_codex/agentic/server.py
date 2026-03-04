@@ -1830,6 +1830,47 @@ class AgentsServer:
         # MCP tools (Phase 5 consolidation). Use update_infrastructure() in the
         # REPL instead: update_infrastructure('facility', {'paths': {...}})
 
+        # =====================================================================
+        # Unified search tools — multi-index vector search + graph enrichment
+        # =====================================================================
+
+        from imas_codex.agentic.search_tools import _search_signals
+
+        @self.mcp.tool()
+        def search_signals(
+            query: str,
+            facility: str,
+            diagnostic: str | None = None,
+            physics_domain: str | None = None,
+            k: int = 10,
+        ) -> str:
+            """Search facility signals with full graph enrichment.
+
+            Performs semantic search on signal descriptions, then enriches
+            results with data access templates, IMAS mappings, diagnostic
+            context, and related tree nodes.
+
+            Use this for: "How do I access [quantity] at [facility]?"
+
+            Args:
+                query: Natural language search text (e.g. "plasma current")
+                facility: Facility id (required, e.g. "tcv", "jet")
+                diagnostic: Optional diagnostic filter (e.g. "magnetics")
+                physics_domain: Optional physics domain filter
+                k: Number of results (default 10)
+
+            Returns:
+                Formatted report with signals, data access, IMAS mappings,
+                and related tree nodes.
+            """
+            return _search_signals(
+                query,
+                facility,
+                diagnostic=diagnostic,
+                physics_domain=physics_domain,
+                k=k,
+            )
+
     def _register_prompts(self):
         """Register MCP prompts from markdown files.
 
