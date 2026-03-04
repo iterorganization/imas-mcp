@@ -566,7 +566,7 @@ uv sync
 
 ## Implementation Order
 
-### Sprint 1: Auto-Gen + Schema Context (Foundation)
+### Sprint 1: Auto-Gen + Schema Context (Foundation) ✅ COMPLETE
 
 1. **`schemas/task_groups.yaml`** — Define task groups
 2. **`scripts/gen_schema_context.py`** — Build-time context generator
@@ -582,7 +582,7 @@ uv sync
 5. **Refactor `get_graph_schema()` MCP tool** — Delegate to `schema_for()` with `scope` parameter
 6. **Refactor `get_dd_graph_schema` in SchemaTool** — Delegate to `schema_for(task='imas')`
 
-### Sprint 2: Domain Queries (Biggest Productivity Win)
+### Sprint 2: Domain Queries (Biggest Productivity Win) ✅ COMPLETE
 
 7. **`imas_codex/graph/domain_queries.py`** — Domain query functions
    - `find_signals()`, `find_wiki()`, `find_imas()`, `find_code()`
@@ -593,7 +593,7 @@ uv sync
    - Add `schema_for` to REPL
 9. **MCP tool consolidation** — Remove `update_facility_paths/tools` as MCP tools
 
-### Sprint 3: Query Builder + Polish
+### Sprint 3: Query Builder + Polish ✅ COMPLETE
 
 10. **`graph_search()`** query builder (uses auto-generated schema data)
 11. **Result formatters** (`as_table`, `as_summary`, `pick`)
