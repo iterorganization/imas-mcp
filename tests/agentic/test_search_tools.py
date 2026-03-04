@@ -10,8 +10,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_codex.agentic.search_formatters import format_signals_report
-from imas_codex.agentic.search_tools import _search_signals
+from imas_codex.agentic.search_formatters import (
+    format_docs_report,
+    format_signals_report,
+)
+from imas_codex.agentic.search_tools import _search_docs, _search_signals
 
 # ---------------------------------------------------------------------------
 # search_signals
@@ -307,3 +310,172 @@ class TestFormatSignalsReport:
         result = format_signals_report(signals, [], {"tcv:test/sig": 0.5})
         # Template should be truncated - total result should be reasonable
         assert len(result) < 5000
+
+
+# ---------------------------------------------------------------------------
+# search_docs
+# ---------------------------------------------------------------------------
+
+
+class TestSearchDocs:
+    """Unit tests for search_docs tool."""
+
+    @pytest.fixture()
+    def mock_gc(self):
+        gc = MagicMock()
+        gc.query = MagicMock(return_value=[])
+        return gc
+
+    @pytest.fixture()
+    def mock_encoder(self):
+        enc = MagicMock()
+        enc.embed_texts = MagicMock(return_value=[[0.1] * 1024])
+        return enc
+
+    def test_empty_results(self, mock_gc, mock_encoder):
+        """Empty results produce a descriptive message."""
+        # wiki chunks, artifacts, images — all return empty
+        mock_gc.query.side_effect = [[], [], []]
+        result = _search_docs(
+            query="equilibrium",
+            facility="tcv",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        assert "No documentation found" in result
+
+    def test_wiki_chunks_formatted(self, mock_gc, mock_encoder):
+        """Wiki chunks are grouped by page and formatted."""
+        chunk_vector = [
+            {"id": "jet:wiki:chunk:1", "score": 0.90},
+            {"id": "jet:wiki:chunk:2", "score": 0.85},
+        ]
+        enrichment = [
+            {
+                "id": "jet:wiki:chunk:1",
+                "text": "Fishbone instabilities are observed when...",
+                "section": "Overview",
+                "page_title": "Fishbone instabilities",
+                "page_url": "https://wiki.jet.efda.org/fishbone",
+                "linked_signals": ["jet:mhd/fishbone_amplitude"],
+                "linked_tree_nodes": [],
+                "imas_refs": ["mhd_linear.time_slice[:].toroidal_mode[:].n_tor"],
+            },
+            {
+                "id": "jet:wiki:chunk:2",
+                "text": "Detection methods include Mirnov coil analysis...",
+                "section": "Detection Methods",
+                "page_title": "Fishbone instabilities",
+                "page_url": "https://wiki.jet.efda.org/fishbone",
+                "linked_signals": [],
+                "linked_tree_nodes": [],
+                "imas_refs": [],
+            },
+        ]
+        # Calls: wiki chunks vector, artifact vector, image vector, enrichment
+        mock_gc.query.side_effect = [chunk_vector, [], [], enrichment]
+
+        result = _search_docs(
+            query="fishbone instabilities",
+            facility="jet",
+            gc=mock_gc,
+            encoder=mock_encoder,
+        )
+        assert "Wiki Documentation" in result
+        assert "Fishbone instabilities" in result
+        assert "Overview" in result
+        assert "Detection Methods" in result
+
+    def test_page_grouping(self, mock_gc, mock_encoder):
+        """Chunks from the same page are grouped together."""
+        chunk_vector = [
+            {"id": "c1", "score": 0.9},
+            {"id": "c2", "score": 0.8},
+        ]
+        enrichment = [
+            {
+                "id": "c1",
+                "text": "Section 1 content",
+                "section": "Sec1",
+                "page_title": "Same Page",
+                "page_url": "http://wiki/same",
+                "linked_signals": [],
+                "linked_tree_nodes": [],
+                "imas_refs": [],
+            },
+            {
+                "id": "c2",
+                "text": "Section 2 content",
+                "section": "Sec2",
+                "page_title": "Same Page",
+                "page_url": "http://wiki/same",
+                "linked_signals": [],
+                "linked_tree_nodes": [],
+                "imas_refs": [],
+            },
+        ]
+        mock_gc.query.side_effect = [chunk_vector, [], [], enrichment]
+
+        result = _search_docs(
+            query="test", facility="tcv", gc=mock_gc, encoder=mock_encoder
+        )
+        # Page title should appear once as header, not twice
+        assert result.count('### Page: "Same Page"') == 1
+
+    def test_cross_links_shown(self, mock_gc, mock_encoder):
+        """Cross-links to signals and IMAS paths are shown."""
+        chunk_vector = [{"id": "c1", "score": 0.9}]
+        enrichment = [
+            {
+                "id": "c1",
+                "text": "Content about plasma current",
+                "section": "Signals",
+                "page_title": "Magnetics",
+                "page_url": None,
+                "linked_signals": ["tcv:magnetics/ip"],
+                "linked_tree_nodes": ["\\RESULTS::I_P"],
+                "imas_refs": ["magnetics.ip.0d[:].value"],
+            },
+        ]
+        mock_gc.query.side_effect = [chunk_vector, [], [], enrichment]
+
+        result = _search_docs(
+            query="plasma current", facility="tcv", gc=mock_gc, encoder=mock_encoder
+        )
+        assert "tcv:magnetics/ip" in result
+        assert "magnetics.ip.0d[:].value" in result
+
+    def test_embedding_unavailable(self, mock_gc):
+        """When encoder is unavailable, return helpful message."""
+        from imas_codex.embeddings.encoder import EmbeddingBackendError
+
+        bad_encoder = MagicMock()
+        bad_encoder.embed_texts.side_effect = EmbeddingBackendError("unavailable")
+
+        result = _search_docs(
+            query="test", facility="tcv", gc=mock_gc, encoder=bad_encoder
+        )
+        assert "Embedding" in result or "unavailable" in result.lower()
+
+
+class TestFormatDocsReport:
+    """Unit tests for the docs report formatter."""
+
+    def test_empty_docs(self):
+        result = format_docs_report([], [], {})
+        assert "No documentation found" in result
+
+    def test_artifacts_section(self):
+        """Artifacts appear in Related Documents section."""
+        artifacts = [
+            {
+                "id": "art1",
+                "title": "Analysis Report.pdf",
+                "description": "Detailed analysis",
+                "page_title": "MHD diagnostics",
+            },
+        ]
+        result = format_docs_report([], artifacts, {})
+        assert "Related Documents" in result
+        assert "Analysis Report.pdf" in result
+        assert "MHD diagnostics" in result
