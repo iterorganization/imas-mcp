@@ -640,13 +640,42 @@ uv run pytest tests/path/to/test.py::test_function  # Specific test
 
 ## Python REPL
 
-The `python()` MCP tool provides a persistent REPL with pre-loaded utilities:
+The `python()` MCP tool provides a persistent REPL with pre-loaded utilities. The first call **automatically returns the full API reference** with function signatures.
+
+### REPL Workflow
+
+1. **Use domain query functions** (`find_wiki`, `find_signals`, `graph_search`, etc.) instead of raw Cypher. They handle embeddings, schema validation, and relationship traversal internally.
+2. **For raw Cypher**, call `schema_for(task='wiki')` first to get node labels, properties, relationships, and enums derived from the LinkML schemas. Never guess property names — they are code-generated.
+3. **Chain operations** in a single `python()` call to minimize round-trips. Each call has overhead.
+4. **Format output** with `as_table(pick(results, 'col1', 'col2'))` for structured results.
+
+### Schema-First Queries
+
+All graph node types, properties, enums, and relationships are derived from LinkML schemas. The REPL exposes this via:
+
+- `schema_for(task='signals')` — schema context for a domain (signals, wiki, imas, code, facility, trees)
+- `schema_for('WikiChunk', 'WikiPage')` — schema for specific node labels
+- `get_schema()` — full `GraphSchema` object with `node_labels`, `get_model()`, `get_properties()`
+- `repl_help()` — auto-generated API reference with all function signatures
+
+**Never hardcode property names.** Before writing Cypher, verify against the schema:
 
 ```python
-python("print([name for name in dir() if not name.startswith('_')])")
-python("help(search_imas)")
-python("import inspect; print(inspect.signature(get_facility))")
-python("print(reload())")  # After editing imas_codex/ source files
+python('''
+# Get schema context for wiki queries
+print(schema_for(task="wiki"))
+# Then write the query using verified properties
+results = query("MATCH (c:WikiChunk) WHERE c.text CONTAINS 'fishbone' RETURN c.text, c.section LIMIT 5")
+print(as_table(results))
+''')
+```
+
+### Discovery
+
+```python
+python("repl_help()")                # Full API with signatures
+python("help(find_wiki)")            # Detailed docstring for one function
+python("print(schema_for())")        # Graph schema overview
 ```
 
 ## Quick Reference
