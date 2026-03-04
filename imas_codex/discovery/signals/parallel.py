@@ -494,14 +494,18 @@ def claim_signals_for_enrichment(
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     try:
         with GraphClient() as gc:
-            # First skip channel signals in bulk so they don't clog the queue
+            # First skip channel signals in bulk so they don't clog the queue.
+            # Catches: trailing CHANNEL_NNN, trailing _NNN/:NNN, pure numeric
+            # names, sub-nodes under channel subtrees (CHANNEL_NNN:LEAF),
+            # and TDI function wrappers like data(\TREE::CHANNEL_NNN).
             gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $discovered
                   AND (
-                    s.accessor =~ '.*[_:]CHANNEL_?\\d{2,3}$'
-                    OR s.accessor =~ '.*[_:]\\d{2,3}$'
+                    s.accessor =~ '.*[_:]CHANNEL_?\\d{2,3}\\)?$'
+                    OR s.accessor =~ '.*[_:]\\d{2,3}\\)?$'
+                    OR s.accessor =~ '.*CHANNEL_?\\d{2,3}:.*'
                     OR s.name =~ '^\\d{2,3}$'
                   )
                 SET s.status = $skipped,
@@ -639,6 +643,7 @@ def claim_signals_for_check(
                           THEN $facility + ':mdsplus:tree_tdi'
                           ELSE null END AS derived_data_access
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
+                       s.node_path AS node_path,
                        s.physics_domain AS physics_domain, s.tdi_function AS tdi_function,
                        s.discovery_source AS discovery_source, s.name AS name,
                        COALESCE(s.data_access, derived_data_access) AS data_access
@@ -2850,15 +2855,27 @@ async def check_worker(
                     await asyncio.to_thread(release_signal_claim, signal["id"])
                     continue
 
-                # TDI signals use tcv_shot tree
+                # TDI signals use tcv_shot tree; subtree signals
+                # (results, magnetics, base, etc.) are accessed via tcv_shot
+                # with their full node_path (\RESULTS::THOMSON:NE).
                 tree_name = signal.get("tree_name")
                 if signal.get("tdi_function") and not tree_name:
+                    tree_name = "tcv_shot"
+
+                # For tree_traversal signals, use node_path (full qualified
+                # path like \RESULTS::THOMSON:NE) instead of the stripped
+                # relative accessor. The tree is opened as tcv_shot which
+                # includes all subtrees.
+                accessor = signal["accessor"]
+                node_path = signal.get("node_path")
+                if node_path and signal.get("discovery_source") == "tree_traversal":
+                    accessor = node_path
                     tree_name = "tcv_shot"
 
                 batch_input.append(
                     {
                         "id": signal["id"],
-                        "accessor": signal["accessor"],
+                        "accessor": accessor,
                         "tree_name": tree_name or "tcv_shot",
                         "shot": shot,
                         **(
@@ -3198,7 +3215,6 @@ async def run_parallel_data_discovery(
         state.units_phase.mark_done()
         state.promote_phase.mark_done()
         state._scan_phase.mark_done()
-        state.check_phase.mark_done()
 
     if discover_only:
         # Run supervision loop — scan workers only
@@ -3242,8 +3258,8 @@ async def run_parallel_data_discovery(
             )
         )
 
-    # --- Check workers (unless enrich_only) ---
-    if not enrich_only:
+    # --- Check workers ---
+    if num_check_workers > 0:
         for i in range(num_check_workers):
             worker_name = f"check_worker_{i}"
             status = worker_group.create_status(worker_name, group="check")
