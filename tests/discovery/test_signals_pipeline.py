@@ -1,6 +1,6 @@
-"""End-to-end tests for the redesigned signals discovery pipeline.
+"""Unit tests for the redesigned signals discovery pipeline.
 
-Tests the full async worker pipeline (seed → epoch → extract → units →
+Tests the async worker pipeline (seed → epoch → extract → units →
 promote → enrich → check → embed) with mocked infrastructure.
 
 Verifies:
@@ -9,6 +9,7 @@ Verifies:
 - All workers start simultaneously and coordinate via graph state machine
 - Pipeline phases complete correctly and workers exit cleanly
 - 50+ simulated signal paths flow through the full pipeline
+- CLI integration: help, scanner validation, scan-only routing
 
 No live infrastructure needed — all graph/SSH/LLM calls are mocked.
 """

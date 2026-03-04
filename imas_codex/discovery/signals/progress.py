@@ -10,8 +10,9 @@ Design principles (matching wiki and paths progress displays):
 - Minimal visual clutter (no emojis, thin progress bars)
 
 Display layout: PIPELINE → RESOURCES
-- SCAN: Seed versions, epoch detection (seed+epoch workers)
-- EXTRACT: SSH tree extraction, units, promotion (extract+units+promote workers)
+- SEED: Seed versions, epoch detection (seed+epoch workers)
+- EXTRACT: SSH tree extraction (extract worker)
+- PROMOTE: Units extraction + signal promotion (units+promote workers)
 - ENRICH: LLM classification of physics domain, description
 - CHECK: Test data access, verify units/sign
 
@@ -75,6 +76,25 @@ class EnrichItem:
 
 
 @dataclass
+class ExtractItem:
+    """Current extract activity."""
+
+    version_id: str
+    tree_name: str | None = None
+    version: int | None = None
+    node_count: int = 0
+
+
+@dataclass
+class PromoteItem:
+    """Current promote/units activity."""
+
+    tree_name: str
+    signals_promoted: int = 0
+    units_count: int = 0
+
+
+@dataclass
 class CheckItem:
     """Current check activity."""
 
@@ -127,11 +147,21 @@ class DataProgressState:
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
 
+    # Extract/promote stats
+    run_extracted: int = 0
+    run_promoted: int = 0
+    extract_rate: float | None = None
+    promote_rate: float | None = None
+
     # Current items
     current_scan: ScanItem | None = None
+    current_extract: ExtractItem | None = None
+    current_promote: PromoteItem | None = None
     current_enrich: EnrichItem | None = None
     current_check: CheckItem | None = None
     scan_processing: bool = False
+    extract_processing: bool = False
+    promote_processing: bool = False
     current_tree: str | None = None  # Currently scanning tree
     enrich_processing: bool = False
     check_processing: bool = False
@@ -140,6 +170,16 @@ class DataProgressState:
     scan_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=2.0, max_rate=5.0, min_display_time=0.3
+        )
+    )
+    extract_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=1.0, max_rate=3.0, min_display_time=0.4
+        )
+    )
+    promote_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=1.0, max_rate=3.0, min_display_time=0.4
         )
     )
     enrich_queue: StreamQueue = field(
@@ -230,7 +270,7 @@ class DataProgressDisplay(BaseProgressDisplay):
     """Clean progress display for parallel signal discovery.
 
     Extends ``BaseProgressDisplay`` for the signal discovery pipeline
-    (SCAN → ENRICH → CHECK).  Inherits header, servers, worker tracking,
+    (SEED → EXTRACT → PROMOTE → ENRICH → CHECK).  Inherits header, servers, worker tracking,
     and live-display lifecycle from the base class.
     """
 
@@ -261,9 +301,9 @@ class DataProgressDisplay(BaseProgressDisplay):
         )
 
     def _header_mode_label(self) -> str | None:
-        """Show SCAN ONLY / ENRICH ONLY mode in header."""
+        """Show SEED ONLY / ENRICH ONLY mode in header."""
         if self.state.discover_only:
-            return "SCAN ONLY"
+            return "SEED ONLY"
         if self.state.enrich_only:
             return "ENRICH ONLY"
         return None
@@ -272,11 +312,11 @@ class DataProgressDisplay(BaseProgressDisplay):
         """Build the unified pipeline section (progress + activity merged).
 
         Each pipeline stage gets a 3-line block:
-          Line 1: SCAN   ━━━━━━━━━━━━━━━━━━    2,944       83.4/s
+          Line 1: SEED   ━━━━━━━━━━━━━━━━━━    2,944       83.4/s
           Line 2:        \\HYBRID::PID_I                      ×1
           Line 3:        tree=hybrid  2944 signals discovered
 
-        Stages: SCAN → EXTRACT → ENRICH → CHECK
+        Stages: SEED → EXTRACT → PROMOTE → ENRICH → CHECK
         """
 
         # --- Compute progress data ---
@@ -287,8 +327,9 @@ class DataProgressDisplay(BaseProgressDisplay):
         check_denom = max(enriched, 1)
 
         # Worker counts per group
-        scan_count, scan_ann = self._count_group_workers("scan")
+        seed_count, seed_ann = self._count_group_workers("seed")
         extract_count, extract_ann = self._count_group_workers("extract")
+        promote_count, promote_ann = self._count_group_workers("promote")
         enrich_count, enrich_ann = self._count_group_workers("enrich")
         check_count, check_ann = self._count_group_workers("check")
 
@@ -300,19 +341,22 @@ class DataProgressDisplay(BaseProgressDisplay):
         # --- Build activity data ---
 
         # Worker completion detection
-        scan_complete = self._worker_complete("scan") and not self.state.current_scan
+        seed_complete = self._worker_complete("seed") and not self.state.current_scan
         extract_complete = (
-            self._worker_complete("extract") and not self.state.current_scan
+            self._worker_complete("extract") and not self.state.current_extract
+        )
+        promote_complete = (
+            self._worker_complete("promote") and not self.state.current_promote
         )
         enrich_complete = (
             self._worker_complete("enrich") and not self.state.current_enrich
         )
         check_complete = self._worker_complete("check") and not self.state.current_check
 
-        # SCAN activity (seed + epoch workers)
+        # SEED activity (seed + epoch workers)
         scan = self.state.current_scan
-        scan_text = ""
-        scan_desc = ""
+        seed_text = ""
+        seed_desc = ""
         if scan:
             if scan.epoch_phase:
                 if scan.epoch_phase == "coarse":
@@ -331,10 +375,10 @@ class DataProgressDisplay(BaseProgressDisplay):
                     )
                 else:
                     status = f"building {scan.epoch_boundaries_found} epochs"
-                scan_text = status
+                seed_text = status
             else:
                 path = scan.node_path or scan.signal_id
-                scan_text = path
+                seed_text = path
 
             desc_parts = []
             if scan.tree_name:
@@ -343,9 +387,35 @@ class DataProgressDisplay(BaseProgressDisplay):
                 desc_parts.append(f"{scan.epoch_boundaries_found} epochs detected")
             elif scan.signals_in_tree > 0:
                 desc_parts.append(f"{scan.signals_in_tree:,} versions seeded")
-            scan_desc = "  ".join(desc_parts)
+            seed_desc = "  ".join(desc_parts)
         elif self.state.scan_processing and self.state.current_tree:
-            scan_text = f"tree={self.state.current_tree}"
+            seed_text = f"tree={self.state.current_tree}"
+
+        # EXTRACT activity
+        ext = self.state.current_extract
+        extract_text = ""
+        extract_desc = ""
+        if ext:
+            extract_text = (
+                f"v{ext.version} {ext.tree_name}" if ext.version else ext.version_id
+            )
+            if ext.node_count > 0:
+                extract_desc = f"{ext.node_count:,} nodes extracted"
+            else:
+                extract_desc = "extracting..."
+
+        # PROMOTE activity (units + promote)
+        prom = self.state.current_promote
+        promote_text = ""
+        promote_desc = ""
+        if prom:
+            promote_text = prom.tree_name
+            parts = []
+            if prom.signals_promoted > 0:
+                parts.append(f"{prom.signals_promoted:,} signals")
+            if prom.units_count > 0:
+                parts.append(f"{prom.units_count:,} units")
+            promote_desc = "  ".join(parts)
 
         # ENRICH activity
         enrich = self.state.current_enrich
@@ -381,34 +451,49 @@ class DataProgressDisplay(BaseProgressDisplay):
 
         rows = [
             PipelineRowConfig(
-                name="SCAN",
+                name="SEED",
                 style="bold blue",
                 completed=self.state.run_discovered,
                 total=max(self.state.run_discovered, 1),
                 rate=self.state.discover_rate,
                 show_pct=False,
-                worker_count=scan_count,
-                worker_annotation=scan_ann,
-                primary_text=scan_text,
-                description=scan_desc,
+                worker_count=seed_count,
+                worker_annotation=seed_ann,
+                primary_text=seed_text,
+                description=seed_desc,
                 is_processing=self.state.scan_processing,
-                is_complete=scan_complete,
+                is_complete=seed_complete,
                 processing_label="seeding...",
             ),
             PipelineRowConfig(
                 name="EXTRACT",
                 style="bold cyan",
-                completed=total,
-                total=total,
-                rate=self.state.discover_rate,
+                completed=self.state.run_extracted,
+                total=max(self.state.run_discovered, self.state.run_extracted, 1),
+                rate=self.state.extract_rate,
                 show_pct=False,
                 worker_count=extract_count,
                 worker_annotation=extract_ann,
-                primary_text=scan_text if not scan_complete else "",
-                description=scan_desc if not scan_complete else "",
-                is_processing=not extract_complete,
+                primary_text=extract_text,
+                description=extract_desc,
+                is_processing=self.state.extract_processing,
                 is_complete=extract_complete,
                 processing_label="extracting...",
+            ),
+            PipelineRowConfig(
+                name="PROMOTE",
+                style="bold yellow",
+                completed=self.state.run_promoted,
+                total=max(self.state.run_extracted, self.state.run_promoted, 1),
+                rate=self.state.promote_rate,
+                show_pct=False,
+                worker_count=promote_count,
+                worker_annotation=promote_ann,
+                primary_text=promote_text,
+                description=promote_desc,
+                is_processing=self.state.promote_processing,
+                is_complete=promote_complete,
+                processing_label="promoting...",
             ),
             PipelineRowConfig(
                 name="ENRICH",
@@ -520,6 +605,25 @@ class DataProgressDisplay(BaseProgressDisplay):
         elif self.state.scan_queue.is_stale():
             self.state.current_scan = None
 
+        if item := self.state.extract_queue.pop():
+            self.state.current_extract = ExtractItem(
+                version_id=item.get("id", ""),
+                tree_name=item.get("tree_name"),
+                version=item.get("version"),
+                node_count=item.get("node_count", 0),
+            )
+        elif self.state.extract_queue.is_stale():
+            self.state.current_extract = None
+
+        if item := self.state.promote_queue.pop():
+            self.state.current_promote = PromoteItem(
+                tree_name=item.get("tree_name", ""),
+                signals_promoted=item.get("signals_promoted", 0),
+                units_count=item.get("units_count", 0),
+            )
+        elif self.state.promote_queue.is_stale():
+            self.state.current_promote = None
+
         if item := self.state.enrich_queue.pop():
             self.state.current_enrich = EnrichItem(
                 signal_id=item.get("signal_id", ""),
@@ -549,7 +653,7 @@ class DataProgressDisplay(BaseProgressDisplay):
         results: list[dict] | None = None,
         current_tree: str | None = None,
     ) -> None:
-        """Update scan worker state."""
+        """Update seed/epoch worker state."""
         self.state.run_discovered = stats.processed
         self.state.discover_rate = stats.rate
 
@@ -582,6 +686,67 @@ class DataProgressDisplay(BaseProgressDisplay):
             max_rate = 5.0
             display_rate = min(stats.rate, max_rate) if stats.rate else 2.0
             self.state.scan_queue.add(items, display_rate)
+
+        self._refresh()
+
+    def update_extract(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update extract worker state."""
+        self.state.run_extracted = stats.processed
+        self.state.extract_rate = stats.rate
+
+        if "extracting" in message.lower() or "v" in message.lower():
+            self.state.extract_processing = True
+        else:
+            self.state.extract_processing = False
+
+        if results:
+            items = [
+                {
+                    "id": r.get("id", ""),
+                    "tree_name": r.get("tree_name"),
+                    "version": r.get("version"),
+                    "node_count": r.get("signals_in_tree", 0),
+                }
+                for r in results
+            ]
+            max_rate = 3.0
+            display_rate = min(stats.rate, max_rate) if stats.rate else 1.0
+            self.state.extract_queue.add(items, display_rate)
+
+        self._refresh()
+
+    def update_promote(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update units/promote worker state."""
+        self.state.run_promoted = stats.processed
+        self.state.promote_rate = stats.rate
+
+        if "promoting" in message.lower() or "units" in message.lower():
+            self.state.promote_processing = True
+        else:
+            self.state.promote_processing = False
+
+        if results:
+            items = [
+                {
+                    "tree_name": r.get("tree_name", ""),
+                    "signals_promoted": r.get("signals_in_tree", 0),
+                    "units_count": r.get("units_count", 0),
+                }
+                for r in results
+            ]
+            max_rate = 3.0
+            display_rate = min(stats.rate, max_rate) if stats.rate else 1.0
+            self.state.promote_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -693,15 +858,30 @@ class DataProgressDisplay(BaseProgressDisplay):
         enriched = self.state.signals_enriched + self.state.signals_checked
         checked = self.state.signals_checked
 
-        # SCAN stats
-        summary.append("  SCAN   ", style="bold blue")
-        summary.append(f"discovered={total:,}", style="blue")
+        # SEED stats
+        summary.append("  SEED    ", style="bold blue")
+        summary.append(f"seeded={self.state.run_discovered:,}", style="blue")
         if self.state.discover_rate:
             summary.append(f"  {self.state.discover_rate:.1f}/s", style="dim")
         summary.append("\n")
 
+        # EXTRACT stats
+        summary.append("  EXTRACT ", style="bold cyan")
+        summary.append(f"extracted={self.state.run_extracted:,}", style="cyan")
+        if self.state.extract_rate:
+            summary.append(f"  {self.state.extract_rate:.1f}/s", style="dim")
+        summary.append("\n")
+
+        # PROMOTE stats
+        summary.append("  PROMOTE ", style="bold yellow")
+        summary.append(f"promoted={self.state.run_promoted:,}", style="yellow")
+        summary.append(f"  total={total:,}", style="dim")
+        if self.state.promote_rate:
+            summary.append(f"  {self.state.promote_rate:.1f}/s", style="dim")
+        summary.append("\n")
+
         # ENRICH stats
-        summary.append("  ENRICH ", style="bold green")
+        summary.append("  ENRICH  ", style="bold green")
         summary.append(f"enriched={enriched:,}", style="green")
         summary.append(f"  skipped={self.state.signals_skipped:,}", style="yellow")
         summary.append(f"  cost=${self.state.run_cost:.3f}", style="yellow")
