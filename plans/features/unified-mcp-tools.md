@@ -382,7 +382,7 @@ Agents use `python()` with `wiki_page_chunks()`, `find_signals()`, etc. for full
 
 ## Phased Implementation
 
-### Phase 1: search_signals
+### Phase 1: search_signals ✅
 
 Start here — signals have the richest graph connectivity (DataAccess, Diagnostic, TreeNode, IMASPath) and will validate the multi-index + traversal + format pattern.
 
@@ -394,7 +394,7 @@ Start here — signals have the richest graph connectivity (DataAccess, Diagnost
 
 **Deliverable**: `search_signals` MCP tool registered and working.
 
-### Phase 2: search_docs
+### Phase 2: search_docs ✅
 
 Wiki domain — WikiChunk → WikiPage traversal, cross-links to signals/tree nodes/IMAS paths. Artifacts and images from secondary indexes.
 
@@ -405,7 +405,7 @@ Wiki domain — WikiChunk → WikiPage traversal, cross-links to signals/tree no
 
 **Deliverable**: `search_docs` MCP tool registered and working.
 
-### Phase 3: search_code
+### Phase 3: search_code ✅
 
 Code domain — CodeChunk → CodeFile → DataReference traversal.
 
@@ -416,7 +416,7 @@ Code domain — CodeChunk → CodeFile → DataReference traversal.
 
 **Deliverable**: `search_code` MCP tool registered and working.
 
-### Phase 4: search_imas
+### Phase 4: search_imas ✅
 
 IMAS DD domain — the cross-domain tool. Uses multi-index search (path + cluster embeddings) and optionally enriches with facility cross-references and version context.
 
@@ -429,7 +429,7 @@ IMAS DD domain — the cross-domain tool. Uses multi-index search (path + cluste
 
 **Deliverable**: `search_imas` MCP tool registered and working.
 
-### Phase 5: Cleanup
+### Phase 5: Cleanup ✅
 
 - Remove `_CHAIN_NUDGE` from python() output
 - Simplify python() docstring — mark REPL functions as "for custom queries in python()"
