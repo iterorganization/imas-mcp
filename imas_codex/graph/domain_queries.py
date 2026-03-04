@@ -170,41 +170,176 @@ def _find_signals_semantic(
 
 
 def find_wiki(
-    query: str,
+    query: str | None = None,
     *,
     facility: str | None = None,
+    text_contains: str | None = None,
+    page_title_contains: str | None = None,
     k: int = 10,
     gc: GraphClient | None = None,
     embed_fn: Any = None,
 ) -> list[dict[str, Any]]:
-    """Semantic search over wiki content with page context.
+    """Search wiki content by semantic similarity, keyword, or both.
 
-    Returns chunk text, section, parent page title/url, and score.
+    Supports three modes:
+
+    1. **Semantic only** (``query`` given): Vector search on chunk embeddings.
+    2. **Keyword only** (``text_contains`` / ``page_title_contains``):
+       Text filtering without embeddings.
+    3. **Combined** (``query`` + keyword filters): Semantic search
+       post-filtered by keyword match.
 
     Args:
-        query: Search text.
+        query: Search text for vector similarity. Omit for keyword-only.
         facility: Optional facility filter.
+        text_contains: Filter chunks whose text contains this substring
+            (case-insensitive via ``toLower``).
+        page_title_contains: Filter by parent page title substring
+            (case-insensitive).
         k: Number of results.
         gc: GraphClient instance.
         embed_fn: Embedding function.
     """
     gc, embed_fn = _resolve(gc, embed_fn)
-    embedding = embed_fn(query)
 
+    if query is not None:
+        return _find_wiki_semantic(
+            query,
+            facility=facility,
+            text_contains=text_contains,
+            page_title_contains=page_title_contains,
+            k=k,
+            gc=gc,
+            embed_fn=embed_fn,
+        )
+
+    # Keyword-only mode (no semantic search)
+    if text_contains is None and page_title_contains is None:
+        raise ValueError(
+            "Provide 'query' for semantic search, or 'text_contains'/"
+            "'page_title_contains' for keyword search"
+        )
+
+    where_parts: list[str] = []
+    params: dict[str, Any] = {"limit": k}
+
+    if facility is not None:
+        where_parts.append("(c)-[:AT_FACILITY]->(:Facility {id: $facility})")
+        params["facility"] = facility
+    if text_contains is not None:
+        where_parts.append("toLower(c.text) CONTAINS toLower($text_kw)")
+        params["text_kw"] = text_contains
+    if page_title_contains is not None:
+        where_parts.append("toLower(p.title) CONTAINS toLower($title_kw)")
+        params["title_kw"] = page_title_contains
+
+    where_clause = " AND ".join(where_parts) if where_parts else "true"
+
+    cypher = (
+        "MATCH (p:WikiPage)-[:HAS_CHUNK]->(c:WikiChunk) "
+        f"WHERE {where_clause} "
+        "RETURN c.text AS text, c.section AS section, "
+        "p.title AS page_title, p.url AS page_url "
+        "ORDER BY p.title LIMIT $limit"
+    )
+
+    return gc.query(cypher, **params)
+
+
+def _find_wiki_semantic(
+    query: str,
+    *,
+    facility: str | None,
+    text_contains: str | None,
+    page_title_contains: str | None,
+    k: int,
+    gc: GraphClient,
+    embed_fn: Any,
+) -> list[dict[str, Any]]:
+    """Semantic search branch for find_wiki, with optional keyword filters."""
+    embedding = embed_fn(query)
     params: dict[str, Any] = {"k": k, "embedding": embedding}
 
-    facility_filter = ""
+    # Build post-filter conditions on the vector search results
+    post_filters: list[str] = []
     if facility is not None:
-        facility_filter = "AND (c)-[:AT_FACILITY]->(:Facility {id: $facility}) "
+        post_filters.append("(c)-[:AT_FACILITY]->(:Facility {id: $facility})")
         params["facility"] = facility
+    if text_contains is not None:
+        post_filters.append("toLower(c.text) CONTAINS toLower($text_kw)")
+        params["text_kw"] = text_contains
+
+    filter_clause = ""
+    if post_filters:
+        filter_clause = "AND " + " AND ".join(post_filters) + " "
+
+    # Page title filter needs to happen after the page join
+    title_filter = ""
+    if page_title_contains is not None:
+        title_filter = "WHERE toLower(p.title) CONTAINS toLower($title_kw) "
+        params["title_kw"] = page_title_contains
 
     cypher = (
         'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
-        f"YIELD node AS c, score WHERE true {facility_filter}"
+        f"YIELD node AS c, score WHERE true {filter_clause}"
         "OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(c) "
+        f"{title_filter}"
         "RETURN c.text AS text, c.section AS section, "
         "p.title AS page_title, p.url AS page_url, score "
         "ORDER BY score DESC"
+    )
+
+    return gc.query(cypher, **params)
+
+
+# ---------------------------------------------------------------------------
+# Wiki page chunk retrieval
+# ---------------------------------------------------------------------------
+
+
+def wiki_page_chunks(
+    title_contains: str,
+    *,
+    facility: str | None = None,
+    text_contains: str | None = None,
+    limit: int = 50,
+    gc: GraphClient | None = None,
+    embed_fn: Any = None,
+) -> list[dict[str, Any]]:
+    """Get all chunks from wiki pages matching a title pattern.
+
+    Common pattern: find pages by title, then retrieve all their content.
+    Replaces the two-step "find pages → query chunks" manual Cypher pattern.
+
+    Args:
+        title_contains: Substring to match in page title (case-insensitive).
+        facility: Optional facility filter.
+        text_contains: Optional keyword filter on chunk text.
+        limit: Max chunks to return.
+        gc: GraphClient instance.
+        embed_fn: Embedding function (unused, accepted for bind consistency).
+    """
+    gc, _ = _resolve(gc, None)
+
+    where_parts = ["toLower(p.title) CONTAINS toLower($title_kw)"]
+    params: dict[str, Any] = {"title_kw": title_contains, "limit": limit}
+
+    if facility is not None:
+        where_parts.append("p.facility_id = $facility")
+        params["facility"] = facility
+    if text_contains is not None:
+        where_parts.append("toLower(c.text) CONTAINS toLower($text_kw)")
+        params["text_kw"] = text_contains
+
+    where_clause = " AND ".join(where_parts)
+
+    cypher = (
+        "MATCH (p:WikiPage)-[:HAS_CHUNK]->(c:WikiChunk) "
+        f"WHERE {where_clause} "
+        "RETURN p.title AS page_title, p.url AS page_url, "
+        "p.facility_id AS facility, "
+        "c.section AS section, c.text AS text "
+        "ORDER BY p.title, c.section LIMIT $limit"
     )
 
     return gc.query(cypher, **params)

@@ -160,3 +160,100 @@ class TestGraphSearchOrderBy:
         cypher = mock_gc.query.call_args[0][0]
         assert "ORDER BY" in cypher
         assert "name" in cypher
+
+
+class TestGraphSearchFilterOps:
+    """Test text and comparison filter operators."""
+
+    def test_contains_operator(self, mock_gc, mock_embed):
+        graph_search(
+            "WikiChunk",
+            where={"text__contains": "fishbone"},
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        assert "CONTAINS" in cypher
+
+    def test_starts_with_operator(self, mock_gc, mock_embed):
+        graph_search(
+            "TreeNode",
+            where={"path__starts_with": "\\RESULTS"},
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        assert "STARTS WITH" in cypher
+
+    def test_ends_with_operator(self, mock_gc, mock_embed):
+        graph_search(
+            "FacilityPath",
+            where={"path__ends_with": ".py"},
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        assert "ENDS WITH" in cypher
+
+    def test_in_operator(self, mock_gc, mock_embed):
+        graph_search(
+            "FacilityPath",
+            where={"status__in": ["discovered", "explored"]},
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        assert "IN" in cypher
+
+    def test_gt_operator(self, mock_gc, mock_embed):
+        graph_search(
+            "FacilityPath",
+            where={"score_composite__gt": 0.7},
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        assert ">" in cypher
+
+    def test_ne_operator(self, mock_gc, mock_embed):
+        graph_search(
+            "FacilityPath",
+            where={"status__ne": "failed"},
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        assert "<>" in cypher
+
+    def test_operator_validates_base_property(self, mock_gc, mock_embed):
+        with pytest.raises(ValueError, match="property"):
+            graph_search(
+                "Facility",
+                where={"nonexistent__contains": "x"},
+                gc=mock_gc,
+                embed_fn=mock_embed,
+            )
+
+    def test_contains_with_semantic(self, mock_gc, mock_embed):
+        """Operators should combine with semantic search."""
+        graph_search(
+            "WikiChunk",
+            semantic="fishbone instabilities",
+            where={"text__contains": "fishbone"},
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        assert "queryNodes" in cypher
+        assert "CONTAINS" in cypher
+
+    def test_multiple_operators(self, mock_gc, mock_embed):
+        graph_search(
+            "FacilityPath",
+            where={"score_composite__gte": 0.5, "status__ne": "failed"},
+            gc=mock_gc,
+            embed_fn=mock_embed,
+        )
+        cypher = mock_gc.query.call_args[0][0]
+        assert ">=" in cypher
+        assert "<>" in cypher

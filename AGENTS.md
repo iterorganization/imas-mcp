@@ -655,11 +655,30 @@ python("print(reload())")  # After editing imas_codex/ source files
 |------|---------|
 | Graph query | `python("print(query('MATCH (n) RETURN n.id LIMIT 5'))")` |
 | IMAS search | `python("print(search_imas('electron temperature'))")` |
-| Code search | `python("print(search_code('equilibrium'))")` |
+| Wiki search | `python("print(find_wiki('plasma control', facility='jet'))")` |
+| Wiki keyword | `python("print(find_wiki(text_contains='fishbone'))")` |
+| Page chunks | `python("print(wiki_page_chunks('equilibrium', facility='tcv'))")` |
+| Signal search | `python("print(find_signals('electron density', facility='tcv'))")` |
+| Code search | `python("print(find_code('equilibrium', facility='tcv'))")` |
+| Graph search | `python("print(graph_search('WikiChunk', where={'text__contains': 'IMAS'}))")` |
+| Format table | `python("print(as_table(find_signals('ip', facility='tcv')))")` |
 | Facility info | `python("print(get_facility('tcv'))")` |
 | Add to graph | `add_to_graph('SourceFile', [...])` |
 | Update infra | `update_facility_infrastructure('tcv', {...})` |
 | Remote command | `ssh facility "rg pattern /path"` |
+
+**IMPORTANT:** Chain multiple operations in a single `python()` call to minimize round-trips:
+
+```python
+python('''
+signals = find_signals("electron density", facility="tcv")
+mapped = map_signals_to_imas(facility="tcv", physics_domain="magnetics")
+wiki = find_wiki("equilibrium reconstruction", facility="jet", k=10)
+print(as_table(pick(signals, "id", "description", "score")))
+print(f"\n{len(mapped)} mapped signals")
+print(as_table(pick(wiki, "page_title", "section", "score")))
+''')
+```
 
 ## Embedding Server
 

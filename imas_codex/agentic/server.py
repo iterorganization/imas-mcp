@@ -948,6 +948,7 @@ def _init_repl() -> dict[str, Any]:
 
     find_signals = _bind_dq(_dq.find_signals)
     find_wiki = _bind_dq(_dq.find_wiki)
+    wiki_page_chunks = _bind_dq(_dq.wiki_page_chunks)
     find_imas = _bind_dq(_dq.find_imas)
     find_code = _bind_dq(_dq.find_code)
     find_tree_nodes = _bind_dq(_dq.find_tree_nodes)
@@ -986,6 +987,7 @@ def _init_repl() -> dict[str, Any]:
         # Domain query functions
         "find_signals": find_signals,
         "find_wiki": find_wiki,
+        "wiki_page_chunks": wiki_page_chunks,
         "find_imas": find_imas,
         "find_code": find_code,
         "find_tree_nodes": find_tree_nodes,
@@ -1096,7 +1098,7 @@ class AgentsServer:
 
     The python() REPL provides access to:
     - Graph: query(), semantic_search(), embed(), graph_search()
-    - Domain: find_signals(), find_wiki(), find_imas(), find_code()
+    - Domain: find_signals(), find_wiki(), wiki_page_chunks(), find_imas(), find_code()
     - Formatters: as_table(), as_summary(), pick()
     - Remote: run(), check_tools() (auto-detects local vs SSH)
     - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
@@ -1140,46 +1142,60 @@ class AgentsServer:
             The REPL maintains state between calls - variables persist across invocations.
             All utilities are loaded at server startup for instant response.
 
+            IMPORTANT: Chain multiple operations in a single call to minimize
+            round-trips. Each python() invocation has overhead — combine related
+            queries and processing into one call.
+
             === DISCOVERY ===
             List all functions: dir()
             Get help: help(function_name)
             Get signature: import inspect; inspect.signature(function_name)
 
+            === DOMAIN QUERIES (pre-composed, one-call solutions) ===
+            find_wiki(query, text_contains, page_title_contains, facility, k)
+            wiki_page_chunks(title_contains, facility, text_contains, limit)
+            find_signals(query, facility, diagnostic, physics_domain)
+            find_imas(query, ids_filter, limit)
+            find_code(query, facility, limit)
+            find_tree_nodes(query, facility, tree_name, path_prefix)
+            map_signals_to_imas(facility, diagnostic, physics_domain)
+            facility_overview(facility)
+
+            === QUERY BUILDER (schema-validated, flexible) ===
+            graph_search(label, where, semantic, traverse, return_props, limit)
+              Filter operators: prop__contains, prop__starts_with,
+              prop__ends_with, prop__in, prop__gt, prop__gte, prop__lt,
+              prop__lte, prop__ne
+
+            === FORMATTERS ===
+            as_table(results, columns) - Markdown table
+            as_summary(results, group_by) - Count summary
+            pick(results, *fields) - Project to specific fields
+
             === GRAPH OPERATIONS ===
             query(cypher, **params) - Execute Cypher query, return list of dicts
-            semantic_search(text, index, k, include_deprecated) - Vector similarity search
-            embed(text) - Get 256-dim embedding vector
+            semantic_search(text, index, k, include_deprecated) - Vector search
+            embed(text) - Get embedding vector
 
             === FACILITY CONFIGURATION ===
-            get_facility(facility) - Load complete config (public + private merged)
-            get_facility_infrastructure(facility) - Load private infrastructure only
-            update_infrastructure(facility, data) - Update private config (tools, paths, notes)
-            update_metadata(facility, data) - Update public config (name, description)
+            get_facility(facility) - Load complete config
+            get_facility_infrastructure(facility) - Load private infra only
+            update_infrastructure(facility, data) - Update private config
             get_exploration_targets(facility, limit) - Prioritized work items
             get_tree_structure(tree, prefix, limit) - TreeNode hierarchy
 
             === REMOTE EXECUTION ===
-            run(cmd, facility, timeout) - Execute command (auto-detects local/SSH)
-            check_tools(facility) - Check tool availability and versions
-
-            === CODE SEARCH ===
-            search_code(query, top_k, facility, min_score) - Semantic code search
+            run(cmd, facility, timeout) - Execute command (local/SSH)
+            check_tools(facility) - Check tool availability
 
             === IMAS DATA DICTIONARY ===
-            search_imas(query, ids_filter, max_results) - Semantic DD search
-            fetch_imas(paths) - Full documentation for paths
-            list_imas(paths, leaf_only, max_paths) - List IDS structure
-            check_imas(paths) - Validate path existence
-            get_imas_overview(query) - High-level DD summary
+            search_imas(query, ids_filter, max_results)
+            fetch_imas(paths)
+            list_imas(paths, leaf_only, max_paths)
+            check_imas(paths)
 
             === COCOS ===
-            validate_cocos(cocos) - Validate COCOS value
-            determine_cocos(psi_axis, psi_edge, ip, b0) - Infer COCOS from data
-            cocos_sign_flip_paths(ids_name) - Get sign-flip paths for DD3/DD4
-            cocos_info(cocos_value) - Get COCOS parameters
-
-            Vector indexes for semantic_search:
-            Call get_graph_schema() to list all available indexes.
+            validate_cocos(cocos), determine_cocos(...), cocos_info(cocos)
 
             Args:
                 code: Python code to execute (multi-line supported)
@@ -1188,22 +1204,23 @@ class AgentsServer:
                 stdout output, or repr of last expression if no print
 
             Examples:
-                # Discover what's available
-                python("print([f for f in dir() if not f.startswith('_')])")
+                # Chain multiple queries in one call:
+                python('''
+                pages = find_wiki(text_contains="fishbone", facility="jet")
+                chunks = wiki_page_chunks("fishbone", facility="jet")
+                print(as_table(pick(pages, "page_title", "score")))
+                print(f"\\n{len(chunks)} chunks from matching pages")
+                ''')
 
-                # Check locality
-                python("import socket; print(socket.gethostname())")
+                # Schema-aware search with filter operators:
+                python('''
+                results = graph_search("WikiChunk",
+                    where={"text__contains": "equilibrium"},
+                    return_props=["id", "text", "section"])
+                print(as_table(results))
+                ''')
 
-                # Graph query
-                python("paths = query('MATCH (t:TreeNode) RETURN t.path LIMIT 5')")
-
-                # Update infrastructure (private)
-                python("update_infrastructure('iter', {'tools': {'rg': '14.1.1'}})")
-
-                # Facility info
-                python("info = get_facility('iter'); print(info['paths'])")
-
-                # Variables persist
+                # Variables persist across calls
                 python("x = 42")
                 python("print(x * 2)")  # prints 84
             """
