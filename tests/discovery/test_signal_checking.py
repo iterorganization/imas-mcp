@@ -4,16 +4,16 @@ Tests the check worker routing logic, multi-shot batch checking,
 DataAccess-driven signal routing, and expression node handling.
 
 Phase 1: Static tree routing - independent trees use their own tree_name/shot
-Phase 2: DataAccess-driven check routing
-Phase 3: Multi-shot batch checking (check all versions/epochs by default)
-Phase 4: Expression node classification
-Phase 5: TDI function categorization
-Phase 6: Missing library error detection
+Phase 2: Multi-version batch checking as primary (not fallback)
+Phase 3: Expression node classification
+Phase 4: TDI function categorization
+Phase 5: Missing library error detection
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,7 +29,7 @@ from imas_codex.discovery.signals.parallel import (
 
 
 class TestResolveCheckTree:
-    """Test _resolve_check_tree routes signals to the correct tree/shot."""
+    """Test _resolve_check_tree routes signals to the correct tree/check_shots."""
 
     def test_subtree_signal_routes_to_connection_tree(self):
         """Subtree signals (results, magnetics) route to connection tree."""
@@ -39,7 +39,7 @@ class TestResolveCheckTree:
             "discovery_source": "tree_traversal",
             "accessor": "THOMSON:NE",
         }
-        tree_name, accessor, shot = _resolve_check_tree(
+        tree_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
@@ -48,7 +48,7 @@ class TestResolveCheckTree:
         )
         assert tree_name == "tcv_shot"
         assert accessor == "\\RESULTS::THOMSON:NE"
-        assert shot == 85000
+        assert check_shots == [85000]
 
     def test_static_tree_routes_independently(self):
         """Static tree signals open the static tree directly, not tcv_shot."""
@@ -58,7 +58,7 @@ class TestResolveCheckTree:
             "discovery_source": "tree_traversal",
             "accessor": "TOP.MECHANICAL.COIL:R",
         }
-        tree_name, accessor, shots = _resolve_check_tree(
+        tree_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
@@ -68,15 +68,15 @@ class TestResolveCheckTree:
         assert tree_name == "static"
         assert accessor == "\\STATIC::TOP.MECHANICAL.COIL:R"
 
-    def test_static_tree_uses_version_shots(self):
-        """Static tree checks ALL versions, not just the reference shot."""
+    def test_static_tree_returns_all_version_shots(self):
+        """Static tree returns ALL version shots as check_shots."""
         signal = {
             "tree_name": "static",
             "node_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
             "discovery_source": "tree_traversal",
             "accessor": "TOP.MECHANICAL.COIL:R",
         }
-        tree_name, accessor, shot = _resolve_check_tree(
+        tree_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
@@ -84,8 +84,8 @@ class TestResolveCheckTree:
             reference_shot=85000,
         )
         assert tree_name == "static"
-        # Static tree uses version numbers as shots, first version
-        assert shot == 1
+        # All versions returned, not just the first
+        assert check_shots == [1, 2, 3, 4, 5, 6, 7, 8]
 
     def test_vsystem_routes_independently(self):
         """vsystem tree signals open vsystem directly."""
@@ -95,7 +95,7 @@ class TestResolveCheckTree:
             "discovery_source": "tree_traversal",
             "accessor": "SOME:NODE",
         }
-        tree_name, accessor, shot = _resolve_check_tree(
+        tree_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
@@ -103,7 +103,8 @@ class TestResolveCheckTree:
             reference_shot=85000,
         )
         assert tree_name == "vsystem"
-        assert shot == 85000  # No special shots for vsystem
+        # No version shots for vsystem, falls back to reference
+        assert check_shots == [85000]
 
     def test_tdi_function_uses_connection_tree(self):
         """TDI function signals route through connection tree."""
@@ -113,7 +114,7 @@ class TestResolveCheckTree:
             "discovery_source": "tdi_extraction",
             "accessor": 'tcv_eq("r_axis")',
         }
-        tree_name, accessor, shot = _resolve_check_tree(
+        tree_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
@@ -121,7 +122,7 @@ class TestResolveCheckTree:
             reference_shot=85000,
         )
         assert tree_name == "tcv_shot"
-        assert shot == 85000
+        assert check_shots == [85000]
 
     def test_unknown_tree_defaults_to_connection_tree(self):
         """Signals from unknown trees default to connection tree."""
@@ -131,7 +132,7 @@ class TestResolveCheckTree:
             "discovery_source": "tree_traversal",
             "accessor": "NODE",
         }
-        tree_name, accessor, shot = _resolve_check_tree(
+        tree_name, accessor, check_shots = _resolve_check_tree(
             signal,
             connection_tree="tcv_shot",
             independent_trees={"static", "vsystem"},
@@ -139,7 +140,46 @@ class TestResolveCheckTree:
             reference_shot=85000,
         )
         assert tree_name == "tcv_shot"
-        assert shot == 85000
+        assert check_shots == [85000]
+
+    def test_subtree_with_fallback_shots(self):
+        """Subtree signals include fallback shots from tree versions."""
+        signal = {
+            "tree_name": "results",
+            "node_path": "\\RESULTS::THOMSON:NE",
+            "discovery_source": "tree_traversal",
+            "accessor": "THOMSON:NE",
+        }
+        tree_name, accessor, check_shots = _resolve_check_tree(
+            signal,
+            connection_tree="tcv_shot",
+            independent_trees={"static"},
+            tree_shots={"tcv_shot": [85000, 75000, 65000]},
+            reference_shot=85000,
+        )
+        assert tree_name == "tcv_shot"
+        # Reference shot first, then fallbacks from tcv_shot versions
+        assert check_shots[0] == 85000
+        assert 75000 in check_shots
+        assert 65000 in check_shots
+
+    def test_independent_tree_no_versions_uses_reference(self):
+        """Independent tree with no configured versions uses reference shot."""
+        signal = {
+            "tree_name": "vsystem",
+            "node_path": "\\VSYSTEM::NODE",
+            "discovery_source": "tree_traversal",
+            "accessor": "NODE",
+        }
+        tree_name, accessor, check_shots = _resolve_check_tree(
+            signal,
+            connection_tree="tcv_shot",
+            independent_trees={"vsystem"},
+            tree_shots={},
+            reference_shot=85000,
+        )
+        assert tree_name == "vsystem"
+        assert check_shots == [85000]
 
 
 # =============================================================================
@@ -192,7 +232,7 @@ class TestClassifyCheckError:
 
 
 # =============================================================================
-# Phase 3: Multi-shot batch checking — check_signals_batch.py
+# Phase 2: Multi-shot batch checking — check_signals_batch.py
 # =============================================================================
 
 
@@ -201,66 +241,129 @@ class TestCheckSignalsBatchScript:
 
     def test_groups_signals_by_tree_and_shot(self):
         """Signals are grouped by (tree_name, shot) for efficient batching."""
-        # Import the grouping logic from the script
         from collections import defaultdict
 
         signals = [
             {
                 "id": "s1",
                 "tree_name": "results",
-                "shot": 85000,
+                "check_shots": [85000],
                 "accessor": "\\RESULTS::A",
             },
             {
                 "id": "s2",
                 "tree_name": "results",
-                "shot": 85000,
+                "check_shots": [85000],
                 "accessor": "\\RESULTS::B",
             },
-            {"id": "s3", "tree_name": "static", "shot": 1, "accessor": "\\STATIC::C"},
+            {
+                "id": "s3",
+                "tree_name": "static",
+                "check_shots": [1],
+                "accessor": "\\STATIC::C",
+            },
             {
                 "id": "s4",
                 "tree_name": "results",
-                "shot": 75000,
+                "check_shots": [75000],
                 "accessor": "\\RESULTS::A",
             },
         ]
 
+        # First check_shot is the primary group key
         groups: dict[tuple[str, int], list] = defaultdict(list)
         for sig in signals:
-            groups[(sig["tree_name"], sig["shot"])].append(sig)
+            primary = sig["check_shots"][0]
+            groups[(sig["tree_name"], primary)].append(sig)
 
         assert len(groups) == 3
         assert len(groups[("results", 85000)]) == 2
         assert len(groups[("static", 1)]) == 1
         assert len(groups[("results", 75000)]) == 1
 
-    def test_multi_shot_signals_generate_multiple_groups(self):
-        """When check_shots has multiple values, signal appears in all groups."""
+    def test_check_shots_drives_multi_version_checking(self):
+        """check_shots list drives systematic multi-version checking."""
         from collections import defaultdict
 
-        # Simulate how multi-shot checking works
         signals = [
             {
                 "id": "s1",
-                "tree_name": "tcv_shot",
-                "shot": 85000,
-                "accessor": "\\RESULTS::A",
-                "check_shots": [85000, 75000, 65000],
+                "tree_name": "static",
+                "check_shots": [1, 2, 3, 4, 5, 6, 7, 8],
+                "accessor": "\\STATIC::A",
             },
         ]
 
-        groups: dict[tuple[str, int], list] = defaultdict(list)
+        # Primary attempt uses first check_shot
+        primary_groups: dict[tuple[str, int], list] = defaultdict(list)
         for sig in signals:
-            check_shots = sig.get("check_shots", [sig["shot"]])
-            for shot in check_shots:
-                groups[(sig["tree_name"], shot)].append(sig)
+            primary_groups[(sig["tree_name"], sig["check_shots"][0])].append(sig)
 
-        assert len(groups) == 3
+        assert len(primary_groups) == 1
+        assert ("static", 1) in primary_groups
+
+        # Remaining check_shots are for retry
+        sig = signals[0]
+        retry_shots = sig["check_shots"][1:]
+        assert retry_shots == [2, 3, 4, 5, 6, 7, 8]
+
+
+class TestCheckSignalsBatchInputFormat:
+    """Test the input/output format of the batch check script."""
+
+    def test_check_shots_replaces_shot_and_fallback(self):
+        """check_shots is the single field for all shots to try."""
+        # New format — check_shots is primary
+        batch_input = {
+            "signals": [
+                {
+                    "id": "tcv:static:/r_c",
+                    "accessor": "\\STATIC::R_C",
+                    "tree_name": "static",
+                    "check_shots": [1, 2, 3, 4, 5, 6, 7, 8],
+                },
+                {
+                    "id": "tcv:results:/ip",
+                    "accessor": "\\ip",
+                    "tree_name": "tcv_shot",
+                    "check_shots": [85000],
+                },
+            ],
+            "timeout_per_group": 30,
+        }
+        # Verify structure
+        for sig in batch_input["signals"]:
+            assert "check_shots" in sig
+            assert isinstance(sig["check_shots"], list)
+            assert len(sig["check_shots"]) >= 1
+            # Old fields should not be present
+            assert "shot" not in sig
+            assert "fallback_shots" not in sig
+
+    def test_backward_compat_shot_field(self):
+        """Script should handle legacy shot+fallback_shots format."""
+        from imas_codex.remote.scripts.check_signals_batch import (
+            _normalize_signal_shots,
+        )
+
+        # Legacy format
+        sig = {"id": "s1", "shot": 85000, "fallback_shots": [75000, 65000]}
+        check_shots = _normalize_signal_shots(sig)
+        assert check_shots == [85000, 75000, 65000]
+
+        # New format
+        sig2 = {"id": "s2", "check_shots": [1, 2, 3]}
+        check_shots2 = _normalize_signal_shots(sig2)
+        assert check_shots2 == [1, 2, 3]
+
+        # Minimal format — just shot, no fallbacks
+        sig3 = {"id": "s3", "shot": 85000}
+        check_shots3 = _normalize_signal_shots(sig3)
+        assert check_shots3 == [85000]
 
 
 # =============================================================================
-# Phase 5: TDI function categorization
+# Phase 4: TDI function categorization
 # =============================================================================
 
 

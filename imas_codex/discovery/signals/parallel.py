@@ -3129,14 +3129,15 @@ def _resolve_check_tree(
     independent_trees: set[str],
     tree_shots: dict[str, list[int]],
     reference_shot: int,
-) -> tuple[str, str, int]:
-    """Determine the correct tree_name, accessor, and shot for checking a signal.
+) -> tuple[str, str, list[int]]:
+    """Determine the correct tree_name, accessor, and check_shots for a signal.
 
     Routes signals based on whether their tree is independent (opened directly)
     or a subtree of the connection tree (opened via the connection tree).
 
-    For independent trees (e.g., static), uses the first version shot from
-    tree_shots. For subtree signals, uses the reference_shot.
+    For independent trees with configured versions (e.g., static), returns all
+    version shots as check_shots. For subtrees, returns the reference_shot
+    plus any connection tree version shots as check_shots.
 
     Args:
         signal: Signal dict with tree_name, node_path, accessor, etc.
@@ -3146,7 +3147,8 @@ def _resolve_check_tree(
         reference_shot: Default shot for subtree checking
 
     Returns:
-        Tuple of (tree_name, accessor, shot)
+        Tuple of (tree_name, accessor, check_shots) where check_shots
+        is a list of shots to try in order.
     """
     tree_name = signal.get("tree_name")
     node_path = signal.get("node_path")
@@ -3154,7 +3156,7 @@ def _resolve_check_tree(
 
     # TDI functions use the connection tree
     if signal.get("tdi_function") and not tree_name:
-        return connection_tree, accessor, reference_shot
+        return connection_tree, accessor, [reference_shot]
 
     # For tree_traversal signals, use full node_path as accessor
     if node_path and signal.get("discovery_source") == "tree_traversal":
@@ -3162,13 +3164,19 @@ def _resolve_check_tree(
 
     # Independent trees are opened directly with their own shots
     if tree_name and tree_name in independent_trees:
-        # Use first version shot if available, else reference_shot
         versions = tree_shots.get(tree_name, [])
-        shot = versions[0] if versions else reference_shot
-        return tree_name, accessor, shot
+        if versions:
+            return tree_name, accessor, versions
+        return tree_name, accessor, [reference_shot]
 
     # Subtree signals go through the connection tree
-    return connection_tree, accessor, reference_shot
+    # Include connection tree version shots as additional check_shots
+    conn_shots = tree_shots.get(connection_tree, [])
+    check_shots = [reference_shot]
+    for s in conn_shots:
+        if s != reference_shot:
+            check_shots.append(s)
+    return connection_tree, accessor, check_shots
 
 
 async def check_worker(
@@ -3198,7 +3206,6 @@ async def check_worker(
     connection_tree = "tcv_shot"
     independent_trees: set[str] = set()
     tree_shots: dict[str, list[int]] = {}
-    fallback_shots: list[int] = []
 
     if isinstance(mdsplus_config, dict):
         connection_tree = mdsplus_config.get("connection_tree", "tcv_shot")
@@ -3223,12 +3230,6 @@ async def check_worker(
                     ]
                     if shots:
                         tree_shots[tree_name] = sorted(shots)
-                for v in versions:
-                    first_shot = v.get("first_shot")
-                    if first_shot and first_shot != state.reference_shot:
-                        fallback_shots.append(first_shot)
-        # Sort descending so we try newest shots first
-        fallback_shots.sort(reverse=True)
 
     # Keep batch size moderate — MDSplus segfaults (core dumps) when
     # too many signals from the same tree are checked in a single process.
@@ -3369,8 +3370,8 @@ async def check_worker(
                     await asyncio.to_thread(release_signal_claim, signal["id"])
                     continue
 
-                # Resolve the correct tree, accessor, and primary shot
-                resolved_tree, resolved_accessor, primary_shot = _resolve_check_tree(
+                # Resolve the correct tree, accessor, and check_shots
+                resolved_tree, resolved_accessor, check_shots = _resolve_check_tree(
                     signal,
                     connection_tree=connection_tree,
                     independent_trees=independent_trees,
@@ -3378,27 +3379,12 @@ async def check_worker(
                     reference_shot=state.reference_shot,
                 )
 
-                # Build check_shots: for independent versioned trees,
-                # check ALL versions. For subtrees, check reference + fallbacks.
-                sig_tree = signal.get("tree_name", "")
-                if sig_tree in independent_trees and sig_tree in tree_shots:
-                    check_shots = tree_shots[sig_tree]
-                else:
-                    check_shots = [primary_shot] + [
-                        s for s in fallback_shots if s != primary_shot
-                    ]
-
                 batch_input.append(
                     {
                         "id": signal["id"],
                         "accessor": resolved_accessor,
                         "tree_name": resolved_tree,
-                        "shot": check_shots[0],
-                        **(
-                            {"fallback_shots": check_shots[1:]}
-                            if len(check_shots) > 1
-                            else {}
-                        ),
+                        "check_shots": check_shots,
                     }
                 )
 
