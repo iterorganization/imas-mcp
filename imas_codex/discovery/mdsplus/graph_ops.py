@@ -106,13 +106,26 @@ def seed_versions(
 def backfill_tree_relationships(facility: str) -> int:
     """Create missing MDSplusTree nodes and IN_TREE relationships.
 
-    Backfills TreeNode→MDSplusTree edges for nodes ingested before
-    IN_TREE relationships were added. Idempotent via MERGE.
+    One-time migration for TreeNodes ingested before IN_TREE relationships
+    were added. Checks cheaply first; skips entirely when nothing is missing.
 
     Returns:
         Number of TreeNodes that gained an IN_TREE relationship.
     """
     with GraphClient() as gc:
+        # Cheap existence check — avoids scanning all TreeNodes on every run
+        check = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility})
+            WHERE n.tree_name IS NOT NULL
+              AND NOT (n)-[:IN_TREE]->(:MDSplusTree)
+            RETURN count(n) > 0 AS needs_backfill
+            """,
+            facility=facility,
+        )
+        if not check or not check[0]["needs_backfill"]:
+            return 0
+
         result = gc.query(
             """
             MATCH (n:TreeNode {facility_id: $facility})
