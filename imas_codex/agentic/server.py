@@ -122,8 +122,181 @@ def _neo4j_error_message(e: Exception) -> str:
 
 _repl_globals: dict[str, Any] | None = None
 _repl_lock = threading.Lock()
-_repl_first_call = True
 _imas_tools_instance = None
+
+
+# =============================================================================
+# API Reference — generated from source function signatures at import time
+# =============================================================================
+
+# Registry entries: (func_name, module_path) for importable functions, or
+# (func_name, None, static_sig) for functions defined inside _init_repl().
+# The module-level _API_REGISTRY intentionally mirrors the category order
+# of _REPL_REGISTRY inside _init_repl() — keep them in sync when adding
+# new functions.
+type _ApiEntry = tuple[str, str] | tuple[str, None, str]
+
+_API_REGISTRY: list[tuple[str, list[_ApiEntry]]] = [
+    (
+        "DOMAIN QUERIES (prefer over raw Cypher)",
+        [
+            ("find_signals", "imas_codex.graph.domain_queries"),
+            ("find_wiki", "imas_codex.graph.domain_queries"),
+            ("wiki_page_chunks", "imas_codex.graph.domain_queries"),
+            ("find_code", "imas_codex.graph.domain_queries"),
+            ("find_imas", "imas_codex.graph.domain_queries"),
+            ("find_tree_nodes", "imas_codex.graph.domain_queries"),
+            ("map_signals_to_imas", "imas_codex.graph.domain_queries"),
+            ("facility_overview", "imas_codex.graph.domain_queries"),
+        ],
+    ),
+    (
+        "QUERY BUILDER",
+        [("graph_search", "imas_codex.graph.query_builder")],
+    ),
+    (
+        "FORMATTERS",
+        [
+            ("as_table", "imas_codex.graph.formatters"),
+            ("as_summary", "imas_codex.graph.formatters"),
+            ("pick", "imas_codex.graph.formatters"),
+        ],
+    ),
+    (
+        "SCHEMA (call before writing Cypher)",
+        [
+            ("schema_for", "imas_codex.graph.schema_context"),
+            ("get_schema", "imas_codex.graph"),
+        ],
+    ),
+    (
+        "GRAPH",
+        [
+            ("query", None, "(cypher: str, **params) -> list[dict]"),
+            (
+                "semantic_search",
+                None,
+                "(text: str, index: str = 'imas_path_embedding', k: int = 5, include_deprecated: bool = False) -> list[dict]",
+            ),
+            ("embed", None, "(text: str) -> list[float]"),
+        ],
+    ),
+    (
+        "FACILITY",
+        [
+            ("get_facility", None, "(facility: str) -> dict"),
+            (
+                "get_exploration_targets",
+                None,
+                "(facility: str, limit: int = 10) -> list[dict]",
+            ),
+            (
+                "get_tree_structure",
+                None,
+                "(facility: str, tree_name: str, version: int | None = None, subtree: str | None = None) -> dict",
+            ),
+        ],
+    ),
+    (
+        "REMOTE",
+        [
+            (
+                "run",
+                None,
+                "(cmd: str, facility: str | None = None, timeout: int = 60) -> str",
+            ),
+            ("check_tools", None, "(facility: str | None = None) -> dict"),
+        ],
+    ),
+    (
+        "IMAS DD",
+        [
+            (
+                "search_imas",
+                None,
+                "(query: str, *, max_results: int = 20, method: str = 'hybrid') -> str",
+            ),
+            ("fetch_imas", None, "(paths: str) -> str"),
+            (
+                "list_imas",
+                None,
+                "(paths: str, leaf_only: bool = True, max_paths: int = 100) -> str",
+            ),
+            ("check_imas", None, "(paths: str) -> str"),
+        ],
+    ),
+    (
+        "COCOS",
+        [
+            (
+                "validate_cocos",
+                None,
+                "(cocos_value: int, data: dict, facility: str | None = None) -> dict",
+            ),
+            (
+                "determine_cocos",
+                None,
+                "(data: dict, facility: str | None = None) -> dict",
+            ),
+            ("cocos_info", None, "(cocos_value: int) -> dict"),
+        ],
+    ),
+]
+
+# Params injected by REPL binding — hidden from the API reference
+_INTERNAL_PARAMS = {"gc", "embed_fn"}
+
+
+def _generate_api_reference() -> str:
+    """Generate compact API reference by introspecting source functions.
+
+    This runs at tool registration time — no REPL init needed.
+    Importable functions are introspected via inspect.signature().
+    Locally-defined functions use static signatures from the registry.
+    """
+    import importlib
+    import inspect
+
+    lines = ["Available functions (with exact signatures):", ""]
+
+    for cat, entries in _API_REGISTRY:
+        lines.append(f"  {cat}:")
+        for entry in entries:
+            if len(entry) == 3:
+                # Static signature for locally-defined function
+                func_name, _, sig_str = entry
+                lines.append(f"    {func_name}{sig_str}")
+            else:
+                # Introspect importable function
+                func_name, module_path = entry
+                try:
+                    mod = importlib.import_module(module_path)
+                    fn = getattr(mod, func_name)
+                    sig = inspect.signature(fn)
+                    params = {
+                        k: v
+                        for k, v in sig.parameters.items()
+                        if k not in _INTERNAL_PARAMS
+                    }
+                    clean_sig = sig.replace(parameters=list(params.values()))
+                    lines.append(f"    {func_name}{clean_sig}")
+                except Exception:
+                    lines.append(f"    {func_name}(...)")
+        lines.append("")
+
+    lines.extend(
+        [
+            "  Also: repl_help() for full reference, reload() to reinitialize",
+            "",
+            "  Tips:",
+            "  - Chain queries in a single python() call",
+            "  - Call schema_for(task='wiki') before writing raw Cypher",
+            "  - Use as_table(pick(results, 'col1', 'col2')) for output",
+            "",
+        ]
+    )
+
+    return "\n".join(lines)
 
 
 def _get_imas_tools(gc: GraphClient | None = None):
@@ -958,56 +1131,110 @@ def _init_repl() -> dict[str, Any]:
     graph_search = _bind_dq(_graph_search)
 
     # =========================================================================
-    # REPL help — auto-generated from introspection
+    # REPL Registry — single source of truth for exposed functions
     # =========================================================================
+    # To add a function: define it above, then add one entry here.
+    # This registry drives: _repl_globals, repl_help(), and the python()
+    # tool docstring. No other place needs updating.
+    #
+    # Format: list of (category, [(name, function), ...])
+    # The name is what agents type in the REPL.
+
+    _REPL_REGISTRY: list[tuple[str, list[tuple[str, Any]]]] = [
+        (
+            "DOMAIN QUERIES (prefer over raw Cypher)",
+            [
+                ("find_signals", find_signals),
+                ("find_wiki", find_wiki),
+                ("wiki_page_chunks", wiki_page_chunks),
+                ("find_code", find_code),
+                ("find_imas", find_imas),
+                ("find_tree_nodes", find_tree_nodes),
+                ("map_signals_to_imas", map_signals_to_imas),
+                ("facility_overview", facility_overview),
+            ],
+        ),
+        (
+            "QUERY BUILDER",
+            [("graph_search", graph_search)],
+        ),
+        (
+            "FORMATTERS",
+            [
+                ("as_table", as_table),
+                ("as_summary", as_summary),
+                ("pick", pick),
+            ],
+        ),
+        (
+            "SCHEMA (call before writing Cypher)",
+            [
+                ("schema_for", _schema_for),
+                ("get_schema", get_schema),
+            ],
+        ),
+        (
+            "GRAPH",
+            [
+                ("query", query),
+                ("semantic_search", semantic_search),
+                ("embed", embed),
+            ],
+        ),
+        (
+            "FACILITY",
+            [
+                ("get_facility", get_facility),
+                ("get_facility_infrastructure", get_facility_infrastructure),
+                ("update_infrastructure", update_infrastructure),
+                ("get_exploration_targets", get_exploration_targets),
+                ("get_tree_structure", get_tree_structure),
+            ],
+        ),
+        (
+            "REMOTE",
+            [
+                ("run", run),
+                ("check_tools", check_tools),
+            ],
+        ),
+        (
+            "IMAS DD",
+            [
+                ("search_imas", search_imas),
+                ("fetch_imas", fetch_imas),
+                ("list_imas", list_imas),
+                ("check_imas", check_imas),
+            ],
+        ),
+        (
+            "COCOS",
+            [
+                ("validate_cocos", validate_cocos),
+                ("determine_cocos", determine_cocos),
+                ("cocos_info", cocos_info),
+            ],
+        ),
+    ]
+
+    # Internal params injected by REPL binding — hidden from API reference
+    _INTERNAL_PARAMS = {"gc", "embed_fn"}
 
     def _generate_repl_help() -> str:
-        """Generate compact API reference from registered functions."""
+        """Generate compact API reference from the registry."""
         import inspect
-
-        # Functions to document, grouped by category
-        categories = {
-            "DOMAIN QUERIES (prefer over raw Cypher)": [
-                find_signals,
-                find_wiki,
-                wiki_page_chunks,
-                find_code,
-                find_imas,
-                find_tree_nodes,
-                map_signals_to_imas,
-                facility_overview,
-            ],
-            "QUERY BUILDER": [graph_search],
-            "FORMATTERS": [as_table, as_summary, pick],
-            "SCHEMA (call before writing Cypher)": [_schema_for, get_schema],
-            "GRAPH": [query, semantic_search, embed],
-            "FACILITY": [
-                get_facility,
-                get_facility_infrastructure,
-                update_infrastructure,
-                get_exploration_targets,
-                get_tree_structure,
-            ],
-            "REMOTE": [run, check_tools],
-            "IMAS DD": [search_imas, fetch_imas, list_imas, check_imas],
-            "COCOS": [validate_cocos, determine_cocos, cocos_info],
-        }
-
-        # Internal params injected by REPL binding
-        _internal = {"gc", "embed_fn"}
 
         lines = ["=== CODEX REPL API ===", ""]
 
-        for cat, funcs in categories.items():
+        for cat, funcs in _REPL_REGISTRY:
             lines.append(f"  {cat}:")
-            for fn in funcs:
-                name = fn.__name__
-                if name.startswith("_"):
-                    name = name.lstrip("_")
+            for name, fn in funcs:
                 try:
                     sig = inspect.signature(fn)
                     params = {
-                        k: v for k, v in sig.parameters.items() if k not in _internal
+                        k: v
+                        for k, v in sig.parameters.items()
+                        if k not in _INTERNAL_PARAMS
                     }
                     clean_sig = sig.replace(parameters=list(params.values()))
                     lines.append(f"    {name}{clean_sig}")
@@ -1035,69 +1262,32 @@ def _init_repl() -> dict[str, Any]:
         return ref
 
     # =========================================================================
-    # Build REPL globals
+    # Build REPL globals from registry
     # =========================================================================
 
-    _repl_globals = {
-        # Core utilities
-        "gc": gc,
-        "query": query,
-        "embed": embed,
-        "semantic_search": semantic_search,
-        # Embedding (lazy - only initialized when used)
-        "EmbeddingBackendError": EmbeddingBackendError,
-        # Facility utilities
-        "get_facility": get_facility,
-        "get_facility_infrastructure": get_facility_infrastructure,
-        "get_exploration_targets": get_exploration_targets,
-        "get_tree_structure": get_tree_structure,
-        # Facility configuration
-        "update_infrastructure": update_infrastructure,
-        "update_metadata": update_metadata,
-        # Tool management (unified local/remote)
-        "run": run,
-        "check_tools": check_tools,
-        "install_tools": install_tools,
-        "setup_tools": setup_tools,
-        "quick_setup": quick_setup,
-        # Code search
-        "search_code": search_code,
-        # Domain query functions
-        "find_signals": find_signals,
-        "find_wiki": find_wiki,
-        "wiki_page_chunks": wiki_page_chunks,
-        "find_imas": find_imas,
-        "find_code": find_code,
-        "find_tree_nodes": find_tree_nodes,
-        "map_signals_to_imas": map_signals_to_imas,
-        "facility_overview": facility_overview,
-        # Query builder and formatters
-        "graph_search": graph_search,
-        "as_table": as_table,
-        "as_summary": as_summary,
-        "pick": pick,
-        # IMAS DD utilities
-        "search_imas": search_imas,
-        "fetch_imas": fetch_imas,
-        "list_imas": list_imas,
-        "check_imas": check_imas,
-        "get_imas_overview": get_imas_overview,
-        # COCOS utilities
-        "validate_cocos": validate_cocos,
-        "determine_cocos": determine_cocos,
-        "cocos_sign_flip_paths": cocos_sign_flip_paths,
-        "cocos_info": cocos_info,
-        # Schema utilities
-        "get_schema": get_schema,
-        "schema_for": _schema_for,
-        # REPL management
-        "reload": _reload_repl,
-        "repl_help": repl_help,
-        # Standard library
-        "subprocess": subprocess,
-        # Result storage
-        "_": None,
-    }
+    _repl_globals = {name: fn for _, funcs in _REPL_REGISTRY for name, fn in funcs}
+    _repl_globals.update(
+        {
+            # Core objects
+            "gc": gc,
+            "EmbeddingBackendError": EmbeddingBackendError,
+            # Additional utilities not in the API reference
+            "update_metadata": update_metadata,
+            "install_tools": install_tools,
+            "setup_tools": setup_tools,
+            "quick_setup": quick_setup,
+            "search_code": search_code,
+            "get_imas_overview": get_imas_overview,
+            "cocos_sign_flip_paths": cocos_sign_flip_paths,
+            # REPL management
+            "reload": _reload_repl,
+            "repl_help": repl_help,
+            # Standard library
+            "subprocess": subprocess,
+            # Result storage
+            "_": None,
+        }
+    )
 
     logger.info(
         "Python REPL initialized with graph, IMAS, COCOS, and facility utilities"
@@ -1130,12 +1320,11 @@ def _reload_repl() -> str:
     Returns:
         Status message
     """
-    global _repl_globals, _imas_tools_instance, _repl_first_call
+    global _repl_globals, _imas_tools_instance
 
     # Clear REPL state
     _repl_globals = None
     _imas_tools_instance = None
-    _repl_first_call = True
 
     # Invalidate imas_codex module cache
     modules_to_reload = [name for name in sys.modules if name.startswith("imas_codex")]
@@ -1210,50 +1399,18 @@ class AgentsServer:
     def _register_tools(self):
         """Register the 4 core tools."""
 
+        # Generate API reference at registration time from the source
+        # functions (no REPL init needed — just inspect.signature on
+        # the unbound originals).
+        api_reference = _generate_api_reference()
+
         # =====================================================================
         # Tool 1: python - Persistent REPL (primary interface)
         # =====================================================================
 
         @self.mcp.tool()
         def python(code: str) -> str:
-            """
-            Execute Python code in a persistent REPL with pre-loaded graph
-            utilities. Variables persist across calls.
-
-            FIRST CALL returns the full API reference automatically.
-            Subsequent calls: use repl_help() to see it again.
-
-            WORKFLOW:
-            1. Use domain query functions (find_wiki, find_signals, etc.)
-               instead of raw Cypher — they handle embeddings and schema.
-            2. For raw Cypher, call schema_for(task='wiki') first to get
-               node labels, properties, relationships, and enums.
-            3. Chain multiple operations in a single python() call.
-            4. Use as_table(pick(results, 'col1', 'col2')) for output.
-
-            KEY FUNCTIONS:
-            - find_wiki, find_signals, find_code, find_imas, find_tree_nodes
-            - wiki_page_chunks, map_signals_to_imas, facility_overview
-            - graph_search (schema-validated, supports filter operators)
-            - schema_for, get_schema (LinkML-derived graph schema)
-            - query, semantic_search, embed (low-level graph access)
-            - as_table, as_summary, pick (formatters)
-            - repl_help() (full API with signatures)
-
-            Args:
-                code: Python code to execute (multi-line supported)
-
-            Returns:
-                stdout output, or repr of last expression if no print
-            """
-            global _repl_first_call
             repl = _get_repl()
-
-            # On first call, prepend orientation with API reference
-            orientation = ""
-            if _repl_first_call:
-                _repl_first_call = False
-                orientation = repl["repl_help"]() + "\n"
 
             stdout_capture = io.StringIO()
 
@@ -1270,13 +1427,30 @@ class AgentsServer:
                 output = stdout_capture.getvalue()
                 if not output:
                     output = "(no output)"
-                return orientation + output
+                return output
 
             except Exception as e:
                 import traceback
 
                 tb = traceback.format_exc()
                 return f"Error: {e}\n\n{tb}"
+
+        # Set the docstring dynamically so it's always in sync with
+        # the actual registered functions (generated from introspection)
+        python.__doc__ = (
+            "Execute Python code in a persistent REPL with pre-loaded "
+            "graph utilities. Variables persist across calls.\n\n"
+            "Chain multiple operations in a single call to minimize "
+            "round-trips.\n\n"
+            "Use domain query functions instead of raw Cypher. For raw "
+            "Cypher, call schema_for(task='wiki') first to get node "
+            "labels, properties, and enums.\n\n"
+            f"{api_reference}\n"
+            "Args:\n"
+            "    code: Python code to execute (multi-line supported)\n\n"
+            "Returns:\n"
+            "    stdout output, or repr of last expression if no print"
+        )
 
         # =====================================================================
         # Tool 2: get_graph_schema - Schema introspection

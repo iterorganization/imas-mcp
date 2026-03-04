@@ -640,7 +640,7 @@ uv run pytest tests/path/to/test.py::test_function  # Specific test
 
 ## Python REPL
 
-The `python()` MCP tool provides a persistent REPL with pre-loaded utilities. The first call **automatically returns the full API reference** with function signatures.
+The `python()` MCP tool provides a persistent REPL with pre-loaded utilities. The tool description includes exact function signatures — use them directly without calling `repl_help()` first.
 
 ### REPL Workflow
 
