@@ -1240,7 +1240,7 @@ def ingest_epochs(
                 WITH v, ep
                 MERGE (t:MDSplusTree {name: ep.tree_name})
                 ON CREATE SET t.facility_id = ep.facility_id
-                MERGE (v)-[:TREE_NAME]->(t)
+                MERGE (v)-[:IN_TREE]->(t)
                 """,
                 epochs=clean_epochs,
             )

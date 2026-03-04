@@ -235,7 +235,7 @@ def ingest_tree_nodes(
             """
             MATCH (n:TreeNode {tree_name: $tree_name})
             MATCH (t:MDSplusTree {name: $tree_name})
-            MERGE (n)-[:TREE_NAME]->(t)
+            MERGE (n)-[:IN_TREE]->(t)
             """,
             tree_name=tree_name,
         )
