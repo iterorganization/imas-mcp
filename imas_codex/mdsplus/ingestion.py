@@ -128,6 +128,11 @@ def ingest_epochs(
         WITH v, epoch
         MATCH (f:Facility {id: epoch.facility_id})
         MERGE (v)-[:AT_FACILITY]->(f)
+        WITH v, epoch, f
+        MERGE (t:MDSplusTree {name: epoch.tree_name})
+        ON CREATE SET t.facility_id = epoch.facility_id
+        MERGE (v)-[:IN_TREE]->(t)
+        MERGE (t)-[:AT_FACILITY]->(f)
     """,
         epochs=records,
     )
@@ -264,6 +269,22 @@ def ingest_super_tree(
         MATCH (f:Facility {id: n.facility_id})
         MERGE (n)-[:AT_FACILITY]->(f)
     """)
+
+    # Create IN_TREE relationships
+    client.query(
+        """
+        MATCH (n:TreeNode)
+        WHERE n.tree_name = $tree_name AND n.facility_id = $facility
+        WITH n
+        MATCH (f:Facility {id: $facility})
+        MERGE (t:MDSplusTree {name: $tree_name})
+        ON CREATE SET t.facility_id = $facility
+        MERGE (t)-[:AT_FACILITY]->(f)
+        MERGE (n)-[:IN_TREE]->(t)
+        """,
+        tree_name=tree_name,
+        facility=facility,
+    )
 
     # Create INTRODUCED_IN relationships
     client.query("""
