@@ -932,8 +932,12 @@ def build_servers_section(
 
     for s in statuses:
         if s.state == ServiceState.healthy:
-            style = "green"
             label = s.detail or "ok"
+            # Flag credit/budget issues even when some models are healthy
+            if "no credit" in label:
+                style = "yellow"
+            else:
+                style = "green"
         elif s.state == ServiceState.unknown:
             # Pending initial check — show grey "pending" instead of "unknown"
             style = "dim"
