@@ -2944,6 +2944,8 @@ async def run_parallel_data_discovery(
     enrich_only: bool = False,
     deadline: float | None = None,
     on_discover_progress: Callable | None = None,
+    on_extract_progress: Callable | None = None,
+    on_promote_progress: Callable | None = None,
     on_enrich_progress: Callable | None = None,
     on_check_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
@@ -3027,7 +3029,7 @@ async def run_parallel_data_discovery(
     # --- Scan workers (unless enrich_only) ---
     if not enrich_only:
         # Seed worker: seeds TreeModelVersions + runs non-MDSplus scanners
-        seed_status = worker_group.create_status("seed_worker_0", group="scan")
+        seed_status = worker_group.create_status("seed_worker_0", group="seed")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
@@ -3042,7 +3044,7 @@ async def run_parallel_data_discovery(
         )
 
         # Epoch worker: independently detects epochs for dynamic trees
-        epoch_status = worker_group.create_status("epoch_worker_0", group="scan")
+        epoch_status = worker_group.create_status("epoch_worker_0", group="seed")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
@@ -3065,14 +3067,14 @@ async def run_parallel_data_discovery(
                     "extract_worker_0",
                     state,
                     lambda: state.stop_requested,
-                    on_progress=on_discover_progress,
+                    on_progress=on_extract_progress or on_discover_progress,
                     status_tracker=extract_status,
                 )
             )
         )
 
         # Units worker: extracts units for ingested trees
-        units_status = worker_group.create_status("units_worker_0", group="extract")
+        units_status = worker_group.create_status("units_worker_0", group="promote")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
@@ -3080,14 +3082,14 @@ async def run_parallel_data_discovery(
                     "units_worker_0",
                     state,
                     lambda: state.stop_requested,
-                    on_progress=on_discover_progress,
+                    on_progress=on_promote_progress or on_discover_progress,
                     status_tracker=units_status,
                 )
             )
         )
 
         # Promote worker: creates FacilitySignals from leaf TreeNodes
-        promote_status = worker_group.create_status("promote_worker_0", group="extract")
+        promote_status = worker_group.create_status("promote_worker_0", group="promote")
         worker_group.add_task(
             asyncio.create_task(
                 supervised_worker(
@@ -3095,7 +3097,7 @@ async def run_parallel_data_discovery(
                     "promote_worker_0",
                     state,
                     lambda: state.stop_requested,
-                    on_progress=on_discover_progress,
+                    on_progress=on_promote_progress or on_discover_progress,
                     status_tracker=promote_status,
                 )
             )

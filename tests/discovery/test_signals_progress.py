@@ -418,10 +418,10 @@ class TestDataProgressDisplay:
         assert "Signal Discovery" in header.plain
 
     def test_header_shows_scan_only(self):
-        """Header shows SCAN ONLY mode."""
+        """Header shows SEED ONLY mode."""
         display = self._display(discover_only=True)
         header = display._build_header()
-        assert "SCAN ONLY" in header.plain
+        assert "SEED ONLY" in header.plain
 
     def test_header_shows_enrich_only(self):
         """Header shows ENRICH ONLY mode."""
@@ -436,13 +436,15 @@ class TestDataProgressDisplay:
         assert "magnetics" in header.plain
 
     def test_pipeline_section_has_all_stages(self):
-        """Pipeline section includes SCAN, ENRICH, CHECK."""
+        """Pipeline section includes SEED, EXTRACT, PROMOTE, ENRICH, CHECK."""
         display = self._display()
         display.state.total_signals = 100
         display.state.signals_enriched = 20
         section = display._build_pipeline_section()
         text = section.plain
-        assert "SCAN" in text
+        assert "SEED" in text
+        assert "EXTRACT" in text
+        assert "PROMOTE" in text
         assert "ENRICH" in text
         assert "CHECK" in text
 
@@ -452,7 +454,7 @@ class TestDataProgressDisplay:
         display.state.total_signals = 100
         section = display._build_pipeline_section()
         text = section.plain
-        assert "SCAN" in text
+        assert "SEED" in text
         # ENRICH and CHECK disabled (not rendered by build_pipeline_section)
 
     def test_pipeline_check_disabled_in_enrich_only(self):
@@ -461,7 +463,7 @@ class TestDataProgressDisplay:
         display.state.total_signals = 100
         section = display._build_pipeline_section()
         text = section.plain
-        assert "SCAN" in text
+        assert "SEED" in text
         assert "ENRICH" in text
 
     def test_pipeline_shows_scan_activity(self):
@@ -610,8 +612,8 @@ class TestDataProgressDisplay:
         # Mock the worker group
         group = MagicMock(spec=SupervisedWorkerGroup)
         group.workers = {
-            "scan_worker_0": WorkerStatus(
-                name="scan_worker_0", group="scan", state=WorkerState.running
+            "seed_worker_0": WorkerStatus(
+                name="seed_worker_0", group="seed", state=WorkerState.running
             ),
             "enrich_worker_0": WorkerStatus(
                 name="enrich_worker_0", group="enrich", state=WorkerState.running
@@ -624,7 +626,7 @@ class TestDataProgressDisplay:
 
         section = display._build_pipeline_section()
         text = section.plain
-        assert "x1" in text  # scan workers
+        assert "x1" in text  # seed workers
         assert "x2" in text  # enrich workers
 
     def test_resources_section_has_time(self):
@@ -683,7 +685,7 @@ class TestDataProgressDisplay:
         text = panel.renderable.plain
         assert "ITER" in text
         assert "magnetics" in text
-        assert "SCAN" in text
+        assert "SEED" in text
         assert "ENRICH" in text
         assert "TIME" in text
 
@@ -693,7 +695,7 @@ class TestDataProgressDisplay:
         display.state.total_signals = 200
         panel = display._build_display()
         text = panel.renderable.plain
-        assert "SCAN ONLY" in text
+        assert "SEED ONLY" in text
 
     def test_display_idle_state(self):
         """Display with no activity shows idle."""
@@ -757,7 +759,9 @@ class TestSummary:
         display.state._run_enrich_cost = 2.50
         summary = display._build_summary()
         text = summary.plain
-        assert "SCAN" in text
+        assert "SEED" in text
+        assert "EXTRACT" in text
+        assert "PROMOTE" in text
         assert "ENRICH" in text
         assert "CHECK" in text
         assert "USAGE" in text

@@ -215,7 +215,15 @@ def signals(
 
         def log_on_scan(msg, stats, results=None):
             if msg != "idle":
-                sig_logger.info(f"SCAN: {msg}")
+                sig_logger.info(f"SEED: {msg}")
+
+        def log_on_extract(msg, stats, results=None):
+            if msg != "idle":
+                sig_logger.info(f"EXTRACT: {msg}")
+
+        def log_on_promote(msg, stats, results=None):
+            if msg != "idle":
+                sig_logger.info(f"PROMOTE: {msg}")
 
         def log_on_enrich(msg, stats, results=None):
             if msg != "idle":
@@ -246,6 +254,8 @@ def signals(
                     num_enrich_workers=enrich_workers,
                     num_check_workers=check_workers,
                     on_discover_progress=log_on_scan,
+                    on_extract_progress=log_on_extract,
+                    on_promote_progress=log_on_promote,
                     on_enrich_progress=log_on_enrich,
                     on_check_progress=log_on_check,
                     stop_event=stop_event,
@@ -337,6 +347,12 @@ def signals(
                     def on_scan(msg, stats, results=None):
                         display.update_scan(msg, stats, results)
 
+                    def on_extract(msg, stats, results=None):
+                        display.update_extract(msg, stats, results)
+
+                    def on_promote(msg, stats, results=None):
+                        display.update_promote(msg, stats, results)
+
                     def on_enrich(msg, stats, results=None):
                         display.update_enrich(msg, stats, results)
 
@@ -361,6 +377,8 @@ def signals(
                             num_enrich_workers=enrich_workers,
                             num_check_workers=check_workers,
                             on_discover_progress=on_scan,
+                            on_extract_progress=on_extract,
+                            on_promote_progress=on_promote,
                             on_enrich_progress=on_enrich,
                             on_check_progress=on_check,
                             on_worker_status=on_worker_status,
