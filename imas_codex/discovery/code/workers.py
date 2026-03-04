@@ -44,7 +44,7 @@ async def scan_worker(
         release_path_file_scan_claim,
     )
     from imas_codex.discovery.code.scanner import (
-        _persist_discovered_files,
+        _persist_code_files,
         async_scan_remote_paths_batch,
     )
     from imas_codex.graph import GraphClient
@@ -109,7 +109,7 @@ async def scan_worker(
 
                 if files:
                     persist_result = await asyncio.to_thread(
-                        _persist_discovered_files,
+                        _persist_code_files,
                         state.facility,
                         files,
                         source_path_id=path_id,
