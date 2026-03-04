@@ -1420,18 +1420,19 @@ async def seed_worker(
     # Check existing graph state to report resumed progress
     existing_versions = get_version_counts(state.facility)
     existing_signals = get_signal_counts(state.facility)
-    existing_total = existing_versions["total"] + existing_signals["total"]
+    existing_total = existing_signals["total"]
 
     if existing_total > 0:
-        state.discover_stats.processed = existing_versions["total"]
+        # Show signal count (not version count) for meaningful display
+        state.discover_stats.processed = existing_total
         if on_progress:
             on_progress(
                 f"resumed: {existing_versions['total']} versions, "
-                f"{existing_signals['total']} signals in graph",
+                f"{existing_total:,} signals in graph",
                 state.discover_stats,
             )
 
-    total_discovered = existing_versions["total"]
+    total_discovered = existing_total
 
     for scanner_type in state.scanner_types:
         if state.stop_requested:
@@ -1664,7 +1665,7 @@ async def epoch_worker(
         return
 
     for tree_name, tree_config in trees_with_epochs:
-        if state.stop_requested:
+        if state.stop_requested or state.deadline_expired:
             break
 
         if on_progress:
@@ -1675,12 +1676,25 @@ async def epoch_worker(
             )
 
         try:
-            epochs = await asyncio.to_thread(
+            # Bound epoch detection to remaining deadline so it doesn't
+            # run for 15+ minutes when the user set --time 1.
+            timeout = None
+            if state.deadline is not None:
+                remaining = state.deadline - time.time()
+                if remaining <= 0:
+                    break
+                timeout = remaining
+
+            coro = asyncio.to_thread(
                 detect_epochs_for_tree,
                 facility=state.ssh_host or state.facility,
                 tree_name=tree_name,
                 tree_config=tree_config,
             )
+            if timeout is not None:
+                epochs = await asyncio.wait_for(coro, timeout=timeout)
+            else:
+                epochs = await coro
 
             if epochs:
                 # Ingest epoch TreeModelVersion nodes
@@ -1716,6 +1730,17 @@ async def epoch_worker(
             else:
                 if on_progress:
                     on_progress(f"{tree_name}: no epochs", state.discover_stats)
+
+        except TimeoutError:
+            logger.info(
+                "Epoch detection for %s timed out (deadline reached)", tree_name
+            )
+            if on_progress:
+                on_progress(
+                    f"{tree_name}: epoch detection skipped (deadline)",
+                    state.discover_stats,
+                )
+            break
 
         except Exception as e:
             logger.error("Epoch detection failed for %s: %s", tree_name, e)
@@ -1768,15 +1793,19 @@ async def mdsplus_extract_worker(
         state.extract_phase.mark_done()
         return
 
-    # Report existing extracted versions for idempotent restart
-    from imas_codex.discovery.mdsplus.graph_ops import get_version_counts
+    # Report existing extracted signals for idempotent restart
+    from imas_codex.discovery.mdsplus.graph_ops import (
+        get_signal_counts as _get_signal_counts,
+        get_version_counts,
+    )
 
-    existing = get_version_counts(state.facility)
-    if existing["ingested"] > 0:
-        state.extract_stats.processed = existing["ingested"]
+    existing_versions = get_version_counts(state.facility)
+    existing_sigs = _get_signal_counts(state.facility)
+    if existing_versions["ingested"] > 0:
+        state.extract_stats.processed = existing_sigs["total"]
         if on_progress:
             on_progress(
-                f"resumed: {existing['ingested']} versions already extracted",
+                f"resumed: {existing_sigs['total']} signals already extracted",
                 state.extract_stats,
             )
 
@@ -3223,6 +3252,11 @@ async def run_parallel_data_discovery(
             lambda: state._scan_phase.done,
             on_worker_status=on_worker_status,
             on_tick=orphan_tick,
+            phases=[
+                state.extract_phase,
+                state.units_phase,
+                state.promote_phase,
+            ],
         )
         state.stop_requested = True
         if stop_watcher and not stop_watcher.done():
@@ -3294,11 +3328,21 @@ async def run_parallel_data_discovery(
     )
 
     # Run supervision loop — handles status updates and clean shutdown
+    # Pass all graph-backed phases so their has_work caches are refreshed
+    # in a background thread, preventing event loop blocking.
+    all_phases = [
+        state.extract_phase,
+        state.units_phase,
+        state.promote_phase,
+        state.enrich_phase,
+        state.check_phase,
+    ]
     await run_supervised_loop(
         worker_group,
         state.should_stop,
         on_worker_status=on_worker_status,
         on_tick=orphan_tick,
+        phases=all_phases,
     )
     state.stop_requested = True
     if stop_watcher and not stop_watcher.done():

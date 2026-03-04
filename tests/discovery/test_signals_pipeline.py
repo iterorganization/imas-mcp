@@ -531,6 +531,10 @@ class TestExtractWorker:
                 "imas_codex.discovery.mdsplus.graph_ops.get_version_counts",
                 return_value={"total": 0, "discovered": 0, "ingested": 0, "failed": 0},
             ),
+            patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
+                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
+            ),
         ):
             await mdsplus_extract_worker(state)
 
