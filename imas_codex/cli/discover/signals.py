@@ -310,7 +310,9 @@ def signals(
 
                         while True:
                             try:
-                                stats = get_data_discovery_stats(facility)
+                                stats = await asyncio.to_thread(
+                                    get_data_discovery_stats, facility
+                                )
                                 if stats:
                                     display.update_from_graph(
                                         total_signals=stats.get("total", 0),
@@ -329,7 +331,7 @@ def signals(
                                 raise
                             except Exception:
                                 pass
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(2.0)
 
                     async def queue_ticker():
                         while True:
