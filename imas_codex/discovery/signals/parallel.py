@@ -486,10 +486,33 @@ def claim_signals_for_enrichment(
 
     Returns signals sorted by tdi_function to enable batching by function.
     Uses claimed_at timeout for orphan recovery (parallel-safe).
+
+    Filters out numbered channel signals (e.g. CHANNEL_006, :003) that are
+    array elements of a parent signal — these don't need individual LLM
+    enrichment. They are marked as skipped with reason 'channel_element'.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     try:
         with GraphClient() as gc:
+            # First skip channel signals in bulk so they don't clog the queue
+            gc.query(
+                """
+                MATCH (s:FacilitySignal {facility_id: $facility})
+                WHERE s.status = $discovered
+                  AND (
+                    s.accessor =~ '.*[_:]CHANNEL_?\\d{2,3}$'
+                    OR s.accessor =~ '.*[_:]\\d{2,3}$'
+                    OR s.name =~ '^\\d{2,3}$'
+                  )
+                SET s.status = $skipped,
+                    s.skip_reason = 'channel_element',
+                    s.claimed_at = null
+                """,
+                facility=facility,
+                discovered=FacilitySignalStatus.discovered.value,
+                skipped=FacilitySignalStatus.skipped.value,
+            )
+
             result = gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
@@ -732,6 +755,8 @@ def mark_signals_checked(
     node, carrying outcome metadata (success, shot, shape, dtype, error).
     Created for BOTH successful and failed data access checks.
 
+    Retries on Neo4j deadlock (DeadlockDetected) up to 3 times.
+
     Expected signal dict keys:
     - id: signal ID
     - data_access: DataAccess ID (creates CHECKED_WITH relationship)
@@ -745,35 +770,48 @@ def mark_signals_checked(
     if not signals:
         return 0
 
-    try:
-        with GraphClient() as gc:
-            gc.query(
-                """
-                UNWIND $signals AS sig
-                MATCH (s:FacilitySignal {id: sig.id})
-                SET s.status = $checked,
-                    s.checked = true,
-                    s.checked_at = datetime(),
-                    s.claimed_at = null
-                WITH s, sig
-                WHERE sig.data_access IS NOT NULL
-                MATCH (da:DataAccess {id: sig.data_access})
-                MERGE (s)-[c:CHECKED_WITH]->(da)
-                SET c.success = sig.success,
-                    c.shot = sig.shot,
-                    c.checked_at = datetime(),
-                    c.shape = sig.shape,
-                    c.dtype = sig.dtype,
-                    c.error = sig.error,
-                    c.error_type = sig.error_type
-                """,
-                signals=signals,
-                checked=FacilitySignalStatus.checked.value,
-            )
-        return len(signals)
-    except Exception as e:
-        logger.warning("Could not mark signals checked: %s", e)
-        return 0
+    import time
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with GraphClient() as gc:
+                gc.query(
+                    """
+                    UNWIND $signals AS sig
+                    MATCH (s:FacilitySignal {id: sig.id})
+                    SET s.status = $checked,
+                        s.checked = true,
+                        s.checked_at = datetime(),
+                        s.claimed_at = null
+                    WITH s, sig
+                    WHERE sig.data_access IS NOT NULL
+                    MATCH (da:DataAccess {id: sig.data_access})
+                    MERGE (s)-[c:CHECKED_WITH]->(da)
+                    SET c.success = sig.success,
+                        c.shot = sig.shot,
+                        c.checked_at = datetime(),
+                        c.shape = sig.shape,
+                        c.dtype = sig.dtype,
+                        c.error = sig.error,
+                        c.error_type = sig.error_type
+                    """,
+                    signals=signals,
+                    checked=FacilitySignalStatus.checked.value,
+                )
+            return len(signals)
+        except Exception as e:
+            if "DeadlockDetected" in str(e) and attempt < max_retries - 1:
+                logger.warning(
+                    "Deadlock on mark_signals_checked (attempt %d/%d), retrying...",
+                    attempt + 1,
+                    max_retries,
+                )
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            logger.warning("Could not mark signals checked: %s", e)
+            return 0
+    return 0
 
 
 def mark_signal_skipped(signal_id: str, reason: str) -> None:
@@ -2672,8 +2710,11 @@ async def check_worker(
         # Sort descending so we try newest shots first
         fallback_shots.sort(reverse=True)
 
-    # Large batch size - signals are grouped by tree/shot on the remote side
-    BATCH_SIZE = 100
+    # Keep batch size moderate — MDSplus segfaults (core dumps) when
+    # too many signals from the same tree are checked in a single process.
+    # The remote script groups signals by (tree_name, shot) so 100 signals
+    # from the same tree all land in one group, overloading MDSplus.
+    BATCH_SIZE = 20
 
     def _get_signal_scanner_type(signal: dict) -> str:
         """Determine which scanner should check this signal."""
@@ -2926,9 +2967,20 @@ async def check_worker(
                         await asyncio.to_thread(release_signal_claim, sig["id"])
                 except subprocess.CalledProcessError as e:
                     stderr = e.stderr[:200] if e.stderr else str(e)
-                    logger.warning(
-                        "Check script failed (exit %d): %s", e.returncode, stderr
-                    )
+                    # Core dumps indicate MDSplus segfault — log clearly
+                    if "dumped core" in stderr or e.returncode < 0:
+                        logger.warning(
+                            "MDSplus core dump checking %d signals (exit %d) — "
+                            "batch released for retry",
+                            len(batch_input),
+                            e.returncode,
+                        )
+                    else:
+                        logger.warning(
+                            "Check script failed (exit %d): %s",
+                            e.returncode,
+                            stderr,
+                        )
                     for sig in batch_input:
                         await asyncio.to_thread(release_signal_claim, sig["id"])
                 except subprocess.TimeoutExpired:
