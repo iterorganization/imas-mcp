@@ -30,6 +30,20 @@ MDSPLUS_PATH_PATTERNS = [
     r'\.get\(["\']\\\\?([^"\']+)["\']\)',
     # MDSplus TdiExecute or TdiCompile
     r'Tdi(?:Execute|Compile)\(["\']([^"\']+)["\']\)',
+    # Python .tdi() method: conn.tdi(r'\results::psi'), tcv.shot(n).tdi(...)
+    r'\.tdi\s*\(\s*r?["\']\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)["\']',
+    # MATLAB tdi() calls: tdi('\results::thomson:te')
+    r"tdi\s*\(\s*['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)['\"]",
+    # MATLAB mdsvalue() calls: mdsvalue('\results::ip')
+    r"mdsvalue\s*\(\s*['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)['\"]",
+    # MATLAB mdsvalue with concatenation: mdsvalue(['\results::ece_lfs:channel_00' int2str(i)])
+    r"mdsvalue\s*\(\s*\[\s*['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)",
+    # Fortran MDS_OPEN/MDS_GET/MDS_VALUE: call MDS_GET('\results::ip')
+    r"MDS_(?:OPEN|GET|VALUE)\s*\(\s*['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)['\"]",
+    # IDL mdsvalue: mdsvalue, '\results::ip'
+    r"mdsvalue\s*,\s*['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)['\"]",
+    # Python tree.getNode: self._MDSTree.getNode(self._root+'::psi')
+    r"getNode\s*\(\s*[^)]*['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)['\"]",
 ]
 
 # TDI function call patterns (tcv_eq, tcv_get, etc.)
@@ -38,6 +52,12 @@ TDI_FUNCTION_PATTERNS = [
     r'tcv_get\(["\']([A-Z_][A-Z0-9_]+)["\']',
     r'tcv_psitbx\(["\']([A-Z_][A-Z0-9_]+)["\']',
     r'tcv_\w+\(["\']([A-Z_][A-Z0-9_]+)["\']',
+    # MATLAB tdi() with TDI function: tdi('tcv_ip()'), tdi('tcv_eq("PSI")')
+    r"tdi\s*\(\s*['\"](\w+)\s*\(",
+    # mdsvalue with TDI function: mdsvalue('tcv_eq("PSI")')
+    r"mdsvalue\s*\(\s*['\"](\w+)\s*\(",
+    # Python .tdi() with TDI function: conn.tdi('tcv_ip()')
+    r"\.tdi\s*\(\s*['\"](\w+)\s*\(",
 ]
 
 # MDSplus path pattern for plain text (wiki pages, docs)
