@@ -331,7 +331,7 @@ async def ingest_files(
     total_to_process = sum(len(docs) for docs in docs_by_language.values())
     stats["files"] = 0
 
-    BATCH_SIZE = 25
+    BATCH_SIZE = 5
 
     processed_files = 0
     for language, documents in docs_by_language.items():
