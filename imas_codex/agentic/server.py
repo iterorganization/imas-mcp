@@ -1,7 +1,13 @@
 """
 Agents MCP Server - Streamlined tools for LLM-driven facility exploration.
 
-This server provides 7 MCP tools organized by purpose:
+This server provides 12 MCP tools organized by purpose:
+
+Unified Search (primary interface):
+- search_signals: Signal search with data access and IMAS enrichment
+- search_docs: Wiki/artifact/image search with cross-links
+- search_code: Code search with data reference enrichment
+- search_imas: IMAS DD search with cluster and facility cross-refs
 
 Graph Operations:
 - get_graph_schema: Schema introspection for query generation
@@ -12,27 +18,30 @@ Facility Infrastructure (Private Data):
 - get_facility_infrastructure: Read private infrastructure data
 - add_exploration_note: Append timestamped exploration note
 
-Legacy/General:
+Configuration:
 - update_facility_config: Read/update facility config (public or private)
-- python: Persistent Python REPL with rich pre-loaded utilities
+- get_discovery_context: Get facility discovery context
 
-The python() REPL provides advanced operations:
+Advanced:
+- python: Persistent Python REPL for custom queries
+
+The python() REPL provides advanced operations not covered by search tools:
 - Graph: query(), semantic_search(), embed()
+- Domain: find_signals(), find_wiki(), find_imas(), find_code(), graph_search()
 - Remote: run(), check_tools() (auto-detects local vs SSH)
 - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
 - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
 - COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
-- Code: search_code()
+
+Use search_* MCP tools for:
+- Common signal, documentation, code, and IMAS lookups
+- Formatted reports with enriched results in one call
 
 Use python() for:
 - Complex multi-step operations requiring state
 - Graph queries with Cypher
 - Chained processing with intermediate logic
 - IMAS/COCOS domain-specific operations
-
-Use dedicated MCP tools for:
-- Single-purpose infrastructure updates
-- Clear, type-safe operations
 - Better discoverability and documentation
 
 REPL state is initialized lazily on first use to avoid import deadlocks.
@@ -138,33 +147,24 @@ def _generate_api_reference() -> str:
     """
     return "\n".join(
         [
-            "Combine ALL related queries in a SINGLE python() call.",
-            "Variables persist across calls, so store results and keep going.",
+            "Use search_signals/search_docs/search_code/search_imas for common lookups.",
+            "Use python() for custom queries not covered by the search tools.",
             "",
-            "Task -> Function:",
-            "  Wiki/docs       -> find_wiki(query, facility=, text_contains=, page_title_contains=, k=10)",
-            "  Wiki full pages  -> wiki_page_chunks(title_contains, facility=, text_contains=, limit=50)",
-            "  Signals          -> find_signals(query, facility=, diagnostic=, physics_domain=, limit=20)",
-            "  IMAS DD          -> find_imas(query) or search_imas(query)",
-            "  Code             -> find_code(query, facility=, limit=10)",
-            "  Tree nodes       -> find_tree_nodes(query, facility=, tree_name=)",
-            "  Signal->IMAS map -> map_signals_to_imas(facility, diagnostic=, physics_domain=)",
-            "  Facility info    -> facility_overview(facility)",
-            "  Flexible query   -> graph_search(label, where={}, semantic=, traverse=[], return_props=[], limit=25)",
-            "  Raw Cypher       -> query(cypher, **params)  (only if no domain function fits)",
-            "  Vector search    -> semantic_search(text, index=, k=5)",
+            "REPL functions (for custom queries in python()):",
+            "  find_wiki(query, facility=, text_contains=, page_title_contains=, k=10)",
+            "  wiki_page_chunks(title_contains, facility=, text_contains=, limit=50)",
+            "  find_signals(query, facility=, diagnostic=, physics_domain=, limit=20)",
+            "  find_imas(query) | find_code(query, facility=, limit=10)",
+            "  find_tree_nodes(query, facility=, tree_name=)",
+            "  map_signals_to_imas(facility, diagnostic=, physics_domain=)",
+            "  facility_overview(facility)",
+            "  graph_search(label, where={}, semantic=, traverse=[], return_props=[], limit=25)",
+            "  query(cypher, **params)  — raw Cypher, only if no domain function fits",
+            "  semantic_search(text, index=, k=5)",
             "",
             "  Format: as_table(pick(results, 'col1', 'col2'))",
             "  Schema: schema_for(task='wiki') before raw Cypher",
             "  Full API: repl_help()",
-            "",
-            "Example — combine wiki + signal search in ONE call:",
-            "  wiki = find_wiki('fishbone instabilities', facility='jet')",
-            "  chunks = wiki_page_chunks('fishbone', facility='jet')",
-            "  signals = find_signals('fishbone', facility='jet')",
-            "  print(as_table(pick(wiki, 'page_title', 'section', 'score')))",
-            "  print(as_table(pick(chunks, 'page_title', 'section', 'text')))",
-            "  print(as_table(pick(signals, 'id', 'description', 'score')))",
             "",
         ]
     )
@@ -1228,7 +1228,11 @@ class AgentsServer:
     import deadlocks that occur when background threads perform imports.
 
     Tools:
-    - python: Persistent REPL with rich utilities (primary interface)
+    - search_signals: Signal search with data access and IMAS enrichment
+    - search_docs: Wiki/artifact/image search with cross-links
+    - search_code: Code search with data reference enrichment
+    - search_imas: IMAS DD search with cluster and facility cross-refs
+    - python: Persistent REPL for custom queries not covered above
     - get_graph_schema: Schema introspection for query generation
     - add_to_graph: Schema-validated node creation with privacy filtering
     - update_facility_config: Read/update facility config (public or private)
@@ -1264,11 +1268,11 @@ class AgentsServer:
         self._register_prompts()
 
         logger.info(
-            f"Agents MCP server ready with 9 tools and {len(self._prompts)} prompts"
+            f"Agents MCP server ready with 12 tools and {len(self._prompts)} prompts"
         )
 
     def _register_tools(self):
-        """Register the 4 core tools."""
+        """Register all MCP tools."""
 
         # Generate API reference at registration time from the source
         # functions (no REPL init needed — just inspect.signature on
@@ -1278,12 +1282,6 @@ class AgentsServer:
         # =====================================================================
         # Tool 1: python - Persistent REPL (primary interface)
         # =====================================================================
-
-        _CHAIN_NUDGE = (
-            "\n---\n"
-            "Tip: combine related queries in a single python() call.\n"
-            "  e.g. results=find_wiki(...); sigs=find_signals(...); print(as_table(pick(results,'page_title','score')))"
-        )
 
         @self.mcp.tool()
         def python(code: str) -> str:
@@ -1304,7 +1302,7 @@ class AgentsServer:
                 output = stdout_capture.getvalue()
                 if not output:
                     output = "(no output)"
-                return output + _CHAIN_NUDGE
+                return output
 
             except Exception as e:
                 import traceback
@@ -1315,9 +1313,11 @@ class AgentsServer:
         # Set the docstring dynamically so it's always in sync with
         # the actual registered functions (generated from introspection)
         python.__doc__ = (
-            "Execute Python in a persistent REPL with pre-loaded graph, "
-            "wiki, signal, and IMAS utilities. Variables persist across "
-            "calls.\n\n"
+            "Execute Python in a persistent REPL for custom graph queries "
+            "and operations not covered by the search_* tools. Variables "
+            "persist across calls.\n\n"
+            "Prefer search_signals/search_docs/search_code/search_imas for "
+            "common lookups — they return formatted reports in one call.\n\n"
             f"{api_reference}\n"
             "Args:\n"
             "    code: Python code to execute (multi-line supported)\n\n"

@@ -640,14 +640,15 @@ uv run pytest tests/path/to/test.py::test_function  # Specific test
 
 ## Python REPL
 
-The `python()` MCP tool provides a persistent REPL with pre-loaded utilities. The tool description includes exact function signatures — use them directly without calling `repl_help()` first.
+The `python()` MCP tool provides a persistent REPL for custom queries not covered by the search tools. Prefer `search_signals`, `search_docs`, `search_code`, and `search_imas` for common lookups — they perform multi-index vector search with graph enrichment and return formatted reports in one call.
 
 ### REPL Workflow
 
-1. **Use domain query functions** (`find_wiki`, `find_signals`, `graph_search`, etc.) instead of raw Cypher. They handle embeddings, schema validation, and relationship traversal internally. Never write raw Cypher when a domain function covers your task.
-2. **Chain operations** in a single `python()` call to minimize round-trips. Each call has overhead.
-3. **For raw Cypher** (only when no domain function fits), call `schema_for(task='wiki')` first to get node labels, properties, relationships, and enums derived from the LinkML schemas. Never guess property names — they are code-generated.
-4. **Format output** with `as_table(pick(results, 'col1', 'col2'))` for structured results.
+1. **Use search_* MCP tools first** for signal, documentation, code, and IMAS lookups. They handle embeddings, multi-index fan-out, enrichment, and formatting automatically.
+2. **Use python() for custom queries** — signal→IMAS mapping, facility overviews, flexible graph_search(), raw Cypher, or chaining multiple domain functions.
+3. **Chain operations** in a single `python()` call to minimize round-trips. Each call has overhead.
+4. **For raw Cypher** (only when no domain function fits), call `schema_for(task='wiki')` first to get node labels, properties, relationships, and enums derived from the LinkML schemas. Never guess property names — they are code-generated.
+5. **Format output** with `as_table(pick(results, 'col1', 'col2'))` for structured results.
 
 ### Schema-First Queries
 
@@ -691,14 +692,22 @@ python("print(schema_for())")        # Graph schema overview
 
 ## Quick Reference
 
+**Primary MCP tools** — use these first, they return formatted reports:
+
+| Task | MCP Tool |
+|------|----------|
+| Signal lookup | `search_signals("plasma current", facility="tcv")` |
+| Documentation | `search_docs("fishbone instabilities", facility="jet")` |
+| Code examples | `search_code("equilibrium reconstruction", facility="tcv")` |
+| IMAS DD paths | `search_imas("electron temperature", facility="tcv")` |
+
+**python() REPL** — for custom queries not covered by the search tools:
+
 | Task | Command |
 |------|---------|
-| Wiki search | `python("print(find_wiki('plasma control', facility='jet'))")` |
 | Wiki keyword | `python("print(find_wiki(text_contains='fishbone'))")` |
 | Page chunks | `python("print(wiki_page_chunks('equilibrium', facility='tcv'))")` |
-| Signal search | `python("print(find_signals('electron density', facility='tcv'))")` |
-| IMAS search | `python("print(search_imas('electron temperature'))")` |
-| Code search | `python("print(find_code('equilibrium', facility='tcv'))")` |
+| Signal→IMAS map | `python("print(map_signals_to_imas(facility='tcv', physics_domain='magnetics'))")` |
 | Graph search | `python("print(graph_search('WikiChunk', where={'text__contains': 'IMAS'}))")` |
 | Format table | `python("print(as_table(find_signals('ip', facility='tcv')))")` |
 | Facility info | `python("print(get_facility('tcv'))")` |
