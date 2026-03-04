@@ -89,9 +89,13 @@ def seed_versions(
                 v.description = rec.description,
                 v.status = rec.status
             WITH v, rec
-            WHERE v.status = rec.status
             MATCH (f:Facility {id: rec.facility_id})
             MERGE (v)-[:AT_FACILITY]->(f)
+            WITH v, rec, f
+            MERGE (t:MDSplusTree {name: rec.tree_name})
+            ON CREATE SET t.facility_id = rec.facility_id
+            MERGE (v)-[:TREE_NAME]->(t)
+            MERGE (t)-[:AT_FACILITY]->(f)
             RETURN count(CASE WHEN v.status = 'discovered' THEN 1 END) AS seeded
             """,
             records=records,
