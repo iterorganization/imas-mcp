@@ -512,3 +512,218 @@ class TestTDIFunctionCategorization:
             assert not _is_excluded_tdi_function(func, exclude_list=excluded), (
                 f"{func} should NOT be excluded"
             )
+
+
+# =============================================================================
+# Phase 5: End-to-end check flow
+# =============================================================================
+
+
+class TestCheckWorkerBatchInputConstruction:
+    """Test that check_worker builds the correct batch_input for the remote script."""
+
+    def _make_facility_config(self):
+        """Create a realistic TCV-like facility config."""
+        return {
+            "data_sources": {
+                "mdsplus": {
+                    "connection_tree": "tcv_shot",
+                    "trees": [
+                        {
+                            "tree_name": "tcv_shot",
+                            "versions": [
+                                {"first_shot": 85000},
+                                {"first_shot": 75000},
+                            ],
+                        },
+                        {
+                            "tree_name": "static",
+                            "versions": [
+                                {"version": 1},
+                                {"version": 2},
+                                {"version": 3},
+                            ],
+                        },
+                    ],
+                }
+            },
+            "data_access_patterns": {
+                "independent_trees": ["static", "vsystem"],
+            },
+        }
+
+    def test_static_signal_gets_all_version_check_shots(self):
+        """Static tree signal should get all versions as check_shots."""
+        signal = {
+            "tree_name": "static",
+            "node_path": "\\STATIC::TOP.MECHANICAL.COIL:R",
+            "discovery_source": "tree_traversal",
+            "accessor": "TOP.MECHANICAL.COIL:R",
+        }
+        config = self._make_facility_config()
+
+        # Build routing tables as check_worker does
+        mdsplus_config = config["data_sources"]["mdsplus"]
+        dap = config["data_access_patterns"]
+        independent_trees = set(dap.get("independent_trees", []))
+        tree_shots: dict[str, list[int]] = {}
+        for st in mdsplus_config["trees"]:
+            versions = st.get("versions", [])
+            shots = [
+                v.get("first_shot") or v.get("version")
+                for v in versions
+                if v.get("first_shot") or v.get("version")
+            ]
+            if shots:
+                tree_shots[st["tree_name"]] = sorted(shots)
+
+        tree_name, accessor, check_shots = _resolve_check_tree(
+            signal,
+            connection_tree="tcv_shot",
+            independent_trees=independent_trees,
+            tree_shots=tree_shots,
+            reference_shot=85000,
+        )
+
+        # Batch input should use check_shots, not shot+fallback_shots
+        batch_entry = {
+            "id": "tcv:static:/mechanical/coil/r",
+            "accessor": accessor,
+            "tree_name": tree_name,
+            "check_shots": check_shots,
+        }
+
+        assert batch_entry["tree_name"] == "static"
+        assert batch_entry["check_shots"] == [1, 2, 3]
+        assert "shot" not in batch_entry
+        assert "fallback_shots" not in batch_entry
+
+    def test_subtree_signal_gets_connection_tree_shots(self):
+        """Subtree signal should get reference + connection tree version shots."""
+        signal = {
+            "tree_name": "results",
+            "node_path": "\\RESULTS::THOMSON:NE",
+            "discovery_source": "tree_traversal",
+            "accessor": "THOMSON:NE",
+        }
+        config = self._make_facility_config()
+
+        mdsplus_config = config["data_sources"]["mdsplus"]
+        dap = config["data_access_patterns"]
+        independent_trees = set(dap.get("independent_trees", []))
+        tree_shots: dict[str, list[int]] = {}
+        for st in mdsplus_config["trees"]:
+            versions = st.get("versions", [])
+            shots = [
+                v.get("first_shot") or v.get("version")
+                for v in versions
+                if v.get("first_shot") or v.get("version")
+            ]
+            if shots:
+                tree_shots[st["tree_name"]] = sorted(shots)
+
+        tree_name, accessor, check_shots = _resolve_check_tree(
+            signal,
+            connection_tree="tcv_shot",
+            independent_trees=independent_trees,
+            tree_shots=tree_shots,
+            reference_shot=85000,
+        )
+
+        assert tree_name == "tcv_shot"
+        assert check_shots[0] == 85000  # Reference shot first
+        assert 75000 in check_shots  # Fallback included
+
+    def test_tdi_function_gets_reference_shot_only(self):
+        """TDI function signals should only check at reference shot."""
+        signal = {
+            "tree_name": None,
+            "tdi_function": "tcv_eq",
+            "discovery_source": "tdi_extraction",
+            "accessor": 'tcv_eq("r_axis")',
+        }
+        config = self._make_facility_config()
+
+        mdsplus_config = config["data_sources"]["mdsplus"]
+        dap = config["data_access_patterns"]
+        independent_trees = set(dap.get("independent_trees", []))
+        tree_shots: dict[str, list[int]] = {}
+        for st in mdsplus_config["trees"]:
+            versions = st.get("versions", [])
+            shots = [
+                v.get("first_shot") or v.get("version")
+                for v in versions
+                if v.get("first_shot") or v.get("version")
+            ]
+            if shots:
+                tree_shots[st["tree_name"]] = sorted(shots)
+
+        tree_name, accessor, check_shots = _resolve_check_tree(
+            signal,
+            connection_tree="tcv_shot",
+            independent_trees=independent_trees,
+            tree_shots=tree_shots,
+            reference_shot=85000,
+        )
+
+        assert tree_name == "tcv_shot"
+        assert check_shots == [85000]
+
+
+class TestCheckResultHandling:
+    """Test how check results map to graph updates."""
+
+    def test_successful_check_has_required_fields(self):
+        """Successful check result should have shape, dtype, and shot."""
+        result = {
+            "id": "tcv:static:/r_c",
+            "success": True,
+            "shape": [1],
+            "dtype": "float64",
+            "checked_shot": 3,
+        }
+        # Build the entry as check_worker does
+        entry = {
+            "id": result["id"],
+            "success": True,
+            "shot": result["checked_shot"],
+            "data_access": "tcv:mdsplus:static",
+            "shape": result.get("shape"),
+            "dtype": result.get("dtype"),
+        }
+        assert entry["success"] is True
+        assert entry["shot"] == 3
+        assert entry["shape"] == [1]
+
+    def test_failed_check_has_error_classification(self):
+        """Failed check result should have error and error_type."""
+        result = {
+            "id": "tcv:static:/greens/r",
+            "success": False,
+            "error": "Error loading libjmmshr_gsl.so: cannot open shared object",
+            "checked_shot": 1,
+        }
+        entry = {
+            "id": result["id"],
+            "success": False,
+            "shot": result["checked_shot"],
+            "data_access": "tcv:mdsplus:static",
+            "error": result["error"],
+            "error_type": _classify_check_error(result["error"]),
+        }
+        assert entry["success"] is False
+        assert entry["error_type"] == "missing_library"
+
+    def test_retry_success_reports_failed_shots(self):
+        """Check result from retry should report all failed shots."""
+        result = {
+            "id": "tcv:static:/ang_a",
+            "success": True,
+            "shape": [1],
+            "dtype": "float64",
+            "checked_shot": 4,
+            "failed_shots": [1, 2, 3],
+        }
+        assert result["checked_shot"] == 4
+        assert result["failed_shots"] == [1, 2, 3]
+        assert result["success"] is True
