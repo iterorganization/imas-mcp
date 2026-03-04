@@ -168,6 +168,8 @@ def _init_repl() -> dict[str, Any]:
 
     logger.info("Initializing Python REPL...")
 
+    from imas_codex.graph.schema_context import schema_for as _schema_for
+
     gc = GraphClient()
 
     # Create encoder with lazy initialization - respects embedding-backend config
@@ -967,6 +969,7 @@ def _init_repl() -> dict[str, Any]:
         "cocos_info": cocos_info,
         # Schema utilities
         "get_schema": get_schema,
+        "schema_for": _schema_for,
         # REPL management
         "reload": _reload_repl,
         # Standard library
@@ -1192,48 +1195,31 @@ class AgentsServer:
         # =====================================================================
 
         @self.mcp.tool()
-        def get_graph_schema() -> dict[str, Any]:
+        def get_graph_schema(
+            scope: str = "overview",
+        ) -> str:
             """
-            Get complete graph schema for Cypher query generation.
+            Get graph schema context for Cypher query generation.
 
-            Returns node labels with all properties, enums with valid values,
-            relationship types, vector indexes, and private field annotations.
-            Call this before writing Cypher queries in the python() REPL.
+            Returns compact, task-relevant schema in text format. Use scope to
+            get only the schema slice you need, reducing token usage.
+
+            Args:
+                scope: One of "overview" (compact summary of all labels),
+                       "signals", "wiki", "imas", "code", "facility", "trees"
+                       (detailed schema for that domain).
 
             Returns:
-                Schema dict with node_labels, enums, relationship_types,
-                vector_indexes, notes
+                Compact text schema context for LLM consumption.
+
+            Examples:
+                get_graph_schema()  # Overview of all labels
+                get_graph_schema("signals")  # Signal-related schema
+                get_graph_schema("imas")  # IMAS DD schema
             """
-            schema = get_schema()
+            from imas_codex.graph.schema_context import schema_for
 
-            node_labels = {}
-            for label in schema.node_labels:
-                node_labels[label] = {
-                    "identifier": schema.get_identifier(label),
-                    "description": schema.get_class_description(label),
-                    "properties": schema.get_all_slots(label),
-                    "private_fields": schema.get_private_slots(label),
-                }
-
-            # Derive vector indexes from all schemas (facility + DD)
-            from imas_codex.graph.client import EXPECTED_VECTOR_INDEXES
-
-            vector_indexes = {
-                idx_name: {"label": label, "property": prop}
-                for idx_name, label, prop in EXPECTED_VECTOR_INDEXES
-            }
-
-            return {
-                "node_labels": node_labels,
-                "enums": schema.get_enums(),
-                "relationship_types": schema.relationship_types,
-                "vector_indexes": vector_indexes,
-                "notes": {
-                    "private_fields": "Fields with is_private:true are never stored in graph",
-                    "mutations": "Use add_to_graph() tool for writes, or query() for reads in python REPL",
-                    "semantic_search": "Use semantic_search(text, index, k) with any index from vector_indexes",
-                },
-            }
+            return schema_for(task=scope)
 
         # =====================================================================
         # Tool 3: add_to_graph - Schema-validated writes
