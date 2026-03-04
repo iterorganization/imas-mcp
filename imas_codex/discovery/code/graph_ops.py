@@ -462,7 +462,9 @@ def has_pending_enrich_work(facility: str) -> bool:
         return result[0]["has_work"] if result else False
 
 
-def has_pending_code_work(facility: str, min_score: float = 0.75) -> bool:
+def has_pending_code_work(
+    facility: str, min_score: float = 0.75, max_line_count: int = 10000
+) -> bool:
     """Check if there are scored code files needing ingestion."""
     with GraphClient() as gc:
         result = gc.query(
@@ -471,10 +473,12 @@ def has_pending_code_work(facility: str, min_score: float = 0.75) -> bool:
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NOT NULL
               AND sf.interest_score >= $min_score
+              AND coalesce(sf.line_count, 0) <= $max_line_count
             RETURN count(sf) > 0 AS has_work
             """,
             facility=facility,
             min_score=min_score,
+            max_line_count=max_line_count,
         )
         return result[0]["has_work"] if result else False
 
