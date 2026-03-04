@@ -2,7 +2,8 @@
 
 Pure functions that take structured query results and produce
 formatted text reports for agent consumption. Each formatter
-targets ~4000 tokens max output.
+targets ~8000 tokens max output — rich enough that agents can
+answer directly without follow-up REPL queries.
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ def format_signals_report(
 
             desc = sig.get("description") or ""
             if desc:
-                parts.append(f"  {_truncate(desc, 200)}")
+                parts.append(f"  {_truncate(desc, 400)}")
 
             # Metadata line
             meta_parts: list[str] = []
@@ -87,7 +88,7 @@ def format_signals_report(
                 connection = sig.get("connection_template")
                 if connection:
                     parts.append(f"    {connection}")
-                parts.append(f"    {_truncate(access_template, 300)}")
+                parts.append(f"    {_truncate(access_template, 500)}")
 
             # IMAS mapping section
             imas_path = sig.get("imas_path")
@@ -95,7 +96,7 @@ def format_signals_report(
                 parts.append(f"\n  **IMAS mapping**: {imas_path}")
                 imas_docs = sig.get("imas_docs")
                 if imas_docs:
-                    parts.append(f'    "{_truncate(imas_docs, 150)}"')
+                    parts.append(f'    "{_truncate(imas_docs, 300)}"')
                 imas_unit = sig.get("imas_unit")
                 if imas_unit:
                     parts.append(f"    Unit: {imas_unit}")
@@ -185,7 +186,7 @@ def format_docs_report(
                 parts.append(f"**Section: {section}**{score_str}")
 
                 text = chunk.get("text") or ""
-                parts.append(f"  {_truncate(text, 200)}")
+                parts.append(f"  {_truncate(text, 800)}")
 
                 # Cross-links
                 linked_signals = chunk.get("linked_signals") or []
@@ -204,15 +205,17 @@ def format_docs_report(
 
     if artifacts:
         parts.append(f"\n## Related Documents ({len(artifacts)} items)")
-        for art in artifacts[:5]:
+        for art in artifacts[:15]:
             title = art.get("title") or art.get("id", "?")
             page = art.get("page_title") or ""
             desc = art.get("description") or ""
-            line = f'  - "{title}"'
+            score = scores.get(art.get("id", ""))
+            score_str = f" [score: {score:.2f}]" if score is not None else ""
+            line = f'  - "{title}"{score_str}'
             if page:
                 line += f' — from "{page}"'
             if desc:
-                line += f" ({_truncate(desc, 80)})"
+                line += f" ({_truncate(desc, 300)})"
             parts.append(line)
 
     return "\n".join(parts)
@@ -256,7 +259,7 @@ def format_code_report(
 
         text = chunk.get("text") or ""
         if text:
-            parts.append(f"  ```python\n  {_truncate(text, 500)}\n  ```")
+            parts.append(f"  ```python\n  {_truncate(text, 1000)}\n  ```")
 
         # Data references
         data_refs = chunk.get("data_refs") or []
@@ -332,7 +335,7 @@ def format_imas_report(
 
             doc = p.get("documentation") or ""
             if doc:
-                parts.append(f'  "{_truncate(doc, 150)}"')
+                parts.append(f'  "{_truncate(doc, 300)}"')
 
             # Metadata line
             meta_parts: list[str] = []

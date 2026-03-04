@@ -241,7 +241,10 @@ def _search_docs(
         scores.update(artifact_scores)
 
         if not chunk_ids and not artifact_results:
-            return f"No documentation found for '{query}' at {facility}."
+            return (
+                f"No documentation found for '{query}' at {facility}. "
+                "Try search_signals() or search_code() instead."
+            )
 
         # Step 3: Enrich chunks with cross-links
         enriched_chunks = []
@@ -388,7 +391,10 @@ def _search_code(
 
         if not chunk_ids:
             facility_msg = f" at {facility}" if facility else ""
-            return f"No code examples found for '{query}'{facility_msg}."
+            return (
+                f"No code examples found for '{query}'{facility_msg}. "
+                "Try search_docs() or search_signals() instead."
+            )
 
         # Step 2: Enrich with data references and directory context
         enriched = _enrich_code_chunks(gc, chunk_ids)
@@ -449,7 +455,7 @@ def _enrich_code_chunks(
         OPTIONAL MATCH (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip:IMASPath)
         OPTIONAL MATCH (dr)-[:CALLS_TDI_FUNCTION]->(tdi:TDIFunction)
         OPTIONAL MATCH (cf)-[:IN_DIRECTORY]->(fp:FacilityPath)
-        RETURN cc.id AS id, substring(cc.text, 0, 500) AS text,
+        RETURN cc.id AS id, substring(cc.text, 0, 1000) AS text,
                cc.function_name AS function_name, ce.source_file AS source_file,
                cf.facility_id AS facility_id,
                collect(DISTINCT {type: dr.ref_type, raw: dr.raw_string,
@@ -505,7 +511,10 @@ def _search_imas(
         scores.update(cluster_scores)
 
         if not path_ids and not cluster_results:
-            return f"No IMAS paths found for '{query}'."
+            return (
+                f"No IMAS paths found for '{query}'. "
+                "Try search_docs() or search_signals() instead."
+            )
 
         # Step 3: Enrich paths
         enriched_paths = []
