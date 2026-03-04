@@ -269,6 +269,19 @@ class TestSeedWorker:
             facility=FACILITY,
             ssh_host=SSH_HOST,
             scanner_types=["mdsplus"],
+            facility_config=FACILITY_CONFIG,
+            initial_version_counts={
+                "total": 0,
+                "discovered": 0,
+                "ingested": 0,
+                "failed": 0,
+            },
+            initial_signal_counts={
+                "total": 0,
+                "discovered": 0,
+                "enriched": 0,
+                "checked": 0,
+            },
             cost_limit=10.0,
         )
 
@@ -279,22 +292,10 @@ class TestSeedWorker:
 
         with (
             patch(
-                "imas_codex.discovery.base.facility.get_facility",
-                return_value=FACILITY_CONFIG,
-            ),
-            patch(
                 "imas_codex.discovery.mdsplus.graph_ops.seed_versions",
                 return_value=3,
             ) as mock_seed,
             patch("imas_codex.graph.GraphClient") as mock_gc_class,
-            patch(
-                "imas_codex.discovery.mdsplus.graph_ops.get_version_counts",
-                return_value={"total": 0, "discovered": 0, "ingested": 0, "failed": 0},
-            ),
-            patch(
-                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
-                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
-            ),
         ):
             mock_gc = MagicMock()
             mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
@@ -318,28 +319,29 @@ class TestSeedWorker:
             facility=FACILITY,
             ssh_host=SSH_HOST,
             scanner_types=["mdsplus"],
+            facility_config=FACILITY_CONFIG,
+            initial_version_counts={
+                "total": 0,
+                "discovered": 0,
+                "ingested": 0,
+                "failed": 0,
+            },
+            initial_signal_counts={
+                "total": 0,
+                "discovered": 0,
+                "enriched": 0,
+                "checked": 0,
+            },
             cost_limit=10.0,
             reference_shot=5000,  # Provide reference shot
         )
 
         with (
             patch(
-                "imas_codex.discovery.base.facility.get_facility",
-                return_value=FACILITY_CONFIG,
-            ),
-            patch(
                 "imas_codex.discovery.mdsplus.graph_ops.seed_versions",
                 return_value=1,
             ) as mock_seed,
             patch("imas_codex.graph.GraphClient") as mock_gc_class,
-            patch(
-                "imas_codex.discovery.mdsplus.graph_ops.get_version_counts",
-                return_value={"total": 0, "discovered": 0, "ingested": 0, "failed": 0},
-            ),
-            patch(
-                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
-                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
-            ),
         ):
             mock_gc = MagicMock()
             mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
@@ -380,11 +382,9 @@ class TestEpochWorker:
         def on_progress(msg, stats, results=None):
             progress_calls.append(msg)
 
+        state.facility_config = FACILITY_CONFIG
+
         with (
-            patch(
-                "imas_codex.discovery.base.facility.get_facility",
-                return_value=FACILITY_CONFIG,
-            ),
             patch(
                 "imas_codex.discovery.mdsplus.epochs.detect_epochs_for_tree",
                 return_value=mock_epochs,
@@ -426,12 +426,9 @@ class TestEpochWorker:
             cost_limit=10.0,
             reference_shot=5000,
         )
+        state.facility_config = config_all_static
 
-        with patch(
-            "imas_codex.discovery.base.facility.get_facility",
-            return_value=config_all_static,
-        ):
-            await epoch_worker(state)
+        await epoch_worker(state)
 
         assert state.epoch_phase.done
 
@@ -446,12 +443,9 @@ class TestEpochWorker:
             scanner_types=["tdi"],  # No mdsplus
             cost_limit=10.0,
         )
+        state.facility_config = FACILITY_CONFIG
 
-        with patch(
-            "imas_codex.discovery.base.facility.get_facility",
-            return_value=FACILITY_CONFIG,
-        ):
-            await epoch_worker(state)
+        await epoch_worker(state)
 
         assert state.epoch_phase.done
 
@@ -504,11 +498,21 @@ class TestExtractWorker:
         ):
             return _make_tree_nodes(tree_name, shot)
 
+        state.facility_config = FACILITY_CONFIG
+        state.initial_version_counts = {
+            "total": 0,
+            "discovered": 0,
+            "ingested": 0,
+            "failed": 0,
+        }
+        state.initial_signal_counts = {
+            "total": 0,
+            "discovered": 0,
+            "enriched": 0,
+            "checked": 0,
+        }
+
         with (
-            patch(
-                "imas_codex.discovery.base.facility.get_facility",
-                return_value=FACILITY_CONFIG,
-            ),
             patch(
                 "imas_codex.discovery.mdsplus.graph_ops.claim_version_for_extraction_facility",
                 side_effect=mock_claim,
@@ -526,14 +530,6 @@ class TestExtractWorker:
             ),
             patch(
                 "imas_codex.discovery.mdsplus.graph_ops.mark_version_extracted",
-            ),
-            patch(
-                "imas_codex.discovery.mdsplus.graph_ops.get_version_counts",
-                return_value={"total": 0, "discovered": 0, "ingested": 0, "failed": 0},
-            ),
-            patch(
-                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
-                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
             ),
         ):
             await mdsplus_extract_worker(state)
@@ -570,6 +566,13 @@ class TestPromoteWorker:
             state.promote_phase.mark_done()
             return None
 
+        state.initial_signal_counts = {
+            "total": 0,
+            "discovered": 0,
+            "enriched": 0,
+            "checked": 0,
+        }
+
         with (
             patch(
                 "imas_codex.discovery.mdsplus.graph_ops.claim_tree_for_promote",
@@ -578,10 +581,6 @@ class TestPromoteWorker:
             patch(
                 "imas_codex.discovery.mdsplus.graph_ops.promote_leaf_nodes_to_signals",
                 return_value=25,
-            ),
-            patch(
-                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
-                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
             ),
         ):
             # Suppress TDI linkage import

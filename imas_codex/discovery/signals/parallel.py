@@ -85,6 +85,13 @@ class DataDiscoveryState:
     facility: str
     ssh_host: str | None = None
 
+    # Pre-fetched facility config (avoids sync get_facility() in workers)
+    facility_config: dict = field(default_factory=dict)
+
+    # Pre-fetched graph counts (avoids sync graph queries in workers)
+    initial_version_counts: dict = field(default_factory=dict)
+    initial_signal_counts: dict = field(default_factory=dict)
+
     # Data source configuration
     reference_shot: int | None = None
     scanner_types: list[str] = field(default_factory=list)
@@ -1405,29 +1412,26 @@ async def seed_worker(
     Idempotent: uses MERGE so re-runs detect existing work. Reports
     both new and pre-existing items so the display reflects total state.
     """
-    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.mdsplus.graph_ops import (
-        get_signal_counts,
-        get_version_counts,
         seed_versions,
     )
     from imas_codex.discovery.signals.scanners.base import get_scanner
 
-    facility_config = get_facility(state.facility)
+    facility_config = state.facility_config
     data_sources = facility_config.get("data_sources", {})
     ssh_host = state.ssh_host or facility_config.get("ssh_host", state.facility)
 
-    # Check existing graph state to report resumed progress
-    existing_versions = get_version_counts(state.facility)
-    existing_signals = get_signal_counts(state.facility)
-    existing_total = existing_signals["total"]
+    # Use pre-fetched graph state to report resumed progress
+    existing_versions = state.initial_version_counts
+    existing_signals = state.initial_signal_counts
+    existing_total = existing_signals.get("total", 0)
 
     if existing_total > 0:
         # Show signal count (not version count) for meaningful display
         state.discover_stats.processed = existing_total
         if on_progress:
             on_progress(
-                f"resumed: {existing_versions['total']} versions, "
+                f"resumed: {existing_versions.get('total', 0)} versions, "
                 f"{existing_total:,} signals in graph",
                 state.discover_stats,
             )
@@ -1468,8 +1472,12 @@ async def seed_worker(
                         ver_list = [state.reference_shot]
 
                     if ver_list:
-                        seeded = seed_versions(
-                            state.facility, sub_name, ver_list, versions
+                        seeded = await asyncio.to_thread(
+                            seed_versions,
+                            state.facility,
+                            sub_name,
+                            ver_list,
+                            versions,
                         )
                         total_discovered += seeded
                         state.discover_stats.processed += seeded
@@ -1505,22 +1513,26 @@ async def seed_worker(
             primary_tree = connection_tree or first_tree
             if primary_tree:
                 try:
-                    with GraphClient() as gc:
-                        gc.query(
-                            """
-                            MERGE (da:DataAccess {id: $id})
-                            SET da.facility_id = $facility,
-                                da.method_type = 'mdsplus',
-                                da.library = 'MDSplus',
-                                da.access_type = 'local',
-                                da.data_source = 'mdsplus'
-                            WITH da
-                            MATCH (f:Facility {id: $facility})
-                            MERGE (da)-[:AT_FACILITY]->(f)
-                            """,
-                            id=f"{state.facility}:mdsplus:tree_tdi",
-                            facility=state.facility,
-                        )
+
+                    def _create_mdsplus_da(_facility: str) -> None:
+                        with GraphClient() as gc:
+                            gc.query(
+                                """
+                                MERGE (da:DataAccess {id: $id})
+                                SET da.facility_id = $facility,
+                                    da.method_type = 'mdsplus',
+                                    da.library = 'MDSplus',
+                                    da.access_type = 'local',
+                                    da.data_source = 'mdsplus'
+                                WITH da
+                                MATCH (f:Facility {id: $facility})
+                                MERGE (da)-[:AT_FACILITY]->(f)
+                                """,
+                                id=f"{_facility}:mdsplus:tree_tdi",
+                                facility=_facility,
+                            )
+
+                    await asyncio.to_thread(_create_mdsplus_da, state.facility)
                 except Exception as e:
                     logger.warning("Failed to create MDSplus DataAccess: %s", e)
 
@@ -1555,27 +1567,40 @@ async def seed_worker(
                 state.wiki_context.update(result.wiki_context)
 
             if result.signals:
-                count = ingest_discovered_signals(
-                    [s.model_dump(exclude_none=True) for s in result.signals]
+                count = await asyncio.to_thread(
+                    ingest_discovered_signals,
+                    [s.model_dump(exclude_none=True) for s in result.signals],
                 )
                 total_discovered += count
                 state.discover_stats.processed += count
 
                 if result.data_access:
                     try:
-                        with GraphClient() as gc:
-                            gc.query(
-                                """
-                                MERGE (da:DataAccess {id: $id})
-                                SET da += $props
-                                WITH da
-                                MATCH (f:Facility {id: $facility})
-                                MERGE (da)-[:AT_FACILITY]->(f)
-                                """,
-                                id=result.data_access.id,
-                                props=result.data_access.model_dump(exclude_none=True),
-                                facility=state.facility,
-                            )
+                        da = result.data_access
+
+                        def _ingest_da(
+                            _da_id: str, _props: dict, _facility: str
+                        ) -> None:
+                            with GraphClient() as gc:
+                                gc.query(
+                                    """
+                                    MERGE (da:DataAccess {id: $id})
+                                    SET da += $props
+                                    WITH da
+                                    MATCH (f:Facility {id: $facility})
+                                    MERGE (da)-[:AT_FACILITY]->(f)
+                                    """,
+                                    id=_da_id,
+                                    props=_props,
+                                    facility=_facility,
+                                )
+
+                        await asyncio.to_thread(
+                            _ingest_da,
+                            da.id,
+                            da.model_dump(exclude_none=True),
+                            state.facility,
+                        )
                     except Exception as e:
                         logger.warning(
                             "Failed to ingest DataAccess for %s: %s",
@@ -1631,11 +1656,10 @@ async def epoch_worker(
     Runs independently from seed — can take 15+ minutes for large trees.
     Seeds additional TreeModelVersion nodes as epochs are detected.
     """
-    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.mdsplus.epochs import detect_epochs_for_tree
     from imas_codex.discovery.mdsplus.graph_ops import seed_versions
 
-    facility_config = get_facility(state.facility)
+    facility_config = state.facility_config
     data_sources = facility_config.get("data_sources", {})
     mdsplus_config = data_sources.get("mdsplus", {})
     if not isinstance(mdsplus_config, dict):
@@ -1698,7 +1722,8 @@ async def epoch_worker(
 
             if epochs:
                 # Ingest epoch TreeModelVersion nodes
-                ingest_epochs(
+                await asyncio.to_thread(
+                    ingest_epochs,
                     epochs,
                     data_access_id=f"{state.facility}:mdsplus:tree_tdi",
                     reference_shot=state.reference_shot,
@@ -1706,7 +1731,8 @@ async def epoch_worker(
                 # Also seed versions from detected epochs for extraction
                 epoch_versions = [e["version"] for e in epochs if "version" in e]
                 if epoch_versions:
-                    seed_versions(
+                    await asyncio.to_thread(
+                        seed_versions,
                         state.facility,
                         tree_name,
                         epoch_versions,
@@ -1765,7 +1791,6 @@ async def mdsplus_extract_worker(
     Claims TreeModelVersion nodes with status=discovered across ALL trees,
     runs SSH extraction, and ingests TreeNodes into the graph.
     """
-    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.mdsplus.graph_ops import (
         claim_version_for_extraction_facility,
         mark_version_extracted,
@@ -1777,7 +1802,7 @@ async def mdsplus_extract_worker(
         merge_version_results,
     )
 
-    facility_config = get_facility(state.facility)
+    facility_config = state.facility_config
     data_sources = facility_config.get("data_sources", {})
     mdsplus_config = data_sources.get("mdsplus", {})
     node_usages = None
@@ -1794,18 +1819,13 @@ async def mdsplus_extract_worker(
         return
 
     # Report existing extracted signals for idempotent restart
-    from imas_codex.discovery.mdsplus.graph_ops import (
-        get_signal_counts as _get_signal_counts,
-        get_version_counts,
-    )
-
-    existing_versions = get_version_counts(state.facility)
-    existing_sigs = _get_signal_counts(state.facility)
-    if existing_versions["ingested"] > 0:
-        state.extract_stats.processed = existing_sigs["total"]
+    existing_versions = state.initial_version_counts
+    existing_sigs = state.initial_signal_counts
+    if existing_versions.get("ingested", 0) > 0:
+        state.extract_stats.processed = existing_sigs.get("total", 0)
         if on_progress:
             on_progress(
-                f"resumed: {existing_sigs['total']} signals already extracted",
+                f"resumed: {existing_sigs.get('total', 0)} signals already extracted",
                 state.extract_stats,
             )
 
@@ -1871,10 +1891,14 @@ async def mdsplus_extract_worker(
             node_count = ver_data.get("node_count", 0)
 
             merged = merge_version_results([data])
-            from imas_codex.graph import GraphClient as GC2
 
-            with GC2() as client:
-                ingest_static_tree(client, state.facility, merged)
+            def _ingest_tree(_facility: str, _merged: dict) -> None:
+                from imas_codex.graph import GraphClient as GC2
+
+                with GC2() as client:
+                    ingest_static_tree(client, _facility, _merged)
+
+            await asyncio.to_thread(_ingest_tree, state.facility, merged)
 
             await asyncio.to_thread(mark_version_extracted, version_id, node_count)
             state.extract_stats.processed += 1
@@ -2030,11 +2054,9 @@ async def mdsplus_promote_worker(
         state.promote_phase.mark_done()
         return
 
-    # Report existing promoted signals for idempotent restart
-    from imas_codex.discovery.mdsplus.graph_ops import get_signal_counts
-
-    existing = get_signal_counts(state.facility)
-    if existing["total"] > 0:
+    # Report existing promoted signals for idempotent restart (pre-fetched)
+    existing = state.initial_signal_counts
+    if existing.get("total", 0) > 0:
         state.promote_stats.processed = existing["total"]
         if on_progress:
             on_progress(
@@ -2722,11 +2744,10 @@ async def check_worker(
     """
     from collections import defaultdict
 
-    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.signals.scanners.base import get_scanner
     from imas_codex.graph.models import FacilitySignal as FacilitySignalModel
 
-    facility_config = get_facility(state.facility)
+    facility_config = state.facility_config
     data_sources = facility_config.get("data_sources", {})
 
     # Build fallback shots from versioned tree epochs (operational phases)
@@ -3102,35 +3123,56 @@ async def run_parallel_data_discovery(
     """
     start_time = time.time()
 
-    # Get facility config for defaults
-    if not ssh_host:
+    # Pre-fetch all shared data in a background thread so the event loop
+    # stays free for display ticking.  Every worker used to call
+    # get_facility() + graph count queries synchronously at startup,
+    # blocking the event loop for 30-60 s on remote Neo4j.
+    def _preflight(
+        _facility: str, _ssh_host: str | None, _scanner_types: list[str] | None
+    ) -> tuple[dict, str | None, list[str], dict, dict]:
         from imas_codex.discovery.base.facility import get_facility
-
-        config = get_facility(facility)
-        ssh_host = config.get("ssh_host", facility)
-
-    # Reset orphaned claims
-    reset_transient_signals(facility)
-
-    # Ensure Facility node exists so AT_FACILITY relationships don't fail
-    from imas_codex.graph import GraphClient
-
-    with GraphClient() as gc:
-        gc.ensure_facility(facility)
-
-    # Auto-detect scanner types if not specified
-    if not scanner_types:
+        from imas_codex.discovery.mdsplus.graph_ops import (
+            get_signal_counts,
+            get_version_counts,
+        )
         from imas_codex.discovery.signals.scanners.base import (
             get_scanners_for_facility,
         )
+        from imas_codex.graph import GraphClient as _GC
 
-        scanner_instances = get_scanners_for_facility(facility)
-        scanner_types = [s.scanner_type for s in scanner_instances]
+        config = get_facility(_facility)
+        if not _ssh_host:
+            _ssh_host = config.get("ssh_host", _facility)
+
+        reset_transient_signals(_facility)
+
+        with _GC() as gc:
+            gc.ensure_facility(_facility)
+
+        if not _scanner_types:
+            scanner_instances = get_scanners_for_facility(_facility)
+            _scanner_types = [s.scanner_type for s in scanner_instances]
+
+        version_counts = get_version_counts(_facility)
+        signal_counts = get_signal_counts(_facility)
+
+        return config, _ssh_host, _scanner_types, version_counts, signal_counts
+
+    (
+        facility_config,
+        ssh_host,
+        scanner_types,
+        initial_version_counts,
+        initial_signal_counts,
+    ) = await asyncio.to_thread(_preflight, facility, ssh_host, scanner_types)
 
     # Initialize state
     state = DataDiscoveryState(
         facility=facility,
         ssh_host=ssh_host,
+        facility_config=facility_config,
+        initial_version_counts=initial_version_counts,
+        initial_signal_counts=initial_signal_counts,
         reference_shot=reference_shot,
         scanner_types=scanner_types,
         tdi_path=tdi_path,
