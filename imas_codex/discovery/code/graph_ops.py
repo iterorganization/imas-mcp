@@ -462,7 +462,7 @@ def has_pending_enrich_work(facility: str) -> bool:
         return result[0]["has_work"] if result else False
 
 
-def has_pending_code_work(facility: str, min_score: float = 0.0) -> bool:
+def has_pending_code_work(facility: str, min_score: float = 0.75) -> bool:
     """Check if there are scored code files needing ingestion."""
     with GraphClient() as gc:
         result = gc.query(

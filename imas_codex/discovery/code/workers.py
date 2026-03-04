@@ -387,11 +387,12 @@ async def score_worker(
 def _claim_code_files_for_ingestion(
     facility: str,
     limit: int = 20,
-    min_score: float = 0.0,
+    min_score: float = 0.75,
 ) -> list[dict[str, Any]]:
     """Claim scored CodeFiles for ingestion.
 
-    Claims CodeFiles with status='discovered' that have been scored.
+    Claims CodeFiles with status='discovered' that have been scored
+    above the minimum interest score threshold (default: 0.75).
     """
     from imas_codex.discovery.base.claims import DEFAULT_CLAIM_TIMEOUT_SECONDS
     from imas_codex.graph import GraphClient
