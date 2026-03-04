@@ -1837,6 +1837,7 @@ class AgentsServer:
         from imas_codex.agentic.search_tools import (
             _search_code,
             _search_docs,
+            _search_imas,
             _search_signals,
         )
 
@@ -1924,6 +1925,41 @@ class AgentsServer:
                 and directory context.
             """
             return _search_code(query, facility=facility, k=k)
+
+        @self.mcp.tool()
+        def search_imas(
+            query: str,
+            ids_filter: str | None = None,
+            facility: str | None = None,
+            include_version_context: bool = False,
+            k: int = 10,
+        ) -> str:
+            """Search IMAS Data Dictionary with cross-domain enrichment.
+
+            Performs semantic search across IMAS path and cluster embeddings,
+            enriched with cluster membership, coordinate context, units,
+            and optional facility cross-references and version history.
+
+            Use this for: "What IMAS paths represent [concept]?"
+
+            Args:
+                query: Natural language search text (e.g. "electron temperature")
+                ids_filter: Optional IDS name filter (e.g. "core_profiles")
+                facility: Optional facility for cross-references (e.g. "tcv")
+                include_version_context: Include DD version change history
+                k: Number of results (default 10)
+
+            Returns:
+                Formatted report with IMAS paths, clusters, facility
+                cross-references, and version context.
+            """
+            return _search_imas(
+                query,
+                ids_filter=ids_filter,
+                facility=facility,
+                include_version_context=include_version_context,
+                k=k,
+            )
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files.
