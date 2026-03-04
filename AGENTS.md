@@ -85,6 +85,139 @@ add_to_graph("SourceFile", [sf.model_dump()])
 
 **Full schema reference:** [agents/schema-reference.md](agents/schema-reference.md) — auto-generated list of all node labels, properties, vector indexes, relationships, and enums. Rebuilt on `uv sync`.
 
+### Schema Design Guidelines
+
+Follow these conventions when adding new classes, properties, or relationships to LinkML schemas. Consistency here is critical — the build pipeline, `create_nodes()`, and query builder all depend on predictable schema structure.
+
+#### Dual Property + Relationship Model
+
+Every slot that references another class produces **both** a node property AND a Neo4j relationship. This is intentional — it supports multiple search and traversal patterns:
+
+- **Property** (`n.facility_id = 'tcv'`): Fast `WHERE` filtering without relationship traversal. Enables simple queries and aggregation grouping.
+- **Relationship** (`(n)-[:AT_FACILITY]->(f:Facility)`): Graph traversal, multi-hop queries, path-finding. Enables joining across node types.
+
+`create_nodes()` in `client.py` implements this: `SET n += item` stores all properties on the node first, then for each slot with a class range it creates relationships via `MERGE (n)-[:REL_TYPE]->(t:TargetClass {id: item.slot_name})`.
+
+**Never remove one side of the dual model.** Both the property and the relationship must exist for every class-ranged slot.
+
+#### Relationship Type Annotations
+
+When a slot has `range: SomeClass`, the Cypher relationship type is derived as follows:
+
+1. **Explicit annotation (preferred for clarity)**:
+   ```yaml
+   facility_id:
+     range: Facility
+     annotations:
+       relationship_type: AT_FACILITY
+   ```
+   Use explicit annotations when the auto-derived name would be unclear (e.g., `FACILITY_ID` is less readable than `AT_FACILITY`).
+
+2. **Auto-derived fallback**: If no `relationship_type` annotation, the slot name is uppercased: `signal` → `SIGNAL`, `data_access` → `DATA_ACCESS`, `has_chunk` → `HAS_CHUNK`.
+
+**Rules for new relationships:**
+- Use `relationship_type: AT_FACILITY` for all `facility_id` slots — this is the standard pattern across the entire schema.
+- Prefer verb-based names: `MAPS_TO_IMAS`, `BELONGS_TO_DIAGNOSTIC`, `DOCUMENTED_BY`.
+- If the auto-derived name is clear enough (e.g., `has_chunk` → `HAS_CHUNK`), omit the annotation.
+- All `facility_id` slots MUST have `range: Facility` and `annotations: { relationship_type: AT_FACILITY }`. No exceptions.
+
+#### Class Structure Template
+
+Every concrete class should follow this structure:
+
+```yaml
+MyNewNode:
+  description: >-
+    What this node represents. Include example Cypher queries
+    that agents would use to query this node type.
+  class_uri: facility:MyNewNode
+  attributes:
+    id:
+      identifier: true
+      description: Composite key format (e.g., "facility:unique_part")
+      required: true
+    facility_id:
+      description: Parent facility ID
+      required: true
+      range: Facility
+      annotations:
+        relationship_type: AT_FACILITY
+    # ... domain-specific properties ...
+    status:
+      description: Lifecycle status
+      range: MyNewNodeStatus  # Define enum in same schema
+      required: true
+    description:
+      description: Human-readable description
+    embedding:
+      description: Vector embedding of description for semantic search
+      multivalued: true
+      range: float
+    embedded_at:
+      description: When the embedding was last computed
+      range: datetime
+```
+
+#### ID Conventions
+
+- Use `identifier: true` on exactly one slot per class (always `id` unless there's a domain reason).
+- Composite IDs use colon separator: `facility_id:unique_part` (e.g., `"tcv:/home/codes/liuqe.py"`, `"tcv:ip/measured"`).
+- IDs must be globally unique across all facilities.
+
+#### Vector Indexes
+
+Nodes with `embedding` + `description` slots automatically get a vector index named `{snake_case_label}_desc_embedding` (e.g., `FacilitySignal` → `facility_signal_desc_embedding`).
+
+For non-standard embedding slots, use the `vector_index_name` annotation:
+
+```yaml
+embedding:
+  multivalued: true
+  range: float
+  annotations:
+    vector_index_name: cluster_embedding
+```
+
+The build pipeline validates all vector indexes and generates them into `schema_context_data.py`.
+
+#### Status Enums and Lifecycles
+
+Define status enums in the same schema file as the class. Statuses must represent **durable states only** — no transient states like `scanning` or `processing`. Worker coordination uses `claimed_at` timestamps, not status values.
+
+```yaml
+enums:
+  MyNewNodeStatus:
+    permissible_values:
+      discovered:
+        description: Initial state after creation
+      processed:
+        description: Successfully processed
+      failed:
+        description: Processing failed
+      stale:
+        description: May have changed, needs re-processing
+```
+
+#### Private Fields
+
+Slots annotated with `is_private: true` are excluded from the graph — they exist only in facility YAML configs:
+
+```yaml
+ssh_host:
+  description: SSH host alias
+  annotations:
+    is_private: true
+```
+
+#### What NOT to Do in Schemas
+
+- **Don't hardcode enum values in Python** — import from generated models.
+- **Don't create a `facility_id` slot as plain `string`** — always use `range: Facility` + `relationship_type: AT_FACILITY` so both the property and relationship are created.
+- **Don't add transient states to status enums** — use `claimed_at` for worker coordination.
+- **Don't define the same relationship type with different semantics** — `AT_FACILITY` always means "belongs to this facility".
+- **Don't skip the `description` field** — it enables semantic search via embeddings.
+- **Don't use `multivalued: true` on relationship slots** unless the relationship is genuinely many-to-many. Cardinality affects query patterns.
+
 ## Facility Configuration
 
 Per-facility YAML configs define discovery roots, wiki sites, data sources, and infrastructure details. Schema enforced via LinkML (`imas_codex/schemas/facility_config.yaml`).

@@ -1,7 +1,7 @@
 """
 Agents MCP Server - Streamlined tools for LLM-driven facility exploration.
 
-This server provides 9 MCP tools organized by purpose:
+This server provides 7 MCP tools organized by purpose:
 
 Graph Operations:
 - get_graph_schema: Schema introspection for query generation
@@ -11,8 +11,6 @@ Facility Infrastructure (Private Data):
 - update_facility_infrastructure: Deep-merge update to private YAML
 - get_facility_infrastructure: Read private infrastructure data
 - add_exploration_note: Append timestamped exploration note
-- update_facility_paths: Update path mappings
-- update_facility_tools: Update tool availability
 
 Legacy/General:
 - update_facility_config: Read/update facility config (public or private)
@@ -168,6 +166,9 @@ def _init_repl() -> dict[str, Any]:
 
     logger.info("Initializing Python REPL...")
 
+    from imas_codex.graph import domain_queries as _dq
+    from imas_codex.graph.formatters import as_summary, as_table, pick
+    from imas_codex.graph.query_builder import graph_search as _graph_search
     from imas_codex.graph.schema_context import schema_for as _schema_for
 
     gc = GraphClient()
@@ -929,6 +930,32 @@ def _init_repl() -> dict[str, Any]:
         return _install_all_tools(facility=facility, required_only=required_only)
 
     # =========================================================================
+    # Domain query functions (bound to this REPL's gc/embed)
+    # =========================================================================
+
+    import functools as _ft
+
+    def _bind_dq(fn):
+        """Bind gc and embed_fn into a domain query function."""
+
+        @_ft.wraps(fn)
+        def wrapper(*args, **kwargs):
+            kwargs.setdefault("gc", gc)
+            kwargs.setdefault("embed_fn", embed)
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    find_signals = _bind_dq(_dq.find_signals)
+    find_wiki = _bind_dq(_dq.find_wiki)
+    find_imas = _bind_dq(_dq.find_imas)
+    find_code = _bind_dq(_dq.find_code)
+    find_tree_nodes = _bind_dq(_dq.find_tree_nodes)
+    map_signals_to_imas = _bind_dq(_dq.map_signals_to_imas)
+    facility_overview = _bind_dq(_dq.facility_overview)
+    graph_search = _bind_dq(_graph_search)
+
+    # =========================================================================
     # Build REPL globals
     # =========================================================================
 
@@ -956,6 +983,19 @@ def _init_repl() -> dict[str, Any]:
         "quick_setup": quick_setup,
         # Code search
         "search_code": search_code,
+        # Domain query functions
+        "find_signals": find_signals,
+        "find_wiki": find_wiki,
+        "find_imas": find_imas,
+        "find_code": find_code,
+        "find_tree_nodes": find_tree_nodes,
+        "map_signals_to_imas": map_signals_to_imas,
+        "facility_overview": facility_overview,
+        # Query builder and formatters
+        "graph_search": graph_search,
+        "as_table": as_table,
+        "as_summary": as_summary,
+        "pick": pick,
         # IMAS DD utilities
         "search_imas": search_imas,
         "fetch_imas": fetch_imas,
@@ -1039,7 +1079,7 @@ def _reload_repl() -> str:
 @dataclass
 class AgentsServer:
     """
-    MCP server with 9 core tools for facility exploration.
+    MCP server with 7 core tools for facility exploration.
 
     Uses lazy initialization for the REPL — the first python() call
     triggers GraphClient connection and encoder setup. This avoids
@@ -1053,11 +1093,11 @@ class AgentsServer:
     - update_facility_infrastructure: Deep-merge update to private YAML
     - get_facility_infrastructure: Read private infrastructure data
     - add_exploration_note: Append timestamped exploration note
-    - update_facility_paths: Update path mappings
-    - update_facility_tools: Update tool availability
 
     The python() REPL provides access to:
-    - Graph: query(), semantic_search(), embed()
+    - Graph: query(), semantic_search(), embed(), graph_search()
+    - Domain: find_signals(), find_wiki(), find_imas(), find_code()
+    - Formatters: as_table(), as_summary(), pick()
     - Remote: run(), check_tools() (auto-detects local vs SSH)
     - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
     - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
@@ -1691,98 +1731,9 @@ class AgentsServer:
                 logger.exception(f"Failed to get discovery context for {facility}")
                 raise RuntimeError(f"Failed to get discovery context: {e}") from e
 
-        # =====================================================================
-        # Tool 8: update_facility_paths - Update facility path mappings
-        # =====================================================================
-
-        @self.mcp.tool()
-        def update_facility_paths(
-            facility: str,
-            paths: dict[str, dict[str, str]],
-        ) -> dict[str, dict[str, str]]:
-            """
-            Update facility path mappings in private data.
-
-            Use this to record important directory paths discovered during exploration.
-
-            Args:
-                facility: Facility identifier (e.g., "tcv", "iter")
-                paths: Nested dict of path categories and paths
-
-            Returns:
-                Updated paths section
-
-            Example:
-                update_facility_paths("iter", {
-                    "imas": {
-                        "root": "/work/imas",
-                        "core": "/work/imas/core",
-                        "shared": "/work/imas/shared"
-                    },
-                    "codes": {
-                        "chease": "/work/codes/chease",
-                        "helena": "/work/codes/helena"
-                    }
-                })
-            """
-            try:
-                update_infrastructure(facility, {"paths": paths})
-                from imas_codex.discovery import (
-                    get_facility_infrastructure as _get_infra,
-                )
-
-                infra = _get_infra(facility) or {}
-                return infra.get("paths", {})
-            except Exception as e:
-                logger.exception(f"Failed to update paths for {facility}")
-                raise RuntimeError(f"Failed to update paths: {e}") from e
-
-        # =====================================================================
-        # Tool 9: update_facility_tools - Update tool availability
-        # =====================================================================
-
-        @self.mcp.tool()
-        def update_facility_tools(
-            facility: str,
-            tools: dict[str, dict[str, str]],
-        ) -> dict[str, dict[str, str]]:
-            """
-            Update tool availability and versions in private data.
-
-            Use this after running check_tools() to persist tool information.
-
-            Args:
-                facility: Facility identifier (e.g., "tcv", "iter")
-                tools: Dict of tool_name -> {version, path, purpose}
-
-            Returns:
-                Updated tools section
-
-            Example:
-                update_facility_tools("iter", {
-                    "rg": {
-                        "version": "14.1.1",
-                        "path": "/home/user/bin/rg",
-                        "purpose": "Fast pattern search"
-                    },
-                    "fd": {
-                        "version": "10.2.0",
-                        "path": "/home/user/bin/fd",
-                        "purpose": "Fast file finder"
-                    }
-                })
-            """
-            try:
-                update_infrastructure(facility, {"tools": tools})
-                from imas_codex.discovery import (
-                    get_facility_infrastructure as _get_infra,
-                )
-
-                infra = _get_infra(facility) or {}
-                return infra.get("tools", {})
-            except Exception as e:
-                logger.exception(f"Failed to update tools for {facility}")
-                raise RuntimeError(f"Failed to update tools: {e}") from e
+        # NOTE: update_facility_paths and update_facility_tools were removed as
+        # MCP tools (Phase 5 consolidation). Use update_infrastructure() in the
+        # REPL instead: update_infrastructure('facility', {'paths': {...}})
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files.
