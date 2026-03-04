@@ -633,3 +633,85 @@ async def enrich_worker(
             await asyncio.to_thread(release_file_enrich_claims, batch_ids)
 
         await asyncio.sleep(0.1)
+
+
+# ============================================================================
+# Link Worker (code evidence → signal propagation)
+# ============================================================================
+
+
+async def link_worker(
+    state: FileDiscoveryState,
+    on_progress: Callable | None = None,
+) -> None:
+    """Link worker: Propagate code evidence to FacilitySignals.
+
+    After code ingestion creates DataReference → TreeNode links, this
+    worker propagates evidence to FacilitySignals via the chain:
+      DataReference → RESOLVES_TO_TREE_NODE → TreeNode ← SOURCE_NODE ← FacilitySignal
+
+    Sets code_evidence_count and has_code_evidence on matched signals.
+    Runs periodically while code workers are active, then one final pass.
+    """
+    from imas_codex.discovery.code.graph_ops import (
+        has_pending_link_work,
+        link_code_evidence_to_signals,
+    )
+
+    last_linked = 0
+
+    while not state.should_stop():
+        if state.scan_only or state.score_only:
+            break
+
+        has_work = await asyncio.to_thread(has_pending_link_work, state.facility)
+
+        if not has_work:
+            # If code phase is done, we're done too
+            if state.code_phase.done:
+                break
+            await asyncio.sleep(5.0)
+            continue
+
+        if on_progress:
+            on_progress("linking code evidence to signals", state.link_stats, None)
+
+        try:
+            result = await asyncio.to_thread(
+                link_code_evidence_to_signals, state.facility
+            )
+
+            signals_linked = result.get("signals_linked", 0)
+            refs_resolved = result.get("refs_resolved", 0)
+            state.link_stats.processed += signals_linked
+            last_linked = signals_linked
+
+            if on_progress:
+                on_progress(
+                    f"linked {signals_linked} signals ({refs_resolved} refs resolved)",
+                    state.link_stats,
+                    None,
+                )
+
+        except Exception as e:
+            logger.error("Code evidence linking failed: %s", e)
+            state.link_stats.errors += 1
+
+        # Link is cheap, run every 10s
+        await asyncio.sleep(10.0)
+
+    # Final pass after all code ingestion is done
+    if not (state.scan_only or state.score_only):
+        try:
+            result = await asyncio.to_thread(
+                link_code_evidence_to_signals, state.facility
+            )
+            final_linked = result.get("signals_linked", 0)
+            if final_linked > last_linked and on_progress:
+                on_progress(
+                    f"final link: {final_linked} signals",
+                    state.link_stats,
+                    None,
+                )
+        except Exception as e:
+            logger.error("Final code evidence linking failed: %s", e)
