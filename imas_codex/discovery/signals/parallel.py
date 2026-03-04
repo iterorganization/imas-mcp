@@ -1715,6 +1715,7 @@ async def seed_worker(
     both new and pre-existing items so the display reflects total state.
     """
     from imas_codex.discovery.mdsplus.graph_ops import (
+        backfill_tree_relationships,
         seed_versions,
     )
     from imas_codex.discovery.signals.scanners.base import get_scanner
@@ -1837,6 +1838,10 @@ async def seed_worker(
                     await asyncio.to_thread(_create_mdsplus_da, state.facility)
                 except Exception as e:
                     logger.warning("Failed to create MDSplus DataAccess: %s", e)
+
+            # Backfill IN_TREE edges for TreeNodes ingested before
+            # MDSplusTree relationships were added to the schema
+            await asyncio.to_thread(backfill_tree_relationships, state.facility)
 
             continue
 

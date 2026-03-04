@@ -103,6 +103,41 @@ def seed_versions(
         return result[0]["seeded"] if result else 0
 
 
+def backfill_tree_relationships(facility: str) -> int:
+    """Create missing MDSplusTree nodes and IN_TREE relationships.
+
+    Backfills TreeNode→MDSplusTree edges for nodes ingested before
+    IN_TREE relationships were added. Idempotent via MERGE.
+
+    Returns:
+        Number of TreeNodes that gained an IN_TREE relationship.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility})
+            WHERE n.tree_name IS NOT NULL
+              AND NOT (n)-[:IN_TREE]->(:MDSplusTree)
+            WITH n
+            MATCH (f:Facility {id: $facility})
+            MERGE (t:MDSplusTree {name: n.tree_name})
+            ON CREATE SET t.facility_id = $facility
+            MERGE (t)-[:AT_FACILITY]->(f)
+            MERGE (n)-[:IN_TREE]->(t)
+            RETURN count(n) AS backfilled
+            """,
+            facility=facility,
+        )
+        count = result[0]["backfilled"] if result else 0
+        if count > 0:
+            logger.info(
+                "Backfilled %d TreeNode→MDSplusTree IN_TREE relationships for %s",
+                count,
+                facility,
+            )
+        return count
+
+
 # ---------------------------------------------------------------------------
 # Claim — atomic claim of pending TreeModelVersion for extraction
 # ---------------------------------------------------------------------------
