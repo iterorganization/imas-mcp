@@ -151,7 +151,7 @@ class MDSplusExtractor(TransformComponent):
     """Extract MDSplus paths from LlamaIndex nodes.
 
     Scans code/text for MDSplus path references and TDI function calls.
-    Stores counts in metadata; full references in _mdsplus_refs for graph linking.
+    Stores counts in metadata; full paths in mdsplus_paths for graph linking.
     """
 
     def __call__(self, nodes: list[BaseNode], **kwargs: dict) -> list[BaseNode]:
@@ -164,7 +164,7 @@ class MDSplusExtractor(TransformComponent):
                 node.metadata["mdsplus_ref_count"] = len(refs)
                 # Store as flat string list — NamedTuples cause
                 # "Collections containing collections" in Neo4j
-                node.metadata["_mdsplus_refs"] = [r.path for r in refs]
+                node.metadata["mdsplus_paths"] = [r.path for r in refs]
 
         return nodes
 
