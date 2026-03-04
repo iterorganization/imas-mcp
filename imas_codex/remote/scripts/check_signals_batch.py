@@ -65,6 +65,7 @@ _SHOT_DEPENDENT_ERRORS = (
     "NNF",  # Node not found (may exist in other tree version)
     "KEYNOTFOU",  # Key not found (shot-dependent lookup)
     "TreeNOT_OPEN",  # Tree not available for this shot
+    "Unable to change",  # Unable to change current shot
 )
 
 # Errors that are structural and never resolve by changing shots
