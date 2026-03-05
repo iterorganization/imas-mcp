@@ -9,22 +9,26 @@ with rich shutdown progress tracking:
   Second Ctrl+C: Stops Rich display, cancels all async tasks.
   Third Ctrl+C:  Immediate process exit (os._exit).
 
-Usage in async discovery loops::
+Usage in discovery CLIs::
 
-    from imas_codex.cli.shutdown import install_shutdown_handlers
+    from imas_codex.cli.shutdown import install_shutdown_handlers, safe_asyncio_run
 
-    async def _async_discovery_loop(...):
-        stop_event = asyncio.Event()
+    with MyProgressDisplay(...) as display:
+        async def run_with_display():
+            stop_event = asyncio.Event()
+            install_shutdown_handlers(
+                stop_event=stop_event,
+                display=display,  # BaseProgressDisplay subclass
+            )
+            try:
+                return await run_parallel_discovery(
+                    ..., stop_event=stop_event,
+                )
+            finally:
+                ...  # cancel refresh/ticker tasks
 
-        install_shutdown_handlers(
-            stop_event=stop_event,
-            display=display,  # BaseProgressDisplay subclass
-        )
-
-        result = await run_parallel_discovery(
-            ...,
-            stop_event=stop_event,
-        )
+        result = safe_asyncio_run(run_with_display())
+        display.print_summary()  # display still alive here
 
 The stop_event is wired into the discovery state's should_stop() check
 by each parallel runner via a watcher task.

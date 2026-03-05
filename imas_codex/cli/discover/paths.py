@@ -334,31 +334,205 @@ def _run_iterative_discovery(
     if focus and not scan_only:
         log_print(f"Focus: {focus}")
 
-    # Run the async discovery loop
+    # Run the async discovery loop.
+    # Pattern: display OUTSIDE safe_asyncio_run so shutdown handlers can
+    # interact with the live display and signal processing isn't blocked.
     from imas_codex.cli.shutdown import safe_asyncio_run
+    from imas_codex.discovery.paths.parallel import run_parallel_discovery
 
     try:
-        result, scored_this_run = safe_asyncio_run(
-            _async_discovery_loop(
+        scored_this_run: set[str] = set()
+        enrichment_aggregates: dict = {}
+
+        if use_rich:
+            from imas_codex.cli.discover.common import create_discovery_monitor
+            from imas_codex.discovery.base.facility import get_facility
+            from imas_codex.discovery.paths.progress import ParallelProgressDisplay
+
+            config = get_facility(facility)
+
+            service_monitor = create_discovery_monitor(
+                config,
+                check_graph=True,
+                check_embed=not scan_only,
+                check_model=not scan_only,
+                check_ssh=not triage_only,
+                check_auth=False,
+            )
+
+            with ParallelProgressDisplay(
                 facility=facility,
-                budget=budget,
+                cost_limit=budget,
                 path_limit=path_limit,
-                focus=focus,
-                threshold=threshold,
+                model=model_name,
                 console=console,
-                num_scan_workers=effective_scan_workers,
-                num_triage_workers=effective_triage_workers,
+                focus=focus or "",
                 scan_only=scan_only,
                 triage_only=triage_only,
-                use_rich=use_rich,
-                root_filter=root_filter,
-                auto_enrich_threshold=enrich_threshold,
-                deadline=deadline,
-            )
-        )
+            ) as display:
+                display.service_monitor = service_monitor
+
+                async def run_with_display():
+                    from imas_codex.cli.shutdown import install_shutdown_handlers
+
+                    stop_event = asyncio.Event()
+                    await service_monitor.__aenter__()
+                    install_shutdown_handlers(stop_event=stop_event, display=display)
+
+                    async def refresh_graph_state():
+                        while True:
+                            try:
+                                if not stop_event.is_set():
+                                    display.refresh_from_graph(facility)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                pass
+                            await asyncio.sleep(0.5)
+
+                    async def queue_ticker():
+                        while True:
+                            try:
+                                display.tick()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                pass
+                            await asyncio.sleep(0.15)
+
+                    refresh_task = asyncio.create_task(refresh_graph_state())
+                    ticker_task = asyncio.create_task(queue_ticker())
+
+                    def on_scan(msg, stats, paths=None, scan_results=None):
+                        display.update_scan(
+                            msg, stats, paths=paths, scan_results=scan_results
+                        )
+
+                    def on_expand(msg, stats, paths=None, scan_results=None):
+                        display.update_expand(
+                            msg, stats, paths=paths, scan_results=scan_results
+                        )
+
+                    def on_triage(msg, stats, results=None):
+                        display.update_triage(msg, stats, results=results)
+
+                    def on_enrich(msg, stats, results=None):
+                        display.update_enrich(msg, stats, results=results)
+
+                    def on_score(msg, stats, results=None):
+                        display.update_score(msg, stats, results=results)
+
+                    def on_dedup(msg, stats, results=None):
+                        display.update_dedup(msg, stats, results=results)
+
+                    def on_worker_status(worker_group):
+                        display.update_worker_status(worker_group)
+
+                    try:
+                        return await run_parallel_discovery(
+                            facility=facility,
+                            cost_limit=budget,
+                            path_limit=path_limit,
+                            focus=focus,
+                            threshold=threshold,
+                            root_filter=root_filter,
+                            auto_enrich_threshold=enrich_threshold,
+                            num_scan_workers=effective_scan_workers,
+                            num_triage_workers=effective_triage_workers,
+                            on_scan_progress=on_scan,
+                            on_expand_progress=on_expand,
+                            on_triage_progress=on_triage,
+                            on_enrich_progress=on_enrich,
+                            on_score_progress=on_score,
+                            on_dedup_progress=on_dedup,
+                            on_worker_status=on_worker_status,
+                            deadline=deadline,
+                            stop_event=stop_event,
+                        )
+                    finally:
+                        refresh_task.cancel()
+                        ticker_task.cancel()
+                        try:
+                            await refresh_task
+                        except asyncio.CancelledError:
+                            pass
+                        try:
+                            await ticker_task
+                        except asyncio.CancelledError:
+                            pass
+                        await service_monitor.__aexit__(None, None, None)
+
+                result = safe_asyncio_run(run_with_display())
+
+                # Display still alive — final refresh and data extraction
+                try:
+                    display.refresh_from_graph(facility)
+                except Exception:
+                    pass
+                scored_this_run = display.get_paths_scored_this_run()
+                enrichment_aggregates = display.get_enrichment_aggregates()
+
+        else:
+            # Non-rich: logging-based progress
+            def on_scan_log(msg: str, stats, paths=None, scan_results=None):
+                if scan_results and len(scan_results) > 0:
+                    disc_logger.info(
+                        f"SCAN batch: {len(scan_results)} paths, "
+                        f"total: {stats.processed}, rate: {stats.rate:.1f}/s"
+                    )
+
+            def on_triage_log(msg: str, stats, results=None):
+                if results and len(results) > 0:
+                    for r in results:
+                        if r.get("path"):
+                            scored_this_run.add(r["path"])
+                    disc_logger.info(
+                        f"TRIAGE batch: {len(results)} paths, "
+                        f"total: {stats.processed}, cost: ${stats.cost:.3f}"
+                    )
+
+            async def _run_non_rich():
+                from imas_codex.cli.shutdown import install_shutdown_handlers
+
+                stop_event = asyncio.Event()
+                install_shutdown_handlers(stop_event=stop_event)
+
+                return await run_parallel_discovery(
+                    facility=facility,
+                    cost_limit=budget,
+                    path_limit=path_limit,
+                    focus=focus,
+                    threshold=threshold,
+                    root_filter=root_filter,
+                    auto_enrich_threshold=enrich_threshold,
+                    num_scan_workers=effective_scan_workers,
+                    num_triage_workers=effective_triage_workers,
+                    on_scan_progress=on_scan_log,
+                    on_triage_progress=on_triage_log,
+                    deadline=deadline,
+                    stop_event=stop_event,
+                )
+
+            result = safe_asyncio_run(_run_non_rich())
+
+        # Build full result dict
+        full_result = {
+            "cycles": 1,
+            "scanned": result["scanned"],
+            "scored": result["scored"],
+            "expanded": result.get("expanded", 0),
+            "enriched": result.get("enriched", 0),
+            "triaged": result.get("triaged", 0),
+            "cost": result["cost"],
+            "elapsed_seconds": result["elapsed_seconds"],
+            "scan_rate": result.get("scan_rate"),
+            "triage_rate": result.get("triage_rate"),
+            "score_rate": result.get("score_rate"),
+            "enrichment_aggregates": enrichment_aggregates,
+        }
 
         _print_discovery_summary(
-            console, facility, result, scored_this_run, scan_only=scan_only
+            console, facility, full_result, scored_this_run, scan_only=scan_only
         )
 
     except KeyboardInterrupt:
@@ -632,193 +806,3 @@ def _print_discovery_summary(
         remaining = len(sorted_paths) - 3
         if remaining > 0:
             console.print(f"    [dim]... +{remaining} more[/dim]")
-
-
-async def _async_discovery_loop(
-    facility: str,
-    budget: float,
-    path_limit: int | None,
-    focus: str | None,
-    threshold: float,
-    console,
-    num_scan_workers: int = 2,
-    num_triage_workers: int = 2,
-    scan_only: bool = False,
-    triage_only: bool = False,
-    use_rich: bool = True,
-    root_filter: list[str] | None = None,
-    auto_enrich_threshold: float | None = None,
-    deadline: float | None = None,
-) -> tuple[dict, set[str]]:
-    """Async discovery loop with parallel scan/triage/score workers."""
-    from imas_codex.cli.shutdown import install_shutdown_handlers
-    from imas_codex.discovery.paths.parallel import run_parallel_discovery
-
-    disc_logger = logging.getLogger("imas_codex.discovery")
-    scored_this_run: set[str] = set()
-    stop_event = asyncio.Event()
-
-    if use_rich:
-        from imas_codex.cli.discover.common import create_discovery_monitor
-        from imas_codex.discovery.base.facility import get_facility
-        from imas_codex.discovery.paths.progress import ParallelProgressDisplay
-        from imas_codex.settings import get_model
-
-        model_name = get_model("language")
-        config = get_facility(facility)
-
-        service_monitor = create_discovery_monitor(
-            config,
-            check_graph=True,
-            check_embed=not scan_only,
-            check_model=not scan_only,
-            check_ssh=not triage_only,
-            check_auth=False,
-        )
-
-        with ParallelProgressDisplay(
-            facility=facility,
-            cost_limit=budget,
-            path_limit=path_limit,
-            model=model_name,
-            console=console,
-            focus=focus or "",
-            scan_only=scan_only,
-            triage_only=triage_only,
-        ) as display:
-            display.service_monitor = service_monitor
-            await service_monitor.__aenter__()
-
-            install_shutdown_handlers(stop_event=stop_event, display=display)
-
-            async def refresh_graph_state():
-                while True:
-                    if not stop_event.is_set():
-                        display.refresh_from_graph(facility)
-                    await asyncio.sleep(0.5)
-
-            async def queue_ticker():
-                while True:
-                    display.tick()
-                    await asyncio.sleep(0.15)
-
-            refresh_task = asyncio.create_task(refresh_graph_state())
-            ticker_task = asyncio.create_task(queue_ticker())
-
-            def on_scan(msg, stats, paths=None, scan_results=None):
-                display.update_scan(msg, stats, paths=paths, scan_results=scan_results)
-
-            def on_expand(msg, stats, paths=None, scan_results=None):
-                display.update_expand(
-                    msg, stats, paths=paths, scan_results=scan_results
-                )
-
-            def on_triage(msg, stats, results=None):
-                display.update_triage(msg, stats, results=results)
-
-            def on_enrich(msg, stats, results=None):
-                display.update_enrich(msg, stats, results=results)
-
-            def on_score(msg, stats, results=None):
-                display.update_score(msg, stats, results=results)
-
-            def on_dedup(msg, stats, results=None):
-                display.update_dedup(msg, stats, results=results)
-
-            def on_worker_status(worker_group):
-                display.update_worker_status(worker_group)
-
-            try:
-                result = await run_parallel_discovery(
-                    facility=facility,
-                    cost_limit=budget,
-                    path_limit=path_limit,
-                    focus=focus,
-                    threshold=threshold,
-                    root_filter=root_filter,
-                    auto_enrich_threshold=auto_enrich_threshold,
-                    num_scan_workers=num_scan_workers,
-                    num_triage_workers=num_triage_workers,
-                    on_scan_progress=on_scan,
-                    on_expand_progress=on_expand,
-                    on_triage_progress=on_triage,
-                    on_enrich_progress=on_enrich,
-                    on_score_progress=on_score,
-                    on_dedup_progress=on_dedup,
-                    on_worker_status=on_worker_status,
-                    deadline=deadline,
-                    stop_event=stop_event,
-                )
-            finally:
-                refresh_task.cancel()
-                ticker_task.cancel()
-                try:
-                    await refresh_task
-                except asyncio.CancelledError:
-                    pass
-                try:
-                    await ticker_task
-                except asyncio.CancelledError:
-                    pass
-                await service_monitor.__aexit__(None, None, None)
-
-            if not stop_event.is_set():
-                display.refresh_from_graph(facility)
-            scored_this_run = display.get_paths_scored_this_run()
-            enrichment_aggregates = display.get_enrichment_aggregates()
-
-    else:
-        # Logging-based progress
-        def on_scan_log(msg: str, stats, paths=None, scan_results=None):
-            if scan_results and len(scan_results) > 0:
-                disc_logger.info(
-                    f"SCAN batch: {len(scan_results)} paths, "
-                    f"total: {stats.processed}, rate: {stats.rate:.1f}/s"
-                )
-
-        def on_triage_log(msg: str, stats, results=None):
-            if results and len(results) > 0:
-                for r in results:
-                    if r.get("path"):
-                        scored_this_run.add(r["path"])
-                disc_logger.info(
-                    f"TRIAGE batch: {len(results)} paths, "
-                    f"total: {stats.processed}, cost: ${stats.cost:.3f}"
-                )
-
-        install_shutdown_handlers(stop_event=stop_event)
-
-        result = await run_parallel_discovery(
-            facility=facility,
-            cost_limit=budget,
-            path_limit=path_limit,
-            focus=focus,
-            threshold=threshold,
-            root_filter=root_filter,
-            auto_enrich_threshold=auto_enrich_threshold,
-            num_scan_workers=num_scan_workers,
-            num_triage_workers=num_triage_workers,
-            on_scan_progress=on_scan_log,
-            on_triage_progress=on_triage_log,
-            deadline=deadline,
-            stop_event=stop_event,
-        )
-        enrichment_aggregates = {}
-
-    return (
-        {
-            "cycles": 1,
-            "scanned": result["scanned"],
-            "scored": result["scored"],
-            "expanded": result.get("expanded", 0),
-            "enriched": result.get("enriched", 0),
-            "triaged": result.get("triaged", 0),
-            "cost": result["cost"],
-            "elapsed_seconds": result["elapsed_seconds"],
-            "scan_rate": result.get("scan_rate"),
-            "triage_rate": result.get("triage_rate"),
-            "score_rate": result.get("score_rate"),
-            "enrichment_aggregates": enrichment_aggregates,
-        },
-        scored_this_run,
-    )
