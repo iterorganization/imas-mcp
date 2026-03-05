@@ -618,7 +618,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 parts.append((f"{display_score:.2f}", style))
                 if dim_label:
                     parts.append((" ", "dim"))
-                    parts.append((dim_label, "dim italic"))
+                    parts.append((dim_label, "cyan italic"))
                 score_score_parts = parts or None
 
                 # Physics domain
