@@ -5,12 +5,12 @@ This server provides 13 MCP tools organized by purpose:
 
 Unified Search (primary interface):
 - search_signals: Signal search with data access and IMAS enrichment
-- search_docs: Wiki/artifact/image search with cross-links
+- search_docs: Wiki/document/image search with cross-links
 - search_code: Code search with data reference enrichment
 - search_imas: IMAS DD search with cluster and facility cross-refs
 
 Retrieval:
-- fetch: Full content retrieval by ID or URL (WikiPage, WikiArtifact, CodeFile, Image)
+- fetch: Full content retrieval by ID or URL (WikiPage, WikiDocument, CodeFile, Image)
 
 Graph Operations:
 - get_graph_schema: Schema introspection for query generation
@@ -353,12 +353,12 @@ def _init_repl() -> dict[str, Any]:
             'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
             "YIELD node, score "
             "OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(node) "
-            "OPTIONAL MATCH (wa:WikiArtifact)-[:HAS_CHUNK]->(node) "
+            "OPTIONAL MATCH (wa:WikiDocument)-[:HAS_CHUNK]->(node) "
             "RETURN [k IN keys(node) "
             "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
             "AS properties, labels(node) AS labels, score, "
             "p.title AS page_title, p.url AS page_url, "
-            "wa.id AS artifact_id, wa.title AS artifact_title, wa.url AS artifact_url "
+            "wa.id AS document_id, wa.title AS document_title, wa.url AS document_url "
             "ORDER BY score DESC",
             k=k,
             embedding=embedding,
@@ -370,14 +370,14 @@ def _init_repl() -> dict[str, Any]:
                 "labels": r["labels"],
                 "score": r["score"],
             }
-            # Add parent page context (WikiPage or WikiArtifact)
+            # Add parent page context (WikiPage or WikiDocument)
             if r.get("page_title"):
                 d["page_title"] = r["page_title"]
                 d["page_url"] = r["page_url"]
-            elif r.get("artifact_id"):
-                d["page_title"] = r["artifact_title"] or r["artifact_id"]
-                if r.get("artifact_url"):
-                    d["page_url"] = r["artifact_url"]
+            elif r.get("document_id"):
+                d["page_title"] = r["document_title"] or r["document_id"]
+                if r.get("document_url"):
+                    d["page_url"] = r["document_url"]
             out.append(d)
         return out
 
@@ -1232,7 +1232,7 @@ class AgentsServer:
 
     Tools:
     - search_signals: Signal search with data access and IMAS enrichment
-    - search_docs: Wiki/artifact/image search with cross-links
+    - search_docs: Wiki/document/image search with cross-links
     - search_code: Code search with data reference enrichment
     - search_imas: IMAS DD search with cluster and facility cross-refs
     - python: Persistent REPL for custom queries not covered above
@@ -1886,7 +1886,7 @@ class AgentsServer:
             facility: str,
             k: int = 10,
         ) -> str:
-            """Search documentation (wiki, artifacts, images) with cross-links.
+            """Search documentation (wiki, documents, images) with cross-links.
 
             Performs semantic search across wiki content, linked documents,
             and images, enriched with cross-references to signals, tree nodes,
@@ -1973,7 +1973,7 @@ class AgentsServer:
             identifies a resource of interest. Returns all chunks
             or content for the resource.
 
-            Supported types: WikiPage, WikiArtifact, CodeFile, Image.
+            Supported types: WikiPage, WikiDocument, CodeFile, Image.
 
             The resource parameter can be:
             - A graph node ID from search results (e.g. "jet:Fishbone_proposal_2018.ppt")

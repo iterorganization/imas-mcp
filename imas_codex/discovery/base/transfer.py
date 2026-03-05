@@ -7,9 +7,9 @@ or SSH, with support for:
 - Batch downloads with compression for SSH transfers
 - Context managers for temporary file cleanup
 
-This module supports both wiki artifact ingestion and remote facility file
+This module supports both wiki document ingestion and remote facility file
 ingestion. The key difference is the access method:
-- Wiki artifacts: HTTP (direct or via Tequila auth) or SSH-proxied curl
+- Wiki documents: HTTP (direct or via Tequila auth) or SSH-proxied curl
 - Facility files: SSH/SCP direct access
 
 Example usage:
@@ -201,7 +201,7 @@ class TransferBackend(ABC):
 class SSHCurlBackend(TransferBackend):
     """Transfer backend using SSH-proxied curl commands.
 
-    Used for wiki artifacts accessible only from within facility networks.
+    Used for wiki documents accessible only from within facility networks.
     """
 
     def __init__(self, ssh_host: str, verify_ssl: bool = False):

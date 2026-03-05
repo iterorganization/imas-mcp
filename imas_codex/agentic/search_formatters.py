@@ -130,7 +130,7 @@ def format_signals_report(
 
 def format_docs_report(
     chunks: list[dict[str, Any]],
-    artifacts: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
     scores: dict[str, float],
 ) -> str:
     """Format documentation search results into a readable report.
@@ -139,13 +139,13 @@ def format_docs_report(
 
     Args:
         chunks: Enriched wiki chunk records.
-        artifacts: Artifact/image results.
-        scores: Map of chunk/artifact ID → similarity score.
+        documents: Document/image results.
+        scores: Map of chunk/document ID → similarity score.
 
     Returns:
         Formatted text report.
     """
-    if not chunks and not artifacts:
+    if not chunks and not documents:
         return "No documentation found."
 
     parts: list[str] = []
@@ -196,9 +196,9 @@ def format_docs_report(
 
                 parts.append("")
 
-    if artifacts:
-        parts.append(f"\n## Related Documents ({len(artifacts)} items)")
-        for art in artifacts:
+    if documents:
+        parts.append(f"\n## Related Documents ({len(documents)} items)")
+        for art in documents:
             aid = art.get("id", "?")
             title = art.get("title") or aid
             page = art.get("page_title") or ""
@@ -436,7 +436,7 @@ def format_imas_report(
 def format_fetch_report(chunks: list[dict[str, Any]]) -> str:
     """Format fetched resource chunks into a full-content report.
 
-    Used by the ``fetch`` tool for WikiPage, WikiArtifact, and CodeFile
+    Used by the ``fetch`` tool for WikiPage, WikiDocument, and CodeFile
     results. Chunks are expected to be pre-sorted by chunk_index.
 
     Args:
@@ -458,7 +458,7 @@ def format_fetch_report(chunks: list[dict[str, Any]]) -> str:
 
     type_label = {
         "wiki_page": "Wiki Page",
-        "artifact": "Wiki Artifact",
+        "document": "Wiki Document",
         "code": "Code File",
     }.get(source_type, source_type.title())
 

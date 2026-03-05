@@ -25,11 +25,11 @@ __all__ = [
     "WikiScoreBatch",
     "ScoredWikiPage",
     "ScoredWikiBatch",
-    # Artifact scoring
-    "ArtifactScoreResult",
-    "ArtifactScoreBatch",
-    "grounded_artifact_score",
-    "ScoredArtifact",
+    # Document scoring
+    "DocumentScoreResult",
+    "DocumentScoreBatch",
+    "grounded_document_score",
+    "ScoredDocument",
     # Image scoring
     "ImageScoreResult",
     "ImageScoreBatch",
@@ -328,12 +328,12 @@ class ScoredWikiBatch:
 
 
 # ============================================================================
-# Artifact Scoring Pydantic Models (LLM Structured Output)
+# Document Scoring Pydantic Models (LLM Structured Output)
 # ============================================================================
 
 
-class ArtifactScoreResult(BaseModel):
-    """LLM scoring result for a single wiki artifact.
+class DocumentScoreResult(BaseModel):
+    """LLM scoring result for a single wiki document.
 
     This Pydantic model is passed to LiteLLM's response_format parameter
     to ensure structured, parseable output from the LLM.
@@ -341,7 +341,7 @@ class ArtifactScoreResult(BaseModel):
     Uses same scoring dimensions as WikiScoreResult for consistency.
     """
 
-    id: str = Field(description="The artifact ID (echo from input)")
+    id: str = Field(description="The document ID (echo from input)")
 
     artifact_purpose: ContentPurpose = Field(
         description="Classification: data_source, diagnostic, code, calibration, "
@@ -350,7 +350,7 @@ class ArtifactScoreResult(BaseModel):
     )
 
     description: str = Field(
-        description="Concise description of artifact contents (1-2 sentences)"
+        description="Concise description of document contents (1-2 sentences)"
     )
 
     # Per-dimension scores (0.0-1.0 each) - same as WikiScoreResult
@@ -404,22 +404,22 @@ class ArtifactScoreResult(BaseModel):
     )
 
 
-class ArtifactScoreBatch(BaseModel):
-    """Batch of artifact scoring results from LLM.
+class DocumentScoreBatch(BaseModel):
+    """Batch of document scoring results from LLM.
 
     This is the top-level model passed to LiteLLM's response_format.
     """
 
-    results: list[ArtifactScoreResult] = Field(
-        description="List of scoring results, one per input artifact, in order"
+    results: list[DocumentScoreResult] = Field(
+        description="List of scoring results, one per input document, in order"
     )
 
 
-def grounded_artifact_score(
+def grounded_document_score(
     scores: dict[str, float],
     purpose: ContentPurpose,
 ) -> float:
-    """Compute combined score from per-dimension scores for artifacts.
+    """Compute combined score from per-dimension scores for documents.
 
     Uses same logic as grounded_wiki_score for consistency.
     MAX of per-dimension scores with purpose-based multipliers.
@@ -428,20 +428,20 @@ def grounded_artifact_score(
 
 
 @dataclass
-class ScoredArtifact:
-    """Result of LLM scoring for a single wiki artifact.
+class ScoredDocument:
+    """Result of LLM scoring for a single wiki document.
 
     Runtime dataclass containing per-dimension scores and ingestion decision.
     """
 
     id: str
-    """Artifact ID (facility:filename)."""
+    """Document ID (facility:filename)."""
 
     artifact_purpose: ContentPurpose
-    """Classified purpose of the artifact."""
+    """Classified purpose of the document."""
 
     description: str
-    """One-sentence description of the artifact's contents."""
+    """One-sentence description of the document's contents."""
 
     # Per-dimension scores (0.0-1.0 each)
     score_data_documentation: float = 0.0
@@ -458,7 +458,7 @@ class ScoredArtifact:
     """Brief explanation for the score."""
 
     keywords: list[str] = field(default_factory=list)
-    """Searchable keywords for this artifact (max 5)."""
+    """Searchable keywords for this document (max 5)."""
 
     physics_domain: PhysicsDomain | None = None
     """Primary physics domain."""
@@ -467,17 +467,17 @@ class ScoredArtifact:
     """Whether to download full content and ingest."""
 
     skip_reason: str | None = None
-    """Why this artifact should not be ingested."""
+    """Why this document should not be ingested."""
 
     score_cost: float = 0.0
-    """LLM cost in USD for scoring this artifact (batch cost / batch size)."""
+    """LLM cost in USD for scoring this document (batch cost / batch size)."""
 
     @classmethod
     def from_llm_result(
         cls,
-        result: ArtifactScoreResult,
-        cost_per_artifact: float = 0.0,
-    ) -> ScoredArtifact:
+        result: DocumentScoreResult,
+        cost_per_document: float = 0.0,
+    ) -> ScoredDocument:
         """Create from LLM structured output result."""
         scores = {
             "score_data_documentation": result.score_data_documentation,
@@ -488,7 +488,7 @@ class ScoredArtifact:
             "score_imas_relevance": result.score_imas_relevance,
         }
 
-        combined = grounded_artifact_score(scores, result.artifact_purpose)
+        combined = grounded_document_score(scores, result.artifact_purpose)
 
         return cls(
             id=result.id,
@@ -506,7 +506,7 @@ class ScoredArtifact:
             physics_domain=result.physics_domain,
             should_ingest=result.should_ingest,
             skip_reason=result.skip_reason or None,
-            score_cost=cost_per_artifact,
+            score_cost=cost_per_document,
         )
 
     def to_graph_dict(self) -> dict[str, Any]:
@@ -547,7 +547,7 @@ class ImageScoreResult(BaseModel):
     The VLM receives image bytes + context (page_title, section,
     surrounding_text) and returns caption + scoring in a single pass.
 
-    Uses the same scoring dimensions as WikiScoreResult / ArtifactScoreResult
+    Uses the same scoring dimensions as WikiScoreResult / DocumentScoreResult
     so that scores are comparable across all content types.
     """
 
@@ -643,7 +643,7 @@ def grounded_image_score(
 ) -> float:
     """Compute combined score for an image.
 
-    Uses same grounded scoring logic as pages and artifacts.
+    Uses same grounded scoring logic as pages and documents.
     """
     return _grounded_score(scores, purpose)
 

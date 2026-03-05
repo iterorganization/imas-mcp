@@ -353,7 +353,7 @@ class ScanStats:
 
     pages_scanned: int = 0
     pages_skipped: int = 0
-    artifacts_found: int = 0
+    documents_found: int = 0
     links_discovered: int = 0
     frontier_size: int = 0
     max_depth: int = 0
@@ -437,7 +437,7 @@ class ScanProgressMonitor:
         self,
         page: str = "",
         links_found: int = 0,
-        artifacts_found: int = 0,
+        documents_found: int = 0,
         frontier_size: int = 0,
         depth: int = 0,
         skipped: bool = False,
@@ -447,7 +447,7 @@ class ScanProgressMonitor:
         Args:
             page: Current page being scanned
             links_found: New page links discovered from this page
-            artifacts_found: New artifact links discovered from this page
+            documents_found: New document links discovered from this page
             frontier_size: Current frontier queue size
             depth: Current link depth
             skipped: Whether this page was skipped
@@ -459,7 +459,7 @@ class ScanProgressMonitor:
         else:
             self.stats.pages_scanned += 1
         self.stats.links_discovered += links_found
-        self.stats.artifacts_found += artifacts_found
+        self.stats.documents_found += documents_found
         self.stats.frontier_size = frontier_size
         self.stats.current_depth = depth
         self.stats.max_depth = max(self.stats.max_depth, depth)
@@ -502,8 +502,8 @@ class ScanProgressMonitor:
             f"[yellow]{self.stats.frontier_size}[/]",
         )
         stats.add_row(
-            "Artifacts:",
-            f"[blue]{self.stats.artifacts_found}[/]",
+            "Documents:",
+            f"[blue]{self.stats.documents_found}[/]",
             "Elapsed:",
             f"[dim]{self.stats.elapsed_formatted()}[/]",
         )
@@ -546,12 +546,12 @@ class ScanProgressMonitor:
 
         if self._console:
             elapsed = self.stats.elapsed_formatted()
-            artifacts_msg = ""
-            if self.stats.artifacts_found > 0:
-                artifacts_msg = f", [blue]{self.stats.artifacts_found}[/] artifacts"
+            documents_msg = ""
+            if self.stats.documents_found > 0:
+                documents_msg = f", [blue]{self.stats.documents_found}[/] documents"
             self._console.print(
                 f"\n[green]✓[/] Scanned [bold]{self.stats.pages_scanned}[/] pages"
-                f"{artifacts_msg} in [bold]{elapsed}[/]"
+                f"{documents_msg} in [bold]{elapsed}[/]"
             )
 
         return self.stats

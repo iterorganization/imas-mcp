@@ -1,8 +1,8 @@
 """Parallel wiki discovery engine.
 
 Main entry point for wiki discovery with async workers. Orchestrates:
-- Bulk page/artifact discovery via platform APIs
-- Supervised async worker pool (score, ingest, artifact, image)
+- Bulk page/document discovery via platform APIs
+- Supervised async worker pool (score, ingest, document, image)
 - Progress reporting and cost tracking
 
 Use run_parallel_wiki_discovery() as the main entry point.
@@ -27,12 +27,12 @@ from imas_codex.discovery.base.supervision import (
     supervised_worker,
 )
 from imas_codex.graph import GraphClient
-from imas_codex.graph.models import WikiArtifactStatus, WikiPageStatus
+from imas_codex.graph.models import WikiDocumentStatus, WikiPageStatus
 
 from .graph_ops import (
     INGESTABLE_ARTIFACT_TYPES,
     SCORABLE_ARTIFACT_TYPES,
-    _bulk_create_wiki_artifacts,
+    _bulk_create_wiki_documents,
     _bulk_create_wiki_pages,
     reset_transient_pages,
 )
@@ -257,11 +257,11 @@ def bulk_discover_pages(
 
 
 # =============================================================================
-# Bulk Artifact Discovery via MediaWiki API
+# Bulk Document Discovery via MediaWiki API
 # =============================================================================
 
 
-def bulk_discover_artifacts(
+def bulk_discover_documents(
     facility: str,
     base_url: str,
     site_type: str = "mediawiki",
@@ -275,7 +275,7 @@ def bulk_discover_artifacts(
     space_key: str | None = None,
     on_progress: Callable | None = None,
 ) -> tuple[int, dict[str, list[str]]]:
-    """Bulk discover all wiki artifacts via platform API.
+    """Bulk discover all wiki documents via platform API.
 
     This is much faster than scanning pages - uses dedicated APIs:
     - MediaWiki: list=allimages API (returns all files in one call)
@@ -299,12 +299,12 @@ def bulk_discover_artifacts(
         on_progress: Progress callback
 
     Returns:
-        Tuple of (count, page_artifacts) where page_artifacts maps
-        page names to lists of artifact filenames discovered on that page.
+        Tuple of (count, page_documents) where page_documents maps
+        page names to lists of document filenames discovered on that page.
     """
     from imas_codex.discovery.wiki.adapters import get_adapter
 
-    logger.debug(f"Starting bulk artifact discovery for {site_type}...")
+    logger.debug(f"Starting bulk document discovery for {site_type}...")
 
     # For Confluence with session auth, create session if not provided
     close_session = False
@@ -320,10 +320,10 @@ def bulk_discover_artifacts(
                 if confluence_client.authenticate():
                     session = confluence_client._get_session()
                     close_session = True
-                    logger.info("Created Confluence session for artifact discovery")
+                    logger.info("Created Confluence session for document discovery")
                 else:
                     logger.warning(
-                        "Confluence auth failed for artifact discovery at %s",
+                        "Confluence auth failed for document discovery at %s",
                         base_url,
                     )
             except Exception as e:
@@ -344,8 +344,8 @@ def bulk_discover_artifacts(
     )
 
     try:
-        # Discover artifacts
-        artifacts = adapter.bulk_discover_artifacts(facility, base_url, on_progress)
+        # Discover documents
+        documents = adapter.bulk_discover_documents(facility, base_url, on_progress)
     finally:
         if close_session and session is not None:
             try:
@@ -353,14 +353,14 @@ def bulk_discover_artifacts(
             except Exception:
                 pass
 
-    if not artifacts:
-        logger.debug("No artifacts discovered")
+    if not documents:
+        logger.debug("No documents discovered")
         return 0, {}
 
-    logger.debug(f"Discovered {len(artifacts)} artifacts")
+    logger.debug(f"Discovered {len(documents)} documents")
 
-    # Create artifact nodes in graph using shared helper (UNWIND + AT_FACILITY)
-    # Include linked_pages for HAS_ARTIFACT relationship creation
+    # Create document nodes in graph using shared helper (UNWIND + AT_FACILITY)
+    # Include linked_pages for HAS_DOCUMENT relationship creation
     batch_data = [
         {
             "id": f"{facility}:{a.filename}",
@@ -371,36 +371,36 @@ def bulk_discover_artifacts(
             "mime_type": a.mime_type,
             "linked_pages": a.linked_pages,
         }
-        for a in artifacts
+        for a in documents
     ]
 
     with GraphClient() as gc:
-        created = _bulk_create_wiki_artifacts(
+        created = _bulk_create_wiki_documents(
             gc, facility, batch_data, on_progress=on_progress
         )
 
-        # Create HAS_ARTIFACT links from page file references
+        # Create HAS_DOCUMENT links from page file references
         # (extracted during page ingestion and stored on WikiPage nodes).
-        # This provides artifact-page linking even when the MediaWiki API
+        # This provides document-page linking even when the MediaWiki API
         # doesn't support prop=fileusage (e.g. old MediaWiki, API disabled).
-        from imas_codex.discovery.wiki.graph_ops import link_artifacts_from_page_refs
+        from imas_codex.discovery.wiki.graph_ops import link_documents_from_page_refs
 
-        link_artifacts_from_page_refs(gc, facility, on_progress)
+        link_documents_from_page_refs(gc, facility, on_progress)
 
-    logger.info(f"Created/updated {created} artifact nodes in graph")
+    logger.info(f"Created/updated {created} document nodes in graph")
     if on_progress:
-        on_progress(f"created {created} artifacts", None)
+        on_progress(f"created {created} documents", None)
 
-    # Build page → artifact filenames mapping for CLI display
-    page_artifacts: dict[str, list[str]] = {}
-    for a in artifacts:
+    # Build page → document filenames mapping for CLI display
+    page_documents: dict[str, list[str]] = {}
+    for a in documents:
         if a.linked_pages:
             for page in a.linked_pages:
-                page_artifacts.setdefault(page, []).append(a.filename)
+                page_documents.setdefault(page, []).append(a.filename)
         else:
-            page_artifacts.setdefault("(unlinked)", []).append(a.filename)
+            page_documents.setdefault("(unlinked)", []).append(a.filename)
 
-    return created, page_artifacts
+    return created, page_documents
 
 
 # =============================================================================
@@ -425,14 +425,14 @@ async def run_parallel_wiki_discovery(
     score_only: bool = False,
     store_images: bool = False,
     bulk_discover: bool = True,
-    ingest_artifacts: bool = True,
+    ingest_documents: bool = True,
     skip_reset: bool = False,
     deadline: float | None = None,
     on_scan_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
     on_ingest_progress: Callable | None = None,
     on_docs_progress: Callable | None = None,
-    on_artifact_score_progress: Callable | None = None,
+    on_document_score_progress: Callable | None = None,
     on_image_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
@@ -448,15 +448,15 @@ async def run_parallel_wiki_discovery(
         bulk_discover: If True (default), use Special:AllPages for fast
             discovery of all pages upfront. This is 100-300x faster than
             crawling links page-by-page. Only works for MediaWiki sites.
-        ingest_artifacts: If True (default), start artifact worker to
-            download and ingest artifacts discovered during scanning.
-            Artifacts go through score→ingest pipeline:
+        ingest_documents: If True (default), start document worker to
+            download and ingest documents discovered during scanning.
+            Documents go through score→ingest pipeline:
             discovered → scored (LLM) → ingested (embed)
         skip_reset: If True, skip orphan recovery on entry. The reset
             is now timeout-based and parallel-safe, so this is mainly
             a performance optimization for multi-site loops.
-        on_docs_progress: Progress callback for artifact ingest worker.
-        on_artifact_score_progress: Progress callback for artifact score worker.
+        on_docs_progress: Progress callback for document ingest worker.
+        on_document_score_progress: Progress callback for document score worker.
         on_worker_status: Callback for worker status changes. Called with
             SupervisedWorkerGroup for live status display.
         service_monitor: ServiceMonitor instance for health monitoring.
@@ -503,7 +503,7 @@ async def run_parallel_wiki_discovery(
 
     # Wire up graph-backed has_work_fn on each phase.
     # Pipeline: scan (bulk) → score → ingest → image
-    #                       → artifact_score → docs (artifact ingest)
+    #                       → document_score → docs (document ingest)
     # Scan phase is always mark_done() (bulk discovery), so skip it.
     from imas_codex.discovery.wiki import graph_ops as _wiki_ops
 
@@ -513,13 +513,13 @@ async def run_parallel_wiki_discovery(
             _wiki_ops.has_pending_ingest_work(facility) or not state.score_phase.done
         )
     )
-    state.artifact_score_phase.set_has_work_fn(
-        lambda: _wiki_ops.has_pending_artifact_score_work(facility)
+    state.document_score_phase.set_has_work_fn(
+        lambda: _wiki_ops.has_pending_document_score_work(facility)
     )
     state.docs_phase.set_has_work_fn(
         lambda: (
-            _wiki_ops.has_pending_artifact_ingest_work(facility)
-            or not state.artifact_score_phase.done
+            _wiki_ops.has_pending_document_ingest_work(facility)
+            or not state.document_score_phase.done
         )
     )
     state.image_phase.set_has_work_fn(
@@ -600,13 +600,13 @@ async def run_parallel_wiki_discovery(
             logger.info(f"Bulk discovery found {bulk_discovered} pages")
         state.scan_stats.processed = bulk_discovered
 
-    # Bulk artifact discovery: use platform API to find all artifacts
+    # Bulk document discovery: use platform API to find all documents
     # This is much faster than scanning each page for links
-    bulk_artifacts_discovered = 0
-    if bulk_discover and ingest_artifacts and not score_only:
-        logger.info("Starting bulk artifact discovery via API...")
+    bulk_documents_discovered = 0
+    if bulk_discover and ingest_documents and not score_only:
+        logger.info("Starting bulk document discovery via API...")
 
-        def artifact_progress(msg, _stats):
+        def document_progress(msg, _stats):
             if on_docs_progress:
                 on_docs_progress(f"bulk: {msg}", state.docs_stats)
 
@@ -615,7 +615,7 @@ async def run_parallel_wiki_discovery(
 
         # Bulk discovery uses SSH when available, session for Confluence
         bulk_result = await asyncio.to_thread(
-            bulk_discover_artifacts,
+            bulk_discover_documents,
             facility,
             base_url,
             site_type,
@@ -624,17 +624,17 @@ async def run_parallel_wiki_discovery(
             credential_service=state.credential_service,
             access_method="vpn" if ssh_host else "direct",
             space_key=_space_key,
-            on_progress=artifact_progress,
+            on_progress=document_progress,
         )
-        # bulk_discover_artifacts returns (count, page_artifacts_dict)
+        # bulk_discover_documents returns (count, page_documents_dict)
         if isinstance(bulk_result, tuple):
-            bulk_artifacts_discovered, _page_artifacts = bulk_result
+            bulk_documents_discovered, _page_documents = bulk_result
         else:
-            bulk_artifacts_discovered = bulk_result or 0
+            bulk_documents_discovered = bulk_result or 0
 
-        if bulk_artifacts_discovered:
-            logger.info(f"Bulk discovery found {bulk_artifacts_discovered} artifacts")
-            state.docs_stats.processed = bulk_artifacts_discovered
+        if bulk_documents_discovered:
+            logger.info(f"Bulk discovery found {bulk_documents_discovered} documents")
+            state.docs_stats.processed = bulk_documents_discovered
 
     # Create portal page if not exists (may already exist from bulk discovery)
     _seed_portal_page(facility, portal_page, base_url, site_type)
@@ -644,8 +644,8 @@ async def run_parallel_wiki_discovery(
     # num_scan_workers and scan_only params are kept for CLI backwards compat.
     #
     # --scan-only: return immediately (bulk discovery already ran above)
-    # --score-only: start score + artifact_score + image_score workers only
-    # default: start all workers (score, ingest, artifact, image)
+    # --score-only: start score + document_score + image_score workers only
+    # default: start all workers (score, ingest, document, image)
 
     if scan_only:
         # Bulk discovery already ran above — nothing more to do.
@@ -654,7 +654,7 @@ async def run_parallel_wiki_discovery(
             "scanned": state.scan_stats.processed,
             "scored": 0,
             "ingested": 0,
-            "artifacts": 0,
+            "documents": 0,
             "images_scored": 0,
             "cost": 0.0,
             "elapsed_seconds": elapsed,
@@ -680,9 +680,9 @@ async def run_parallel_wiki_discovery(
             )
         )
 
-    if ingest_artifacts:
-        # Artifact score worker: LLM scoring with text preview extraction
-        artifact_score_status = worker_group.create_status(
+    if ingest_documents:
+        # Document score worker: LLM scoring with text preview extraction
+        document_score_status = worker_group.create_status(
             "docs_score_worker", group="docs"
         )
         worker_group.add_task(
@@ -692,8 +692,8 @@ async def run_parallel_wiki_discovery(
                     "docs_score_worker",
                     state,
                     state.should_stop_docs_scoring,
-                    on_progress=on_artifact_score_progress,
-                    status_tracker=artifact_score_status,
+                    on_progress=on_document_score_progress,
+                    status_tracker=document_score_status,
                 )
             )
         )
@@ -724,7 +724,7 @@ async def run_parallel_wiki_discovery(
                     "embed_worker",
                     state,
                     state.should_stop,
-                    labels=["WikiPage", "WikiArtifact", "Image"],
+                    labels=["WikiPage", "WikiDocument", "Image"],
                     status_tracker=embed_status,
                 )
             )
@@ -749,9 +749,9 @@ async def run_parallel_wiki_discovery(
                 )
             )
 
-        if ingest_artifacts:
-            # Artifact ingest worker: download and embed scored artifacts
-            artifact_ingest_status = worker_group.create_status(
+        if ingest_documents:
+            # Document ingest worker: download and embed scored documents
+            document_ingest_status = worker_group.create_status(
                 "docs_worker", group="docs"
             )
             worker_group.add_task(
@@ -762,7 +762,7 @@ async def run_parallel_wiki_discovery(
                         state,
                         state.should_stop_docs_worker,
                         on_progress=on_docs_progress,
-                        status_tracker=artifact_ingest_status,
+                        status_tracker=document_ingest_status,
                     )
                 )
             )
@@ -784,7 +784,7 @@ async def run_parallel_wiki_discovery(
     logger.info(
         f"Started {worker_group.get_active_count()} workers: "
         f"score_only={score_only}, scan_only={scan_only}, "
-        f"ingest_artifacts={ingest_artifacts}, "
+        f"ingest_documents={ingest_documents}, "
         f"skip_facility_workers={skip_facility_workers}"
     )
 
@@ -793,7 +793,7 @@ async def run_parallel_wiki_discovery(
         facility,
         [
             OrphanRecoverySpec("WikiPage"),
-            OrphanRecoverySpec("WikiArtifact"),
+            OrphanRecoverySpec("WikiDocument"),
         ],
     )
 
@@ -823,7 +823,7 @@ async def run_parallel_wiki_discovery(
         "scanned": state.scan_stats.processed,
         "scored": state.score_stats.processed,
         "ingested": state.ingest_stats.processed,
-        "artifacts": state.docs_stats.processed,
+        "documents": state.docs_stats.processed,
         "images_scored": state.image_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
@@ -1035,18 +1035,18 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             ingest_result[0]["pending_ingest"] if ingest_result else 0
         )
 
-        # Get accumulated cost from all pages, artifacts, and images
+        # Get accumulated cost from all pages, documents, and images
         cost_result = gc.query(
             """
             OPTIONAL MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.score_cost IS NOT NULL
             WITH sum(wp.score_cost) AS page_cost
-            OPTIONAL MATCH (wa:WikiArtifact {facility_id: $facility})
+            OPTIONAL MATCH (wa:WikiDocument {facility_id: $facility})
             WHERE wa.score_cost IS NOT NULL
-            WITH page_cost, sum(wa.score_cost) AS artifact_cost
+            WITH page_cost, sum(wa.score_cost) AS document_cost
             OPTIONAL MATCH (img:Image {facility_id: $facility})
             WHERE img.score_cost IS NOT NULL
-            RETURN page_cost, artifact_cost, sum(img.score_cost) AS image_cost
+            RETURN page_cost, document_cost, sum(img.score_cost) AS image_cost
             """,
             facility=facility,
         )
@@ -1055,9 +1055,9 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             if cost_result and cost_result[0]["page_cost"]
             else 0.0
         )
-        artifact_cost = (
-            cost_result[0]["artifact_cost"]
-            if cost_result and cost_result[0]["artifact_cost"]
+        document_cost = (
+            cost_result[0]["document_cost"]
+            if cost_result and cost_result[0]["document_cost"]
             else 0.0
         )
         image_cost = (
@@ -1065,15 +1065,15 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             if cost_result and cost_result[0]["image_cost"]
             else 0.0
         )
-        stats["accumulated_cost"] = page_cost + artifact_cost + image_cost
+        stats["accumulated_cost"] = page_cost + document_cost + image_cost
         stats["accumulated_page_cost"] = page_cost
-        stats["accumulated_artifact_cost"] = artifact_cost
+        stats["accumulated_document_cost"] = document_cost
         stats["accumulated_image_cost"] = image_cost
 
-        # Add artifact stats (total + pending counts per worker)
-        artifact_result = gc.query(
+        # Add document stats (total + pending counts per worker)
+        document_result = gc.query(
             """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
+            MATCH (wa:WikiDocument {facility_id: $facility})
             WITH wa.status AS status, wa.score AS score,
                  wa.artifact_type AS atype,
                  coalesce(wa.score_exempt, false) AS exempt
@@ -1081,59 +1081,59 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             """,
             facility=facility,
         )
-        total_artifacts = 0
-        pending_artifact_score = 0
-        pending_artifact_ingest = 0
+        total_documents = 0
+        pending_document_score = 0
+        pending_document_ingest = 0
         scorable = SCORABLE_ARTIFACT_TYPES
         ingestable = INGESTABLE_ARTIFACT_TYPES
-        for r in artifact_result:
-            total_artifacts += r["cnt"]
+        for r in document_result:
+            total_documents += r["cnt"]
             st = r["status"]
             atype = r["atype"]
             exempt = r["exempt"]
             if (
-                st == WikiArtifactStatus.discovered.value
+                st == WikiDocumentStatus.discovered.value
                 and atype in scorable
                 and not exempt
             ):
-                pending_artifact_score += r["cnt"]
-            elif st == WikiArtifactStatus.discovered.value and exempt:
-                pending_artifact_ingest += r["cnt"]
+                pending_document_score += r["cnt"]
+            elif st == WikiDocumentStatus.discovered.value and exempt:
+                pending_document_ingest += r["cnt"]
             elif (
-                st == WikiArtifactStatus.scored.value
+                st == WikiDocumentStatus.scored.value
                 and atype in ingestable
                 and r["score"] is not None
                 and r["score"] >= 0.5
             ):
-                pending_artifact_ingest += r["cnt"]
+                pending_document_ingest += r["cnt"]
 
-        # Count artifacts by terminal status
+        # Count documents by terminal status
         docs_ingested = 0
-        artifacts_scored = 0
-        artifacts_failed = 0
-        artifacts_deferred = 0
-        artifacts_skipped = 0
-        for r in artifact_result:
+        documents_scored = 0
+        documents_failed = 0
+        documents_deferred = 0
+        documents_skipped = 0
+        for r in document_result:
             st = r["status"]
-            if st == WikiArtifactStatus.ingested.value:
+            if st == WikiDocumentStatus.ingested.value:
                 docs_ingested += r["cnt"]
-            elif st == WikiArtifactStatus.scored.value:
-                artifacts_scored += r["cnt"]
+            elif st == WikiDocumentStatus.scored.value:
+                documents_scored += r["cnt"]
             elif st == "failed":
-                artifacts_failed += r["cnt"]
+                documents_failed += r["cnt"]
             elif st == "deferred":
-                artifacts_deferred += r["cnt"]
+                documents_deferred += r["cnt"]
             elif st == "skipped":
-                artifacts_skipped += r["cnt"]
+                documents_skipped += r["cnt"]
 
-        stats["total_artifacts"] = total_artifacts
+        stats["total_documents"] = total_documents
         stats["docs_ingested"] = docs_ingested
-        stats["artifacts_scored"] = artifacts_scored
-        stats["artifacts_failed"] = artifacts_failed
-        stats["artifacts_deferred"] = artifacts_deferred
-        stats["artifacts_skipped"] = artifacts_skipped
-        stats["pending_artifact_score"] = pending_artifact_score
-        stats["pending_artifact_ingest"] = pending_artifact_ingest
+        stats["documents_scored"] = documents_scored
+        stats["documents_failed"] = documents_failed
+        stats["documents_deferred"] = documents_deferred
+        stats["documents_skipped"] = documents_skipped
+        stats["pending_document_score"] = pending_document_score
+        stats["pending_document_ingest"] = pending_document_ingest
 
         # Image node counts (created during page ingestion, scored by VLM)
         img_result = gc.query(
@@ -1271,7 +1271,7 @@ def start_facility_workers(
                 "embed_worker",
                 facility_state,
                 facility_state.should_stop,
-                labels=["WikiPage", "WikiArtifact", "Image"],
+                labels=["WikiPage", "WikiDocument", "Image"],
                 status_tracker=embed_status,
             )
         )

@@ -1,7 +1,7 @@
 """Wiki ingestion pipeline using LlamaIndex.
 
-Processes wiki pages and artifacts through a deterministic pipeline:
-1. Scan: Discover pages/artifacts via link traversal (creates nodes with status='scanned')
+Processes wiki pages and documents through a deterministic pipeline:
+1. Scan: Discover pages/documents via link traversal (creates nodes with status='scanned')
 2. Score: Agent evaluates interest_score (sets status='scored' or 'skipped')
 3. Ingest: Fetch content, chunk, embed, and link to graph (sets status='ingested')
 
@@ -113,7 +113,7 @@ def get_wiki_queue_stats(facility_id: str) -> dict:
         facility_id: Facility ID
 
     Returns:
-        Dict with status counts for pages and artifacts
+        Dict with status counts for pages and documents
     """
     with GraphClient() as gc:
         result = gc.query(
@@ -147,27 +147,27 @@ def get_wiki_queue_stats(facility_id: str) -> dict:
         return stats
 
 
-def get_pending_wiki_artifacts(
+def get_pending_wiki_documents(
     facility_id: str,
     limit: int | None = None,
     min_interest_score: float = 0.5,
 ) -> list[dict]:
-    """Get wiki artifacts pending ingestion from the graph.
+    """Get wiki documents pending ingestion from the graph.
 
-    Returns WikiArtifact nodes with status='scored' (passed agent evaluation),
+    Returns WikiDocument nodes with status='scored' (passed agent evaluation),
     sorted by interest_score descending.
 
     Args:
         facility_id: Facility ID
-        limit: Maximum artifacts to return (None for all)
+        limit: Maximum documents to return (None for all)
         min_interest_score: Minimum interest score threshold
 
     Returns:
-        List of artifact dicts with id, url, filename, artifact_type, interest_score
+        List of document dicts with id, url, filename, artifact_type, interest_score
     """
     # Build query with optional LIMIT clause
     query = """
-        MATCH (wa:WikiArtifact {facility_id: $facility_id, status: 'scored'})
+        MATCH (wa:WikiDocument {facility_id: $facility_id, status: 'scored'})
         WHERE wa.interest_score >= $min_score
         RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
                wa.artifact_type AS artifact_type,
@@ -1333,15 +1333,15 @@ def get_wiki_stats(facility_id: str) -> dict:
 def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
     """Delete all wiki discovery nodes for a facility in batches.
 
-    Always cascades: deletes WikiChunks and WikiArtifacts along with WikiPages.
-    Wiki chunks and artifacts are always dependent on their parent pages/facility,
+    Always cascades: deletes WikiChunks and WikiDocuments along with WikiPages.
+    Wiki chunks and documents are always dependent on their parent pages/facility,
     so cascade is the only sensible behaviour.
 
     Deletion order follows referential integrity:
     1. WikiChunks linked via HAS_CHUNK from WikiPages
-    2. WikiChunks linked via HAS_CHUNK from WikiArtifacts
+    2. WikiChunks linked via HAS_CHUNK from WikiDocuments
     3. Any remaining orphaned WikiChunks by facility_id
-    4. WikiArtifacts by facility_id
+    4. WikiDocuments by facility_id
     5. WikiPages by facility_id
 
     Args:
@@ -1349,10 +1349,10 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
         batch_size: Nodes to delete per batch (default 1000)
 
     Returns:
-        Dict with deletion counts: pages_deleted, chunks_deleted, artifacts_deleted
+        Dict with deletion counts: pages_deleted, chunks_deleted, documents_deleted
     """
     chunks_deleted = 0
-    artifacts_deleted = 0
+    documents_deleted = 0
     pages_deleted = 0
     images_deleted = 0
 
@@ -1375,11 +1375,11 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
             if deleted < batch_size:
                 break
 
-        # Delete WikiChunks linked to WikiArtifacts
+        # Delete WikiChunks linked to WikiDocuments
         while True:
             result = gc.query(
                 """
-                MATCH (wa:WikiArtifact {facility_id: $facility})
+                MATCH (wa:WikiDocument {facility_id: $facility})
                       -[:HAS_CHUNK]->(wc:WikiChunk)
                 WITH wc LIMIT $batch_size
                 DETACH DELETE wc
@@ -1410,11 +1410,11 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
             if deleted < batch_size:
                 break
 
-        # Delete WikiArtifacts (uses facility_id to catch both linked and orphaned)
+        # Delete WikiDocuments (uses facility_id to catch both linked and orphaned)
         while True:
             result = gc.query(
                 """
-                MATCH (wa:WikiArtifact {facility_id: $facility})
+                MATCH (wa:WikiDocument {facility_id: $facility})
                 WITH wa LIMIT $batch_size
                 DETACH DELETE wa
                 RETURN count(wa) AS deleted
@@ -1423,7 +1423,7 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
                 batch_size=batch_size,
             )
             deleted = result[0]["deleted"] if result else 0
-            artifacts_deleted += deleted
+            documents_deleted += deleted
             if deleted < batch_size:
                 break
 
@@ -1446,7 +1446,7 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
 
         # Delete orphaned Image nodes — only those with no remaining
         # HAS_IMAGE relationships from other domains (e.g. CodeFile).
-        # Wiki nodes (WikiPage, WikiArtifact) are already deleted above,
+        # Wiki nodes (WikiPage, WikiDocument) are already deleted above,
         # so any Image still linked via HAS_IMAGE belongs to another domain.
         while True:
             result = gc.query(
@@ -1468,25 +1468,25 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
     return {
         "pages_deleted": pages_deleted,
         "chunks_deleted": chunks_deleted,
-        "artifacts_deleted": artifacts_deleted,
+        "documents_deleted": documents_deleted,
         "images_deleted": images_deleted,
     }
 
 
 # =============================================================================
-# Artifact Ingestion
+# Document Ingestion
 # =============================================================================
 
 
-class ArtifactIngestionStats(TypedDict):
-    """Statistics from ingesting a single artifact."""
+class DocumentIngestionStats(TypedDict):
+    """Statistics from ingesting a single document."""
 
     chunks: int
     content_preview: str
     artifact_type: str
 
 
-# Default size limits for artifact ingestion
+# Default size limits for document ingestion
 DEFAULT_MAX_ARTIFACT_SIZE_MB = 5.0  # 5 MB default
 MAX_ARTIFACT_SIZE_BYTES = int(DEFAULT_MAX_ARTIFACT_SIZE_MB * 1024 * 1024)
 
@@ -1494,27 +1494,27 @@ MAX_ARTIFACT_SIZE_BYTES = int(DEFAULT_MAX_ARTIFACT_SIZE_MB * 1024 * 1024)
 def _decode_url(url: str) -> str:
     """Decode URL-encoded path components.
 
-    Wiki artifact URLs may have encoded slashes (%2F) that need decoding.
+    Wiki document URLs may have encoded slashes (%2F) that need decoding.
     """
     from urllib.parse import unquote
 
     return unquote(url)
 
 
-def fetch_artifact_size(
+def fetch_document_size(
     url: str,
     facility: str = "tcv",
     timeout: int = 30,
     session: Any = None,
 ) -> int | None:
-    """Fetch artifact file size via HTTP HEAD request.
+    """Fetch document file size via HTTP HEAD request.
 
     Uses the transfer module for SSH-proxied or direct HTTP access.
     When a session is provided (e.g. Confluence auth), uses direct HTTP
     instead of SSH curl.
 
     Args:
-        url: Full URL to artifact
+        url: Full URL to document
         facility: SSH host alias (None for direct HTTP)
         timeout: Timeout in seconds
         session: Optional authenticated requests.Session (bypasses SSH)
@@ -1546,24 +1546,24 @@ def fetch_artifact_size(
         else:
             return asyncio.run(_get_size())
     except Exception as e:
-        logger.debug("Error getting artifact size: %s", e)
+        logger.debug("Error getting document size: %s", e)
         return None
 
 
-async def fetch_artifact_content(
+async def fetch_document_content(
     url: str,
     facility: str = "tcv",
     timeout: int = 120,
     session: Any = None,
 ) -> tuple[str, bytes]:
-    """Fetch artifact content with validation.
+    """Fetch document content with validation.
 
     Uses the transfer module for SSH-proxied or direct HTTP access.
     When a session is provided (e.g. Confluence auth), uses direct HTTP
     instead of SSH curl.
 
     Args:
-        url: Full URL to artifact
+        url: Full URL to document
         facility: SSH host alias (None for direct HTTP)
         timeout: Timeout in seconds
         session: Optional authenticated requests.Session (bypasses SSH)
@@ -1595,10 +1595,10 @@ async def fetch_artifact_content(
     return result.content_type or "application/octet-stream", result.content
 
 
-class WikiArtifactPipeline:
-    """Pipeline for ingesting wiki artifacts (PDFs, presentations, etc.).
+class WikiDocumentPipeline:
+    """Pipeline for ingesting wiki documents (PDFs, presentations, etc.).
 
-    Uses LlamaIndex readers for PDF extraction. Other artifact types
+    Uses LlamaIndex readers for PDF extraction. Other document types
     are currently marked as deferred (require OCR or specialized parsers).
 
     Supported types:
@@ -1606,9 +1606,9 @@ class WikiArtifactPipeline:
     - Others: Deferred for future implementation
 
     Size limits:
-    - Artifacts larger than max_size_mb are marked as 'deferred' with size_bytes stored
+    - Documents larger than max_size_mb are marked as 'deferred' with size_bytes stored
     - This prevents flooding the graph with oversized content
-    - Deferred artifacts can still be searched via metadata (filename, linked pages)
+    - Deferred documents can still be searched via metadata (filename, linked pages)
     """
 
     def __init__(
@@ -1619,14 +1619,14 @@ class WikiArtifactPipeline:
         use_rich: bool = True,
         max_size_mb: float = DEFAULT_MAX_ARTIFACT_SIZE_MB,
     ):
-        """Initialize the artifact pipeline.
+        """Initialize the document pipeline.
 
         Args:
             facility_id: Facility ID
             chunk_size: Target chunk size in characters
             chunk_overlap: Overlap between chunks
             use_rich: Use Rich progress display
-            max_size_mb: Maximum artifact size in MB (default 5.0)
+            max_size_mb: Maximum document size in MB (default 5.0)
         """
         self.facility_id = facility_id
         self.chunk_size = chunk_size
@@ -1651,13 +1651,13 @@ class WikiArtifactPipeline:
 
     async def ingest_pdf(
         self,
-        artifact_id: str,
+        document_id: str,
         pdf_bytes: bytes,
-    ) -> ArtifactIngestionStats:
-        """Ingest a PDF artifact.
+    ) -> DocumentIngestionStats:
+        """Ingest a PDF document.
 
         Args:
-            artifact_id: WikiArtifact node ID
+            document_id: WikiDocument node ID
             pdf_bytes: Raw PDF content
 
         Returns:
@@ -1670,7 +1670,7 @@ class WikiArtifactPipeline:
 
         import pypdf
 
-        stats: ArtifactIngestionStats = {
+        stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
             "artifact_type": "pdf",
@@ -1710,32 +1710,32 @@ class WikiArtifactPipeline:
             pypdf_logger.setLevel(original_level)
 
         if not text_parts:
-            logger.warning("No content extracted from PDF: %s", artifact_id)
+            logger.warning("No content extracted from PDF: %s", document_id)
             return stats
 
         full_text = "\n\n".join(text_parts)
 
         if not full_text.strip():
-            logger.warning("No text content in PDF: %s", artifact_id)
+            logger.warning("No text content in PDF: %s", document_id)
             return stats
 
         stats["content_preview"] = full_text[:300]
-        stats = await self._create_artifact_chunks(artifact_id, full_text, "pdf", stats)
+        stats = await self._create_document_chunks(document_id, full_text, "pdf", stats)
 
         # Extract embedded images for VLM captioning pipeline
         try:
-            images = self._extract_pdf_images(pdf_bytes, artifact_id)
+            images = self._extract_pdf_images(pdf_bytes, document_id)
             if images:
                 stats["extracted_images"] = images
         except Exception as e:
-            logger.debug("PDF image extraction failed for %s: %s", artifact_id, e)
+            logger.debug("PDF image extraction failed for %s: %s", document_id, e)
 
         return stats
 
     def _extract_pdf_images(
         self,
         pdf_bytes: bytes,
-        artifact_id: str,
+        document_id: str,
         max_images: int = 20,
     ) -> list[dict[str, Any]]:
         """Extract embedded images from PDF for VLM processing.
@@ -1745,7 +1745,7 @@ class WikiArtifactPipeline:
 
         Args:
             pdf_bytes: Raw PDF bytes
-            artifact_id: Parent artifact ID for context
+            document_id: Parent document ID for context
             max_images: Maximum images to extract per PDF
 
         Returns:
@@ -1791,13 +1791,13 @@ class WikiArtifactPipeline:
 
     async def ingest_docx(
         self,
-        artifact_id: str,
+        document_id: str,
         content_bytes: bytes,
-    ) -> ArtifactIngestionStats:
-        """Ingest a Word document artifact.
+    ) -> DocumentIngestionStats:
+        """Ingest a Word document document.
 
         Args:
-            artifact_id: WikiArtifact node ID
+            document_id: WikiDocument node ID
             content_bytes: Raw document content
 
         Returns:
@@ -1807,7 +1807,7 @@ class WikiArtifactPipeline:
 
         from docx import Document as DocxDocument
 
-        stats: ArtifactIngestionStats = {
+        stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
             "artifact_type": "docx",
@@ -1818,24 +1818,24 @@ class WikiArtifactPipeline:
         full_text = "\n\n".join(paragraphs)
 
         if not full_text.strip():
-            logger.warning("No content extracted from DOCX: %s", artifact_id)
+            logger.warning("No content extracted from DOCX: %s", document_id)
             return stats
 
         stats["content_preview"] = full_text[:300]
-        stats = await self._create_artifact_chunks(
-            artifact_id, full_text, "docx", stats
+        stats = await self._create_document_chunks(
+            document_id, full_text, "docx", stats
         )
         return stats
 
     async def ingest_pptx(
         self,
-        artifact_id: str,
+        document_id: str,
         content_bytes: bytes,
-    ) -> ArtifactIngestionStats:
-        """Ingest a PowerPoint artifact.
+    ) -> DocumentIngestionStats:
+        """Ingest a PowerPoint document.
 
         Args:
-            artifact_id: WikiArtifact node ID
+            document_id: WikiDocument node ID
             content_bytes: Raw presentation content
 
         Returns:
@@ -1845,7 +1845,7 @@ class WikiArtifactPipeline:
 
         from pptx import Presentation
 
-        stats: ArtifactIngestionStats = {
+        stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
             "artifact_type": "pptx",
@@ -1865,28 +1865,28 @@ class WikiArtifactPipeline:
         full_text = "\n\n".join(text_parts)
 
         if not full_text.strip():
-            logger.warning("No content extracted from PPTX: %s", artifact_id)
+            logger.warning("No content extracted from PPTX: %s", document_id)
             return stats
 
         stats["content_preview"] = full_text[:300]
-        stats = await self._create_artifact_chunks(
-            artifact_id, full_text, "pptx", stats
+        stats = await self._create_document_chunks(
+            document_id, full_text, "pptx", stats
         )
 
         # Extract embedded images from slides for VLM captioning
         try:
-            images = self._extract_pptx_images(content_bytes, artifact_id)
+            images = self._extract_pptx_images(content_bytes, document_id)
             if images:
                 stats["extracted_images"] = images
         except Exception as e:
-            logger.debug("PPTX image extraction failed for %s: %s", artifact_id, e)
+            logger.debug("PPTX image extraction failed for %s: %s", document_id, e)
 
         return stats
 
     def _extract_pptx_images(
         self,
         content_bytes: bytes,
-        artifact_id: str,
+        document_id: str,
         max_images: int = 20,
     ) -> list[dict[str, Any]]:
         """Extract embedded images from PowerPoint for VLM processing.
@@ -1896,7 +1896,7 @@ class WikiArtifactPipeline:
 
         Args:
             content_bytes: Raw PPTX bytes
-            artifact_id: Parent artifact ID for context
+            document_id: Parent document ID for context
             max_images: Maximum images to extract
 
         Returns:
@@ -1936,19 +1936,19 @@ class WikiArtifactPipeline:
 
     async def ingest_xlsx(
         self,
-        artifact_id: str,
+        document_id: str,
         content_bytes: bytes,
-    ) -> ArtifactIngestionStats:
-        """Ingest an Excel artifact.
+    ) -> DocumentIngestionStats:
+        """Ingest an Excel document.
 
         Args:
-            artifact_id: WikiArtifact node ID
+            document_id: WikiDocument node ID
             content_bytes: Raw spreadsheet content
 
         Returns:
             Ingestion stats
         """
-        stats: ArtifactIngestionStats = {
+        stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
             "artifact_type": "xlsx",
@@ -1959,24 +1959,24 @@ class WikiArtifactPipeline:
         full_text = extract_excel_full(content_bytes)
 
         if not full_text.strip():
-            logger.warning("No content extracted from XLSX: %s", artifact_id)
+            logger.warning("No content extracted from XLSX: %s", document_id)
             return stats
 
         stats["content_preview"] = full_text[:300]
-        stats = await self._create_artifact_chunks(
-            artifact_id, full_text, "xlsx", stats
+        stats = await self._create_document_chunks(
+            document_id, full_text, "xlsx", stats
         )
         return stats
 
     async def ingest_notebook(
         self,
-        artifact_id: str,
+        document_id: str,
         content_bytes: bytes,
-    ) -> ArtifactIngestionStats:
-        """Ingest a Jupyter notebook artifact.
+    ) -> DocumentIngestionStats:
+        """Ingest a Jupyter notebook document.
 
         Args:
-            artifact_id: WikiArtifact node ID
+            document_id: WikiDocument node ID
             content_bytes: Raw notebook content
 
         Returns:
@@ -1986,7 +1986,7 @@ class WikiArtifactPipeline:
 
         import nbformat
 
-        stats: ArtifactIngestionStats = {
+        stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
             "artifact_type": "ipynb",
@@ -1995,7 +1995,7 @@ class WikiArtifactPipeline:
         try:
             nb = nbformat.reads(content_bytes.decode("utf-8"), as_version=4)
         except (json.JSONDecodeError, nbformat.reader.NotJSONError) as e:
-            logger.warning("Failed to parse notebook %s: %s", artifact_id, e)
+            logger.warning("Failed to parse notebook %s: %s", document_id, e)
             return stats
 
         text_parts = []
@@ -2010,27 +2010,27 @@ class WikiArtifactPipeline:
         full_text = "\n\n".join(text_parts)
 
         if not full_text.strip():
-            logger.warning("No content extracted from notebook: %s", artifact_id)
+            logger.warning("No content extracted from notebook: %s", document_id)
             return stats
 
         stats["content_preview"] = full_text[:300]
-        stats = await self._create_artifact_chunks(
-            artifact_id, full_text, "ipynb", stats
+        stats = await self._create_document_chunks(
+            document_id, full_text, "ipynb", stats
         )
         return stats
 
     async def ingest_json(
         self,
-        artifact_id: str,
+        document_id: str,
         content_bytes: bytes,
-    ) -> ArtifactIngestionStats:
-        """Ingest a JSON artifact.
+    ) -> DocumentIngestionStats:
+        """Ingest a JSON document.
 
         Parses JSON content and converts to readable text for chunking.
         Handles both structured data and configuration-style JSON.
 
         Args:
-            artifact_id: WikiArtifact node ID
+            document_id: WikiDocument node ID
             content_bytes: Raw JSON content
 
         Returns:
@@ -2038,7 +2038,7 @@ class WikiArtifactPipeline:
         """
         import json
 
-        stats: ArtifactIngestionStats = {
+        stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
             "artifact_type": "json",
@@ -2048,42 +2048,42 @@ class WikiArtifactPipeline:
             text = content_bytes.decode("utf-8", errors="replace")
             data = json.loads(text)
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning("Failed to parse JSON %s: %s", artifact_id, e)
+            logger.warning("Failed to parse JSON %s: %s", document_id, e)
             return stats
 
         # Pretty-print for chunking (preserves structure for LLM understanding)
         full_text = json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
         if not full_text.strip():
-            logger.warning("No content extracted from JSON: %s", artifact_id)
+            logger.warning("No content extracted from JSON: %s", document_id)
             return stats
 
         stats["content_preview"] = full_text[:300]
-        stats = await self._create_artifact_chunks(
-            artifact_id, full_text, "json", stats
+        stats = await self._create_document_chunks(
+            document_id, full_text, "json", stats
         )
         return stats
 
-    async def ingest_artifact(
+    async def ingest_document(
         self,
-        artifact_id: str,
+        document_id: str,
         content_bytes: bytes,
         artifact_type: str,
-    ) -> ArtifactIngestionStats:
-        """Dispatch to appropriate extraction method based on artifact type.
+    ) -> DocumentIngestionStats:
+        """Dispatch to appropriate extraction method based on document type.
 
         Uses semantic type names matching ArtifactType enum values.
 
         Args:
-            artifact_id: WikiArtifact node ID
-            content_bytes: Raw artifact content
-            artifact_type: Semantic artifact type (pdf, document, presentation, etc.)
+            document_id: WikiDocument node ID
+            content_bytes: Raw document content
+            artifact_type: Semantic document type (pdf, document, presentation, etc.)
 
         Returns:
             Ingestion stats as dict
 
         Raises:
-            ValueError: If artifact type is not supported
+            ValueError: If document type is not supported
         """
         handlers = {
             "pdf": self.ingest_pdf,
@@ -2096,20 +2096,20 @@ class WikiArtifactPipeline:
 
         handler = handlers.get(artifact_type.lower())
         if handler is None:
-            raise ValueError(f"Unsupported artifact type: {artifact_type}")
+            raise ValueError(f"Unsupported document type: {artifact_type}")
 
-        return await handler(artifact_id, content_bytes)
+        return await handler(document_id, content_bytes)
 
-    async def _create_artifact_chunks(
+    async def _create_document_chunks(
         self,
-        artifact_id: str,
+        document_id: str,
         full_text: str,
         artifact_type: str,
-        stats: ArtifactIngestionStats,
-    ) -> ArtifactIngestionStats:
+        stats: DocumentIngestionStats,
+    ) -> DocumentIngestionStats:
         """Create chunks from extracted text and persist to graph.
 
-        Common implementation used by all artifact type extractors.
+        Common implementation used by all document type extractors.
         Performs entity extraction including facility-aware tool mention
         matching from DataAccessPatternsConfig.
 
@@ -2128,7 +2128,7 @@ class WikiArtifactPipeline:
         combined_doc = Document(
             text=full_text,
             metadata={
-                "artifact_id": artifact_id,
+                "document_id": document_id,
                 "facility_id": self.facility_id,
             },
         )
@@ -2156,8 +2156,8 @@ class WikiArtifactPipeline:
 
             chunk_batch.append(
                 {
-                    "id": f"{artifact_id}:chunk_{i}",
-                    "artifact_id": artifact_id,
+                    "id": f"{document_id}:chunk_{i}",
+                    "document_id": document_id,
                     "facility_id": self.facility_id,
                     "text": chunk_text,
                     "embedding": node.embedding,
@@ -2167,16 +2167,16 @@ class WikiArtifactPipeline:
 
         # Persist chunks
         with GraphClient() as gc:
-            # Update artifact status
+            # Update document status
             gc.query(
                 """
-                MATCH (wa:WikiArtifact {id: $id})
+                MATCH (wa:WikiDocument {id: $id})
                 SET wa.status = 'ingested',
                     wa.chunk_count = $chunks,
                     wa.ingested_at = datetime(),
                     wa.claimed_at = null
                 """,
-                id=artifact_id,
+                id=document_id,
                 chunks=len(nodes),
             )
 
@@ -2187,7 +2187,7 @@ class WikiArtifactPipeline:
                     """
                     UNWIND $chunks AS chunk
                     MERGE (c:WikiChunk {id: chunk.id})
-                    SET c.artifact_id = chunk.artifact_id,
+                    SET c.document_id = chunk.document_id,
                         c.facility_id = chunk.facility_id,
                         c.text = chunk.text,
                         c.embedding = chunk.embedding,
@@ -2198,7 +2198,7 @@ class WikiArtifactPipeline:
                         c.conventions_mentioned = chunk.conventions,
                         c.tool_mentions = chunk.tool_mentions
                     WITH c, chunk
-                    MATCH (wa:WikiArtifact {id: chunk.artifact_id})
+                    MATCH (wa:WikiDocument {id: chunk.document_id})
                     MERGE (wa)-[:HAS_CHUNK]->(c)
                     WITH c, chunk
                     MATCH (f:Facility {id: chunk.facility_id})
@@ -2214,56 +2214,56 @@ class WikiArtifactPipeline:
         limit: int | None = None,
         min_interest_score: float = 0.5,
     ) -> dict[str, int]:
-        """Ingest artifacts from the graph queue.
+        """Ingest documents from the graph queue.
 
-        Pre-checks file size via HTTP HEAD before downloading. Artifacts
+        Pre-checks file size via HTTP HEAD before downloading. Documents
         exceeding max_size_bytes are marked as 'deferred' with size stored.
         Currently only processes PDFs. Other types are marked as deferred.
 
         Args:
-            limit: Maximum artifacts to process (None for all)
+            limit: Maximum documents to process (None for all)
             min_interest_score: Minimum score threshold
 
         Returns:
             Stats dict
         """
         total_stats = {
-            "artifacts": 0,
-            "artifacts_failed": 0,
-            "artifacts_deferred": 0,
-            "artifacts_oversized": 0,
+            "documents": 0,
+            "documents_failed": 0,
+            "documents_deferred": 0,
+            "documents_oversized": 0,
             "chunks": 0,
         }
 
-        pending = get_pending_wiki_artifacts(
+        pending = get_pending_wiki_documents(
             self.facility_id,
             limit=limit,
             min_interest_score=min_interest_score,
         )
 
         if not pending:
-            logger.info("No pending artifacts for %s", self.facility_id)
+            logger.info("No pending documents for %s", self.facility_id)
             return total_stats
 
-        for artifact in pending:
-            artifact_id = artifact["id"]
-            artifact_type = artifact.get("artifact_type", "unknown")
-            url = artifact["url"]
-            filename = artifact.get("filename", "unknown")
+        for document in pending:
+            document_id = document["id"]
+            artifact_type = document.get("artifact_type", "unknown")
+            url = document["url"]
+            filename = document.get("filename", "unknown")
 
             try:
                 # Check size before downloading
-                size_bytes = fetch_artifact_size(url, facility=self.facility_id)
+                size_bytes = fetch_document_size(url, facility=self.facility_id)
 
                 if size_bytes is not None:
                     # Update size in graph
                     with GraphClient() as gc:
                         gc.query(
                             """
-                            MATCH (wa:WikiArtifact {id: $id})
+                            MATCH (wa:WikiDocument {id: $id})
                             SET wa.size_bytes = $size
                             """,
-                            id=artifact_id,
+                            id=document_id,
                             size=size_bytes,
                         )
 
@@ -2275,72 +2275,72 @@ class WikiArtifactPipeline:
                             f"File size {size_mb:.1f} MB exceeds limit {max_mb:.1f} MB"
                         )
                         logger.info(
-                            "Deferring oversized artifact %s: %s",
+                            "Deferring oversized document %s: %s",
                             filename,
                             defer_reason,
                         )
                         with GraphClient() as gc:
                             gc.query(
                                 """
-                                MATCH (wa:WikiArtifact {id: $id})
+                                MATCH (wa:WikiDocument {id: $id})
                                 SET wa.status = 'deferred',
                                     wa.defer_reason = $reason
                                 """,
-                                id=artifact_id,
+                                id=document_id,
                                 reason=defer_reason,
                             )
-                        total_stats["artifacts_deferred"] += 1
-                        total_stats["artifacts_oversized"] += 1
+                        total_stats["documents_deferred"] += 1
+                        total_stats["documents_oversized"] += 1
                         continue
 
                 if artifact_type == "pdf":
-                    _, content = await fetch_artifact_content(
+                    _, content = await fetch_document_content(
                         url, facility=self.facility_id
                     )
-                    stats = await self.ingest_pdf(artifact_id, content)
-                    total_stats["artifacts"] += 1
+                    stats = await self.ingest_pdf(document_id, content)
+                    total_stats["documents"] += 1
                     total_stats["chunks"] += stats["chunks"]
                 else:
                     # Mark non-PDF as deferred
                     with GraphClient() as gc:
                         gc.query(
                             """
-                            MATCH (wa:WikiArtifact {id: $id})
+                            MATCH (wa:WikiDocument {id: $id})
                             SET wa.status = 'deferred',
                                 wa.defer_reason = $reason
                             """,
-                            id=artifact_id,
-                            reason=f"Artifact type '{artifact_type}' not yet supported",
+                            id=document_id,
+                            reason=f"Document type '{artifact_type}' not yet supported",
                         )
-                    total_stats["artifacts_deferred"] += 1
+                    total_stats["documents_deferred"] += 1
 
             except Exception as e:
-                logger.error("Failed to ingest artifact %s: %s", artifact_id, e)
+                logger.error("Failed to ingest document %s: %s", document_id, e)
                 with GraphClient() as gc:
                     gc.query(
                         """
-                        MATCH (wa:WikiArtifact {id: $id})
+                        MATCH (wa:WikiDocument {id: $id})
                         SET wa.status = 'failed', wa.error = $error
                         """,
-                        id=artifact_id,
+                        id=document_id,
                         error=str(e),
                     )
-                total_stats["artifacts_failed"] += 1
+                total_stats["documents_failed"] += 1
 
         return total_stats
 
 
 __all__ = [
-    "ArtifactIngestionStats",
+    "DocumentIngestionStats",
     "DEFAULT_MAX_ARTIFACT_SIZE_MB",
     "ProgressCallback",
-    "WikiArtifactPipeline",
+    "WikiDocumentPipeline",
     "WikiIngestionPipeline",
     "clear_facility_wiki",
-    "fetch_artifact_content",
-    "fetch_artifact_size",
+    "fetch_document_content",
+    "fetch_document_size",
     "get_embed_model",
-    "get_pending_wiki_artifacts",
+    "get_pending_wiki_documents",
     "get_pending_wiki_pages",
     "get_wiki_queue_stats",
     "get_wiki_stats",

@@ -201,31 +201,31 @@ enums:
       failed:
         description: Error during processing (check error field)
 
-  WikiArtifactStatus:
+  WikiDocumentStatus:
     description: >-
-      Lifecycle status for wiki artifacts (PDFs, presentations, etc.).
+      Lifecycle status for wiki documents (PDFs, presentations, etc.).
       Uses claimed_at timestamp for transient worker coordination
       (same pattern as WikiPageStatus - no separate transient states).
       
       Workflow: discovered → scored → ingested (simple 3-phase)
       - Bulk discovery sets status=discovered
       - Score: download preview + LLM scoring in single pass
-        Artifacts with score >= 0.5 proceed to ingestion
+        Documents with score >= 0.5 proceed to ingestion
       - Ingest: download full content, parse, chunk, embed
       
-      Score-exempt artifacts (score_exempt=true, e.g. images) skip the
+      Score-exempt documents (score_exempt=true, e.g. images) skip the
       scored phase entirely: discovered → ingested. They are picked up
       directly by the ingestion worker without LLM text scoring.
     permissible_values:
       discovered:
         description: >-
-          Artifact link found but not yet scored. Awaiting content-aware scoring.
-          Score-exempt artifacts (images) are picked up directly from this
+          Document link found but not yet scored. Awaiting content-aware scoring.
+          Score-exempt documents (images) are picked up directly from this
           state by the ingestion worker.
       scored:
         description: >-
           Scoring complete. Score field set based on content preview.
-          Artifacts with score >= 0.5 proceed to ingestion.
+          Documents with score >= 0.5 proceed to ingestion.
       ingested:
         description: Content downloaded, parsed, chunked, and embedded
       deferred:

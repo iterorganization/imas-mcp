@@ -1,8 +1,8 @@
 """Scoring functions for wiki discovery.
 
-LLM-based scoring for wiki pages, artifacts, and images:
+LLM-based scoring for wiki pages, documents, and images:
 - Page scoring: content preview + LLM structured output
-- Artifact scoring: text extraction + LLM structured output
+- Document scoring: text extraction + LLM structured output
 - Image scoring: VLM captioning + structured output
 - HTML fetching: SSH proxy, Tequila, Keycloak, HTTP Basic auth
 - Heuristic fallback scoring for non-LLM path
@@ -136,16 +136,16 @@ def batch_ssh_read_files(
     return results
 
 
-async def _extract_artifact_preview(
+async def _extract_document_preview(
     url: str,
     artifact_type: str,
     facility: str,
     max_chars: int = 1500,
     session: Any = None,
 ) -> str:
-    """Extract a text preview from an artifact for LLM scoring.
+    """Extract a text preview from an document for LLM scoring.
 
-    Downloads the artifact content and extracts text from the first
+    Downloads the document content and extracts text from the first
     portion. This is a lightweight extraction for scoring purposes only.
 
     For PDFs: extracts text from first few pages.
@@ -154,8 +154,8 @@ async def _extract_artifact_preview(
     For notebooks: extracts cell content.
 
     Args:
-        url: Artifact download URL
-        artifact_type: Type of artifact (pdf, docx, pptx, xlsx, ipynb)
+        url: Document download URL
+        artifact_type: Type of document (pdf, docx, pptx, xlsx, ipynb)
         facility: Facility ID (for SSH proxy)
         max_chars: Maximum characters to extract
         session: Optional authenticated requests.Session (bypasses SSH)
@@ -163,10 +163,10 @@ async def _extract_artifact_preview(
     Returns:
         Extracted text preview or empty string on failure
     """
-    from imas_codex.discovery.wiki.pipeline import fetch_artifact_content
+    from imas_codex.discovery.wiki.pipeline import fetch_document_content
 
     try:
-        _, content_bytes = await fetch_artifact_content(
+        _, content_bytes = await fetch_document_content(
             url, facility=facility, session=session
         )
     except Exception as e:
@@ -182,12 +182,12 @@ async def _extract_artifact_preview(
 
 
 def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
-    """Extract text from artifact bytes based on type.
+    """Extract text from document bytes based on type.
 
     Lightweight extraction for scoring preview. Does not use LlamaIndex
     to avoid heavyweight dependencies in the scoring path.
 
-    Uses semantic artifact type names matching ArtifactType enum values.
+    Uses semantic document type names matching ArtifactType enum values.
     """
     import io
 
@@ -284,24 +284,24 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
     return ""
 
 
-async def _score_artifacts_batch(
-    artifacts: list[dict[str, Any]],
+async def _score_documents_batch(
+    documents: list[dict[str, Any]],
     model: str,
     focus: str | None = None,
     data_access_patterns: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
-    """Score a batch of artifacts using LLM with structured output.
+    """Score a batch of documents using LLM with structured output.
 
-    Uses litellm.acompletion with ArtifactScoreBatch Pydantic model for
+    Uses litellm.acompletion with DocumentScoreBatch Pydantic model for
     structured output. Content-based scoring with per-dimension scores.
 
     Args:
-        artifacts: List of artifact dicts with id, filename, preview_text, etc.
+        documents: List of document dicts with id, filename, preview_text, etc.
         model: Model identifier from get_model()
         focus: Optional focus area for scoring
         data_access_patterns: Optional facility-specific data access patterns
             from facility config. When provided, injected into the prompt
-            template so the LLM can boost artifacts matching facility tools/APIs.
+            template so the LLM can boost documents matching facility tools/APIs.
 
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
@@ -316,8 +316,8 @@ async def _score_artifacts_batch(
 
     from imas_codex.agentic.prompt_loader import render_prompt
     from imas_codex.discovery.wiki.models import (
-        ArtifactScoreBatch,
-        grounded_artifact_score,
+        DocumentScoreBatch,
+        grounded_document_score,
     )
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
@@ -328,23 +328,23 @@ async def _score_artifacts_batch(
     if not model_id.startswith("openrouter/"):
         model_id = f"openrouter/{model_id}"
 
-    # Build system prompt using artifact-scorer template
+    # Build system prompt using document-scorer template
     context: dict[str, Any] = {}
     if focus:
         context["focus"] = focus
     if data_access_patterns:
         context["data_access_patterns"] = data_access_patterns
 
-    system_prompt = render_prompt("wiki/artifact-scorer", context)
+    system_prompt = render_prompt("wiki/document-scorer", context)
 
-    # Build user prompt with artifact content
+    # Build user prompt with document content
     lines = [
-        f"Score these {len(artifacts)} wiki artifacts based on their content.",
+        f"Score these {len(documents)} wiki documents based on their content.",
         "(Use the preview text to assess value for the IMAS knowledge graph.)\n",
     ]
 
-    for i, a in enumerate(artifacts, 1):
-        lines.append(f"\n## Artifact {i}")
+    for i, a in enumerate(documents, 1):
+        lines.append(f"\n## Document {i}")
         lines.append(f"ID: {a['id']}")
         lines.append(f"Filename: {a.get('filename', 'Unknown')}")
         lines.append(f"Type: {a.get('artifact_type', 'unknown')}")
@@ -363,7 +363,7 @@ async def _score_artifacts_batch(
             lines.append(f"URL: {a['url']}")
 
     lines.append(
-        "\n\nReturn results for each artifact in order. "
+        "\n\nReturn results for each document in order. "
         "The response format is enforced by the schema."
     )
 
@@ -392,7 +392,7 @@ async def _score_artifacts_batch(
             response = await litellm.acompletion(
                 model=model_id,
                 api_key=api_key,
-                response_format=ArtifactScoreBatch,
+                response_format=DocumentScoreBatch,
                 messages=messages,
                 temperature=0.3,
                 max_tokens=16000,
@@ -414,7 +414,7 @@ async def _score_artifacts_batch(
 
             content = response.choices[0].message.content
             if not content:
-                logger.warning("LLM returned empty response for artifacts")
+                logger.warning("LLM returned empty response for documents")
                 return [], total_cost
 
             content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
@@ -422,7 +422,7 @@ async def _score_artifacts_batch(
                 "utf-8", errors="replace"
             )
 
-            batch = ArtifactScoreBatch.model_validate_json(content)
+            batch = DocumentScoreBatch.model_validate_json(content)
             llm_results = batch.results
             break
 
@@ -467,24 +467,24 @@ async def _score_artifacts_batch(
                 await asyncio.sleep(delay)
             else:
                 logger.error(
-                    "LLM failed for artifact batch of %d after %d attempts: %s. "
-                    "Artifacts reverted to discovered status for retry.",
-                    len(artifacts),
+                    "LLM failed for document batch of %d after %d attempts: %s. "
+                    "Documents reverted to discovered status for retry.",
+                    len(documents),
                     attempt + 1,
                     e,
                 )
                 raise ValueError(
                     f"LLM failed after {attempt + 1} attempts: {e}. "
-                    f"Artifacts reverted to discovered status."
+                    f"Documents reverted to discovered status."
                 ) from e
     else:
         raise last_error  # type: ignore[misc]
 
     # Convert to result dicts
-    cost_per_artifact = total_cost / len(artifacts) if artifacts else 0.0
+    cost_per_document = total_cost / len(documents) if documents else 0.0
     results = []
 
-    for r in llm_results[: len(artifacts)]:
+    for r in llm_results[: len(documents)]:
         scores = {
             "score_data_documentation": r.score_data_documentation,
             "score_physics_content": r.score_physics_content,
@@ -494,10 +494,10 @@ async def _score_artifacts_batch(
             "score_imas_relevance": r.score_imas_relevance,
         }
 
-        combined_score = grounded_artifact_score(scores, r.artifact_purpose)
+        combined_score = grounded_document_score(scores, r.artifact_purpose)
 
-        # Find the matching artifact for filename
-        matching = next((a for a in artifacts if a["id"] == r.id), {})
+        # Find the matching document for filename
+        matching = next((a for a in documents if a["id"] == r.id), {})
 
         results.append(
             {
@@ -516,7 +516,7 @@ async def _score_artifacts_batch(
                 "score_data_access": r.score_data_access,
                 "score_calibration": r.score_calibration,
                 "score_imas_relevance": r.score_imas_relevance,
-                "score_cost": cost_per_artifact,
+                "score_cost": cost_per_document,
                 # Pass through filename for display
                 "filename": matching.get("filename", ""),
                 "artifact_type": matching.get("artifact_type", ""),

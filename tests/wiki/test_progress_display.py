@@ -127,13 +127,13 @@ class TestProgressStateProperties:
         state = self._state(cost_limit=1.0, run_scored=0)
         assert state.cost_per_page is None
 
-    def test_cost_per_artifact_score(self):
+    def test_cost_per_document_score(self):
         state = self._state(
             cost_limit=1.0,
             run_docs_scored=5,
             _run_docs_score_cost=0.25,
         )
-        assert state.cost_per_artifact_score == pytest.approx(0.05)
+        assert state.cost_per_document_score == pytest.approx(0.05)
 
     def test_cost_per_image_score(self):
         state = self._state(
@@ -273,7 +273,7 @@ class TestDisplayItems:
         )
         assert item.chunk_count == 12
 
-    def test_artifact_item(self):
+    def test_document_item(self):
         item = DocsItem(
             filename="report.pdf",
             artifact_type="pdf",

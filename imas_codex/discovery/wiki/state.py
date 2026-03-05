@@ -95,7 +95,7 @@ class WikiDiscoveryState:
     score_stats: WorkerStats = field(default_factory=WorkerStats)
     ingest_stats: WorkerStats = field(default_factory=WorkerStats)
     docs_stats: WorkerStats = field(default_factory=WorkerStats)
-    artifact_score_stats: WorkerStats = field(default_factory=WorkerStats)
+    document_score_stats: WorkerStats = field(default_factory=WorkerStats)
     image_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
@@ -108,9 +108,9 @@ class WikiDiscoveryState:
     scan_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("scan"))
     score_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("score"))
     ingest_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("ingest"))
-    docs_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("artifact"))
-    artifact_score_phase: PipelinePhase = field(
-        default_factory=lambda: PipelinePhase("artifact_score")
+    docs_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("document"))
+    document_score_phase: PipelinePhase = field(
+        default_factory=lambda: PipelinePhase("document_score")
     )
     image_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("image"))
 
@@ -292,7 +292,7 @@ class WikiDiscoveryState:
             self.score_stats.cost
             + self.ingest_stats.cost
             + self.image_stats.cost
-            + self.artifact_score_stats.cost
+            + self.document_score_stats.cost
         )
 
     async def await_services(self) -> bool:
@@ -328,10 +328,10 @@ class WikiDiscoveryState:
         Used by the main loop to determine when discovery is complete.
 
         When budget is exhausted or page limit reached, LLM-dependent workers
-        (score, artifact_score, image) exit their loops immediately — their
+        (score, document_score, image) exit their loops immediately — their
         phases may not reach idle.  We treat them as implicitly "done" so
         the main loop doesn't hang waiting for phases that can never idle.
-        I/O workers (ingest, artifact) continue draining their queues normally.
+        I/O workers (ingest, document) continue draining their queues normally.
         """
         if self.stop_requested:
             return True
@@ -345,7 +345,7 @@ class WikiDiscoveryState:
 
         # LLM workers: idle/done OR limit-stopped counts as "done"
         score_done = self.score_phase.is_idle_or_done or limit_done
-        artifact_score_done = self.artifact_score_phase.is_idle_or_done or limit_done
+        document_score_done = self.document_score_phase.is_idle_or_done or limit_done
         image_done = self.image_phase.is_idle_or_done or limit_done
 
         # I/O workers: must be genuinely idle or done
@@ -354,7 +354,7 @@ class WikiDiscoveryState:
             and score_done
             and self.ingest_phase.is_idle_or_done
             and self.docs_phase.is_idle_or_done
-            and artifact_score_done
+            and document_score_done
             and image_done
         )
         if all_idle:
@@ -375,11 +375,11 @@ class WikiDiscoveryState:
             elif limit_done:
                 has_work = graph_ops.has_pending_ingest_work(
                     self.facility
-                ) or graph_ops.has_pending_artifact_ingest_work(self.facility)
+                ) or graph_ops.has_pending_document_ingest_work(self.facility)
             else:
                 has_work = (
                     graph_ops.has_pending_work(self.facility)
-                    or graph_ops.has_pending_artifact_work(self.facility)
+                    or graph_ops.has_pending_document_work(self.facility)
                     or graph_ops.has_pending_image_work(self.facility)
                 )
 
@@ -395,7 +395,7 @@ class WikiDiscoveryState:
                     self.score_phase.record_activity()
                     self.ingest_phase.record_activity()
                     self.docs_phase.record_activity()
-                    self.artifact_score_phase.record_activity()
+                    self.document_score_phase.record_activity()
                     self.image_phase.record_activity()
                 return False
             return True
@@ -463,36 +463,36 @@ class WikiDiscoveryState:
         return False
 
     def should_stop_docs_worker(self) -> bool:
-        """Check if artifact ingest workers should stop.
+        """Check if document ingest workers should stop.
 
-        Artifact ingest workers continue draining scored artifacts.
+        Document ingest workers continue draining scored documents.
         They only stop when:
         1. Explicitly requested or deadline expired
         2. Idle with no pending ingest work AND
-           artifact scoring is also done (no more scoring happening)
+           document scoring is also done (no more scoring happening)
         """
         if self.stop_requested:
             return True
         if self.deadline_expired:
             return True
         if self.docs_phase.is_idle_or_done:
-            # Only stop if artifact scoring is also done AND no pending work
+            # Only stop if document scoring is also done AND no pending work
             scoring_done = (
-                self.artifact_score_phase.is_idle_or_done
+                self.document_score_phase.is_idle_or_done
                 or self.budget_exhausted
                 or self.provider_budget_exhausted
             )
-            if scoring_done and not _get_graph_ops().has_pending_artifact_ingest_work(
+            if scoring_done and not _get_graph_ops().has_pending_document_ingest_work(
                 self.facility
             ):
                 return True
         return False
 
     def should_stop_docs_scoring(self) -> bool:
-        """Check if artifact score workers should stop.
+        """Check if document score workers should stop.
 
-        Artifact score workers stop when budget exhausted, provider budget
-        exhausted, deadline expired, or no more discovered artifacts.
+        Document score workers stop when budget exhausted, provider budget
+        exhausted, deadline expired, or no more discovered documents.
         """
         if self.stop_requested:
             return True
@@ -501,8 +501,8 @@ class WikiDiscoveryState:
         if self.budget_exhausted or self.provider_budget_exhausted:
             return True
         if (
-            self.artifact_score_phase.is_idle_or_done
-            and not _get_graph_ops().has_pending_artifact_score_work(self.facility)
+            self.document_score_phase.is_idle_or_done
+            and not _get_graph_ops().has_pending_document_score_work(self.facility)
         ):
             return True
         return False
@@ -742,14 +742,14 @@ class WikiDiscoveryState:
         limit_done = budget_done or self.page_limit_reached
 
         score_done = self.score_phase.is_idle_or_done or limit_done
-        artifact_score_done = self.artifact_score_phase.is_idle_or_done or limit_done
+        document_score_done = self.document_score_phase.is_idle_or_done or limit_done
 
         all_idle = (
             self.scan_phase.is_idle_or_done
             and score_done
             and self.ingest_phase.is_idle_or_done
             and self.docs_phase.is_idle_or_done
-            and artifact_score_done
+            and document_score_done
         )
         if all_idle:
             graph_ops = _get_graph_ops()
@@ -761,11 +761,11 @@ class WikiDiscoveryState:
             elif limit_done:
                 has_work = graph_ops.has_pending_ingest_work(
                     self.facility
-                ) or graph_ops.has_pending_artifact_ingest_work(self.facility)
+                ) or graph_ops.has_pending_document_ingest_work(self.facility)
             else:
                 has_work = graph_ops.has_pending_work(
                     self.facility
-                ) or graph_ops.has_pending_artifact_work(self.facility)
+                ) or graph_ops.has_pending_document_work(self.facility)
 
             if has_work:
                 if limit_done:
@@ -776,7 +776,7 @@ class WikiDiscoveryState:
                     self.score_phase.record_activity()
                     self.ingest_phase.record_activity()
                     self.docs_phase.record_activity()
-                    self.artifact_score_phase.record_activity()
+                    self.document_score_phase.record_activity()
                 return False
             return True
         return False

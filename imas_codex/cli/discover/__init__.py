@@ -192,20 +192,20 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
             from imas_codex.graph import GraphClient
 
             with GraphClient() as gc:
-                artifact_result = gc.query(
-                    "MATCH (wa:WikiArtifact {facility_id: $f}) RETURN count(wa) AS cnt",
+                document_result = gc.query(
+                    "MATCH (wa:WikiDocument {facility_id: $f}) RETURN count(wa) AS cnt",
                     f=facility,
                 )
-                artifacts = artifact_result[0]["cnt"] if artifact_result else 0
+                documents = document_result[0]["cnt"] if document_result else 0
                 image_result = gc.query(
                     "MATCH (i:Image {facility_id: $f}) RETURN count(i) AS cnt",
                     f=facility,
                 )
                 images = image_result[0]["cnt"] if image_result else 0
-            if pages > 0 or artifacts > 0 or images > 0:
-                label = f"wiki pages + {chunks} chunks + {artifacts} artifacts + {images} images"
+            if pages > 0 or documents > 0 or images > 0:
+                label = f"wiki pages + {chunks} chunks + {documents} documents + {images} images"
                 items_to_clear.append(
-                    (label, pages or artifacts or images, clear_facility_wiki)
+                    (label, pages or documents or images, clear_facility_wiki)
                 )
 
         # Signals domain
@@ -273,7 +273,7 @@ def _print_clear_result(name: str, result: dict | int, facility: str) -> None:
         for key in (
             "pages_deleted",
             "chunks_deleted",
-            "artifacts_deleted",
+            "documents_deleted",
             "images_deleted",
             "signals_deleted",
             "data_access_deleted",
