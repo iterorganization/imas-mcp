@@ -62,7 +62,7 @@ class ScoreItem:
     """Current score activity."""
 
     title: str
-    score: float | None = None
+    score_composite: float | None = None
     physics_domain: str | None = None  # Physics domain if detected
     description: str = ""  # LLM description of page value
     is_physics: bool = False
@@ -75,7 +75,7 @@ class IngestItem:
     """Current ingest activity."""
 
     title: str
-    score: float | None = None  # Redisplay score on ingest
+    score_composite: float | None = None  # Redisplay score on ingest
     description: str = ""  # Redisplay LLM description
     physics_domain: str | None = None  # Physics domain if detected
     chunk_count: int = 0
@@ -87,7 +87,7 @@ class DocsItem:
 
     filename: str
     artifact_type: str
-    score: float | None = None
+    score_composite: float | None = None
     physics_domain: str | None = None
     description: str = ""
     chunk_count: int = 0
@@ -99,7 +99,7 @@ class ImageItem:
     """Current image VLM activity."""
 
     image_id: str
-    score: float | None = None
+    score_composite: float | None = None
     physics_domain: str | None = None
     description: str = ""
     purpose: str = ""
@@ -709,7 +709,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 reason = score.skip_reason[:40] if score.skip_reason else ""
                 triage_desc_fallback = f"skipped: {reason}"
             else:
-                triage_score = score.score
+                triage_score = score.score_composite
                 triage_domain = score.physics_domain or (
                     "physics" if score.is_physics else ""
                 )
@@ -732,7 +732,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             pages_complete = True
         if ingest:
             pages_text = ingest.title
-            pages_score = ingest.score
+            pages_score = ingest.score_composite
             pages_domain = ingest.physics_domain or ""
             pages_desc = ingest.description
 
@@ -761,10 +761,10 @@ class WikiProgressDisplay(BaseProgressDisplay):
             display_name = document.filename
             if document.chunk_count > 0:
                 display_name += f" ({document.chunk_count} chunks)"
-            elif document.score is not None and document.score < 0.5:
+            elif document.score_composite is not None and document.score_composite < 0.5:
                 display_name += " (skipped)"
             docs_text = display_name
-            docs_score = document.score
+            docs_score = document.score_composite
             docs_domain = document.physics_domain or ""
             docs_desc = document.description
             # Fallback for image-type documents with no description
@@ -800,7 +800,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 images_complete_label = "cost limit"
         if image:
             images_text = image.display_name
-            images_score = image.score
+            images_score = image.score_composite
             images_domain = image.physics_domain or ""
             images_desc = image.description
             if not images_desc:
@@ -1079,7 +1079,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         if item := self.state.score_queue.pop():
             self.state.current_score = ScoreItem(
                 title=item.get("title", ""),
-                score=item.get("score"),
+                score_composite=item.get("score_composite"),
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
                 is_physics=item.get("is_physics", False),
@@ -1093,7 +1093,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         if item := self.state.ingest_queue.pop():
             self.state.current_ingest = IngestItem(
                 title=item.get("title", ""),
-                score=item.get("score"),
+                score_composite=item.get("score_composite"),
                 description=item.get("description", ""),
                 physics_domain=item.get("physics_domain"),
                 chunk_count=item.get("chunk_count", 0),
@@ -1106,7 +1106,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             self.state.current_docs = DocsItem(
                 filename=item.get("filename", ""),
                 artifact_type=item.get("artifact_type", ""),
-                score=item.get("score"),
+                score_composite=item.get("score_composite"),
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
                 is_score=True,
@@ -1116,7 +1116,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             self.state.current_docs = DocsItem(
                 filename=item.get("filename", ""),
                 artifact_type=item.get("artifact_type", ""),
-                score=item.get("score"),
+                score_composite=item.get("score_composite"),
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
                 chunk_count=item.get("chunk_count", 0),
@@ -1141,7 +1141,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 page_image_index = self.state._page_image_seen[page_title]
             self.state.current_image = ImageItem(
                 image_id=item.get("id", ""),
-                score=item.get("score"),
+                score_composite=item.get("score_composite"),
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
                 purpose=item.get("purpose", ""),
@@ -1201,7 +1201,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 items.append(
                     {
                         "title": title,
-                        "score": r.get("score"),
+                        "score_composite": r.get("score_composite"),
                         "physics_domain": r.get("physics_domain"),
                         "description": r.get("description", ""),
                         "is_physics": r.get("is_physics", False),
@@ -1250,7 +1250,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 items.append(
                     {
                         "title": title,
-                        "score": r.get("score"),
+                        "score_composite": r.get("score_composite"),
                         "description": r.get("description", ""),
                         "physics_domain": r.get("physics_domain"),
                         "chunk_count": r.get("chunk_count", 0),
@@ -1295,7 +1295,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                     {
                         "filename": r.get("filename", "unknown"),
                         "artifact_type": r.get("artifact_type", ""),
-                        "score": r.get("score"),
+                        "score_composite": r.get("score_composite"),
                         "physics_domain": r.get("physics_domain"),
                         "description": r.get("description", ""),
                         "chunk_count": r.get("chunk_count", 0),
@@ -1339,7 +1339,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 {
                     "filename": r.get("filename", "unknown"),
                     "artifact_type": r.get("artifact_type", ""),
-                    "score": r.get("score"),
+                    "score_composite": r.get("score_composite"),
                     "physics_domain": r.get("physics_domain"),
                     "description": r.get("description", ""),
                 }
@@ -1382,7 +1382,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             items = [
                 {
                     "id": r.get("id", "unknown"),
-                    "score": r.get("score"),
+                    "score_composite": r.get("score_composite"),
                     "physics_domain": r.get("physics_domain"),
                     "description": r.get("description", ""),
                     "purpose": r.get("purpose", ""),

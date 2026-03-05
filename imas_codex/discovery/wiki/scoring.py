@@ -502,7 +502,7 @@ async def _score_documents_batch(
         results.append(
             {
                 "id": r.id,
-                "score": combined_score,
+                "score_composite": combined_score,
                 "artifact_purpose": r.artifact_purpose.value,
                 "description": r.description,
                 "reasoning": r.reasoning,
@@ -881,7 +881,7 @@ async def _score_pages_batch(
         results.append(
             {
                 "id": r.id,
-                "score": combined_score,
+                "score_composite": combined_score,
                 "purpose": r.page_purpose.value,
                 "description": r.description,
                 "reasoning": r.reasoning,
@@ -981,7 +981,7 @@ def _score_pages_heuristic(
         results.append(
             {
                 "id": page["id"],
-                "score": score,
+                "score_composite": score,
                 "reasoning": reasoning,
                 "page_type": "documentation",
                 "is_physics": score >= 0.6,

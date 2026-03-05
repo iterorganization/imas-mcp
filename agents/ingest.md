@@ -42,7 +42,7 @@ ingest_nodes("SourceFile", [
      "path": "/home/codes/liuqe.py",
      "facility_id": "tcv", 
      "status": "discovered", 
-     "interest_score": 0.8}
+     "score_composite": 0.8}
 ])
 """)
 ```

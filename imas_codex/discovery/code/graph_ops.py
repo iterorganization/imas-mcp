@@ -540,7 +540,7 @@ def has_pending_code_work(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'scored'
-              AND sf.interest_score >= $min_score
+              AND sf.score_composite >= $min_score
               AND coalesce(sf.line_count, 0) <= $max_line_count
             RETURN count(sf) > 0 AS has_work
             """,

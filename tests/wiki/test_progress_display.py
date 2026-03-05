@@ -247,13 +247,13 @@ class TestDisplayItems:
     def test_score_item(self):
         item = ScoreItem(
             title="Thomson_Scattering",
-            score=0.85,
+            score_composite=0.85,
             physics_domain="diagnostics",
             description="Thomson scattering diagnostic page",
             is_physics=True,
         )
         assert item.title == "Thomson_Scattering"
-        assert item.score == 0.85
+        assert item.score_composite == 0.85
         assert item.skipped is False
 
     def test_score_item_skipped(self):
@@ -268,7 +268,7 @@ class TestDisplayItems:
     def test_ingest_item(self):
         item = IngestItem(
             title="LIUQE Documentation",
-            score=0.90,
+            score_composite=0.90,
             chunk_count=12,
         )
         assert item.chunk_count == 12
@@ -277,7 +277,7 @@ class TestDisplayItems:
         item = DocsItem(
             filename="report.pdf",
             artifact_type="pdf",
-            score=0.75,
+            score_composite=0.75,
             chunk_count=8,
         )
         assert item.filename == "report.pdf"
@@ -287,7 +287,7 @@ class TestDisplayItems:
         item = ImageItem(
             image_id="tcv:abc123",
             description="Plasma cross-section",
-            score=0.60,
+            score_composite=0.60,
         )
         assert item.image_id == "tcv:abc123"
         assert item.description == "Plasma cross-section"

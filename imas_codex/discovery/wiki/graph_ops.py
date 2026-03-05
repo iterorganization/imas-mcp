@@ -351,7 +351,7 @@ def has_pending_document_work(facility: str) -> bool:
             MATCH (wa:WikiDocument {facility_id: $facility})
             WHERE (
                 (wa.status = $discovered)
-                OR (wa.status = $scored AND wa.score >= 0.5
+                OR (wa.status = $scored AND wa.score_composite >= 0.5
                     AND wa.artifact_type IN $ingestable)
               )
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
@@ -406,7 +406,7 @@ def has_pending_document_ingest_work(facility: str) -> bool:
             """
             MATCH (wa:WikiDocument {facility_id: $facility})
             WHERE (
-                (wa.status = $scored AND wa.score >= 0.5
+                (wa.status = $scored AND wa.score_composite >= 0.5
                  AND wa.artifact_type IN $types)
                 OR (wa.status = $discovered AND wa.score_exempt = true)
               )
@@ -435,7 +435,7 @@ def has_pending_work(facility: str) -> bool:
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE (wp.status = $scanned AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
-               OR (wp.status = $scored AND wp.score >= 0.5 AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
+               OR (wp.status = $scored AND wp.score_composite >= 0.5 AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
             RETURN count(wp) AS pending
             """,
             facility=facility,
@@ -479,7 +479,7 @@ def has_pending_ingest_work(facility: str) -> bool:
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scored
-              AND wp.score >= 0.5
+              AND wp.score_composite >= 0.5
               AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff))
             RETURN count(wp) AS pending
             """,
@@ -630,7 +630,7 @@ def claim_pages_for_ingesting(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scored
-              AND wp.score >= $min_score
+              AND wp.score_composite >= $min_score
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
             WITH wp
@@ -651,7 +651,7 @@ def claim_pages_for_ingesting(
             """
             MATCH (wp:WikiPage {facility_id: $facility, claim_token: $token})
             RETURN wp.id AS id, wp.title AS title, wp.url AS url,
-                   wp.score AS score, wp.description AS description,
+                   wp.score_composite AS score, wp.description AS description,
                    wp.physics_domain AS physics_domain,
                    wp.preview_text AS preview,
                    wp.in_degree AS in_degree, wp.out_degree AS out_degree
@@ -709,7 +709,7 @@ def mark_pages_scored(
 
         item = {
             "id": page_id,
-            "score": r.get("score", 0.0),
+            "score_composite": r.get("score_composite", 0.0),
             "purpose": r.get("purpose", r.get("page_purpose", "other")),
             "description": r.get("description", "") or "",
             "reasoning": r.get("reasoning", ""),
@@ -728,7 +728,7 @@ def mark_pages_scored(
             "score_cost": r.get("score_cost", 0.0),
         }
 
-        if item["score"] >= skip_threshold:
+        if item["score_composite"] >= skip_threshold:
             scored_batch.append(item)
         else:
             skipped_batch.append(item)
@@ -742,7 +742,7 @@ def mark_pages_scored(
                 UNWIND $batch AS item
                 MATCH (wp:WikiPage {id: item.id})
                 SET wp.status = $status,
-                    wp.score = item.score,
+                    wp.score_composite = item.score_composite,
                     wp.purpose = item.purpose,
                     wp.description = item.description,
                     wp.reasoning = item.reasoning,
@@ -1007,7 +1007,7 @@ def recover_failed_pages(facility: str) -> int:
                 MATCH (wp:WikiPage {facility_id: $facility})
                 WHERE wp.status = $failed
                   AND wp.error IS NULL
-                  AND wp.score IS NULL
+                  AND wp.score_composite IS NULL
                 SET wp.status = $scanned,
                     wp.fetch_retries = 0,
                     wp.claimed_at = null,
@@ -1135,14 +1135,14 @@ def claim_documents_for_ingesting(
             """
             MATCH (wa:WikiDocument {facility_id: $facility})
             WHERE (
-                (wa.status = $scored AND wa.score >= $min_score
+                (wa.status = $scored AND wa.score_composite >= $min_score
                  AND wa.artifact_type IN $types)
                 OR (wa.status = $discovered AND wa.score_exempt = true)
               )
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
             WITH wa
-            ORDER BY wa.score DESC, rand()
+            ORDER BY wa.score_composite DESC, rand()
             LIMIT $limit
             SET wa.claimed_at = datetime(), wa.claim_token = $token
             """,
@@ -1161,7 +1161,7 @@ def claim_documents_for_ingesting(
             """
             MATCH (wa:WikiDocument {facility_id: $facility, claim_token: $token})
             RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
-                   wa.artifact_type AS artifact_type, wa.score AS score,
+                   wa.artifact_type AS artifact_type, wa.score_composite AS score,
                    wa.description AS description, wa.physics_domain AS physics_domain
             """,
             facility=facility,
@@ -1199,7 +1199,7 @@ def mark_documents_scored(
         batch_data.append(
             {
                 "id": document_id,
-                "score": r.get("score", 0.0),
+                "score_composite": r.get("score_composite", 0.0),
                 "artifact_purpose": r.get("artifact_purpose", "other"),
                 "description": r.get("description", "") or "",
                 "reasoning": r.get("reasoning", ""),
@@ -1227,7 +1227,7 @@ def mark_documents_scored(
             UNWIND $batch AS item
             MATCH (wa:WikiDocument {id: item.id})
             SET wa.status = $status,
-                wa.score = item.score,
+                wa.score_composite = item.score_composite,
                 wa.artifact_purpose = item.artifact_purpose,
                 wa.description = item.description,
                 wa.reasoning = item.reasoning,

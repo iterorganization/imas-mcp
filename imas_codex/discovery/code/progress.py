@@ -62,7 +62,7 @@ class ScoreItem:
     """Current score activity."""
 
     path: str
-    score: float | None = None
+    score_composite: float | None = None
     category: str = ""  # code, document, notebook, config
     description: str = ""  # LLM reasoning about what the file contains
     skipped: bool = False  # LLM says skip this file
@@ -347,8 +347,8 @@ class FileProgressDisplay(BaseProgressDisplay):
                     score_category = score.category
                 if score.description:
                     score_desc = clean_text(score.description)
-            elif score.score is not None:
-                score_value = score.score
+            elif score.score_composite is not None:
+                score_value = score.score_composite
                 if score.category:
                     score_category = score.category
                 if score.description:
@@ -561,7 +561,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             items = [
                 ScoreItem(
                     path=r.get("path", ""),
-                    score=r.get("score"),
+                    score_composite=r.get("score"),
                     category=r.get("category", ""),
                     description=r.get("description", ""),
                     skipped=r.get("skipped", False),

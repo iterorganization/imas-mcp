@@ -25,7 +25,7 @@ class QueuedFile:
     path: str
     facility_id: str
     language: str
-    interest_score: float = 0.5
+    score_composite: float = 0.5
     patterns_matched: list[str] | None = None
     in_directory: str | None = None
     discovered_by: str | None = None
@@ -45,7 +45,7 @@ def _detect_language(path: str) -> str:
 def queue_source_files(
     facility: str,
     file_paths: list[str],
-    interest_score: float = 0.5,
+    score_composite: float = 0.5,
     patterns_matched: list[str] | None = None,
     in_directory: str | None = None,
     discovered_by: str | None = None,
@@ -58,7 +58,7 @@ def queue_source_files(
     Args:
         facility: Facility ID (e.g., "tcv")
         file_paths: List of remote file paths to discover
-        interest_score: Priority score (0.0-1.0, higher = sooner)
+        score_composite: Priority score (0.0-1.0, higher = sooner)
         patterns_matched: Patterns that matched (e.g., ["IMAS", "equilibrium"])
         in_directory: FacilityPath that contains these files
         discovered_by: Scout session identifier
@@ -79,7 +79,7 @@ def queue_source_files(
                 "path": path,
                 "language": _detect_language(path),
                 "status": "discovered",
-                "interest_score": interest_score,
+                "score_composite": score_composite,
                 "patterns_matched": patterns_matched or [],
                 "in_directory": in_directory,
                 "discovered_by": discovered_by,
@@ -155,20 +155,20 @@ def queue_source_files(
 def get_pending_files(
     facility: str,
     limit: int = 100,
-    min_interest_score: float = 0.0,
+    min_score_composite: float = 0.0,
 ) -> list[dict]:
     """Get pending CodeFile nodes for ingestion.
 
     Returns files with status 'discovered' or 'failed' (retry < 3).
-    Ordered by interest_score descending.
+    Ordered by score_composite descending.
 
     Args:
         facility: Facility ID
         limit: Maximum number of files to return
-        min_interest_score: Minimum interest score threshold
+        min_score_composite: Minimum interest score threshold
 
     Returns:
-        List of CodeFile dicts with id, path, language, interest_score
+        List of CodeFile dicts with id, path, language, score_composite
     """
     with GraphClient() as client:
         result = client.query(
@@ -176,15 +176,15 @@ def get_pending_files(
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
                OR (sf.status = 'failed' AND coalesce(sf.retry_count, 0) < 3)
-            AND coalesce(sf.interest_score, 0.5) >= $min_score
+            AND coalesce(sf.score_composite, 0.5) >= $min_score
             RETURN sf.id AS id, sf.path AS path, sf.language AS language,
-                   sf.interest_score AS interest_score, sf.status AS status,
+                   sf.score_composite AS score_composite, sf.status AS status,
                    sf.retry_count AS retry_count
-            ORDER BY sf.interest_score DESC, sf.discovered_at ASC
+            ORDER BY sf.score_composite DESC, sf.discovered_at ASC
             LIMIT $limit
             """,
             facility=facility,
-            min_score=min_interest_score,
+            min_score=min_score_composite,
             limit=limit,
         )
         return list(result)

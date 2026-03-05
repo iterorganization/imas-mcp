@@ -222,7 +222,7 @@ class ScoredWikiPage:
     score_calibration: float = 0.0
     score_imas_relevance: float = 0.0
 
-    score: float = 0.0
+    score_composite: float = 0.0
     """Combined score computed by grounded scoring function."""
 
     reasoning: str = ""
@@ -271,7 +271,7 @@ class ScoredWikiPage:
             score_data_access=result.score_data_access,
             score_calibration=result.score_calibration,
             score_imas_relevance=result.score_imas_relevance,
-            score=combined,
+            score_composite=combined,
             reasoning=result.reasoning,
             keywords=result.keywords[:5],
             physics_domain=result.physics_domain,
@@ -292,7 +292,7 @@ class ScoredWikiPage:
             "score_data_access": self.score_data_access,
             "score_calibration": self.score_calibration,
             "score_imas_relevance": self.score_imas_relevance,
-            "score": self.score,
+            "score_composite": self.score_composite,
             "reasoning": self.reasoning,
             "keywords": self.keywords,
             "physics_domain": self.physics_domain.value
@@ -451,7 +451,7 @@ class ScoredDocument:
     score_calibration: float = 0.0
     score_imas_relevance: float = 0.0
 
-    score: float = 0.0
+    score_composite: float = 0.0
     """Combined score computed by grounded scoring function."""
 
     reasoning: str = ""
@@ -500,7 +500,7 @@ class ScoredDocument:
             score_data_access=result.score_data_access,
             score_calibration=result.score_calibration,
             score_imas_relevance=result.score_imas_relevance,
-            score=combined,
+            score_composite=combined,
             reasoning=result.reasoning,
             keywords=result.keywords[:5],
             physics_domain=result.physics_domain,
@@ -522,7 +522,7 @@ class ScoredDocument:
             "score_data_access": self.score_data_access,
             "score_calibration": self.score_calibration,
             "score_imas_relevance": self.score_imas_relevance,
-            "score": self.score,
+            "score_composite": self.score_composite,
             "reasoning": self.reasoning,
             "keywords": self.keywords,
             "physics_domain": self.physics_domain.value
@@ -678,7 +678,7 @@ class ScoredImage:
     score_calibration: float = 0.0
     score_imas_relevance: float = 0.0
 
-    score: float = 0.0
+    score_composite: float = 0.0
     """Combined score computed by grounded scoring function."""
 
     reasoning: str = ""
@@ -729,7 +729,7 @@ class ScoredImage:
             score_data_access=result.score_data_access,
             score_calibration=result.score_calibration,
             score_imas_relevance=result.score_imas_relevance,
-            score=combined,
+            score_composite=combined,
             reasoning=result.reasoning,
             keywords=result.keywords[:5],
             physics_domain=result.physics_domain,
@@ -752,7 +752,7 @@ class ScoredImage:
             "score_data_access": self.score_data_access,
             "score_calibration": self.score_calibration,
             "score_imas_relevance": self.score_imas_relevance,
-            "score": self.score,
+            "score_composite": self.score_composite,
             "reasoning": self.reasoning,
             "keywords": self.keywords,
             "physics_domain": self.physics_domain.value

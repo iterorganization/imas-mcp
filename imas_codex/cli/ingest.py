@@ -89,7 +89,7 @@ def ingest_run(
     console.print(f"[cyan]Fetching discovered files for {facility}...[/cyan]")
     query_limit = limit if limit is not None else 10000  # Large number for "all"
     pending = get_pending_files(
-        facility, limit=query_limit, min_interest_score=min_score
+        facility, limit=query_limit, min_score_composite=min_score
     )
 
     if not pending:
@@ -104,7 +104,7 @@ def ingest_run(
     if dry_run:
         console.print("\n[cyan]Files that would be processed:[/cyan]")
         for i, f in enumerate(pending[:20], 1):
-            score = f.get("interest_score", 0.5)
+            score = f.get("score_composite", 0.5)
             console.print(f"  {i}. [{score:.2f}] {f['path']}")
         if len(pending) > 20:
             console.print(f"  ... and {len(pending) - 20} more")
@@ -220,7 +220,7 @@ def ingest_queue(
     paths: tuple[str, ...],
     from_file: str | None,
     stdin: bool,
-    interest_score: float,
+    score_composite: float,
     dry_run: bool,
 ) -> None:
     """Discover source files for ingestion.
@@ -278,13 +278,13 @@ def ingest_queue(
             console.print(f"  {i}. {path}")
         if len(path_list) > 20:
             console.print(f"  ... and {len(path_list) - 20} more")
-        console.print(f"\n[dim]Interest score: {interest_score}[/dim]")
+        console.print(f"\n[dim]Interest score: {score_composite}[/dim]")
         return
 
     result = queue_source_files(
         facility=facility,
         file_paths=path_list,
-        interest_score=interest_score,
+        score_composite=score_composite,
         discovered_by="cli",
     )
 
@@ -339,8 +339,8 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
                 """
                 MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 RETURN sf.path AS path, sf.status AS status,
-                       sf.interest_score AS score, sf.error AS error
-                ORDER BY sf.interest_score DESC
+                       sf.score_composite AS score, sf.error AS error
+                ORDER BY sf.score_composite DESC
                 LIMIT $limit
                 """,
                 facility=facility,
@@ -352,8 +352,8 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
                 MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
                 WHERE sf.status = $status
                 RETURN sf.path AS path, sf.status AS status,
-                       sf.interest_score AS score, sf.error AS error
-                ORDER BY sf.interest_score DESC
+                       sf.score_composite AS score, sf.error AS error
+                ORDER BY sf.score_composite DESC
                 LIMIT $limit
                 """,
                 facility=facility,

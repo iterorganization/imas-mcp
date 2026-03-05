@@ -190,7 +190,7 @@ add_to_graph("SourceFile", [
     {"id": "tcv:/home/codes/liuqe/liuqe.py", 
      "path": "/home/codes/liuqe/liuqe.py",
      "facility_id": "tcv", "status": "discovered", 
-     "interest_score": 0.8}
+     "score_composite": 0.8}
 ])
 """)
 
