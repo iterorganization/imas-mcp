@@ -142,6 +142,9 @@ def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
             ON CREATE SET
                 d.id = facility + ':mdsplus_path:' + path,
                 d.ref_type = 'mdsplus_path'
+            WITH d, facility
+            MATCH (f:Facility {id: facility})
+            MERGE (d)-[:AT_FACILITY]->(f)
             RETURN count(d) AS refs_created
         """
         result = client.query(create_refs_simple)
@@ -236,6 +239,9 @@ def link_example_mdsplus_paths(
             d.id = facility + ':mdsplus_path:' + path,
             d.ref_type = 'mdsplus_path'
         MERGE (c)-[:CONTAINS_REF]->(d)
+        WITH d, facility
+        MATCH (f:Facility {id: facility})
+        MERGE (d)-[:AT_FACILITY]->(f)
         RETURN count(DISTINCT d) AS refs_created
         """,
         example_id=example_id,
