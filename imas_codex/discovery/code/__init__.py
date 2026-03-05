@@ -6,10 +6,12 @@ same pattern as wiki discovery.
 
 Pipeline:
     discover code <facility>
-      1. SCAN: SSH enumerate code files + rg pattern enrichment (depth=1)
-      2. TRIAGE: Fast LLM pass to keep/skip files per directory
-      3. SCORE: Detailed LLM scoring of kept files with pattern evidence
-      4. CODE: Fetch, chunk, embed high-scoring code files
+      1. SCAN: SSH enumerate code files from scored FacilityPaths
+      2. TRIAGE: Per-dimension LLM scoring (discovered → triaged | skipped)
+      3. ENRICH: rg pattern matching + preview extraction (triaged → enriched)
+      4. SCORE: Full LLM scoring with enrichment evidence (enriched → scored)
+      5. CODE: Fetch, tree-sitter chunk, embed (scored → ingested)
+      6. LINK: Propagate code evidence to FacilitySignals
 
 Uses claim coordination via ``claimed_at`` and ``files_claimed_at``
 for parallel-safe execution across CLI instances.

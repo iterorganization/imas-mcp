@@ -104,7 +104,7 @@ def code(
     \b
     Pipeline stages:
       SCAN:    SSH to facility, enumerate code files + rg pattern enrichment
-      TRIAGE:  Fast LLM pass to keep/skip files per directory
+      TRIAGE:  Per-dimension LLM scoring (discovered → triaged | skipped)
       SCORE:   Detailed multi-dimensional LLM scoring with pattern evidence
       INGEST:  Fetch, tree-sitter chunk, embed, extract IDS/MDSplus refs
 

@@ -38,7 +38,7 @@ Directory structure:
     │   ├── triage.md     # Triage directories (first pass)
     │   └── scorer.md     # Score with enrichment evidence (second pass)
     ├── code/             # Code file scoring prompts
-    │   ├── triage.md     # Fast keep/skip file triage (first pass)
+    │   ├── triage.md     # Per-dimension file triage (first pass)
     │   └── scorer.md     # Multi-dimensional file scoring (second pass)
     ├── signals/          # Signal discovery prompts
     │   └── enrichment.md # Signal enrichment and classification
