@@ -4,23 +4,45 @@
 
 Use the `discover code` CLI to ingest analysis code from TCV, extract data access patterns (MDSplus paths, TDI function calls), link them to TreeNodes and FacilitySignals, and use the code evidence to validate and enrich the signal graph. The approach learns from real code how scientists access data rather than probing signals blindly.
 
-## Current State
+## Pipeline Architecture
 
-### Graph State (as of investigation)
+```
+discovered → triaged → (enriched) → scored → ingested | skipped | failed | stale
+```
+
+| Phase | Worker | Input Status | Output Status | Method |
+|-------|--------|-------------|---------------|--------|
+| SCAN | scan_worker | FacilityPath (scored) | CodeFile (discovered) | SSH file enumeration |
+| TRIAGE | triage_worker | discovered | triaged / skipped | Per-dimension LLM scoring (9 dims) |
+| ENRICH | enrich_worker | triaged (composite ≥ 0.75) | triaged + is_enriched | rg patterns + preview text |
+| SCORE | score_worker | triaged + is_enriched | scored / skipped | Full LLM scoring (9 dims + enrichment) |
+| CODE | code_worker | scored (interest_score ≥ 0.75) | ingested / failed | tree-sitter chunk, embed |
+| LINK | link_worker | ingested | ingested + evidence_linked | DataReference → TreeNode → Signal |
+
+**Composite formula:** `max(dims) * (1 + mean(nonzero_dims)) / 2`
+
+**Score dimensions:** modeling_code, analysis_code, operations_code, data_access, workflow, visualization, documentation, imas, convention
+
+**Calibration:** Triage uses triage_* from general population (triaged+scored+ingested). Score uses score_* from graduate cohort (scored+ingested only). Both prompts include dimension-specific calibration examples.
+
+**Preview text:** Extracted during enrichment (head of file, max 40 lines / 2KB). Used by score worker but NOT persisted to graph.
+
+**Sibling context:** Triage groups files by parent directory and includes sibling filenames for context.
+
+## Graph State (after initial runs)
 
 | Node Type | Count | Notes |
 |-----------|-------|-------|
-| FacilityPath | 12,237 | score ≥ 0.7, none file-scanned |
-| CodeFile | 0 | Pipeline never run |
-| CodeChunk | 0 | No code ingested |
-| DataReference | 0 | No references extracted |
-| FacilitySignal | 64,950 | 14,746 check_success, 14,747 check_fail, 25,464 discovered |
-| TreeNode | 82,717 | MDSplus tree nodes enumerated |
-| DataAccess | 4 | tcv:mdsplus:tree_tdi, tcv:mdsplus:static, tcv:mdsplus:vsystem, tcv:tdi:functions |
+| FacilityPath | ~12,237 | scored, most file-scanned |
+| CodeFile | ~13,172 | 12,794 discovered, 299 ingested, 79 skipped (old pipeline) |
+| CodeChunk | ~12,865 | embedded |
+| DataReference | 158 | MDSplus paths extracted |
+| FacilitySignal | ~64,950 | 248 with code evidence |
+| TreeNode | ~82,717 | MDSplus tree nodes |
 
-### Known Code Access Patterns from SSH Inspection
+**NOTE:** All existing CodeFiles were processed under the OLD pipeline (single-pass score, no triage/enrich phases). They lack `triage_*` and `score_*` dimension properties. A re-triage run is needed — see Phase 3.
 
-Inspected 4 TCV codebases (tcvpy, eqtools, MATLAB analysis, liuqe) via SSH:
+## Known Code Access Patterns (from SSH inspection)
 
 | Pattern | Language | Example | Prevalence |
 |---------|----------|---------|------------|
@@ -37,166 +59,24 @@ Inspected 4 TCV codebases (tcvpy, eqtools, MATLAB analysis, liuqe) via SSH:
 
 **Unique references found**: 786 unique MDSplus paths, 18 unique TDI function calls across all inspected code.
 
-### Root Cause: `discover code` CLI Failure
+---
 
-The CLI crashes immediately on startup. All scan workers crash in a loop (10 restart attempts each) with:
+## Phase 0: Fix the `discover code` CLI ✅ COMPLETE
 
-```
-ImportError: cannot import name '_persist_discovered_files' from 'imas_codex.discovery.code.scanner'
-```
+All import errors fixed, pipeline validated end-to-end. Workers start, claim, SSH scan, triage, enrich, score, ingest, and link without crashes. 77 tests pass. Pipeline ran for 30+ min across multiple sessions.
 
-**Root cause**: `workers.py` imports `_persist_discovered_files` (lines 47, 112) but the function was renamed to `_persist_code_files` in `scanner.py` (line 285). The import name was not updated after the rename.
+Key bugs fixed:
+- Import rename `_persist_discovered_files` → `_persist_code_files`
+- Tree-sitter timeout guard for large auto-generated files
+- `asyncio.to_thread` for `pipeline.run()` to prevent event loop blocking
+- Embedding batch size reduction to prevent GPU OOM
+- `mdsplus_paths` metadata key mismatch for graph linking
 
 ---
 
-## Phase 0: Fix the `discover code` CLI
+## Phase 1: Extend MDSplusExtractor with Multi-Language Patterns ✅ COMPLETE
 
-### Goal
-Make the `discover code` CLI fully operational through iterative E2E testing, graph inspection, and bug fixes.
-
-### Step 0.1: Fix the Import Error
-
-Fix the broken import in `workers.py`:
-- `_persist_discovered_files` → `_persist_code_files` (2 references: import line 47, usage line 112)
-
-### Step 0.2: Smoke Test — Scan Only (2 min time limit)
-
-```bash
-uv run imas-codex discover code tcv --scan-only --time 2 --max-paths 10
-```
-
-**Success criteria**: Workers start, claim FacilityPaths, SSH to TCV, enumerate files, create CodeFile nodes in graph.
-
-**Graph verification after**:
-```cypher
-MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-RETURN cf.status, cf.language, count(cf) AS n
-ORDER BY n DESC
-```
-
-Expected: CodeFile nodes with status='discovered', languages including python, fortran, matlab.
-
-### Step 0.3: Score Test — Small Batch (5 min, $2 cost limit)
-
-```bash
-uv run imas-codex discover code tcv --score-only --time 5 -c 2.0
-```
-
-**Success criteria**: score_worker claims CodeFiles, runs triage (keep/skip), scores kept files with multi-dimensional LLM scoring.
-
-**Graph verification after**:
-```cypher
-MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-WHERE cf.interest_score IS NOT NULL
-RETURN cf.interest_score, cf.file_category, cf.path
-ORDER BY cf.interest_score DESC
-LIMIT 20
-```
-
-Expected: Files scored 0.0-1.0 with categories like 'analysis', 'data_access', 'modeling'.
-
-### Step 0.4: Ingestion Test — Full Pipeline (10 min, $3 cost limit)
-
-```bash
-uv run imas-codex discover code tcv --time 10 -c 3.0 --max-paths 20
-```
-
-**Success criteria**: All 4 workers run (scan → triage → score → ingest). CodeChunk nodes created with embeddings. MDSplusExtractor extracts path references.
-
-**Graph verification after**:
-```cypher
-// Check CodeChunks
-MATCH (cc:CodeChunk)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-RETURN count(cc) AS chunks, 
-       count(CASE WHEN cc.embedding IS NOT NULL THEN 1 END) AS embedded
-
-// Check extracted references
-MATCH (cc:CodeChunk)
-WHERE cc.mdsplus_ref_count > 0
-RETURN cc.path, cc.mdsplus_ref_count
-ORDER BY cc.mdsplus_ref_count DESC
-LIMIT 10
-```
-
-### Step 0.5: Enrichment Verification
-
-```bash
-# Verify rg enrichment ran
-```
-
-```cypher
-MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-WHERE cf.is_enriched = true
-RETURN cf.pattern_categories, cf.total_pattern_matches, cf.path
-ORDER BY cf.total_pattern_matches DESC
-LIMIT 20
-```
-
-### Step 0.6: Fix and Iterate
-
-After each step, inspect logs and graph state:
-- Read `~/.local/share/imas-codex/logs/code_tcv.log` for errors
-- Run graph queries to verify node creation and relationships
-- Fix any issues found before proceeding to next step
-- Repeat failed steps after fixes
-
-### Exit Criteria
-- All 4 workers complete without crashes
-- CodeFile nodes created with scores and enrichment
-- CodeChunk nodes created with embeddings
-- MDSplus references extracted from Python code chunks
-- Pipeline can run for 30+ min without errors
-
----
-
-## Phase 1: Extend MDSplusExtractor with Multi-Language Patterns
-
-### Goal
-Extend `imas_codex/ingestion/extractors/mdsplus.py` to capture data access patterns from MATLAB (dominant at TCV: 71k+ LOC), Fortran, IDL, and more Python access patterns.
-
-### Step 1.1: Add MATLAB MDSplus Patterns
-
-MATLAB is the dominant language at TCV but currently has zero pattern coverage in MDSplusExtractor.
-
-**New patterns to add to `MDSPLUS_PATH_PATTERNS`**:
-
-```python
-# MATLAB tdi() calls: tdi('\results::thomson:te')
-r"tdi\s*\(\s*['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)['\"]",
-
-# MATLAB mdsvalue() calls: mdsvalue('\results::ip')
-r"mdsvalue\s*\(\s*['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)['\"]",
-
-# MATLAB mdsvalue with concatenation: mdsvalue(['\results::ece_lfs:channel_00' int2str(i)])
-r"mdsvalue\s*\(\s*\[\s*['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)",
-
-# MATLAB mdsopen: mdsopen('tcv_shot', pulno) — captures tree name
-r"mdsopen\s*\(\s*['\"]([A-Za-z_][A-Za-z0-9_]+)['\"]",
-```
-
-**New patterns for `TDI_FUNCTION_PATTERNS`**:
-
-```python
-# MATLAB-style TDI function calls: tdi('tcv_ip()'), tdi('tcv_eq("PSI")')
-r"tdi\s*\(\s*['\"](\w+)\s*\(",
-
-# mdsvalue with TDI function: mdsvalue('tcv_eq("PSI")')
-r"mdsvalue\s*\(\s*['\"](\w+)\s*\(",
-```
-
-### Step 1.2: Add Python Wrapper Patterns
-
-Current patterns miss common Python access patterns seen at TCV:
-
-```python
-# tcvpy connection.tdi: conn.tdi(r'\results::psi')
-r"\.tdi\s*\(\s*r?['\"]\\\\?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*::[A-Za-z0-9_:\.]+)['\"]",
-
-# tcvpy shot access: tcv.shot(shot).tdi('tcv_ip()')
-r"\.tdi\s*\(\s*['\"](\w+)\s*\(",
-```
-
-### Step 1.3: Add Fortran/IDL Patterns
+MATLAB (`tdi()`, `mdsvalue()`, `mdsopen()`), Python wrappers (`conn.tdi()`, `tcv.shot().tdi()`), Fortran (`MDS_OPEN`, `MDS_GET`), and IDL (`mdsvalue`) patterns added to `imas_codex/ingestion/extractors/mdsplus.py`. All patterns pass unit tests with real TCV code snippets. Existing tests unaffected.
 
 ```python
 # Fortran MDS_OPEN/MDS_GET: call MDS_OPEN('tcv_shot', shot)
@@ -234,138 +114,90 @@ def test_extract_conn_tdi():
 
 ---
 
-## Phase 2: Expand Enrichment Pattern Registry
+## Phase 2: Expand Enrichment Pattern Registry ✅ COMPLETE
 
-### Goal
-Add data access patterns to `PATTERN_REGISTRY` in `imas_codex/discovery/paths/enrichment.py` to maximize detection of code that accesses fusion data. These patterns are used for both directory-level and file-level `rg` enrichment.
-
-### Step 2.1: Extend DATA_ACCESS_PATTERNS
-
-Add patterns for access methods seen in real TCV code but not currently matched:
-
-```python
-DATA_ACCESS_PATTERNS = {
-    # Existing patterns (keep all):
-    "mdsplus": r"(mdsconnect|mdsopen|mdsvalue|MDSplus|TdiExecute|connection\.openTree|TreeNode)",
-    "ppf": ...,
-    
-    # NEW patterns to add:
-    "mdsplus_tdi": r"(\.tdi\(|conn\.tdi|connection\.tdi|tdi\s*\()",
-    "mdsplus_matlab": r"(mdsopen|mdsclose|mdsvalue|mdsdisconnect|mdsconnect)",
-    "tcvpy": r"(tcvpy|tcv\.shot|from\s+tcvpy|import\s+tcv)",
-    "eqtools": r"(eqtools|EqdskReader|CModTCVMachine|TRIPPYMachine)",
-    "aug_shotfile": r"(dd\.open|sf\.getSignal|sf\.getParameter|AUGshotfile)",
-    "uda_client": r"(pyuda\.Client|UdaClient|uda\.get|labcom\.read|labcom_read)",
-    "edas_jt60sa": r"(eGIS|eSLICE|eSURF|EDASDB|edas\.read)",
-}
-```
-
-### Step 2.2: Add Facility-Specific Wrapper Patterns
-
-```python
-# TCV-specific access wrappers
-"tcv_wrappers": r"(tcv_eq|tcv_get|tcv_psitbx|tcv_ip|tcv_bt|tcv_ne|tcv_te)",
-
-# JET-specific access
-"jet_access": r"(jet\.ppf|jpf\.read|jet\.data|sal\.get|sal\.list)",
-
-# JT-60SA access
-"jt60sa_access": r"(labcom|lhd_read|nifs_access|edasdb)",
-```
-
-### Step 2.3: Add Shot Number Detection Pattern
-
-For identifying code that references specific shots (useful for finding known-good test shots):
-
-```python
-"shot_reference": r"(shot\s*=\s*\d{4,6}|pulse\s*=\s*\d{4,6}|pulno\s*=\s*\d{4,6}|shot_number|pulse_number)",
-```
-
-### Exit Criteria
-- New patterns added to PATTERN_REGISTRY
-- Pattern categories cover all known TCV access patterns
-- rg enrichment detects data access code in MATLAB, Python, Fortran, IDL files
+DATA_ACCESS_PATTERNS expanded with `mdsplus_tdi`, `mdsplus_matlab`, `tcvpy`, `eqtools`, `aug_shotfile`, `uda_client`, `edas_jt60sa`, `tcv_wrappers`, `jet_access`, `jt60sa_access`, and `shot_reference` patterns. All added to PATTERN_REGISTRY in `imas_codex/discovery/paths/enrichment.py`.
 
 ---
 
-## Phase 3: Run Code Discovery to Completion
+## Phase 3: Re-triage and Run Code Discovery to Completion
 
 ### Goal
-Run the full code discovery pipeline across all scored FacilityPaths at TCV to build the CodeFile → CodeChunk → DataReference subgraph.
+Run the new triage→enrich→score pipeline across all CodeFiles. Existing files were scored under the old single-pass model and lack dimension properties. A re-triage run is required to populate triage_* and score_* dimensions.
 
-### Step 3.1: Production Scan Run
+### Step 3.1: Reset Old Scored Files for Re-triage
 
-```bash
-uv run imas-codex discover code tcv --scan-only --time 120
+Existing CodeFiles with `status='discovered'` (12,794) will be picked up automatically by the new triage_worker. However, files already `ingested` (299) or `skipped` (79) under the old model need a decision:
+
+**Option A (recommended):** Leave ingested files as-is. They have CodeChunks + embeddings. Re-score them later if needed by a separate one-shot script that backfills triage_* and score_* properties from their existing data.
+
+**Option B:** Reset all non-ingested files to `discovered` to re-triage:
+```cypher
+// Reset skipped files (they were skipped by old triage, might pass new one)
+MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
+WHERE cf.status = 'skipped'
+  AND cf.triage_composite IS NULL
+SET cf.status = 'discovered', cf.skip_reason = null
 ```
 
-Scan all 12,237 scored FacilityPaths. Creates CodeFile nodes with language, enrichment data.
+### Step 3.2: Run Triage + Enrich + Score
 
-**Monitor**:
+```bash
+uv run imas-codex discover code tcv --score-only --time 60 -c 10.0
+```
+
+The `--score-only` flag runs triage, enrich, and score workers but skips scan and code workers. This will process all 12,794 discovered files through the new pipeline.
+
+**Monitor progress:**
 ```cypher
 MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-RETURN cf.language, cf.status, count(cf) AS n
+RETURN cf.status, count(cf) AS n
 ORDER BY n DESC
 ```
 
-### Step 3.2: Score and Ingest Run
+Expected: Files move through discovered → triaged → scored | skipped.
 
+### Step 3.3: Production Ingestion Run
+
+After scoring, run full pipeline to ingest high-value files:
 ```bash
 uv run imas-codex discover code tcv --time 240 -c 20.0 --code-workers 4
 ```
 
-Score discovered files, ingest high-value ones. Multiple runs may be needed — the pipeline is interrupt-safe and resumes from where it stopped.
-
-**Monitor**:
-```cypher
-// Progress
-MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-RETURN cf.status, count(cf) AS n ORDER BY n DESC
-
-// Top scored files
-MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-WHERE cf.interest_score IS NOT NULL
-RETURN cf.path, cf.interest_score, cf.file_category, cf.language
-ORDER BY cf.interest_score DESC LIMIT 20
-
-// Ingestion progress
-MATCH (cc:CodeChunk)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-RETURN count(cc) AS chunks,
-       count(CASE WHEN cc.embedding IS NOT NULL THEN 1 END) AS embedded,
-       count(CASE WHEN cc.mdsplus_ref_count > 0 THEN 1 END) AS with_refs
-```
-
-### Step 3.3: Verify Reference Extraction
+### Step 3.4: Verify New Dimension Properties
 
 ```cypher
-// MDSplus paths extracted from code
-MATCH (cc:CodeChunk)
-WHERE cc.mdsplus_ref_count > 0
-WITH cc.path AS file, sum(cc.mdsplus_ref_count) AS total_refs
-RETURN file, total_refs
-ORDER BY total_refs DESC
-LIMIT 30
+// Verify triage dimensions populated
+MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
+WHERE cf.triage_composite IS NOT NULL
+RETURN count(cf) AS triaged,
+       avg(cf.triage_composite) AS avg_composite,
+       avg(cf.triage_data_access) AS avg_data_access,
+       avg(cf.triage_imas) AS avg_imas
 
-// Unique MDSplus paths found in code
-MATCH (dr:DataReference)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-RETURN count(DISTINCT dr.path) AS unique_paths, count(dr) AS total_refs
+// Verify score dimensions populated
+MATCH (cf:CodeFile {status: 'scored'})-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
+RETURN count(cf) AS scored,
+       avg(cf.interest_score) AS avg_score,
+       avg(cf.score_data_access) AS avg_data_access,
+       avg(cf.score_imas) AS avg_imas
 ```
 
 ### Exit Criteria
-- All scored FacilityPaths scanned for files
-- High-value CodeFiles scored and ingested
-- CodeChunk nodes with embeddings
-- DataReference nodes created from extracted MDSplus paths
-- Language coverage includes Python, MATLAB, Fortran
+- All discovered CodeFiles triaged with dimension properties
+- High-value files enriched (rg patterns + preview)
+- Enriched files scored with full 9-dimension scores
+- Scored files ingested with CodeChunks + embeddings
 
 ---
 
-## Phase 4: Code-Evidence Signal Linking
+## Phase 4: Code-Evidence Signal Linking ✅ PARTIALLY COMPLETE
 
-### Goal
-Link DataReferences extracted from code to TreeNodes and propagate evidence to FacilitySignals. Creates a code→tree→signal evidence chain that validates which signals are actually used by scientists.
+`link_worker` in `workers.py` and `link_code_evidence_to_signals()` in `graph_ops.py` are fully implemented and operational. The automated link worker runs as part of the standard pipeline and propagates evidence from DataReference → TreeNode → FacilitySignal.
 
-### Step 4.1: Verify DataReference → TreeNode Links
+Current state: 248 FacilitySignals have code evidence from 158 DataReferences.
+
+### Remaining work
 
 The ingestion pipeline's `link_chunks_to_tree_nodes()` already creates DataReference → TreeNode relationships. Verify these exist:
 
@@ -557,15 +389,16 @@ The code discovery pipeline is designed for iterative runs:
 
 ## Success Metrics
 
-| Metric | Target |
-|--------|--------|
-| CodeFile nodes discovered | > 10,000 |
-| CodeChunks ingested | > 50,000 |
-| Unique MDSplus paths extracted | > 500 |
-| Signals with code evidence | > 5,000 |
-| Languages covered | Python, MATLAB, Fortran, IDL |
-| Signal check success rate | > 70% (up from 50%) |
-| DataAccess templates | Cover all major access methods |
+| Metric | Target | Current |
+|--------|--------|---------|
+| CodeFile nodes discovered | > 10,000 | ✅ ~13,172 |
+| CodeChunks ingested | > 50,000 | ~12,865 (partial) |
+| Unique MDSplus paths extracted | > 500 | 158 (partial) |
+| Signals with code evidence | > 5,000 | 248 (partial) |
+| Languages covered | Python, MATLAB, Fortran, IDL | ✅ Python, Fortran, MATLAB, C, IDL |
+| Signal check success rate | > 70% (up from 50%) | TBD |
+| DataAccess templates | Cover all major access methods | TBD |
+| All files triaged (new pipeline) | 100% of discovered | 0% (re-triage needed) |
 
 ## Dependencies
 

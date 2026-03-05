@@ -1,9 +1,11 @@
 """Parallel code discovery engine.
 
 Main entry point for code discovery with async workers. Orchestrates:
-- Scan: SSH code file enumeration + rg enrichment (depth=1 per scored FacilityPath)
-- Score: Dual-pass LLM scoring (triage → detailed score)
-- Code: Fetch, tree-sitter chunk, embed code files
+- Scan: SSH code file enumeration (FacilityPaths → CodeFile nodes)
+- Triage: Per-dimension LLM triage (discovered → triaged | skipped)
+- Enrich: rg pattern matching + preview extraction (triaged → enriched)
+- Score: Full LLM scoring (enriched → scored)
+- Code: Fetch, tree-sitter chunk, embed code files (scored → ingested)
 
 Use ``run_parallel_code_discovery()`` as the main entry point.
 """
@@ -31,6 +33,7 @@ from .graph_ops import (
     has_pending_link_work,
     has_pending_scan_work,
     has_pending_score_work,
+    has_pending_triage_work,
     reset_orphaned_file_claims,
 )
 from .state import FileDiscoveryState
@@ -40,6 +43,7 @@ from .workers import (
     link_worker,
     scan_worker,
     score_worker,
+    triage_worker,
 )
 
 if TYPE_CHECKING:
@@ -57,13 +61,15 @@ async def run_parallel_code_discovery(
     max_paths: int = 100,
     focus: str | None = None,
     num_scan_workers: int = 2,
+    num_triage_workers: int = 2,
+    num_enrich_workers: int = 2,
     num_score_workers: int = 2,
-    num_enrich_workers: int = 0,
     num_code_workers: int = 2,
     scan_only: bool = False,
     score_only: bool = False,
     deadline: float | None = None,
     on_scan_progress: Callable | None = None,
+    on_triage_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
     on_enrich_progress: Callable | None = None,
     on_code_progress: Callable | None = None,
@@ -75,9 +81,12 @@ async def run_parallel_code_discovery(
     """Run parallel code discovery with async workers.
 
     Orchestrates workers through the code discovery pipeline:
-    1. Scan workers: SSH code file enumeration + rg enrichment (depth=1)
-    2. Score workers: Dual-pass LLM scoring (triage → detailed score)
-    3. Code workers: Fetch, tree-sitter chunk, embed code files
+    1. Scan workers: SSH code file enumeration (depth=1)
+    2. Triage workers: Per-dimension LLM triage (discovered → triaged)
+    3. Enrich workers: rg pattern matching + preview (triaged → enriched)
+    4. Score workers: Full LLM scoring (enriched → scored)
+    5. Code workers: Fetch, tree-sitter chunk, embed (scored → ingested)
+    6. Link worker: Code evidence → signal propagation
 
     Args:
         facility: Facility ID
@@ -87,13 +96,15 @@ async def run_parallel_code_discovery(
         max_paths: Maximum paths to scan per batch
         focus: Natural language focus for scoring
         num_scan_workers: Number of parallel scan workers
+        num_triage_workers: Number of parallel triage workers
+        num_enrich_workers: Number of parallel enrich workers
         num_score_workers: Number of parallel score workers
-        num_enrich_workers: Number of parallel enrich workers (legacy)
         num_code_workers: Number of parallel code workers
-        scan_only: Only scan, skip scoring and ingestion
-        score_only: Only score, skip scanning and ingestion
+        scan_only: Only scan, skip triage/enrichment/scoring/ingestion
+        score_only: Only triage/enrich/score, skip scanning and ingestion
         deadline: Absolute time (epoch) when discovery should stop
         on_scan_progress: Callback for scan worker progress
+        on_triage_progress: Callback for triage worker progress
         on_score_progress: Callback for score worker progress
         on_enrich_progress: Callback for enrich worker progress
         on_code_progress: Callback for code worker progress
@@ -126,20 +137,17 @@ async def run_parallel_code_discovery(
     )
 
     # Wire up graph-backed has_work_fn on each phase.
-    # New pipeline: scan (with enrichment) → score (dual-pass) → code/docs
-    # Enrichment now happens during scan, so enrich phase is optional (legacy).
+    # Pipeline: scan → triage → enrich → score → code → link
     state.scan_phase.set_has_work_fn(lambda: has_pending_scan_work(facility, min_score))
-    state.score_phase.set_has_work_fn(
-        lambda: has_pending_score_work(facility) or not state.scan_phase.done
+    state.triage_phase.set_has_work_fn(
+        lambda: has_pending_triage_work(facility) or not state.scan_phase.done
     )
-    # Enrich phase only active if num_enrich_workers > 0 (legacy backfill)
     state.enrich_phase.set_has_work_fn(
-        lambda: (
-            (num_enrich_workers > 0 and has_pending_enrich_work(facility))
-            or not state.score_phase.done
-        )
+        lambda: has_pending_enrich_work(facility) or not state.triage_phase.done
     )
-    # Code depends on score phase (not enrich — enrichment is pre-score now)
+    state.score_phase.set_has_work_fn(
+        lambda: has_pending_score_work(facility) or not state.enrich_phase.done
+    )
     state.code_phase.set_has_work_fn(
         lambda: has_pending_code_work(facility) or not state.score_phase.done
     )
@@ -199,29 +207,28 @@ async def run_parallel_code_discovery(
     else:
         state.scan_phase.mark_done()
 
-    # --- Score workers ---
+    # --- Triage workers ---
     if not scan_only:
-        for i in range(num_score_workers):
-            worker_name = f"score_worker_{i}"
+        for i in range(num_triage_workers):
+            worker_name = f"triage_worker_{i}"
             status = worker_group.create_status(worker_name, group="triage")
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
-                        score_worker,
+                        triage_worker,
                         worker_name,
                         state,
                         state.should_stop,
-                        on_progress=on_score_progress,
+                        on_progress=on_triage_progress,
                         status_tracker=status,
                     )
                 )
             )
     else:
-        state.score_phase.mark_done()
+        state.triage_phase.mark_done()
 
-    # --- Code workers (skip in scan_only and score_only modes) ---
-    if not scan_only and not score_only:
-        # --- Enrich workers (legacy: only when explicitly requested) ---
+    # --- Enrich workers (between triage and score) ---
+    if not scan_only:
         for i in range(num_enrich_workers):
             worker_name = f"enrich_worker_{i}"
             status = worker_group.create_status(worker_name, group="enrich")
@@ -237,7 +244,31 @@ async def run_parallel_code_discovery(
                     )
                 )
             )
+    else:
+        state.enrich_phase.mark_done()
 
+    # --- Score workers ---
+    if not scan_only:
+        for i in range(num_score_workers):
+            worker_name = f"score_worker_{i}"
+            status = worker_group.create_status(worker_name, group="score")
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        score_worker,
+                        worker_name,
+                        state,
+                        state.should_stop,
+                        on_progress=on_score_progress,
+                        status_tracker=status,
+                    )
+                )
+            )
+    else:
+        state.score_phase.mark_done()
+
+    # --- Code workers + link worker (skip in scan_only and score_only) ---
+    if not scan_only and not score_only:
         for i in range(num_code_workers):
             worker_name = f"code_worker_{i}"
             status = worker_group.create_status(worker_name, group="code")
@@ -253,10 +284,6 @@ async def run_parallel_code_discovery(
                     )
                 )
             )
-
-        # Mark enrich phase done if no enrich workers
-        if num_enrich_workers == 0:
-            state.enrich_phase.mark_done()
 
         # --- Link worker (code evidence → signal propagation) ---
         worker_name = "link_worker_0"
@@ -275,16 +302,16 @@ async def run_parallel_code_discovery(
         )
     else:
         state.code_phase.mark_done()
-        state.enrich_phase.mark_done()
         state.link_phase.mark_done()
 
     logger.info(
-        "Started %d workers: scan=%d score=%d enrich=%d code=%d "
+        "Started %d workers: scan=%d triage=%d enrich=%d score=%d code=%d "
         "scan_only=%s score_only=%s",
         worker_group.get_active_count(),
         num_scan_workers if not score_only else 0,
+        num_triage_workers if not scan_only else 0,
+        num_enrich_workers if not scan_only else 0,
         num_score_workers if not scan_only else 0,
-        num_enrich_workers if not (scan_only or score_only) else 0,
         num_code_workers if not (scan_only or score_only) else 0,
         scan_only,
         score_only,
@@ -316,6 +343,7 @@ async def run_parallel_code_discovery(
 
     return {
         "scanned": state.scan_stats.processed,
+        "triaged": state.triage_stats.processed,
         "scored": state.score_stats.processed,
         "enriched": state.enrich_stats.processed,
         "code_ingested": state.code_stats.processed,
@@ -323,6 +351,7 @@ async def run_parallel_code_discovery(
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_errors": state.scan_stats.errors,
+        "triage_errors": state.triage_stats.errors,
         "score_errors": state.score_stats.errors,
         "enrich_errors": state.enrich_stats.errors,
         "code_errors": state.code_stats.errors,
@@ -348,9 +377,13 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
         stats: dict[str, int | float] = {
             "total": 0,
             "discovered": 0,
+            "triaged": 0,
+            "scored": 0,
             "ingested": 0,
             "failed": 0,
             "skipped": 0,
+            "pending_triage": 0,
+            "pending_enrich": 0,
             "pending_score": 0,
             "pending_ingest": 0,
         }
@@ -368,46 +401,64 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
             lang_key = f"{lang}_files"
             stats[lang_key] = stats.get(lang_key, 0) + count
 
-        # Pending score: discovered without interest_score
-        score_result = gc.query(
+        # Pending triage: discovered without triage_composite
+        triage_result = gc.query(
             """
             MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE cf.status = 'discovered' AND cf.interest_score IS NULL
+            WHERE cf.status = 'discovered' AND cf.triage_composite IS NULL
             RETURN count(cf) AS pending
             """,
             facility=facility,
         )
-        stats["pending_score"] = score_result[0]["pending"] if score_result else 0
+        stats["pending_triage"] = triage_result[0]["pending"] if triage_result else 0
 
-        # Pending ingest: scored code files not yet ingested
+        # Pending enrich: triaged but not enriched
+        enrich_pending = gc.query(
+            """
+            MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE cf.status = 'triaged'
+              AND coalesce(cf.is_enriched, false) = false
+            RETURN count(cf) AS pending
+            """,
+            facility=facility,
+        )
+        stats["pending_enrich"] = enrich_pending[0]["pending"] if enrich_pending else 0
+
+        # Pending score: triaged + enriched
+        score_pending = gc.query(
+            """
+            MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE cf.status = 'triaged'
+              AND cf.is_enriched = true
+            RETURN count(cf) AS pending
+            """,
+            facility=facility,
+        )
+        stats["pending_score"] = score_pending[0]["pending"] if score_pending else 0
+
+        # Pending ingest: scored code files
         ingest_result = gc.query(
             """
             MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE cf.status = 'discovered'
-              AND cf.interest_score IS NOT NULL
-              AND cf.interest_score >= 0.3
+            WHERE cf.status = 'scored'
+              AND cf.interest_score >= 0.75
             RETURN count(cf) AS pending
             """,
             facility=facility,
         )
         stats["pending_ingest"] = ingest_result[0]["pending"] if ingest_result else 0
 
-        # Scored and enriched counts for progress display
-        enrich_result = gc.query(
+        # Enriched count
+        enriched_result = gc.query(
             """
             MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE cf.interest_score IS NOT NULL
-            RETURN count(cf) AS scored,
-                   count(CASE WHEN coalesce(cf.is_enriched, false) = true
-                              THEN 1 END) AS enriched
+            WHERE cf.is_enriched = true
+            RETURN count(cf) AS enriched
             """,
             facility=facility,
         )
-        if enrich_result:
-            stats["scored_count"] = enrich_result[0]["scored"]
-            stats["enriched_count"] = enrich_result[0]["enriched"]
-        else:
-            stats["scored_count"] = 0
-            stats["enriched_count"] = 0
+        stats["enriched_count"] = (
+            enriched_result[0]["enriched"] if enriched_result else 0
+        )
 
         return stats

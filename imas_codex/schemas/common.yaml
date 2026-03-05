@@ -137,12 +137,21 @@ enums:
   SourceFileStatus:
     description: >-
       Lifecycle status for source file ingestion pipeline.
+      discovered -> triaged -> scored -> ingested | skipped | failed | stale.
+      Triage assigns fast per-dimension scores from minimal context.
+      Scoring uses enrichment evidence for independent re-grading.
       Progress is graph-derived: count CodeExample nodes linked to file.
     permissible_values:
       discovered:
-        description: File found, awaiting ingestion
+        description: File found, awaiting triage
+      triaged:
+        description: Triage dimension scores assigned, awaiting enrichment and scoring
+      scored:
+        description: Full scoring complete with enrichment evidence
       ingested:
         description: Code extracted, CodeExample nodes created
+      skipped:
+        description: Filtered out during triage or scoring (check skip_reason)
       failed:
         description: Ingestion failed (check error property)
       stale:

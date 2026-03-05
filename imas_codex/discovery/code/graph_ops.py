@@ -238,32 +238,30 @@ def set_files_scan_after(facility: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Score-phase claiming (CodeFile with claimed_at)
+# Triage-phase claiming (CodeFile: discovered → triaged)
 # ---------------------------------------------------------------------------
 
 
-def claim_files_for_scoring(
+def claim_files_for_triage(
     facility: str,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
-    """Atomically claim discovered CodeFiles for LLM scoring.
+    """Atomically claim discovered CodeFiles for LLM triage.
 
-    Claims files with ``status='discovered'`` and no ``interest_score``.
-    Uses ``claimed_at`` timeout for orphan recovery.
-
-    Joins through CONTAINS → FacilityPath to return parent directory
-    enrichment data (pattern matches, scores, description) so the
-    scorer can group files by parent and include enrichment context.
+    Claims files with ``status='discovered'`` and no ``triage_composite``.
+    Returns minimal context: path, language, parent directory path and
+    description.  NO numeric scores from the parent — the triage LLM
+    should assess from filename and directory context alone.
 
     Files are ordered by parent path score descending so files from
-    the highest-value directories are scored first.
+    the highest-value directories are triaged first.
 
     Args:
         facility: Facility ID
         limit: Maximum files to claim
 
     Returns:
-        List of dicts with file info + parent enrichment fields
+        List of dicts with file info + parent path/description
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
@@ -271,7 +269,7 @@ def claim_files_for_scoring(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
-              AND sf.interest_score IS NULL
+              AND sf.triage_composite IS NULL
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
             OPTIONAL MATCH (sf)-[:IN_DIRECTORY]->(p:FacilityPath)
@@ -281,26 +279,142 @@ def claim_files_for_scoring(
             SET sf.claimed_at = datetime()
             RETURN sf.id AS id, sf.path AS path,
                    sf.language AS language,
-                   sf.pattern_categories AS patterns_json,
-                   sf.total_pattern_matches AS total_matches,
-                   sf.line_count AS line_count,
-                   sf.is_enriched AS is_enriched,
                    p.id AS parent_path_id, p.path AS parent_path,
-                   p.score_composite AS parent_score, p.purpose AS parent_purpose,
-                   p.description AS parent_description,
-                   p.pattern_categories AS parent_patterns,
-                   p.read_matches AS parent_read_matches,
-                   p.write_matches AS parent_write_matches,
-                   p.is_multiformat AS parent_multiformat,
-                   p.score_data_access AS parent_score_data_access,
-                   p.score_imas AS parent_score_imas,
-                   p.score_convention AS parent_score_convention,
-                   p.score_analysis_code AS parent_score_analysis_code,
-                   p.score_modeling_code AS parent_score_modeling_code,
-                   p.score_operations_code AS parent_score_operations_code,
-                   p.score_workflow AS parent_score_workflow,
-                   p.score_visualization AS parent_score_visualization,
-                   p.score_documentation AS parent_score_documentation
+                   p.description AS parent_description
+            """,
+            facility=facility,
+            limit=limit,
+            cutoff=cutoff,
+        )
+        files = list(result)
+        if files:
+            logger.debug(
+                "Claimed %d CodeFiles for triage (facility=%s)",
+                len(files),
+                facility,
+            )
+        return files
+
+
+def release_file_triage_claim(file_id: str) -> None:
+    """Release triage claim on a single CodeFile."""
+    release_claim("CodeFile", file_id)
+
+
+def release_file_triage_claims(file_ids: list[str]) -> None:
+    """Release triage claims on multiple CodeFiles."""
+    release_claims_batch("CodeFile", file_ids)
+
+
+# ---------------------------------------------------------------------------
+# Enrich-phase claiming (CodeFile: triaged → enriched)
+# ---------------------------------------------------------------------------
+
+
+def claim_files_for_enrichment(
+    facility: str,
+    limit: int = 200,
+    min_triage_composite: float = 0.75,
+) -> list[dict[str, Any]]:
+    """Atomically claim triaged CodeFiles for rg pattern enrichment.
+
+    Claims files with ``status='triaged'`` and ``triage_composite``
+    above the threshold.  Enrichment runs rg pattern matching and
+    extracts preview text for the subsequent scoring pass.
+
+    Prioritizes files with high triage composite scores.
+
+    Args:
+        facility: Facility ID
+        limit: Maximum files to claim
+        min_triage_composite: Minimum triage composite to enrich
+
+    Returns:
+        List of dicts with id, path, language, triage_composite
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'triaged'
+              AND sf.triage_composite >= $min_triage
+              AND coalesce(sf.is_enriched, false) = false
+              AND (sf.claimed_at IS NULL
+                   OR sf.claimed_at < datetime() - duration($cutoff))
+            WITH sf ORDER BY sf.triage_composite DESC LIMIT $limit
+            SET sf.claimed_at = datetime()
+            RETURN sf.id AS id, sf.path AS path,
+                   sf.language AS language,
+                   sf.triage_composite AS triage_composite
+            """,
+            facility=facility,
+            limit=limit,
+            cutoff=cutoff,
+            min_triage=min_triage_composite,
+        )
+        files = list(result)
+        if files:
+            logger.debug(
+                "Claimed %d CodeFiles for enrichment (facility=%s)",
+                len(files),
+                facility,
+            )
+        return files
+
+
+def release_file_enrich_claims(file_ids: list[str]) -> None:
+    """Release enrichment claims on multiple CodeFiles."""
+    release_claims_batch("CodeFile", file_ids)
+
+
+# ---------------------------------------------------------------------------
+# Score-phase claiming (CodeFile: triaged+enriched → scored)
+# ---------------------------------------------------------------------------
+
+
+def claim_files_for_scoring(
+    facility: str,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Atomically claim enriched CodeFiles for full LLM scoring.
+
+    Claims files with ``status='triaged'`` that have been enriched
+    (``is_enriched=true``).  Returns triage description (qualitative
+    only, NO triage numeric scores) plus enrichment evidence (pattern
+    categories, line count) and parent directory context.
+
+    Args:
+        facility: Facility ID
+        limit: Maximum files to claim
+
+    Returns:
+        List of dicts with file info + triage description + enrichment data
+    """
+    import json as _json
+
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'triaged'
+              AND sf.is_enriched = true
+              AND (sf.claimed_at IS NULL
+                   OR sf.claimed_at < datetime() - duration($cutoff))
+            OPTIONAL MATCH (sf)-[:IN_DIRECTORY]->(p:FacilityPath)
+            WITH sf, p
+            ORDER BY sf.triage_composite DESC, sf.triaged_at ASC
+            LIMIT $limit
+            SET sf.claimed_at = datetime()
+            RETURN sf.id AS id, sf.path AS path,
+                   sf.language AS language,
+                   sf.triage_description AS triage_description,
+                   sf.pattern_categories AS pattern_categories_json,
+                   sf.total_pattern_matches AS total_pattern_matches,
+                   sf.line_count AS line_count,
+                   p.id AS parent_path_id, p.path AS parent_path,
+                   p.description AS parent_description
             """,
             facility=facility,
             limit=limit,
@@ -309,18 +423,16 @@ def claim_files_for_scoring(
         files = []
         for row in result:
             f = dict(row)
-            # Parse per-file pattern_categories JSON into a dict
-            patterns_json = f.pop("patterns_json", None)
-            if patterns_json:
+            # Parse pattern_categories JSON
+            pj = f.pop("pattern_categories_json", None)
+            if pj:
                 try:
-                    import json
-
-                    f["patterns"] = json.loads(patterns_json)
-                except (json.JSONDecodeError, TypeError):
-                    f["patterns"] = {}
+                    f["pattern_categories"] = _json.loads(pj)
+                except (_json.JSONDecodeError, TypeError):
+                    f["pattern_categories"] = {}
             else:
-                f["patterns"] = {}
-            f.setdefault("total_matches", 0)
+                f["pattern_categories"] = {}
+            f.setdefault("total_pattern_matches", 0)
             f.setdefault("line_count", 0)
             files.append(f)
         if files:
@@ -339,63 +451,6 @@ def release_file_score_claim(file_id: str) -> None:
 
 def release_file_score_claims(file_ids: list[str]) -> None:
     """Release scoring claims on multiple CodeFiles."""
-    release_claims_batch("CodeFile", file_ids)
-
-
-# ---------------------------------------------------------------------------
-# Enrich-phase claiming (CodeFile with claimed_at, scored + not enriched)
-# ---------------------------------------------------------------------------
-
-
-def claim_files_for_enrichment(
-    facility: str,
-    limit: int = 200,
-) -> list[dict[str, Any]]:
-    """Atomically claim scored CodeFiles for rg pattern enrichment.
-
-    Claims files that have been scored (interest_score IS NOT NULL) but
-    not yet enriched (is_enriched IS NULL or false). Prioritizes files
-    with high composite scores.
-
-    Args:
-        facility: Facility ID
-        limit: Maximum files to claim
-
-    Returns:
-        List of dicts with id, path, language, interest_score
-    """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE sf.status = 'discovered'
-              AND sf.interest_score IS NOT NULL
-              AND coalesce(sf.is_enriched, false) = false
-              AND (sf.claimed_at IS NULL
-                   OR sf.claimed_at < datetime() - duration($cutoff))
-            WITH sf ORDER BY sf.interest_score DESC LIMIT $limit
-            SET sf.claimed_at = datetime()
-            RETURN sf.id AS id, sf.path AS path,
-                   sf.language AS language,
-                   sf.interest_score AS interest_score
-            """,
-            facility=facility,
-            limit=limit,
-            cutoff=cutoff,
-        )
-        files = list(result)
-        if files:
-            logger.debug(
-                "Claimed %d CodeFiles for enrichment (facility=%s)",
-                len(files),
-                facility,
-            )
-        return files
-
-
-def release_file_enrich_claims(file_ids: list[str]) -> None:
-    """Release enrichment claims on multiple CodeFiles."""
     release_claims_batch("CodeFile", file_ids)
 
 
@@ -432,13 +487,28 @@ def has_pending_scan_work(facility: str, min_score: float = 0.5) -> bool:
 
 
 def has_pending_score_work(facility: str) -> bool:
-    """Check if there are CodeFiles needing LLM scoring."""
+    """Check if there are triaged+enriched CodeFiles needing scoring."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'triaged'
+              AND sf.is_enriched = true
+            RETURN count(sf) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def has_pending_triage_work(facility: str) -> bool:
+    """Check if there are discovered CodeFiles needing triage."""
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
-              AND sf.interest_score IS NULL
+              AND sf.triage_composite IS NULL
             RETURN count(sf) > 0 AS has_work
             """,
             facility=facility,
@@ -447,13 +517,12 @@ def has_pending_score_work(facility: str) -> bool:
 
 
 def has_pending_enrich_work(facility: str) -> bool:
-    """Check if there are scored CodeFiles needing rg enrichment."""
+    """Check if there are triaged CodeFiles needing rg enrichment."""
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE sf.status = 'discovered'
-              AND sf.interest_score IS NOT NULL
+            WHERE sf.status = 'triaged'
               AND coalesce(sf.is_enriched, false) = false
             RETURN count(sf) > 0 AS has_work
             """,
@@ -470,8 +539,7 @@ def has_pending_code_work(
         result = gc.query(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE sf.status = 'discovered'
-              AND sf.interest_score IS NOT NULL
+            WHERE sf.status = 'scored'
               AND sf.interest_score >= $min_score
               AND coalesce(sf.line_count, 0) <= $max_line_count
             RETURN count(sf) > 0 AS has_work
@@ -565,16 +633,20 @@ __all__ = [
     "CLAIM_TIMEOUT_SECONDS",
     "claim_files_for_enrichment",
     "claim_files_for_scoring",
+    "claim_files_for_triage",
     "claim_paths_for_file_scan",
     "has_pending_code_work",
     "has_pending_enrich_work",
     "has_pending_link_work",
     "has_pending_scan_work",
     "has_pending_score_work",
+    "has_pending_triage_work",
     "link_code_evidence_to_signals",
     "release_file_enrich_claims",
     "release_file_score_claim",
     "release_file_score_claims",
+    "release_file_triage_claim",
+    "release_file_triage_claims",
     "release_path_file_scan_claim",
     "release_path_file_scan_claims_batch",
     "reset_orphaned_file_claims",

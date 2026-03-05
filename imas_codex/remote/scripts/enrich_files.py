@@ -58,6 +58,33 @@ def count_lines(path: str) -> int:
     return 0
 
 
+def read_preview(path: str, max_lines: int = 40, max_bytes: int = 2000) -> str:
+    """Read the head of a file as preview text.
+
+    Returns up to max_lines lines or max_bytes characters, whichever
+    comes first.  Binary files return empty string.
+    """
+    try:
+        with open(path, errors="replace") as f:
+            lines = []
+            total = 0
+            for i, line in enumerate(f):
+                if i >= max_lines:
+                    break
+                if total + len(line) > max_bytes:
+                    lines.append(line[: max_bytes - total])
+                    break
+                lines.append(line)
+                total += len(line)
+            text = "".join(lines)
+            # Skip binary-looking content
+            if "\x00" in text:
+                return ""
+            return text
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
 def run_rg_on_file(pattern: str, path: str) -> int:
     """Run rg -c on a single file and return match count."""
     try:
@@ -75,12 +102,13 @@ def run_rg_on_file(pattern: str, path: str) -> int:
 
 
 def enrich_file(path: str, pattern_categories: Dict[str, str]) -> Dict[str, Any]:
-    """Enrich a single file with pattern matching and line count."""
+    """Enrich a single file with pattern matching, line count, and preview."""
     result = {
         "path": path,
         "pattern_categories": {},
         "total_pattern_matches": 0,
         "line_count": 0,
+        "preview_text": "",
     }
 
     if not os.path.isfile(path):
@@ -89,6 +117,9 @@ def enrich_file(path: str, pattern_categories: Dict[str, str]) -> Dict[str, Any]
 
     # Line count
     result["line_count"] = count_lines(path)
+
+    # Preview text (head of file)
+    result["preview_text"] = read_preview(path)
 
     # Pattern matching — batch all categories via single rg call where possible
     # For accuracy, run per-category to get per-category counts

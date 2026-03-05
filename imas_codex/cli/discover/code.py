@@ -104,7 +104,7 @@ def code(
     \b
     Pipeline stages:
       SCAN:    SSH to facility, enumerate code files + rg pattern enrichment
-      TRIAGE:  Fast LLM pass to keep/skip files per directory
+      TRIAGE:  Per-dimension LLM scoring (discovered → triaged | skipped)
       SCORE:   Detailed multi-dimensional LLM scoring with pattern evidence
       INGEST:  Fetch, tree-sitter chunk, embed, extract IDS/MDSplus refs
 
@@ -188,6 +188,10 @@ def code(
             if msg != "idle":
                 file_logger.info("CODE: %s", msg)
 
+        def log_triage(msg, stats, results=None):
+            if msg != "idle":
+                file_logger.info("TRIAGE: %s", msg)
+
         def log_enrich(msg, stats, results=None):
             if msg != "idle":
                 file_logger.info("ENRICH: %s", msg)
@@ -220,6 +224,7 @@ def code(
                     score_only=score_only,
                     deadline=deadline,
                     on_scan_progress=log_scan,
+                    on_triage_progress=log_triage,
                     on_score_progress=log_score,
                     on_enrich_progress=log_enrich,
                     on_code_progress=log_code_cb,
@@ -293,6 +298,9 @@ def code(
                     def on_scan(msg, stats, results=None):
                         display.update_scan(msg, stats, results)
 
+                    def on_triage(msg, stats, results=None):
+                        display.update_triage(msg, stats, results)
+
                     def on_score(msg, stats, results=None):
                         display.update_score(msg, stats, results)
 
@@ -320,6 +328,7 @@ def code(
                             score_only=score_only,
                             deadline=deadline,
                             on_scan_progress=on_scan,
+                            on_triage_progress=on_triage,
                             on_score_progress=on_score,
                             on_enrich_progress=on_enrich,
                             on_code_progress=on_code,
