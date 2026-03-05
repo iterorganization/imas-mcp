@@ -723,3 +723,137 @@ class WikiDiscoveryState:
             except Exception:
                 pass
             self._basic_auth_client = None
+
+    def should_stop_site_workers(self) -> bool:
+        """Check if site-bound workers should terminate.
+
+        Like should_stop() but excludes image and embed phases.  Used
+        when facility-scoped workers (image, embed) run separately so
+        the per-site supervision loop can advance to the next site
+        without waiting for slow downstream VLM processing.
+        """
+        if self.stop_requested:
+            return True
+
+        if self.deadline_expired:
+            return True
+
+        budget_done = self.budget_exhausted or self.provider_budget_exhausted
+        limit_done = budget_done or self.page_limit_reached
+
+        score_done = self.score_phase.is_idle_or_done or limit_done
+        artifact_score_done = self.artifact_score_phase.is_idle_or_done or limit_done
+
+        all_idle = (
+            self.scan_phase.is_idle_or_done
+            and score_done
+            and self.ingest_phase.is_idle_or_done
+            and self.docs_phase.is_idle_or_done
+            and artifact_score_done
+        )
+        if all_idle:
+            graph_ops = _get_graph_ops()
+            if self.score_only:
+                if limit_done:
+                    has_work = False
+                else:
+                    has_work = graph_ops.has_pending_work(self.facility)
+            elif limit_done:
+                has_work = graph_ops.has_pending_ingest_work(
+                    self.facility
+                ) or graph_ops.has_pending_artifact_ingest_work(self.facility)
+            else:
+                has_work = graph_ops.has_pending_work(
+                    self.facility
+                ) or graph_ops.has_pending_artifact_work(self.facility)
+
+            if has_work:
+                if limit_done:
+                    self.ingest_phase.record_activity()
+                    self.docs_phase.record_activity()
+                else:
+                    self.scan_phase.record_activity()
+                    self.score_phase.record_activity()
+                    self.ingest_phase.record_activity()
+                    self.docs_phase.record_activity()
+                    self.artifact_score_phase.record_activity()
+                return False
+            return True
+        return False
+
+
+@dataclass
+class FacilityWorkerState:
+    """Lightweight state for facility-scoped workers (image, embed).
+
+    These workers don't need site-specific fields (base_url, auth_type,
+    site_type).  They operate on graph data that already contains full
+    URLs and fetch images via source_url stored on each node.
+
+    Used when facility-scoped workers are lifted out of the per-site
+    lifecycle to run continuously across all sites.
+    """
+
+    facility: str
+    ssh_host: str | None = None
+    focus: str | None = None
+
+    # Shared service monitor (same instance as site workers)
+    service_monitor: Any = field(default=None, repr=False)
+
+    # Budget / limits — shared with the orchestrator
+    cost_limit: float = 10.0
+    deadline: float | None = None
+    store_images: bool = False
+
+    # Control
+    stop_requested: bool = False
+    provider_budget_exhausted: bool = False
+
+    # Stats
+    image_stats: WorkerStats = field(default_factory=WorkerStats)
+
+    # Phases
+    image_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("image"))
+
+    @property
+    def total_cost(self) -> float:
+        return self.image_stats.cost
+
+    @property
+    def deadline_expired(self) -> bool:
+        if self.deadline is None:
+            return False
+        return time.time() >= self.deadline
+
+    @property
+    def budget_exhausted(self) -> bool:
+        return self.total_cost >= self.cost_limit
+
+    def should_stop(self) -> bool:
+        """Check if facility-scoped workers should stop."""
+        if self.stop_requested:
+            return True
+        if self.deadline_expired:
+            return True
+        return False
+
+    def should_stop_image_scoring(self) -> bool:
+        """Check if image worker should stop.
+
+        Unlike the site-scoped version, this doesn't gate on an ingest
+        phase — facility-scoped image workers drain the global queue and
+        stop when no pending images remain after a debounce period.
+        """
+        if self.stop_requested:
+            return True
+        if self.deadline_expired:
+            return True
+        if self.budget_exhausted or self.provider_budget_exhausted:
+            return True
+        if (
+            self.image_phase.is_idle_or_done
+            and not _get_graph_ops().has_pending_image_work(self.facility)
+        ):
+            return True
+        return False

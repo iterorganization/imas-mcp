@@ -771,6 +771,43 @@ def wiki(
                 install_shutdown_handlers(stop_event=stop_event)
 
                 _multi = len(_site_configs) > 1
+
+                # When processing multiple sites, start facility-scoped
+                # workers (IMAGE, EMBED) once — they drain the global queue
+                # while per-site workers advance through sites.
+                facility_group = None
+                facility_state = None
+                if _multi and not _scan_only:
+                    from imas_codex.discovery.base.supervision import (
+                        SupervisedWorkerGroup,
+                        run_supervised_loop,
+                    )
+                    from imas_codex.discovery.wiki.parallel import (
+                        create_facility_worker_state,
+                        start_facility_workers,
+                    )
+
+                    # Determine shared SSH host from first site config
+                    _shared_ssh = _site_configs[0].get("ssh_host")
+
+                    facility_state = create_facility_worker_state(
+                        _facility,
+                        ssh_host=_shared_ssh,
+                        focus=_focus,
+                        cost_limit=_cost_limit,
+                        deadline=_deadline,
+                        store_images=_store_images,
+                    )
+
+                    facility_group = SupervisedWorkerGroup()
+                    start_facility_workers(
+                        facility_state,
+                        facility_group,
+                        on_image_progress=lambda msg, stats, results=None: (
+                            wiki_logger.info(f"IMAGE: {msg}") if msg != "idle" else None
+                        ),
+                    )
+
                 for i, sc in enumerate(_site_configs):
                     if remaining_budget <= 0:
                         wiki_logger.info("Budget exhausted, skipping remaining sites")
@@ -815,7 +852,7 @@ def wiki(
                             on_score_progress=log_on_score,
                             on_ingest_progress=log_on_ingest,
                             max_wiki_connections=sc.get("max_wiki_connections", 10),
-                            stop_event=stop_event,
+                            skip_facility_workers=_multi and not _scan_only,
                         )
                     except Exception as e:
                         wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
@@ -829,6 +866,22 @@ def wiki(
                     remaining_budget -= result.get("cost", 0)
                     if remaining_pages is not None:
                         remaining_pages -= result.get("scored", 0)
+
+                # Drain facility-scoped workers after all sites complete
+                if facility_state is not None and facility_group is not None:
+                    wiki_logger.info(
+                        "All sites processed — draining facility workers "
+                        "(images, embeddings)"
+                    )
+                    # Signal that no more ingest work will arrive
+                    facility_state.image_phase.record_idle()
+                    await run_supervised_loop(
+                        facility_group,
+                        facility_state.should_stop,
+                    )
+                    facility_state.stop_requested = True
+                    combined["images_scored"] += facility_state.image_stats.processed
+                    combined["cost"] += facility_state.total_cost
 
                 return combined
 
@@ -1053,6 +1106,37 @@ def wiki(
                 def on_worker_status(worker_group):
                     display.update_worker_status(worker_group)
 
+                # Start facility-scoped workers for multi-site Rich path
+                facility_group_rich = None
+                facility_state_rich = None
+                if multi_site and not _scan_only:
+                    from imas_codex.discovery.base.supervision import (
+                        SupervisedWorkerGroup,
+                        run_supervised_loop,
+                    )
+                    from imas_codex.discovery.wiki.parallel import (
+                        create_facility_worker_state,
+                        start_facility_workers,
+                    )
+
+                    _shared_ssh = _site_configs[0].get("ssh_host")
+                    facility_state_rich = create_facility_worker_state(
+                        _facility,
+                        ssh_host=_shared_ssh,
+                        focus=_focus,
+                        cost_limit=_cost_limit,
+                        deadline=_deadline,
+                        store_images=_store_images,
+                        service_monitor=service_monitor,
+                    )
+                    facility_group_rich = SupervisedWorkerGroup()
+                    start_facility_workers(
+                        facility_state_rich,
+                        facility_group_rich,
+                        on_image_progress=on_image,
+                        on_worker_status=on_worker_status,
+                    )
+
                 try:
                     for i, sc in enumerate(_site_configs):
                         if i > 0 and multi_site:
@@ -1096,7 +1180,7 @@ def wiki(
                                 on_worker_status=on_worker_status,
                                 service_monitor=service_monitor,
                                 max_wiki_connections=sc.get("max_wiki_connections", 10),
-                                stop_event=stop_event,
+                                skip_facility_workers=multi_site and not _scan_only,
                             )
                         except Exception as e:
                             wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
@@ -1116,6 +1200,25 @@ def wiki(
                         remaining_budget -= result.get("cost", 0)
                         if remaining_pages is not None:
                             remaining_pages -= result.get("scored", 0)
+
+                    # Drain facility-scoped workers after all sites
+                    if (
+                        facility_state_rich is not None
+                        and facility_group_rich is not None
+                    ):
+                        wiki_logger.info(
+                            "All sites processed — draining facility workers"
+                        )
+                        facility_state_rich.image_phase.record_idle()
+                        await run_supervised_loop(
+                            facility_group_rich,
+                            facility_state_rich.should_stop,
+                        )
+                        facility_state_rich.stop_requested = True
+                        combined["images_scored"] += (
+                            facility_state_rich.image_stats.processed
+                        )
+                        combined["cost"] += facility_state_rich.total_cost
 
                 finally:
                     # Final graph refresh so progress bars show 100% state
