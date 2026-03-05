@@ -1245,7 +1245,7 @@ async def scan_worker(
                 enable_rg=False,
                 enable_size=False,
                 enable_git_metadata=True,
-                enable_vcs_remote_check=False,  # Deferred to expand_worker — network call
+                enable_vcs_remote_check=True,
                 pool=pool,
             )
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
