@@ -976,8 +976,9 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "file_scoring_schema",
         "format_patterns",
     ],
-    # File triage (pass 1)
+    # File triage (pass 1) — dimension scoring from minimal context
     "code/triage": [
+        "file_score_dimensions",
         "file_triage_schema",
     ],
 }
