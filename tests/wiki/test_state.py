@@ -45,6 +45,7 @@ class TestShouldStop:
         """All idle + no pending work -> should stop."""
         _set_all_idle(state)
         mock_ops = mock_graph_ops.return_value
+        mock_ops.has_active_claims.return_value = False
         mock_ops.has_pending_work.return_value = False
         mock_ops.has_pending_document_work.return_value = False
         mock_ops.has_pending_image_work.return_value = False
@@ -87,6 +88,7 @@ class TestShouldStop:
 
         # No pending I/O work
         mock_ops = mock_graph_ops.return_value
+        mock_ops.has_active_claims.return_value = False
         mock_ops.has_pending_ingest_work.return_value = False
         mock_ops.has_pending_document_ingest_work.return_value = False
 
@@ -106,6 +108,7 @@ class TestShouldStop:
 
         # Pending ingest work (scored pages waiting for embedding)
         mock_ops = mock_graph_ops.return_value
+        mock_ops.has_active_claims.return_value = False
         mock_ops.has_pending_ingest_work.return_value = True
         mock_ops.has_pending_document_ingest_work.return_value = False
 
@@ -136,6 +139,7 @@ class TestShouldStop:
 
         # No I/O work pending — only LLM work pending
         mock_ops = mock_graph_ops.return_value
+        mock_ops.has_active_claims.return_value = False
         mock_ops.has_pending_ingest_work.return_value = False
         mock_ops.has_pending_document_ingest_work.return_value = False
         # These should NOT be called when budget is exhausted:
@@ -156,6 +160,7 @@ class TestShouldStop:
         assert state.budget_exhausted is False
 
         mock_ops = mock_graph_ops.return_value
+        mock_ops.has_active_claims.return_value = False
         mock_ops.has_pending_work.return_value = True
         mock_ops.has_pending_document_work.return_value = False
         mock_ops.has_pending_image_work.return_value = False

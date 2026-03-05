@@ -333,12 +333,9 @@ class WikiDiscoveryState:
         the main loop doesn't hang waiting for phases that can never idle.
         I/O workers (ingest, document) continue draining their queues normally.
 
-        Uses ``has_pending_*`` with ``base_url`` scoping so each site's
-        workers only consider pages belonging to their own site.  The
-        ``claimed_at`` filter in ``has_pending_*`` correctly excludes
-        in-flight pages within the site, preventing double-claiming
-        while still allowing the stop condition to fire when no more
-        unclaimed work exists for this site.
+        Also checks ``has_active_claims`` to avoid terminating while workers
+        are actively processing claimed pages — the idle detection can fire
+        prematurely when one worker is idle while another is processing.
         """
         if self.stop_requested:
             return True
@@ -365,15 +362,16 @@ class WikiDiscoveryState:
             and image_done
         )
         if all_idle:
-            # Check for pending work scoped to this site's base_url.
-            # When limits are hit only check I/O queues — LLM-dependent
-            # pending work cannot be processed.
-            # In score_only mode, no ingest workers run so skip I/O checks.
             graph_ops = _get_graph_ops()
             url = self.base_url
+
+            # Check for in-flight work — pages claimed by active workers.
+            if graph_ops.has_active_claims(self.facility, base_url=url):
+                self.score_phase.record_activity()
+                self.ingest_phase.record_activity()
+                return False
+
             if self.score_only:
-                # No ingest workers — pending ingest work is expected and
-                # irrelevant.  Only check if LLM workers still have work.
                 if limit_done:
                     has_work = False
                 else:
@@ -743,9 +741,11 @@ class WikiDiscoveryState:
         without waiting for slow downstream VLM processing.
 
         Uses ``has_pending_*`` with ``base_url`` scoping so the site
-        loop only considers pages from the current site.  Claimed pages
-        within this site are correctly excluded, allowing the site loop
-        to advance once all pages are either claimed or processed.
+        loop only considers pages from the current site.  Also checks
+        ``has_active_claims`` to avoid terminating while workers are
+        actively processing claimed pages — the idle detection can
+        fire prematurely when one worker is idle while another is
+        processing a batch.
         """
         if self.stop_requested:
             return True
@@ -769,6 +769,15 @@ class WikiDiscoveryState:
         if all_idle:
             graph_ops = _get_graph_ops()
             url = self.base_url
+
+            # Check for in-flight work first — pages that are claimed
+            # and being actively processed by workers.  has_pending_work
+            # deliberately excludes these, so we need a separate check.
+            if graph_ops.has_active_claims(self.facility, base_url=url):
+                self.score_phase.record_activity()
+                self.ingest_phase.record_activity()
+                return False
+
             if self.score_only:
                 if limit_done:
                     has_work = False
@@ -849,11 +858,22 @@ class FacilityWorkerState:
         return self.total_cost >= self.cost_limit
 
     def should_stop(self) -> bool:
-        """Check if facility-scoped workers should stop."""
+        """Check if facility-scoped workers should stop.
+
+        Returns True when explicitly requested, deadline expired, or
+        all facility-scoped work is complete (image scoring done and
+        no pending embed work).
+        """
         if self.stop_requested:
             return True
         if self.deadline_expired:
             return True
+        # Check if all facility-scoped work is genuinely complete.
+        # Image worker has its own stop condition; embed worker checks
+        # whether any un-embedded descriptions remain for the facility.
+        if self.image_phase.is_idle_or_done:
+            if not _get_graph_ops().has_pending_image_work(self.facility):
+                return True
         return False
 
     def should_stop_image_scoring(self) -> bool:

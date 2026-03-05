@@ -468,6 +468,37 @@ def has_pending_document_ingest_work(
         return result[0]["pending"] > 0 if result else False
 
 
+def has_active_claims(facility: str, *, base_url: str | None = None) -> bool:
+    """Check if any pages have active (non-orphaned) claims.
+
+    Returns True if workers are currently processing pages. Used by
+    the stop condition to avoid terminating while in-flight work exists.
+    ``has_pending_work`` deliberately excludes claimed pages, so a
+    separate check is needed to detect work that's in progress but not
+    yet complete.
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    url_filter = "AND wp.url STARTS WITH $base_url" if base_url else ""
+    with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "cutoff": cutoff,
+        }
+        if base_url:
+            params["base_url"] = base_url
+        result = gc.query(
+            f"""
+            MATCH (wp:WikiPage {{facility_id: $facility}})
+            WHERE wp.claimed_at IS NOT NULL
+              AND wp.claimed_at >= datetime() - duration($cutoff)
+              {url_filter}
+            RETURN count(wp) AS active
+            """,
+            **params,
+        )
+        return result[0]["active"] > 0 if result else False
+
+
 def has_pending_work(facility: str, *, base_url: str | None = None) -> bool:
     """Check if there's pending wiki work in the graph.
 
