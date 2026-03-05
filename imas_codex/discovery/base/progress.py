@@ -707,7 +707,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
         line2.append(clip_text(config.primary_text, max_name), style="white")
         if config.physics_domain:
             line2.append("  ", style="dim")
-            line2.append(config.physics_domain, style="cyan")
+            line2.append(config.physics_domain, style="green")
         if config.terminal_label:
             line2.append("  ", style="dim")
             line2.append(config.terminal_label, style="red dim")
