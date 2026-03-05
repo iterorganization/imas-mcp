@@ -58,6 +58,17 @@ class ScanItem:
 
 
 @dataclass
+class TriageItem:
+    """Current triage activity."""
+
+    path: str
+    score_composite: float | None = None
+    category: str = ""  # top scoring dimension (modeling, analysis, imas, etc.)
+    description: str = ""  # LLM description of what the file contains
+    skipped: bool = False
+
+
+@dataclass
 class ScoreItem:
     """Current score activity."""
 
@@ -74,6 +85,10 @@ class EnrichItem:
 
     path: str
     patterns: int = 0  # total pattern matches
+    line_count: int = 0  # lines of code
+    pattern_categories: dict[str, int] = field(
+        default_factory=dict
+    )  # per-category match counts
 
 
 @dataclass
@@ -119,12 +134,15 @@ class FileProgressState:
 
     # This run stats
     run_scanned: int = 0
+    run_triaged: int = 0
     run_scored: int = 0
     run_skipped: int = 0
     run_enriched: int = 0
     run_code_ingested: int = 0
+    _run_triage_cost: float = 0.0
     _run_score_cost: float = 0.0
     scan_rate: float | None = None
+    triage_rate: float | None = None
     score_rate: float | None = None
     enrich_rate: float | None = None
     code_rate: float | None = None
@@ -134,16 +152,23 @@ class FileProgressState:
 
     # Current items
     current_scan: ScanItem | None = None
+    current_triage: TriageItem | None = None
     current_score: ScoreItem | None = None
     current_enrich: EnrichItem | None = None
     current_ingest: IngestItem | None = None
     scan_processing: bool = False
+    triage_processing: bool = False
     score_processing: bool = False
     enrich_processing: bool = False
     ingest_processing: bool = False
 
     # Streaming queues
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
+    triage_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.5, max_rate=2.0, min_display_time=0.4
+        )
+    )
     score_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.5, max_rate=2.0, min_display_time=0.4
@@ -179,7 +204,7 @@ class FileProgressState:
 
     @property
     def run_cost(self) -> float:
-        return self._run_score_cost
+        return self._run_triage_cost + self._run_score_cost
 
     @property
     def cost_per_file(self) -> float | None:
@@ -279,7 +304,7 @@ class FileProgressDisplay(BaseProgressDisplay):
           Line 2:        /home/codes/liuqe/src
           Line 3:        45 files found
 
-        Stages: SCAN -> SCORE -> ENRICH -> INGEST
+        Stages: SCAN → TRIAGE → ENRICH → SCORE → INGEST
         """
 
         # --- Compute progress data ---
@@ -287,27 +312,35 @@ class FileProgressDisplay(BaseProgressDisplay):
         # SCAN: files discovered / total from paths
         scan_total = max(self.state.total, 1)
 
-        # SCORE: files scored (graph) / total needing scoring
-        score_completed = self.state.scored_count
-        score_total = max(self.state.total, 1)
+        # TRIAGE: triaged / total needing triage
+        triage_completed = self.state.triaged_count + self.state.skipped
+        triage_total = max(self.state.pending_triage + triage_completed, 1)
 
-        # ENRICH: enriched (graph) / scored (all scored files need enriching)
+        # ENRICH: enriched / total needing enrichment (triaged files)
         enrich_completed = self.state.enriched_count
-        enrich_total = max(self.state.scored_count, 1)
+        enrich_total = max(self.state.pending_enrich + enrich_completed, 1)
 
-        # INGEST: ingested (graph) / total needing ingestion
+        # SCORE: scored / total needing scoring
+        score_completed = self.state.scored_count
+        score_total = max(self.state.pending_score + score_completed, 1)
+
+        # INGEST: ingested / total needing ingestion
         ingest_completed = self.state.ingested
         ingest_total = max(self.state.ingested + self.state.pending_ingest, 1)
 
-        # Score cost for display
+        # Cost for display
+        triage_cost = (
+            self.state._run_triage_cost if self.state._run_triage_cost > 0 else None
+        )
         score_cost = (
             self.state._run_score_cost if self.state._run_score_cost > 0 else None
         )
 
         # Worker counts per group
         scan_count, scan_ann = self._count_group_workers("scan")
-        score_count, score_ann = self._count_group_workers("triage")
+        triage_count, triage_ann = self._count_group_workers("triage")
         enrich_count, enrich_ann = self._count_group_workers("enrich")
+        score_count, score_ann = self._count_group_workers("score")
         code_count, code_ann = self._count_group_workers("code")
         ingest_count = code_count
         ingest_ann = code_ann
@@ -315,14 +348,16 @@ class FileProgressDisplay(BaseProgressDisplay):
         # --- Build activity data ---
 
         scan = self.state.current_scan
-        score = self.state.current_score
+        triage = self.state.current_triage
         enrich = self.state.current_enrich
+        score = self.state.current_score
         ingest = self.state.current_ingest
 
         # Worker completion detection
         scan_complete = self._worker_complete("scan") and not scan
-        score_complete = self._worker_complete("triage") and not score
+        triage_complete = self._worker_complete("triage") and not triage
         enrich_complete = self._worker_complete("enrich") and not enrich
+        score_complete = self._worker_complete("score") and not score
         code_complete = self._worker_complete("code")
         ingest_complete = code_complete and not ingest
 
@@ -334,9 +369,48 @@ class FileProgressDisplay(BaseProgressDisplay):
             if scan.files_found > 0:
                 scan_desc = f"{scan.files_found} files found"
 
-        # SCORE activity — uses structured fields for 3-line layout:
-        #   Line 2: score  [category]  /path/clipped...         rate
-        #   Line 3: LLM description spanning full width...      $cost
+        # TRIAGE activity — score + category + description
+        triage_text = ""
+        triage_value: float | None = None
+        triage_category = ""
+        triage_desc = ""
+        triage_terminal = ""
+        if triage:
+            triage_text = triage.path
+            if triage.skipped:
+                triage_terminal = "skip"
+                if triage.description:
+                    triage_desc = clean_text(triage.description)
+            elif triage.score_composite is not None:
+                triage_value = triage.score_composite
+                if triage.category:
+                    triage_category = triage.category.replace("_", " ")
+                if triage.description:
+                    triage_desc = clean_text(triage.description)
+
+        # ENRICH activity — line count + pattern categories
+        enrich_text = ""
+        enrich_desc = ""
+        if enrich:
+            enrich_text = enrich.path
+            desc_parts = []
+            if enrich.line_count > 0:
+                desc_parts.append(f"{enrich.line_count:,} LOC")
+            if enrich.pattern_categories:
+                cat_strs = [
+                    f"{cat}:{count}"
+                    for cat, count in sorted(
+                        enrich.pattern_categories.items(),
+                        key=lambda x: x[1],
+                        reverse=True,
+                    )[:4]
+                ]
+                desc_parts.append(" ".join(cat_strs))
+            elif enrich.patterns > 0:
+                desc_parts.append(f"{enrich.patterns} patterns")
+            enrich_desc = "  ".join(desc_parts)
+
+        # SCORE activity — score + category + description
         score_text = ""
         score_value: float | None = None
         score_category = ""
@@ -357,15 +431,7 @@ class FileProgressDisplay(BaseProgressDisplay):
                 if score.description:
                     score_desc = clean_text(score.description)
 
-        # ENRICH activity
-        enrich_text = ""
-        enrich_desc = ""
-        if enrich:
-            enrich_text = enrich.path
-            if enrich.patterns > 0:
-                enrich_desc = f"{enrich.patterns} patterns"
-
-        # INGEST activity (combined code + docs)
+        # INGEST activity
         ingest_text = ""
         ingest_desc = ""
         if ingest:
@@ -393,8 +459,40 @@ class FileProgressDisplay(BaseProgressDisplay):
                 worker_annotation=scan_ann,
             ),
             PipelineRowConfig(
-                name="SCORE",
+                name="TRIAGE",
                 style="bold green",
+                completed=triage_completed,
+                total=triage_total,
+                rate=self.state.triage_rate,
+                cost=triage_cost,
+                disabled=self.state.scan_only,
+                primary_text=triage_text,
+                score_value=triage_value,
+                physics_domain=triage_category,
+                terminal_label=triage_terminal,
+                description=triage_desc,
+                is_processing=self.state.triage_processing,
+                is_complete=triage_complete,
+                worker_count=triage_count,
+                worker_annotation=triage_ann,
+            ),
+            PipelineRowConfig(
+                name="ENRICH",
+                style="bold magenta",
+                completed=enrich_completed,
+                total=enrich_total,
+                rate=self.state.enrich_rate,
+                disabled=self.state.scan_only,
+                primary_text=enrich_text,
+                description=enrich_desc,
+                is_processing=self.state.enrich_processing,
+                is_complete=enrich_complete,
+                worker_count=enrich_count,
+                worker_annotation=enrich_ann,
+            ),
+            PipelineRowConfig(
+                name="SCORE",
+                style="bold cyan",
                 completed=score_completed,
                 total=score_total,
                 rate=self.state.score_rate,
@@ -411,22 +509,8 @@ class FileProgressDisplay(BaseProgressDisplay):
                 worker_annotation=score_ann,
             ),
             PipelineRowConfig(
-                name="ENRICH",
-                style="bold white",
-                completed=enrich_completed,
-                total=enrich_total,
-                rate=self.state.enrich_rate,
-                disabled=self.state.scan_only or self.state.score_only,
-                primary_text=enrich_text,
-                description=enrich_desc,
-                is_processing=self.state.enrich_processing,
-                is_complete=enrich_complete,
-                worker_count=enrich_count,
-                worker_annotation=enrich_ann,
-            ),
-            PipelineRowConfig(
                 name="INGEST",
-                style="bold magenta",
+                style="bold yellow",
                 completed=ingest_completed,
                 total=ingest_total,
                 rate=self.state.ingest_rate,
@@ -493,7 +577,7 @@ class FileProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update scan worker state."""
         self.state.run_scanned = stats.processed
-        self.state.scan_rate = stats.rate
+        self.state.scan_rate = stats.ema_rate or stats.active_rate
 
         if message == "idle":
             self.state.scan_processing = False
@@ -512,9 +596,12 @@ class FileProgressDisplay(BaseProgressDisplay):
                 )
                 for r in results
             ]
-            max_rate = 2.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 1.0
-            self.state.scan_queue.add(items, display_rate)
+            ema = stats.ema_rate or stats.active_rate
+            self.state.scan_queue.add(
+                items,
+                ema,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -524,18 +611,35 @@ class FileProgressDisplay(BaseProgressDisplay):
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update triage worker state (feeds into score display)."""
-        self.state._run_score_cost += stats.cost - getattr(
-            self, "_last_triage_cost", 0.0
-        )
-        self._last_triage_cost = stats.cost
+        """Update triage worker state with own display row."""
+        self.state.run_triaged = stats.processed
+        self.state.triage_rate = stats.ema_rate or stats.active_rate
+        self.state._run_triage_cost = stats.cost
 
         if "idle" in message.lower():
-            self.state.score_processing = False
+            self.state.triage_processing = False
+            self._refresh()
+            return
         elif "triaging" in message.lower():
-            self.state.score_processing = True
+            self.state.triage_processing = True
         else:
-            self.state.score_processing = False
+            self.state.triage_processing = False
+
+        if results:
+            items = [
+                TriageItem(
+                    path=r.get("path", ""),
+                    score_composite=r.get("score"),
+                    category=r.get("category", ""),
+                    description=r.get("description", ""),
+                    skipped=r.get("skipped", False),
+                )
+                for r in results
+            ]
+            self.state.run_skipped += sum(1 for r in results if r.get("skipped"))
+            max_rate = 2.0
+            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
+            self.state.triage_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -547,7 +651,7 @@ class FileProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update score worker state."""
         self.state.run_scored = stats.processed
-        self.state.score_rate = stats.rate
+        self.state.score_rate = stats.ema_rate or stats.active_rate
         self.state._run_score_cost = stats.cost
 
         if "waiting" in message.lower():
@@ -570,11 +674,12 @@ class FileProgressDisplay(BaseProgressDisplay):
                 )
                 for r in results
             ]
-            # Track skipped files
-            self.state.run_skipped += sum(1 for r in results if r.get("skipped"))
-            max_rate = 2.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.score_queue.add(items, display_rate)
+            ema = stats.ema_rate or stats.active_rate
+            self.state.score_queue.add(
+                items,
+                ema,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -586,7 +691,7 @@ class FileProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update enrich worker state."""
         self.state.run_enriched = stats.processed
-        self.state.enrich_rate = stats.rate
+        self.state.enrich_rate = stats.ema_rate or stats.active_rate
 
         if "waiting" in message.lower() or "idle" in message.lower():
             self.state.enrich_processing = False
@@ -600,12 +705,17 @@ class FileProgressDisplay(BaseProgressDisplay):
                 EnrichItem(
                     path=r.get("path", ""),
                     patterns=r.get("patterns", 0),
+                    line_count=r.get("line_count", 0),
+                    pattern_categories=r.get("pattern_categories", {}),
                 )
                 for r in results
             ]
-            max_rate = 2.5
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.enrich_queue.add(items, display_rate)
+            ema = stats.ema_rate or stats.active_rate
+            self.state.enrich_queue.add(
+                items,
+                ema,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -617,9 +727,10 @@ class FileProgressDisplay(BaseProgressDisplay):
     ) -> None:
         """Update code ingestion worker state (feeds into INGEST row)."""
         self.state.run_code_ingested = stats.processed
-        self.state.code_rate = stats.rate
+        self.state.code_rate = stats.ema_rate or stats.active_rate
 
-        if "waiting" in message.lower():
+        if "waiting" in message.lower() or "idle" in message.lower():
+            self.state.ingest_processing = False
             self._refresh()
             return
         elif "ingesting" in message.lower() or "fetching" in message.lower():
@@ -634,9 +745,12 @@ class FileProgressDisplay(BaseProgressDisplay):
                 )
                 for r in results
             ]
-            max_rate = 2.0
-            display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.ingest_queue.add(items, display_rate)
+            ema = stats.ema_rate or stats.active_rate
+            self.state.ingest_queue.add(
+                items,
+                ema,
+                last_batch_time=stats.last_batch_time,
+            )
 
         self._refresh()
 
@@ -672,12 +786,14 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.current_scan = None
             updated = True
 
-        next_score = self.state.score_queue.pop()
-        if next_score:
-            self.state.current_score = next_score
+        next_triage = self.state.triage_queue.pop()
+        if next_triage:
+            self.state.current_triage = next_triage
             updated = True
-        elif self.state.score_queue.is_stale() and self.state.current_score is not None:
-            self.state.current_score = None
+        elif (
+            self.state.triage_queue.is_stale() and self.state.current_triage is not None
+        ):
+            self.state.current_triage = None
             updated = True
 
         next_enrich = self.state.enrich_queue.pop()
@@ -688,6 +804,14 @@ class FileProgressDisplay(BaseProgressDisplay):
             self.state.enrich_queue.is_stale() and self.state.current_enrich is not None
         ):
             self.state.current_enrich = None
+            updated = True
+
+        next_score = self.state.score_queue.pop()
+        if next_score:
+            self.state.current_score = next_score
+            updated = True
+        elif self.state.score_queue.is_stale() and self.state.current_score is not None:
+            self.state.current_score = None
             updated = True
 
         next_ingest = self.state.ingest_queue.pop()
@@ -726,9 +850,25 @@ class FileProgressDisplay(BaseProgressDisplay):
             summary.append(f"  {self.state.scan_rate:.1f}/s", style="dim")
         summary.append("\n")
 
+        # TRIAGE stats
+        summary.append("  TRIAGE   ", style="bold green")
+        summary.append(f"triaged={self.state.run_triaged:,}", style="green")
+        if self.state._run_triage_cost > 0:
+            summary.append(f"  cost=${self.state._run_triage_cost:.3f}", style="yellow")
+        if self.state.triage_rate:
+            summary.append(f"  {self.state.triage_rate:.1f}/s", style="dim")
+        summary.append("\n")
+
+        # ENRICH stats
+        summary.append("  ENRICH   ", style="bold magenta")
+        summary.append(f"enriched={self.state.run_enriched:,}", style="magenta")
+        if self.state.enrich_rate:
+            summary.append(f"  {self.state.enrich_rate:.1f}/s", style="dim")
+        summary.append("\n")
+
         # SCORE stats
-        summary.append("  SCORE    ", style="bold green")
-        summary.append(f"scored={self.state.run_scored:,}", style="green")
+        summary.append("  SCORE    ", style="bold cyan")
+        summary.append(f"scored={self.state.run_scored:,}", style="cyan")
         if self.state.run_skipped > 0:
             summary.append(f"  skipped={self.state.run_skipped:,}", style="yellow")
         summary.append(f"  cost=${self.state._run_score_cost:.3f}", style="yellow")
@@ -736,23 +876,16 @@ class FileProgressDisplay(BaseProgressDisplay):
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # ENRICH stats
-        summary.append("  ENRICH   ", style="bold white")
-        summary.append(f"enriched={self.state.run_enriched:,}", style="white")
-        if self.state.enrich_rate:
-            summary.append(f"  {self.state.enrich_rate:.1f}/s", style="dim")
-        summary.append("\n")
-
         # INGEST stats
-        summary.append("  INGEST   ", style="bold magenta")
-        summary.append(f"code={self.state.run_code_ingested:,}", style="magenta")
+        summary.append("  INGEST   ", style="bold yellow")
+        summary.append(f"code={self.state.run_code_ingested:,}", style="yellow")
         ingest_rate = self.state.ingest_rate
         if ingest_rate:
             summary.append(f"  {ingest_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # USAGE stats
-        summary.append("  USAGE    ", style="bold cyan")
+        summary.append("  USAGE    ", style="bold white")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
         summary.append(f"  cost=${self.state.accumulated_cost:.2f}", style="yellow")
         if self.state.run_cost > 0:
