@@ -225,7 +225,8 @@ def scan_directory(
             try:
                 proc = subprocess.run(
                     ["eza", "--tree", "--level", "2", "--only-dirs", path],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=10,
                 )
@@ -245,7 +246,8 @@ def scan_directory(
                 # Fallback to tree if eza not available
                 proc = subprocess.run(
                     ["tree", "-L", "2", "-d", "--dirsfirst", "--noreport", path],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=10,
                 )
@@ -297,7 +299,8 @@ def scan_directory(
         try:
             proc = subprocess.run(
                 ["rg", "-c", "--max-depth", "1", all_patterns, path],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 timeout=10,
             )
@@ -321,7 +324,8 @@ def scan_directory(
         try:
             proc = subprocess.run(
                 ["du", "-sb", path],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 timeout=30,
             )
@@ -351,7 +355,8 @@ def scan_directory(
             try:
                 proc = subprocess.run(
                     git_base + ["config", "--get", "remote.origin.url"],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=3,
                     env=git_env,
@@ -365,7 +370,8 @@ def scan_directory(
             try:
                 proc = subprocess.run(
                     git_base + ["rev-parse", "HEAD"],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=3,
                     env=git_env,
@@ -379,7 +385,8 @@ def scan_directory(
             try:
                 proc = subprocess.run(
                     git_base + ["symbolic-ref", "--short", "HEAD"],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=3,
                     env=git_env,
@@ -393,7 +400,8 @@ def scan_directory(
             try:
                 proc = subprocess.run(
                     git_base + ["rev-list", "--max-parents=0", "HEAD"],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=3,
                     env=git_env,
@@ -417,7 +425,8 @@ def scan_directory(
                     "repos-root-url",
                     path,
                 ],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 timeout=5,
             )
@@ -429,7 +438,8 @@ def scan_directory(
         try:
             proc = subprocess.run(
                 ["hg", "paths", "default", "-R", path],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 timeout=5,
             )
@@ -447,7 +457,8 @@ def scan_directory(
             try:
                 proc = subprocess.run(
                     ["git", "ls-remote", "--exit-code", effective_remote, "HEAD"],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=3,
                     env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
@@ -465,7 +476,8 @@ def scan_directory(
                         "--no-auth-cache",
                         effective_remote,
                     ],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=3,
                 )
@@ -476,7 +488,8 @@ def scan_directory(
             try:
                 proc = subprocess.run(
                     ["hg", "identify", effective_remote],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=3,
                 )

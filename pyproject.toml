@@ -117,7 +117,6 @@ dev = [
     # --- LLM & Discovery ---
     "litellm>=1.81.0",
     "smolagents>=1.24.0",
-    "llama-index-core>=0.14",
 
     # --- Graph build & schema ---
     "linkml>=1.9.3",
@@ -146,7 +145,6 @@ dev = [
 
     # --- Tree-sitter ---
     "tree-sitter>=0.25.2",
-    "tree-sitter-languages>=1.10.2",
     "tree-sitter-language-pack>=0.13.0",
 
     # --- Testing ---
@@ -391,8 +389,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
 "tests/**/*" = ["B011", "F401", "F811"]  # Allow assert False and unused imports in tests
-# Remote scripts run on Python 3.8+ systems - disable type hint modernization
-"imas_codex/remote/scripts/*" = ["UP006", "UP007", "UP035", "UP045"]
+# Remote scripts run on Python 3.6+ systems - disable type hint and subprocess modernization
+"imas_codex/remote/scripts/*" = ["UP006", "UP007", "UP022", "UP035", "UP045"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["imas_codex"]

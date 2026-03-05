@@ -131,7 +131,8 @@ def scan_path_fd(
     try:
         result = subprocess.run(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             timeout=60,
         )
@@ -184,7 +185,8 @@ def scan_path_find(
     try:
         result = subprocess.run(
             ["sh", "-c", cmd],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             timeout=60,
         )
