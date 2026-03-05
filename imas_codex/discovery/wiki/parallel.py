@@ -36,7 +36,7 @@ from .graph_ops import (
     _bulk_create_wiki_pages,
     reset_transient_pages,
 )
-from .state import WikiDiscoveryState
+from .state import FacilityWorkerState, WikiDiscoveryState
 from .workers import (
     docs_score_worker,
     docs_worker,
@@ -437,7 +437,7 @@ async def run_parallel_wiki_discovery(
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     service_monitor: Any = None,
     max_wiki_connections: int = 10,
-    stop_event: asyncio.Event | None = None,
+    skip_facility_workers: bool = False,
 ) -> dict[str, Any]:
     """Run parallel wiki discovery with async workers.
 
@@ -462,6 +462,9 @@ async def run_parallel_wiki_discovery(
         service_monitor: ServiceMonitor instance for health monitoring.
             When provided, workers gate on service health (pause when
             SSH/VPN is down). Passed through to WikiDiscoveryState.
+        skip_facility_workers: If True, don't create IMAGE or EMBED workers.
+            Used when facility-scoped workers are managed externally
+            (e.g., running across all sites in a multi-site loop).
 
     Returns:
         Dict with discovery statistics
@@ -553,13 +556,6 @@ async def run_parallel_wiki_discovery(
 
     # Create worker group for status tracking
     worker_group = SupervisedWorkerGroup()
-
-    # Watch external stop event (from CLI signal handler)
-    stop_watcher: asyncio.Task | None = None
-    if stop_event is not None:
-        from imas_codex.cli.shutdown import watch_stop_event
-
-        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
 
     # Bulk discovery: use adapter-based APIs to find all pages instantly
     # This replaces the slow scan phase (crawling links page-by-page)
@@ -702,38 +698,37 @@ async def run_parallel_wiki_discovery(
             )
         )
 
-    # Image score worker: VLM caption + scoring for ingested images
-    image_score_status = worker_group.create_status(
-        "image_score_worker", group="images"
-    )
-    worker_group.add_task(
-        asyncio.create_task(
-            supervised_worker(
-                image_score_worker,
-                "image_score_worker",
-                state,
-                state.should_stop_image_scoring,
-                on_progress=on_image_progress,
-                status_tracker=image_score_status,
+    # Image score + embed workers — skipped when managed externally
+    if not skip_facility_workers:
+        image_score_status = worker_group.create_status(
+            "image_score_worker", group="images"
+        )
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    image_score_worker,
+                    "image_score_worker",
+                    state,
+                    state.should_stop_image_scoring,
+                    on_progress=on_image_progress,
+                    status_tracker=image_score_status,
+                )
             )
         )
-    )
 
-    # Embed description worker: embeds descriptions for all wiki node types
-    # Runs continuously, picking up newly-described nodes from score/ingest workers
-    embed_status = worker_group.create_status("embed_worker", group="pages")
-    worker_group.add_task(
-        asyncio.create_task(
-            supervised_worker(
-                embed_description_worker,
-                "embed_worker",
-                state,
-                state.should_stop,
-                labels=["WikiPage", "WikiArtifact", "Image"],
-                status_tracker=embed_status,
+        embed_status = worker_group.create_status("embed_worker", group="pages")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    embed_description_worker,
+                    "embed_worker",
+                    state,
+                    state.should_stop,
+                    labels=["WikiPage", "WikiArtifact", "Image"],
+                    status_tracker=embed_status,
+                )
             )
         )
-    )
 
     # --- I/O ingest workers (skipped in score_only mode) ---
 
@@ -777,6 +772,11 @@ async def run_parallel_wiki_discovery(
         state.ingest_phase.mark_done()
         state.docs_phase.mark_done()
 
+    # When facility workers are managed externally, mark their phases done
+    # so the per-site stop condition doesn't block on them.
+    if skip_facility_workers:
+        state.image_phase.mark_done()
+
     # Scan workers were removed (replaced by bulk discovery above).
     # Mark scan phase as done so should_stop() doesn't block on a non-existent worker.
     state.scan_phase.mark_done()
@@ -784,7 +784,8 @@ async def run_parallel_wiki_discovery(
     logger.info(
         f"Started {worker_group.get_active_count()} workers: "
         f"score_only={score_only}, scan_only={scan_only}, "
-        f"ingest_artifacts={ingest_artifacts}"
+        f"ingest_artifacts={ingest_artifacts}, "
+        f"skip_facility_workers={skip_facility_workers}"
     )
 
     # Periodic orphan recovery during discovery (every 60s)
@@ -796,22 +797,19 @@ async def run_parallel_wiki_discovery(
         ],
     )
 
+    # Choose stop condition: site-only when facility workers are external
+    stop_fn = (
+        state.should_stop_site_workers if skip_facility_workers else state.should_stop
+    )
+
     # Run supervision loop — handles status updates and clean shutdown
     await run_supervised_loop(
         worker_group,
-        state.should_stop,
+        stop_fn,
         on_worker_status=on_worker_status,
         on_tick=orphan_tick,
     )
     state.stop_requested = True
-
-    # Cancel stop watcher if still running
-    if stop_watcher is not None and not stop_watcher.done():
-        stop_watcher.cancel()
-        try:
-            await stop_watcher
-        except asyncio.CancelledError:
-            pass
 
     # Clean up async wiki client
     await state.close_async_wiki_client()
@@ -964,9 +962,6 @@ def _seed_portal_page(
                           wp.status = $scanned,
                           wp.link_depth = 0,
                           wp.discovered_at = datetime()
-            WITH wp
-            MATCH (f:Facility {id: $facility})
-            MERGE (wp)-[:AT_FACILITY]->(f)
             """,
             id=page_id,
             title=portal_page,
@@ -1199,3 +1194,85 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             )
 
         return stats
+
+
+# =============================================================================
+# Facility-scoped worker management
+# =============================================================================
+
+
+def create_facility_worker_state(
+    facility: str,
+    *,
+    ssh_host: str | None = None,
+    focus: str | None = None,
+    cost_limit: float = 10.0,
+    deadline: float | None = None,
+    store_images: bool = False,
+    service_monitor: Any = None,
+) -> FacilityWorkerState:
+    """Create state for facility-scoped workers (image, embed).
+
+    These workers run independently of per-site workers and drain
+    facility-wide queues (images, embeddings) across all sites.
+    """
+    from imas_codex.discovery.wiki import graph_ops as _wiki_ops
+
+    state = FacilityWorkerState(
+        facility=facility,
+        ssh_host=ssh_host,
+        focus=focus,
+        cost_limit=cost_limit,
+        deadline=deadline,
+        store_images=store_images,
+        service_monitor=service_monitor,
+    )
+    state.image_phase.set_has_work_fn(
+        lambda: _wiki_ops.has_pending_image_work(facility)
+    )
+    return state
+
+
+def start_facility_workers(
+    facility_state: FacilityWorkerState,
+    worker_group: SupervisedWorkerGroup,
+    *,
+    on_image_progress: Callable | None = None,
+) -> None:
+    """Start facility-scoped IMAGE and EMBED workers.
+
+    These run continuously across all sites, processing images and
+    embeddings as they are produced by per-site ingest workers.
+
+    Args:
+        facility_state: Lightweight state for facility workers.
+        worker_group: Group to register workers in.
+        on_image_progress: Progress callback for image worker.
+    """
+    image_status = worker_group.create_status("image_score_worker", group="images")
+    worker_group.add_task(
+        asyncio.create_task(
+            supervised_worker(
+                image_score_worker,
+                "image_score_worker",
+                facility_state,
+                facility_state.should_stop_image_scoring,
+                on_progress=on_image_progress,
+                status_tracker=image_status,
+            )
+        )
+    )
+
+    embed_status = worker_group.create_status("embed_worker", group="pages")
+    worker_group.add_task(
+        asyncio.create_task(
+            supervised_worker(
+                embed_description_worker,
+                "embed_worker",
+                facility_state,
+                facility_state.should_stop,
+                labels=["WikiPage", "WikiArtifact", "Image"],
+                status_tracker=embed_status,
+            )
+        )
+    )
