@@ -1110,6 +1110,7 @@ dev = [
     { name = "smolagents" },
     { name = "tqdm-stubs" },
     { name = "tree-sitter" },
+    { name = "tree-sitter-gdl" },
     { name = "tree-sitter-language-pack" },
     { name = "uvicorn" },
     { name = "xlrd" },
@@ -1196,6 +1197,7 @@ dev = [
     { name = "smolagents", specifier = ">=1.24.0" },
     { name = "tqdm-stubs", specifier = ">=0.2.1" },
     { name = "tree-sitter", specifier = ">=0.25.2" },
+    { name = "tree-sitter-gdl", specifier = ">=0.1.0" },
     { name = "tree-sitter-language-pack", specifier = ">=0.13.0" },
     { name = "uvicorn", specifier = ">=0.31.1" },
     { name = "xlrd", specifier = ">=2.0.2" },
@@ -3809,6 +3811,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/14/8a/d745071afa5e8bdf5b381cf84c4dc6be6c79dee6af8e0ff07476c3d8e4aa/tree_sitter_embedded_template-0.25.0-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:d0a35cfe634c44981a516243bc039874580e02a2990669313730187ce83a5bc6", size = 18267, upload-time = "2025-08-29T00:42:48.635Z" },
     { url = "https://files.pythonhosted.org/packages/5d/74/728355e594fca140f793f234fdfec195366b6956b35754d00ea97ca18b21/tree_sitter_embedded_template-0.25.0-cp310-abi3-win_amd64.whl", hash = "sha256:3e05a4ac013d54505e75ae48e1a0e9db9aab19949fe15d9f4c7345b11a84a069", size = 13049, upload-time = "2025-08-29T00:42:49.589Z" },
     { url = "https://files.pythonhosted.org/packages/d8/de/afac475e694d0e626b0808f3c86339c349cd15c5163a6a16a53cc11cf892/tree_sitter_embedded_template-0.25.0-cp310-abi3-win_arm64.whl", hash = "sha256:2751d402179ac0e83f2065b249d8fe6df0718153f1636bcb6a02bde3e5730db9", size = 11978, upload-time = "2025-08-29T00:42:50.226Z" },
+]
+
+[[package]]
+name = "tree-sitter-gdl"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4f/c6/8255f1862b9166beef72513e7471b20e18ec4ac56540e5b074818819fc4f/tree_sitter_gdl-0.1.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:3a4d0a07cb45ec1eeff1daabb772e25e1e54c7422c0c92b7e1abc755d981c14a", size = 21885, upload-time = "2026-03-05T13:02:47.406Z" },
+    { url = "https://files.pythonhosted.org/packages/49/58/085e95d1e360928d22afe4b488ffec8af3e8f52235478f63229816af7202/tree_sitter_gdl-0.1.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:d37c2302c770df5e61842363c07cf3eefbc2857a3acce1eb2fc76cc65a1a72c2", size = 22710, upload-time = "2026-03-05T13:02:48.415Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/d2/cfd735865732b8cf44d0ccc674559f6c0ce131fdd9cc48474f4e9a325648/tree_sitter_gdl-0.1.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f4cdb714e9ac5493a09e5e6e63668d2b1ce1abd74f8ad3c9dca7d9d8690d5b38", size = 38727, upload-time = "2026-03-05T13:02:50.854Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/52/5199f06618a1c649341bd3fe3e2de35df7dda604afa93233279b39eea871/tree_sitter_gdl-0.1.0-cp312-cp312-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1db9d49fa0a567f870b341572fafbb5a9879586bf836fd54007acd6d53b195d2", size = 38906, upload-time = "2026-03-05T13:02:51.901Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/5c/615233d73f73681201e31cc5b682671a7a93a0ddc02d0511f79265c9beb7/tree_sitter_gdl-0.1.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:d8b81baa9fbe129a45085498f5d172f7c92007d7e3e247a4edac5926ce9329b8", size = 37791, upload-time = "2026-03-05T13:02:52.951Z" },
+    { url = "https://files.pythonhosted.org/packages/99/8b/39dda46fc166c1117891a0b54113732a223e5b117c8c4b6805e8d1fd7475/tree_sitter_gdl-0.1.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:cb05a51919c36301e1728312e312b31c0220f398a3519cc08cee7cad73dc89a8", size = 37262, upload-time = "2026-03-05T13:02:54.016Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/64/165a4ec0961746246a37b5013b8da0a6a755b1c13e52bb3197fd81b3aa77/tree_sitter_gdl-0.1.0-cp312-cp312-win_amd64.whl", hash = "sha256:4044b62eed0ea1c2fbd10133d93fc8411bd0865365b873739d5d22f18b0762ac", size = 24452, upload-time = "2026-03-05T13:02:55.34Z" },
 ]
 
 [[package]]

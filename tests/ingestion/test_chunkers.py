@@ -126,3 +126,69 @@ def b():
     def test_unsupported_language_raises(self):
         with pytest.raises(Exception):
             chunk_code("some text", "nonexistent_language_xyz")
+
+    def test_idl_single_procedure(self):
+        """Parse a single IDL procedure with MDSplus access patterns."""
+        code = """pro liuqe_params
+; Sets up Liuqe parameters
+on_error, 2
+mds$open, 'tcv_shot', -1
+nequil = mds$value('\\pcs::mgams.data:numeq')
+rlia1 = mds$value('\\pcs::mgams.data:rlia1')
+mds$close
+end
+"""
+        chunks = chunk_code(code, "idl")
+        assert len(chunks) >= 1
+        all_text = "\n".join(c.text for c in chunks)
+        assert "liuqe_params" in all_text
+        assert "mds$value" in all_text
+
+    def test_idl_multiple_routines(self):
+        """Parse multiple IDL procedures and functions."""
+        code = """function get_ip, shot
+  mds$open, 'tcv_shot', shot
+  ip = mds$value('\\results::i_p')
+  mds$close
+  return, ip
+end
+
+pro plot_equilibrium, shot
+  compile_opt idl2
+  psi = tdi('\\results::psi')
+  contour, psi
+end
+
+pro main_analysis
+  shots = [48952, 55608]
+  for i = 0, n_elements(shots)-1 do begin
+    ip = get_ip(shots[i])
+    plot_equilibrium, shots[i]
+  endfor
+end
+"""
+        chunks = chunk_code(code, "idl")
+        assert len(chunks) >= 1
+        all_text = "\n".join(c.text for c in chunks)
+        assert "get_ip" in all_text
+        assert "plot_equilibrium" in all_text
+        assert "main_analysis" in all_text
+
+    def test_idl_trcf_mdsplus(self):
+        """Parse real TCV IDL code with mds$open/mds$value patterns."""
+        code = """pro fix_trcf_br, shot
+mds$open, 'thoms', shot
+if mds$value('getnci(".TRCF_001:CHANNEL_001","RLENGTH")') eq 24 then $
+   ll = 0 $
+else $
+   ll = mds$value('size(.TRCF_001:CHANNEL_001)')
+mds$close
+mds$open, 'diagz', shot
+mds$put, '\\TRCF_BREMS_IR_001:CHANNEL_001:ENDIDX', '$', ll-1
+mds$close
+print, shot
+end
+"""
+        chunks = chunk_code(code, "idl")
+        assert len(chunks) >= 1
+        assert "fix_trcf_br" in chunks[0].text
