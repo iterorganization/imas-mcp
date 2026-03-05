@@ -1011,18 +1011,6 @@ def get_schema_for_prompt(
     return context
 
 
-def get_schema_context() -> dict[str, Any]:
-    """Get full schema context for prompt rendering.
-
-    DEPRECATED: Use get_schema_for_prompt() for targeted loading.
-    This function loads everything for backwards compatibility.
-    """
-    context: dict[str, Any] = {}
-    for provider in _SCHEMA_PROVIDERS.values():
-        context.update(provider())
-    return context
-
-
 def get_data_access_context() -> dict[str, Any]:
     """Get existing DataAccess nodes from the graph for prompt context.
 

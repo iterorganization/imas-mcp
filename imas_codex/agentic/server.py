@@ -1752,7 +1752,7 @@ class AgentsServer:
                 print("Coverage:", ctx["coverage_by_category"])
             """
             try:
-                from imas_codex.agentic.prompt_loader import get_schema_context
+                from imas_codex.agentic.prompt_loader import get_schema_for_prompt
                 from imas_codex.discovery import (
                     get_facility_infrastructure as _get_infra,
                 )
@@ -1763,7 +1763,9 @@ class AgentsServer:
                 discovery_roots = infra.get("discovery_roots", [])
 
                 # Get schema context for valid category values
-                schema_ctx = get_schema_context()
+                schema_ctx = get_schema_for_prompt(
+                    "discovery/roots", ["discovery_categories"]
+                )
 
                 # Use GraphClient for graph queries
                 with GraphClient() as client:
