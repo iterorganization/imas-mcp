@@ -515,6 +515,27 @@ class FileProgressDisplay(BaseProgressDisplay):
 
         self._refresh()
 
+    def update_triage(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update triage worker state (feeds into score display)."""
+        self.state._run_score_cost += stats.cost - getattr(
+            self, "_last_triage_cost", 0.0
+        )
+        self._last_triage_cost = stats.cost
+
+        if "idle" in message.lower():
+            self.state.score_processing = False
+        elif "triaging" in message.lower():
+            self.state.score_processing = True
+        else:
+            self.state.score_processing = False
+
+        self._refresh()
+
     def update_score(
         self,
         message: str,
