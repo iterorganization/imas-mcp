@@ -1,10 +1,11 @@
 """Async workers for parallel code discovery.
 
 Workers that process code files through the pipeline:
-- scan_worker: SSH file enumeration + rg enrichment (FacilityPaths → CodeFile nodes)
-- score_worker: Dual-pass LLM scoring (triage → score) of discovered CodeFiles
+- scan_worker: SSH file enumeration (FacilityPaths → CodeFile nodes)
+- triage_worker: LLM dimension triage (discovered → triaged | skipped)
+- enrich_worker: rg pattern matching + preview extraction (triaged → enriched)
+- score_worker: LLM full scoring (enriched → scored)
 - code_worker: Code ingestion — fetch, chunk, embed (scored → ingested)
-- enrich_worker: rg pattern matching on scored CodeFiles (legacy backfill)
 
 Workers coordinate through graph_ops claim/mark functions using claimed_at timestamps.
 """
@@ -187,6 +188,136 @@ async def scan_worker(
 
 
 # ============================================================================
+# Triage Worker
+# ============================================================================
+
+
+async def triage_worker(
+    state: FileDiscoveryState,
+    on_progress: Callable | None = None,
+    batch_size: int = 50,
+) -> None:
+    """Triage worker: Per-dimension LLM triage of discovered CodeFiles.
+
+    Claims CodeFiles with status='discovered', groups by parent
+    FacilityPath for batch context, calls LLM for per-dimension triage
+    scores.  Files scoring above a composite threshold are set to
+    status='triaged'; below threshold → status='skipped'.
+    """
+    from imas_codex.discovery.base.llm import call_llm_structured
+    from imas_codex.discovery.code.graph_ops import (
+        claim_files_for_triage,
+        release_file_triage_claims,
+    )
+    from imas_codex.discovery.code.scorer import (
+        FileTriageBatch,
+        _build_triage_system_prompt,
+        _build_triage_user_prompt,
+        _group_files_by_parent,
+        apply_triage_results,
+    )
+    from imas_codex.settings import get_model
+
+    model = get_model("language")
+
+    import time as _time
+
+    _prompt_built_at = _time.monotonic()
+    _PROMPT_REBUILD_INTERVAL = 60.0
+
+    triage_system_prompt = _build_triage_system_prompt(
+        facility=state.facility, focus=state.focus
+    )
+
+    while not state.should_stop():
+        if state.budget_exhausted:
+            if on_progress:
+                on_progress("budget exhausted", state.triage_stats, None)
+            break
+
+        # Rebuild system prompt periodically (picks up new calibration)
+        if (_time.monotonic() - _prompt_built_at) > _PROMPT_REBUILD_INTERVAL:
+            triage_system_prompt = _build_triage_system_prompt(
+                facility=state.facility, focus=state.focus
+            )
+            _prompt_built_at = _time.monotonic()
+
+        files = await asyncio.to_thread(
+            claim_files_for_triage, state.facility, limit=batch_size
+        )
+
+        if not files:
+            state.triage_phase.record_idle()
+            if state.triage_phase.done:
+                break
+            if on_progress:
+                on_progress("idle", state.triage_stats, None)
+            await asyncio.sleep(2.0)
+            continue
+
+        state.triage_phase.record_activity(len(files))
+
+        file_id_map = {f["path"]: f["id"] for f in files}
+        batch_ids = [f["id"] for f in files]
+
+        # Group by parent path; include sibling names for context
+        file_groups = _group_files_by_parent(files, include_siblings=True)
+
+        if on_progress:
+            on_progress(
+                f"triaging {len(files)} files ({len(file_groups)} dirs)",
+                state.triage_stats,
+                None,
+            )
+
+        try:
+            triage_user_prompt = _build_triage_user_prompt(file_groups)
+            triage_parsed, triage_cost, _ = await asyncio.to_thread(
+                call_llm_structured,
+                model=model,
+                messages=[
+                    {"role": "system", "content": triage_system_prompt},
+                    {"role": "user", "content": triage_user_prompt},
+                ],
+                response_model=FileTriageBatch,
+                temperature=0.1,
+            )
+            state.triage_stats.cost += triage_cost
+
+            triage_applied = await asyncio.to_thread(
+                apply_triage_results, triage_parsed.results, file_id_map
+            )
+
+            triaged = triage_applied["triaged"]
+            skipped = triage_applied["skipped"]
+            state.triage_stats.processed += triaged + skipped
+
+            if on_progress:
+                on_progress(
+                    f"triaged {triaged}, skipped {skipped} (${triage_cost:.3f})",
+                    state.triage_stats,
+                    None,
+                )
+
+            # Release claims (apply_triage_results already clears claimed_at
+            # for triaged/skipped files, but release any unmatched ones)
+            unmatched = set(batch_ids) - {
+                f["id"]
+                for f in files
+                if f["path"] in {r.path for r in triage_parsed.results}
+            }
+            if unmatched:
+                await asyncio.to_thread(release_file_triage_claims, list(unmatched))
+
+        except Exception as e:
+            logger.error("Triage batch failed: %s", e)
+            state.triage_stats.errors += 1
+            await asyncio.to_thread(release_file_triage_claims, batch_ids)
+
+        await asyncio.sleep(0.1)
+
+
+# ============================================================================
 # Score Worker
 # ============================================================================
 
@@ -196,15 +327,12 @@ async def score_worker(
     on_progress: Callable | None = None,
     batch_size: int = 50,
 ) -> None:
-    """Score worker: Dual-pass LLM scoring of discovered CodeFiles.
+    """Score worker: Full LLM scoring of enriched CodeFiles.
 
-    Pass 1 (Triage): Fast keep/skip classification from path + per-file
-    enrichment evidence (rg matches). Filters ~70-80% of noise.
-
-    Pass 2 (Score): Full multi-dimensional scoring for kept files.
-
-    Claims CodeFiles with status='discovered' and no interest_score,
-    groups by parent FacilityPath for context.
+    Claims CodeFiles that have been triaged AND enriched
+    (status='triaged', is_enriched=true).  The score prompt receives
+    enrichment evidence (pattern matches, preview text) and
+    the triage description (qualitative, NO triage numeric scores).
     """
     from imas_codex.discovery.base.llm import call_llm_structured
     from imas_codex.discovery.code.graph_ops import (
@@ -213,22 +341,23 @@ async def score_worker(
     )
     from imas_codex.discovery.code.scorer import (
         FileScoreBatch,
-        FileTriageBatch,
-        _build_system_prompt,
-        _build_triage_system_prompt,
-        _build_triage_user_prompt,
-        _build_user_prompt,
+        _build_score_system_prompt,
+        _build_score_user_prompt,
         _group_files_by_parent,
         apply_file_scores,
-        apply_triage_results,
     )
     from imas_codex.settings import get_model
 
     model = get_model("language")
 
-    # Build system prompts once for prefix caching
-    triage_system_prompt = _build_triage_system_prompt(focus=state.focus)
-    score_system_prompt = _build_system_prompt(focus=state.focus)
+    import time as _time
+
+    _prompt_built_at = _time.monotonic()
+    _PROMPT_REBUILD_INTERVAL = 60.0
+
+    score_system_prompt = _build_score_system_prompt(
+        facility=state.facility, focus=state.focus
+    )
 
     while not state.should_stop():
         if state.budget_exhausted:
@@ -236,7 +365,13 @@ async def score_worker(
                 on_progress("budget exhausted", state.score_stats, None)
             break
 
-        # Claim files (joined with parent FacilityPath enrichment data)
+        # Rebuild system prompt periodically
+        if (_time.monotonic() - _prompt_built_at) > _PROMPT_REBUILD_INTERVAL:
+            score_system_prompt = _build_score_system_prompt(
+                facility=state.facility, focus=state.focus
+            )
+            _prompt_built_at = _time.monotonic()
+
         files = await asyncio.to_thread(
             claim_files_for_scoring, state.facility, limit=batch_size
         )
@@ -255,86 +390,18 @@ async def score_worker(
         file_id_map = {f["path"]: f["id"] for f in files}
         batch_ids = [f["id"] for f in files]
 
-        # Group by parent path for enrichment context
-        file_groups = _group_files_by_parent(files)
+        # Group by parent path (no siblings needed — enrichment provides context)
+        file_groups = _group_files_by_parent(files, include_siblings=False)
 
         if on_progress:
             on_progress(
-                f"triaging {len(files)} files ({len(file_groups)} dirs)",
-                state.score_stats,
-                None,
-            )
-
-        # --- Pass 1: Triage ---
-        try:
-            triage_user_prompt = _build_triage_user_prompt(file_groups)
-            triage_parsed, triage_cost, _ = await asyncio.to_thread(
-                call_llm_structured,
-                model=model,
-                messages=[
-                    {"role": "system", "content": triage_system_prompt},
-                    {"role": "user", "content": triage_user_prompt},
-                ],
-                response_model=FileTriageBatch,
-                temperature=0.1,
-            )
-            state.score_stats.cost += triage_cost
-
-            triage_applied = await asyncio.to_thread(
-                apply_triage_results, triage_parsed.results, file_id_map
-            )
-
-            kept_ids = set(triage_applied["kept_ids"])
-            skipped_count = triage_applied["skipped"]
-
-            if on_progress and skipped_count > 0:
-                on_progress(
-                    f"triage: kept {len(kept_ids)}, skipped {skipped_count} (${triage_cost:.3f})",
-                    state.score_stats,
-                    None,
-                )
-
-            if not kept_ids:
-                # All files triaged out
-                state.score_stats.processed += skipped_count
-                await asyncio.to_thread(release_file_score_claims, batch_ids)
-                if on_progress:
-                    on_progress(
-                        f"all {len(files)} files triaged out",
-                        state.score_stats,
-                        None,
-                    )
-                await asyncio.sleep(0.1)
-                continue
-
-        except Exception as e:
-            logger.error("Triage batch failed: %s — scoring all files", e)
-            state.score_stats.errors += 1
-            # Fail-open: score all files if triage fails
-            kept_ids = set(file_id_map.values())
-
-        # --- Pass 2: Score kept files ---
-        kept_groups = []
-        for group in file_groups:
-            kept_files = [f for f in group["files"] if f["id"] in kept_ids]
-            if kept_files:
-                kept_groups.append({**group, "files": kept_files})
-
-        if not kept_groups:
-            await asyncio.to_thread(release_file_score_claims, batch_ids)
-            await asyncio.sleep(0.1)
-            continue
-
-        if on_progress:
-            kept_count = sum(len(g["files"]) for g in kept_groups)
-            on_progress(
-                f"scoring {kept_count} kept files ({len(kept_groups)} dirs)",
+                f"scoring {len(files)} files ({len(file_groups)} dirs)",
                 state.score_stats,
                 None,
             )
 
         try:
-            score_user_prompt = _build_user_prompt(kept_groups)
+            score_user_prompt = _build_score_user_prompt(file_groups)
             parsed, cost, _tokens = await asyncio.to_thread(
                 call_llm_structured,
                 model=model,
@@ -350,25 +417,17 @@ async def score_worker(
             result = await asyncio.to_thread(
                 apply_file_scores, parsed.results, file_id_map
             )
-            state.score_stats.processed += result.get("scored", 0)
+            state.score_stats.processed += result.get("scored", 0) + result.get(
+                "skipped", 0
+            )
 
             await asyncio.to_thread(release_file_score_claims, batch_ids)
 
             if on_progress:
-                score_results = [
-                    {
-                        "path": s.path,
-                        "score": s.interest_score,
-                        "category": s.file_category,
-                        "description": s.description,
-                        "skipped": s.skip,
-                    }
-                    for s in parsed.results
-                ]
                 on_progress(
-                    f"scored {result.get('scored', 0)} (${cost:.3f})",
+                    f"scored {result.get('scored', 0)}, skipped {result.get('skipped', 0)} (${cost:.3f})",
                     state.score_stats,
-                    score_results,
+                    None,
                 )
 
         except Exception as e:
@@ -392,10 +451,9 @@ def _claim_code_files_for_ingestion(
 ) -> list[dict[str, Any]]:
     """Claim scored CodeFiles for ingestion.
 
-    Claims CodeFiles with status='discovered' that have been scored
-    above the minimum interest score threshold (default: 0.75).
-    Skips files exceeding max_line_count to avoid tree-sitter hangs
-    on very large auto-generated files.
+    Claims CodeFiles with status='scored' above the minimum interest
+    score threshold. Skips files exceeding max_line_count to avoid
+    tree-sitter hangs on very large auto-generated files.
     """
     from imas_codex.discovery.base.claims import DEFAULT_CLAIM_TIMEOUT_SECONDS
     from imas_codex.graph import GraphClient
@@ -405,7 +463,7 @@ def _claim_code_files_for_ingestion(
         result = gc.query(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
-            WHERE sf.status = 'discovered'
+            WHERE sf.status = 'scored'
               AND sf.interest_score IS NOT NULL
               AND sf.interest_score >= $min_score
               AND coalesce(sf.line_count, 0) <= $max_line_count
@@ -553,15 +611,15 @@ async def enrich_worker(
     on_progress: Callable | None = None,
     batch_size: int = 100,
 ) -> None:
-    """Enrich worker: rg pattern matching on scored CodeFiles.
+    """Enrich worker: rg pattern matching + preview extraction on triaged files.
 
-    Claims scored CodeFiles that haven't been enriched yet, runs
-    batched rg pattern matching via SSH, stores per-file pattern
-    evidence on CodeFile nodes.
+    Claims triaged CodeFiles above the triage composite threshold,
+    runs batched rg pattern matching and preview text extraction
+    via SSH.  Stores pattern evidence on CodeFile nodes; preview text
+    is NOT persisted but is available for the subsequent score worker
+    via the graph claim query.
 
-    Runs AFTER scoring, in parallel with code/docs ingestion workers.
-    Enrichment data improves ingestion prioritization — files with
-    actual pattern evidence are ingested first.
+    Runs AFTER triage, BEFORE scoring.
     """
     from imas_codex.discovery.code.enrichment import (
         enrich_files,
@@ -573,7 +631,7 @@ async def enrich_worker(
     )
 
     while not state.should_stop():
-        if state.scan_only or state.score_only:
+        if state.scan_only:
             break
 
         files = await asyncio.to_thread(

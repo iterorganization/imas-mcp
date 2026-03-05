@@ -2536,15 +2536,17 @@ classes:
     description: >-
       A source code file discovered at a facility and queued for ingestion.
       
-      Lifecycle: discovered -> ingested -> failed -> stale
-      On failure: any state -> failed (check error field)
-      On re-scan: ingested -> stale -> discovered (if changed)
+      Lifecycle: discovered -> triaged -> scored -> ingested | skipped | failed | stale
       
-      CodeFile is the unit of work for the code ingestion pipeline.
-      Only source code files (Python, Fortran, MATLAB, Julia, C/C++, IDL, TDI)
-      — documents and images use the Document node type.
-      Code files are processed by tree-sitter for chunking, embedding,
-      and data reference extraction.
+      Triage assigns fast per-dimension scores from minimal context (parent dir
+      description + filename). Files triaging over threshold are enriched (rg
+      pattern matching + preview extraction) then independently scored with
+      full evidence. Scored files over the ingestion threshold are fetched,
+      chunked by tree-sitter, embedded, and data references extracted.
+      
+      Path scanning is detected by the presence of (CodeFile)-[:IN_DIRECTORY]->
+      (FacilityPath) relationships — no state switch on FacilityPath is needed
+      since multiple downstream clients examine the same paths.
     class_uri: facility:CodeFile
     attributes:
       id:
@@ -2609,6 +2611,47 @@ classes:
         range: float
       score_reason:
         description: Brief LLM explanation for the assigned scores
+      # Triage-phase dimension scores (1st pass, minimal context)
+      # Permanently preserved so calibration can draw from the full triage
+      # population (triaged + scored). Naming mirrors FacilityPath convention.
+      triage_composite:
+        description: Combined triage score (max * (1+mean_nonzero)/2)
+        range: float
+      triage_modeling_code:
+        description: Triage score for forward modeling/simulation code
+        range: float
+      triage_analysis_code:
+        description: Triage score for experimental analysis code
+        range: float
+      triage_operations_code:
+        description: Triage score for real-time operations code
+        range: float
+      triage_data_access:
+        description: Triage score for data access tools
+        range: float
+      triage_workflow:
+        description: Triage score for orchestration and batch processing
+        range: float
+      triage_visualization:
+        description: Triage score for plotting and rendering tools
+        range: float
+      triage_documentation:
+        description: Triage score for documentation value
+        range: float
+      triage_imas:
+        description: Triage score for IMAS relevance
+        range: float
+      triage_convention:
+        description: Triage score for COCOS convention handling
+        range: float
+      triage_description:
+        description: Brief description from triage (passed to scorer without triage scores)
+      triaged_at:
+        description: When triage was completed
+        range: datetime
+      scored_at:
+        description: When scoring was completed
+        range: datetime
       patterns_matched:
         description: Patterns that matched during discovery
         multivalued: true

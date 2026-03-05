@@ -37,6 +37,7 @@ class FileDiscoveryState:
 
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
+    triage_stats: WorkerStats = field(default_factory=WorkerStats)
     score_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
     code_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -49,6 +50,7 @@ class FileDiscoveryState:
 
     # Pipeline phases
     scan_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("scan"))
+    triage_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("triage"))
     score_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("score"))
     enrich_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("enrich"))
     code_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("code"))
@@ -65,13 +67,12 @@ class FileDiscoveryState:
     @property
     def budget_exhausted(self) -> bool:
         """Check if cost limit reached."""
-        total_cost = self.score_stats.cost
-        return total_cost >= self.cost_limit
+        return self.total_cost >= self.cost_limit
 
     @property
     def total_cost(self) -> float:
         """Total LLM cost across all workers."""
-        return self.score_stats.cost
+        return self.triage_stats.cost + self.score_stats.cost
 
     @property
     def elapsed_seconds(self) -> float:
