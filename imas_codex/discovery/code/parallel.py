@@ -28,6 +28,7 @@ from imas_codex.graph import GraphClient
 from .graph_ops import (
     has_pending_code_work,
     has_pending_enrich_work,
+    has_pending_link_work,
     has_pending_scan_work,
     has_pending_score_work,
     reset_orphaned_file_claims,
@@ -36,6 +37,7 @@ from .state import FileDiscoveryState
 from .workers import (
     code_worker,
     enrich_worker,
+    link_worker,
     scan_worker,
     score_worker,
 )
@@ -140,6 +142,10 @@ async def run_parallel_code_discovery(
     # Code depends on score phase (not enrich — enrichment is pre-score now)
     state.code_phase.set_has_work_fn(
         lambda: has_pending_code_work(facility) or not state.score_phase.done
+    )
+    # Link phase depends on code phase (propagates evidence after ingestion)
+    state.link_phase.set_has_work_fn(
+        lambda: has_pending_link_work(facility) or not state.code_phase.done
     )
 
     # Pre-warm SSH ControlMaster
@@ -251,9 +257,26 @@ async def run_parallel_code_discovery(
         # Mark enrich phase done if no enrich workers
         if num_enrich_workers == 0:
             state.enrich_phase.mark_done()
+
+        # --- Link worker (code evidence → signal propagation) ---
+        worker_name = "link_worker_0"
+        status = worker_group.create_status(worker_name, group="link")
+        worker_group.add_task(
+            asyncio.create_task(
+                supervised_worker(
+                    link_worker,
+                    worker_name,
+                    state,
+                    state.should_stop,
+                    on_progress=on_code_progress,
+                    status_tracker=status,
+                )
+            )
+        )
     else:
         state.code_phase.mark_done()
         state.enrich_phase.mark_done()
+        state.link_phase.mark_done()
 
     logger.info(
         "Started %d workers: scan=%d score=%d enrich=%d code=%d "
@@ -296,12 +319,14 @@ async def run_parallel_code_discovery(
         "scored": state.score_stats.processed,
         "enriched": state.enrich_stats.processed,
         "code_ingested": state.code_stats.processed,
+        "signals_linked": state.link_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_errors": state.scan_stats.errors,
         "score_errors": state.score_stats.errors,
         "enrich_errors": state.enrich_stats.errors,
         "code_errors": state.code_stats.errors,
+        "link_errors": state.link_stats.errors,
     }
 
 

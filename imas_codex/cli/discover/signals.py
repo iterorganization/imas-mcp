@@ -310,7 +310,9 @@ def signals(
 
                         while True:
                             try:
-                                stats = get_data_discovery_stats(facility)
+                                stats = await asyncio.to_thread(
+                                    get_data_discovery_stats, facility
+                                )
                                 if stats:
                                     display.update_from_graph(
                                         total_signals=stats.get("total", 0),
@@ -329,7 +331,7 @@ def signals(
                                 raise
                             except Exception:
                                 pass
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(2.0)
 
                     async def queue_ticker():
                         while True:
@@ -438,6 +440,12 @@ def signals(
         )
         log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
 
+    except KeyboardInterrupt:
+        log_print("\n[yellow]Discovery interrupted by user[/yellow]")
+        from imas_codex.remote.executor import cleanup_ssh_on_exit
+
+        cleanup_ssh_on_exit()
+        raise SystemExit(130) from None
     except Exception as e:
         log_print(f"[red]Error: {e}[/red]")
         import traceback

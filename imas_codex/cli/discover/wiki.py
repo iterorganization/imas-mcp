@@ -889,7 +889,9 @@ def wiki(
 
                     while True:
                         try:
-                            stats = get_wiki_discovery_stats(_facility)
+                            stats = await asyncio.to_thread(
+                                get_wiki_discovery_stats, _facility
+                            )
                             display.update_from_graph(
                                 total_pages=stats.get("total", 0),
                                 pages_scanned=stats.get("scanned", 0),
@@ -933,7 +935,7 @@ def wiki(
                             raise
                         except Exception as e:
                             wiki_logger.debug("Graph refresh failed: %s", e)
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(2.0)
 
                 async def queue_ticker():
                     while True:

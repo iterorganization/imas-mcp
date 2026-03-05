@@ -189,6 +189,9 @@ def _start_llm_deploy() -> None:
 def llm_status(url: str | None) -> None:
     """Check LiteLLM proxy health.
 
+    Shows proxy health, systemd service state, process resource usage,
+    model availability, and authentication status.
+
     Examples:
         imas-codex llm status
         imas-codex llm status --url http://remote:18400
@@ -200,17 +203,23 @@ def llm_status(url: str | None) -> None:
     if url is None:
         url = get_llm_proxy_url()
 
-    click.echo(f"LiteLLM Proxy ({url}):")
+    # Systemd service status
+    _show_llm_service_status()
+
+    click.echo(f"\nLiteLLM Proxy ({url}):")
 
     try:
         # Use root endpoint for quick alive check (no auth required)
         resp = httpx.get(f"{url}/", timeout=5.0)
         if resp.status_code == 200:
             click.echo("  ✓ Healthy")
+
+            # Auth check — verify that unauthenticated requests are rejected
+            _show_llm_auth_status(url)
+
             # Show model availability (requires auth)
-            headers = {
-                "Authorization": f"Bearer {os.environ.get('LITELLM_MASTER_KEY', '')}"
-            }
+            master_key = os.environ.get("LITELLM_MASTER_KEY", "")
+            headers = {"Authorization": f"Bearer {master_key}"}
             models_resp = httpx.get(
                 f"{url}/v1/models",
                 timeout=10.0,
@@ -221,6 +230,8 @@ def llm_status(url: str | None) -> None:
                 click.echo(f"  Models: {len(models)} available")
                 for m in models[:10]:
                     click.echo(f"    - {m.get('id', 'unknown')}")
+            elif models_resp.status_code == 401:
+                click.echo("  Models: auth required (LITELLM_MASTER_KEY not set)")
         else:
             click.echo(f"  ✗ Unhealthy (HTTP {resp.status_code})")
     except httpx.ConnectError:
@@ -240,6 +251,119 @@ def llm_status(url: str | None) -> None:
         click.echo("    imas-codex llm service start")
     except Exception as e:
         click.echo(f"  ✗ Error: {e}")
+
+
+def _show_llm_service_status() -> None:
+    """Show systemd service status with resource usage."""
+    try:
+        from imas_codex.cli.services import _colored_bar, _run_remote
+    except ImportError:
+        return
+
+    try:
+        # Get systemd service properties in one call
+        props = _run_remote(
+            "systemctl --user show imas-codex-llm "
+            "--property=ActiveState,SubState,MainPID,MemoryCurrent,"
+            "ActiveEnterTimestamp,NRestarts 2>/dev/null || true",
+            timeout=10,
+        )
+    except Exception:
+        click.echo("Service: unavailable (cannot reach login node)")
+        return
+
+    parsed = {}
+    for line in props.strip().split("\n"):
+        if "=" in line:
+            key, _, val = line.partition("=")
+            parsed[key.strip()] = val.strip()
+
+    active_state = parsed.get("ActiveState", "unknown")
+    sub_state = parsed.get("SubState", "")
+    pid = parsed.get("MainPID", "0")
+
+    if active_state == "active":
+        state_str = click.style("active", fg="green")
+    elif active_state == "activating":
+        state_str = click.style("starting", fg="yellow")
+    else:
+        state_str = click.style(active_state, fg="red")
+
+    click.echo(f"Service: {state_str} ({sub_state})")
+
+    if active_state != "active" or pid == "0":
+        return
+
+    click.echo(f"  PID: {pid}")
+
+    # Uptime from ActiveEnterTimestamp
+    timestamp = parsed.get("ActiveEnterTimestamp", "")
+    if timestamp and timestamp != "[not set]":
+        try:
+            uptime_out = _run_remote(
+                f'echo $(( $(date +%s) - $(date -d "{timestamp}" +%s) ))',
+                timeout=5,
+            )
+            uptime_s = int(uptime_out.strip())
+            if uptime_s > 86400:
+                click.echo(f"  Uptime: {uptime_s / 86400:.1f}d")
+            elif uptime_s > 3600:
+                click.echo(f"  Uptime: {uptime_s / 3600:.1f}h")
+            else:
+                click.echo(f"  Uptime: {uptime_s / 60:.0f}m")
+        except Exception:
+            pass
+
+    # Memory from systemd cgroup (more reliable than ps)
+    mem_current = parsed.get("MemoryCurrent", "")
+    if mem_current and mem_current not in ("[not set]", "infinity"):
+        try:
+            mem_bytes = int(mem_current)
+            mem_mb = mem_bytes / (1024 * 1024)
+            # LLM proxy is lightweight — 2GB is generous for a Python proxy
+            mem_limit_mb = 2048
+            mem_bar = _colored_bar(mem_mb, mem_limit_mb)
+            click.echo(f"  Mem:  {mem_bar}  {mem_mb:.0f} MB")
+        except ValueError:
+            pass
+
+    # Process CPU via ps (systemd doesn't track cumulative CPU)
+    try:
+        cpu_out = _run_remote(
+            f"ps -p {pid} -o %cpu= 2>/dev/null || true",
+            timeout=5,
+        )
+        cpu_val = float(cpu_out.strip()) if cpu_out.strip() else 0
+        if cpu_val > 0:
+            # Login node typically has many cores; show relative to 1 core
+            cpu_bar = _colored_bar(cpu_val, 100)
+            click.echo(f"  CPU:  {cpu_bar}  {cpu_val:.1f}%")
+    except Exception:
+        pass
+
+    # Restart count
+    restarts = parsed.get("NRestarts", "0")
+    if restarts != "0":
+        click.echo(f"  Restarts: {restarts}")
+
+
+def _show_llm_auth_status(url: str) -> None:
+    """Verify that the LLM proxy requires authentication."""
+    import httpx
+
+    try:
+        # Try accessing models endpoint without auth
+        resp = httpx.get(f"{url}/v1/models", timeout=5.0)
+        if resp.status_code == 401:
+            click.echo(f"  Auth: {click.style('✓ API key required', fg='green')}")
+        elif resp.status_code == 200:
+            click.echo(
+                f"  Auth: {click.style('✗ UNPROTECTED — no API key required!', fg='red', bold=True)}"
+            )
+        else:
+            click.echo(f"  Auth: HTTP {resp.status_code}")
+    except Exception:
+        pass
 
 
 @llm.command("service")

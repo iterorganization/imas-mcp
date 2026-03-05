@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.base.llm import ProviderBudgetExhausted
 from imas_codex.discovery.base.progress import WorkerStats
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
@@ -69,6 +70,7 @@ class DiscoveryState:
 
     # Control
     stop_requested: bool = False
+    provider_budget_exhausted: bool = False  # API key credit limit hit (402)
 
     # Pipeline phases (initialized in __post_init__)
     scan_phase: PipelinePhase = field(init=False)
@@ -137,7 +139,7 @@ class DiscoveryState:
 
     @property
     def budget_exhausted(self) -> bool:
-        return self.total_cost >= self.cost_limit
+        return self.total_cost >= self.cost_limit or self.provider_budget_exhausted
 
     @property
     def deadline_expired(self) -> bool:
@@ -818,15 +820,24 @@ def mark_enrichment_complete(
             path_id = f"{facility}:{result['path']}"
 
             if result.get("error"):
-                # Clear claimed_at so path can be retried, and store error
+                error_msg = result["error"][:200]
+                # Permanent errors: path won't succeed on retry, so stop
+                # re-claiming it by setting should_enrich = false.
+                permanent = error_msg in (
+                    "not a directory",
+                    "permission denied",
+                )
                 gc.query(
                     """
                     MATCH (p:FacilityPath {id: $id})
                     SET p.claimed_at = null,
-                        p.enrich_error = $error
+                        p.enrich_error = $error,
+                        p.should_enrich = CASE WHEN $permanent
+                            THEN false ELSE p.should_enrich END
                     """,
                     id=path_id,
-                    error=result["error"][:200],
+                    error=error_msg,
+                    permanent=permanent,
                 )
                 continue
 
@@ -1868,6 +1879,13 @@ async def triage_worker(
                     all_results,
                 )
 
+        except ProviderBudgetExhausted as e:
+            logger.error("API key budget exhausted — halting triage workers: %s", e)
+            _revert_path_claims(state.facility, [p["path"] for p in paths_to_score])
+            state.provider_budget_exhausted = True
+            if on_progress:
+                on_progress("provider budget exhausted", state.triage_stats, None)
+            break
         except ValueError:
             # LLM validation error - revert paths to 'scanned' status for retry
             # DO NOT increment error count - this will be retried automatically
@@ -2146,6 +2164,12 @@ async def score_worker(
             if on_progress:
                 on_progress(f"scored {scored}", state.score_stats, score_results)
 
+        except ProviderBudgetExhausted as e:
+            logger.error("API key budget exhausted — halting score workers: %s", e)
+            state.provider_budget_exhausted = True
+            if on_progress:
+                on_progress("provider budget exhausted", state.score_stats, None)
+            break
         except Exception as e:
             logger.exception(f"Score error: {e}")
             state.score_stats.errors += len(paths)

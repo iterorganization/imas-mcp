@@ -230,12 +230,16 @@ def ingest_tree_nodes(
             processed += len(batch)
             logger.info(f"Ingested {processed}/{len(prepared)} nodes")
 
-        # Create TREE_NAME relationships
+        # Create IN_TREE relationships (MERGE ensures MDSplusTree exists)
         client.query(
             """
             MATCH (n:TreeNode {tree_name: $tree_name})
-            MATCH (t:MDSplusTree {name: $tree_name})
-            MERGE (n)-[:TREE_NAME]->(t)
+            WITH n
+            MATCH (f:Facility {id: n.facility_id})
+            MERGE (t:MDSplusTree {name: $tree_name})
+            ON CREATE SET t.facility_id = n.facility_id
+            MERGE (t)-[:AT_FACILITY]->(f)
+            MERGE (n)-[:IN_TREE]->(t)
             """,
             tree_name=tree_name,
         )

@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -84,6 +85,13 @@ class DataDiscoveryState:
 
     facility: str
     ssh_host: str | None = None
+
+    # Pre-fetched facility config (avoids sync get_facility() in workers)
+    facility_config: dict = field(default_factory=dict)
+
+    # Pre-fetched graph counts (avoids sync graph queries in workers)
+    initial_version_counts: dict = field(default_factory=dict)
+    initial_signal_counts: dict = field(default_factory=dict)
 
     # Data source configuration
     reference_shot: int | None = None
@@ -486,14 +494,42 @@ def claim_signals_for_enrichment(
 
     Returns signals sorted by tdi_function to enable batching by function.
     Uses claimed_at timeout for orphan recovery (parallel-safe).
+
+    Filters out numbered channel signals (e.g. CHANNEL_006, :003) that are
+    array elements of a parent signal — these don't need individual LLM
+    enrichment. They are marked as skipped with reason 'channel_element'.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     try:
         with GraphClient() as gc:
+            # First skip channel signals in bulk so they don't clog the queue.
+            # Catches: trailing CHANNEL_NNN, trailing _NNN/:NNN, pure numeric
+            # names, sub-nodes under channel subtrees (CHANNEL_NNN:LEAF),
+            # and TDI function wrappers like data(\TREE::CHANNEL_NNN).
+            gc.query(
+                """
+                MATCH (s:FacilitySignal {facility_id: $facility})
+                WHERE s.status = $discovered
+                  AND (
+                    s.accessor =~ '.*[_:]CHANNEL_?\\d{2,3}\\)?$'
+                    OR s.accessor =~ '.*[_:]\\d{2,3}\\)?$'
+                    OR s.accessor =~ '.*CHANNEL_?\\d{2,3}:.*'
+                    OR s.name =~ '^\\d{2,3}$'
+                  )
+                SET s.status = $skipped,
+                    s.skip_reason = 'channel_element',
+                    s.claimed_at = null
+                """,
+                facility=facility,
+                discovered=FacilitySignalStatus.discovered.value,
+                skipped=FacilitySignalStatus.skipped.value,
+            )
+
             result = gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $discovered
+                  AND s.pattern_representative_id IS NULL
                   AND (s.claimed_at IS NULL
                        OR s.claimed_at < datetime() - duration($cutoff))
                 WITH s ORDER BY s.tdi_function, s.id LIMIT $batch_size
@@ -616,6 +652,7 @@ def claim_signals_for_check(
                           THEN $facility + ':mdsplus:tree_tdi'
                           ELSE null END AS derived_data_access
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
+                       s.node_path AS node_path,
                        s.physics_domain AS physics_domain, s.tdi_function AS tdi_function,
                        s.discovery_source AS discovery_source, s.name AS name,
                        COALESCE(s.data_access, derived_data_access) AS data_access
@@ -732,6 +769,8 @@ def mark_signals_checked(
     node, carrying outcome metadata (success, shot, shape, dtype, error).
     Created for BOTH successful and failed data access checks.
 
+    Retries on Neo4j deadlock (DeadlockDetected) up to 3 times.
+
     Expected signal dict keys:
     - id: signal ID
     - data_access: DataAccess ID (creates CHECKED_WITH relationship)
@@ -745,35 +784,48 @@ def mark_signals_checked(
     if not signals:
         return 0
 
-    try:
-        with GraphClient() as gc:
-            gc.query(
-                """
-                UNWIND $signals AS sig
-                MATCH (s:FacilitySignal {id: sig.id})
-                SET s.status = $checked,
-                    s.checked = true,
-                    s.checked_at = datetime(),
-                    s.claimed_at = null
-                WITH s, sig
-                WHERE sig.data_access IS NOT NULL
-                MATCH (da:DataAccess {id: sig.data_access})
-                MERGE (s)-[c:CHECKED_WITH]->(da)
-                SET c.success = sig.success,
-                    c.shot = sig.shot,
-                    c.checked_at = datetime(),
-                    c.shape = sig.shape,
-                    c.dtype = sig.dtype,
-                    c.error = sig.error,
-                    c.error_type = sig.error_type
-                """,
-                signals=signals,
-                checked=FacilitySignalStatus.checked.value,
-            )
-        return len(signals)
-    except Exception as e:
-        logger.warning("Could not mark signals checked: %s", e)
-        return 0
+    import time
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with GraphClient() as gc:
+                gc.query(
+                    """
+                    UNWIND $signals AS sig
+                    MATCH (s:FacilitySignal {id: sig.id})
+                    SET s.status = $checked,
+                        s.checked = true,
+                        s.checked_at = datetime(),
+                        s.claimed_at = null
+                    WITH s, sig
+                    WHERE sig.data_access IS NOT NULL
+                    MATCH (da:DataAccess {id: sig.data_access})
+                    MERGE (s)-[c:CHECKED_WITH]->(da)
+                    SET c.success = sig.success,
+                        c.shot = sig.shot,
+                        c.checked_at = datetime(),
+                        c.shape = sig.shape,
+                        c.dtype = sig.dtype,
+                        c.error = sig.error,
+                        c.error_type = sig.error_type
+                    """,
+                    signals=signals,
+                    checked=FacilitySignalStatus.checked.value,
+                )
+            return len(signals)
+        except Exception as e:
+            if "DeadlockDetected" in str(e) and attempt < max_retries - 1:
+                logger.warning(
+                    "Deadlock on mark_signals_checked (attempt %d/%d), retrying...",
+                    attempt + 1,
+                    max_retries,
+                )
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            logger.warning("Could not mark signals checked: %s", e)
+            return 0
+    return 0
 
 
 def mark_signal_skipped(signal_id: str, reason: str) -> None:
@@ -821,6 +873,299 @@ def release_signal_claim(signal_id: str) -> None:
     from imas_codex.discovery.base.claims import release_claim
 
     release_claim("FacilitySignal", signal_id)
+
+
+# Maximum number of crash retries before marking a signal as checked-failed.
+# Covers core dumps, timeouts, and other transient script failures.
+MAX_CRASH_RETRIES = 3
+
+
+def release_or_fail_after_crash(
+    signal_id: str,
+    error_type: str = "segfault",
+    error_msg: str = "MDSplus process crash",
+) -> bool:
+    """Increment crash retry counter and either release or fail the signal.
+
+    Tracks how many times a signal has caused a process crash (core dump,
+    timeout, etc.) via the ``check_retries`` property.  After
+    ``MAX_CRASH_RETRIES`` crashes, marks the signal as ``checked`` with
+    ``success=false`` so it stops being retried.
+
+    Returns True if the signal was marked as checked-failed (max retries
+    exceeded), False if it was released for another attempt.
+    """
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (s:FacilitySignal {id: $id})
+                SET s.check_retries = coalesce(s.check_retries, 0) + 1,
+                    s.claimed_at = null
+                RETURN s.check_retries AS retries
+                """,
+                id=signal_id,
+            )
+            retries = result[0]["retries"] if result else 0
+            if retries >= MAX_CRASH_RETRIES:
+                gc.query(
+                    """
+                    MATCH (s:FacilitySignal {id: $id})
+                    SET s.status = $checked,
+                        s.checked = true,
+                        s.checked_at = datetime()
+                    """,
+                    id=signal_id,
+                    checked=FacilitySignalStatus.checked.value,
+                )
+                logger.info(
+                    "Signal %s marked checked-failed after %d crash retries (%s)",
+                    signal_id,
+                    retries,
+                    error_type,
+                )
+                return True
+            return False
+    except Exception as e:
+        logger.warning(
+            "Could not update crash retry for %s: %s — releasing claim",
+            signal_id,
+            e,
+        )
+        release_signal_claim(signal_id)
+        return False
+
+
+# =============================================================================
+# Signal Pattern Detection & Propagation
+# =============================================================================
+
+# Regex to replace numeric segments (2+ digits) with NNN for pattern grouping.
+# Matches: _007, _010, :003, pure digits at segment boundaries.
+_PATTERN_RE = re.compile(r"\d{2,}")
+
+
+def _accessor_to_pattern(accessor: str) -> str:
+    """Convert a signal accessor to its pattern template.
+
+    Replaces numeric segments (2+ digits) with NNN.
+    E.g., 'CALIB_GAS_010:PROPERTIES:PARAM_048:LIM' -> 'CALIB_GAS_NNN:PROPERTIES:PARAM_NNN:LIM'
+    """
+    return _PATTERN_RE.sub("NNN", accessor)
+
+
+def detect_signal_patterns(
+    facility: str,
+    min_instances: int = 3,
+) -> tuple[int, int]:
+    """Detect indexed signal groups and skip non-representative signals.
+
+    Scans discovered FacilitySignals for accessor patterns where numeric
+    segments vary (e.g., CALIB_GAS_010:...:PARAM_048:LIM). For each
+    pattern with >= min_instances, one signal is kept as the representative
+    and all others get ``pattern_representative_id`` set to the
+    representative's ID.  Status stays ``discovered`` — no transient
+    status is introduced.  ``claim_signals_for_enrichment`` skips
+    signals with ``pattern_representative_id IS NOT NULL`` so only
+    representatives are sent to the LLM.
+
+    After the representative is enriched, ``propagate_pattern_enrichment()``
+    copies the LLM-generated metadata to all followers and moves them
+    straight to ``enriched``.
+
+    Idempotent: signals already tagged with a pattern_representative_id
+    are excluded from the initial query.  If the process crashes after
+    tagging but before propagation, followers remain ``discovered`` and
+    the next run will re-detect them (or, if the representative has
+    already been enriched, propagate immediately).
+
+    Args:
+        facility: Facility ID
+        min_instances: Minimum signals in a group to form a pattern
+
+    Returns:
+        Tuple of (patterns_detected, signals_marked_as_followers)
+    """
+    # Fetch all discovered signal accessors that are not yet part of a pattern
+    with GraphClient() as gc:
+        results = gc.query(
+            """
+            MATCH (s:FacilitySignal {facility_id: $facility})
+            WHERE s.status = $discovered
+              AND s.pattern_representative_id IS NULL
+            RETURN s.id AS id, s.accessor AS accessor
+            """,
+            facility=facility,
+            discovered=FacilitySignalStatus.discovered.value,
+        )
+
+    if not results:
+        return 0, 0
+
+    # Group signals by pattern template
+    pattern_groups: dict[str, list[dict]] = {}
+    for r in results:
+        pattern = _accessor_to_pattern(r["accessor"])
+        pattern_groups.setdefault(pattern, []).append(
+            {"id": r["id"], "accessor": r["accessor"]}
+        )
+
+    # Filter to groups with enough instances
+    multi_groups = {
+        p: sigs for p, sigs in pattern_groups.items() if len(sigs) >= min_instances
+    }
+
+    if not multi_groups:
+        return 0, 0
+
+    # For each pattern group, pick one representative and tag the rest.
+    # Status stays 'discovered' — coordination uses pattern_representative_id.
+    total_followers = 0
+    with GraphClient() as gc:
+        for pattern, sigs in multi_groups.items():
+            # Representative = first signal alphabetically (deterministic)
+            sigs.sort(key=lambda s: s["accessor"])
+            representative = sigs[0]
+            followers = sigs[1:]
+
+            if not followers:
+                continue
+
+            follower_ids = [f["id"] for f in followers]
+
+            # Tag followers — status stays 'discovered'
+            gc.query(
+                """
+                UNWIND $follower_ids AS fid
+                MATCH (s:FacilitySignal {id: fid})
+                WHERE s.status = $discovered
+                SET s.pattern_representative_id = $rep_id,
+                    s.pattern_template = $pattern
+                """,
+                follower_ids=follower_ids,
+                discovered=FacilitySignalStatus.discovered.value,
+                rep_id=representative["id"],
+                pattern=pattern,
+            )
+            total_followers += len(followers)
+
+    patterns_detected = len(multi_groups)
+    logger.info(
+        "Detected %d signal patterns for %s: %d followers, %d representatives",
+        patterns_detected,
+        facility,
+        total_followers,
+        patterns_detected,
+    )
+    return patterns_detected, total_followers
+
+
+def propagate_pattern_enrichment(
+    representative_id: str,
+    enrichment: dict,
+    batch_cost: float = 0.0,
+) -> int:
+    """Propagate enrichment from a representative signal to all pattern followers.
+
+    After the representative signal is enriched by the LLM, this copies
+    the physics_domain, description, name, diagnostic, keywords, etc.
+    to all signals that share the same pattern_representative_id.
+
+    Followers are still ``discovered`` (no transient status).  This
+    function transitions them directly to ``enriched``.
+
+    Args:
+        representative_id: ID of the enriched representative signal
+        enrichment: Dict with enrichment fields (physics_domain, description, etc.)
+        batch_cost: LLM cost to distribute across all propagated signals
+
+    Returns:
+        Number of follower signals updated
+    """
+    with GraphClient() as gc:
+        # Count followers first for cost distribution
+        count_result = gc.query(
+            """
+            MATCH (s:FacilitySignal)
+            WHERE s.pattern_representative_id = $rep_id
+              AND s.status = $discovered
+            RETURN count(s) AS cnt
+            """,
+            rep_id=representative_id,
+            discovered=FacilitySignalStatus.discovered.value,
+        )
+        follower_count = count_result[0]["cnt"] if count_result else 0
+
+        if follower_count == 0:
+            return 0
+
+        # Cost per signal (representative + followers)
+        per_signal_cost = batch_cost / (follower_count + 1) if batch_cost > 0 else 0.0
+
+        # Propagate enrichment: discovered → enriched
+        result = gc.query(
+            """
+            MATCH (s:FacilitySignal)
+            WHERE s.pattern_representative_id = $rep_id
+              AND s.status = $discovered
+            SET s.status = $enriched,
+                s.physics_domain = $physics_domain,
+                s.description = $description,
+                s.name = $name,
+                s.diagnostic = CASE WHEN $diagnostic <> '' THEN $diagnostic ELSE s.diagnostic END,
+                s.analysis_code = CASE WHEN $analysis_code <> '' THEN $analysis_code ELSE s.analysis_code END,
+                s.keywords = $keywords,
+                s.sign_convention = CASE WHEN $sign_convention <> '' THEN $sign_convention ELSE s.sign_convention END,
+                s.llm_cost = $per_signal_cost,
+                s.enriched_at = datetime(),
+                s.claimed_at = null,
+                s.enrichment_source = 'pattern_propagation'
+            RETURN count(s) AS updated
+            """,
+            rep_id=representative_id,
+            discovered=FacilitySignalStatus.discovered.value,
+            enriched=FacilitySignalStatus.enriched.value,
+            physics_domain=enrichment.get("physics_domain", ""),
+            description=enrichment.get("description", ""),
+            name=enrichment.get("name", ""),
+            diagnostic=enrichment.get("diagnostic", ""),
+            analysis_code=enrichment.get("analysis_code", ""),
+            keywords=enrichment.get("keywords", []),
+            sign_convention=enrichment.get("sign_convention", ""),
+            per_signal_cost=per_signal_cost,
+        )
+
+        updated = result[0]["updated"] if result else 0
+
+        # Also create Diagnostic nodes for followers
+        if enrichment.get("diagnostic"):
+            gc.query(
+                """
+                MATCH (s:FacilitySignal)
+                WHERE s.pattern_representative_id = $rep_id
+                  AND s.status = $enriched
+                WITH s, toLower(trim($diagnostic)) AS diag_name
+                WHERE diag_name <> ''
+                MERGE (d:Diagnostic {name: diag_name})
+                ON CREATE SET d.facility_id = s.facility_id
+                MERGE (s)-[:BELONGS_TO_DIAGNOSTIC]->(d)
+                WITH d, s
+                MATCH (f:Facility {id: s.facility_id})
+                MERGE (d)-[:AT_FACILITY]->(f)
+                """,
+                rep_id=representative_id,
+                enriched=FacilitySignalStatus.enriched.value,
+                diagnostic=enrichment.get("diagnostic", ""),
+            )
+
+        if updated > 0:
+            logger.info(
+                "Propagated enrichment from %s to %d followers",
+                representative_id,
+                updated,
+            )
+
+        return updated
 
 
 # =============================================================================
@@ -950,6 +1295,13 @@ def ingest_epochs(
                              v.nodes_removed = ep.nodes_removed,
                              v.added_subtrees = ep.added_subtrees,
                              v.removed_subtrees = ep.removed_subtrees
+                WITH v, ep
+                MATCH (f:Facility {id: ep.facility_id})
+                MERGE (v)-[:AT_FACILITY]->(f)
+                WITH v, ep
+                MERGE (t:MDSplusTree {name: ep.tree_name})
+                ON CREATE SET t.facility_id = ep.facility_id
+                MERGE (v)-[:IN_TREE]->(t)
                 """,
                 epochs=clean_epochs,
             )
@@ -1359,18 +1711,35 @@ async def seed_worker(
     For other scanners (TDI, PPF, EDAS, wiki): runs scanner.scan() and
     ingests signals directly to graph.
 
-    This worker exits quickly — it only creates the initial work items
-    for downstream workers to claim.
+    Idempotent: uses MERGE so re-runs detect existing work. Reports
+    both new and pre-existing items so the display reflects total state.
     """
-    from imas_codex.discovery.base.facility import get_facility
-    from imas_codex.discovery.mdsplus.graph_ops import seed_versions
+    from imas_codex.discovery.mdsplus.graph_ops import (
+        backfill_tree_relationships,
+        seed_versions,
+    )
     from imas_codex.discovery.signals.scanners.base import get_scanner
 
-    facility_config = get_facility(state.facility)
+    facility_config = state.facility_config
     data_sources = facility_config.get("data_sources", {})
     ssh_host = state.ssh_host or facility_config.get("ssh_host", state.facility)
 
-    total_discovered = 0
+    # Use pre-fetched graph state to report resumed progress
+    existing_versions = state.initial_version_counts
+    existing_signals = state.initial_signal_counts
+    existing_total = existing_signals.get("total", 0)
+
+    if existing_total > 0:
+        # Show signal count (not version count) for meaningful display
+        state.discover_stats.processed = existing_total
+        if on_progress:
+            on_progress(
+                f"resumed: {existing_versions.get('total', 0)} versions, "
+                f"{existing_total:,} signals in graph",
+                state.discover_stats,
+            )
+
+    total_discovered = existing_total
 
     for scanner_type in state.scanner_types:
         if state.stop_requested:
@@ -1406,8 +1775,12 @@ async def seed_worker(
                         ver_list = [state.reference_shot]
 
                     if ver_list:
-                        seeded = seed_versions(
-                            state.facility, sub_name, ver_list, versions
+                        seeded = await asyncio.to_thread(
+                            seed_versions,
+                            state.facility,
+                            sub_name,
+                            ver_list,
+                            versions,
                         )
                         total_discovered += seeded
                         state.discover_stats.processed += seeded
@@ -1443,24 +1816,32 @@ async def seed_worker(
             primary_tree = connection_tree or first_tree
             if primary_tree:
                 try:
-                    with GraphClient() as gc:
-                        gc.query(
-                            """
-                            MERGE (da:DataAccess {id: $id})
-                            SET da.facility_id = $facility,
-                                da.method_type = 'mdsplus',
-                                da.library = 'MDSplus',
-                                da.access_type = 'local',
-                                da.data_source = 'mdsplus'
-                            WITH da
-                            MATCH (f:Facility {id: $facility})
-                            MERGE (da)-[:AT_FACILITY]->(f)
-                            """,
-                            id=f"{state.facility}:mdsplus:tree_tdi",
-                            facility=state.facility,
-                        )
+
+                    def _create_mdsplus_da(_facility: str) -> None:
+                        with GraphClient() as gc:
+                            gc.query(
+                                """
+                                MERGE (da:DataAccess {id: $id})
+                                SET da.facility_id = $facility,
+                                    da.method_type = 'mdsplus',
+                                    da.library = 'MDSplus',
+                                    da.access_type = 'local',
+                                    da.data_source = 'mdsplus'
+                                WITH da
+                                MATCH (f:Facility {id: $facility})
+                                MERGE (da)-[:AT_FACILITY]->(f)
+                                """,
+                                id=f"{_facility}:mdsplus:tree_tdi",
+                                facility=_facility,
+                            )
+
+                    await asyncio.to_thread(_create_mdsplus_da, state.facility)
                 except Exception as e:
                     logger.warning("Failed to create MDSplus DataAccess: %s", e)
+
+            # Backfill IN_TREE edges for TreeNodes ingested before
+            # MDSplusTree relationships were added to the schema
+            await asyncio.to_thread(backfill_tree_relationships, state.facility)
 
             continue
 
@@ -1493,27 +1874,40 @@ async def seed_worker(
                 state.wiki_context.update(result.wiki_context)
 
             if result.signals:
-                count = ingest_discovered_signals(
-                    [s.model_dump(exclude_none=True) for s in result.signals]
+                count = await asyncio.to_thread(
+                    ingest_discovered_signals,
+                    [s.model_dump(exclude_none=True) for s in result.signals],
                 )
                 total_discovered += count
                 state.discover_stats.processed += count
 
                 if result.data_access:
                     try:
-                        with GraphClient() as gc:
-                            gc.query(
-                                """
-                                MERGE (da:DataAccess {id: $id})
-                                SET da += $props
-                                WITH da
-                                MATCH (f:Facility {id: $facility})
-                                MERGE (da)-[:AT_FACILITY]->(f)
-                                """,
-                                id=result.data_access.id,
-                                props=result.data_access.model_dump(exclude_none=True),
-                                facility=state.facility,
-                            )
+                        da = result.data_access
+
+                        def _ingest_da(
+                            _da_id: str, _props: dict, _facility: str
+                        ) -> None:
+                            with GraphClient() as gc:
+                                gc.query(
+                                    """
+                                    MERGE (da:DataAccess {id: $id})
+                                    SET da += $props
+                                    WITH da
+                                    MATCH (f:Facility {id: $facility})
+                                    MERGE (da)-[:AT_FACILITY]->(f)
+                                    """,
+                                    id=_da_id,
+                                    props=_props,
+                                    facility=_facility,
+                                )
+
+                        await asyncio.to_thread(
+                            _ingest_da,
+                            da.id,
+                            da.model_dump(exclude_none=True),
+                            state.facility,
+                        )
                     except Exception as e:
                         logger.warning(
                             "Failed to ingest DataAccess for %s: %s",
@@ -1569,18 +1963,16 @@ async def epoch_worker(
     Runs independently from seed — can take 15+ minutes for large trees.
     Seeds additional TreeModelVersion nodes as epochs are detected.
     """
-    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.mdsplus.epochs import detect_epochs_for_tree
     from imas_codex.discovery.mdsplus.graph_ops import seed_versions
 
-    facility_config = get_facility(state.facility)
+    facility_config = state.facility_config
     data_sources = facility_config.get("data_sources", {})
     mdsplus_config = data_sources.get("mdsplus", {})
     if not isinstance(mdsplus_config, dict):
         state.epoch_phase.mark_done()
         return
 
-    ssh_host = state.ssh_host or facility_config.get("ssh_host", state.facility)
     has_mdsplus = "mdsplus" in state.scanner_types
 
     if not has_mdsplus:
@@ -1604,7 +1996,7 @@ async def epoch_worker(
         return
 
     for tree_name, tree_config in trees_with_epochs:
-        if state.stop_requested:
+        if state.stop_requested or state.deadline_expired:
             break
 
         if on_progress:
@@ -1615,21 +2007,30 @@ async def epoch_worker(
             )
 
         try:
-            setup_commands = tree_config.get(
-                "setup_commands", mdsplus_config.get("setup_commands", [])
-            )
-            epochs = await asyncio.to_thread(
+            # Bound epoch detection to remaining deadline so it doesn't
+            # run for 15+ minutes when the user set --time 1.
+            timeout = None
+            if state.deadline is not None:
+                remaining = state.deadline - time.time()
+                if remaining <= 0:
+                    break
+                timeout = remaining
+
+            coro = asyncio.to_thread(
                 detect_epochs_for_tree,
-                facility=state.facility,
-                ssh_host=ssh_host,
+                facility=state.ssh_host or state.facility,
                 tree_name=tree_name,
-                reference_shot=state.reference_shot,
-                setup_commands=setup_commands,
+                tree_config=tree_config,
             )
+            if timeout is not None:
+                epochs = await asyncio.wait_for(coro, timeout=timeout)
+            else:
+                epochs = await coro
 
             if epochs:
                 # Ingest epoch TreeModelVersion nodes
-                ingest_epochs(
+                await asyncio.to_thread(
+                    ingest_epochs,
                     epochs,
                     data_access_id=f"{state.facility}:mdsplus:tree_tdi",
                     reference_shot=state.reference_shot,
@@ -1637,7 +2038,8 @@ async def epoch_worker(
                 # Also seed versions from detected epochs for extraction
                 epoch_versions = [e["version"] for e in epochs if "version" in e]
                 if epoch_versions:
-                    seed_versions(
+                    await asyncio.to_thread(
+                        seed_versions,
                         state.facility,
                         tree_name,
                         epoch_versions,
@@ -1662,6 +2064,17 @@ async def epoch_worker(
                 if on_progress:
                     on_progress(f"{tree_name}: no epochs", state.discover_stats)
 
+        except TimeoutError:
+            logger.info(
+                "Epoch detection for %s timed out (deadline reached)", tree_name
+            )
+            if on_progress:
+                on_progress(
+                    f"{tree_name}: epoch detection skipped (deadline)",
+                    state.discover_stats,
+                )
+            break
+
         except Exception as e:
             logger.error("Epoch detection failed for %s: %s", tree_name, e)
             if on_progress:
@@ -1685,7 +2098,6 @@ async def mdsplus_extract_worker(
     Claims TreeModelVersion nodes with status=discovered across ALL trees,
     runs SSH extraction, and ingests TreeNodes into the graph.
     """
-    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.mdsplus.graph_ops import (
         claim_version_for_extraction_facility,
         mark_version_extracted,
@@ -1697,7 +2109,7 @@ async def mdsplus_extract_worker(
         merge_version_results,
     )
 
-    facility_config = get_facility(state.facility)
+    facility_config = state.facility_config
     data_sources = facility_config.get("data_sources", {})
     mdsplus_config = data_sources.get("mdsplus", {})
     node_usages = None
@@ -1712,6 +2124,17 @@ async def mdsplus_extract_worker(
     if not has_mdsplus:
         state.extract_phase.mark_done()
         return
+
+    # Report existing extracted signals for idempotent restart
+    existing_versions = state.initial_version_counts
+    existing_sigs = state.initial_signal_counts
+    if existing_versions.get("ingested", 0) > 0:
+        state.extract_stats.processed = existing_sigs.get("total", 0)
+        if on_progress:
+            on_progress(
+                f"resumed: {existing_sigs.get('total', 0)} signals already extracted",
+                state.extract_stats,
+            )
 
     ssh_retry_count = 0
     max_ssh_retries = 5
@@ -1775,10 +2198,14 @@ async def mdsplus_extract_worker(
             node_count = ver_data.get("node_count", 0)
 
             merged = merge_version_results([data])
-            from imas_codex.graph import GraphClient as GC2
 
-            with GC2() as client:
-                ingest_static_tree(client, state.facility, merged)
+            def _ingest_tree(_facility: str, _merged: dict) -> None:
+                from imas_codex.graph import GraphClient as GC2
+
+                with GC2() as client:
+                    ingest_static_tree(client, _facility, _merged)
+
+            await asyncio.to_thread(_ingest_tree, state.facility, merged)
 
             await asyncio.to_thread(mark_version_extracted, version_id, node_count)
             state.extract_stats.processed += 1
@@ -1934,6 +2361,16 @@ async def mdsplus_promote_worker(
         state.promote_phase.mark_done()
         return
 
+    # Report existing promoted signals for idempotent restart (pre-fetched)
+    existing = state.initial_signal_counts
+    if existing.get("total", 0) > 0:
+        state.promote_stats.processed = existing["total"]
+        if on_progress:
+            on_progress(
+                f"resumed: {existing['total']} signals already promoted",
+                state.promote_stats,
+            )
+
     # Wait for at least one extraction
     while not state.stop_requested:
         if state.extract_stats.processed > 0:
@@ -2033,7 +2470,10 @@ async def enrich_worker(
     from collections import defaultdict
 
     from imas_codex.agentic.prompt_loader import render_prompt
-    from imas_codex.discovery.base.llm import acall_llm_structured
+    from imas_codex.discovery.base.llm import (
+        ProviderBudgetExhausted,
+        acall_llm_structured,
+    )
     from imas_codex.discovery.signals.models import SignalEnrichmentBatch
     from imas_codex.settings import get_model
 
@@ -2291,7 +2731,7 @@ async def enrich_worker(
                     WHERE score >= $min_score
                     OPTIONAL MATCH (src)-[:HAS_CHUNK]->(node)
                     WHERE src.facility_id = $facility
-                    RETURN node.content AS content,
+                    RETURN node.text AS text,
                            src.path AS source_path,
                            node.chunk_type AS chunk_type,
                            score
@@ -2304,12 +2744,12 @@ async def enrich_worker(
                 )
                 chunks = []
                 for row in results:
-                    content = row.get("content", "")
-                    if len(content) > 600:
-                        content = content[:600] + "..."
+                    text = row.get("text", "")
+                    if len(text) > 600:
+                        text = text[:600] + "..."
                     chunks.append(
                         {
-                            "content": content,
+                            "text": text,
                             "source_path": row.get("source_path", ""),
                             "chunk_type": row.get("chunk_type", ""),
                         }
@@ -2321,7 +2761,26 @@ async def enrich_worker(
             code_context_cache[group_key] = []
             return []
 
+    # Circuit breaker: stop after consecutive batch failures to avoid
+    # infinite claim/fail/release loops when LLM service is degraded.
+    MAX_CONSECUTIVE_FAILURES = 3
+    consecutive_failures = 0
+
     while not state.should_stop_enriching():
+        # --- Pattern detection phase ---
+        # On each idle cycle, detect indexed signal patterns and mark
+        # followers so they skip individual LLM enrichment. Once a
+        # representative is enriched, its metadata is propagated.
+        patterns_detected, followers_marked = await asyncio.to_thread(
+            detect_signal_patterns,
+            state.facility,
+        )
+        if patterns_detected > 0 and on_progress:
+            on_progress(
+                f"detected {patterns_detected} patterns ({followers_marked} followers)",
+                state.enrich_stats,
+            )
+
         # Claim batch of signals (sorted by tdi_function)
         # Batch size 50 - signals grouped by function so one source code per group
         signals = await asyncio.to_thread(
@@ -2429,7 +2888,7 @@ async def enrich_worker(
             if group_wiki:
                 user_lines.append("\n**Relevant wiki documentation:**")
                 for chunk in group_wiki:
-                    user_lines.append(f"- [{chunk['page_title']}] {chunk['content']}")
+                    user_lines.append(f"- [{chunk['page_title']}] {chunk['text']}")
 
             # Fetch relevant source code chunks via code_chunk_embedding
             code_chunks = await _fetch_code_context(group_key, indexed_signals)
@@ -2440,7 +2899,7 @@ async def enrich_worker(
                     ctype = chunk.get("chunk_type", "")
                     label = f"{path} ({ctype})" if ctype else path
                     user_lines.append(f"\n```python  # {label}")
-                    user_lines.append(chunk["content"])
+                    user_lines.append(chunk["text"])
                     user_lines.append("```")
 
             # Add individual signal entries
@@ -2509,23 +2968,50 @@ async def enrich_worker(
                 response_model=SignalEnrichmentBatch,
                 temperature=0.3,
             )
-        except ValueError as e:
+        except ProviderBudgetExhausted as e:
+            logger.error("LLM provider budget exhausted — stopping enrichment: %s", e)
+            for signal in signals:
+                await asyncio.to_thread(release_signal_claim, signal["id"])
+            state.enrich_phase.mark_done()
+            if on_progress:
+                on_progress("provider budget exhausted", state.enrich_stats)
+            break
+        except (ValueError, Exception) as e:
+            consecutive_failures += 1
+            for signal in signals:
+                await asyncio.to_thread(release_signal_claim, signal["id"])
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                logger.error(
+                    "Enrichment stopped: %d consecutive batch failures. Last error: %s",
+                    consecutive_failures,
+                    e,
+                )
+                state.enrich_phase.mark_done()
+                if on_progress:
+                    on_progress(
+                        f"stopped: {consecutive_failures} consecutive failures",
+                        state.enrich_stats,
+                    )
+                break
+            backoff = min(60.0, 5.0 * (2 ** (consecutive_failures - 1)))
             logger.warning(
-                "LLM enrichment failed for batch of %d signals: %s",
-                len(signals),
+                "Batch failure %d/%d: %s — backing off %.0fs",
+                consecutive_failures,
+                MAX_CONSECUTIVE_FAILURES,
                 e,
+                backoff,
             )
-            for signal in signals:
-                await asyncio.to_thread(release_signal_claim, signal["id"])
-            continue
-        except Exception as e:
-            logger.warning("LLM error (non-retryable): %s", e)
-            for signal in signals:
-                await asyncio.to_thread(release_signal_claim, signal["id"])
+            if on_progress:
+                on_progress(
+                    f"LLM error ({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES})",
+                    state.enrich_stats,
+                )
+            await asyncio.sleep(backoff)
             continue
 
         # Track cost
         state.enrich_stats.cost += batch_cost
+        consecutive_failures = 0  # Reset circuit breaker on success
 
         logger.debug(
             "LLM response: %d tokens for %d signals (cost=$%.4f)",
@@ -2567,6 +3053,26 @@ async def enrich_worker(
             await asyncio.to_thread(mark_signals_enriched, enriched, batch_cost)
             state.enrich_stats.processed += len(enriched)
 
+            # Propagate enrichment from representative signals to pattern followers
+            total_propagated = 0
+            for e in enriched:
+                propagated = await asyncio.to_thread(
+                    propagate_pattern_enrichment,
+                    e["id"],
+                    e,
+                    batch_cost / len(enriched) if batch_cost > 0 else 0.0,
+                )
+                total_propagated += propagated
+
+            if total_propagated > 0:
+                state.enrich_stats.processed += total_propagated
+                if on_progress:
+                    on_progress(
+                        f"propagated to {total_propagated} pattern followers",
+                        state.enrich_stats,
+                        enriched,
+                    )
+
             if on_progress:
                 on_progress("enriched batch", state.enrich_stats, enriched)
 
@@ -2589,6 +3095,12 @@ def _classify_check_error(error: str) -> str:
         return "timeout"
     if "connection" in err_lower or "refused" in err_lower:
         return "connection_error"
+    # Missing shared library — e.g. libjmmshr_gsl.so, libblas.so
+    if "error loading" in err_lower or "cannot open shared object" in err_lower:
+        return "missing_library"
+    # Expression evaluation errors — TDI expression failures
+    if "extra_arg" in err_lower or "roprand" in err_lower:
+        return "expression_error"
     if "empty" in err_lower:
         return "empty_data"
     if "permission" in err_lower or "denied" in err_lower:
@@ -2596,6 +3108,75 @@ def _classify_check_error(error: str) -> str:
     if "segmentation" in err_lower or "segfault" in err_lower:
         return "segfault"
     return "other"
+
+
+def _is_excluded_tdi_function(func_name: str, exclude_list: list[str]) -> bool:
+    """Check if a TDI function should be excluded from checking.
+
+    Args:
+        func_name: TDI function name (e.g., "tcv_eq", "tile_store")
+        exclude_list: List of excluded function names from facility config
+
+    Returns:
+        True if the function should be excluded from checking.
+    """
+    return func_name in exclude_list
+
+
+def _resolve_check_tree(
+    signal: dict,
+    connection_tree: str,
+    independent_trees: set[str],
+    tree_shots: dict[str, list[int]],
+    reference_shot: int,
+) -> tuple[str, str, list[int]]:
+    """Determine the correct tree_name, accessor, and check_shots for a signal.
+
+    Routes signals based on whether their tree is independent (opened directly)
+    or a subtree of the connection tree (opened via the connection tree).
+
+    For independent trees with configured versions (e.g., static), returns all
+    version shots as check_shots. For subtrees, returns the reference_shot
+    plus any connection tree version shots as check_shots.
+
+    Args:
+        signal: Signal dict with tree_name, node_path, accessor, etc.
+        connection_tree: Parent tree name (e.g., "tcv_shot")
+        independent_trees: Set of tree names that are NOT subtrees
+        tree_shots: Map of tree_name -> list of version/epoch shots
+        reference_shot: Default shot for subtree checking
+
+    Returns:
+        Tuple of (tree_name, accessor, check_shots) where check_shots
+        is a list of shots to try in order.
+    """
+    tree_name = signal.get("tree_name")
+    node_path = signal.get("node_path")
+    accessor = signal.get("accessor", "")
+
+    # TDI functions use the connection tree
+    if signal.get("tdi_function") and not tree_name:
+        return connection_tree, accessor, [reference_shot]
+
+    # For tree_traversal signals, use full node_path as accessor
+    if node_path and signal.get("discovery_source") == "tree_traversal":
+        accessor = node_path
+
+    # Independent trees are opened directly with their own shots
+    if tree_name and tree_name in independent_trees:
+        versions = tree_shots.get(tree_name, [])
+        if versions:
+            return tree_name, accessor, versions
+        return tree_name, accessor, [reference_shot]
+
+    # Subtree signals go through the connection tree
+    # Include connection tree version shots as additional check_shots
+    conn_shots = tree_shots.get(connection_tree, [])
+    check_shots = [reference_shot]
+    for s in conn_shots:
+        if s != reference_shot:
+            check_shots.append(s)
+    return connection_tree, accessor, check_shots
 
 
 async def check_worker(
@@ -2614,30 +3195,47 @@ async def check_worker(
     """
     from collections import defaultdict
 
-    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.signals.scanners.base import get_scanner
     from imas_codex.graph.models import FacilitySignal as FacilitySignalModel
 
-    facility_config = get_facility(state.facility)
+    facility_config = state.facility_config
     data_sources = facility_config.get("data_sources", {})
 
-    # Build fallback shots from versioned tree epochs (operational phases)
-    # These provide representative shots from different machine configurations
-    fallback_shots: list[int] = []
+    # Build tree configuration from facility config
     mdsplus_config = data_sources.get("mdsplus", {})
+    connection_tree = "tcv_shot"
+    independent_trees: set[str] = set()
+    tree_shots: dict[str, list[int]] = {}
+
     if isinstance(mdsplus_config, dict):
+        connection_tree = mdsplus_config.get("connection_tree", "tcv_shot")
+
+        # Read independent trees from data_access_patterns
+        dap = facility_config.get("data_access_patterns", {})
+        for t in dap.get("independent_trees", []):
+            independent_trees.add(t)
+
+        # Build version/epoch shot lists per tree
         all_trees = mdsplus_config.get("trees", [])
         for st in all_trees:
             if isinstance(st, dict):
-                for v in st.get("versions", []):
-                    first_shot = v.get("first_shot")
-                    if first_shot and first_shot != state.reference_shot:
-                        fallback_shots.append(first_shot)
-        # Sort descending so we try newest shots first
-        fallback_shots.sort(reverse=True)
+                tree_name = st.get("tree_name", "")
+                versions = st.get("versions", [])
+                if versions:
+                    # Collect all version shots for this tree
+                    shots = [
+                        v.get("first_shot") or v.get("version")
+                        for v in versions
+                        if v.get("first_shot") or v.get("version")
+                    ]
+                    if shots:
+                        tree_shots[tree_name] = sorted(shots)
 
-    # Large batch size - signals are grouped by tree/shot on the remote side
-    BATCH_SIZE = 100
+    # Keep batch size moderate — MDSplus segfaults (core dumps) when
+    # too many signals from the same tree are checked in a single process.
+    # The remote script groups signals by (tree_name, shot) so 100 signals
+    # from the same tree all land in one group, overloading MDSplus.
+    BATCH_SIZE = 20
 
     def _get_signal_scanner_type(signal: dict) -> str:
         """Determine which scanner should check this signal."""
@@ -2764,29 +3362,29 @@ async def check_worker(
         if mdsplus_group:
             batch_input = []
             for signal in mdsplus_group:
-                shot = signal.get("check_shot") or state.reference_shot
-                if not shot:
+                if not state.reference_shot:
                     logger.warning(
-                        "Signal %s has no check_shot and no reference_shot",
+                        "Signal %s has no reference_shot",
                         signal["id"],
                     )
                     await asyncio.to_thread(release_signal_claim, signal["id"])
                     continue
 
-                # TDI signals use tcv_shot tree
-                tree_name = signal.get("tree_name")
-                if signal.get("tdi_function") and not tree_name:
-                    tree_name = "tcv_shot"
+                # Resolve the correct tree, accessor, and check_shots
+                resolved_tree, resolved_accessor, check_shots = _resolve_check_tree(
+                    signal,
+                    connection_tree=connection_tree,
+                    independent_trees=independent_trees,
+                    tree_shots=tree_shots,
+                    reference_shot=state.reference_shot,
+                )
 
                 batch_input.append(
                     {
                         "id": signal["id"],
-                        "accessor": signal["accessor"],
-                        "tree_name": tree_name or "tcv_shot",
-                        "shot": shot,
-                        **(
-                            {"fallback_shots": fallback_shots} if fallback_shots else {}
-                        ),
+                        "accessor": resolved_accessor,
+                        "tree_name": resolved_tree,
+                        "check_shots": check_shots,
                     }
                 )
 
@@ -2887,25 +3485,61 @@ async def check_worker(
                         str(e)[:200],
                     )
                     for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                        await asyncio.to_thread(
+                            release_or_fail_after_crash,
+                            sig["id"],
+                            "parse_error",
+                            f"Failed to parse check response: {e}",
+                        )
                 except subprocess.CalledProcessError as e:
                     stderr = e.stderr[:200] if e.stderr else str(e)
-                    logger.warning(
-                        "Check script failed (exit %d): %s", e.returncode, stderr
-                    )
+                    # Core dumps indicate MDSplus segfault — log clearly
+                    if "dumped core" in stderr or e.returncode < 0:
+                        logger.warning(
+                            "MDSplus core dump checking %d signals (exit %d) — "
+                            "tracking retries (max %d)",
+                            len(batch_input),
+                            e.returncode,
+                            MAX_CRASH_RETRIES,
+                        )
+                        error_type = "segfault"
+                        error_msg = "MDSplus process crash (core dump)"
+                    else:
+                        logger.warning(
+                            "Check script failed (exit %d): %s",
+                            e.returncode,
+                            stderr,
+                        )
+                        error_type = "script_crash"
+                        error_msg = f"Check script failed (exit {e.returncode})"
                     for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                        await asyncio.to_thread(
+                            release_or_fail_after_crash,
+                            sig["id"],
+                            error_type,
+                            error_msg,
+                        )
                 except subprocess.TimeoutExpired:
                     logger.warning(
                         "Check script timed out for batch of %d signals",
                         len(batch_input),
                     )
                     for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                        await asyncio.to_thread(
+                            release_or_fail_after_crash,
+                            sig["id"],
+                            "timeout",
+                            "Check script timed out",
+                        )
                 except Exception as e:
                     logger.warning("Failed to run check: %s", e)
                     for sig in batch_input:
-                        await asyncio.to_thread(release_signal_claim, sig["id"])
+                        await asyncio.to_thread(
+                            release_or_fail_after_crash,
+                            sig["id"],
+                            "infrastructure",
+                            str(e)[:200],
+                        )
 
         # All results go through mark_signals_checked
         if checked:
@@ -2968,35 +3602,56 @@ async def run_parallel_data_discovery(
     """
     start_time = time.time()
 
-    # Get facility config for defaults
-    if not ssh_host:
+    # Pre-fetch all shared data in a background thread so the event loop
+    # stays free for display ticking.  Every worker used to call
+    # get_facility() + graph count queries synchronously at startup,
+    # blocking the event loop for 30-60 s on remote Neo4j.
+    def _preflight(
+        _facility: str, _ssh_host: str | None, _scanner_types: list[str] | None
+    ) -> tuple[dict, str | None, list[str], dict, dict]:
         from imas_codex.discovery.base.facility import get_facility
-
-        config = get_facility(facility)
-        ssh_host = config.get("ssh_host", facility)
-
-    # Reset orphaned claims
-    reset_transient_signals(facility)
-
-    # Ensure Facility node exists so AT_FACILITY relationships don't fail
-    from imas_codex.graph import GraphClient
-
-    with GraphClient() as gc:
-        gc.ensure_facility(facility)
-
-    # Auto-detect scanner types if not specified
-    if not scanner_types:
+        from imas_codex.discovery.mdsplus.graph_ops import (
+            get_signal_counts,
+            get_version_counts,
+        )
         from imas_codex.discovery.signals.scanners.base import (
             get_scanners_for_facility,
         )
+        from imas_codex.graph import GraphClient as _GC
 
-        scanner_instances = get_scanners_for_facility(facility)
-        scanner_types = [s.scanner_type for s in scanner_instances]
+        config = get_facility(_facility)
+        if not _ssh_host:
+            _ssh_host = config.get("ssh_host", _facility)
+
+        reset_transient_signals(_facility)
+
+        with _GC() as gc:
+            gc.ensure_facility(_facility)
+
+        if not _scanner_types:
+            scanner_instances = get_scanners_for_facility(_facility)
+            _scanner_types = [s.scanner_type for s in scanner_instances]
+
+        version_counts = get_version_counts(_facility)
+        signal_counts = get_signal_counts(_facility)
+
+        return config, _ssh_host, _scanner_types, version_counts, signal_counts
+
+    (
+        facility_config,
+        ssh_host,
+        scanner_types,
+        initial_version_counts,
+        initial_signal_counts,
+    ) = await asyncio.to_thread(_preflight, facility, ssh_host, scanner_types)
 
     # Initialize state
     state = DataDiscoveryState(
         facility=facility,
         ssh_host=ssh_host,
+        facility_config=facility_config,
+        initial_version_counts=initial_version_counts,
+        initial_signal_counts=initial_signal_counts,
         reference_shot=reference_shot,
         scanner_types=scanner_types,
         tdi_path=tdi_path,
@@ -3110,7 +3765,6 @@ async def run_parallel_data_discovery(
         state.units_phase.mark_done()
         state.promote_phase.mark_done()
         state._scan_phase.mark_done()
-        state.check_phase.mark_done()
 
     if discover_only:
         # Run supervision loop — scan workers only
@@ -3119,6 +3773,11 @@ async def run_parallel_data_discovery(
             lambda: state._scan_phase.done,
             on_worker_status=on_worker_status,
             on_tick=orphan_tick,
+            phases=[
+                state.extract_phase,
+                state.units_phase,
+                state.promote_phase,
+            ],
         )
         state.stop_requested = True
         if stop_watcher and not stop_watcher.done():
@@ -3154,8 +3813,8 @@ async def run_parallel_data_discovery(
             )
         )
 
-    # --- Check workers (unless enrich_only) ---
-    if not enrich_only:
+    # --- Check workers ---
+    if num_check_workers > 0:
         for i in range(num_check_workers):
             worker_name = f"check_worker_{i}"
             status = worker_group.create_status(worker_name, group="check")
@@ -3190,11 +3849,21 @@ async def run_parallel_data_discovery(
     )
 
     # Run supervision loop — handles status updates and clean shutdown
+    # Pass all graph-backed phases so their has_work caches are refreshed
+    # in a background thread, preventing event loop blocking.
+    all_phases = [
+        state.extract_phase,
+        state.units_phase,
+        state.promote_phase,
+        state.enrich_phase,
+        state.check_phase,
+    ]
     await run_supervised_loop(
         worker_group,
         state.should_stop,
         on_worker_status=on_worker_status,
         on_tick=orphan_tick,
+        phases=all_phases,
     )
     state.stop_requested = True
     if stop_watcher and not stop_watcher.done():

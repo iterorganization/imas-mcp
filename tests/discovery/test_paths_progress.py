@@ -424,13 +424,13 @@ class TestParallelProgressDisplay:
         assert "$2.50" in text
 
     def test_pipeline_shows_rate(self):
-        """Pipeline shows processing rate with 2dp."""
+        """Pipeline shows processing rate."""
         display = self._display()
         display.state.total = 100
         display.state.scan_rate = 77.1
         section = display._build_pipeline_section()
         text = section.plain
-        assert "77.10/s" in text
+        assert "77/s" in text
 
     def test_resources_section_has_time(self):
         """Resources section shows TIME row."""

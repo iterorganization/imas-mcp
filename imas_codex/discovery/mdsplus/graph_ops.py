@@ -89,14 +89,66 @@ def seed_versions(
                 v.description = rec.description,
                 v.status = rec.status
             WITH v, rec
-            WHERE v.status = rec.status
             MATCH (f:Facility {id: rec.facility_id})
             MERGE (v)-[:AT_FACILITY]->(f)
+            WITH v, rec, f
+            MERGE (t:MDSplusTree {name: rec.tree_name})
+            ON CREATE SET t.facility_id = rec.facility_id
+            MERGE (v)-[:IN_TREE]->(t)
+            MERGE (t)-[:AT_FACILITY]->(f)
             RETURN count(CASE WHEN v.status = 'discovered' THEN 1 END) AS seeded
             """,
             records=records,
         )
         return result[0]["seeded"] if result else 0
+
+
+def backfill_tree_relationships(facility: str) -> int:
+    """Create missing MDSplusTree nodes and IN_TREE relationships.
+
+    One-time migration for TreeNodes ingested before IN_TREE relationships
+    were added. Checks cheaply first; skips entirely when nothing is missing.
+
+    Returns:
+        Number of TreeNodes that gained an IN_TREE relationship.
+    """
+    with GraphClient() as gc:
+        # Cheap existence check — avoids scanning all TreeNodes on every run
+        check = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility})
+            WHERE n.tree_name IS NOT NULL
+              AND NOT (n)-[:IN_TREE]->(:MDSplusTree)
+            RETURN count(n) > 0 AS needs_backfill
+            """,
+            facility=facility,
+        )
+        if not check or not check[0]["needs_backfill"]:
+            return 0
+
+        result = gc.query(
+            """
+            MATCH (n:TreeNode {facility_id: $facility})
+            WHERE n.tree_name IS NOT NULL
+              AND NOT (n)-[:IN_TREE]->(:MDSplusTree)
+            WITH n
+            MATCH (f:Facility {id: $facility})
+            MERGE (t:MDSplusTree {name: n.tree_name})
+            ON CREATE SET t.facility_id = $facility
+            MERGE (t)-[:AT_FACILITY]->(f)
+            MERGE (n)-[:IN_TREE]->(t)
+            RETURN count(n) AS backfilled
+            """,
+            facility=facility,
+        )
+        count = result[0]["backfilled"] if result else 0
+        if count > 0:
+            logger.info(
+                "Backfilled %d TreeNode→MDSplusTree IN_TREE relationships for %s",
+                count,
+                facility,
+            )
+        return count
 
 
 # ---------------------------------------------------------------------------
@@ -1735,6 +1787,50 @@ def promote_leaf_nodes_to_signals(
 # ---------------------------------------------------------------------------
 # Facility-wide queries — used by top-level pipeline workers
 # ---------------------------------------------------------------------------
+
+
+def get_version_counts(facility: str) -> dict[str, int]:
+    """Get TreeModelVersion counts by status for a facility.
+
+    Returns:
+        Dict with keys: total, discovered, ingested, failed
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (v:TreeModelVersion {facility_id: $facility})
+            RETURN count(v) AS total,
+                   sum(CASE WHEN v.status = 'discovered' THEN 1 ELSE 0 END) AS discovered,
+                   sum(CASE WHEN v.status = 'ingested' THEN 1 ELSE 0 END) AS ingested,
+                   sum(CASE WHEN v.status = 'failed' THEN 1 ELSE 0 END) AS failed
+            """,
+            facility=facility,
+        )
+        if result:
+            return dict(result[0])
+        return {"total": 0, "discovered": 0, "ingested": 0, "failed": 0}
+
+
+def get_signal_counts(facility: str) -> dict[str, int]:
+    """Get FacilitySignal counts by status for a facility.
+
+    Returns:
+        Dict with keys: total, discovered, enriched, checked
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (s:FacilitySignal {facility_id: $facility})
+            RETURN count(s) AS total,
+                   sum(CASE WHEN s.status = 'discovered' THEN 1 ELSE 0 END) AS discovered,
+                   sum(CASE WHEN s.status = 'enriched' THEN 1 ELSE 0 END) AS enriched,
+                   sum(CASE WHEN s.status = 'checked' THEN 1 ELSE 0 END) AS checked
+            """,
+            facility=facility,
+        )
+        if result:
+            return dict(result[0])
+        return {"total": 0, "discovered": 0, "enriched": 0, "checked": 0}
 
 
 def has_pending_extract_work_facility(facility: str) -> bool:

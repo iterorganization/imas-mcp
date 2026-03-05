@@ -168,6 +168,9 @@ class ProgressState:
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
 
+    # Provider budget exhaustion (API key credit limit hit)
+    provider_budget_exhausted: bool = False
+
     # Current items (and their processing state)
     current_scan: ScanItem | None = None
     current_triage: TriageItem | None = None
@@ -295,6 +298,8 @@ class ProgressState:
     @property
     def limit_reason(self) -> str | None:
         """Return which limit was reached, or None if no limit reached."""
+        if self.provider_budget_exhausted:
+            return "provider budget"
         if self.cost_limit_reached:
             return "cost"
         if self.path_limit_reached:
@@ -475,7 +480,13 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         # SCAN activity
         scan_text = ""
         scan_desc = ""
-        if scan:
+        # When all known paths are scanned (100%) but workers are still
+        # alive waiting for expand dirs, let the queue drain naturally
+        # before switching to "waiting" status.  Only suppress content
+        # once the queue is empty so the last batch fully unwinds.
+        scan_at_capacity = scanned_paths >= scan_total and not scan_complete
+        scan_queue_drained = self.state.scan_queue.is_empty()
+        if scan and not (scan_at_capacity and scan_queue_drained):
             scan_text = scan.path
             scan_parts = [f"{scan.files} files, {scan.dirs} dirs"]
             if scan.has_code:
@@ -594,24 +605,17 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                     top_dim.replace("score_", "").replace("_", " ") if top_dim else ""
                 )
 
-                if score.previous_score is not None:
-                    delta = display_score - score.previous_score
-                    delta_style = (
-                        "green" if delta > 0 else "red" if delta < 0 else "dim"
-                    )
-                    parts.append((f"{delta:+.2f}", delta_style))
-                else:
-                    from imas_codex.settings import get_discovery_threshold
+                from imas_codex.settings import get_discovery_threshold
 
-                    _threshold = get_discovery_threshold()
-                    style = (
-                        "bold green"
-                        if display_score >= _threshold
-                        else "yellow"
-                        if display_score >= 0.4
-                        else "red"
-                    )
-                    parts.append((f"{display_score:.2f}", style))
+                _threshold = get_discovery_threshold()
+                style = (
+                    "bold green"
+                    if display_score >= _threshold
+                    else "yellow"
+                    if display_score >= 0.4
+                    else "red"
+                )
+                parts.append((f"{display_score:.2f}", style))
                 if dim_label:
                     parts.append((" ", "dim"))
                     parts.append((dim_label, "dim italic"))
@@ -653,7 +657,15 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 disabled=self.state.triage_only,
                 primary_text=scan_text,
                 description=scan_desc,
-                is_processing=self.state.scan_processing > 0,
+                is_processing=self.state.scan_processing > 0
+                or (scan_at_capacity and scan_queue_drained),
+                processing_label=(
+                    "waiting for expand..."
+                    if scan_at_capacity
+                    and scan_queue_drained
+                    and self.state.scan_processing == 0
+                    else "processing..."
+                ),
                 is_complete=scan_complete,
                 worker_count=scan_count,
                 worker_annotation=scan_ann,
@@ -834,6 +846,11 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.run_triaged = stats.processed
         self.state.triage_rate = stats.ema_rate or stats.active_rate
         self.state._run_triage_cost = stats.cost
+
+        if "provider budget" in message.lower():
+            self.state.provider_budget_exhausted = True
+            self._refresh()
+            return
 
         # Track processing state for display
         # Don't clear current_triage when waiting - let queue drain naturally
@@ -1029,6 +1046,11 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.score_rate = stats.ema_rate or stats.active_rate
         # Track score cost separately (cumulative from score worker)
         self.state._run_score_cost = stats.cost
+
+        if "provider budget" in message.lower():
+            self.state.provider_budget_exhausted = True
+            self._refresh()
+            return
 
         # Track processing state for display
         if "waiting" in message.lower():

@@ -131,6 +131,45 @@ def _generate_schema_reference(
         return 0  # Non-fatal — models are the priority
 
 
+def _generate_schema_context(
+    logger: logging.Logger,
+    force: bool,
+    dry_run: bool,
+) -> int:
+    """Generate imas_codex/graph/schema_context_data.py from LinkML schemas.
+
+    Returns:
+        0 on success, non-zero on failure.
+    """
+    from scripts.gen_schema_context import generate_schema_context
+
+    root = get_project_root()
+    output_file = root / "imas_codex" / "graph" / "schema_context_data.py"
+    schemas_dir = get_schemas_dir()
+
+    # Check freshness
+    if output_file.exists() and not force:
+        output_mtime = output_file.stat().st_mtime
+        schema_files = list(schemas_dir.glob("*.yaml"))
+        if all(f.stat().st_mtime <= output_mtime for f in schema_files):
+            logger.info(f"Schema context up to date at {output_file}")
+            return 0
+        logger.info("Schema files newer than context, regenerating...")
+
+    if dry_run:
+        click.echo(f"Would generate: {output_file}")
+        return 0
+
+    try:
+        generate_schema_context(force=True)
+        logger.info(f"Generated schema context at {output_file}")
+        click.echo(f"Generated: {output_file}")
+        return 0
+    except Exception as e:
+        logger.warning(f"Schema context generation failed (non-fatal): {e}")
+        return 0  # Non-fatal — models are the priority
+
+
 @click.command()
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging output")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress all logging except errors")
@@ -331,6 +370,9 @@ To regenerate:
 
         # Generate schema reference for agents
         _generate_schema_reference(logger, force, dry_run)
+
+        # Generate schema context data for schema_for()
+        _generate_schema_context(logger, force, dry_run)
 
         # Generate facility config models
         config_schema_file = schemas_dir / "facility_config.yaml"
