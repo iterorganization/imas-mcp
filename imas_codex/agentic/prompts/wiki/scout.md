@@ -27,8 +27,8 @@ Your goal is to find high-value technical documentation and skip administrative/
    - Use patterns for MDSplus paths (e.g., `results::`, `magnetics::`)
    - Use patterns for diagnostic/code names (e.g., `thomson`, `cxrs`, `ece`)
 4. **Queue pages** based on match counts:
-   - match_count > 5: status="discovered", interest_score=0.9
-   - match_count 1-5: status="discovered", interest_score=0.6
+   - match_count > 5: status="discovered", score_composite=0.9
+   - match_count 1-5: status="discovered", score_composite=0.6
    - match_count 0: status="skipped" with skip_reason
 5. **Repeat** for additional portal pages if budget allows
 

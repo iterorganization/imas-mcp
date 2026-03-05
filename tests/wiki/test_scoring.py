@@ -80,7 +80,7 @@ class TestContentAwareScoring:
         for value in [True, False]:
             assert isinstance(value, bool)
 
-    def test_interest_score_range(self):
+    def test_score_composite_range(self):
         """Test that interest scores are in valid range."""
         # Valid scores: 0.0-1.0
         for score in [0.0, 0.25, 0.5, 0.75, 1.0]:

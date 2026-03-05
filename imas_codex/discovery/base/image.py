@@ -877,7 +877,7 @@ async def score_images_batch(
                 "ocr_tool_mentions": ocr_tool_mentions,
                 "purpose": r.purpose.value,
                 "description": r.description,
-                "score": combined_score,
+                "score_composite": combined_score,
                 "score_data_documentation": r.score_data_documentation,
                 "score_physics_content": r.score_physics_content,
                 "score_code_documentation": r.score_code_documentation,

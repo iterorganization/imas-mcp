@@ -11,7 +11,7 @@ Systematically discover, document, and classify code and data structures at fusi
 
 ## What We're Looking For
 
-### High-Value Discoveries (interest_score 0.8+)
+### High-Value Discoveries (score_composite 0.8+)
 
 1. **IMAS Integration Code**
    - Files with `imas.DBEntry`, `ids.put`, `ids.get`
@@ -37,14 +37,14 @@ Systematically discover, document, and classify code and data structures at fusi
    - Tree builders/updaters
    - Signal processors
 
-### Medium-Value Discoveries (interest_score 0.5-0.8)
+### Medium-Value Discoveries (score_composite 0.5-0.8)
 
 - General diagnostics (Thomson, ECE, interferometry)
 - Data visualization tools
 - Calibration routines
 - Helper libraries
 
-### Low-Value (interest_score < 0.5)
+### Low-Value (score_composite < 0.5)
 
 - Pure config files
 - Build scripts without physics content
@@ -96,7 +96,7 @@ End your exploration with a summary:
 - Remote tools: [available tools]
 
 ### Key Discoveries
-1. [Discovery 1]: [description], [file count], interest_score=[score]
+1. [Discovery 1]: [description], [file count], score_composite=[score]
 2. [Discovery 2]: ...
 
 ### Files Queued

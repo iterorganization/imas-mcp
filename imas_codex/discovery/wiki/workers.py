@@ -424,7 +424,7 @@ async def ingest_worker(
                 return {
                     "id": page_id,
                     "chunk_count": chunk_count,
-                    "score": page.get("score"),
+                    "score_composite": page.get("score_composite"),
                     "description": page.get("description", ""),
                     "physics_domain": page.get("physics_domain"),
                 }
@@ -617,7 +617,7 @@ async def docs_worker(
                         {
                             "filename": filename,
                             "artifact_type": artifact_type,
-                            "score": document.get("score"),
+                            "score_composite": document.get("score_composite"),
                             "physics_domain": document.get("physics_domain"),
                             "description": document.get("description", ""),
                         }
@@ -648,7 +648,7 @@ async def docs_worker(
                             "chunk_count": 0,
                             "filename": filename,
                             "artifact_type": artifact_type,
-                            "score": document.get("score"),
+                            "score_composite": document.get("score_composite"),
                             "physics_domain": document.get("physics_domain"),
                             "description": document.get("description", ""),
                         }
@@ -705,7 +705,7 @@ async def docs_worker(
                         "chunk_count": stats["chunks"],
                         "filename": filename,
                         "artifact_type": artifact_type,
-                        "score": document.get("score"),
+                        "score_composite": document.get("score_composite"),
                         "physics_domain": document.get("physics_domain"),
                         "description": document.get("description", ""),
                     }

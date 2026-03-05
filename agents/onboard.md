@@ -230,7 +230,7 @@ python("""
 add_to_graph('FacilityPath', [
     {'id': 'myfacility:/common/codes', 'path': '/common/codes',
      'facility_id': 'myfacility', 'path_type': 'code_directory', 
-     'status': 'discovered', 'interest_score': 0.8}
+     'status': 'discovered', 'score_composite': 0.8}
 ])
 """)
 ```

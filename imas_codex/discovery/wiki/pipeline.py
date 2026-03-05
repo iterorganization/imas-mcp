@@ -2,7 +2,7 @@
 
 Processes wiki pages and documents through a deterministic pipeline:
 1. Scan: Discover pages/documents via link traversal (creates nodes with status='scanned')
-2. Score: Agent evaluates interest_score (sets status='scored' or 'skipped')
+2. Score: Agent evaluates score_composite (sets status='scored' or 'skipped')
 3. Ingest: Fetch content, chunk, embed, and link to graph (sets status='ingested')
 
 The pipeline is graph-driven and fully deterministic (no LLM calls during ingestion).
@@ -17,7 +17,7 @@ Example:
 
     # Step 3: Ingest high-score pages (deterministic)
     pipeline = WikiIngestionPipeline(facility_id="tcv")
-    stats = await pipeline.ingest_from_graph(min_interest_score=0.7)
+    stats = await pipeline.ingest_from_graph(min_score_composite=0.7)
     print(f"Created {stats['chunks']} chunks")
 """
 
@@ -71,28 +71,28 @@ class PageIngestionStats(TypedDict):
 def get_pending_wiki_pages(
     facility_id: str,
     limit: int | None = None,
-    min_interest_score: float = 0.5,
+    min_score_composite: float = 0.5,
 ) -> list[dict]:
     """Get wiki pages pending ingestion from the graph.
 
     Returns WikiPage nodes with status='scored' (passed agent evaluation),
-    sorted by interest_score descending.
+    sorted by score_composite descending.
 
     Args:
         facility_id: Facility ID
         limit: Maximum pages to return (None for all)
-        min_interest_score: Minimum interest score threshold
+        min_score_composite: Minimum interest score threshold
 
     Returns:
-        List of page dicts with id, url, title, interest_score
+        List of page dicts with id, url, title, score_composite
     """
     # Build query with optional LIMIT clause
     query = """
         MATCH (wp:WikiPage {facility_id: $facility_id, status: 'scored'})
-        WHERE wp.interest_score >= $min_score
+        WHERE wp.score_composite >= $min_score
         RETURN wp.id AS id, wp.url AS url, wp.title AS title,
-               wp.interest_score AS interest_score
-        ORDER BY wp.interest_score DESC, wp.discovered_at ASC
+               wp.score_composite AS score_composite
+        ORDER BY wp.score_composite DESC, wp.discovered_at ASC
     """
     if limit is not None:
         query += f"LIMIT {limit}"
@@ -101,7 +101,7 @@ def get_pending_wiki_pages(
         result = gc.query(
             query,
             facility_id=facility_id,
-            min_score=min_interest_score,
+            min_score=min_score_composite,
         )
         return [dict(r) for r in result] if result else []
 
@@ -150,29 +150,29 @@ def get_wiki_queue_stats(facility_id: str) -> dict:
 def get_pending_wiki_documents(
     facility_id: str,
     limit: int | None = None,
-    min_interest_score: float = 0.5,
+    min_score_composite: float = 0.5,
 ) -> list[dict]:
     """Get wiki documents pending ingestion from the graph.
 
     Returns WikiDocument nodes with status='scored' (passed agent evaluation),
-    sorted by interest_score descending.
+    sorted by score_composite descending.
 
     Args:
         facility_id: Facility ID
         limit: Maximum documents to return (None for all)
-        min_interest_score: Minimum interest score threshold
+        min_score_composite: Minimum interest score threshold
 
     Returns:
-        List of document dicts with id, url, filename, artifact_type, interest_score
+        List of document dicts with id, url, filename, artifact_type, score_composite
     """
     # Build query with optional LIMIT clause
     query = """
         MATCH (wa:WikiDocument {facility_id: $facility_id, status: 'scored'})
-        WHERE wa.interest_score >= $min_score
+        WHERE wa.score_composite >= $min_score
         RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
                wa.artifact_type AS artifact_type,
-               wa.interest_score AS interest_score
-        ORDER BY wa.interest_score DESC
+               wa.score_composite AS score_composite
+        ORDER BY wa.score_composite DESC
     """
     if limit is not None:
         query += f"LIMIT {limit}"
@@ -181,7 +181,7 @@ def get_pending_wiki_documents(
         result = gc.query(
             query,
             facility_id=facility_id,
-            min_score=min_interest_score,
+            min_score=min_score_composite,
         )
         return [dict(r) for r in result] if result else []
 
@@ -1187,7 +1187,7 @@ class WikiIngestionPipeline:
     async def ingest_from_graph(
         self,
         limit: int | None = None,
-        min_interest_score: float = 0.5,
+        min_score_composite: float = 0.5,
         progress_callback: ProgressCallback | None = None,
         rate_limit: float = 0.5,
     ) -> dict[str, int]:
@@ -1201,7 +1201,7 @@ class WikiIngestionPipeline:
 
         Args:
             limit: Maximum pages to process (None for all)
-            min_interest_score: Minimum interest score threshold
+            min_score_composite: Minimum interest score threshold
             progress_callback: Optional callback for progress updates
             rate_limit: Minimum seconds between requests
 
@@ -1212,7 +1212,7 @@ class WikiIngestionPipeline:
         pending = get_pending_wiki_pages(
             self.facility_id,
             limit=limit,
-            min_interest_score=min_interest_score,
+            min_score_composite=min_score_composite,
         )
 
         if not pending:
@@ -2212,7 +2212,7 @@ class WikiDocumentPipeline:
     async def ingest_from_graph(
         self,
         limit: int | None = None,
-        min_interest_score: float = 0.5,
+        min_score_composite: float = 0.5,
     ) -> dict[str, int]:
         """Ingest documents from the graph queue.
 
@@ -2222,7 +2222,7 @@ class WikiDocumentPipeline:
 
         Args:
             limit: Maximum documents to process (None for all)
-            min_interest_score: Minimum score threshold
+            min_score_composite: Minimum score threshold
 
         Returns:
             Stats dict
@@ -2238,7 +2238,7 @@ class WikiDocumentPipeline:
         pending = get_pending_wiki_documents(
             self.facility_id,
             limit=limit,
-            min_interest_score=min_interest_score,
+            min_score_composite=min_score_composite,
         )
 
         if not pending:

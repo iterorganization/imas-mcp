@@ -556,7 +556,7 @@ classes:
         description: >-
           Content description. Length scales with content type: 1-2 sentences
           for paths and signals, full paragraph for images and schematics.
-      score:
+      score_composite:
         description: >-
           Combined relevance score (0.0-1.0). Computed as
           max(dimension_scores) * purpose_multiplier.

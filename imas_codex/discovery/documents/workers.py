@@ -395,7 +395,7 @@ async def image_score_worker(
                     [
                         {
                             "path": r.get("source_url", r["id"]),
-                            "score": f"{r.get('score', 0):.2f}",
+                            "score": f"{r.get('score_composite', 0):.2f}",
                         }
                         for r in results[:5]
                     ],

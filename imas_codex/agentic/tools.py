@@ -435,14 +435,14 @@ class QueueFilesTool(Tool):
     name = "queue_files"
     description = (
         "Queue source files for ingestion. MUST call this to persist discoveries. "
-        "Set interest_score based on physics value (0.9+ for IMAS, 0.7+ for physics codes)."
+        "Set score_composite based on physics value (0.9+ for IMAS, 0.7+ for physics codes)."
     )
     inputs = {
         "file_paths": {
             "type": "array",
             "description": "List of absolute file paths on the facility",
         },
-        "interest_score": {
+        "score_composite": {
             "type": "number",
             "description": "Priority score 0.0-1.0 (default: 0.7)",
             "nullable": True,
@@ -455,20 +455,20 @@ class QueueFilesTool(Tool):
         self.facility = facility
         self.files_queued: list[str] = []
 
-    def forward(self, file_paths: list[str], interest_score: float = 0.7) -> str:
+    def forward(self, file_paths: list[str], score_composite: float = 0.7) -> str:
         """Queue the files."""
         from imas_codex.ingestion import queue_source_files
 
         if not file_paths:
             return "No files provided"
 
-        print(f"Queueing {len(file_paths)} files with score {interest_score}")
+        print(f"Queueing {len(file_paths)} files with score {score_composite}")
 
         try:
             result = queue_source_files(
                 facility=self.facility,
                 file_paths=file_paths,
-                interest_score=interest_score,
+                score_composite=score_composite,
                 discovered_by="explore_agent",
             )
             self.files_queued.extend(file_paths[: result["discovered"]])

@@ -464,15 +464,15 @@ def _claim_code_files_for_ingestion(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'scored'
-              AND sf.interest_score IS NOT NULL
-              AND sf.interest_score >= $min_score
+              AND sf.score_composite IS NOT NULL
+              AND sf.score_composite >= $min_score
               AND coalesce(sf.line_count, 0) <= $max_line_count
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
-            WITH sf ORDER BY sf.interest_score DESC LIMIT $limit
+            WITH sf ORDER BY sf.score_composite DESC LIMIT $limit
             SET sf.claimed_at = datetime()
             RETURN sf.id AS id, sf.path AS path, sf.language AS language,
-                   sf.interest_score AS interest_score
+                   sf.score_composite AS score_composite
             """,
             facility=facility,
             min_score=min_score,

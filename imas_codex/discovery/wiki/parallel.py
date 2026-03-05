@@ -1024,7 +1024,7 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
         ingest_result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $scored AND wp.score >= 0.5
+            WHERE wp.status = $scored AND wp.score_composite >= 0.5
             RETURN count(wp) AS pending_ingest
             """,
             facility=facility,
@@ -1074,7 +1074,7 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
         document_result = gc.query(
             """
             MATCH (wa:WikiDocument {facility_id: $facility})
-            WITH wa.status AS status, wa.score AS score,
+            WITH wa.status AS status, wa.score_composite AS score,
                  wa.artifact_type AS atype,
                  coalesce(wa.score_exempt, false) AS exempt
             RETURN status, score, atype, exempt, count(*) AS cnt
@@ -1102,8 +1102,8 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             elif (
                 st == WikiDocumentStatus.scored.value
                 and atype in ingestable
-                and r["score"] is not None
-                and r["score"] >= 0.5
+                and r["score_composite"] is not None
+                and r["score_composite"] >= 0.5
             ):
                 pending_document_ingest += r["cnt"]
 

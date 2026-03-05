@@ -811,7 +811,7 @@ classes:
       # Scoring dimensions (LLM-assigned, 0.0-1.0 each)
       # Per-purpose scores aligned with DiscoveryRootCategory taxonomy
       # Enables downstream actors to query specific dimensions
-      score:
+      score_composite:
         description: Composite interest score (0.0-1.0), max of per-purpose scores
         range: float
       score_percentile:
@@ -2580,7 +2580,7 @@ classes:
       discovered_at:
         description: When this file was queued for ingestion
         range: datetime
-      interest_score:
+      score_composite:
         description: >-
           Composite interest score (0.0-1.0, max of per-dimension scores).
         range: float
@@ -2742,8 +2742,8 @@ classes:
       discovered_at:
         description: When this file was discovered
         range: datetime
-      interest_score:
-        description: Interest score (0.0-1.0)
+      score_composite:
+        description: Composite interest score (0.0-1.0)
         range: float
       claimed_at:
         description: Worker coordination timestamp

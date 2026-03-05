@@ -366,7 +366,7 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
             """
             MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WITH cf.status AS status, cf.language AS language,
-                 cf.interest_score AS score
+                 cf.score_composite AS score
             RETURN status, language,
                    count(*) AS count,
                    avg(score) AS avg_score
@@ -441,7 +441,7 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
             """
             MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE cf.status = 'scored'
-              AND cf.interest_score >= 0.75
+              AND cf.score_composite >= 0.75
             RETURN count(cf) AS pending
             """,
             facility=facility,

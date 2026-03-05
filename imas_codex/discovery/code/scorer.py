@@ -309,7 +309,7 @@ class FileScoreResult(BaseModel):
     )
 
     @property
-    def interest_score(self) -> float:
+    def score_composite(self) -> float:
         """Composite = max(dims) * (1 + mean(nonzero_dims)) / 2.
 
         Same breadth-weighted formula as paths and triage.
@@ -679,7 +679,7 @@ def apply_file_scores(
             scored_items.append(
                 {
                     "id": sf_id,
-                    "interest_score": round(result.interest_score, 4),
+                    "score_composite": round(result.score_composite, 4),
                     "score_reason": result.description,
                     "file_category": result.file_category,
                     "score_modeling_code": result.score_modeling_code,
@@ -701,7 +701,7 @@ def apply_file_scores(
                 UNWIND $items AS item
                 MATCH (sf:CodeFile {id: item.id})
                 SET sf.status = 'scored',
-                    sf.interest_score = item.interest_score,
+                    sf.score_composite = item.score_composite,
                     sf.score_reason = item.score_reason,
                     sf.file_category = item.file_category,
                     sf.score_modeling_code = item.score_modeling_code,

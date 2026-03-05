@@ -468,8 +468,8 @@ def _init_repl() -> dict[str, Any]:
                 """
                 MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $fid})
                 WHERE p.status = 'discovered'
-                RETURN p.path AS path, p.interest_score AS score, p.description AS description
-                ORDER BY COALESCE(p.interest_score, 0) DESC
+                RETURN p.path AS path, p.score_composite AS score, p.description AS description
+                ORDER BY COALESCE(p.score_composite, 0) DESC
                 LIMIT 20
                 """,
                 fid=facility,
@@ -537,8 +537,8 @@ def _init_repl() -> dict[str, Any]:
                 """
                 MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $fid})
                 WHERE p.status = 'discovered'
-                RETURN p.path AS path, p.interest_score AS score
-                ORDER BY COALESCE(p.interest_score, 0) DESC
+                RETURN p.path AS path, p.score_composite AS score
+                ORDER BY COALESCE(p.score_composite, 0) DESC
                 LIMIT 5
                 """,
                 fid=facility,
@@ -1402,7 +1402,7 @@ class AgentsServer:
                 add_to_graph("FacilityPath", [
                     {"id": "tcv:/home/codes", "path": "/home/codes",
                      "facility_id": "tcv", "path_type": "code_directory",
-                     "status": "discovered", "interest_score": 0.8}
+                     "status": "discovered", "score_composite": 0.8}
                 ])
             """
             schema = get_schema()

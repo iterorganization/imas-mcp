@@ -193,7 +193,7 @@ class TestDisplayItems:
     def test_triage_item_defaults(self):
         """TriageItem has sensible defaults."""
         item = TriageItem(path="/home/user/code")
-        assert item.score is None
+        assert item.score_composite is None
         assert item.should_expand is True
         assert item.skipped is False
 
@@ -313,7 +313,7 @@ class TestParallelProgressDisplay:
         display.state.pending_triage = 50
         display.state.current_triage = TriageItem(
             path="/home/codes/chease",
-            score=0.85,
+            score_composite=0.85,
             purpose="simulation_code",
             description="Equilibrium solver",
         )
@@ -343,7 +343,7 @@ class TestParallelProgressDisplay:
         display.state.pending_triage = 50
         display.state.current_triage = TriageItem(
             path="/home/codes/tool",
-            score=0.3,
+            score_composite=0.3,
             should_expand=False,
             terminal_reason="low_value_leaf",
         )
