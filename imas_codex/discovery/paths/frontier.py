@@ -279,7 +279,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.terminal_reason = $excluded_reason THEN 1 ELSE 0 END) AS excluded,
                 sum(CASE WHEN p.claimed_at IS NOT NULL THEN 1 ELSE 0 END) AS claimed,
                 sum(CASE WHEN p.status = $triaged AND p.should_expand = true AND p.expanded_at IS NULL THEN 1 ELSE 0 END) AS expansion_ready,
-                sum(CASE WHEN p.status = $triaged AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
+                sum(CASE WHEN p.status = $triaged AND p.should_enrich = true AND p.triage_composite >= 0.15 AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 sum(CASE WHEN p.is_enriched = true THEN 1 ELSE 0 END) AS enriched,
                 sum(CASE WHEN p.status = $triaged THEN 1 ELSE 0 END) AS triaged,
                 sum(CASE WHEN p.is_enriched = true AND p.scored_at IS NULL THEN 1 ELSE 0 END) AS score_ready,
