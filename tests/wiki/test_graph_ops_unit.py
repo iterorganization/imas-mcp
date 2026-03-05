@@ -14,9 +14,9 @@ from neo4j.exceptions import TransientError
 
 from imas_codex.discovery.wiki.graph_ops import (
     CLAIM_TIMEOUT_SECONDS,
-    IMAGE_ARTIFACT_TYPES,
-    INGESTABLE_ARTIFACT_TYPES,
-    SCORABLE_ARTIFACT_TYPES,
+    IMAGE_DOCUMENT_TYPES,
+    INGESTABLE_DOCUMENT_TYPES,
+    SCORABLE_DOCUMENT_TYPES,
     _bulk_create_wiki_documents,
     _bulk_create_wiki_pages,
     retry_on_deadlock,
@@ -34,28 +34,28 @@ class TestTypeClassification:
         """Ingestable types should include text-extractable formats."""
         expected = {
             "pdf",
-            "document",
+            "text_document",
             "presentation",
             "spreadsheet",
             "notebook",
             "json",
         }
-        assert INGESTABLE_ARTIFACT_TYPES == expected
+        assert INGESTABLE_DOCUMENT_TYPES == expected
 
     def test_image_types(self):
         """Image types should only include image."""
-        assert IMAGE_ARTIFACT_TYPES == {"image"}
+        assert IMAGE_DOCUMENT_TYPES == {"image"}
 
     def test_scorable_types(self):
         """Scorable types should be ingestable + metadata-only types."""
-        assert INGESTABLE_ARTIFACT_TYPES.issubset(SCORABLE_ARTIFACT_TYPES)
-        assert "data" in SCORABLE_ARTIFACT_TYPES
-        assert "archive" in SCORABLE_ARTIFACT_TYPES
-        assert "other" in SCORABLE_ARTIFACT_TYPES
+        assert INGESTABLE_DOCUMENT_TYPES.issubset(SCORABLE_DOCUMENT_TYPES)
+        assert "data" in SCORABLE_DOCUMENT_TYPES
+        assert "archive" in SCORABLE_DOCUMENT_TYPES
+        assert "other" in SCORABLE_DOCUMENT_TYPES
 
     def test_images_not_scorable(self):
         """Image types should NOT be scorable (they use VLM pipeline)."""
-        assert IMAGE_ARTIFACT_TYPES.isdisjoint(SCORABLE_ARTIFACT_TYPES)
+        assert IMAGE_DOCUMENT_TYPES.isdisjoint(SCORABLE_DOCUMENT_TYPES)
 
 
 # =============================================================================
@@ -196,7 +196,7 @@ class TestBulkCreateWikiPages:
 # =============================================================================
 
 
-class TestBulkCreateWikiDocuments:
+class TestBulkCreateDocuments:
     """Tests for _bulk_create_wiki_documents with mocked GraphClient."""
 
     def test_creates_documents(self):
@@ -209,13 +209,13 @@ class TestBulkCreateWikiDocuments:
                 "id": "tcv:report.pdf",
                 "filename": "report.pdf",
                 "url": "https://wiki/report.pdf",
-                "artifact_type": "pdf",
+                "document_type": "pdf",
             },
             {
                 "id": "tcv:img.png",
                 "filename": "img.png",
                 "url": "https://wiki/img.png",
-                "artifact_type": "image",
+                "document_type": "image",
             },
         ]
 
@@ -232,7 +232,7 @@ class TestBulkCreateWikiDocuments:
                 "id": "tcv:photo.png",
                 "filename": "photo.png",
                 "url": "https://wiki/photo.png",
-                "artifact_type": "image",
+                "document_type": "image",
             },
         ]
 
@@ -250,7 +250,7 @@ class TestBulkCreateWikiDocuments:
                 "id": "tcv:report.pdf",
                 "filename": "report.pdf",
                 "url": "x",
-                "artifact_type": "pdf",
+                "document_type": "pdf",
             },
         ]
 
@@ -267,7 +267,7 @@ class TestBulkCreateWikiDocuments:
                 "id": "tcv:file.pdf",
                 "filename": "file.pdf",
                 "url": "x",
-                "artifact_type": "pdf",
+                "document_type": "pdf",
                 "linked_pages": ["MainPage", "Reports"],
             },
         ]
@@ -286,7 +286,7 @@ class TestBulkCreateWikiDocuments:
                 "id": "tcv:file.pdf",
                 "filename": "file.pdf",
                 "url": "x",
-                "artifact_type": "pdf",
+                "document_type": "pdf",
             },
         ]
 

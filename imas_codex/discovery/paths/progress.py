@@ -1457,23 +1457,23 @@ def print_discovery_status(
                 if wiki_scored > 0:
                     output(f"│  └─ Awaiting: {wiki_scored:,}")
 
-                # Artifact stats
-                total_artifacts = wiki_stats.get("total_artifacts", 0)
-                if total_artifacts > 0:
-                    art_scored = wiki_stats.get("artifacts_scored", 0)
-                    art_ingested = wiki_stats.get("docs_ingested", 0)
-                    art_pending_score = wiki_stats.get("pending_artifact_score", 0)
-                    art_pending_ingest = wiki_stats.get("pending_artifact_ingest", 0)
+                # Document stats
+                total_documents = wiki_stats.get("total_documents", 0)
+                if total_documents > 0:
+                    doc_scored = wiki_stats.get("documents_scored", 0)
+                    doc_ingested = wiki_stats.get("docs_ingested", 0)
+                    doc_pending_score = wiki_stats.get("pending_document_score", 0)
+                    doc_pending_ingest = wiki_stats.get("pending_document_ingest", 0)
                     # Cumulative: scored includes downstream ingested
-                    cum_art_scored = art_scored + art_ingested
-                    output(f"\nArtifacts: {total_artifacts:,}")
-                    output(f"├─ Scored:    {cum_art_scored:,}")
-                    output(f"│  └─ Ingested: {art_ingested:,}")
-                    if art_pending_score > 0 or art_pending_ingest > 0:
+                    cum_doc_scored = doc_scored + doc_ingested
+                    output(f"\nDocuments: {total_documents:,}")
+                    output(f"├─ Scored:    {cum_doc_scored:,}")
+                    output(f"│  └─ Ingested: {doc_ingested:,}")
+                    if doc_pending_score > 0 or doc_pending_ingest > 0:
                         output(
                             f"└─ Pending:   "
-                            f"score={art_pending_score:,}, "
-                            f"ingest={art_pending_ingest:,}"
+                            f"score={doc_pending_score:,}, "
+                            f"ingest={doc_pending_ingest:,}"
                         )
 
                 output(f"Accumulated cost: ${wiki_cost:.2f}")

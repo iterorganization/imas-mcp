@@ -1,7 +1,7 @@
 """Graph operations for wiki discovery.
 
 Neo4j graph helpers for wiki page and document lifecycle management:
-- Bulk node creation (WikiPage, WikiDocument)
+- Bulk node creation (WikiPage, Document)
 - Work claiming with claim_token pattern
 - Status transitions (mark scored, ingested, failed)
 - Orphan recovery and transient reset
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from neo4j.exceptions import TransientError
 
 from imas_codex.graph import GraphClient
-from imas_codex.graph.models import WikiDocumentStatus, WikiPageStatus
+from imas_codex.graph.models import DocumentStatus, WikiPageStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,13 +36,13 @@ MAX_RETRY_ATTEMPTS = 5
 RETRY_BASE_DELAY = 0.1  # seconds
 RETRY_MAX_DELAY = 2.0  # seconds
 
-# Document type classification using semantic names (matching ArtifactType enum).
+# Document type classification using semantic names (matching DocumentType enum).
 # Adapters produce these names; all downstream code uses them consistently.
 
 # Types we can extract full text from for chunking and embedding
-INGESTABLE_ARTIFACT_TYPES = {
+INGESTABLE_DOCUMENT_TYPES = {
     "pdf",
-    "document",
+    "text_document",
     "presentation",
     "spreadsheet",
     "notebook",
@@ -51,12 +51,12 @@ INGESTABLE_ARTIFACT_TYPES = {
 
 # Types that should become Image nodes (routed to image pipeline, not text extraction).
 # Used by docs_worker for routing; Cypher queries use score_exempt property instead.
-IMAGE_ARTIFACT_TYPES = {"image"}
+IMAGE_DOCUMENT_TYPES = {"image"}
 
 # All types worth scoring via LLM (metadata-only scoring for data/archive/other).
 # Image documents are excluded — they are score_exempt and bypass LLM text scoring,
 # going directly from discovered → ingested via the VLM captioning pipeline.
-SCORABLE_ARTIFACT_TYPES = INGESTABLE_ARTIFACT_TYPES | {
+SCORABLE_DOCUMENT_TYPES = INGESTABLE_DOCUMENT_TYPES | {
     "data",
     "archive",
     "other",
@@ -130,12 +130,12 @@ def _bulk_create_wiki_documents(
     batch_size: int = 500,
     on_progress: Callable | None = None,
 ) -> int:
-    """Create WikiDocument nodes with AT_FACILITY and HAS_DOCUMENT relationships.
+    """Create Document nodes with AT_FACILITY and HAS_DOCUMENT relationships.
 
     Args:
         gc: Open GraphClient
         facility: Facility ID
-        batch_data: List of dicts with id, filename, url, artifact_type,
+        batch_data: List of dicts with id, filename, url, document_type,
                     and optionally size_bytes, mime_type, linked_pages
         batch_size: Nodes per batch
         on_progress: Optional progress callback
@@ -148,7 +148,7 @@ def _bulk_create_wiki_documents(
     # (discovered → ingested) via the VLM captioning pipeline.
     for a in batch_data:
         a.setdefault(
-            "score_exempt", a.get("artifact_type", "").lower() in IMAGE_ARTIFACT_TYPES
+            "score_exempt", a.get("document_type", "").lower() in IMAGE_DOCUMENT_TYPES
         )
 
     created = 0
@@ -158,11 +158,11 @@ def _bulk_create_wiki_documents(
         result = gc.query(
             """
             UNWIND $documents AS a
-            MERGE (wa:WikiDocument {id: a.id})
+            MERGE (wa:Document {id: a.id})
             ON CREATE SET wa.facility_id = $facility,
                           wa.filename = a.filename,
                           wa.url = a.url,
-                          wa.artifact_type = a.artifact_type,
+                          wa.document_type = a.document_type,
                           wa.size_bytes = a.size_bytes,
                           wa.mime_type = a.mime_type,
                           wa.status = $discovered,
@@ -177,7 +177,7 @@ def _bulk_create_wiki_documents(
             """,
             documents=batch,
             facility=facility,
-            discovered=WikiDocumentStatus.discovered.value,
+            discovered=DocumentStatus.discovered.value,
         )
         if result:
             created += result[0]["count"]
@@ -203,7 +203,7 @@ def _bulk_create_wiki_documents(
         gc.query(
             """
             UNWIND $links AS link
-            MATCH (wa:WikiDocument {id: link.document_id})
+            MATCH (wa:Document {id: link.document_id})
             MERGE (wp:WikiPage {id: link.page_id})
             ON CREATE SET wp.facility_id = $facility,
                           wp.status = 'scanned',
@@ -227,7 +227,7 @@ def save_page_file_references(page_id: str, filenames: list[str]) -> None:
 
     Called during page ingestion when HTML contains file/document references.
     The DOC phase uses these references to create HAS_DOCUMENT relationships
-    after WikiDocument nodes are created.
+    after Document nodes are created.
     """
     with GraphClient() as gc:
         gc.query(
@@ -247,7 +247,7 @@ def link_documents_from_page_refs(
 ) -> int:
     """Create HAS_DOCUMENT relationships from stored WikiPage file references.
 
-    After document discovery creates WikiDocument nodes, this function
+    After document discovery creates Document nodes, this function
     matches them against file references extracted during page ingestion
     (stored in WikiPage.referenced_files). This provides document-page
     linking that works regardless of whether the MediaWiki API supports
@@ -261,7 +261,7 @@ def link_documents_from_page_refs(
         MATCH (wp:WikiPage {facility_id: $facility})
         WHERE wp.referenced_files IS NOT NULL
         UNWIND wp.referenced_files AS fn
-        MATCH (wa:WikiDocument {facility_id: $facility})
+        MATCH (wa:Document {facility_id: $facility})
         WHERE wa.filename = fn
         MERGE (wp)-[:HAS_DOCUMENT]->(wa)
         RETURN count(*) AS created
@@ -348,19 +348,19 @@ def has_pending_document_work(facility: str) -> bool:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (wa:WikiDocument {facility_id: $facility})
+            MATCH (wa:Document {facility_id: $facility})
             WHERE (
                 (wa.status = $discovered)
                 OR (wa.status = $scored AND wa.score_composite >= 0.5
-                    AND wa.artifact_type IN $ingestable)
+                    AND wa.document_type IN $ingestable)
               )
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
-            discovered=WikiDocumentStatus.discovered.value,
-            scored=WikiDocumentStatus.scored.value,
-            ingestable=list(INGESTABLE_ARTIFACT_TYPES),
+            discovered=DocumentStatus.discovered.value,
+            scored=DocumentStatus.scored.value,
+            ingestable=list(INGESTABLE_DOCUMENT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -371,22 +371,22 @@ def has_pending_document_score_work(facility: str) -> bool:
 
     Returns True if there are documents with:
     - status = 'discovered'
-    - artifact_type in SCORABLE_ARTIFACT_TYPES
+    - document_type in SCORABLE_DOCUMENT_TYPES
     - claimed_at is null or expired
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (wa:WikiDocument {facility_id: $facility})
+            MATCH (wa:Document {facility_id: $facility})
             WHERE wa.status = $discovered
-              AND wa.artifact_type IN $types
+              AND wa.document_type IN $types
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
-            discovered=WikiDocumentStatus.discovered.value,
-            types=list(SCORABLE_ARTIFACT_TYPES),
+            discovered=DocumentStatus.discovered.value,
+            types=list(SCORABLE_DOCUMENT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -404,19 +404,19 @@ def has_pending_document_ingest_work(facility: str) -> bool:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (wa:WikiDocument {facility_id: $facility})
+            MATCH (wa:Document {facility_id: $facility})
             WHERE (
                 (wa.status = $scored AND wa.score_composite >= 0.5
-                 AND wa.artifact_type IN $types)
+                 AND wa.document_type IN $types)
                 OR (wa.status = $discovered AND wa.score_exempt = true)
               )
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
-            scored=WikiDocumentStatus.scored.value,
-            discovered=WikiDocumentStatus.discovered.value,
-            types=list(INGESTABLE_ARTIFACT_TYPES),
+            scored=DocumentStatus.scored.value,
+            discovered=DocumentStatus.discovered.value,
+            types=list(INGESTABLE_DOCUMENT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -505,7 +505,7 @@ def reset_transient_pages(
     Only claims older than the timeout are considered orphaned.
 
     Delegates to the common claims module for both WikiPage and
-    WikiDocument node types.
+    Document node types.
 
     Args:
         facility: Facility ID
@@ -524,7 +524,7 @@ def reset_transient_pages(
     )
 
     document_reset = reset_stale_claims(
-        "WikiDocument",
+        "Document",
         facility,
         timeout_seconds=timeout,
         silent=True,
@@ -950,7 +950,7 @@ def release_orphaned_claims(facility: str) -> dict[str, int]:
             # Release stale document claims
             result = gc.query(
                 """
-                MATCH (wa:WikiDocument {facility_id: $facility})
+                MATCH (wa:Document {facility_id: $facility})
                 WHERE wa.claimed_at IS NOT NULL
                   AND wa.claimed_at < datetime() - duration($cutoff)
                 SET wa.claimed_at = null
@@ -1044,7 +1044,7 @@ def claim_documents_for_scoring(
 ) -> list[dict[str, Any]]:
     """Claim discovered documents for scoring.
 
-    Claims documents with status='discovered' and any scorable artifact_type.
+    Claims documents with status='discovered' and any scorable document_type.
     Image documents are NOT scored here — they bypass LLM scoring and go
     directly to ingestion via claim_documents_for_ingesting.
 
@@ -1063,9 +1063,9 @@ def claim_documents_for_scoring(
         # Step 1: Attempt to claim documents with our unique token
         gc.query(
             """
-            MATCH (wa:WikiDocument {facility_id: $facility})
+            MATCH (wa:Document {facility_id: $facility})
             WHERE wa.status = $discovered
-              AND wa.artifact_type IN $types
+              AND wa.document_type IN $types
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
             WITH wa
@@ -1074,8 +1074,8 @@ def claim_documents_for_scoring(
             SET wa.claimed_at = datetime(), wa.claim_token = $token
             """,
             facility=facility,
-            discovered=WikiDocumentStatus.discovered.value,
-            types=list(SCORABLE_ARTIFACT_TYPES),
+            discovered=DocumentStatus.discovered.value,
+            types=list(SCORABLE_DOCUMENT_TYPES),
             cutoff=cutoff,
             limit=limit,
             token=claim_token,
@@ -1084,9 +1084,9 @@ def claim_documents_for_scoring(
         # Step 2: Read back only documents WE successfully claimed
         result = gc.query(
             """
-            MATCH (wa:WikiDocument {facility_id: $facility, claim_token: $token})
+            MATCH (wa:Document {facility_id: $facility, claim_token: $token})
             RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
-                   wa.artifact_type AS artifact_type, wa.size_bytes AS size_bytes
+                   wa.document_type AS document_type, wa.size_bytes AS size_bytes
             """,
             facility=facility,
             token=claim_token,
@@ -1133,10 +1133,10 @@ def claim_documents_for_ingesting(
         # Text documents: claim from 'scored' with score >= threshold.
         gc.query(
             """
-            MATCH (wa:WikiDocument {facility_id: $facility})
+            MATCH (wa:Document {facility_id: $facility})
             WHERE (
                 (wa.status = $scored AND wa.score_composite >= $min_score
-                 AND wa.artifact_type IN $types)
+                 AND wa.document_type IN $types)
                 OR (wa.status = $discovered AND wa.score_exempt = true)
               )
               AND (wa.claimed_at IS NULL
@@ -1147,10 +1147,10 @@ def claim_documents_for_ingesting(
             SET wa.claimed_at = datetime(), wa.claim_token = $token
             """,
             facility=facility,
-            scored=WikiDocumentStatus.scored.value,
-            discovered=WikiDocumentStatus.discovered.value,
+            scored=DocumentStatus.scored.value,
+            discovered=DocumentStatus.discovered.value,
             min_score=min_score,
-            types=list(INGESTABLE_ARTIFACT_TYPES),
+            types=list(INGESTABLE_DOCUMENT_TYPES),
             cutoff=cutoff,
             limit=limit,
             token=claim_token,
@@ -1159,9 +1159,9 @@ def claim_documents_for_ingesting(
         # Step 2: Read back only documents WE successfully claimed
         result = gc.query(
             """
-            MATCH (wa:WikiDocument {facility_id: $facility, claim_token: $token})
+            MATCH (wa:Document {facility_id: $facility, claim_token: $token})
             RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
-                   wa.artifact_type AS artifact_type, wa.score_composite AS score,
+                   wa.document_type AS document_type, wa.score_composite AS score,
                    wa.description AS description, wa.physics_domain AS physics_domain
             """,
             facility=facility,
@@ -1200,7 +1200,7 @@ def mark_documents_scored(
             {
                 "id": document_id,
                 "score_composite": r.get("score_composite", 0.0),
-                "artifact_purpose": r.get("artifact_purpose", "other"),
+                "document_purpose": r.get("document_purpose", "other"),
                 "description": r.get("description", "") or "",
                 "reasoning": r.get("reasoning", ""),
                 "keywords": r.get("keywords", []),
@@ -1225,10 +1225,10 @@ def mark_documents_scored(
         gc.query(
             """
             UNWIND $batch AS item
-            MATCH (wa:WikiDocument {id: item.id})
+            MATCH (wa:Document {id: item.id})
             SET wa.status = $status,
                 wa.score_composite = item.score_composite,
-                wa.artifact_purpose = item.artifact_purpose,
+                wa.document_purpose = item.document_purpose,
                 wa.description = item.description,
                 wa.reasoning = item.reasoning,
                 wa.keywords = item.keywords,
@@ -1247,7 +1247,7 @@ def mark_documents_scored(
                 wa.claimed_at = null
             """,
             batch=batch_data,
-            status=WikiDocumentStatus.scored.value,
+            status=DocumentStatus.scored.value,
         )
 
     return len(batch_data)
@@ -1277,14 +1277,14 @@ def mark_documents_ingested(
         gc.query(
             """
             UNWIND $batch AS item
-            MATCH (wa:WikiDocument {id: item.id})
+            MATCH (wa:Document {id: item.id})
             SET wa.status = $ingested,
                 wa.chunk_count = item.chunks,
                 wa.ingested_at = datetime(),
                 wa.claimed_at = null
             """,
             batch=batch_data,
-            ingested=WikiDocumentStatus.ingested.value,
+            ingested=DocumentStatus.ingested.value,
         )
 
     return len(batch_data)
@@ -1296,14 +1296,14 @@ def mark_document_failed(document_id: str, error: str) -> None:
         with GraphClient() as gc:
             gc.query(
                 """
-                MATCH (wa:WikiDocument {id: $id})
+                MATCH (wa:Document {id: $id})
                 SET wa.status = $failed,
                     wa.error = $error,
                     wa.failed_at = datetime(),
                     wa.claimed_at = null
                 """,
                 id=document_id,
-                failed=WikiDocumentStatus.failed.value,
+                failed=DocumentStatus.failed.value,
                 error=error,
             )
     except Exception as e:
@@ -1320,13 +1320,13 @@ def mark_document_deferred(document_id: str, reason: str) -> None:
         with GraphClient() as gc:
             gc.query(
                 """
-                MATCH (wa:WikiDocument {id: $id})
+                MATCH (wa:Document {id: $id})
                 SET wa.status = $deferred,
                     wa.defer_reason = $reason,
                     wa.claimed_at = null
                 """,
                 id=document_id,
-                deferred=WikiDocumentStatus.deferred.value,
+                deferred=DocumentStatus.deferred.value,
                 reason=reason,
             )
     except Exception as e:

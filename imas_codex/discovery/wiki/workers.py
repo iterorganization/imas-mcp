@@ -22,8 +22,8 @@ from imas_codex.graph import GraphClient
 from imas_codex.graph.models import WikiPageStatus
 
 from .graph_ops import (
-    IMAGE_ARTIFACT_TYPES,
-    INGESTABLE_ARTIFACT_TYPES,
+    IMAGE_DOCUMENT_TYPES,
+    INGESTABLE_DOCUMENT_TYPES,
     _release_claimed_images,
     _release_claimed_pages,
     claim_documents_for_ingesting,
@@ -548,13 +548,13 @@ async def docs_worker(
         max_size_mb: Maximum document size in MB
     """
     from imas_codex.discovery.wiki.pipeline import (
-        WikiDocumentPipeline,
+        DocumentPipeline,
         fetch_document_content,
         fetch_document_size,
     )
 
     max_size_bytes = int(max_size_mb * 1024 * 1024)
-    pipeline = WikiDocumentPipeline(
+    pipeline = DocumentPipeline(
         facility_id=state.facility,
         max_size_mb=max_size_mb,
         use_rich=False,
@@ -604,7 +604,7 @@ async def docs_worker(
         results = []
         for document in documents:
             document_id = document["id"]
-            artifact_type = document.get("artifact_type", "unknown")
+            document_type = document.get("document_type", "unknown")
             url = document.get("url", "")
             filename = document.get("filename", "unknown")
 
@@ -616,7 +616,7 @@ async def docs_worker(
                     results=[
                         {
                             "filename": filename,
-                            "artifact_type": artifact_type,
+                            "document_type": document_type,
                             "score_composite": document.get("score_composite"),
                             "physics_domain": document.get("physics_domain"),
                             "description": document.get("description", ""),
@@ -627,13 +627,13 @@ async def docs_worker(
         results = []
         for document in documents:
             document_id = document["id"]
-            artifact_type = document.get("artifact_type", "unknown")
+            document_type = document.get("document_type", "unknown")
             url = document.get("url", "")
             filename = document.get("filename", "unknown")
 
             try:
                 # Route image documents to Image node pipeline
-                if artifact_type.lower() in IMAGE_ARTIFACT_TYPES:
+                if document_type.lower() in IMAGE_DOCUMENT_TYPES:
                     await _ingest_image_document(
                         document_id=document_id,
                         url=url,
@@ -647,7 +647,7 @@ async def docs_worker(
                             "id": document_id,
                             "chunk_count": 0,
                             "filename": filename,
-                            "artifact_type": artifact_type,
+                            "document_type": document_type,
                             "score_composite": document.get("score_composite"),
                             "physics_domain": document.get("physics_domain"),
                             "description": document.get("description", ""),
@@ -673,8 +673,8 @@ async def docs_worker(
                     continue
 
                 # Check if type is text-extractable
-                if artifact_type.lower() not in INGESTABLE_ARTIFACT_TYPES:
-                    reason = f"Document type '{artifact_type}' not text-extractable"
+                if document_type.lower() not in INGESTABLE_DOCUMENT_TYPES:
+                    reason = f"Document type '{document_type}' not text-extractable"
                     logger.debug(
                         "Deferring non-ingestable document %s: %s", filename, reason
                     )
@@ -686,7 +686,7 @@ async def docs_worker(
                     url, facility=state.facility, session=auth_session
                 )
                 stats = await pipeline.ingest_document(
-                    document_id, content, artifact_type
+                    document_id, content, document_type
                 )
 
                 # If pipeline extracted images (PDF/PPTX), create Image nodes
@@ -704,7 +704,7 @@ async def docs_worker(
                         "id": document_id,
                         "chunk_count": stats["chunks"],
                         "filename": filename,
-                        "artifact_type": artifact_type,
+                        "document_type": document_type,
                         "score_composite": document.get("score_composite"),
                         "physics_domain": document.get("physics_domain"),
                         "description": document.get("description", ""),
@@ -830,12 +830,12 @@ async def docs_score_worker(
             document_id = document["id"]
             url = document.get("url", "")
             filename = document.get("filename", "")
-            artifact_type = document.get("artifact_type", "unknown")
+            document_type = document.get("document_type", "unknown")
 
             try:
                 preview_text = await _extract_document_preview(
                     url=url,
-                    artifact_type=artifact_type,
+                    document_type=document_type,
                     facility=state.facility,
                     max_chars=1500,
                     session=auth_session,
@@ -845,7 +845,7 @@ async def docs_score_worker(
                         "id": document_id,
                         "filename": filename,
                         "url": url,
-                        "artifact_type": artifact_type,
+                        "document_type": document_type,
                         "size_bytes": document.get("size_bytes"),
                         "preview_text": preview_text,
                     }
@@ -858,7 +858,7 @@ async def docs_score_worker(
                         "id": document_id,
                         "filename": filename,
                         "url": url,
-                        "artifact_type": artifact_type,
+                        "document_type": document_type,
                         "size_bytes": document.get("size_bytes"),
                         "preview_text": "",
                     }
@@ -873,7 +873,7 @@ async def docs_score_worker(
                 documents_to_score.append(a)
             else:
                 # Generate metadata-only preview from filename and type
-                at = a.get("artifact_type", "unknown")
+                at = a.get("document_type", "unknown")
                 fn = a.get("filename", "unknown")
                 size = a.get("size_bytes")
                 size_str = f" ({size / (1024 * 1024):.1f} MB)" if size else ""
@@ -941,7 +941,7 @@ async def docs_score_worker(
                     gc.query(
                         """
                         UNWIND $ids AS id
-                        MATCH (wa:WikiDocument {id: id})
+                        MATCH (wa:Document {id: id})
                         SET wa.claimed_at = null
                         """,
                         ids=[a["id"] for a in documents],
@@ -958,7 +958,7 @@ async def docs_score_worker(
                     gc.query(
                         """
                         UNWIND $ids AS id
-                        MATCH (wa:WikiDocument {id: id})
+                        MATCH (wa:Document {id: id})
                         SET wa.claimed_at = null
                         """,
                         ids=[a["id"] for a in documents],
@@ -1306,7 +1306,7 @@ async def _ingest_page(
 
         # Extract file/document references from HTML for HAS_DOCUMENT linking.
         # Stored on WikiPage node so DOC phase can create relationships after
-        # WikiDocument nodes are created (DOC runs after INGEST).
+        # Document nodes are created (DOC runs after INGEST).
         if html and chunks > 0:
             try:
                 file_refs = _extract_file_references(html)
@@ -1340,14 +1340,14 @@ async def _ingest_image_document(
     ssh_host: str | None = None,
     session: Any = None,
 ) -> None:
-    """Convert an image-type WikiDocument into an Image node.
+    """Convert an image-type Document into an Image node.
 
     Downloads the image, downsamples to WebP, creates an Image node with
-    status='ingested', and links it to both the WikiDocument (HAS_IMAGE)
+    status='ingested', and links it to both the Document (HAS_IMAGE)
     and any linked WikiPages.
 
     Args:
-        document_id: WikiDocument node ID
+        document_id: Document node ID
         url: Image download URL
         filename: Original filename
         facility: Facility ID
@@ -1378,7 +1378,7 @@ async def _ingest_image_document(
     b64_data, stored_w, stored_h, orig_w, orig_h = result
     image_id = make_image_id(facility, url)
 
-    # Persist Image node and link to WikiDocument + facility
+    # Persist Image node and link to Document + facility
     with GraphClient() as gc:
         gc.query(
             """
@@ -1395,7 +1395,7 @@ async def _ingest_image_document(
                           i.original_height = $orig_h,
                           i.ingested_at = datetime()
             WITH i
-            MATCH (wa:WikiDocument {id: $document_id})
+            MATCH (wa:Document {id: $document_id})
             MERGE (wa)-[:HAS_IMAGE]->(i)
             WITH i
             MATCH (f:Facility {id: $facility})
@@ -1415,7 +1415,7 @@ async def _ingest_image_document(
         # Also link to pages that reference this document
         gc.query(
             """
-            MATCH (wa:WikiDocument {id: $document_id})<-[:HAS_DOCUMENT]-(wp:WikiPage)
+            MATCH (wa:Document {id: $document_id})<-[:HAS_DOCUMENT]-(wp:WikiPage)
             MATCH (i:Image {id: $image_id})
             MERGE (wp)-[:HAS_IMAGE]->(i)
             """,
@@ -1435,11 +1435,11 @@ async def _persist_document_figures(
     """Persist images extracted from PDF/PPTX as Image nodes.
 
     Delegates to the shared ``persist_document_figures`` from base.image,
-    using WikiDocument as the parent label.
+    using Document as the parent label.
 
     Args:
         extracted_images: List from pipeline._extract_pdf_images or _extract_pptx_images
-        document_id: WikiDocument node ID
+        document_id: Document node ID
         document_url: Download URL of the parent document (for re-fetching)
         facility: Facility ID
 
@@ -1452,7 +1452,7 @@ async def _persist_document_figures(
         persist_document_figures,
         extracted_images,
         parent_id=document_id,
-        parent_label="WikiDocument",
+        parent_label="Document",
         facility=facility,
     )
 

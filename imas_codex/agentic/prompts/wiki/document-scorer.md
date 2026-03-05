@@ -1,21 +1,21 @@
 ---
-name: wiki/artifact-scorer
-description: Content-aware scoring of wiki artifacts for IMAS knowledge graph
-used_by: imas_codex.discovery.wiki.parallel.artifact_score_worker
+name: wiki/document-scorer
+description: Content-aware scoring of wiki documents for IMAS knowledge graph
+used_by: imas_codex.discovery.wiki.parallel.document_score_worker
 task: score
 dynamic: true
 ---
 
-You are evaluating wiki artifacts (PDFs, presentations, documents) from a fusion research facility for inclusion in the IMAS knowledge graph.
-Each artifact includes a **content preview** (extracted text from first pages). Use this to make accurate scoring decisions.
+You are evaluating wiki documents (PDFs, presentations, documents) from a fusion research facility for inclusion in the IMAS knowledge graph.
+Each document includes a **content preview** (extracted text from first pages). Use this to make accurate scoring decisions.
 
 ## Task
 
-For each wiki artifact and its content preview, provide:
-1. **Classification** - Select the most appropriate `artifact_purpose` (same categories as wiki pages)
+For each wiki document and its content preview, provide:
+1. **Classification** - Select the most appropriate `document_purpose` (same categories as wiki pages)
 2. **Scores** - Rate each dimension 0.0-1.0 based on content relevance
 3. **Ingestion decision** - Whether to fully download, parse, and embed the content
-4. **Description** - Brief summary of the artifact's value
+4. **Description** - Brief summary of the document's value
 
 {% include "schema/wiki-purposes.md" %}
 
@@ -29,7 +29,7 @@ Each dimension represents a distinct value category. Score dimensions independen
 - **{{ dim.field }}**: {{ dim.description }}
 {% endfor %}
 
-### Artifact-Specific Scoring Principles
+### document-Specific Scoring Principles
 
 **PDF manuals and technical documents are gold.** Facility manuals, diagnostic handbooks, and code documentation PDFs often contain detailed technical information not available elsewhere.
 
@@ -53,9 +53,9 @@ Each dimension represents a distinct value category. Score dimensions independen
 {% if focus %}
 ## Focus Area
 
-Prioritize artifacts related to: **{{ focus }}**
+Prioritize documents related to: **{{ focus }}**
 
-Boost scores by ~0.2 for artifacts matching this focus.
+Boost scores by ~0.2 for documents matching this focus.
 {% endif %}
 
 {% if data_access_patterns %}
@@ -75,7 +75,7 @@ This facility uses **{{ data_access_patterns.primary_method }}** as its primary 
 {% if data_access_patterns.key_tools %}
 **Key tools/APIs:** {{ data_access_patterns.key_tools | join(', ') }}
 
-Artifacts documenting these tools are high-value. Boost `score_data_access` and `score_code_documentation` by ~0.2 when these appear in content.
+documents documenting these tools are high-value. Boost `score_data_access` and `score_code_documentation` by ~0.2 when these appear in content.
 {% endif %}
 
 {% if data_access_patterns.wiki_signal_patterns %}
@@ -84,7 +84,7 @@ Artifacts documenting these tools are high-value. Boost `score_data_access` and 
 - {{ pattern }}
 {% endfor %}
 
-Artifacts matching these patterns contain core signal documentation. Boost `score_data_documentation` accordingly.
+documents matching these patterns contain core signal documentation. Boost `score_data_documentation` accordingly.
 {% endif %}
 
 {% if data_access_patterns.code_import_patterns %}
@@ -93,13 +93,13 @@ Artifacts matching these patterns contain core signal documentation. Boost `scor
 - `{{ pattern }}`
 {% endfor %}
 
-Artifacts containing these code patterns document data access workflows. Boost `score_code_documentation` and `score_data_access`.
+documents containing these code patterns document data access workflows. Boost `score_code_documentation` and `score_data_access`.
 {% endif %}
 {% endif %}
 
 ## Ingestion Decision
 
-Set `should_ingest=true` when the artifact contains content worth embedding for search.
+Set `should_ingest=true` when the document contains content worth embedding for search.
 
 **Always ingest:**
 - Diagnostic manuals and handbooks
@@ -117,4 +117,4 @@ Set `should_ingest=true` when the artifact contains content worth embedding for 
 
 **Ingestion threshold:** Combined score >= 0.5
 
-{% include "schema/artifact-scoring-output.md" %}
+{% include "schema/document-scoring-output.md" %}

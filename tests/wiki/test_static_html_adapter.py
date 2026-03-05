@@ -8,41 +8,41 @@ from imas_codex.discovery.wiki.adapters import (
     DiscoveredDocument,
     DiscoveredPage,
     StaticHtmlAdapter,
-    _get_artifact_type_from_filename,
+    _get_document_type_from_filename,
 )
 
 # ---------------------------------------------------------------------------
-# _get_artifact_type_from_filename
+# _get_document_type_from_filename
 # ---------------------------------------------------------------------------
 
 
-class TestGetArtifactTypeFromFilename:
+class TestGetDocumentTypeFromFilename:
     def test_pdf(self):
-        assert _get_artifact_type_from_filename("manual.pdf") == "pdf"
-        assert _get_artifact_type_from_filename("MANUAL.PDF") == "pdf"
+        assert _get_document_type_from_filename("manual.pdf") == "pdf"
+        assert _get_document_type_from_filename("MANUAL.PDF") == "pdf"
 
     def test_document(self):
-        assert _get_artifact_type_from_filename("report.doc") == "document"
-        assert _get_artifact_type_from_filename("report.docx") == "document"
+        assert _get_document_type_from_filename("report.doc") == "text_document"
+        assert _get_document_type_from_filename("report.docx") == "text_document"
 
     def test_presentation(self):
-        assert _get_artifact_type_from_filename("slides.ppt") == "presentation"
-        assert _get_artifact_type_from_filename("slides.pptx") == "presentation"
+        assert _get_document_type_from_filename("slides.ppt") == "presentation"
+        assert _get_document_type_from_filename("slides.pptx") == "presentation"
 
     def test_spreadsheet(self):
-        assert _get_artifact_type_from_filename("data.xls") == "spreadsheet"
-        assert _get_artifact_type_from_filename("data.xlsx") == "spreadsheet"
+        assert _get_document_type_from_filename("data.xls") == "spreadsheet"
+        assert _get_document_type_from_filename("data.xlsx") == "spreadsheet"
 
     def test_notebook(self):
-        assert _get_artifact_type_from_filename("analysis.ipynb") == "notebook"
+        assert _get_document_type_from_filename("analysis.ipynb") == "notebook"
 
     def test_data_files(self):
-        assert _get_artifact_type_from_filename("output.h5") == "data"
-        assert _get_artifact_type_from_filename("output.hdf5") == "data"
-        assert _get_artifact_type_from_filename("output.mat") == "data"
+        assert _get_document_type_from_filename("output.h5") == "data"
+        assert _get_document_type_from_filename("output.hdf5") == "data"
+        assert _get_document_type_from_filename("output.mat") == "data"
 
     def test_unknown_defaults_to_document(self):
-        assert _get_artifact_type_from_filename("readme.txt") == "document"
+        assert _get_document_type_from_filename("readme.txt") == "text_document"
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ class TestStaticHtmlAdapterDocumentDiscovery:
         assert any("discovered" in m for m in progress_msgs)
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
-    def test_artifact_type_mapping(self, mock_fetch):
+    def test_document_type_mapping(self, mock_fetch):
         """All supported document types are correctly identified."""
         adapter = self._make_adapter()
 
@@ -258,9 +258,9 @@ class TestStaticHtmlAdapterDocumentDiscovery:
                 "test", "https://example.org/docs"
             )
 
-        type_map = {a.filename: a.artifact_type for a in documents}
+        type_map = {a.filename: a.document_type for a in documents}
         assert type_map["a.pdf"] == "pdf"
-        assert type_map["b.docx"] == "document"
+        assert type_map["b.docx"] == "text_document"
         assert type_map["c.pptx"] == "presentation"
         assert type_map["d.xlsx"] == "spreadsheet"
         assert type_map["e.ipynb"] == "notebook"

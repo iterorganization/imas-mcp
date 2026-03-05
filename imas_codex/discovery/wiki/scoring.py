@@ -138,7 +138,7 @@ def batch_ssh_read_files(
 
 async def _extract_document_preview(
     url: str,
-    artifact_type: str,
+    document_type: str,
     facility: str,
     max_chars: int = 1500,
     session: Any = None,
@@ -155,7 +155,7 @@ async def _extract_document_preview(
 
     Args:
         url: Document download URL
-        artifact_type: Type of document (pdf, docx, pptx, xlsx, ipynb)
+        document_type: Type of document (pdf, docx, pptx, xlsx, ipynb)
         facility: Facility ID (for SSH proxy)
         max_chars: Maximum characters to extract
         session: Optional authenticated requests.Session (bypasses SSH)
@@ -174,24 +174,24 @@ async def _extract_document_preview(
         return ""
 
     try:
-        text = _extract_text_from_bytes(content_bytes, artifact_type)
+        text = _extract_text_from_bytes(content_bytes, document_type)
         return text[:max_chars] if text else ""
     except Exception as e:
         logger.debug("Failed to extract text from %s: %s", url, e)
         return ""
 
 
-def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
+def _extract_text_from_bytes(content_bytes: bytes, document_type: str) -> str:
     """Extract text from document bytes based on type.
 
     Lightweight extraction for scoring preview. Does not use LlamaIndex
     to avoid heavyweight dependencies in the scoring path.
 
-    Uses semantic document type names matching ArtifactType enum values.
+    Uses semantic document type names matching DocumentType enum values.
     """
     import io
 
-    at = artifact_type.lower()
+    at = document_type.lower()
 
     if at == "pdf":
         # Extract text from first few pages
@@ -221,7 +221,7 @@ def _extract_text_from_bytes(content_bytes: bytes, artifact_type: str) -> str:
         except Exception:
             return ""
 
-    elif at == "document":
+    elif at == "text_document":
         try:
             from docx import Document as DocxDocument
 
@@ -347,7 +347,7 @@ async def _score_documents_batch(
         lines.append(f"\n## Document {i}")
         lines.append(f"ID: {a['id']}")
         lines.append(f"Filename: {a.get('filename', 'Unknown')}")
-        lines.append(f"Type: {a.get('artifact_type', 'unknown')}")
+        lines.append(f"Type: {a.get('document_type', 'unknown')}")
 
         if a.get("size_bytes"):
             size_mb = a["size_bytes"] / (1024 * 1024)
@@ -494,7 +494,7 @@ async def _score_documents_batch(
             "score_imas_relevance": r.score_imas_relevance,
         }
 
-        combined_score = grounded_document_score(scores, r.artifact_purpose)
+        combined_score = grounded_document_score(scores, r.document_purpose)
 
         # Find the matching document for filename
         matching = next((a for a in documents if a["id"] == r.id), {})
@@ -503,7 +503,7 @@ async def _score_documents_batch(
             {
                 "id": r.id,
                 "score_composite": combined_score,
-                "artifact_purpose": r.artifact_purpose.value,
+                "document_purpose": r.document_purpose.value,
                 "description": r.description,
                 "reasoning": r.reasoning,
                 "keywords": r.keywords[:5],
@@ -519,7 +519,7 @@ async def _score_documents_batch(
                 "score_cost": cost_per_document,
                 # Pass through filename for display
                 "filename": matching.get("filename", ""),
-                "artifact_type": matching.get("artifact_type", ""),
+                "document_type": matching.get("document_type", ""),
             }
         )
 

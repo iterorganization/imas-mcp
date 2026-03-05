@@ -275,7 +275,7 @@ def wiki(
 
         with GraphClient() as _gc:
             _art_result = _gc.query(
-                "MATCH (wa:WikiDocument {facility_id: $f}) RETURN count(wa) AS cnt",
+                "MATCH (wa:Document {facility_id: $f}) RETURN count(wa) AS cnt",
                 f=facility,
             )
             existing_documents = _art_result[0]["cnt"] if _art_result else 0
@@ -317,7 +317,7 @@ def wiki(
             # Per-site document counts
             _art_rows = _gc.query(
                 """
-                MATCH (wa:WikiDocument {facility_id: $f})<-[:HAS_DOCUMENT]-(wp:WikiPage)
+                MATCH (wa:Document {facility_id: $f})<-[:HAS_DOCUMENT]-(wp:WikiPage)
                 WITH wp.url AS url, count(wa) AS cnt
                 RETURN url, cnt
                 """,
@@ -1057,7 +1057,7 @@ def wiki(
                         result_dicts = [
                             {
                                 "filename": r.get("filename", "unknown"),
-                                "artifact_type": r.get("artifact_type", ""),
+                                "document_type": r.get("document_type", ""),
                                 "score": r.get("score"),
                                 "physics_domain": r.get("physics_domain"),
                                 "description": r.get("description", ""),
@@ -1076,7 +1076,7 @@ def wiki(
                         result_dicts = [
                             {
                                 "filename": r.get("filename", "unknown"),
-                                "artifact_type": r.get("artifact_type", ""),
+                                "document_type": r.get("document_type", ""),
                                 "score": r.get("score"),
                                 "physics_domain": r.get("physics_domain"),
                                 "description": r.get("description", ""),

@@ -436,7 +436,7 @@ def format_imas_report(
 def format_fetch_report(chunks: list[dict[str, Any]]) -> str:
     """Format fetched resource chunks into a full-content report.
 
-    Used by the ``fetch`` tool for WikiPage, WikiDocument, and CodeFile
+    Used by the ``fetch`` tool for WikiPage, Document, and CodeFile
     results. Chunks are expected to be pre-sorted by chunk_index.
 
     Args:

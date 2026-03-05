@@ -343,7 +343,7 @@ class DocumentScoreResult(BaseModel):
 
     id: str = Field(description="The document ID (echo from input)")
 
-    artifact_purpose: ContentPurpose = Field(
+    document_purpose: ContentPurpose = Field(
         description="Classification: data_source, diagnostic, code, calibration, "
         "data_access, physics_analysis, experimental_procedure, tutorial, "
         "reference, administrative, personal, other"
@@ -437,7 +437,7 @@ class ScoredDocument:
     id: str
     """Document ID (facility:filename)."""
 
-    artifact_purpose: ContentPurpose
+    document_purpose: ContentPurpose
     """Classified purpose of the document."""
 
     description: str
@@ -488,11 +488,11 @@ class ScoredDocument:
             "score_imas_relevance": result.score_imas_relevance,
         }
 
-        combined = grounded_document_score(scores, result.artifact_purpose)
+        combined = grounded_document_score(scores, result.document_purpose)
 
         return cls(
             id=result.id,
-            artifact_purpose=result.artifact_purpose,
+            document_purpose=result.document_purpose,
             description=result.description,
             score_data_documentation=result.score_data_documentation,
             score_physics_content=result.score_physics_content,
@@ -513,8 +513,8 @@ class ScoredDocument:
         """Convert to dictionary for graph persistence."""
         return {
             "id": self.id,
-            "artifact_purpose": self.artifact_purpose.value,
-            "purpose": self.artifact_purpose.value,
+            "document_purpose": self.document_purpose.value,
+            "purpose": self.document_purpose.value,
             "description": self.description,
             "score_data_documentation": self.score_data_documentation,
             "score_physics_content": self.score_physics_content,

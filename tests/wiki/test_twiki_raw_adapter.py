@@ -197,7 +197,7 @@ class TestTWikiRawAdapterDocuments:
         documents = adapter.bulk_discover_documents("jt-60sa", "")
 
         assert len(documents) == 2
-        types = {a.artifact_type for a in documents}
+        types = {a.document_type for a in documents}
         assert "pdf" in types
 
         # Should link to topic name

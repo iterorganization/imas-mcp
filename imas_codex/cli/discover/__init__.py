@@ -193,7 +193,7 @@ def discover_clear(facility: str, force: bool, domain: str | None) -> None:
 
             with GraphClient() as gc:
                 document_result = gc.query(
-                    "MATCH (wa:WikiDocument {facility_id: $f}) RETURN count(wa) AS cnt",
+                    "MATCH (wa:Document {facility_id: $f}) RETURN count(wa) AS cnt",
                     f=facility,
                 )
                 documents = document_result[0]["cnt"] if document_result else 0

@@ -52,7 +52,7 @@ from imas_codex.discovery.wiki.parallel import (
     run_parallel_wiki_discovery,
 )
 from imas_codex.discovery.wiki.pipeline import (
-    WikiDocumentPipeline,
+    DocumentPipeline,
     WikiIngestionPipeline,
     clear_facility_wiki,
     get_pending_wiki_documents,
@@ -100,7 +100,7 @@ __all__ = [
     "WikiDiscoveryState",
     "run_parallel_wiki_discovery",
     # Ingestion pipeline
-    "WikiDocumentPipeline",
+    "DocumentPipeline",
     "WikiIngestionPipeline",
     "WikiPage",
     # Extraction utilities

@@ -369,7 +369,7 @@ def _fetch(
 
     Supported node types (resolved in order):
     - WikiPage: all chunks in reading order
-    - WikiDocument: all parsed document chunks
+    - Document: all parsed document chunks
     - CodeFile: all code chunks with function names
     - Image: description, OCR text, and source URL
 
@@ -431,9 +431,9 @@ def _fetch_wiki_page(gc: GraphClient, resource: str) -> str | None:
 
 
 def _fetch_wiki_document(gc: GraphClient, resource: str) -> str | None:
-    """Resolve and fetch a WikiDocument by ID, URL, or filename."""
+    """Resolve and fetch a Document by ID, URL, or filename."""
     chunks = gc.query(
-        "MATCH (a:WikiDocument)-[:HAS_CHUNK]->(c:WikiChunk) "
+        "MATCH (a:Document)-[:HAS_CHUNK]->(c:WikiChunk) "
         "WHERE a.id = $resource OR a.url = $resource "
         "   OR toLower(a.filename) CONTAINS toLower($resource) "
         "   OR toLower(a.title) CONTAINS toLower($resource) "
@@ -476,7 +476,7 @@ def _fetch_image(gc: GraphClient, resource: str) -> str | None:
         "MATCH (img:Image) "
         "WHERE img.id = $resource OR img.source_url = $resource "
         "OPTIONAL MATCH (p)-[:HAS_IMAGE]->(img) "
-        "WHERE p:WikiPage OR p:WikiDocument "
+        "WHERE p:WikiPage OR p:Document "
         "RETURN 'image' AS source_type, "
         "coalesce(img.description, img.alt_text, img.filename, 'Untitled') AS title, "
         "img.source_url AS url, img.id AS source_id, "

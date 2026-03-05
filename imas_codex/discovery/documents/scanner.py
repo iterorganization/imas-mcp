@@ -26,7 +26,7 @@ _DOCUMENT_AND_IMAGE_EXTENSIONS: set[str] = set(DOCUMENT_EXTENSIONS) | IMAGE_EXTE
 # Extension → DocumentType mapping
 _EXT_TO_DOCUMENT_TYPE: dict[str, str] = {
     ".pdf": "pdf",
-    ".docx": "spreadsheet",  # Word docs → closer to spreadsheet than presentation
+    ".docx": "text_document",  # Word documents
     ".pptx": "presentation",
     ".xlsx": "spreadsheet",
     ".html": "html",

@@ -19,10 +19,10 @@ import pytest
 class TestExtractTextFromBytes:
     """Tests for _extract_text_from_bytes — document text extraction."""
 
-    def _extract(self, content: bytes, artifact_type: str) -> str:
+    def _extract(self, content: bytes, document_type: str) -> str:
         from imas_codex.discovery.wiki.scoring import _extract_text_from_bytes
 
-        return _extract_text_from_bytes(content, artifact_type)
+        return _extract_text_from_bytes(content, document_type)
 
     def test_notebook_extraction(self):
         """Jupyter notebook cells should be extracted."""

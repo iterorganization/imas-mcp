@@ -45,7 +45,7 @@ class DiscoveredDocument:
 
     filename: str
     url: str
-    artifact_type: str
+    document_type: str
     size_bytes: int | None = None
     mime_type: str | None = None
     # Pages that link to this document (for scoring by association)
@@ -933,12 +933,12 @@ class MediaWikiAdapter(WikiAdapter):
             return None
 
         # Determine document type from extension or mime type
-        artifact_type = self._get_artifact_type(filename, mime)
+        document_type = self._get_document_type(filename, mime)
 
         return DiscoveredDocument(
             filename=filename,
             url=url,
-            artifact_type=artifact_type,
+            document_type=document_type,
             size_bytes=size,
             mime_type=mime,
         )
@@ -1316,7 +1316,7 @@ class MediaWikiAdapter(WikiAdapter):
                     document = DiscoveredDocument(
                         filename=filename,
                         url=url,
-                        artifact_type=self._get_artifact_type(filename),
+                        document_type=self._get_document_type(filename),
                     )
                     documents.append(document)
 
@@ -1347,14 +1347,14 @@ class MediaWikiAdapter(WikiAdapter):
         logger.debug(f"Discovered {len(documents)} documents via HTML scraping")
         return documents
 
-    def _get_artifact_type(self, filename: str, mime: str | None = None) -> str:
+    def _get_document_type(self, filename: str, mime: str | None = None) -> str:
         """Get document type from filename extension or MIME type."""
         filename_lower = filename.lower()
 
         if filename_lower.endswith(".pdf"):
             return "pdf"
         if filename_lower.endswith((".doc", ".docx", ".odt", ".rtf")):
-            return "document"
+            return "text_document"
         if filename_lower.endswith((".ppt", ".pptx", ".key")):
             return "presentation"
         if filename_lower.endswith((".xls", ".xlsx", ".csv")):
@@ -1381,7 +1381,7 @@ class MediaWikiAdapter(WikiAdapter):
             if "presentation" in mime or "powerpoint" in mime:
                 return "presentation"
 
-        return "document"
+        return "text_document"
 
 
 class TWikiAdapter(WikiAdapter):
@@ -1582,7 +1582,7 @@ class TWikiAdapter(WikiAdapter):
 
         for web in self.webs:
             web_pub_path = f"{self._pub_path}/{web}"
-            ext_args = " ".join(f"-e {ext.lstrip('.')}" for ext in _ARTIFACT_EXTENSIONS)
+            ext_args = " ".join(f"-e {ext.lstrip('.')}" for ext in _DOCUMENT_EXTENSIONS)
             cmd = f"fd {ext_args} . {shlex.quote(web_pub_path)}"
 
             if on_progress:
@@ -1625,7 +1625,7 @@ class TWikiAdapter(WikiAdapter):
 
                 topic_name = parts[0]
                 filename = parts[-1]
-                artifact_type = _get_artifact_type_from_filename(filename)
+                document_type = _get_document_type_from_filename(filename)
 
                 # Build web-accessible URL: /twiki/pub/<web>/<topic>/<filename>
                 url_path = f"/twiki/pub/{web}/{rel_path}"
@@ -1635,7 +1635,7 @@ class TWikiAdapter(WikiAdapter):
                 document = DiscoveredDocument(
                     filename=filename,
                     url=document_url,
-                    artifact_type=artifact_type,
+                    document_type=document_type,
                 )
                 document.linked_pages.append(f"{web}/{topic_name}")
                 documents.append(document)
@@ -2076,7 +2076,7 @@ class TWikiStaticAdapter(WikiAdapter):
         Returns:
             List of discovered documents with topic linkage
         """
-        ext_args = " ".join(f"-e {ext.lstrip('.')}" for ext in _ARTIFACT_EXTENSIONS)
+        ext_args = " ".join(f"-e {ext.lstrip('.')}" for ext in _DOCUMENT_EXTENSIONS)
         cmd = f"fd {ext_args} . {shlex.quote(self._pub_path)}"
 
         if on_progress:
@@ -2122,7 +2122,7 @@ class TWikiStaticAdapter(WikiAdapter):
             # First part is the web name, second is the topic
             topic_name = parts[1] if len(parts) >= 3 else parts[0]
             filename = parts[-1]
-            artifact_type = _get_artifact_type_from_filename(filename)
+            document_type = _get_document_type_from_filename(filename)
 
             # Build web-accessible URL: base_url/rsrc/<rel_path>
             document_url = f"{effective_base_url}/rsrc/{rel_path}"
@@ -2130,7 +2130,7 @@ class TWikiStaticAdapter(WikiAdapter):
             document = DiscoveredDocument(
                 filename=filename,
                 url=document_url,
-                artifact_type=artifact_type,
+                document_type=document_type,
             )
             document.linked_pages.append(topic_name)
             documents.append(document)
@@ -2177,7 +2177,7 @@ class TWikiStaticAdapter(WikiAdapter):
                     href = link["href"]
                     href_lower = href.lower()
 
-                    if any(href_lower.endswith(ext) for ext in _ARTIFACT_EXTENSIONS):
+                    if any(href_lower.endswith(ext) for ext in _DOCUMENT_EXTENSIONS):
                         if href.startswith("http"):
                             document_url = href
                         elif href.startswith("/"):
@@ -2192,12 +2192,12 @@ class TWikiStaticAdapter(WikiAdapter):
                         seen_urls.add(document_url)
 
                         filename = document_url.split("/")[-1]
-                        artifact_type = self._get_artifact_type(filename)
+                        document_type = self._get_document_type(filename)
 
                         document = DiscoveredDocument(
                             filename=filename,
                             url=document_url,
-                            artifact_type=artifact_type,
+                            document_type=document_type,
                         )
                         document.linked_pages.append(page.name)
                         documents.append(document)
@@ -2217,16 +2217,16 @@ class TWikiStaticAdapter(WikiAdapter):
 
         return documents
 
-    def _get_artifact_type(self, filename: str) -> str:
+    def _get_document_type(self, filename: str) -> str:
         """Get document type from filename."""
-        return _get_artifact_type_from_filename(filename)
+        return _get_document_type_from_filename(filename)
 
 
 # =============================================================================
 # Shared document discovery helpers
 # =============================================================================
 
-_ARTIFACT_EXTENSIONS = (
+_DOCUMENT_EXTENSIONS = (
     ".pdf",
     ".doc",
     ".docx",
@@ -2365,12 +2365,12 @@ done
         seen_urls.add(document_url)
 
         filename = document_url.split("/")[-1]
-        artifact_type = _get_artifact_type_from_filename(filename)
+        document_type = _get_document_type_from_filename(filename)
 
         document = DiscoveredDocument(
             filename=filename,
             url=document_url,
-            artifact_type=artifact_type,
+            document_type=document_type,
         )
         document.linked_pages.append(page_name)
         documents.append(document)
@@ -2386,17 +2386,17 @@ done
     return documents
 
 
-def _get_artifact_type_from_filename(filename: str) -> str:
+def _get_document_type_from_filename(filename: str) -> str:
     """Get document type from filename extension.
 
     Shared utility for all adapters that discover documents.
-    Returns semantic type names matching ArtifactType enum values.
+    Returns semantic type names matching DocumentType enum values.
     """
     filename_lower = filename.lower()
     if filename_lower.endswith(".pdf"):
         return "pdf"
     if filename_lower.endswith((".doc", ".docx")):
-        return "document"
+        return "text_document"
     if filename_lower.endswith((".ppt", ".pptx")):
         return "presentation"
     if filename_lower.endswith((".xls", ".xlsx")):
@@ -2409,7 +2409,7 @@ def _get_artifact_type_from_filename(filename: str) -> str:
         return "json"
     if filename_lower.endswith((".h5", ".hdf5", ".mat")):
         return "data"
-    return "document"
+    return "text_document"
 
 
 class StaticHtmlAdapter(WikiAdapter):
@@ -2695,7 +2695,7 @@ class StaticHtmlAdapter(WikiAdapter):
                     href = link["href"]
                     href_lower = href.lower()
 
-                    if any(href_lower.endswith(ext) for ext in _ARTIFACT_EXTENSIONS):
+                    if any(href_lower.endswith(ext) for ext in _DOCUMENT_EXTENSIONS):
                         if href.startswith("http"):
                             document_url = href
                         elif href.startswith("/"):
@@ -2711,12 +2711,12 @@ class StaticHtmlAdapter(WikiAdapter):
                         seen_urls.add(document_url)
 
                         filename = document_url.split("/")[-1]
-                        artifact_type = _get_artifact_type_from_filename(filename)
+                        document_type = _get_document_type_from_filename(filename)
 
                         document = DiscoveredDocument(
                             filename=filename,
                             url=document_url,
-                            artifact_type=artifact_type,
+                            document_type=document_type,
                         )
                         document.linked_pages.append(page.name)
                         documents.append(document)
@@ -2989,12 +2989,12 @@ class ConfluenceAdapter(WikiAdapter):
 
                 media_type = att.get("metadata", {}).get("mediaType", "")
                 size = att.get("extensions", {}).get("fileSize", 0)
-                artifact_type = _get_artifact_type_from_filename(att_title)
+                document_type = _get_document_type_from_filename(att_title)
 
                 document = DiscoveredDocument(
                     filename=att_title,
                     url=document_url,
-                    artifact_type=artifact_type,
+                    document_type=document_type,
                     size_bytes=size if size else None,
                     mime_type=media_type if media_type else None,
                 )
@@ -3216,7 +3216,7 @@ class TWikiRawAdapter(WikiAdapter):
         documents: list[DiscoveredDocument] = []
         for filepath in files:
             filename = filepath.rsplit("/", 1)[-1]
-            artifact_type = _get_artifact_type_from_filename(filename)
+            document_type = _get_document_type_from_filename(filename)
 
             # Extract topic name from pub/<web>/<topic>/<filename>
             parts = filepath.replace(self._pub_path + "/", "").split("/")
@@ -3225,7 +3225,7 @@ class TWikiRawAdapter(WikiAdapter):
             document = DiscoveredDocument(
                 filename=filename,
                 url=f"ssh://{self._ssh_host}{filepath}",
-                artifact_type=artifact_type,
+                document_type=document_type,
             )
             if topic_name:
                 document.linked_pages.append(topic_name)

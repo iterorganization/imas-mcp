@@ -73,7 +73,7 @@ class TestWikiHierarchy:
     """Wiki content hierarchy integrity."""
 
     def test_wiki_chunks_have_parent(self, graph_client, label_counts):
-        """Every WikiChunk must have a parent via HAS_CHUNK (WikiPage or WikiDocument)."""
+        """Every WikiChunk must have a parent via HAS_CHUNK (WikiPage or Document)."""
         if not label_counts.get("WikiChunk"):
             pytest.skip("No WikiChunk nodes in graph")
 
@@ -82,22 +82,22 @@ class TestWikiHierarchy:
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
-            f"{count} WikiChunk nodes without parent (WikiPage or WikiDocument)"
+            f"{count} WikiChunk nodes without parent (WikiPage or Document)"
         )
 
     def test_wiki_documents_have_parent_page(self, graph_client, label_counts):
-        """WikiDocuments discovered via page crawling should link to a parent WikiPage.
+        """Documents discovered via page crawling should link to a parent WikiPage.
 
         Bulk-discovered documents (bulk_discovered=true) may not have parent
         page links until page crawling enriches them. Only non-bulk documents
         are expected to have HAS_DOCUMENT relationships.
         """
-        if not label_counts.get("WikiDocument"):
-            pytest.skip("No WikiDocument nodes in graph")
+        if not label_counts.get("Document"):
+            pytest.skip("No Document nodes in graph")
 
         # Check non-bulk documents (should always have parent)
         result = graph_client.query(
-            "MATCH (a:WikiDocument) "
+            "MATCH (a:Document) "
             "WHERE (a.bulk_discovered IS NULL OR a.bulk_discovered = false) "
             "AND NOT (:WikiPage)-[:HAS_DOCUMENT]->(a) "
             "RETURN count(a) AS cnt"
@@ -106,7 +106,7 @@ class TestWikiHierarchy:
 
         # Check overall linkage rate for all documents (informational)
         result = graph_client.query(
-            "MATCH (a:WikiDocument) "
+            "MATCH (a:Document) "
             "RETURN count(a) AS total, "
             "count(CASE WHEN (:WikiPage)-[:HAS_DOCUMENT]->(a) THEN 1 END) AS linked"
         )
@@ -114,7 +114,7 @@ class TestWikiHierarchy:
         linked = result[0]["linked"] if result else 0
 
         assert non_bulk_orphans == 0, (
-            f"{non_bulk_orphans} non-bulk WikiDocument nodes without parent WikiPage. "
+            f"{non_bulk_orphans} non-bulk Document nodes without parent WikiPage. "
             f"Overall: {linked}/{total} documents linked to pages."
         )
 
