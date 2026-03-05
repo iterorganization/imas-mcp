@@ -38,6 +38,7 @@ from .graph_ops import (
     mark_images_scored,
     mark_page_failed,
     mark_pages_ingested,
+    mark_pages_insufficient_content,
     mark_pages_scored,
 )
 from .scoring import (
@@ -231,42 +232,90 @@ async def score_worker(
 
         logger.debug(f"score_worker {worker_id}: fetched {len(fetched_pages)} pages")
 
-        # Step 1b: Separate pages with content from those where fetch failed.
-        # Pages without preview_text cannot be scored meaningfully — release
-        # them back so they can be retried when the server is responsive.
+        # Step 1b: Separate pages into three categories:
+        # 1) pages_with_content: have preview_text → score with LLM
+        # 2) fetch_failed: no preview_text AND has fetch_error → release for retry
+        # 3) empty_content: no preview_text AND no fetch_error → page was
+        #    fetched successfully but has no useful content (e.g. MediaWiki
+        #    system pages, empty stubs).  These get score=0 / skipped.
         pages_with_content = [p for p in fetched_pages if p.get("preview_text")]
-        pages_no_content = [p for p in fetched_pages if not p.get("preview_text")]
+        fetch_failed = [
+            p
+            for p in fetched_pages
+            if not p.get("preview_text") and p.get("fetch_error")
+        ]
+        empty_content = [
+            p
+            for p in fetched_pages
+            if not p.get("preview_text") and not p.get("fetch_error")
+        ]
 
-        # Track fetch outcomes for wiki overwhelm detection
-        state.record_fetch_batch(len(fetched_pages), len(pages_with_content))
+        # Track fetch outcomes for wiki overwhelm detection —
+        # only count genuine fetch errors, not empty-content pages
+        state.record_fetch_batch(
+            len(fetched_pages), len(pages_with_content) + len(empty_content)
+        )
 
-        if pages_no_content:
+        if fetch_failed:
             logger.info(
-                "score_worker %s: %d/%d pages had no content (fetch failed), "
-                "releasing for retry",
+                "score_worker %s: %d/%d pages had fetch errors, releasing for retry",
                 worker_id,
-                len(pages_no_content),
+                len(fetch_failed),
                 len(fetched_pages),
             )
             await asyncio.to_thread(
-                _release_claimed_pages, [p["id"] for p in pages_no_content]
+                _release_claimed_pages, [p["id"] for p in fetch_failed]
             )
+
+        if empty_content:
+            # Pages that were fetched OK but have no useful content —
+            # mark as skipped with score 0 so they don't cycle forever
+            logger.info(
+                "score_worker %s: %d/%d pages fetched OK but empty, marking as skipped",
+                worker_id,
+                len(empty_content),
+                len(fetched_pages),
+            )
+            skip_results = [
+                {
+                    "id": p["id"],
+                    "score_composite": 0.0,
+                    "purpose": "empty",
+                    "description": "",
+                    "reasoning": "Page fetched successfully but contains no text content",
+                    "keywords": [],
+                    "physics_domain": None,
+                    "preview_text": "(empty page)",
+                    "score_data_documentation": 0.0,
+                    "score_physics_content": 0.0,
+                    "score_code_documentation": 0.0,
+                    "score_data_access": 0.0,
+                    "score_calibration": 0.0,
+                    "score_imas_relevance": 0.0,
+                    "should_ingest": False,
+                    "skip_reason": "empty_content",
+                    "is_physics": False,
+                    "score_cost": 0.0,
+                }
+                for p in empty_content
+            ]
+            await asyncio.to_thread(mark_pages_scored, state.facility, skip_results)
+            state.score_stats.processed += len(empty_content)
 
         if not pages_with_content:
             logger.debug(
                 f"score_worker {worker_id}: no pages with content, skipping LLM"
             )
-            # All fetches failed — wiki may be overwhelmed or connectivity down.
-            # Check wiki overwhelm first (exponential backoff + probe), then
-            # fall back to service monitor for infrastructure-level issues.
-            if state.wiki_overwhelmed:
-                if on_progress:
-                    on_progress("wiki overwhelmed — backing off", state.score_stats)
-                await state.await_wiki_recovery()
-            elif state.service_monitor and not state.service_monitor.all_healthy:
-                if on_progress:
-                    on_progress("paused", state.score_stats)
-                await state.service_monitor.await_services_ready()
+            # If there were genuine fetch failures, check wiki overwhelm
+            if fetch_failed:
+                if state.wiki_overwhelmed:
+                    if on_progress:
+                        on_progress("wiki overwhelmed — backing off", state.score_stats)
+                    await state.await_wiki_recovery()
+                elif state.service_monitor and not state.service_monitor.all_healthy:
+                    if on_progress:
+                        on_progress("paused", state.score_stats)
+                    await state.service_monitor.await_services_ready()
             continue
 
         if on_progress:
@@ -502,19 +551,17 @@ async def ingest_worker(
         # Filter out None results (failed pages)
         results = [r for r in results_raw if r is not None]
 
-        # Track fetch outcomes for wiki overwhelm detection.
-        # Pages that produced 0 chunks (empty_page_ids) are transient
-        # failures — release them for retry instead of permanent failure.
-        successful = len(results)
-        failed = len(empty_page_ids)
-        state.record_fetch_batch(successful + failed, successful)
-
+        # Pages that produced 0 chunks (empty_page_ids) are permanently
+        # uningestable — they have some preview text but not enough full
+        # content for useful chunking.  Mark as skipped so they don't
+        # cycle through failed → recovered → claimed → 0 chunks forever.
         if empty_page_ids:
-            logger.warning(
-                "Releasing %d empty pages for retry (wiki may be overwhelmed)",
+            logger.info(
+                "Marking %d pages as skipped (insufficient content for chunking)",
                 len(empty_page_ids),
             )
-            await asyncio.to_thread(_release_claimed_pages, empty_page_ids)
+            await asyncio.to_thread(mark_pages_insufficient_content, empty_page_ids)
+            state.ingest_stats.processed += len(empty_page_ids)
             empty_page_ids.clear()
 
         # Run blocking Neo4j call in thread pool

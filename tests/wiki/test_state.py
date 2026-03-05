@@ -45,8 +45,8 @@ class TestShouldStop:
         """All idle + no pending work -> should stop."""
         _set_all_idle(state)
         mock_ops = mock_graph_ops.return_value
-        mock_ops.has_pending_work.return_value = False
-        mock_ops.has_pending_document_work.return_value = False
+        mock_ops.has_remaining_work.return_value = False
+        mock_ops.has_remaining_document_work.return_value = False
         mock_ops.has_pending_image_work.return_value = False
 
         assert state.should_stop() is True
@@ -139,14 +139,14 @@ class TestShouldStop:
         mock_ops.has_pending_ingest_work.return_value = False
         mock_ops.has_pending_document_ingest_work.return_value = False
         # These should NOT be called when budget is exhausted:
-        mock_ops.has_pending_work.return_value = True  # 12K scanned pages
+        mock_ops.has_remaining_work.return_value = True  # 12K scanned pages
         mock_ops.has_pending_image_work.return_value = True  # VLM pending
 
         assert state.should_stop() is True
         # Verify LLM pending work checks were NOT called
-        mock_ops.has_pending_work.assert_not_called()
+        mock_ops.has_remaining_work.assert_not_called()
         mock_ops.has_pending_image_work.assert_not_called()
-        mock_ops.has_pending_document_work.assert_not_called()
+        mock_ops.has_remaining_document_work.assert_not_called()
 
     @patch("imas_codex.discovery.wiki.state._get_graph_ops")
     def test_no_budget_resets_all_idle_on_pending(self, mock_graph_ops, state):
@@ -156,8 +156,8 @@ class TestShouldStop:
         assert state.budget_exhausted is False
 
         mock_ops = mock_graph_ops.return_value
-        mock_ops.has_pending_work.return_value = True
-        mock_ops.has_pending_document_work.return_value = False
+        mock_ops.has_remaining_work.return_value = True
+        mock_ops.has_remaining_document_work.return_value = False
         mock_ops.has_pending_image_work.return_value = False
 
         assert state.should_stop() is False
