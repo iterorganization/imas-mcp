@@ -366,7 +366,13 @@ class WikiDiscoveryState:
             url = self.base_url
 
             # Check for in-flight work — pages claimed by active workers.
-            if graph_ops.has_active_claims(self.facility, base_url=url):
+            # Skip when limit_done: LLM workers have already exited, so
+            # any remaining claims are from completed batches that will
+            # time out.  Resetting phases here would deadlock because
+            # the exited workers can never call record_idle() again.
+            if not limit_done and graph_ops.has_active_claims(
+                self.facility, base_url=url
+            ):
                 self.score_phase.record_activity()
                 self.ingest_phase.record_activity()
                 return False
@@ -770,10 +776,14 @@ class WikiDiscoveryState:
             graph_ops = _get_graph_ops()
             url = self.base_url
 
-            # Check for in-flight work first — pages that are claimed
-            # and being actively processed by workers.  has_pending_work
-            # deliberately excludes these, so we need a separate check.
-            if graph_ops.has_active_claims(self.facility, base_url=url):
+            # Check for in-flight work — pages claimed by active workers.
+            # Skip when limit_done: LLM workers have already exited, so
+            # any remaining claims are from completed batches that will
+            # time out.  Resetting phases here would deadlock because
+            # the exited workers can never call record_idle() again.
+            if not limit_done and graph_ops.has_active_claims(
+                self.facility, base_url=url
+            ):
                 self.score_phase.record_activity()
                 self.ingest_phase.record_activity()
                 return False
