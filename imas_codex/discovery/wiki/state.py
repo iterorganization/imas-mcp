@@ -333,9 +333,12 @@ class WikiDiscoveryState:
         the main loop doesn't hang waiting for phases that can never idle.
         I/O workers (ingest, document) continue draining their queues normally.
 
-        Uses ``has_remaining_*`` (not ``has_pending_*``) for the graph
-        check to include actively-claimed in-flight work.  This prevents
-        premature shutdown while a worker is still processing its batch.
+        Uses ``has_pending_*`` with ``base_url`` scoping so each site's
+        workers only consider pages belonging to their own site.  The
+        ``claimed_at`` filter in ``has_pending_*`` correctly excludes
+        in-flight pages within the site, preventing double-claiming
+        while still allowing the stop condition to fire when no more
+        unclaimed work exists for this site.
         """
         if self.stop_requested:
             return True
@@ -362,28 +365,31 @@ class WikiDiscoveryState:
             and image_done
         )
         if all_idle:
-            # Check for remaining work (including in-flight claimed pages).
+            # Check for pending work scoped to this site's base_url.
             # When limits are hit only check I/O queues — LLM-dependent
             # pending work cannot be processed.
             # In score_only mode, no ingest workers run so skip I/O checks.
             graph_ops = _get_graph_ops()
+            url = self.base_url
             if self.score_only:
                 # No ingest workers — pending ingest work is expected and
                 # irrelevant.  Only check if LLM workers still have work.
                 if limit_done:
                     has_work = False
                 else:
-                    has_work = graph_ops.has_remaining_work(
-                        self.facility
+                    has_work = graph_ops.has_pending_work(
+                        self.facility, base_url=url
                     ) or graph_ops.has_pending_image_work(self.facility)
             elif limit_done:
                 has_work = graph_ops.has_pending_ingest_work(
-                    self.facility
-                ) or graph_ops.has_pending_document_ingest_work(self.facility)
+                    self.facility, base_url=url
+                ) or graph_ops.has_pending_document_ingest_work(
+                    self.facility, base_url=url
+                )
             else:
                 has_work = (
-                    graph_ops.has_remaining_work(self.facility)
-                    or graph_ops.has_remaining_document_work(self.facility)
+                    graph_ops.has_pending_work(self.facility, base_url=url)
+                    or graph_ops.has_pending_document_work(self.facility, base_url=url)
                     or graph_ops.has_pending_image_work(self.facility)
                 )
 
@@ -461,7 +467,7 @@ class WikiDiscoveryState:
                 or self.page_limit_reached
             )
             if scoring_done and not _get_graph_ops().has_pending_ingest_work(
-                self.facility
+                self.facility, base_url=self.base_url
             ):
                 return True
         return False
@@ -487,7 +493,7 @@ class WikiDiscoveryState:
                 or self.provider_budget_exhausted
             )
             if scoring_done and not _get_graph_ops().has_pending_document_ingest_work(
-                self.facility
+                self.facility, base_url=self.base_url
             ):
                 return True
         return False
@@ -736,10 +742,10 @@ class WikiDiscoveryState:
         the per-site supervision loop can advance to the next site
         without waiting for slow downstream VLM processing.
 
-        Uses ``has_remaining_*`` (not ``has_pending_*``) for the graph
-        check to include actively-claimed in-flight work.  Without this,
-        the stop condition fires as soon as a worker claims all available
-        pages — cancelling the worker before it finishes processing.
+        Uses ``has_pending_*`` with ``base_url`` scoping so the site
+        loop only considers pages from the current site.  Claimed pages
+        within this site are correctly excluded, allowing the site loop
+        to advance once all pages are either claimed or processed.
         """
         if self.stop_requested:
             return True
@@ -762,19 +768,22 @@ class WikiDiscoveryState:
         )
         if all_idle:
             graph_ops = _get_graph_ops()
+            url = self.base_url
             if self.score_only:
                 if limit_done:
                     has_work = False
                 else:
-                    has_work = graph_ops.has_remaining_work(self.facility)
+                    has_work = graph_ops.has_pending_work(self.facility, base_url=url)
             elif limit_done:
                 has_work = graph_ops.has_pending_ingest_work(
-                    self.facility
-                ) or graph_ops.has_pending_document_ingest_work(self.facility)
+                    self.facility, base_url=url
+                ) or graph_ops.has_pending_document_ingest_work(
+                    self.facility, base_url=url
+                )
             else:
-                has_work = graph_ops.has_remaining_work(
-                    self.facility
-                ) or graph_ops.has_remaining_document_work(self.facility)
+                has_work = graph_ops.has_pending_work(
+                    self.facility, base_url=url
+                ) or graph_ops.has_pending_document_work(self.facility, base_url=url)
 
             if has_work:
                 if limit_done:
