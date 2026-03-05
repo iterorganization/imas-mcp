@@ -845,6 +845,24 @@ def wiki(
                         wiki_logger.info("Time limit reached, skipping remaining sites")
                         break
 
+                    # Skip sites with no pending work (idempotent restart)
+                    from imas_codex.discovery.wiki.graph_ops import (
+                        has_pending_document_work as _has_doc_work,
+                        has_pending_work as _has_page_work,
+                    )
+
+                    site_url = sc["base_url"]
+                    if not _has_page_work(
+                        _facility, base_url=site_url
+                    ) and not _has_doc_work(_facility, base_url=site_url):
+                        wiki_logger.info(
+                            "Skipping site %d/%d (no pending work): %s",
+                            i + 1,
+                            len(_site_configs),
+                            site_url,
+                        )
+                        continue
+
                     wiki_logger.info(
                         "Processing site %d/%d: %s",
                         i + 1,
@@ -1173,6 +1191,24 @@ def wiki(
                             break
                         if _deadline is not None and time.time() >= _deadline:
                             break
+
+                        # Skip sites with no pending work (idempotent restart)
+                        from imas_codex.discovery.wiki.graph_ops import (
+                            has_pending_document_work as _has_doc_work_r,
+                            has_pending_work as _has_page_work_r,
+                        )
+
+                        site_url = sc["base_url"]
+                        if not _has_page_work_r(
+                            _facility, base_url=site_url
+                        ) and not _has_doc_work_r(_facility, base_url=site_url):
+                            wiki_logger.info(
+                                "Skipping site %d/%d (no pending work): %s",
+                                i + 1,
+                                len(_site_configs),
+                                site_url,
+                            )
+                            continue
 
                         try:
                             result = await run_parallel_wiki_discovery(

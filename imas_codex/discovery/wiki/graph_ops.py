@@ -63,6 +63,48 @@ SCORABLE_DOCUMENT_TYPES = INGESTABLE_DOCUMENT_TYPES | {
 }
 
 
+def _document_url_filter(base_url: str | None) -> str:
+    """Build a Cypher URL filter for document queries.
+
+    Matches documents by linked WikiPage URL OR by the document's own URL.
+    Bulk-discovered documents may not have a HAS_DOCUMENT relationship to
+    any WikiPage, so filtering only on linked page URLs leaves them orphaned.
+
+    Uses scheme-agnostic comparison because some documents were discovered
+    with ``http://`` URLs while site base URLs use ``https://``.
+    """
+    if not base_url:
+        return ""
+    # Build both http:// and https:// variants so STARTS WITH catches either scheme
+    return (
+        "AND (wa.url STARTS WITH $base_url OR wa.url STARTS WITH $base_url_alt"
+        " OR EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage)"
+        " WHERE wp.url STARTS WITH $base_url })"
+    )
+
+
+def _base_url_params(base_url: str | None) -> dict[str, str]:
+    """Return Cypher parameters for scheme-agnostic URL matching.
+
+    Produces ``base_url`` (as-is) and ``base_url_alt`` (opposite scheme)
+    so that ``STARTS WITH`` filters match documents regardless of whether
+    they were discovered with ``http://`` or ``https://``.
+
+    Ensures trailing ``/`` on both variants to prevent prefix collisions
+    (e.g. ``tf`` matching ``tfe``).
+    """
+    if not base_url:
+        return {}
+    url = base_url.rstrip("/") + "/"
+    if url.startswith("https://"):
+        alt = "http://" + url[len("https://") :]
+    elif url.startswith("http://"):
+        alt = "https://" + url[len("http://") :]
+    else:
+        alt = url
+    return {"base_url": url, "base_url_alt": alt}
+
+
 def create_doc_source(
     gc: GraphClient,
     facility: str,
@@ -405,15 +447,11 @@ def has_pending_document_work(facility: str, *, base_url: str | None = None) -> 
     - status = 'scored' AND score >= 0.5 AND ingestable type (needs ingestion)
 
     Uses ``claimed_at`` filter for multi-worker coordination.
-    When ``base_url`` is provided, only counts documents linked to pages
-    matching the site URL prefix.
+    When ``base_url`` is provided, matches documents by linked page URL
+    OR by the document's own URL (for bulk-discovered unlinked documents).
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
-    url_filter = (
-        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
-        if base_url
-        else ""
-    )
+    url_filter = _document_url_filter(base_url)
     with GraphClient() as gc:
         params: dict = {
             "facility": facility,
@@ -422,8 +460,7 @@ def has_pending_document_work(facility: str, *, base_url: str | None = None) -> 
             "ingestable": list(INGESTABLE_DOCUMENT_TYPES),
             "cutoff": cutoff,
         }
-        if base_url:
-            params["base_url"] = base_url
+        params.update(_base_url_params(base_url))
         result = gc.query(
             f"""
             MATCH (wa:Document {{facility_id: $facility}})
@@ -450,15 +487,11 @@ def has_pending_document_score_work(
     - document_type in SCORABLE_DOCUMENT_TYPES
 
     Uses ``claimed_at`` filter for multi-worker coordination.
-    When ``base_url`` is provided, only counts documents linked to pages
-    matching the site URL prefix.
+    When ``base_url`` is provided, matches documents by linked page URL
+    OR by the document's own URL (for bulk-discovered unlinked documents).
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
-    url_filter = (
-        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
-        if base_url
-        else ""
-    )
+    url_filter = _document_url_filter(base_url)
     with GraphClient() as gc:
         params: dict = {
             "facility": facility,
@@ -466,8 +499,7 @@ def has_pending_document_score_work(
             "types": list(SCORABLE_DOCUMENT_TYPES),
             "cutoff": cutoff,
         }
-        if base_url:
-            params["base_url"] = base_url
+        params.update(_base_url_params(base_url))
         result = gc.query(
             f"""
             MATCH (wa:Document {{facility_id: $facility}})
@@ -493,15 +525,11 @@ def has_pending_document_ingest_work(
     - status = 'discovered' AND score_exempt = true (bypass LLM scoring)
 
     Uses ``claimed_at`` filter for multi-worker coordination.
-    When ``base_url`` is provided, only counts documents linked to pages
-    matching the site URL prefix.
+    When ``base_url`` is provided, matches documents by linked page URL
+    OR by the document's own URL (for bulk-discovered unlinked documents).
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
-    url_filter = (
-        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
-        if base_url
-        else ""
-    )
+    url_filter = _document_url_filter(base_url)
     with GraphClient() as gc:
         params: dict = {
             "facility": facility,
@@ -510,8 +538,7 @@ def has_pending_document_ingest_work(
             "types": list(INGESTABLE_DOCUMENT_TYPES),
             "cutoff": cutoff,
         }
-        if base_url:
-            params["base_url"] = base_url
+        params.update(_base_url_params(base_url))
         result = gc.query(
             f"""
             MATCH (wa:Document {{facility_id: $facility}})
@@ -951,7 +978,7 @@ def mark_pages_scored(
             "id": page_id,
             "score_composite": r.get("score_composite", 0.0),
             "purpose": r.get("purpose", r.get("page_purpose", "other")),
-            "description": r.get("description", "") or "",
+            "description": r.get("description") or None,
             "reasoning": r.get("reasoning", ""),
             "keywords": r.get("keywords", []),
             "physics_domain": r.get("physics_domain"),
@@ -1461,18 +1488,14 @@ def claim_documents_for_scoring(
     After scoring: update status to 'scored' and set score/description/physics_domain.
 
     Uses claim token pattern to handle race conditions between workers.
-    When ``base_url`` is provided, only claims documents linked to pages
-    matching the site URL prefix.
+    When ``base_url`` is provided, matches documents by linked page URL
+    OR by the document's own URL (for bulk-discovered unlinked documents).
     """
     import uuid
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(uuid.uuid4())
-    url_filter = (
-        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
-        if base_url
-        else ""
-    )
+    url_filter = _document_url_filter(base_url)
 
     with GraphClient() as gc:
         params: dict = {
@@ -1483,8 +1506,7 @@ def claim_documents_for_scoring(
             "limit": limit,
             "token": claim_token,
         }
-        if base_url:
-            params["base_url"] = base_url
+        params.update(_base_url_params(base_url))
         # Step 1: Attempt to claim documents with our unique token
         gc.query(
             f"""
@@ -1544,18 +1566,14 @@ def claim_documents_for_ingesting(
     Data/archive types are scored but never claimed for ingestion.
 
     Uses claim token pattern to handle race conditions between workers.
-    When ``base_url`` is provided, only claims documents linked to pages
-    matching the site URL prefix.
+    When ``base_url`` is provided, matches documents by linked page URL
+    OR by the document's own URL (for bulk-discovered unlinked documents).
     """
     import uuid
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(uuid.uuid4())
-    url_filter = (
-        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
-        if base_url
-        else ""
-    )
+    url_filter = _document_url_filter(base_url)
 
     with GraphClient() as gc:
         params: dict = {
@@ -1568,8 +1586,7 @@ def claim_documents_for_ingesting(
             "limit": limit,
             "token": claim_token,
         }
-        if base_url:
-            params["base_url"] = base_url
+        params.update(_base_url_params(base_url))
         # Step 1: Attempt to claim documents with our unique token.
         # Score-exempt documents: claim from 'discovered' (bypass LLM scoring).
         # Text documents: claim from 'scored' with score >= threshold.
@@ -1637,7 +1654,7 @@ def mark_documents_scored(
                 "id": document_id,
                 "score_composite": r.get("score_composite", 0.0),
                 "document_purpose": r.get("document_purpose", "other"),
-                "description": r.get("description", "") or "",
+                "description": r.get("description") or None,
                 "reasoning": r.get("reasoning", ""),
                 "keywords": r.get("keywords", []),
                 "physics_domain": r.get("physics_domain"),
