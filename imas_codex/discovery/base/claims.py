@@ -69,7 +69,8 @@ def reset_stale_claims(
             f"""
             MATCH (n:{label} {{{facility_field}: $facility}})
             WHERE n.{claimed_field} IS NOT NULL
-              AND n.{claimed_field} < datetime() - duration($cutoff)
+              AND (n.{claimed_field} < datetime() - duration($cutoff)
+                   OR n.{claimed_field} > datetime())
             SET n.{claimed_field} = null
             RETURN count(n) AS reset_count
             """,

@@ -110,7 +110,7 @@ class TestScorePagesHeuristic:
         ]
         results = self._score(pages)
         assert len(results) == 1
-        assert results[0]["score"] == 0.5
+        assert results[0]["score_composite"] == 0.5
 
     def test_physics_keyword_boost(self):
         """Physics keywords in title should boost score."""
@@ -122,7 +122,7 @@ class TestScorePagesHeuristic:
             },
         ]
         results = self._score(pages)
-        assert results[0]["score"] > 0.5
+        assert results[0]["score_composite"] > 0.5
 
     def test_multiple_physics_keywords(self):
         """Multiple physics keywords should compound the boost."""
@@ -135,7 +135,7 @@ class TestScorePagesHeuristic:
         ]
         results = self._score(pages)
         # Multiple keywords: equilibrium, diagnostic, calibration, mhd, thomson
-        assert results[0]["score"] > 0.7
+        assert results[0]["score_composite"] > 0.7
 
     def test_low_value_keyword_penalty(self):
         """Low-value keywords should reduce score."""
@@ -143,7 +143,7 @@ class TestScorePagesHeuristic:
             {"id": "tcv:MeetingNotes", "title": "Meeting Notes Draft", "summary": ""},
         ]
         results = self._score(pages)
-        assert results[0]["score"] < 0.5
+        assert results[0]["score_composite"] < 0.5
 
     def test_physics_flag(self):
         """is_physics should be True when score >= 0.6."""
@@ -172,7 +172,7 @@ class TestScorePagesHeuristic:
             "code_import_patterns": ["import ppf"],
         }
         results = self._score(pages, data_access_patterns=patterns)
-        assert results[0]["score"] > 0.5
+        assert results[0]["score_composite"] > 0.5
         assert "facility data access" in results[0]["reasoning"]
 
     def test_summary_keyword_matching(self):
@@ -185,7 +185,7 @@ class TestScorePagesHeuristic:
             },
         ]
         results = self._score(pages)
-        assert results[0]["score"] > 0.5
+        assert results[0]["score_composite"] > 0.5
 
     def test_score_clamping(self):
         """Scores should be clamped to [0.0, 1.0]."""
@@ -198,7 +198,7 @@ class TestScorePagesHeuristic:
             },
         ]
         results = self._score(pages)
-        assert results[0]["score"] <= 1.0
+        assert results[0]["score_composite"] <= 1.0
 
         # Many low-value keywords
         pages = [
@@ -209,7 +209,7 @@ class TestScorePagesHeuristic:
             },
         ]
         results = self._score(pages)
-        assert results[0]["score"] >= 0.0
+        assert results[0]["score_composite"] >= 0.0
 
     def test_batch_scoring(self):
         """Multiple pages should be scored independently."""

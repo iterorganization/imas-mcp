@@ -357,7 +357,7 @@ def wiki(
         )
 
     # Reset orphaned pages once (facility-level)
-    reset_counts = reset_transient_pages(facility, silent=True)
+    reset_counts = reset_transient_pages(facility, force=True, silent=True)
     if any(reset_counts.values()):
         total_reset = sum(reset_counts.values())
         log_print(f"[dim]Reset {total_reset} orphaned pages from previous run[/dim]")
@@ -1134,7 +1134,6 @@ def wiki(
                         facility_state_rich,
                         facility_group_rich,
                         on_image_progress=on_image,
-                        on_worker_status=on_worker_status,
                     )
 
                 try:
@@ -1213,6 +1212,7 @@ def wiki(
                         await run_supervised_loop(
                             facility_group_rich,
                             facility_state_rich.should_stop,
+                            on_worker_status=on_worker_status,
                         )
                         facility_state_rich.stop_requested = True
                         combined["images_scored"] += (
