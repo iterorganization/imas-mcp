@@ -26,7 +26,7 @@ The pipeline uses direct tree-sitter parsing for code chunking, LiteLLM for stru
 detect_language(path) → language string
          │
          ▼
-language in TEXT_SPLITTER_LANGUAGES?       ("tdi", "text", "markdown", ...)
+language == "tdi"?
     ├── YES → chunk_text()                 (sliding window, char-based)
     └── NO  → chunk_code()                 (tree-sitter AST boundaries)
                   │
@@ -40,7 +40,9 @@ language in TEXT_SPLITTER_LANGUAGES?       ("tdi", "text", "markdown", ...)
 
 **Supported tree-sitter languages:** Python, Fortran, MATLAB, Julia, C, C++, IDL/GDL
 
-**Text-splitter only:** TDI (`.fun`), markdown, RST, HTML, documents
+**Text-splitter only:** TDI (`.fun`) — no tree-sitter grammar exists for TDI expressions
+
+**Documents** (markdown, RST, HTML, PDF, PPTX) are handled by the separate `discover docs` CLI, not the code pipeline.
 
 **IDL/GDL parser status:** `tree-sitter-gdl` correctly identifies `procedure_definition` and `function_definition` boundaries (the top-level nodes needed for chunking). 81% of IDL patterns parse without errors. Five error categories remain — struct member assignment, pointer dereference, system variable assignment, arrow method calls, and class method definitions. These don't affect chunking (top-level boundaries are still correct) but will need fixing for future AST-based data access extraction. See `plans/features/tree-sitter-gdl-fixes.md` for details.
 
@@ -86,7 +88,7 @@ discovered → triaged → (enriched) → scored → ingested | skipped | failed
 | `imas_codex/discovery/code/graph_ops.py` | Claim coordination + graph queries |
 | `imas_codex/discovery/code/state.py` | `FileDiscoveryState` shared state |
 | `imas_codex/discovery/code/progress.py` | Rich TUI progress display |
-| `imas_codex/ingestion/chunkers.py` | `chunk_code()` + `chunk_text()` |
+| `imas_codex/ingestion/chunkers.py` | `chunk_code()` (tree-sitter) + `chunk_text()` (TDI only) |
 | `imas_codex/ingestion/extractors/mdsplus.py` | MDSplus path extraction (all languages) |
 | `imas_codex/ingestion/readers/remote.py` | Language detection, file categories |
 
@@ -130,7 +132,7 @@ DATA_ACCESS_PATTERNS expanded with `mdsplus_tdi`, `mdsplus_matlab`, `tcvpy`, `eq
 
 All LlamaIndex dependencies removed (commits `62f00ae`, `e3cf4aa`, `f224c2e`):
 - `chunk_code()` uses direct tree-sitter via `tree-sitter-language-pack` and `tree-sitter-gdl`
-- `chunk_text()` uses sliding window with configurable overlap
+- `chunk_text()` uses sliding window for TDI `.fun` files (no tree-sitter grammar)
 - Code search uses direct Cypher `db.index.vector.queryNodes()` instead of `VectorStoreIndex`
 - Embeddings use `Encoder` from `imas_codex.embeddings`
 
@@ -283,6 +285,6 @@ Agent-driven exploration via `search_code()`, `map_signals_to_imas()` MCP tools.
 |------|-----------|
 | SSH timeouts on large directories | Time-limited runs, depth=1 scanning, exclude lists |
 | LLM cost overruns | Cost limits per run ($5-$20), triage filters 70-80% |
-| tree-sitter parse errors (IDL) | Graceful fallback to `chunk_text()` for problematic files |
+| tree-sitter parse errors (IDL) | Errors don't affect chunking boundaries; see `tree-sitter-gdl-fixes.md` |
 | Pattern false positives | MDSplus paths validated against TreeNode graph |
 | Static tree signals unfixable | Mark as computational (not stored data), skip check |
