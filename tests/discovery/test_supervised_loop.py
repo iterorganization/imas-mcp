@@ -325,7 +325,7 @@ class TestMakeOrphanRecoveryTick:
             "iter",
             [
                 OrphanRecoverySpec("WikiPage", timeout_seconds=300),
-                OrphanRecoverySpec("WikiDocument", timeout_seconds=600),
+                OrphanRecoverySpec("Document", timeout_seconds=600),
             ],
             interval=0.0,
         )
@@ -333,7 +333,7 @@ class TestMakeOrphanRecoveryTick:
         tick()
         assert len(calls) == 2
         assert calls[0] == ("WikiPage", "iter", 300)
-        assert calls[1] == ("WikiDocument", "iter", 600)
+        assert calls[1] == ("Document", "iter", 600)
 
     def test_handles_exception(self, monkeypatch):
         """Exceptions in reset_stale_claims don't crash the tick."""

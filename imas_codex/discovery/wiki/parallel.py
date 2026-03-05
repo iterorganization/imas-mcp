@@ -27,11 +27,11 @@ from imas_codex.discovery.base.supervision import (
     supervised_worker,
 )
 from imas_codex.graph import GraphClient
-from imas_codex.graph.models import WikiDocumentStatus, WikiPageStatus
+from imas_codex.graph.models import DocumentStatus, WikiPageStatus
 
 from .graph_ops import (
-    INGESTABLE_ARTIFACT_TYPES,
-    SCORABLE_ARTIFACT_TYPES,
+    INGESTABLE_DOCUMENT_TYPES,
+    SCORABLE_DOCUMENT_TYPES,
     _bulk_create_wiki_documents,
     _bulk_create_wiki_pages,
     reset_transient_pages,
@@ -366,7 +366,7 @@ def bulk_discover_documents(
             "id": f"{facility}:{a.filename}",
             "filename": a.filename,
             "url": a.url,
-            "artifact_type": a.artifact_type,
+            "document_type": a.document_type,
             "size_bytes": a.size_bytes,
             "mime_type": a.mime_type,
             "linked_pages": a.linked_pages,
@@ -724,7 +724,7 @@ async def run_parallel_wiki_discovery(
                     "embed_worker",
                     state,
                     state.should_stop,
-                    labels=["WikiPage", "WikiDocument", "Image"],
+                    labels=["WikiPage", "Document", "Image"],
                     status_tracker=embed_status,
                 )
             )
@@ -793,7 +793,7 @@ async def run_parallel_wiki_discovery(
         facility,
         [
             OrphanRecoverySpec("WikiPage"),
-            OrphanRecoverySpec("WikiDocument"),
+            OrphanRecoverySpec("Document"),
         ],
     )
 
@@ -1041,7 +1041,7 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             OPTIONAL MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.score_cost IS NOT NULL
             WITH sum(wp.score_cost) AS page_cost
-            OPTIONAL MATCH (wa:WikiDocument {facility_id: $facility})
+            OPTIONAL MATCH (wa:Document {facility_id: $facility})
             WHERE wa.score_cost IS NOT NULL
             WITH page_cost, sum(wa.score_cost) AS document_cost
             OPTIONAL MATCH (img:Image {facility_id: $facility})
@@ -1073,9 +1073,9 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
         # Add document stats (total + pending counts per worker)
         document_result = gc.query(
             """
-            MATCH (wa:WikiDocument {facility_id: $facility})
+            MATCH (wa:Document {facility_id: $facility})
             WITH wa.status AS status, wa.score_composite AS score,
-                 wa.artifact_type AS atype,
+                 wa.document_type AS atype,
                  coalesce(wa.score_exempt, false) AS exempt
             RETURN status, score, atype, exempt, count(*) AS cnt
             """,
@@ -1084,23 +1084,23 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
         total_documents = 0
         pending_document_score = 0
         pending_document_ingest = 0
-        scorable = SCORABLE_ARTIFACT_TYPES
-        ingestable = INGESTABLE_ARTIFACT_TYPES
+        scorable = SCORABLE_DOCUMENT_TYPES
+        ingestable = INGESTABLE_DOCUMENT_TYPES
         for r in document_result:
             total_documents += r["cnt"]
             st = r["status"]
             atype = r["atype"]
             exempt = r["exempt"]
             if (
-                st == WikiDocumentStatus.discovered.value
+                st == DocumentStatus.discovered.value
                 and atype in scorable
                 and not exempt
             ):
                 pending_document_score += r["cnt"]
-            elif st == WikiDocumentStatus.discovered.value and exempt:
+            elif st == DocumentStatus.discovered.value and exempt:
                 pending_document_ingest += r["cnt"]
             elif (
-                st == WikiDocumentStatus.scored.value
+                st == DocumentStatus.scored.value
                 and atype in ingestable
                 and r["score_composite"] is not None
                 and r["score_composite"] >= 0.5
@@ -1115,9 +1115,9 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
         documents_skipped = 0
         for r in document_result:
             st = r["status"]
-            if st == WikiDocumentStatus.ingested.value:
+            if st == DocumentStatus.ingested.value:
                 docs_ingested += r["cnt"]
-            elif st == WikiDocumentStatus.scored.value:
+            elif st == DocumentStatus.scored.value:
                 documents_scored += r["cnt"]
             elif st == "failed":
                 documents_failed += r["cnt"]
@@ -1271,7 +1271,7 @@ def start_facility_workers(
                 "embed_worker",
                 facility_state,
                 facility_state.should_stop,
-                labels=["WikiPage", "WikiDocument", "Image"],
+                labels=["WikiPage", "Document", "Image"],
                 status_tracker=embed_status,
             )
         )

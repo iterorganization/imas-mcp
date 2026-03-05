@@ -1,6 +1,6 @@
 """Tests for wiki adapter functions.
 
-Covers get_adapter factory, _get_artifact_type_from_filename,
+Covers get_adapter factory, _get_document_type_from_filename,
 MediaWikiAdapter._extract_page_links, and adapter construction.
 """
 
@@ -11,25 +11,25 @@ from unittest.mock import MagicMock
 import pytest
 
 # =============================================================================
-# _get_artifact_type_from_filename
+# _get_document_type_from_filename
 # =============================================================================
 
 
-class TestGetArtifactTypeFromFilename:
-    """Tests for _get_artifact_type_from_filename utility."""
+class TestGetDocumentTypeFromFilename:
+    """Tests for _get_document_type_from_filename utility."""
 
     def _get_type(self, filename: str) -> str:
-        from imas_codex.discovery.wiki.adapters import _get_artifact_type_from_filename
+        from imas_codex.discovery.wiki.adapters import _get_document_type_from_filename
 
-        return _get_artifact_type_from_filename(filename)
+        return _get_document_type_from_filename(filename)
 
     def test_pdf(self):
         assert self._get_type("paper.pdf") == "pdf"
         assert self._get_type("REPORT.PDF") == "pdf"
 
     def test_documents(self):
-        assert self._get_type("report.doc") == "document"
-        assert self._get_type("report.docx") == "document"
+        assert self._get_type("report.doc") == "text_document"
+        assert self._get_type("report.docx") == "text_document"
 
     def test_presentations(self):
         assert self._get_type("slides.ppt") == "presentation"
@@ -59,9 +59,9 @@ class TestGetArtifactTypeFromFilename:
         assert self._get_type("matlab.mat") == "data"
 
     def test_unknown_defaults_to_document(self):
-        assert self._get_type("file.txt") == "document"
-        assert self._get_type("binary.bin") == "document"
-        assert self._get_type("noext") == "document"
+        assert self._get_type("file.txt") == "text_document"
+        assert self._get_type("binary.bin") == "text_document"
+        assert self._get_type("noext") == "text_document"
 
     def test_case_insensitive(self):
         assert self._get_type("PHOTO.PNG") == "image"
@@ -317,13 +317,13 @@ class TestDiscoveryDataclasses:
         document = DiscoveredDocument(
             filename="report.pdf",
             url="https://wiki.example.com/files/report.pdf",
-            artifact_type="pdf",
+            document_type="pdf",
             size_bytes=1024,
             mime_type="application/pdf",
             linked_pages=["MainPage", "Reports"],
         )
         assert document.filename == "report.pdf"
-        assert document.artifact_type == "pdf"
+        assert document.document_type == "pdf"
         assert document.size_bytes == 1024
         assert len(document.linked_pages) == 2
 
@@ -333,7 +333,7 @@ class TestDiscoveryDataclasses:
         document = DiscoveredDocument(
             filename="file.xlsx",
             url="https://example.com/file.xlsx",
-            artifact_type="spreadsheet",
+            document_type="spreadsheet",
         )
         assert document.size_bytes is None
         assert document.mime_type is None

@@ -10,7 +10,7 @@ Unified Search (primary interface):
 - search_imas: IMAS DD search with cluster and facility cross-refs
 
 Retrieval:
-- fetch: Full content retrieval by ID or URL (WikiPage, WikiDocument, CodeFile, Image)
+- fetch: Full content retrieval by ID or URL (WikiPage, Document, CodeFile, Image)
 
 Graph Operations:
 - get_graph_schema: Schema introspection for query generation
@@ -353,7 +353,7 @@ def _init_repl() -> dict[str, Any]:
             'CALL db.index.vector.queryNodes("wiki_chunk_embedding", $k, $embedding) '
             "YIELD node, score "
             "OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(node) "
-            "OPTIONAL MATCH (wa:WikiDocument)-[:HAS_CHUNK]->(node) "
+            "OPTIONAL MATCH (wa:Document)-[:HAS_CHUNK]->(node) "
             "RETURN [k IN keys(node) "
             "WHERE NOT k ENDS WITH 'embedding' | [k, node[k]]] "
             "AS properties, labels(node) AS labels, score, "
@@ -370,7 +370,7 @@ def _init_repl() -> dict[str, Any]:
                 "labels": r["labels"],
                 "score": r["score"],
             }
-            # Add parent page context (WikiPage or WikiDocument)
+            # Add parent page context (WikiPage or Document)
             if r.get("page_title"):
                 d["page_title"] = r["page_title"]
                 d["page_url"] = r["page_url"]
@@ -1973,7 +1973,7 @@ class AgentsServer:
             identifies a resource of interest. Returns all chunks
             or content for the resource.
 
-            Supported types: WikiPage, WikiDocument, CodeFile, Image.
+            Supported types: WikiPage, Document, CodeFile, Image.
 
             The resource parameter can be:
             - A graph node ID from search results (e.g. "jet:Fishbone_proposal_2018.ppt")

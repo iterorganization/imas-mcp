@@ -154,7 +154,7 @@ def get_pending_wiki_documents(
 ) -> list[dict]:
     """Get wiki documents pending ingestion from the graph.
 
-    Returns WikiDocument nodes with status='scored' (passed agent evaluation),
+    Returns Document nodes with status='scored' (passed agent evaluation),
     sorted by score_composite descending.
 
     Args:
@@ -163,14 +163,14 @@ def get_pending_wiki_documents(
         min_score_composite: Minimum interest score threshold
 
     Returns:
-        List of document dicts with id, url, filename, artifact_type, score_composite
+        List of document dicts with id, url, filename, document_type, score_composite
     """
     # Build query with optional LIMIT clause
     query = """
-        MATCH (wa:WikiDocument {facility_id: $facility_id, status: 'scored'})
+        MATCH (wa:Document {facility_id: $facility_id, status: 'scored'})
         WHERE wa.score_composite >= $min_score
         RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
-               wa.artifact_type AS artifact_type,
+               wa.document_type AS document_type,
                wa.score_composite AS score_composite
         ORDER BY wa.score_composite DESC
     """
@@ -1333,15 +1333,15 @@ def get_wiki_stats(facility_id: str) -> dict:
 def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
     """Delete all wiki discovery nodes for a facility in batches.
 
-    Always cascades: deletes WikiChunks and WikiDocuments along with WikiPages.
+    Always cascades: deletes WikiChunks and Documents along with WikiPages.
     Wiki chunks and documents are always dependent on their parent pages/facility,
     so cascade is the only sensible behaviour.
 
     Deletion order follows referential integrity:
     1. WikiChunks linked via HAS_CHUNK from WikiPages
-    2. WikiChunks linked via HAS_CHUNK from WikiDocuments
+    2. WikiChunks linked via HAS_CHUNK from Documents
     3. Any remaining orphaned WikiChunks by facility_id
-    4. WikiDocuments by facility_id
+    4. Documents by facility_id
     5. WikiPages by facility_id
 
     Args:
@@ -1375,11 +1375,11 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
             if deleted < batch_size:
                 break
 
-        # Delete WikiChunks linked to WikiDocuments
+        # Delete WikiChunks linked to Documents
         while True:
             result = gc.query(
                 """
-                MATCH (wa:WikiDocument {facility_id: $facility})
+                MATCH (wa:Document {facility_id: $facility})
                       -[:HAS_CHUNK]->(wc:WikiChunk)
                 WITH wc LIMIT $batch_size
                 DETACH DELETE wc
@@ -1410,11 +1410,11 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
             if deleted < batch_size:
                 break
 
-        # Delete WikiDocuments (uses facility_id to catch both linked and orphaned)
+        # Delete Documents (uses facility_id to catch both linked and orphaned)
         while True:
             result = gc.query(
                 """
-                MATCH (wa:WikiDocument {facility_id: $facility})
+                MATCH (wa:Document {facility_id: $facility})
                 WITH wa LIMIT $batch_size
                 DETACH DELETE wa
                 RETURN count(wa) AS deleted
@@ -1446,7 +1446,7 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> dict:
 
         # Delete orphaned Image nodes — only those with no remaining
         # HAS_IMAGE relationships from other domains (e.g. CodeFile).
-        # Wiki nodes (WikiPage, WikiDocument) are already deleted above,
+        # Wiki nodes (WikiPage, Document) are already deleted above,
         # so any Image still linked via HAS_IMAGE belongs to another domain.
         while True:
             result = gc.query(
@@ -1483,7 +1483,7 @@ class DocumentIngestionStats(TypedDict):
 
     chunks: int
     content_preview: str
-    artifact_type: str
+    document_type: str
 
 
 # Default size limits for document ingestion
@@ -1595,7 +1595,7 @@ async def fetch_document_content(
     return result.content_type or "application/octet-stream", result.content
 
 
-class WikiDocumentPipeline:
+class DocumentPipeline:
     """Pipeline for ingesting wiki documents (PDFs, presentations, etc.).
 
     Uses LlamaIndex readers for PDF extraction. Other document types
@@ -1657,7 +1657,7 @@ class WikiDocumentPipeline:
         """Ingest a PDF document.
 
         Args:
-            document_id: WikiDocument node ID
+            document_id: Document node ID
             pdf_bytes: Raw PDF content
 
         Returns:
@@ -1673,7 +1673,7 @@ class WikiDocumentPipeline:
         stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
-            "artifact_type": "pdf",
+            "document_type": "pdf",
         }
 
         # Validate PDF magic bytes before attempting to parse
@@ -1797,7 +1797,7 @@ class WikiDocumentPipeline:
         """Ingest a Word document document.
 
         Args:
-            document_id: WikiDocument node ID
+            document_id: Document node ID
             content_bytes: Raw document content
 
         Returns:
@@ -1810,7 +1810,7 @@ class WikiDocumentPipeline:
         stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
-            "artifact_type": "docx",
+            "document_type": "docx",
         }
 
         doc = DocxDocument(io.BytesIO(content_bytes))
@@ -1835,7 +1835,7 @@ class WikiDocumentPipeline:
         """Ingest a PowerPoint document.
 
         Args:
-            document_id: WikiDocument node ID
+            document_id: Document node ID
             content_bytes: Raw presentation content
 
         Returns:
@@ -1848,7 +1848,7 @@ class WikiDocumentPipeline:
         stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
-            "artifact_type": "pptx",
+            "document_type": "pptx",
         }
 
         prs = Presentation(io.BytesIO(content_bytes))
@@ -1942,7 +1942,7 @@ class WikiDocumentPipeline:
         """Ingest an Excel document.
 
         Args:
-            document_id: WikiDocument node ID
+            document_id: Document node ID
             content_bytes: Raw spreadsheet content
 
         Returns:
@@ -1951,7 +1951,7 @@ class WikiDocumentPipeline:
         stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
-            "artifact_type": "xlsx",
+            "document_type": "xlsx",
         }
 
         from imas_codex.discovery.wiki.excel import extract_excel_full
@@ -1976,7 +1976,7 @@ class WikiDocumentPipeline:
         """Ingest a Jupyter notebook document.
 
         Args:
-            document_id: WikiDocument node ID
+            document_id: Document node ID
             content_bytes: Raw notebook content
 
         Returns:
@@ -1989,7 +1989,7 @@ class WikiDocumentPipeline:
         stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
-            "artifact_type": "ipynb",
+            "document_type": "ipynb",
         }
 
         try:
@@ -2030,7 +2030,7 @@ class WikiDocumentPipeline:
         Handles both structured data and configuration-style JSON.
 
         Args:
-            document_id: WikiDocument node ID
+            document_id: Document node ID
             content_bytes: Raw JSON content
 
         Returns:
@@ -2041,7 +2041,7 @@ class WikiDocumentPipeline:
         stats: DocumentIngestionStats = {
             "chunks": 0,
             "content_preview": "",
-            "artifact_type": "json",
+            "document_type": "json",
         }
 
         try:
@@ -2068,16 +2068,16 @@ class WikiDocumentPipeline:
         self,
         document_id: str,
         content_bytes: bytes,
-        artifact_type: str,
+        document_type: str,
     ) -> DocumentIngestionStats:
         """Dispatch to appropriate extraction method based on document type.
 
-        Uses semantic type names matching ArtifactType enum values.
+        Uses semantic type names matching DocumentType enum values.
 
         Args:
-            document_id: WikiDocument node ID
+            document_id: Document node ID
             content_bytes: Raw document content
-            artifact_type: Semantic document type (pdf, document, presentation, etc.)
+            document_type: Semantic document type (pdf, document, presentation, etc.)
 
         Returns:
             Ingestion stats as dict
@@ -2087,16 +2087,16 @@ class WikiDocumentPipeline:
         """
         handlers = {
             "pdf": self.ingest_pdf,
-            "document": self.ingest_docx,
+            "text_document": self.ingest_docx,
             "presentation": self.ingest_pptx,
             "spreadsheet": self.ingest_xlsx,
             "notebook": self.ingest_notebook,
             "json": self.ingest_json,
         }
 
-        handler = handlers.get(artifact_type.lower())
+        handler = handlers.get(document_type.lower())
         if handler is None:
-            raise ValueError(f"Unsupported document type: {artifact_type}")
+            raise ValueError(f"Unsupported document type: {document_type}")
 
         return await handler(document_id, content_bytes)
 
@@ -2104,7 +2104,7 @@ class WikiDocumentPipeline:
         self,
         document_id: str,
         full_text: str,
-        artifact_type: str,
+        document_type: str,
         stats: DocumentIngestionStats,
     ) -> DocumentIngestionStats:
         """Create chunks from extracted text and persist to graph.
@@ -2170,7 +2170,7 @@ class WikiDocumentPipeline:
             # Update document status
             gc.query(
                 """
-                MATCH (wa:WikiDocument {id: $id})
+                MATCH (wa:Document {id: $id})
                 SET wa.status = 'ingested',
                     wa.chunk_count = $chunks,
                     wa.ingested_at = datetime(),
@@ -2198,7 +2198,7 @@ class WikiDocumentPipeline:
                         c.conventions_mentioned = chunk.conventions,
                         c.tool_mentions = chunk.tool_mentions
                     WITH c, chunk
-                    MATCH (wa:WikiDocument {id: chunk.document_id})
+                    MATCH (wa:Document {id: chunk.document_id})
                     MERGE (wa)-[:HAS_CHUNK]->(c)
                     WITH c, chunk
                     MATCH (f:Facility {id: chunk.facility_id})
@@ -2247,7 +2247,7 @@ class WikiDocumentPipeline:
 
         for document in pending:
             document_id = document["id"]
-            artifact_type = document.get("artifact_type", "unknown")
+            document_type = document.get("document_type", "unknown")
             url = document["url"]
             filename = document.get("filename", "unknown")
 
@@ -2260,7 +2260,7 @@ class WikiDocumentPipeline:
                     with GraphClient() as gc:
                         gc.query(
                             """
-                            MATCH (wa:WikiDocument {id: $id})
+                            MATCH (wa:Document {id: $id})
                             SET wa.size_bytes = $size
                             """,
                             id=document_id,
@@ -2282,7 +2282,7 @@ class WikiDocumentPipeline:
                         with GraphClient() as gc:
                             gc.query(
                                 """
-                                MATCH (wa:WikiDocument {id: $id})
+                                MATCH (wa:Document {id: $id})
                                 SET wa.status = 'deferred',
                                     wa.defer_reason = $reason
                                 """,
@@ -2293,7 +2293,7 @@ class WikiDocumentPipeline:
                         total_stats["documents_oversized"] += 1
                         continue
 
-                if artifact_type == "pdf":
+                if document_type == "pdf":
                     _, content = await fetch_document_content(
                         url, facility=self.facility_id
                     )
@@ -2305,12 +2305,12 @@ class WikiDocumentPipeline:
                     with GraphClient() as gc:
                         gc.query(
                             """
-                            MATCH (wa:WikiDocument {id: $id})
+                            MATCH (wa:Document {id: $id})
                             SET wa.status = 'deferred',
                                 wa.defer_reason = $reason
                             """,
                             id=document_id,
-                            reason=f"Document type '{artifact_type}' not yet supported",
+                            reason=f"Document type '{document_type}' not yet supported",
                         )
                     total_stats["documents_deferred"] += 1
 
@@ -2319,7 +2319,7 @@ class WikiDocumentPipeline:
                 with GraphClient() as gc:
                     gc.query(
                         """
-                        MATCH (wa:WikiDocument {id: $id})
+                        MATCH (wa:Document {id: $id})
                         SET wa.status = 'failed', wa.error = $error
                         """,
                         id=document_id,
@@ -2334,7 +2334,7 @@ __all__ = [
     "DocumentIngestionStats",
     "DEFAULT_MAX_ARTIFACT_SIZE_MB",
     "ProgressCallback",
-    "WikiDocumentPipeline",
+    "DocumentPipeline",
     "WikiIngestionPipeline",
     "clear_facility_wiki",
     "fetch_document_content",

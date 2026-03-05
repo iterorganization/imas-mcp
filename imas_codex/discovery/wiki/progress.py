@@ -86,7 +86,7 @@ class DocsItem:
     """Current document activity (score or ingest)."""
 
     filename: str
-    artifact_type: str
+    document_type: str
     score_composite: float | None = None
     physics_domain: str | None = None
     description: str = ""
@@ -768,8 +768,8 @@ class WikiProgressDisplay(BaseProgressDisplay):
             docs_domain = document.physics_domain or ""
             docs_desc = document.description
             # Fallback for image-type documents with no description
-            if not docs_desc and document.artifact_type:
-                atype = document.artifact_type.lower()
+            if not docs_desc and document.document_type:
+                atype = document.document_type.lower()
                 if atype in ("png", "jpg", "jpeg", "gif", "svg", "bmp", "tiff"):
                     docs_desc_fallback = f"describing {atype.upper()} image with VLM"
                 elif atype in ("pdf",):
@@ -1105,7 +1105,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         if item := self.state.document_score_queue.pop():
             self.state.current_docs = DocsItem(
                 filename=item.get("filename", ""),
-                artifact_type=item.get("artifact_type", ""),
+                document_type=item.get("document_type", ""),
                 score_composite=item.get("score_composite"),
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
@@ -1115,7 +1115,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
         elif item := self.state.document_queue.pop():
             self.state.current_docs = DocsItem(
                 filename=item.get("filename", ""),
-                artifact_type=item.get("artifact_type", ""),
+                document_type=item.get("document_type", ""),
                 score_composite=item.get("score_composite"),
                 physics_domain=item.get("physics_domain"),
                 description=item.get("description", ""),
@@ -1294,7 +1294,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
                 items.append(
                     {
                         "filename": r.get("filename", "unknown"),
-                        "artifact_type": r.get("artifact_type", ""),
+                        "document_type": r.get("document_type", ""),
                         "score_composite": r.get("score_composite"),
                         "physics_domain": r.get("physics_domain"),
                         "description": r.get("description", ""),
@@ -1338,7 +1338,7 @@ class WikiProgressDisplay(BaseProgressDisplay):
             items = [
                 {
                     "filename": r.get("filename", "unknown"),
-                    "artifact_type": r.get("artifact_type", ""),
+                    "document_type": r.get("document_type", ""),
                     "score_composite": r.get("score_composite"),
                     "physics_domain": r.get("physics_domain"),
                     "description": r.get("description", ""),

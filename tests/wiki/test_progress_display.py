@@ -276,12 +276,12 @@ class TestDisplayItems:
     def test_document_item(self):
         item = DocsItem(
             filename="report.pdf",
-            artifact_type="pdf",
+            document_type="pdf",
             score_composite=0.75,
             chunk_count=8,
         )
         assert item.filename == "report.pdf"
-        assert item.artifact_type == "pdf"
+        assert item.document_type == "pdf"
 
     def test_image_item(self):
         item = ImageItem(

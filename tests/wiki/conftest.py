@@ -135,7 +135,7 @@ class MockDiscoveredDocument:
 
     filename: str
     url: str
-    artifact_type: str
+    document_type: str
     size_bytes: int | None = None
     mime_type: str | None = None
     linked_pages: list[str] = field(default_factory=list)
@@ -201,7 +201,7 @@ def make_document_score_results(
         {
             "id": aid,
             "score": score,
-            "artifact_purpose": "data_documentation",
+            "document_purpose": "data_documentation",
             "description": f"Document {aid.split(':')[-1]}",
             "reasoning": "Relevant document",
             "keywords": ["calibration"],
@@ -216,7 +216,7 @@ def make_document_score_results(
             "score_imas_relevance": 0.3,
             "score_cost": 0.002,
             "filename": f"document_{aid.split(':')[-1]}.pdf",
-            "artifact_type": "pdf",
+            "document_type": "pdf",
             "preview_text": "Preview of document",
         }
         for aid, score in zip(document_ids, scores, strict=False)

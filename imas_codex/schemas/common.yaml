@@ -210,9 +210,9 @@ enums:
       failed:
         description: Error during processing (check error field)
 
-  WikiDocumentStatus:
+  DocumentStatus:
     description: >-
-      Lifecycle status for wiki documents (PDFs, presentations, etc.).
+      Lifecycle status for documents (PDFs, presentations, etc.).
       Uses claimed_at timestamp for transient worker coordination
       (same pattern as WikiPageStatus - no separate transient states).
       

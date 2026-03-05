@@ -48,9 +48,6 @@ from imas_codex.agentic.explore import (
     explore_facility_sync,
 )
 
-# LLM configuration (for legacy wiki code that needs LlamaIndex)
-from imas_codex.agentic.llm import get_llm
-
 # Cost monitoring and progress display
 from imas_codex.agentic.monitor import (
     AgentMonitor,
@@ -64,9 +61,6 @@ from imas_codex.agentic.monitor import (
 
 # MCP Server
 from imas_codex.agentic.server import AgentsServer
-
-# Session management
-from imas_codex.agentic.session import CostTracker, LLMSession, create_session
 
 # Tools
 from imas_codex.agentic.tools import (
@@ -111,12 +105,6 @@ __all__ = [
     "estimate_task_cost",
     # MCP Server
     "AgentsServer",
-    # LLM (for legacy wiki code)
-    "get_llm",
-    # Session management
-    "LLMSession",
-    "CostTracker",
-    "create_session",
     # Tools
     "get_all_tools",
     "get_enrichment_tools",
