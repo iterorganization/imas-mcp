@@ -105,9 +105,12 @@ class FileProgressState:
     # Counts from graph
     total: int = 0
     discovered: int = 0
+    triaged_count: int = 0
     ingested: int = 0
     failed: int = 0
     skipped: int = 0
+    pending_triage: int = 0
+    pending_enrich: int = 0
     pending_score: int = 0
     pending_ingest: int = 0
     scored_count: int = 0
@@ -250,7 +253,7 @@ class FileProgressDisplay(BaseProgressDisplay):
             cost_limit=cost_limit,
             console=console,
             focus=focus,
-            title_suffix="File Discovery",
+            title_suffix="Code Discovery",
         )
         self.state = FileProgressState(
             facility=facility,
@@ -447,20 +450,17 @@ class FileProgressDisplay(BaseProgressDisplay):
         if cpf and cpf > 0 and self.state.pending_score > 0:
             etc = total_cost + (cpf * self.state.pending_score)
 
-        # Build stats
+        # Build stats — completed counts across pipeline
         stats: list[tuple[str, str, str]] = [
             ("total", str(self.state.total), "blue"),
+            ("triaged", str(self.state.triaged_count), "green"),
+            ("scored", str(self.state.scored_count), "green"),
             ("ingested", str(self.state.ingested), "green"),
         ]
+        if self.state.skipped > 0:
+            stats.append(("skipped", str(self.state.skipped), "yellow"))
         if self.state.failed > 0:
             stats.append(("failed", str(self.state.failed), "red"))
-        if self.state.skipped > 0:
-            stats.append(("skipped", str(self.state.skipped), "dim"))
-
-        # File type breakdown
-        type_parts: list[tuple[str, str, str]] = []
-        if self.state.code_files > 0:
-            type_parts.append(("code", str(self.state.code_files), "cyan"))
 
         config = ResourceConfig(
             elapsed=self.state.elapsed,
@@ -471,8 +471,10 @@ class FileProgressDisplay(BaseProgressDisplay):
             etc=etc if etc > total_cost else None,
             scan_only=self.state.scan_only,
             limit_reason=self.state.limit_reason,
-            stats=stats + type_parts,
+            stats=stats,
             pending=[
+                ("triage", self.state.pending_triage),
+                ("enrich", self.state.pending_enrich),
                 ("score", self.state.pending_score),
                 ("ingest", self.state.pending_ingest),
             ],
@@ -645,12 +647,15 @@ class FileProgressDisplay(BaseProgressDisplay):
         stats = get_code_discovery_stats(facility)
         self.state.total = stats["total"]
         self.state.discovered = stats["discovered"]
+        self.state.triaged_count = stats["triaged"]
         self.state.ingested = stats["ingested"]
         self.state.failed = stats["failed"]
         self.state.skipped = stats["skipped"]
+        self.state.pending_triage = stats["pending_triage"]
+        self.state.pending_enrich = stats["pending_enrich"]
         self.state.pending_score = stats["pending_score"]
         self.state.pending_ingest = stats["pending_ingest"]
-        self.state.scored_count = stats["scored_count"]
+        self.state.scored_count = stats["scored"]
         self.state.enriched_count = stats["enriched_count"]
         self.state.code_files = stats["total"]
         self._refresh()
