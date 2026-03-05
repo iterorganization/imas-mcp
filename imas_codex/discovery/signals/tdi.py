@@ -442,6 +442,16 @@ tree.close()
     # Insert via GraphClient using proper signature
     props = am.model_dump(exclude_none=True, by_alias=True)
     gc.create_node("DataAccess", am_id, props)
+    # Ensure AT_FACILITY edge exists
+    gc.query(
+        """
+        MATCH (da:DataAccess {id: $id})
+        MATCH (f:Facility {id: $facility})
+        MERGE (da)-[:AT_FACILITY]->(f)
+        """,
+        id=am_id,
+        facility=facility,
+    )
     logger.info("Created TDI data access: %s", am_id)
 
     return am

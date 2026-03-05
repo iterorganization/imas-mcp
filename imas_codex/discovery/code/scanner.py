@@ -566,7 +566,11 @@ def clear_facility_code(facility: str, batch_size: int = 1000) -> dict[str, int]
     Cascades in referential-integrity order:
     1. CodeChunk nodes linked to CodeExamples from facility CodeFiles
     2. CodeExample nodes linked to facility CodeFiles
-    3. CodeFile nodes by facility_id
+    3. DataReference nodes for the facility
+    4. CodeFile nodes by facility_id
+
+    Also resets file scan markers on FacilityPaths so scan_worker
+    will re-enumerate files on the next run.
 
     Args:
         facility: Facility ID
@@ -578,6 +582,7 @@ def clear_facility_code(facility: str, batch_size: int = 1000) -> dict[str, int]
     results = {
         "code_files_deleted": 0,
         "code_chunks_deleted": 0,
+        "data_references_deleted": 0,
     }
 
     with GraphClient() as client:
@@ -634,10 +639,45 @@ def clear_facility_code(facility: str, batch_size: int = 1000) -> dict[str, int]
             if deleted < batch_size:
                 break
 
+        # Delete orphaned DataReference nodes for the facility
+        result = client.query(
+            """
+            MATCH (dr:DataReference {facility_id: $facility})
+            DETACH DELETE dr
+            RETURN count(dr) AS deleted
+            """,
+            facility=facility,
+        )
+        results["data_references_deleted"] = result[0]["deleted"] if result else 0
+
+        # Reset FacilityPath scan markers so paths are re-scanned
+        client.query(
+            """
+            MATCH (fp:FacilityPath {facility_id: $facility})
+            WHERE fp.files_scanned IS NOT NULL
+            SET fp.files_scanned = null,
+                fp.last_file_scan_at = null,
+                fp.evidence_linked = null
+            """,
+            facility=facility,
+        )
+
+        # Clear code evidence from FacilitySignal nodes
+        client.query(
+            """
+            MATCH (fs:FacilitySignal {facility_id: $facility})
+            WHERE fs.code_evidence_count IS NOT NULL
+            SET fs.code_evidence_count = null,
+                fs.has_code_evidence = null
+            """,
+            facility=facility,
+        )
+
         logger.info(
-            "Deleted %d CodeFile + %d CodeChunk nodes for %s",
+            "Deleted %d CodeFile + %d CodeChunk + %d DataReference nodes for %s",
             results["code_files_deleted"],
             results["code_chunks_deleted"],
+            results.get("data_references_deleted", 0),
             facility,
         )
 
