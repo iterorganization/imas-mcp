@@ -124,7 +124,11 @@ def _enumerate_files_fd(path, extensions, max_depth, max_files, max_file_size):
     )
     try:
         result = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            timeout=30,
         )
         files = [
             sanitize_str(line.strip())
@@ -149,7 +153,7 @@ def _enumerate_files_find(path, extensions, max_depth, max_files, max_file_size)
             ["sh", "-c", cmd],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=30,
         )
         files = [
@@ -172,7 +176,7 @@ def _count_lines(path):
             ["wc", "-l", path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=5,
         )
         if result.returncode == 0:
@@ -189,7 +193,7 @@ def _rg_count(pattern, path):
             ["rg", "-c", "--no-filename", pattern, path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():

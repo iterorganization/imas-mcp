@@ -390,7 +390,7 @@ ignore = [
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
 "tests/**/*" = ["B011", "F401", "F811"]  # Allow assert False and unused imports in tests
 # Remote scripts run on Python 3.6+ systems - disable type hint and subprocess modernization
-"imas_codex/remote/scripts/*" = ["UP006", "UP007", "UP022", "UP035", "UP045"]
+"imas_codex/remote/scripts/*" = ["UP006", "UP007", "UP021", "UP022", "UP035", "UP045"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["imas_codex"]

@@ -133,7 +133,7 @@ def scan_path_fd(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=60,
         )
         files = [
@@ -187,7 +187,7 @@ def scan_path_find(
             ["sh", "-c", cmd],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=60,
         )
         files = [
