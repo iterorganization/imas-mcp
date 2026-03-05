@@ -42,7 +42,11 @@ async def enrich_files(
     file_paths: list[str],
     timeout: int = 120,
 ) -> list[dict[str, Any]]:
-    """Enrich files with rg pattern matching on the remote facility.
+    """Enrich files with rg pattern matching and preview text on the remote.
+
+    Returns enrichment dicts including preview_text (head of file).
+    The preview_text is used by the score worker but NOT persisted to
+    the graph — it provides content context for scoring only.
 
     Args:
         facility: Facility identifier
@@ -50,7 +54,8 @@ async def enrich_files(
         timeout: SSH timeout in seconds
 
     Returns:
-        List of enrichment result dicts with pattern_categories, line_count, etc.
+        List of enrichment result dicts with pattern_categories,
+        line_count, preview_text, etc.
     """
     if not file_paths:
         return []
@@ -90,6 +95,9 @@ def persist_file_enrichment(
     file_id_map: dict[str, str],
 ) -> int:
     """Write enrichment results to CodeFile nodes in the graph.
+
+    NOTE: preview_text is intentionally NOT persisted — it's only used
+    by the score worker in memory to provide content context.
 
     Args:
         results: List of enrichment result dicts from enrich_files()
