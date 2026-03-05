@@ -2,14 +2,10 @@
 
 Extracts MDSplus tree paths and TDI function calls from code/text.
 Works on code, documents, and wiki pages.
-
-Can be used standalone or as a LlamaIndex TransformComponent.
 """
 
 import re
 from typing import NamedTuple
-
-from llama_index.core.schema import BaseNode, TransformComponent
 
 
 class MDSplusReference(NamedTuple):
@@ -147,30 +143,7 @@ def extract_mdsplus_paths_text(text: str) -> list[str]:
     return sorted(normalized)
 
 
-class MDSplusExtractor(TransformComponent):
-    """Extract MDSplus paths from LlamaIndex nodes.
-
-    Scans code/text for MDSplus path references and TDI function calls.
-    Stores counts in metadata; full paths in mdsplus_paths for graph linking.
-    """
-
-    def __call__(self, nodes: list[BaseNode], **kwargs: dict) -> list[BaseNode]:
-        """Process nodes and extract MDSplus references."""
-        for node in nodes:
-            content = node.get_content()
-            refs = extract_mdsplus_paths(content)
-
-            if refs:
-                node.metadata["mdsplus_ref_count"] = len(refs)
-                # Store as flat string list — NamedTuples cause
-                # "Collections containing collections" in Neo4j
-                node.metadata["mdsplus_paths"] = [r.path for r in refs]
-
-        return nodes
-
-
 __all__ = [
-    "MDSplusExtractor",
     "MDSplusReference",
     "compute_canonical_path",
     "extract_mdsplus_paths",

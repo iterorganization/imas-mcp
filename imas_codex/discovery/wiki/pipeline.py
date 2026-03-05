@@ -30,17 +30,15 @@ from collections.abc import Callable
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from llama_index.core import Document
-from llama_index.core.node_parser import SentenceSplitter
-
 from imas_codex.graph import GraphClient
+from imas_codex.ingestion.chunkers import chunk_text as _chunk_text
 from imas_codex.settings import get_embedding_dimension
 
 from .monitor import WikiProgressMonitor, set_current_monitor
 from .scraper import WikiPage, fetch_wiki_page
 
 if TYPE_CHECKING:
-    from llama_index.core.embeddings import BaseEmbedding
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -769,7 +767,7 @@ def _strip_twiki_formatting(text: str) -> str:
     return text.strip()
 
 
-def get_embed_model() -> BaseEmbedding:
+def get_embed_model():
     """Get embedding model respecting embedding-backend config (local/remote).
 
     Delegates to the canonical cached singleton in imas_codex.embeddings.
@@ -806,18 +804,11 @@ class WikiIngestionPipeline:
         self.chunk_overlap = chunk_overlap
         self.use_rich = use_rich
 
-        # Initialize text splitter
-        self.splitter = SentenceSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separator="\n",
-        )
-
         # Embedding model is loaded lazily
-        self._embed_model: BaseEmbedding | None = None
+        self._embed_model = None
 
     @property
-    def embed_model(self) -> BaseEmbedding:
+    def embed_model(self):
         """Lazy-load embedding model respecting embedding-backend config."""
         if self._embed_model is None:
             self._embed_model = get_embed_model()
@@ -885,23 +876,16 @@ class WikiIngestionPipeline:
         stats["content_preview"] = text_content[:300]
         stats["mdsplus_paths"] = page.mdsplus_paths[:10] if page.mdsplus_paths else []
 
-        # Create LlamaIndex document for chunking
-        doc = Document(
-            text=text_content,
-            metadata={
-                "page_id": page_id,
-                "title": page.title,
-                "url": page.url,
-                "facility_id": self.facility_id,
-            },
-        )
-
         # Split into chunks (CPU-bound, fast)
-        nodes = self.splitter.get_nodes_from_documents([doc])
-        stats["chunks"] = len(nodes)
+        text_chunks = _chunk_text(
+            text_content,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+        )
+        stats["chunks"] = len(text_chunks)
 
         # Generate embeddings in batch - BLOCKING HTTP, run in thread pool
-        chunk_texts = [node.text for node in nodes]  # type: ignore[attr-defined]
+        chunk_texts = [chunk.text for chunk in text_chunks]
         embeddings = await asyncio.to_thread(
             self.embed_model.get_text_embedding_batch, chunk_texts
         )
@@ -911,12 +895,11 @@ class WikiIngestionPipeline:
         all_mdsplus: set[str] = set()
         all_imas: set[str] = set()
 
-        for i, node in enumerate(nodes):
-            chunk_text: str = node.text  # type: ignore[attr-defined]
-            node.embedding = embeddings[i]
+        for i, chunk in enumerate(text_chunks):
+            chunk_text_str: str = chunk.text
 
             # Extract entities using facility-aware extractor
-            entities = extractor.extract(chunk_text)
+            entities = extractor.extract(chunk_text_str)
             props = extractor.to_chunk_properties(entities)
 
             # Track for stats
@@ -931,8 +914,8 @@ class WikiIngestionPipeline:
                     "wiki_page_id": page_id,
                     "facility_id": self.facility_id,
                     "chunk_index": i,
-                    "text": chunk_text,
-                    "embedding": node.embedding,
+                    "text": chunk_text_str,
+                    "embedding": embeddings[i],
                     **props,
                 }
             )
@@ -966,7 +949,7 @@ class WikiIngestionPipeline:
                 title=page.title,
                 facility_id=self.facility_id,
                 hash=page.content_hash,
-                chunk_count=len(nodes),
+                chunk_count=len(text_chunks),
                 mdsplus_paths=len(page.mdsplus_paths) if page.mdsplus_paths else 0,
                 imas_paths=len(page.imas_paths) if page.imas_paths else 0,
                 conventions=len(page.conventions) if page.conventions else 0,
@@ -1634,16 +1617,10 @@ class DocumentPipeline:
         self.use_rich = use_rich
         self.max_size_bytes = int(max_size_mb * 1024 * 1024)
 
-        self.splitter = SentenceSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separator="\n",
-        )
-
-        self._embed_model: BaseEmbedding | None = None
+        self._embed_model = None
 
     @property
-    def embed_model(self) -> BaseEmbedding:
+    def embed_model(self):
         """Lazy-load embedding model respecting embedding-backend config."""
         if self._embed_model is None:
             self._embed_model = get_embed_model()
@@ -2125,33 +2102,29 @@ class DocumentPipeline:
         extractor = FacilityEntityExtractor(self.facility_id)
 
         # Split into chunks
-        combined_doc = Document(
-            text=full_text,
-            metadata={
-                "document_id": document_id,
-                "facility_id": self.facility_id,
-            },
+        text_chunks = _chunk_text(
+            full_text,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
         )
-        nodes = self.splitter.get_nodes_from_documents([combined_doc])
-        stats["chunks"] = len(nodes)
+        stats["chunks"] = len(text_chunks)
 
-        if not nodes:
+        if not text_chunks:
             return stats
 
         # Generate embeddings in batch - BLOCKING HTTP, run in thread pool
-        chunk_texts = [node.text for node in nodes]  # type: ignore[attr-defined]
+        chunk_texts = [chunk.text for chunk in text_chunks]
         embeddings = await asyncio.to_thread(
             self.embed_model.get_text_embedding_batch, chunk_texts
         )
 
         # Prepare batch with pre-computed embeddings
         chunk_batch: list[dict] = []
-        for i, node in enumerate(nodes):
-            chunk_text: str = node.text  # type: ignore[attr-defined]
-            node.embedding = embeddings[i]
+        for i, chunk in enumerate(text_chunks):
+            chunk_text_str: str = chunk.text
 
             # Extract entities using facility-aware extractor
-            entities = extractor.extract(chunk_text)
+            entities = extractor.extract(chunk_text_str)
             props = extractor.to_chunk_properties(entities)
 
             chunk_batch.append(
@@ -2159,8 +2132,8 @@ class DocumentPipeline:
                     "id": f"{document_id}:chunk_{i}",
                     "document_id": document_id,
                     "facility_id": self.facility_id,
-                    "text": chunk_text,
-                    "embedding": node.embedding,
+                    "text": chunk_text_str,
+                    "embedding": embeddings[i],
                     **props,
                 }
             )
@@ -2177,7 +2150,7 @@ class DocumentPipeline:
                     wa.claimed_at = null
                 """,
                 id=document_id,
-                chunks=len(nodes),
+                chunks=len(text_chunks),
             )
 
             # Batch persist chunks
