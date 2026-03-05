@@ -23,7 +23,8 @@ from .scorer import (
     FileScoreResult,
     FileTriageBatch,
     FileTriageResult,
-    score_facility_files,
+    apply_file_scores,
+    apply_triage_results,
 )
 
 __all__ = [
@@ -31,9 +32,10 @@ __all__ = [
     "FileScoreResult",
     "FileTriageBatch",
     "FileTriageResult",
+    "apply_file_scores",
+    "apply_triage_results",
     "get_code_discovery_stats",
     "reset_orphaned_file_claims",
     "run_parallel_code_discovery",
     "scan_facility_files",
-    "score_facility_files",
 ]
