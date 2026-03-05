@@ -249,39 +249,6 @@ def _scan_remote_path(
     return result_map.get(remote_path, [])
 
 
-def _get_scannable_paths(
-    facility: str,
-    min_score: float = 0.5,
-    limit: int = 100,
-) -> list[dict]:
-    """Get scored FacilityPaths that are ready for file scanning.
-
-    .. deprecated::
-        Use :func:`~imas_codex.discovery.code.graph_ops.claim_paths_for_file_scan`
-        instead for parallel-safe claiming.
-
-    Returns paths with status 'scored' and score >= min_score,
-    ordered by score descending.
-    """
-    with GraphClient() as client:
-        result = client.query(
-            """
-            MATCH (p:FacilityPath {facility_id: $facility})
-            WHERE p.status IN ['scored', 'explored']
-              AND coalesce(p.score_composite, 0) >= $min_score
-              AND p.path IS NOT NULL
-            RETURN p.id AS id, p.path AS path, p.score_composite AS score,
-                   p.purpose AS purpose, coalesce(p.files_scanned, 0) AS files_scanned
-            ORDER BY p.score_composite DESC
-            LIMIT $limit
-            """,
-            facility=facility,
-            min_score=min_score,
-            limit=limit,
-        )
-        return list(result)
-
-
 def _persist_code_files(
     facility: str,
     files: list[dict],
