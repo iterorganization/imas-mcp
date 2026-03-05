@@ -108,10 +108,9 @@ def search_code_examples(query: str, limit: int = 5, min_score: float = 0.5) -> 
     print(f"Searching code examples for: {query}")
 
     try:
-        from imas_codex.ingestion.search import ChunkSearch
+        from imas_codex.ingestion.search import search_code_chunks
 
-        searcher = ChunkSearch()
-        results = searcher.search(query=query, top_k=limit, min_score=min_score)
+        results = search_code_chunks(query=query, top_k=limit, min_score=min_score)
 
         if not results:
             print("No code examples found")

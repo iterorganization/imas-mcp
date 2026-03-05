@@ -606,19 +606,6 @@ def _init_repl() -> dict[str, Any]:
     # Code search utilities
     # =========================================================================
 
-    _code_searcher = None
-
-    def _get_code_searcher():
-        """Get or create ChunkSearch, loading embedding model on first use."""
-        nonlocal _code_searcher
-        if _code_searcher is None:
-            from imas_codex.ingestion.search import ChunkSearch
-
-            logger.info("Initializing ChunkSearch (embedding loading)...")
-            _code_searcher = ChunkSearch()
-            logger.info("ChunkSearch ready")
-        return _code_searcher
-
     def search_code(
         query_text: str,
         top_k: int = 5,
@@ -636,7 +623,9 @@ def _init_repl() -> dict[str, Any]:
         Returns:
             List of code results with content, source_file, score
         """
-        results = _get_code_searcher().search(
+        from imas_codex.ingestion.search import search_code_chunks
+
+        results = search_code_chunks(
             query=query_text,
             top_k=top_k,
             facility=facility,

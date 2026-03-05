@@ -1,53 +1,15 @@
 """Semantic search over ingested code chunks.
 
-Uses Neo4jVectorStore for similarity search with optional
-IDS and facility filtering via Neo4j's native metadata filtering.
+Uses direct Cypher vector queries with optional facility and IDS filtering.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from llama_index.core import VectorStoreIndex
-from llama_index.core.embeddings import BaseEmbedding
-from llama_index.core.vector_stores.types import (
-    FilterCondition,
-    FilterOperator,
-    MetadataFilter,
-    MetadataFilters,
-)
-from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
-
-from imas_codex.embeddings import get_embed_model
-from imas_codex.settings import (
-    get_embedding_dimension,
-    get_graph_password,
-    get_graph_uri,
-    get_graph_username,
-)
+from imas_codex.embeddings import Encoder
+from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
-
-
-def _create_vector_store(
-    neo4j_uri: str | None = None,
-    neo4j_user: str | None = None,
-    neo4j_password: str | None = None,
-) -> Neo4jVectorStore:
-    """Create Neo4jVectorStore for code chunks.
-
-    Connection settings are resolved from centralized settings when not
-    explicitly provided (env var → pyproject.toml → default).
-    """
-    return Neo4jVectorStore(
-        username=neo4j_user or get_graph_username(),
-        password=neo4j_password or get_graph_password(),
-        url=neo4j_uri or get_graph_uri(),
-        embedding_dimension=get_embedding_dimension(),
-        index_name="code_chunk_embedding",
-        node_label="CodeChunk",
-        text_node_property="text",
-        embedding_node_property="embedding",
-    )
 
 
 @dataclass
@@ -65,127 +27,66 @@ class ChunkSearchResult:
     end_line: int | None = None
 
 
-@dataclass
-class ChunkSearch:
-    """Search ingested code chunks using vector similarity.
+def search_code_chunks(
+    query: str,
+    top_k: int = 10,
+    facility: str | None = None,
+    ids_filter: list[str] | None = None,
+    min_score: float = 0.5,
+) -> list[ChunkSearchResult]:
+    """Search code chunks using vector similarity via direct Cypher.
 
-    Uses the embedding-backend config to choose local or remote embedding.
-    Replaces CodeExampleSearch.
+    Args:
+        query: Natural language search query
+        top_k: Maximum number of results to return
+        facility: Optional facility ID to filter by
+        ids_filter: Optional list of IDS names to filter by
+        min_score: Minimum similarity score threshold
+
+    Returns:
+        List of ChunkSearchResult objects ordered by relevance
     """
+    encoder = Encoder()
+    embeddings = encoder.embed_texts([query])
+    embedding = embeddings[0].tolist()
 
-    embed_model: BaseEmbedding = field(default_factory=get_embed_model)
-    vector_store: Neo4jVectorStore | None = None
-    _index: VectorStoreIndex | None = field(default=None, init=False)
+    where_clauses: list[str] = []
+    params: dict = {"embedding": embedding, "k": top_k}
 
-    def _get_index(self) -> VectorStoreIndex:
-        """Get or create the VectorStoreIndex."""
-        if self._index is None:
-            vs = self.vector_store or _create_vector_store()
-            self._index = VectorStoreIndex.from_vector_store(
-                vector_store=vs,
-                embed_model=self.embed_model,
-            )
-        return self._index
+    if facility:
+        where_clauses.append("node.facility_id = $facility")
+        params["facility"] = facility
+    if ids_filter:
+        where_clauses.append("any(ids IN node.related_ids WHERE ids IN $ids_filter)")
+        params["ids_filter"] = ids_filter
 
-    def search(
-        self,
-        query: str,
-        top_k: int = 10,
-        ids_filter: list[str] | None = None,
-        facility: str | None = None,
-        min_score: float = 0.5,
-    ) -> list[ChunkSearchResult]:
-        """Search for code chunks matching the query.
+    where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-        Args:
-            query: Natural language search query
-            top_k: Maximum number of results to return
-            ids_filter: Optional list of IDS names to filter by
-            facility: Optional facility ID to filter by
-            min_score: Minimum similarity score threshold
-
-        Returns:
-            List of ChunkSearchResult objects ordered by relevance
-        """
-        index = self._get_index()
-
-        filters = self._build_filters(facility, ids_filter)
-
-        retriever = index.as_retriever(
-            similarity_top_k=top_k,
-            filters=filters,
+    with GraphClient() as gc:
+        results = gc.query(
+            f"""
+            CALL db.index.vector.queryNodes(
+                'code_chunk_embedding', $k, $embedding
+            ) YIELD node, score
+            {where}
+            RETURN node.id AS chunk_id,
+                   node.text AS content,
+                   node.function_name AS function_name,
+                   node.source_file AS source_file,
+                   node.facility_id AS facility_id,
+                   node.related_ids AS related_ids,
+                   node.start_line AS start_line,
+                   node.end_line AS end_line,
+                   score
+            ORDER BY score DESC
+            """,
+            **params,
         )
 
-        try:
-            nodes_with_scores = retriever.retrieve(query)
-        except Exception as e:
-            logger.warning("Vector search failed: %s", e)
-            return []
-
-        results = []
-        for node_with_score in nodes_with_scores:
-            node = node_with_score.node
-            score = node_with_score.score or 0.0
-
-            if score < min_score:
-                continue
-
-            metadata = node.metadata or {}
-
-            results.append(
-                ChunkSearchResult(
-                    chunk_id=node.node_id,
-                    content=node.get_content(),
-                    function_name=metadata.get("function_name"),
-                    source_file=metadata.get("source_file", ""),
-                    facility_id=metadata.get("facility_id", ""),
-                    related_ids=metadata.get("related_ids", []),
-                    score=score,
-                    start_line=metadata.get("start_line"),
-                    end_line=metadata.get("end_line"),
-                )
-            )
-
-        return results
-
-    def _build_filters(
-        self,
-        facility: str | None,
-        ids_filter: list[str] | None,
-    ) -> MetadataFilters | None:
-        """Build MetadataFilters for Neo4jVectorStore."""
-        if not facility and not ids_filter:
-            return None
-
-        filter_list: list[MetadataFilter] = []
-
-        if facility:
-            filter_list.append(
-                MetadataFilter(
-                    key="facility_id",
-                    value=facility,
-                    operator=FilterOperator.EQ,
-                )
-            )
-
-        if ids_filter:
-            filter_list.append(
-                MetadataFilter(
-                    key="related_ids",
-                    value=ids_filter,
-                    operator=FilterOperator.ANY,
-                )
-            )
-
-        return MetadataFilters(
-            filters=filter_list,
-            condition=FilterCondition.AND
-            if len(filter_list) > 1
-            else FilterCondition.OR,
-        )
+    return [ChunkSearchResult(**r) for r in results if r["score"] >= min_score]
 
 
 __all__ = [
-    "ChunkSearch",
     "ChunkSearchResult",
+    "search_code_chunks",
 ]
