@@ -120,7 +120,6 @@ dev = [
     "llama-index-core>=0.14",
     "llama-index-vector-stores-neo4jvector>=0.4",
     "llama-index-llms-openrouter>=0.4",
-    "llama-index-readers-file>=0.5.6",
 
     # --- Graph build & schema ---
     "linkml>=1.9.3",
