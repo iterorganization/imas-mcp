@@ -636,6 +636,22 @@ class TestBuildServersSection:
         assert build_servers_section([]) is None
         assert build_servers_section(None) is None
 
+    def test_healthy_with_load_indicator(self):
+        from imas_codex.discovery.base.services import ServiceState
+
+        s = self._status(state=ServiceState.healthy, detail="iter ↑12.3")
+        result = build_servers_section([s])
+        plain = result.plain
+        assert "iter" in plain
+        assert "↑12.3" in plain
+
+    def test_healthy_without_load_indicator(self):
+        from imas_codex.discovery.base.services import ServiceState
+
+        s = self._status(state=ServiceState.healthy, detail="iter")
+        result = build_servers_section([s])
+        assert "↑" not in result.plain
+
 
 # =============================================================================
 # WikiProgressDisplay transient=False
