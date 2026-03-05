@@ -66,8 +66,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--code-workers",
     type=int,
-    default=2,
-    help="Number of parallel code ingest workers (default: 2)",
+    default=1,
+    help="Number of parallel code ingest workers (default: 1)",
 )
 @click.option(
     "--scan-only",

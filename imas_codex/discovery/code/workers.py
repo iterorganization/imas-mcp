@@ -566,7 +566,7 @@ def _mark_file_failed(file_id: str, error: str) -> None:
 async def code_worker(
     state: FileDiscoveryState,
     on_progress: Callable | None = None,
-    batch_size: int = 10,
+    batch_size: int = 50,
 ) -> None:
     """Code worker: Fetch, chunk, embed, and link code files.
 
@@ -574,9 +574,14 @@ async def code_worker(
     ingestion pipeline (tree-sitter chunking, embedding, entity extraction).
     Transitions: discovered (scored) → ingested | failed
 
-    This replaces the `ingest run` CLI command's core loop.
+    Creates a single shared Encoder instance to avoid loading the
+    embedding model multiple times on the same GPU.
     """
+    from imas_codex.embeddings.encoder import Encoder
     from imas_codex.ingestion.pipeline import ingest_files
+
+    # Create encoder once for this worker — avoid per-batch GPU model loading.
+    encoder = Encoder()
 
     while not state.should_stop():
         if state.scan_only or state.score_only:
@@ -611,13 +616,19 @@ async def code_worker(
                 facility=state.facility,
                 remote_paths=remote_paths,
                 force=False,
+                encoder=encoder,
             )
 
-            ingested_ids = [file_id_map[p] for p in remote_paths if p in file_id_map]
-            if ingested_ids:
-                await asyncio.to_thread(_mark_files_ingested, ingested_ids)
+            # Only mark files as ingested if they actually succeeded
+            ingested_count = stats.get("files", 0)
+            if ingested_count > 0:
+                ingested_ids = [
+                    file_id_map[p] for p in remote_paths if p in file_id_map
+                ]
+                if ingested_ids:
+                    await asyncio.to_thread(_mark_files_ingested, ingested_ids)
 
-            state.code_stats.processed += stats.get("files", 0)
+            state.code_stats.processed += ingested_count
 
             if on_progress:
                 on_progress(

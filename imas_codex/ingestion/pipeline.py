@@ -17,9 +17,14 @@ import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from imas_codex.graph import GraphClient
+
+if TYPE_CHECKING:
+    from imas_codex.embeddings.encoder import Encoder
 
 from .chunkers import chunk_code, chunk_text
 from .extractors.ids import extract_ids_references
@@ -37,6 +42,79 @@ logger = logging.getLogger(__name__)
 
 # Progress callback type: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
+
+# Maximum number of chunk texts to embed in a single call.
+# Prevents CUDA OOM on large batches — each chunk can be up to 10KB.
+# With 1024-dim embeddings, 32 chunks ≈ 320KB text → ~1 GiB GPU memory.
+MAX_CHUNKS_PER_EMBED = 32
+
+
+def _embed_chunks_safe(
+    encoder: "Encoder",
+    chunk_texts: list[str],
+    max_per_call: int = MAX_CHUNKS_PER_EMBED,
+) -> np.ndarray:
+    """Embed chunks in sub-batches with OOM-aware retry.
+
+    Splits large embedding requests into sub-batches to fit in GPU memory.
+    On CUDA OOM, halves the sub-batch size and retries (down to 1 chunk).
+
+    Args:
+        encoder: Encoder instance (local or remote)
+        chunk_texts: List of text strings to embed
+        max_per_call: Maximum chunks per embedding call
+
+    Returns:
+        Numpy array of embeddings
+
+    Raises:
+        RuntimeError: If embedding fails even at batch size 1
+    """
+    if not chunk_texts:
+        return np.array([])
+
+    all_embeddings: list[np.ndarray] = []
+    i = 0
+    current_batch = max_per_call
+
+    while i < len(chunk_texts):
+        batch = chunk_texts[i : i + current_batch]
+        try:
+            emb = encoder.embed_texts(batch)
+            all_embeddings.append(emb)
+            i += len(batch)
+            # Gradually restore batch size after success
+            if current_batch < max_per_call:
+                current_batch = min(current_batch * 2, max_per_call)
+        except RuntimeError as e:
+            if "CUDA out of memory" in str(e) or "out of memory" in str(e).lower():
+                # Free cached GPU memory before retrying
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+
+                if current_batch > 1:
+                    current_batch = max(1, current_batch // 2)
+                    logger.warning(
+                        "OOM with %d chunks, retrying with %d",
+                        len(batch),
+                        current_batch,
+                    )
+                    continue
+                else:
+                    logger.error(
+                        "OOM embedding single chunk (%d chars), skipping",
+                        len(batch[0]),
+                    )
+                    raise
+            else:
+                raise
+
+    return np.vstack(all_embeddings)
 
 
 def _split_and_extract(
@@ -173,6 +251,7 @@ async def ingest_files(
     progress_callback: ProgressCallback | None = None,
     force: bool = False,
     limit: int | None = None,
+    encoder: "Encoder | None" = None,
 ) -> dict[str, int]:
     """Ingest files from a remote facility.
 
@@ -193,6 +272,7 @@ async def ingest_files(
         progress_callback: Optional callback for progress reporting
         force: If True, re-ingest files even if already present
         limit: Maximum files to process from graph queue
+        encoder: Optional shared Encoder instance (avoids loading model per call)
 
     Returns:
         Dict with counts: files, chunks, ids_found, mdsplus_paths, skipped, tree_nodes_linked
@@ -302,12 +382,13 @@ async def ingest_files(
     total_to_process = sum(len(files) for files in files_by_language.values())
     stats["files"] = 0
 
-    # Load encoder for embeddings
-    from imas_codex.embeddings.encoder import Encoder
+    # Load encoder for embeddings (reuse shared instance if provided)
+    if encoder is None:
+        from imas_codex.embeddings.encoder import Encoder
 
-    encoder = Encoder()
+        encoder = Encoder()
 
-    BATCH_SIZE = 5
+    BATCH_SIZE = 20
 
     processed_files = 0
     for language, file_list in files_by_language.items():
@@ -380,19 +461,21 @@ async def ingest_files(
                         update_source_file_status(sf_id, "failed", error="No chunks")
                 continue
 
-            # Generate embeddings in batch
+            # Generate embeddings in safe sub-batches (OOM-aware)
             chunk_texts = [c["text"] for c in all_chunks]
             try:
-                embeddings = await asyncio.to_thread(encoder.embed_texts, chunk_texts)
+                embeddings = await asyncio.to_thread(
+                    _embed_chunks_safe, encoder, chunk_texts
+                )
                 for i, chunk in enumerate(all_chunks):
                     chunk["embedding"] = embeddings[i].tolist()
             except Exception as e:
-                logger.error("Embedding failed: %s", e)
+                logger.error("Embedding failed for %d chunks: %s", len(chunk_texts), e)
                 for file_info in batch_files:
                     meta = file_metadata.get(file_info["example_id"], {})
                     sf_id = meta.get("_source_file_id")
                     if sf_id:
-                        update_source_file_status(sf_id, "failed", error=str(e))
+                        update_source_file_status(sf_id, "failed", error=str(e)[:200])
                 continue
 
             # Count stats

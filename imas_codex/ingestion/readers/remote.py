@@ -19,8 +19,10 @@ from fabric import Connection
 
 logger = logging.getLogger(__name__)
 
-# Threshold for switching to batch tar transfer
-TAR_BATCH_THRESHOLD = 10
+# Threshold for switching to batch tar transfer.
+# Tar amortises SSH session setup (~1.5s) across all files and is
+# faster than sequential SCP for 2+ files.
+TAR_BATCH_THRESHOLD = 2
 
 # Extension to language mapping for code files
 # Languages with direct tree-sitter integration: python, matlab, fortran, julia, cpp, c, idl
