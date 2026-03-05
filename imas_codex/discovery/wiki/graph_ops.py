@@ -339,29 +339,24 @@ def has_pending_document_work(facility: str) -> bool:
     """Check if there are pending documents (scoring or ingestion).
 
     Documents are pending when:
-    - status = 'discovered' AND NOT score_exempt (needs LLM scoring)
-    - status = 'discovered' AND score_exempt (needs direct ingestion)
+    - status = 'discovered' (needs LLM scoring or direct ingestion)
     - status = 'scored' AND score >= 0.5 AND ingestable type (needs ingestion)
-    - claimed_at is null or expired
+
+    Includes in-flight claimed documents — used by stop-condition checks.
     """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wa:Document {facility_id: $facility})
-            WHERE (
-                (wa.status = $discovered)
-                OR (wa.status = $scored AND wa.score_composite >= 0.5
-                    AND wa.document_type IN $ingestable)
-              )
-              AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
+            WHERE (wa.status = $discovered)
+               OR (wa.status = $scored AND wa.score_composite >= 0.5
+                   AND wa.document_type IN $ingestable)
             RETURN count(wa) AS pending
             """,
             facility=facility,
             discovered=DocumentStatus.discovered.value,
             scored=DocumentStatus.scored.value,
             ingestable=list(INGESTABLE_DOCUMENT_TYPES),
-            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -372,22 +367,20 @@ def has_pending_document_score_work(facility: str) -> bool:
     Returns True if there are documents with:
     - status = 'discovered'
     - document_type in SCORABLE_DOCUMENT_TYPES
-    - claimed_at is null or expired
+
+    Includes in-flight claimed documents — used by stop-condition checks.
     """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wa:Document {facility_id: $facility})
             WHERE wa.status = $discovered
               AND wa.document_type IN $types
-              AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
             discovered=DocumentStatus.discovered.value,
             types=list(SCORABLE_DOCUMENT_TYPES),
-            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -396,11 +389,11 @@ def has_pending_document_ingest_work(facility: str) -> bool:
     """Check if there are documents awaiting ingestion.
 
     Returns True if there are documents with:
-    - status = 'scored' AND score >= 0.5 AND ingestable type (text-extractable)
+    - status = 'scored' AND score >= 0.5 AND ingestable type
     - status = 'discovered' AND score_exempt = true (bypass LLM scoring)
-    - claimed_at is null or expired
+
+    Includes in-flight claimed documents — used by stop-condition checks.
     """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
@@ -410,14 +403,12 @@ def has_pending_document_ingest_work(facility: str) -> bool:
                  AND wa.document_type IN $types)
                 OR (wa.status = $discovered AND wa.score_exempt = true)
               )
-              AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
             scored=DocumentStatus.scored.value,
             discovered=DocumentStatus.discovered.value,
             types=list(INGESTABLE_DOCUMENT_TYPES),
-            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -426,22 +417,24 @@ def has_pending_work(facility: str) -> bool:
     """Check if there's pending wiki work in the graph.
 
     Work exists if there are:
-    - scanned pages awaiting scoring (claimed_at is null)
-    - scored pages with score >= 0.5 awaiting ingest (claimed_at is null)
+    - scanned pages awaiting scoring (including in-flight claimed pages)
+    - scored pages with score >= 0.5 awaiting ingest
+
+    This intentionally includes actively-claimed pages because it is used
+    by the supervision stop-condition.  Excluding claimed pages causes
+    premature shutdown when all pages are in-flight but not yet processed.
     """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE (wp.status = $scanned AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
-               OR (wp.status = $scored AND wp.score_composite >= 0.5 AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
+            WHERE wp.status = $scanned
+               OR (wp.status = $scored AND wp.score_composite >= 0.5)
             RETURN count(wp) AS pending
             """,
             facility=facility,
             scanned=WikiPageStatus.scanned.value,
             scored=WikiPageStatus.scored.value,
-            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -450,20 +443,17 @@ def has_pending_scan_work(facility: str) -> bool:
     """Check if there's pending scoring work in the graph.
 
     With bulk discovery, there's no scan phase. This checks for:
-    - scanned pages awaiting content-aware scoring
+    - scanned pages awaiting content-aware scoring (including in-flight)
     """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scanned
-              AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff))
             RETURN count(wp) AS pending
             """,
             facility=facility,
             scanned=WikiPageStatus.scanned.value,
-            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -471,21 +461,19 @@ def has_pending_scan_work(facility: str) -> bool:
 def has_pending_ingest_work(facility: str) -> bool:
     """Check if there's pending ingest work in the graph.
 
-    Returns True if there are scored pages with score >= 0.5 awaiting ingestion.
+    Returns True if there are scored pages with score >= 0.5 awaiting
+    ingestion (including in-flight claimed pages).
     """
-    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scored
               AND wp.score_composite >= 0.5
-              AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff))
             RETURN count(wp) AS pending
             """,
             facility=facility,
             scored=WikiPageStatus.scored.value,
-            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
