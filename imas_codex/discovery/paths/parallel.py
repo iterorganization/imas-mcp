@@ -610,6 +610,9 @@ async def mark_scan_complete(
 ) -> dict[str, int]:
     """Mark scanned paths complete and conditionally create children.
 
+    Runs persist_scan_results in a thread executor to avoid blocking the
+    event loop — it performs synchronous SSH, HTTP, and Neo4j operations.
+
     Transition: listing → listed (first scan) or scored (expansion scan)
 
     Args:
@@ -620,7 +623,11 @@ async def mark_scan_complete(
     """
     from imas_codex.discovery.paths.frontier import persist_scan_results
 
-    return await persist_scan_results(facility, scan_results, excluded=excluded)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: persist_scan_results(facility, scan_results, excluded=excluded),
+    )
 
 
 def mark_triage_complete(
@@ -2716,6 +2723,17 @@ def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]
     return False, f"Cannot connect to {facility}: {detail}"
 
 
+def _clear_user_claim(user_id: str) -> None:
+    """Clear claimed_at on a FacilityUser so it can be retried."""
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        gc.query(
+            "MATCH (u:FacilityUser {id: $id}) SET u.claimed_at = null",
+            id=user_id,
+        )
+
+
 # ============================================================================
 # User Worker (async Person linking with ORCID)
 # ============================================================================
@@ -2776,7 +2794,8 @@ async def user_worker(
             if state.should_stop():
                 break
             try:
-                with GraphClient() as gc:
+                gc = await loop.run_in_executor(None, GraphClient)
+                try:
                     await _create_person_link(
                         gc,
                         facility_user_id=user["id"],
@@ -2787,17 +2806,18 @@ async def user_worker(
                         email=user.get("email"),
                         now=now,
                     )
-                linked += 1
+                    linked += 1
+                finally:
+                    await loop.run_in_executor(None, gc.close)
             except Exception as e:
                 logger.debug(f"Person link failed for {user['id']}: {e}")
                 errors += 1
                 # Clear claim so user can be retried
                 try:
-                    with GraphClient() as gc:
-                        gc.query(
-                            "MATCH (u:FacilityUser {id: $id}) SET u.claimed_at = null",
-                            id=user["id"],
-                        )
+                    await loop.run_in_executor(
+                        None,
+                        lambda uid=user["id"]: _clear_user_claim(uid),
+                    )
                 except Exception:
                     pass
 

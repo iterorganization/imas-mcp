@@ -1148,7 +1148,30 @@ async def _create_person_link(
             person_id = f"user:{username}"
             person_name = name or username
 
-    # MERGE Person node (deduplicates across facilities)
+    # MERGE Person node and link to FacilityUser (run in executor to avoid
+    # blocking the event loop — gc.query() is synchronous)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: _persist_person_link(
+            gc, person_id, person_name, given_name, family_name,
+            email, orcid, now, facility_user_id,
+        ),
+    )
+
+
+def _persist_person_link(
+    gc: Any,
+    person_id: str,
+    person_name: str,
+    given_name: str | None,
+    family_name: str | None,
+    email: str | None,
+    orcid: str | None,
+    now: str,
+    facility_user_id: str,
+) -> None:
+    """Synchronous helper — MERGE Person node and link FacilityUser."""
     gc.query(
         """
         MERGE (p:Person {id: $person_id})
@@ -1177,7 +1200,6 @@ async def _create_person_link(
         now=now,
     )
 
-    # Link FacilityUser to Person
     gc.query(
         """
         MATCH (u:FacilityUser {id: $user_id})
@@ -1763,7 +1785,7 @@ def cleanup_orphaned_software_repos(batch_size: int = 1000) -> int:
     return total_deleted
 
 
-async def persist_scan_results(
+def persist_scan_results(
     facility: str,
     results: list[tuple[str, dict, list[dict], str | None, bool]],
     excluded: list[tuple[str, str, str]] | None = None,
@@ -2003,10 +2025,6 @@ async def persist_scan_results(
                 )
             else:
                 logger.debug(f"First-scan UNWIND: updated {updated} paths")
-
-            # Yield to event loop so score workers can claim the
-            # newly-scanned paths while we handle excluded dirs, users, etc.
-            await asyncio.sleep(0)
 
         # Batch update expansion paths (keep current status, mark expanded)
         if expansion_updates:
