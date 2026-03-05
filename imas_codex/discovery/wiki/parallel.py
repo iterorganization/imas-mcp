@@ -1102,8 +1102,8 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
             elif (
                 st == DocumentStatus.scored.value
                 and atype in ingestable
-                and r["score_composite"] is not None
-                and r["score_composite"] >= 0.5
+                and r["score"] is not None
+                and r["score"] >= 0.5
             ):
                 pending_document_ingest += r["cnt"]
 
@@ -1270,7 +1270,7 @@ def start_facility_workers(
                 embed_description_worker,
                 "embed_worker",
                 facility_state,
-                facility_state.should_stop,
+                facility_state.should_stop_image_scoring,
                 labels=["WikiPage", "Document", "Image"],
                 status_tracker=embed_status,
             )
