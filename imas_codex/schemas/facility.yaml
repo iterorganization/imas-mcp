@@ -2374,7 +2374,7 @@ classes:
         description: Category of evidence
         range: EvidenceType
         required: true
-      content:
+      text:
         description: Evidence content (text, code snippet, data summary)
         required: true
       supports_mapping:
@@ -2780,7 +2780,7 @@ classes:
         description: Parent CodeExample
         required: true
         range: CodeExample
-      content:
+      text:
         description: The actual code content
         required: true
       function_name:
@@ -3265,7 +3265,7 @@ classes:
         range: integer
       section:
         description: Section heading this chunk belongs to
-      content:
+      text:
         description: The actual text content
         required: true
       start_char:
