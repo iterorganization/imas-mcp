@@ -37,10 +37,9 @@ from .readers.remote import (
     detect_language,
     fetch_remote_files,
 )
-from .search import ChunkSearch, ChunkSearchResult
+from .search import ChunkSearchResult, search_code_chunks
 
 __all__ = [
-    "ChunkSearch",
     "ChunkSearchResult",
     "EXTENSION_TO_LANGUAGE",
     "MDSplusReference",
@@ -57,5 +56,6 @@ __all__ = [
     "link_chunks_to_tree_nodes",
     "normalize_mdsplus_path",
     "queue_source_files",
+    "search_code_chunks",
     "update_source_file_status",
 ]

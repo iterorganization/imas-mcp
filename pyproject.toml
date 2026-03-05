@@ -118,7 +118,6 @@ dev = [
     "litellm>=1.81.0",
     "smolagents>=1.24.0",
     "llama-index-core>=0.14",
-    "llama-index-vector-stores-neo4jvector>=0.4",
 
     # --- Graph build & schema ---
     "linkml>=1.9.3",
