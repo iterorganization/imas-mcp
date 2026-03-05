@@ -441,7 +441,7 @@ def get_code_discovery_stats(facility: str) -> dict[str, int | float]:
             """
             MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE cf.status = 'scored'
-              AND cf.interest_score >= 0.3
+              AND cf.interest_score >= 0.75
             RETURN count(cf) AS pending
             """,
             facility=facility,

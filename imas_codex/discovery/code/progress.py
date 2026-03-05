@@ -11,9 +11,10 @@ Design principles (matching paths, signals, wiki progress displays):
 
 Display layout: PIPELINE → RESOURCES
 - SCAN: SSH file enumeration from scored FacilityPaths
-- SCORE: LLM batch scoring of discovered CodeFiles
-- ENRICH: rg pattern matching on scored files
-- INGEST: Fetch, tree-sitter chunk, embed code files
+- TRIAGE: Per-dimension LLM scoring of discovered CodeFiles
+- ENRICH: rg pattern matching + preview extraction on triaged files
+- SCORE: Full LLM scoring of enriched CodeFiles
+- INGEST: Fetch, tree-sitter chunk, embed scored files
 
 Uses common pipeline infrastructure from base.progress module.
 """
