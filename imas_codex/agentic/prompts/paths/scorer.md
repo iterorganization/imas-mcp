@@ -159,6 +159,22 @@ Prioritize paths related to: **{{ focus }}**
 Boost scores by ~0.15 for paths matching this focus.
 {% endif %}
 
+## Expansion Decision
+
+With enrichment evidence, you can identify directories that should NOT continue expanding. Set `should_expand=false` for:
+
+- **Data directories** — enrichment reveals large byte counts but zero or near-zero code lines, no pattern matches
+- **Archive/log directories** — enrichment shows no code patterns, only data files or logs
+- **Directories with no code evidence** — enrichment confirms zero LOC, no pattern matches
+
+Do NOT change `should_expand` for directories where enrichment confirms they contain code.
+
+{% include "schema/score-output.md" %}
+
+{% if dimension_calibration %}
+{% include "schema/dimension-calibration.md" %}
+{% endif %}
+
 {% if score_calibration %}
 ## Score Calibration Examples
 
@@ -174,19 +190,3 @@ These are real paths from the knowledge graph showing what scores were assigned 
 {% endif %}
 {% endfor %}
 {% endif %}
-
-{% if dimension_calibration %}
-{% include "schema/dimension-calibration.md" %}
-{% endif %}
-
-## Expansion Decision
-
-With enrichment evidence, you can identify directories that should NOT continue expanding. Set `should_expand=false` for:
-
-- **Data directories** — enrichment reveals large byte counts but zero or near-zero code lines, no pattern matches
-- **Archive/log directories** — enrichment shows no code patterns, only data files or logs
-- **Directories with no code evidence** — enrichment confirms zero LOC, no pattern matches
-
-Do NOT change `should_expand` for directories where enrichment confirms they contain code.
-
-{% include "schema/score-output.md" %}

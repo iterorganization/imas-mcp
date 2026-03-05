@@ -137,6 +137,7 @@ class ProgressState:
     triaged: int = 0  # Triaged (1st pass)
     scored: int = 0  # Scored complete (2nd pass)
     skipped: int = 0  # Low value or dead-end
+    explored: int = 0  # Root/navigation paths (scanned but not triaged)
     excluded: int = 0  # Matched exclusion pattern
     max_depth: int = 0  # Maximum tree depth
 
@@ -433,6 +434,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
             + self.state.triaged
             + self.state.scored
             + self.state.skipped
+            + self.state.explored
             - self.state.excluded
         )
         scan_total = max(self.state.total - self.state.excluded, 1)
@@ -1149,6 +1151,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         self.state.triaged = stats["triaged"]
         self.state.scored = stats["scored"]
         self.state.skipped = stats["skipped"]
+        self.state.explored = stats.get("explored", 0)
         self.state.excluded = stats["excluded"]
         self.state.max_depth = stats["max_depth"]
         # Calculate pending work counts including expansion_ready

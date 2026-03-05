@@ -180,7 +180,9 @@ def _can_reach_github(timeout: float = 1.5) -> bool:
     import socket
 
     try:
-        socket.create_connection(("raw.githubusercontent.com", 443), timeout=timeout).close()
+        socket.create_connection(
+            ("raw.githubusercontent.com", 443), timeout=timeout
+        ).close()
         return True
     except OSError:
         return False
@@ -412,6 +414,13 @@ def _build_kwargs(
 
     # Route through LiteLLM proxy when configured (location != "local" or env override)
     llm_location = get_llm_location()
+
+    # Inject cache_control for models that support explicit breakpoints.
+    # This must happen before building kwargs so both proxy and direct
+    # paths benefit from prompt caching.
+    if _supports_cache_control(model):
+        messages = inject_cache_control(messages)
+
     if llm_location != "local" or os.getenv("LITELLM_PROXY_URL"):
         proxy_url = get_llm_proxy_url()
         # Proxy is an OpenAI-compatible endpoint; use openai/ prefix
@@ -431,10 +440,6 @@ def _build_kwargs(
         }
     else:
         model_id = ensure_openrouter_prefix(model)
-
-        # Inject cache_control for models that support explicit breakpoints
-        if _supports_cache_control(model):
-            messages = inject_cache_control(messages)
 
         kwargs = {
             "model": model_id,
