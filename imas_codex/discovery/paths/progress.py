@@ -55,7 +55,7 @@ class TriageItem:
     """Current triage activity."""
 
     path: str
-    score: float | None = None
+    score_composite: float | None = None
     purpose: str = ""  # Category: experimental_data, modeling_code, etc.
     description: str = ""  # LLM reasoning about why this path is valuable
     physics_domain: str = ""  # Primary physics domain (equilibrium, transport, etc.)
@@ -88,7 +88,7 @@ class ScoreItem:
     """Current score activity (2nd pass with enrichment evidence)."""
 
     path: str
-    score: float | None = None
+    score_composite: float | None = None
     previous_score: float | None = None
     purpose: str = ""
     description: str = ""
@@ -505,8 +505,8 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         if triage:
             triage_path = triage.path
 
-            if triage.score is not None:
-                triage_value = triage.score
+            if triage.score_composite is not None:
+                triage_value = triage.score_composite
 
                 # Physics domain (shown on line 2)
                 if triage.physics_domain and triage.physics_domain != "general":
@@ -587,7 +587,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
         score_queue_empty = self.state.score_queue.is_empty()
         if score and (not score_queue_empty or self.state.score_processing > 0):
             score_text = score.path
-            if score.score is not None:
+            if score.score_composite is not None:
                 # Show top dimension score + label instead of combined score
                 parts: list[tuple[str, str]] = []
 
@@ -600,7 +600,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                             top_val = val
                             top_dim = dim
 
-                display_score = top_val if top_dim else score.score
+                display_score = top_val if top_dim else score.score_composite
                 dim_label = (
                     top_dim.replace("score_", "").replace("_", " ") if top_dim else ""
                 )
@@ -875,7 +875,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 items.append(
                     TriageItem(
                         path=path,
-                        score=r.get("score"),
+                        score_composite=r.get("score"),
                         purpose=r.get("label", "") or r.get("path_purpose", ""),
                         description=r.get("description", ""),
                         physics_domain=r.get("physics_domain", ""),
@@ -1077,7 +1077,7 @@ class ParallelProgressDisplay(BaseProgressDisplay):
                 items.append(
                     ScoreItem(
                         path=path,
-                        score=r.get("score"),
+                        score_composite=r.get("score"),
                         previous_score=r.get("previous_score"),
                         purpose=r.get("path_purpose", ""),
                         description=r.get("description", ""),
@@ -1559,3 +1559,81 @@ def print_discovery_status(
         except Exception:
             if domain == "static":
                 output("Static stats unavailable")
+
+    # --------------------------------------------------------------------------
+    # Code domain
+    # --------------------------------------------------------------------------
+    if domain is None or domain == "code":
+        try:
+            from imas_codex.discovery.code.parallel import get_code_discovery_stats
+
+            code_stats = get_code_discovery_stats(facility)
+            code_total = code_stats.get("total", 0)
+            if code_total > 0:
+                if domain is None:
+                    output("\n[bold]Code Discovery:[/bold]")
+                discovered = int(code_stats.get("discovered", 0))
+                triaged = int(code_stats.get("triaged", 0))
+                scored = int(code_stats.get("scored", 0))
+                ingested = int(code_stats.get("ingested", 0))
+                failed = int(code_stats.get("failed", 0))
+                skipped = int(code_stats.get("skipped", 0))
+                enriched = int(code_stats.get("enriched_count", 0))
+
+                output(f"Total code files: {code_total:,}")
+
+                # Cumulative throughput
+                cum_triaged = triaged + scored + ingested + skipped
+                cum_scored = scored + ingested + skipped
+
+                if cum_triaged > 0:
+                    output(
+                        f"├─ Triaged:   {cum_triaged:,}"
+                        f" ({cum_triaged / code_total * 100:.1f}%)"
+                    )
+                    if enriched > 0:
+                        output(f"│  ├─ Enriched: {enriched:,}")
+                    if cum_scored > 0:
+                        output(f"│  ├─ Scored:   {cum_scored:,}")
+                        if ingested > 0:
+                            output(f"│  │  └─ Ingested: {ingested:,}")
+                    if skipped > 0:
+                        output(f"│  └─ Skipped:  {skipped:,}")
+                if discovered > 0:
+                    output(
+                        f"├─ Pending:   {discovered:,}"
+                        f" ({discovered / code_total * 100:.1f}%)"
+                    )
+                if failed > 0:
+                    output(f"└─ Failed:    {failed:,}")
+
+                # Language breakdown
+                lang_keys = sorted(
+                    k for k in code_stats if k.endswith("_files") and code_stats[k] > 0
+                )
+                if lang_keys:
+                    output("\nBy language:")
+                    for lk in lang_keys:
+                        lang = lk.removesuffix("_files")
+                        output(f"  {lang}: {int(code_stats[lk]):,}")
+
+                # Pending work
+                pending_triage = int(code_stats.get("pending_triage", 0))
+                pending_enrich = int(code_stats.get("pending_enrich", 0))
+                pending_score = int(code_stats.get("pending_score", 0))
+                pending_ingest = int(code_stats.get("pending_ingest", 0))
+                if any([pending_triage, pending_enrich, pending_score, pending_ingest]):
+                    output("\nPending work:")
+                    if pending_triage:
+                        output(f"  Triage:  {pending_triage:,}")
+                    if pending_enrich:
+                        output(f"  Enrich:  {pending_enrich:,}")
+                    if pending_score:
+                        output(f"  Score:   {pending_score:,}")
+                    if pending_ingest:
+                        output(f"  Ingest:  {pending_ingest:,}")
+            elif domain == "code":
+                output("No code files discovered")
+        except Exception:
+            if domain == "code":
+                output("Code stats unavailable")
