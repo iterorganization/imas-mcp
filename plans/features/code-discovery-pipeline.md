@@ -29,18 +29,29 @@ discovered → triaged → (enriched) → scored → ingested | skipped | failed
 
 **Sibling context:** Triage groups files by parent directory and includes sibling filenames for context.
 
-## Graph State (after initial runs)
+## Graph State (cleared — ready for fresh run)
+
+All code content has been cleared via `discover clear --domain code tcv --force`. The graph now contains only the structural foundation (FacilityPaths, TreeNodes, FacilitySignals) without any code analysis artifacts.
 
 | Node Type | Count | Notes |
 |-----------|-------|-------|
-| FacilityPath | ~12,237 | scored, most file-scanned |
-| CodeFile | ~13,172 | 12,794 discovered, 299 ingested, 79 skipped (old pipeline) |
-| CodeChunk | ~12,865 | embedded |
-| DataReference | 158 | MDSplus paths extracted |
-| FacilitySignal | ~64,950 | 248 with code evidence |
-| TreeNode | ~82,717 | MDSplus tree nodes |
+| FacilityPath | ~12,237 | scored, scan markers reset (files_scanned=null) |
+| CodeFile | 0 | cleared |
+| CodeChunk | 0 | cleared |
+| CodeExample | 0 | cleared |
+| DataReference | 0 | cleared |
+| FacilitySignal | ~64,950 | code_evidence_count/has_code_evidence reset to null |
+| TreeNode | ~82,717 | MDSplus tree nodes (unchanged) |
 
-**NOTE:** All existing CodeFiles were processed under the OLD pipeline (single-pass score, no triage/enrich phases). They lack `triage_*` and `score_*` dimension properties. A re-triage run is needed — see Phase 3.
+### Referential Integrity Fix (commit 6e27907)
+
+The previous graph had DataReference and DataAccess nodes missing `AT_FACILITY` edges, causing `test_facility_id_edges_exist` to fail. Root causes fixed:
+
+- **DataReference** (ingestion/graph.py): `link_chunks_to_tree_nodes()` and `link_example_chunks_to_tree_nodes()` now create AT_FACILITY edges when merging DataReference nodes.
+- **DataAccess** (discovery/signals/tdi.py): `create_tdi_data_access()` switched from `gc.create_node()` (which skips relationship creation) to explicit Cypher with AT_FACILITY edge.
+- **clear_facility_code** (scanner.py): Now deletes orphaned DataReference nodes, resets FacilityPath scan markers, and clears FacilitySignal code evidence properties for a complete clean slate.
+
+With the cleared state and source fixes, all newly created nodes will have proper AT_FACILITY edges.
 
 ## Known Code Access Patterns (from SSH inspection)
 
@@ -120,74 +131,68 @@ DATA_ACCESS_PATTERNS expanded with `mdsplus_tdi`, `mdsplus_matlab`, `tcvpy`, `eq
 
 ---
 
-## Phase 3: Re-triage and Run Code Discovery to Completion
+## Phase 3: Run Code Discovery from Clean State
 
 ### Goal
-Run the new triage→enrich→score pipeline across all CodeFiles. Existing files were scored under the old single-pass model and lack dimension properties. A re-triage run is required to populate triage_* and score_* dimensions.
+Run the full triage→enrich→score→code→link pipeline from scratch. All previous code data has been cleared via `discover clear --domain code tcv --force`, so the pipeline starts fresh without legacy artifacts from the old single-pass model.
 
-### Step 3.1: Reset Old Scored Files for Re-triage
-
-Existing CodeFiles with `status='discovered'` (12,794) will be picked up automatically by the new triage_worker. However, files already `ingested` (299) or `skipped` (79) under the old model need a decision:
-
-**Option A (recommended):** Leave ingested files as-is. They have CodeChunks + embeddings. Re-score them later if needed by a separate one-shot script that backfills triage_* and score_* properties from their existing data.
-
-**Option B:** Reset all non-ingested files to `discovered` to re-triage:
-```cypher
-// Reset skipped files (they were skipped by old triage, might pass new one)
-MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-WHERE cf.status = 'skipped'
-  AND cf.triage_composite IS NULL
-SET cf.status = 'discovered', cf.skip_reason = null
-```
-
-### Step 3.2: Run Triage + Enrich + Score
+### Step 3.0: Clear Code Content (DONE)
 
 ```bash
-uv run imas-codex discover code tcv --score-only --time 60 -c 10.0
+uv run imas-codex discover clear --domain code tcv --force
 ```
 
-The `--score-only` flag runs triage, enrich, and score workers but skips scan and code workers. This will process all 12,794 discovered files through the new pipeline.
+This deletes all CodeFile, CodeChunk, CodeExample, and DataReference nodes for TCV, resets FacilityPath scan markers (`files_scanned`, `last_file_scan_at`, `evidence_linked` → null), and clears FacilitySignal code evidence properties.
 
-**Monitor progress:**
+### Step 3.1: Full Pipeline Run (scan → triage → enrich → score → code → link)
+
+Since all data is cleared, we need the scan worker to re-enumerate files from FacilityPaths:
+
+```bash
+uv run imas-codex discover code tcv --time 240 -c 20.0 --code-workers 4
+```
+
+**Pipeline flow:**
+1. `scan_worker` reads scored FacilityPaths, SSH enumerates files → creates CodeFile (discovered)
+2. `triage_worker` claims discovered files → per-dimension LLM scoring → status triaged/skipped
+3. `enrich_worker` claims triaged files (composite ≥ 0.75) → rg patterns + preview text → is_enriched=true
+4. `score_worker` claims enriched files → full 9-dimension LLM scoring → status scored/skipped
+5. `code_worker` claims scored files (interest_score ≥ 0.75) → tree-sitter chunk + embed → status ingested/failed
+6. `link_worker` claims ingested files → DataReference → TreeNode → FacilitySignal evidence propagation
+
+### Step 3.2: Monitor Progress
+
 ```cypher
 MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
 RETURN cf.status, count(cf) AS n
 ORDER BY n DESC
 ```
 
-Expected: Files move through discovered → triaged → scored | skipped.
-
-### Step 3.3: Production Ingestion Run
-
-After scoring, run full pipeline to ingest high-value files:
-```bash
-uv run imas-codex discover code tcv --time 240 -c 20.0 --code-workers 4
-```
-
-### Step 3.4: Verify New Dimension Properties
-
 ```cypher
-// Verify triage dimensions populated
+// Verify dimension properties populated
 MATCH (cf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
 WHERE cf.triage_composite IS NOT NULL
 RETURN count(cf) AS triaged,
        avg(cf.triage_composite) AS avg_composite,
        avg(cf.triage_data_access) AS avg_data_access,
        avg(cf.triage_imas) AS avg_imas
+```
 
-// Verify score dimensions populated
-MATCH (cf:CodeFile {status: 'scored'})-[:AT_FACILITY]->(f:Facility {id: 'tcv'})
-RETURN count(cf) AS scored,
-       avg(cf.interest_score) AS avg_score,
-       avg(cf.score_data_access) AS avg_data_access,
-       avg(cf.score_imas) AS avg_imas
+### Step 3.3: Verify Referential Integrity
+
+After ingestion, confirm the AT_FACILITY fix is working:
+
+```bash
+uv run pytest tests/graph/test_referential_integrity.py::test_facility_id_edges_exist -v
 ```
 
 ### Exit Criteria
-- All discovered CodeFiles triaged with dimension properties
-- High-value files enriched (rg patterns + preview)
-- Enriched files scored with full 9-dimension scores
+- All FacilityPaths re-scanned (files_scanned populated)
+- All discovered CodeFiles triaged with 9-dimension properties
+- High-value files enriched and scored
 - Scored files ingested with CodeChunks + embeddings
+- DataReference nodes have AT_FACILITY edges (integrity test passes)
+- FacilitySignals annotated with code evidence from fresh ingestion
 
 ---
 
