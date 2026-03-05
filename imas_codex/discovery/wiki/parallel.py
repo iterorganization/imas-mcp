@@ -55,6 +55,10 @@ def _persist_discovered_pages(
     facility: str,
     pages: list,
     on_progress: Callable | None = None,
+    *,
+    doc_source_id: str | None = None,
+    site_type: str | None = None,
+    auth_type: str | None = None,
 ) -> int:
     """Persist discovered pages to graph as 'scanned' status.
 
@@ -65,6 +69,9 @@ def _persist_discovered_pages(
         facility: Facility ID
         pages: List of DiscoveredPage instances (name, url attrs)
         on_progress: Optional progress callback
+        doc_source_id: DocSource node ID for traceability
+        site_type: Wiki platform type (mediawiki, twiki, etc.)
+        auth_type: Authentication type (tequila, keycloak, etc.)
 
     Returns:
         Number of pages created/updated
@@ -79,6 +86,9 @@ def _persist_discovered_pages(
             "id": canonical_page_id(page.name, facility),
             "title": page.name,
             "url": page.url,
+            "doc_source_id": doc_source_id,
+            "site_type": site_type,
+            "auth_type": auth_type,
         }
         for page in pages
     ]
@@ -111,6 +121,7 @@ def bulk_discover_pages(
     exclude_prefixes: list[str] | None = None,
     max_depth: int | None = None,
     space_key: str | None = None,
+    doc_source_id: str | None = None,
     on_progress: Callable | None = None,
 ) -> int:
     """Bulk discover all wiki pages for a site using the appropriate adapter.
@@ -250,7 +261,14 @@ def bulk_discover_pages(
             return 0
 
         logger.info("Discovered %d pages from %s", len(pages), base_url)
-        return _persist_discovered_pages(facility, pages, on_progress)
+        return _persist_discovered_pages(
+            facility,
+            pages,
+            on_progress,
+            doc_source_id=doc_source_id,
+            site_type=site_type,
+            auth_type=auth_type,
+        )
     finally:
         if close_session and session is not None:
             session.close()
@@ -273,6 +291,7 @@ def bulk_discover_documents(
     pub_path: str | None = None,
     session: Any = None,
     space_key: str | None = None,
+    doc_source_id: str | None = None,
     on_progress: Callable | None = None,
 ) -> tuple[int, dict[str, list[str]]]:
     """Bulk discover all wiki documents via platform API.
@@ -370,6 +389,7 @@ def bulk_discover_documents(
             "size_bytes": a.size_bytes,
             "mime_type": a.mime_type,
             "linked_pages": a.linked_pages,
+            "doc_source_id": doc_source_id,
         }
         for a in documents
     ]

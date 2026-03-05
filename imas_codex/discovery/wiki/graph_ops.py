@@ -63,6 +63,48 @@ SCORABLE_DOCUMENT_TYPES = INGESTABLE_DOCUMENT_TYPES | {
 }
 
 
+def create_doc_source(
+    gc: GraphClient,
+    facility: str,
+    *,
+    name: str,
+    url: str,
+    source_type: str = "wiki",
+    auth_type: str = "none",
+) -> str:
+    """Create or update a DocSource node and return its ID.
+
+    DocSource ID format: ``{facility}:{name}`` where name is the short site
+    identifier (e.g. ``jet:wiki``, ``jet:efda-wiki``).
+    """
+    doc_source_id = f"{facility}:{name}"
+    gc.query(
+        """
+        MERGE (ds:DocSource {id: $id})
+        ON CREATE SET ds.name = $name,
+                      ds.url = $url,
+                      ds.source_type = $source_type,
+                      ds.auth_type = $auth_type,
+                      ds.facility_id = $facility,
+                      ds.status = 'active',
+                      ds.created_at = datetime()
+        ON MATCH SET ds.url = $url,
+                     ds.source_type = $source_type,
+                     ds.auth_type = $auth_type
+        WITH ds
+        MATCH (f:Facility {id: $facility})
+        MERGE (ds)-[:AT_FACILITY]->(f)
+        """,
+        id=doc_source_id,
+        name=name,
+        url=url,
+        source_type=source_type,
+        auth_type=auth_type,
+        facility=facility,
+    )
+    return doc_source_id
+
+
 def _bulk_create_wiki_pages(
     gc: GraphClient,
     facility: str,
@@ -71,15 +113,17 @@ def _bulk_create_wiki_pages(
     batch_size: int = 500,
     on_progress: Callable | None = None,
 ) -> int:
-    """Create WikiPage nodes with AT_FACILITY relationship in batches.
+    """Create WikiPage nodes with AT_FACILITY and FROM_SOURCE relationships.
 
     Every WikiPage gets a [:AT_FACILITY]->(:Facility) relationship at creation
-    time, not deferred to ingestion.
+    time, not deferred to ingestion. If batch items contain ``doc_source_id``,
+    a [:FROM_SOURCE]->(:DocSource) relationship is also created.
 
     Args:
         gc: Open GraphClient
         facility: Facility ID
         batch_data: List of dicts with id, title, url keys
+            (optionally doc_source_id, site_type, auth_type)
         batch_size: Nodes per batch
         on_progress: Optional progress callback
 
@@ -100,14 +144,25 @@ def _bulk_create_wiki_pages(
                           wp.status = $scanned,
                           wp.link_depth = 1,
                           wp.discovered_at = datetime(),
-                          wp.bulk_discovered = true
+                          wp.bulk_discovered = true,
+                          wp.doc_source_id = page.doc_source_id,
+                          wp.site_type = page.site_type,
+                          wp.auth_type = page.auth_type
             ON MATCH SET wp.bulk_discovered = true,
                          wp.url = page.url,
-                         wp.title = page.title
+                         wp.title = page.title,
+                         wp.doc_source_id = coalesce(page.doc_source_id, wp.doc_source_id),
+                         wp.site_type = coalesce(page.site_type, wp.site_type),
+                         wp.auth_type = coalesce(page.auth_type, wp.auth_type)
             WITH wp
             MATCH (f:Facility {id: $facility})
             MERGE (wp)-[:AT_FACILITY]->(f)
-            RETURN count(wp) AS count
+            WITH wp
+            WHERE wp.doc_source_id IS NOT NULL
+            MATCH (ds:DocSource {id: wp.doc_source_id})
+            MERGE (wp)-[:FROM_SOURCE]->(ds)
+            WITH count(wp) AS dummy
+            RETURN dummy + 0 AS count
             """,
             pages=batch,
             facility=facility,
@@ -130,13 +185,13 @@ def _bulk_create_wiki_documents(
     batch_size: int = 500,
     on_progress: Callable | None = None,
 ) -> int:
-    """Create Document nodes with AT_FACILITY and HAS_DOCUMENT relationships.
+    """Create Document nodes with AT_FACILITY, FROM_SOURCE, and HAS_DOCUMENT relationships.
 
     Args:
         gc: Open GraphClient
         facility: Facility ID
         batch_data: List of dicts with id, filename, url, document_type,
-                    and optionally size_bytes, mime_type, linked_pages
+                    and optionally size_bytes, mime_type, linked_pages, doc_source_id
         batch_size: Nodes per batch
         on_progress: Optional progress callback
 
@@ -168,12 +223,19 @@ def _bulk_create_wiki_documents(
                           wa.status = $discovered,
                           wa.score_exempt = a.score_exempt,
                           wa.discovered_at = datetime(),
-                          wa.bulk_discovered = true
-            ON MATCH SET wa.bulk_discovered = true
+                          wa.bulk_discovered = true,
+                          wa.doc_source_id = a.doc_source_id
+            ON MATCH SET wa.bulk_discovered = true,
+                         wa.doc_source_id = coalesce(a.doc_source_id, wa.doc_source_id)
             WITH wa
             MATCH (f:Facility {id: $facility})
             MERGE (wa)-[:AT_FACILITY]->(f)
-            RETURN count(wa) AS count
+            WITH wa
+            WHERE wa.doc_source_id IS NOT NULL
+            MATCH (ds:DocSource {id: wa.doc_source_id})
+            MERGE (wa)-[:FROM_SOURCE]->(ds)
+            WITH count(wa) AS dummy
+            RETURN dummy + 0 AS count
             """,
             documents=batch,
             facility=facility,
@@ -1281,6 +1343,98 @@ def recover_failed_pages(facility: str) -> int:
             return total
     except Exception as e:
         logger.warning("Could not recover failed pages: %s", e)
+        return 0
+
+
+def recover_failed_documents(facility: str) -> int:
+    """Reset failed documents for re-processing.
+
+    Documents marked 'failed' due to transient errors (CUDA OOM, connection
+    refused, etc.) are reset based on their pre-failure state:
+
+    - **Without score** (failed before scoring): reset to ``discovered``
+    - **With score** (failed during ingestion): reset to ``scored``
+
+    Only recovers documents whose error matches known transient patterns.
+    Documents with non-transient errors (parse failures, unsupported formats)
+    are left as-is.
+
+    Args:
+        facility: Facility ID
+
+    Returns:
+        Number of documents recovered
+    """
+    # Patterns that indicate transient/retryable errors
+    transient_patterns = [
+        "CUDA out of memory",
+        "CUDA error",
+        "Connection refused",
+        "Connection reset",
+        "connection was reset",
+        "ServiceUnavailable",
+        "Failed to establish",
+        "Read timed out",
+        "RemoteDisconnected",
+    ]
+    where_clauses = " OR ".join(f"wa.error CONTAINS '{p}'" for p in transient_patterns)
+
+    try:
+        with GraphClient() as gc:
+            # Case 1: Failed before scoring — reset to discovered
+            result1 = gc.query(
+                f"""
+                MATCH (wa:Document {{facility_id: $facility}})
+                WHERE wa.status = $failed
+                  AND wa.score_composite IS NULL
+                  AND ({where_clauses})
+                SET wa.status = $discovered,
+                    wa.error = null,
+                    wa.failed_at = null,
+                    wa.claimed_at = null
+                RETURN count(wa) AS recovered
+                """,
+                facility=facility,
+                failed=DocumentStatus.failed.value,
+                discovered=DocumentStatus.discovered.value,
+            )
+            recovered_to_discovered = result1[0]["recovered"] if result1 else 0
+
+            # Case 2: Failed after scoring — reset to scored for re-ingestion
+            result2 = gc.query(
+                f"""
+                MATCH (wa:Document {{facility_id: $facility}})
+                WHERE wa.status = $failed
+                  AND wa.score_composite IS NOT NULL
+                  AND ({where_clauses})
+                SET wa.status = $scored,
+                    wa.error = null,
+                    wa.failed_at = null,
+                    wa.claimed_at = null
+                RETURN count(wa) AS recovered
+                """,
+                facility=facility,
+                failed=DocumentStatus.failed.value,
+                scored=DocumentStatus.scored.value,
+            )
+            recovered_to_scored = result2[0]["recovered"] if result2 else 0
+
+            total = recovered_to_discovered + recovered_to_scored
+            if total > 0:
+                parts = []
+                if recovered_to_discovered:
+                    parts.append(f"{recovered_to_discovered} to discovered")
+                if recovered_to_scored:
+                    parts.append(f"{recovered_to_scored} to scored")
+                logger.info(
+                    "Recovered %d failed documents for %s (%s)",
+                    total,
+                    facility,
+                    ", ".join(parts),
+                )
+            return total
+    except Exception as e:
+        logger.warning("Could not recover failed documents: %s", e)
         return 0
 
 

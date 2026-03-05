@@ -1579,6 +1579,35 @@ async def fetch_document_content(
     return result.content_type or "application/octet-stream", result.content
 
 
+def _extract_text_from_legacy_bytes(content_bytes: bytes) -> str:
+    """Extract text from legacy binary document formats (.doc, .ppt, .txt).
+
+    Tries UTF-8/Latin-1 decoding first (plain text files), then falls back to
+    extracting ASCII-printable runs from binary OLE2 compound documents.
+    Filters out very short runs (< 20 chars) to skip binary noise.
+    """
+    # Try plain text decoding first
+    for encoding in ("utf-8", "latin-1"):
+        try:
+            text = content_bytes.decode(encoding)
+            # Heuristic: if >80% printable, it's a text file
+            printable = sum(1 for c in text[:1000] if c.isprintable() or c in "\n\r\t")
+            if printable > len(text[:1000]) * 0.8:
+                return text
+        except (UnicodeDecodeError, ValueError):
+            continue
+
+    # Binary OLE2 file — extract printable ASCII runs
+    import re
+
+    # Find runs of printable ASCII characters (min 20 chars to skip noise)
+    runs = re.findall(rb"[\x20-\x7E]{20,}", content_bytes)
+    if runs:
+        return "\n".join(r.decode("ascii", errors="ignore") for r in runs)
+
+    return ""
+
+
 class DocumentPipeline:
     """Pipeline for ingesting wiki documents (PDFs, presentations, etc.).
 
@@ -1772,7 +1801,10 @@ class DocumentPipeline:
         document_id: str,
         content_bytes: bytes,
     ) -> DocumentIngestionStats:
-        """Ingest a Word document document.
+        """Ingest a Word document (.docx) or legacy text document (.doc, .txt).
+
+        Tries python-docx for modern OOXML format first. Falls back to plain
+        text decoding for legacy .doc and .txt files that are not ZIP-based.
 
         Args:
             document_id: Document node ID
@@ -1782,8 +1814,7 @@ class DocumentPipeline:
             Ingestion stats
         """
         import io
-
-        from docx import Document as DocxDocument
+        from zipfile import BadZipFile
 
         stats: DocumentIngestionStats = {
             "chunks": 0,
@@ -1791,17 +1822,31 @@ class DocumentPipeline:
             "document_type": "docx",
         }
 
-        doc = DocxDocument(io.BytesIO(content_bytes))
-        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        full_text = "\n\n".join(paragraphs)
+        full_text = ""
+        try:
+            from docx import Document as DocxDocument
+
+            doc = DocxDocument(io.BytesIO(content_bytes))
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            full_text = "\n\n".join(paragraphs)
+        except BadZipFile:
+            # Legacy .doc or plain .txt file — try text extraction
+            full_text = _extract_text_from_legacy_bytes(content_bytes)
+            if full_text:
+                stats["document_type"] = "legacy_doc"
+                logger.info(
+                    "Extracted %d chars from legacy document: %s",
+                    len(full_text),
+                    document_id,
+                )
 
         if not full_text.strip():
-            logger.warning("No content extracted from DOCX: %s", document_id)
+            logger.warning("No content extracted from document: %s", document_id)
             return stats
 
         stats["content_preview"] = full_text[:300]
         stats = await self._create_document_chunks(
-            document_id, full_text, "docx", stats
+            document_id, full_text, stats["document_type"], stats
         )
         return stats
 
@@ -1810,7 +1855,10 @@ class DocumentPipeline:
         document_id: str,
         content_bytes: bytes,
     ) -> DocumentIngestionStats:
-        """Ingest a PowerPoint document.
+        """Ingest a PowerPoint document (.pptx) or legacy .ppt.
+
+        Tries python-pptx for modern OOXML format first. Falls back to plain
+        text extraction for legacy .ppt files that are not ZIP-based.
 
         Args:
             document_id: Document node ID
@@ -1820,8 +1868,7 @@ class DocumentPipeline:
             Ingestion stats
         """
         import io
-
-        from pptx import Presentation
+        from zipfile import BadZipFile
 
         stats: DocumentIngestionStats = {
             "chunks": 0,
@@ -1829,26 +1876,40 @@ class DocumentPipeline:
             "document_type": "pptx",
         }
 
-        prs = Presentation(io.BytesIO(content_bytes))
-        text_parts = []
+        full_text = ""
+        try:
+            from pptx import Presentation
 
-        for slide_num, slide in enumerate(prs.slides, 1):
-            slide_text = []
-            for shape in slide.shapes:
-                if hasattr(shape, "text") and shape.text.strip():
-                    slide_text.append(shape.text.strip())
-            if slide_text:
-                text_parts.append(f"[Slide {slide_num}]\n" + "\n".join(slide_text))
+            prs = Presentation(io.BytesIO(content_bytes))
+            text_parts = []
 
-        full_text = "\n\n".join(text_parts)
+            for slide_num, slide in enumerate(prs.slides, 1):
+                slide_text = []
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        slide_text.append(shape.text.strip())
+                if slide_text:
+                    text_parts.append(f"[Slide {slide_num}]\n" + "\n".join(slide_text))
+
+            full_text = "\n\n".join(text_parts)
+        except BadZipFile:
+            # Legacy .ppt file — try text extraction
+            full_text = _extract_text_from_legacy_bytes(content_bytes)
+            if full_text:
+                stats["document_type"] = "legacy_ppt"
+                logger.info(
+                    "Extracted %d chars from legacy presentation: %s",
+                    len(full_text),
+                    document_id,
+                )
 
         if not full_text.strip():
-            logger.warning("No content extracted from PPTX: %s", document_id)
+            logger.warning("No content extracted from presentation: %s", document_id)
             return stats
 
         stats["content_preview"] = full_text[:300]
         stats = await self._create_document_chunks(
-            document_id, full_text, "pptx", stats
+            document_id, full_text, stats["document_type"], stats
         )
 
         # Extract embedded images from slides for VLM captioning

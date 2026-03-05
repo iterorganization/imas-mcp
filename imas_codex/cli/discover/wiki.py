@@ -119,6 +119,8 @@ def wiki(
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki import get_wiki_stats
     from imas_codex.discovery.wiki.graph_ops import (
+        create_doc_source,
+        recover_failed_documents,
         recover_failed_pages,
         reset_transient_pages,
     )
@@ -372,6 +374,14 @@ def wiki(
             f"[dim]Recovered {recovered:,} pages from transient fetch failures[/dim]"
         )
 
+    # Recover documents that failed due to transient errors (CUDA OOM,
+    # connection refused, etc.) so they get retried on the next run.
+    recovered_docs = recover_failed_documents(facility)
+    if recovered_docs > 0:
+        log_print(
+            f"[dim]Recovered {recovered_docs:,} documents from transient failures[/dim]"
+        )
+
     # Pre-warm SSH ControlMaster for all sites that need SSH access.
     # This prevents race conditions when bulk_discover_pages tries SSH
     # before the ControlMaster is established.
@@ -476,13 +486,26 @@ def wiki(
                 log_print(f"  [dim]Authenticated as: {creds[0]}[/dim]")
                 validated_cred_services.add(credential_service)
 
+        # Create DocSource node for traceability (shared by page + document discovery)
+        from imas_codex.graph import GraphClient
+
+        effective_auth_type = auth_type or "none"
+        with GraphClient() as gc:
+            doc_source_id = create_doc_source(
+                gc,
+                facility,
+                name=short_name,
+                url=base_url,
+                source_type=site_type,
+                auth_type=effective_auth_type,
+            )
+
         # Bulk page discovery
         bulk_discovered = 0
         if should_bulk_discover and not score_only:
             from imas_codex.discovery.wiki.parallel import bulk_discover_pages
 
             # Skip Keycloak auth if the domain is unreachable
-            effective_auth_type = auth_type or "none"
             if auth_type == "keycloak" and ssh_host:
                 from urllib.parse import urlparse as _auth_parse
 
@@ -498,6 +521,7 @@ def wiki(
                 "auth_type": effective_auth_type,
                 "credential_service": credential_service,
                 "access_method": access_method,
+                "doc_source_id": doc_source_id,
             }
 
             if site_type == "confluence":
@@ -645,6 +669,7 @@ def wiki(
                             space_key=portal_page
                             if site_type == "confluence"
                             else None,
+                            doc_source_id=doc_source_id,
                             on_progress=document_progress_rich,
                         )
                     except Exception:
@@ -664,6 +689,7 @@ def wiki(
                         access_method=access_method,
                         data_path=site.get("data_path"),
                         pub_path=site.get("pub_path"),
+                        doc_source_id=doc_source_id,
                         space_key=portal_page if site_type == "confluence" else None,
                         on_progress=document_progress_log,
                     )
