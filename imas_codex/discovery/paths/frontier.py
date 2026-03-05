@@ -282,6 +282,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.status = $triaged AND p.should_enrich = true AND p.triage_composite >= 0.15 AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 sum(CASE WHEN p.is_enriched = true THEN 1 ELSE 0 END) AS enriched,
                 sum(CASE WHEN p.status = $triaged THEN 1 ELSE 0 END) AS triaged,
+                sum(CASE WHEN p.status = $explored THEN 1 ELSE 0 END) AS explored,
                 sum(CASE WHEN p.is_enriched = true AND p.scored_at IS NULL THEN 1 ELSE 0 END) AS score_ready,
                 max(coalesce(p.depth, 0)) AS max_depth
             """,
@@ -291,6 +292,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             triaged=PathStatus.triaged.value,
             scored=PathStatus.scored.value,
             skipped=PathStatus.skipped.value,
+            explored=PathStatus.explored.value,
             excluded_reason=TerminalReason.excluded.value,
         )
 
@@ -307,6 +309,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 "enrichment_ready": result[0]["enrichment_ready"],
                 "enriched": result[0]["enriched"],
                 "triaged": result[0]["triaged"],
+                "explored": result[0]["explored"],
                 "score_ready": result[0]["score_ready"],
                 "max_depth": result[0]["max_depth"] or 0,
             }
@@ -323,6 +326,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             "enrichment_ready": 0,
             "enriched": 0,
             "triaged": 0,
+            "explored": 0,
             "score_ready": 0,
             "max_depth": 0,
         }

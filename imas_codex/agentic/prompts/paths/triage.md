@@ -183,8 +183,8 @@ Set `should_enrich=true` for directories worth running deep pattern analysis (re
 - Archives, build artifacts, well-known software clones
 - Directories scoring below 0.3 on all dimensions
 
+{% include "schema/scoring-output.md" %}
+
 {% if dimension_calibration %}
 {% include "schema/dimension-calibration.md" %}
 {% endif %}
-
-{% include "schema/scoring-output.md" %}
