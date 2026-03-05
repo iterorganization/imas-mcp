@@ -222,6 +222,7 @@ def has_pending_work(facility: str) -> bool:
     pending to prevent premature termination while workers are mid-task.
     """
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold
 
     with GraphClient() as gc:
         result = gc.query(
@@ -240,6 +241,7 @@ def has_pending_work(facility: str) -> bool:
                       AND (p.is_enriched IS NULL OR p.is_enriched = false)
                       THEN 'enrich' ELSE null END AS enr,
                  CASE WHEN p.is_enriched = true
+                      AND p.triage_composite >= $min_score
                       AND p.scored_at IS NULL
                       THEN 'score' ELSE null END AS rsc
             WHERE disc IS NOT NULL OR scn IS NOT NULL OR exp IS NOT NULL
@@ -255,6 +257,7 @@ def has_pending_work(facility: str) -> bool:
             discovered=PathStatus.discovered.value,
             scanned=PathStatus.scanned.value,
             triaged=PathStatus.triaged.value,
+            min_score=get_discovery_threshold(),
         )
         if result:
             pending = result[0]["pending"]
@@ -352,19 +355,22 @@ def _has_pending_score_work(facility: str) -> bool:
     """Check if there are enriched paths awaiting scoring (2nd pass).
 
     Matches the same criteria as claim_paths_for_scoring:
-    all enriched paths that haven't been scored yet.
+    enriched paths above the discovery threshold that haven't been scored yet.
     """
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold
 
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE p.is_enriched = true
+              AND p.triage_composite >= $min_score
               AND p.scored_at IS NULL
             RETURN count(p) > 0 AS has_work
             """,
             facility=facility,
+            min_score=get_discovery_threshold(),
         )
         return bool(result and result[0]["has_work"])
 
@@ -718,11 +724,12 @@ def claim_paths_for_scoring(
 
     Claims paths where:
     - is_enriched = true
+    - triage_composite >= discovery threshold (0.75)
     - scored_at is null
 
-    All enriched paths are scored — we've already invested in
-    enrichment, so use the data. Scoring can raise OR lower
-    triage scores based on concrete evidence (LOC, patterns, size).
+    Only high-value enriched paths are scored. Scoring uses
+    enrichment evidence (LOC, patterns, size) to produce
+    authoritative scores that can raise or lower triage scores.
 
     Returns paths that this worker now owns.
 
@@ -730,11 +737,12 @@ def claim_paths_for_scoring(
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
-        min_score: Minimum triage_composite for scoring (default: 0.0 = score all)
+        min_score: Minimum triage_composite for scoring (default: discovery threshold)
     """
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_discovery_threshold
 
-    threshold = min_score if min_score is not None else 0.0
+    threshold = min_score if min_score is not None else get_discovery_threshold()
 
     # Build root filter clause
     root_clause = ""
