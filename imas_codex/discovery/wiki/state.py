@@ -332,6 +332,10 @@ class WikiDiscoveryState:
         phases may not reach idle.  We treat them as implicitly "done" so
         the main loop doesn't hang waiting for phases that can never idle.
         I/O workers (ingest, document) continue draining their queues normally.
+
+        Uses ``has_remaining_*`` (not ``has_pending_*``) for the graph
+        check to include actively-claimed in-flight work.  This prevents
+        premature shutdown while a worker is still processing its batch.
         """
         if self.stop_requested:
             return True
@@ -358,9 +362,9 @@ class WikiDiscoveryState:
             and image_done
         )
         if all_idle:
-            # Check for remaining work.  When limits are hit only
-            # check I/O queues — LLM-dependent pending work (scanned pages
-            # needing scoring, images needing VLM) cannot be processed.
+            # Check for remaining work (including in-flight claimed pages).
+            # When limits are hit only check I/O queues — LLM-dependent
+            # pending work cannot be processed.
             # In score_only mode, no ingest workers run so skip I/O checks.
             graph_ops = _get_graph_ops()
             if self.score_only:
@@ -369,7 +373,7 @@ class WikiDiscoveryState:
                 if limit_done:
                     has_work = False
                 else:
-                    has_work = graph_ops.has_pending_work(
+                    has_work = graph_ops.has_remaining_work(
                         self.facility
                     ) or graph_ops.has_pending_image_work(self.facility)
             elif limit_done:
@@ -378,8 +382,8 @@ class WikiDiscoveryState:
                 ) or graph_ops.has_pending_document_ingest_work(self.facility)
             else:
                 has_work = (
-                    graph_ops.has_pending_work(self.facility)
-                    or graph_ops.has_pending_document_work(self.facility)
+                    graph_ops.has_remaining_work(self.facility)
+                    or graph_ops.has_remaining_document_work(self.facility)
                     or graph_ops.has_pending_image_work(self.facility)
                 )
 
@@ -731,6 +735,11 @@ class WikiDiscoveryState:
         when facility-scoped workers (image, embed) run separately so
         the per-site supervision loop can advance to the next site
         without waiting for slow downstream VLM processing.
+
+        Uses ``has_remaining_*`` (not ``has_pending_*``) for the graph
+        check to include actively-claimed in-flight work.  Without this,
+        the stop condition fires as soon as a worker claims all available
+        pages — cancelling the worker before it finishes processing.
         """
         if self.stop_requested:
             return True
@@ -757,15 +766,15 @@ class WikiDiscoveryState:
                 if limit_done:
                     has_work = False
                 else:
-                    has_work = graph_ops.has_pending_work(self.facility)
+                    has_work = graph_ops.has_remaining_work(self.facility)
             elif limit_done:
                 has_work = graph_ops.has_pending_ingest_work(
                     self.facility
                 ) or graph_ops.has_pending_document_ingest_work(self.facility)
             else:
-                has_work = graph_ops.has_pending_work(
+                has_work = graph_ops.has_remaining_work(
                     self.facility
-                ) or graph_ops.has_pending_document_work(self.facility)
+                ) or graph_ops.has_remaining_document_work(self.facility)
 
             if has_work:
                 if limit_done:

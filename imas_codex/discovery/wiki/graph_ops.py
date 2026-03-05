@@ -342,21 +342,25 @@ def has_pending_document_work(facility: str) -> bool:
     - status = 'discovered' (needs LLM scoring or direct ingestion)
     - status = 'scored' AND score >= 0.5 AND ingestable type (needs ingestion)
 
-    Includes in-flight claimed documents — used by stop-condition checks.
+    Uses ``claimed_at`` filter for multi-worker coordination.
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wa:Document {facility_id: $facility})
-            WHERE (wa.status = $discovered)
+            WHERE ((wa.status = $discovered)
                OR (wa.status = $scored AND wa.score_composite >= 0.5
-                   AND wa.document_type IN $ingestable)
+                   AND wa.document_type IN $ingestable))
+              AND (wa.claimed_at IS NULL
+                   OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
             discovered=DocumentStatus.discovered.value,
             scored=DocumentStatus.scored.value,
             ingestable=list(INGESTABLE_DOCUMENT_TYPES),
+            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -368,19 +372,23 @@ def has_pending_document_score_work(facility: str) -> bool:
     - status = 'discovered'
     - document_type in SCORABLE_DOCUMENT_TYPES
 
-    Includes in-flight claimed documents — used by stop-condition checks.
+    Uses ``claimed_at`` filter for multi-worker coordination.
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wa:Document {facility_id: $facility})
             WHERE wa.status = $discovered
               AND wa.document_type IN $types
+              AND (wa.claimed_at IS NULL
+                   OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
             discovered=DocumentStatus.discovered.value,
             types=list(SCORABLE_DOCUMENT_TYPES),
+            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -392,8 +400,9 @@ def has_pending_document_ingest_work(facility: str) -> bool:
     - status = 'scored' AND score >= 0.5 AND ingestable type
     - status = 'discovered' AND score_exempt = true (bypass LLM scoring)
 
-    Includes in-flight claimed documents — used by stop-condition checks.
+    Uses ``claimed_at`` filter for multi-worker coordination.
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
@@ -403,12 +412,15 @@ def has_pending_document_ingest_work(facility: str) -> bool:
                  AND wa.document_type IN $types)
                 OR (wa.status = $discovered AND wa.score_exempt = true)
               )
+              AND (wa.claimed_at IS NULL
+                   OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
             scored=DocumentStatus.scored.value,
             discovered=DocumentStatus.discovered.value,
             types=list(INGESTABLE_DOCUMENT_TYPES),
+            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -417,24 +429,30 @@ def has_pending_work(facility: str) -> bool:
     """Check if there's pending wiki work in the graph.
 
     Work exists if there are:
-    - scanned pages awaiting scoring (including in-flight claimed pages)
-    - scored pages with score >= 0.5 awaiting ingest
+    - scanned pages awaiting scoring (unclaimed or orphaned)
+    - scored pages with score >= 0.5 awaiting ingest (unclaimed or orphaned)
 
-    This intentionally includes actively-claimed pages because it is used
-    by the supervision stop-condition.  Excluding claimed pages causes
-    premature shutdown when all pages are in-flight but not yet processed.
+    The ``claimed_at`` filter is essential for multi-worker coordination:
+    it prevents a stop-condition from counting in-flight pages as
+    "pending", which would cause workers to spin idle while other
+    workers are actively processing those pages.  Orphaned claims
+    (older than the timeout) are included as reclaimable work.
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $scanned
-               OR (wp.status = $scored AND wp.score_composite >= 0.5)
+            WHERE (wp.status = $scanned
+                   OR (wp.status = $scored AND wp.score_composite >= 0.5))
+              AND (wp.claimed_at IS NULL
+                   OR wp.claimed_at < datetime() - duration($cutoff))
             RETURN count(wp) AS pending
             """,
             facility=facility,
             scanned=WikiPageStatus.scanned.value,
             scored=WikiPageStatus.scored.value,
+            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -443,17 +461,21 @@ def has_pending_scan_work(facility: str) -> bool:
     """Check if there's pending scoring work in the graph.
 
     With bulk discovery, there's no scan phase. This checks for:
-    - scanned pages awaiting content-aware scoring (including in-flight)
+    - scanned pages awaiting content-aware scoring (unclaimed or orphaned)
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scanned
+              AND (wp.claimed_at IS NULL
+                   OR wp.claimed_at < datetime() - duration($cutoff))
             RETURN count(wp) AS pending
             """,
             facility=facility,
             scanned=WikiPageStatus.scanned.value,
+            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -462,20 +484,83 @@ def has_pending_ingest_work(facility: str) -> bool:
     """Check if there's pending ingest work in the graph.
 
     Returns True if there are scored pages with score >= 0.5 awaiting
-    ingestion (including in-flight claimed pages).
+    ingestion (unclaimed or orphaned).
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scored
               AND wp.score_composite >= 0.5
+              AND (wp.claimed_at IS NULL
+                   OR wp.claimed_at < datetime() - duration($cutoff))
             RETURN count(wp) AS pending
             """,
             facility=facility,
             scored=WikiPageStatus.scored.value,
+            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
+
+
+# =============================================================================
+# Stop-condition checks (include in-flight claimed work)
+# =============================================================================
+# These functions check whether work REMAINS (including actively-claimed
+# pages), as opposed to the has_pending_* functions above which check
+# whether work is AVAILABLE for a new worker to pick up.
+#
+# The distinction matters:
+#   - has_pending_*:   "can I pick up new work?" → excludes active claims
+#   - has_remaining_*: "is there still work to do?" → includes active claims
+#
+# Stop conditions must use has_remaining_* to avoid prematurely terminating
+# while a worker is still processing its claimed batch.
+
+
+def has_remaining_work(facility: str) -> bool:
+    """Check if there's any non-terminal wiki work (including in-flight).
+
+    Used by stop conditions to avoid premature shutdown while workers
+    are actively processing claimed pages.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility})
+            WHERE wp.status = $scanned
+               OR (wp.status = $scored AND wp.score_composite >= 0.5)
+            RETURN count(wp) AS remaining
+            """,
+            facility=facility,
+            scanned=WikiPageStatus.scanned.value,
+            scored=WikiPageStatus.scored.value,
+        )
+        return result[0]["remaining"] > 0 if result else False
+
+
+def has_remaining_document_work(facility: str) -> bool:
+    """Check if there are any non-terminal documents (including in-flight).
+
+    Used by stop conditions to avoid premature shutdown while workers
+    are actively processing claimed documents.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wa:Document {facility_id: $facility})
+            WHERE (wa.status = $discovered)
+               OR (wa.status = $scored AND wa.score_composite >= 0.5
+                   AND wa.document_type IN $ingestable)
+            RETURN count(wa) AS remaining
+            """,
+            facility=facility,
+            discovered=DocumentStatus.discovered.value,
+            scored=DocumentStatus.scored.value,
+            ingestable=list(INGESTABLE_DOCUMENT_TYPES),
+        )
+        return result[0]["remaining"] > 0 if result else False
 
 
 # =============================================================================
@@ -491,6 +576,12 @@ def reset_transient_pages(
     Uses timeout-based recovery so multiple CLI instances can run
     concurrently on the same facility without wiping each other's claims.
     Only claims older than the timeout are considered orphaned.
+
+    When ``force=True`` (startup), also resets ``fetch_retries`` on
+    scanned pages so pages that accumulated retries from previous runs
+    get a fresh chance.  Without this, scanned pages that transiently
+    failed to fetch would eventually exceed ``max_fetch_retries`` and
+    be permanently marked as failed.
 
     Delegates to the common claims module for both WikiPage and
     Document node types.
@@ -518,6 +609,29 @@ def reset_transient_pages(
         silent=True,
     )
 
+    # At startup, reset fetch_retries on scanned pages to prevent
+    # accumulation across runs.  Only scanned pages are affected —
+    # failed pages are handled by recover_failed_pages() separately.
+    retries_reset = 0
+    if force:
+        try:
+            with GraphClient() as gc:
+                result = gc.query(
+                    """
+                    MATCH (wp:WikiPage {facility_id: $facility})
+                    WHERE wp.status = $scanned
+                      AND wp.fetch_retries IS NOT NULL
+                      AND wp.fetch_retries > 0
+                    SET wp.fetch_retries = 0
+                    RETURN count(wp) AS reset
+                    """,
+                    facility=facility,
+                    scanned=WikiPageStatus.scanned.value,
+                )
+                retries_reset = result[0]["reset"] if result else 0
+        except Exception as e:
+            logger.debug("Could not reset fetch_retries: %s", e)
+
     total_reset = page_reset + document_reset
     if not silent and total_reset > 0:
         logger.info(
@@ -526,6 +640,11 @@ def reset_transient_pages(
             "" if force else f" older than {CLAIM_TIMEOUT_SECONDS}s",
             page_reset,
             document_reset,
+        )
+    if not silent and retries_reset > 0:
+        logger.info(
+            "Reset fetch_retries on %d scanned pages",
+            retries_reset,
         )
 
     return {"orphan_reset": page_reset, "document_reset": document_reset}
@@ -850,6 +969,47 @@ def mark_page_failed(page_id: str, error: str, fallback_status: str) -> None:
         )
 
 
+def mark_pages_insufficient_content(page_ids: list[str]) -> int:
+    """Mark pages as skipped due to insufficient content for chunking.
+
+    Called by the ingest worker when a scored page is successfully fetched
+    but produces 0 chunks.  This is a permanent condition (the page has
+    no useful text to ingest), not a transient fetch failure.
+
+    Sets ``status='skipped'`` with ``skip_reason='insufficient_content'``
+    so these pages are not retried by ``recover_failed_pages()``.
+
+    Returns:
+        Number of pages marked as skipped.
+    """
+    if not page_ids:
+        return 0
+
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (wp:WikiPage {id: id})
+                SET wp.status = $skipped,
+                    wp.skip_reason = 'insufficient_content',
+                    wp.should_ingest = false,
+                    wp.claimed_at = null,
+                    wp.claim_token = null
+                RETURN count(wp) AS cnt
+                """,
+                ids=page_ids,
+                skipped=WikiPageStatus.skipped.value,
+            )
+            count = result[0]["cnt"] if result else 0
+            if count:
+                logger.info("Marked %d pages as skipped (insufficient content)", count)
+            return count
+    except Exception as e:
+        logger.warning("Could not mark pages as skipped: %s", e)
+        return 0
+
+
 def _release_claimed_pages(page_ids: list[str], *, max_fetch_retries: int = 10) -> None:
     """Release claimed pages back for reprocessing.
 
@@ -971,16 +1131,20 @@ def release_orphaned_claims(facility: str) -> dict[str, int]:
 
 
 def recover_failed_pages(facility: str) -> int:
-    """Reset failed pages back to scanned for re-scoring.
+    """Reset failed pages for re-processing.
 
     Pages marked as 'failed' due to exhausted fetch_retries (transient
-    fetch failures, e.g. auth session expiry) are reset to 'scanned'
-    with fetch_retries cleared. This gives them a fresh chance on the
-    next discovery run.
+    fetch failures, e.g. auth session expiry) are recovered based on
+    whether they were scored before failing:
+
+    - **Without score** (failed before scoring): reset to ``scanned``
+      with ``fetch_retries`` cleared so they can be re-scored.
+    - **With score** (failed during ingestion): reset to ``scored``
+      with ``fetch_retries`` cleared so they can be re-ingested.
 
     Only recovers pages that have NO error field set — pages with an
-    explicit error were genuinely broken
-    (e.g. parse errors), not transient fetch failures.
+    explicit error were genuinely broken (e.g. parse errors), not
+    transient failures.
 
     Args:
         facility: Facility ID
@@ -990,7 +1154,8 @@ def recover_failed_pages(facility: str) -> int:
     """
     try:
         with GraphClient() as gc:
-            result = gc.query(
+            # Case 1: Failed before scoring — reset to scanned
+            result1 = gc.query(
                 """
                 MATCH (wp:WikiPage {facility_id: $facility})
                 WHERE wp.status = $failed
@@ -1007,14 +1172,42 @@ def recover_failed_pages(facility: str) -> int:
                 failed=WikiPageStatus.failed.value,
                 scanned=WikiPageStatus.scanned.value,
             )
-            recovered = result[0]["recovered"] if result else 0
-            if recovered > 0:
+            recovered_to_scanned = result1[0]["recovered"] if result1 else 0
+
+            # Case 2: Failed after scoring — reset to scored for re-ingestion
+            result2 = gc.query(
+                """
+                MATCH (wp:WikiPage {facility_id: $facility})
+                WHERE wp.status = $failed
+                  AND wp.error IS NULL
+                  AND wp.score_composite IS NOT NULL
+                SET wp.status = $scored,
+                    wp.fetch_retries = 0,
+                    wp.claimed_at = null,
+                    wp.claim_token = null,
+                    wp.failed_at = null
+                RETURN count(wp) AS recovered
+                """,
+                facility=facility,
+                failed=WikiPageStatus.failed.value,
+                scored=WikiPageStatus.scored.value,
+            )
+            recovered_to_scored = result2[0]["recovered"] if result2 else 0
+
+            total = recovered_to_scanned + recovered_to_scored
+            if total > 0:
+                parts = []
+                if recovered_to_scanned:
+                    parts.append(f"{recovered_to_scanned} to scanned")
+                if recovered_to_scored:
+                    parts.append(f"{recovered_to_scored} to scored")
                 logger.info(
-                    "Recovered %d failed pages for %s (reset to scanned)",
-                    recovered,
+                    "Recovered %d failed pages for %s (%s)",
+                    total,
                     facility,
+                    ", ".join(parts),
                 )
-            return recovered
+            return total
     except Exception as e:
         logger.warning("Could not recover failed pages: %s", e)
         return 0
