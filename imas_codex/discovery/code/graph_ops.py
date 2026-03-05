@@ -629,6 +629,163 @@ def link_code_evidence_to_signals(facility: str) -> dict[str, int]:
         }
 
 
+# Standard data access templates per language × access pattern
+_DATA_ACCESS_TEMPLATES: dict[str, list[dict[str, str]]] = {
+    "tcv": [
+        {
+            "id": "tcv:mdsplus:tcvpy",
+            "facility_id": "tcv",
+            "method_type": "tcvpy",
+            "library": "tcvpy",
+            "access_type": "mdsplus",
+            "imports_template": "import tcv",
+            "connection_template": "conn = tcv.shot({shot})",
+            "data_template": "data = conn.tdi(r'{accessor}')",
+            "time_template": "time = conn.tdi(r'dim_of({accessor})')",
+            "cleanup_template": "",
+            "setup_commands": "pip install tcvpy",
+        },
+        {
+            "id": "tcv:mdsplus:python_mdsplus",
+            "facility_id": "tcv",
+            "method_type": "python_mdsplus",
+            "library": "MDSplus",
+            "access_type": "mdsplus",
+            "imports_template": "import MDSplus",
+            "connection_template": "tree = MDSplus.Tree('{data_source}', {shot})",
+            "data_template": "data = tree.getNode('{accessor}').data()",
+            "time_template": "time = tree.getNode('dim_of({accessor})').data()",
+            "cleanup_template": "",
+            "setup_commands": "pip install mdsplus",
+        },
+        {
+            "id": "tcv:mdsplus:matlab_mdsvalue",
+            "facility_id": "tcv",
+            "method_type": "matlab_mdsvalue",
+            "library": "matlab",
+            "access_type": "mdsplus",
+            "imports_template": "",
+            "connection_template": "mdsopen('{data_source}', {shot})",
+            "data_template": "data = mdsvalue('{accessor}')",
+            "time_template": "time = mdsvalue('dim_of({accessor})')",
+            "cleanup_template": "mdsclose",
+            "setup_commands": "",
+        },
+        {
+            "id": "tcv:mdsplus:fortran_mds",
+            "facility_id": "tcv",
+            "method_type": "fortran_mds",
+            "library": "mdslib",
+            "access_type": "mdsplus",
+            "imports_template": "use mdslib",
+            "connection_template": "call MDS_OPEN('{data_source}', {shot})",
+            "data_template": "call MDS_GET('{accessor}', data, ierr)",
+            "time_template": "",
+            "cleanup_template": "call MDS_CLOSE()",
+            "setup_commands": "",
+        },
+        {
+            "id": "tcv:mdsplus:idl_mdsvalue",
+            "facility_id": "tcv",
+            "method_type": "idl_mdsvalue",
+            "library": "idl",
+            "access_type": "mdsplus",
+            "imports_template": "",
+            "connection_template": "mds$open, '{data_source}', {shot}",
+            "data_template": "data = mds$value('{accessor}')",
+            "time_template": "",
+            "cleanup_template": "mds$close",
+            "setup_commands": "",
+        },
+        {
+            "id": "tcv:tdi:tdi_function",
+            "facility_id": "tcv",
+            "method_type": "tdi_function",
+            "library": "tcvpy",
+            "access_type": "tdi",
+            "imports_template": "import tcv",
+            "connection_template": "conn = tcv.shot({shot})",
+            "data_template": "data = conn.tdi('{accessor}()')",
+            "time_template": "time = conn.tdi('dim_of({accessor}())')",
+            "cleanup_template": "",
+            "setup_commands": "",
+        },
+    ],
+}
+
+
+def persist_data_access_templates(facility: str) -> dict[str, int]:
+    """Create DataAccess nodes with language-specific code templates.
+
+    Uses predefined templates for each facility that encode the canonical
+    access patterns discovered from code evidence.
+
+    Returns:
+        Dict with created and linked counts.
+    """
+    templates = _DATA_ACCESS_TEMPLATES.get(facility, [])
+    if not templates:
+        return {"created": 0, "linked": 0}
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $templates AS t
+            MERGE (da:DataAccess {id: t.id})
+            SET da += t
+            WITH da, t
+            MATCH (f:Facility {id: t.facility_id})
+            MERGE (da)-[:AT_FACILITY]->(f)
+            RETURN count(da) AS created
+            """,
+            templates=templates,
+        )
+        created = result[0]["created"] if result else 0
+
+        return {"created": created, "linked": 0}
+
+
+def link_signals_to_data_access(facility: str) -> dict[str, int]:
+    """Link FacilitySignals to DataAccess nodes based on access patterns.
+
+    Signals with code evidence from specific access methods get linked
+    to the corresponding DataAccess node. Also links signals without
+    explicit code evidence based on their tree_name/tdi_function.
+
+    Returns:
+        Dict with linked count.
+    """
+    with GraphClient() as gc:
+        # Link signals that have TDI functions to the tdi_function DataAccess
+        tdi_result = gc.query(
+            """
+            MATCH (sig:FacilitySignal)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sig.tdi_function IS NOT NULL
+            MATCH (da:DataAccess {id: $facility + ':tdi:tdi_function'})
+            MERGE (sig)-[:DATA_ACCESS]->(da)
+            RETURN count(sig) AS linked
+            """,
+            facility=facility,
+        )
+        tdi_linked = tdi_result[0]["linked"] if tdi_result else 0
+
+        # Link remaining MDSplus signals to the default tcvpy access
+        mds_result = gc.query(
+            """
+            MATCH (sig:FacilitySignal)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sig.tdi_function IS NULL
+              AND NOT (sig)-[:DATA_ACCESS]->()
+            MATCH (da:DataAccess {id: $facility + ':mdsplus:tcvpy'})
+            MERGE (sig)-[:DATA_ACCESS]->(da)
+            RETURN count(sig) AS linked
+            """,
+            facility=facility,
+        )
+        mds_linked = mds_result[0]["linked"] if mds_result else 0
+
+        return {"linked": tdi_linked + mds_linked}
+
+
 __all__ = [
     "CLAIM_TIMEOUT_SECONDS",
     "claim_files_for_enrichment",
@@ -642,6 +799,8 @@ __all__ = [
     "has_pending_score_work",
     "has_pending_triage_work",
     "link_code_evidence_to_signals",
+    "link_signals_to_data_access",
+    "persist_data_access_templates",
     "release_file_enrich_claims",
     "release_file_score_claim",
     "release_file_score_claims",
