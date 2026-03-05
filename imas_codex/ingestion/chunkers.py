@@ -1,12 +1,23 @@
 """Text and code chunking via tree-sitter and sliding window.
 
-Replaces LlamaIndex CodeSplitter and SentenceSplitter with direct
-tree-sitter-language-pack integration and a simple text chunker.
+Uses tree-sitter-language-pack for most languages and tree-sitter-gdl
+for IDL/GDL parsing.
 """
 
 from dataclasses import dataclass
 
+import tree_sitter
+import tree_sitter_gdl
 from tree_sitter_language_pack import get_parser
+
+_gdl_language = tree_sitter_gdl.language()
+
+
+def _get_parser(language: str) -> tree_sitter.Parser:
+    """Return a tree-sitter parser for the given language."""
+    if language in ("idl", "gdl"):
+        return tree_sitter.Parser(_gdl_language)
+    return get_parser(language)
 
 
 @dataclass
@@ -41,7 +52,7 @@ def chunk_code(
     Returns:
         List of Chunk objects with text and line positions
     """
-    parser = get_parser(language)
+    parser = _get_parser(language)
     tree = parser.parse(text.encode())
     root = tree.root_node
 

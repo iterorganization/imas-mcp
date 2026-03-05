@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 TAR_BATCH_THRESHOLD = 10
 
 # Extension to language mapping for code files
-# Languages with direct tree-sitter integration: python, matlab, fortran, julia, cpp, c
-# Languages needing text splitter: tdi, idl
+# Languages with direct tree-sitter integration: python, matlab, fortran, julia, cpp, c, idl
+# Languages needing text splitter: tdi
 EXTENSION_TO_LANGUAGE = {
     ".py": "python",
     ".m": "matlab",
@@ -74,9 +74,9 @@ IMAGE_EXTENSIONS = {
 
 # Languages that require text-based splitting (no tree-sitter grammar).
 # Includes document types that have no tree-sitter parser.
+# IDL is parsed by tree-sitter-gdl and NOT in this set.
 TEXT_SPLITTER_LANGUAGES = {
     "tdi",
-    "idl",
     "text",
     "markdown",
     "rst",
