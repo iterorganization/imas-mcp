@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 TAR_BATCH_THRESHOLD = 10
 
 # Extension to language mapping for code files
-# Languages with tree-sitter support: python, matlab, fortran, julia, cpp, c
+# Languages with direct tree-sitter integration: python, matlab, fortran, julia, cpp, c
 # Languages needing text splitter: tdi, idl
 EXTENSION_TO_LANGUAGE = {
     ".py": "python",

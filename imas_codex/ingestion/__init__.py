@@ -7,7 +7,7 @@ Routes files to appropriate processors based on FileCategory:
 - data/config/other: metadata-only ingestion
 
 All content types share:
-- Embedding via EncoderEmbedding (local/remote/openrouter)
+- Embedding via Encoder (local/remote)
 - Entity extraction (IDS references, MDSplus paths, units, conventions)
 - Unified Chunk graph persistence with NEXT_CHUNK linked lists
 - VLM captioning for embedded images
