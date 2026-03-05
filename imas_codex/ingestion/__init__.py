@@ -17,9 +17,8 @@ Graph-driven workflow:
 2. ingest run <facility> → fetch + chunk + embed + link
 """
 
-from .extractors.ids import IDSExtractor, get_known_ids
+from .extractors.ids import extract_ids_references, get_known_ids
 from .extractors.mdsplus import (
-    MDSplusExtractor,
     MDSplusReference,
     extract_mdsplus_paths,
     normalize_mdsplus_path,
@@ -44,11 +43,10 @@ __all__ = [
     "ChunkSearch",
     "ChunkSearchResult",
     "EXTENSION_TO_LANGUAGE",
-    "IDSExtractor",
-    "MDSplusExtractor",
     "MDSplusReference",
     "TEXT_SPLITTER_LANGUAGES",
     "detect_language",
+    "extract_ids_references",
     "extract_mdsplus_paths",
     "fetch_remote_files",
     "get_known_ids",

@@ -19,22 +19,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from llama_index.core import Document
-from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
-from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
-
-from imas_codex.embeddings import get_embed_model
 from imas_codex.graph import GraphClient
-from imas_codex.settings import (
-    get_embedding_dimension,
-    get_graph_password,
-    get_graph_uri,
-    get_graph_username,
-)
 
-from .extractors.ids import IDSExtractor
-from .extractors.mdsplus import MDSplusExtractor
+from .chunkers import chunk_code, chunk_text
+from .extractors.ids import extract_ids_references
+from .extractors.mdsplus import extract_mdsplus_paths
 from .graph import (
     link_chunks_to_imas_paths,
     link_chunks_to_tree_nodes,
@@ -50,82 +39,73 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[int, int, str], None]
 
 
-def create_vector_store(
-    neo4j_uri: str | None = None,
-    neo4j_user: str | None = None,
-    neo4j_password: str | None = None,
-) -> Neo4jVectorStore:
-    """Create Neo4jVectorStore for code chunks.
-
-    Connection settings are resolved from centralized settings when not
-    explicitly provided (env var → pyproject.toml → default).
-
-    Args:
-        neo4j_uri: Neo4j connection URI (default: from settings)
-        neo4j_user: Neo4j username (default: from settings)
-        neo4j_password: Neo4j password (default: from settings)
-
-    Returns:
-        Configured Neo4jVectorStore
-    """
-    return Neo4jVectorStore(
-        username=neo4j_user or get_graph_username(),
-        password=neo4j_password or get_graph_password(),
-        url=neo4j_uri or get_graph_uri(),
-        embedding_dimension=get_embedding_dimension(),
-        index_name="code_chunk_embedding",
-        node_label="CodeChunk",
-        text_node_property="text",
-        embedding_node_property="embedding",
-    )
-
-
-def create_pipeline(
-    vector_store: Neo4jVectorStore | None = None,
-    language: str = "python",
+def _split_and_extract(
+    content: str,
+    language: str,
+    metadata: dict[str, Any],
+    max_chars: int = 10000,
     chunk_lines: int = 40,
     chunk_lines_overlap: int = 10,
-    max_chars: int = 10000,
     use_text_splitter: bool = False,
-) -> IngestionPipeline:
-    """Create LlamaIndex ingestion pipeline.
+) -> list[dict[str, Any]]:
+    """Split content into chunks and extract metadata.
+
+    Replaces LlamaIndex IngestionPipeline: splits text using tree-sitter
+    or sliding window, then runs IDS and MDSplus extraction.
 
     Args:
-        vector_store: Optional pre-configured Neo4jVectorStore
-        language: Programming language for CodeSplitter
-        chunk_lines: Target lines per chunk
-        chunk_lines_overlap: Overlap between chunks
+        content: Source code text
+        language: Programming language
+        metadata: Base metadata to attach to each chunk
         max_chars: Maximum characters per chunk
-        use_text_splitter: Use text-based splitting instead of tree-sitter
+        chunk_lines: Target lines per chunk
+        chunk_lines_overlap: Overlap lines between chunks
+        use_text_splitter: Force text-based splitting
 
     Returns:
-        Configured IngestionPipeline
+        List of chunk dicts with text, metadata, and extracted references
     """
-    vs = vector_store or create_vector_store()
-
     if use_text_splitter or language in TEXT_SPLITTER_LANGUAGES:
-        splitter = SentenceSplitter(
+        chunks = chunk_text(
+            content,
             chunk_size=max_chars,
             chunk_overlap=chunk_lines_overlap * 60,
-            separator="\n",
         )
     else:
-        splitter = CodeSplitter(
+        chunks = chunk_code(
+            content,
             language=language,
+            max_chars=max_chars,
             chunk_lines=chunk_lines,
             chunk_lines_overlap=chunk_lines_overlap,
-            max_chars=max_chars,
         )
 
-    return IngestionPipeline(
-        transformations=[
-            splitter,
-            IDSExtractor(),
-            MDSplusExtractor(),
-            get_embed_model(),
-        ],
-        vector_store=vs,
-    )
+    result: list[dict[str, Any]] = []
+    for chunk in chunks:
+        # Extract IDS references
+        ids_refs = extract_ids_references(chunk.text)
+        related_ids = sorted(ids_refs) if ids_refs else []
+
+        # Extract MDSplus paths
+        mdsplus_refs = extract_mdsplus_paths(chunk.text)
+        mdsplus_paths = [r.path for r in mdsplus_refs]
+
+        chunk_dict: dict[str, Any] = {
+            "text": chunk.text,
+            "start_line": chunk.start_line,
+            "end_line": chunk.end_line,
+            **metadata,
+        }
+        if related_ids:
+            chunk_dict["related_ids"] = related_ids
+            chunk_dict["related_ids_count"] = len(related_ids)
+        if mdsplus_paths:
+            chunk_dict["mdsplus_paths"] = mdsplus_paths
+            chunk_dict["mdsplus_ref_count"] = len(mdsplus_paths)
+
+        result.append(chunk_dict)
+
+    return result
 
 
 def _generate_example_id(facility: str, remote_path: str) -> str:
@@ -262,8 +242,6 @@ async def ingest_files(
             report(0, 0, f"Ingestion blocked: {e}")
             return stats
 
-    vector_store = create_vector_store()
-
     # Deduplication check
     paths_to_ingest = remote_paths
     if not force:
@@ -283,8 +261,8 @@ async def ingest_files(
         report(total_files, total_files, "All files already ingested")
         return stats
 
-    # Group documents by language
-    docs_by_language: dict[str, list[Document]] = {}
+    # Collect file content grouped by language
+    files_by_language: dict[str, list[dict[str, Any]]] = {}
     file_metadata: dict[str, dict[str, Any]] = {}
 
     for idx, (remote_path, content, language) in enumerate(
@@ -307,125 +285,143 @@ async def ingest_files(
             "_source_file_id": source_file_ids.get(remote_path),
         }
 
-        doc = Document(
-            text=content,
-            metadata={
-                "source_file": remote_path,
-                "facility_id": facility,
-                "language": language,
-                "code_example_id": example_id,
-                "_full_doc_text": content,
-            },
-            excluded_llm_metadata_keys=["_full_doc_text"],
-            excluded_embed_metadata_keys=["_full_doc_text"],
-        )
+        file_info = {
+            "content": content,
+            "remote_path": remote_path,
+            "example_id": example_id,
+        }
 
-        if language not in docs_by_language:
-            docs_by_language[language] = []
-        docs_by_language[language].append(doc)
+        if language not in files_by_language:
+            files_by_language[language] = []
+        files_by_language[language].append(file_info)
 
-    if not docs_by_language:
+    if not files_by_language:
         report(total_files, total_files, "No files to process")
         return stats
 
-    total_to_process = sum(len(docs) for docs in docs_by_language.values())
+    total_to_process = sum(len(files) for files in files_by_language.values())
     stats["files"] = 0
+
+    # Load encoder for embeddings
+    from imas_codex.embeddings.encoder import Encoder
+
+    encoder = Encoder()
 
     BATCH_SIZE = 5
 
     processed_files = 0
-    for language, documents in docs_by_language.items():
-        try:
-            pipeline = create_pipeline(vector_store=vector_store, language=language)
-        except Exception as e:
-            logger.error("Failed to create pipeline for %s: %s", language, e)
-            continue
-
-        for batch_start in range(0, len(documents), BATCH_SIZE):
-            batch_docs = documents[batch_start : batch_start + BATCH_SIZE]
-            batch_end = min(batch_start + BATCH_SIZE, len(documents))
+    for language, file_list in files_by_language.items():
+        for batch_start in range(0, len(file_list), BATCH_SIZE):
+            batch_files = file_list[batch_start : batch_start + BATCH_SIZE]
+            batch_end = min(batch_start + BATCH_SIZE, len(file_list))
 
             report(
                 processed_files,
                 total_to_process,
-                f"Embedding {language} files {batch_start + 1}-{batch_end}/{len(documents)}",
+                f"Processing {language} files {batch_start + 1}-{batch_end}/{len(file_list)}",
             )
 
-            try:
-                nodes = await asyncio.wait_for(
-                    asyncio.to_thread(pipeline.run, documents=batch_docs),
-                    timeout=120,
-                )
-            except TimeoutError:
-                logger.warning(
-                    "Tree-sitter parsing timed out for %s batch (%d docs), "
-                    "falling back to text splitter",
-                    language,
-                    len(batch_docs),
-                )
+            # Split and extract for each file in batch
+            all_chunks: list[dict[str, Any]] = []
+            chunk_example_ids: list[str] = []
+
+            for file_info in batch_files:
+                example_id = file_info["example_id"]
+                chunk_metadata = {
+                    "source_file": file_info["remote_path"],
+                    "facility_id": facility,
+                    "language": language,
+                    "code_example_id": example_id,
+                }
+
                 try:
-                    fallback_pipeline = create_pipeline(
-                        vector_store=vector_store,
-                        language=language,
-                        use_text_splitter=True,
+                    chunks = await asyncio.to_thread(
+                        _split_and_extract,
+                        file_info["content"],
+                        language,
+                        chunk_metadata,
                     )
-                    nodes = await asyncio.wait_for(
-                        asyncio.to_thread(fallback_pipeline.run, documents=batch_docs),
-                        timeout=120,
+                except Exception:
+                    logger.warning(
+                        "Failed to parse %s with tree-sitter, trying text splitter",
+                        file_info["remote_path"],
                     )
-                except (TimeoutError, Exception) as e2:
-                    logger.error("Fallback also failed for %s batch: %s", language, e2)
-                    for doc in batch_docs:
-                        example_id = doc.metadata.get("code_example_id")
-                        meta = file_metadata.get(example_id, {})
-                        sf_id = meta.get("_source_file_id")
-                        if sf_id:
-                            update_source_file_status(
-                                sf_id, "failed", error=f"Timeout: {e2}"
-                            )
-                    continue
-            except Exception as e:
-                logger.warning(
-                    "Failed to parse %s batch with tree-sitter, trying text splitter: %s",
-                    language,
-                    e,
-                )
-                try:
-                    fallback_pipeline = create_pipeline(
-                        vector_store=vector_store,
-                        language=language,
-                        use_text_splitter=True,
-                    )
-                    nodes = await asyncio.to_thread(
-                        fallback_pipeline.run, documents=batch_docs
-                    )
-                except Exception as e2:
-                    logger.error("Failed to process %s batch: %s", language, e2)
-                    for doc in batch_docs:
-                        example_id = doc.metadata.get("code_example_id")
+                    try:
+                        chunks = await asyncio.to_thread(
+                            _split_and_extract,
+                            file_info["content"],
+                            language,
+                            chunk_metadata,
+                            use_text_splitter=True,
+                        )
+                    except Exception as e2:
+                        logger.error(
+                            "Failed to process %s: %s", file_info["remote_path"], e2
+                        )
                         meta = file_metadata.get(example_id, {})
                         sf_id = meta.get("_source_file_id")
                         if sf_id:
                             update_source_file_status(sf_id, "failed", error=str(e2))
-                    continue
+                        continue
+
+                # Generate chunk IDs
+                for i, chunk in enumerate(chunks):
+                    content_hash = hashlib.md5(chunk["text"].encode()).hexdigest()[:8]
+                    chunk["id"] = f"{example_id}:chunk_{i}:{content_hash}"
+
+                all_chunks.extend(chunks)
+                chunk_example_ids.append(example_id)
+
+            if not all_chunks:
+                for file_info in batch_files:
+                    meta = file_metadata.get(file_info["example_id"], {})
+                    sf_id = meta.get("_source_file_id")
+                    if sf_id:
+                        update_source_file_status(sf_id, "failed", error="No chunks")
+                continue
+
+            # Generate embeddings in batch
+            chunk_texts = [c["text"] for c in all_chunks]
+            try:
+                embeddings = await asyncio.to_thread(encoder.embed_texts, chunk_texts)
+                for i, chunk in enumerate(all_chunks):
+                    chunk["embedding"] = embeddings[i].tolist()
+            except Exception as e:
+                logger.error("Embedding failed: %s", e)
+                for file_info in batch_files:
+                    meta = file_metadata.get(file_info["example_id"], {})
+                    sf_id = meta.get("_source_file_id")
+                    if sf_id:
+                        update_source_file_status(sf_id, "failed", error=str(e))
+                continue
 
             # Count stats
             batch_ids_found = 0
             batch_mdsplus_paths = 0
-            for node in nodes:
-                related_ids = node.metadata.get("related_ids", [])
-                batch_ids_found += len(related_ids)
-                mdsplus_paths = node.metadata.get("mdsplus_paths", [])
-                batch_mdsplus_paths += len(mdsplus_paths)
+            for chunk in all_chunks:
+                batch_ids_found += len(chunk.get("related_ids", []))
+                batch_mdsplus_paths += len(chunk.get("mdsplus_paths", []))
 
-            stats["chunks"] += len(nodes)
+            stats["chunks"] += len(all_chunks)
             stats["ids_found"] += batch_ids_found
             stats["mdsplus_paths"] += batch_mdsplus_paths
 
-            # Commit batch to graph (interrupt-safe)
+            # Write chunks to graph via Cypher UNWIND
             with GraphClient() as graph_client:
-                for doc in batch_docs:
-                    example_id = doc.metadata.get("code_example_id")
+                graph_client.query(
+                    """
+                    UNWIND $chunks AS chunk
+                    MERGE (c:CodeChunk {id: chunk.id})
+                    SET c += chunk
+                    WITH c, chunk
+                    MATCH (f:Facility {id: chunk.facility_id})
+                    MERGE (c)-[:AT_FACILITY]->(f)
+                    """,
+                    chunks=all_chunks,
+                )
+
+                for file_info in batch_files:
+                    example_id = file_info["example_id"]
                     meta = file_metadata.get(example_id)
                     if not meta:
                         continue
@@ -450,9 +446,6 @@ async def ingest_files(
                             source_file_id, "ingested", code_example_id=example_id
                         )
 
-                batch_example_ids = [
-                    doc.metadata.get("code_example_id") for doc in batch_docs
-                ]
                 graph_client.query(
                     """
                     MATCH (c:CodeChunk)
@@ -460,15 +453,14 @@ async def ingest_files(
                     MATCH (e:CodeExample {id: c.code_example_id})
                     MERGE (e)-[:HAS_CHUNK]->(c)
                     """,
-                    example_ids=batch_example_ids,
+                    example_ids=chunk_example_ids,
                 )
 
-                for example_id in batch_example_ids:
-                    if example_id:
-                        linked = link_example_mdsplus_paths(graph_client, example_id)
-                        stats["tree_nodes_linked"] += linked
+                for example_id in chunk_example_ids:
+                    linked = link_example_mdsplus_paths(graph_client, example_id)
+                    stats["tree_nodes_linked"] += linked
 
-            processed_files += len(batch_docs)
+            processed_files += len(batch_files)
             stats["files"] = processed_files
 
     # Final relationship linking
@@ -490,7 +482,5 @@ async def ingest_files(
 
 __all__ = [
     "ProgressCallback",
-    "create_pipeline",
-    "create_vector_store",
     "ingest_files",
 ]
