@@ -1,5 +1,5 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
   "cSpell.words": [
     "chromadb",
     "Clusterer",
@@ -28,14 +28,9 @@
   "python.testing.autoTestDiscoverOnSaveEnabled": true,
   "python.analysis.typeCheckingMode": "basic",
   "python.envFile": "${workspaceFolder}/.env",
-  "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
-    "imas-codex/.vscode/mcp.json: imas-debug": {
-      "allowedDuringChat": true
-    },
     "imas-codex/.vscode/mcp.json: imas": {
-      "allowedDuringChat": true,
-      "allowedModels": ["copilot/gemini-3-pro-preview"]
+      "allowedDuringChat": true
     },
     "imas-codex/.vscode/mcp.json: imas-ddv3": {
       "allowedDuringChat": true
@@ -44,14 +39,11 @@
       "allowedDuringChat": true
     },
     "imas-codex/.vscode/mcp.json: imas-test": {
-      "allowedModels": ["copilot/gpt-4.1"]
+      "allowedDuringChat": true
     }
   },
-  // Formatting settings
   "editor.formatOnSave": true,
-  "editor.defaultFormatter": "charliermarsh.ruff",
   "[python]": {
-    "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
       "source.organizeImports": "explicit",
@@ -59,9 +51,7 @@
     }
   },
   "chat.mcp.access": "all",
-  "cursorpyright.analysis.typeCheckingMode": "basic",
   "chat.customAgentInSubagent.enabled": true,
-  "gistpad.mcp.enabled": false,
   "markdown-pdf.highlightStyle": "solarized-light.css",
   "markdown-pdf.includeDefaultStyles": false,
   "markdown-pdf.mermaidServer": "https://unpkg.com/mermaid/dist/mermaid.min.js",
