@@ -1,22 +1,25 @@
 """Dual-pass LLM file scoring for discovered CodeFiles.
 
-Pass 1 (Triage): Fast keep/skip classification from file path, language,
-and per-file enrichment evidence (rg pattern matches). Cheap and fast —
-filters ~70-80% of files.
+Pass 1 (Triage): Per-dimension scoring from minimal context — parent
+directory description + filename + extension.  Quick and cheap.
+Files triaging over threshold proceed to enrichment+scoring.
 
 Pass 2 (Score): Full multi-dimensional scoring with enrichment evidence
-for files that passed triage. Uses the same 9 score dimensions as
-the paths pipeline.
+(rg pattern matches, file preview text) for files that passed triage.
+The scorer receives the triage description but NOT the triage numeric
+scores — it makes an independent assessment.
 
-Both passes use Jinja2 prompt templates with static content first to
-maximize LLM prefix cache reuse across batches.
+Both passes inject dynamic calibration examples sampled from previously-
+scored CodeFiles in the graph (same pattern as the paths pipeline).
+Calibration examples evolve as more files are scored (60s TTL cache).
+
+Lifecycle: discovered → triaged → (enrich) → scored → ingested | skipped
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from collections.abc import Callable
+import time
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -25,10 +28,10 @@ from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
 
-# Progress callback: (current, total, message) -> None
-ProgressCallback = Callable[[int, int, str], None]
+# ---------------------------------------------------------------------------
+# Score dimensions (same as paths minus data-only dimensions)
+# ---------------------------------------------------------------------------
 
-# Score dimension names (matching FacilityPath dimensions)
 SCORE_DIMENSION_NAMES = [
     "score_modeling_code",
     "score_analysis_code",
@@ -41,21 +44,206 @@ SCORE_DIMENSION_NAMES = [
     "score_convention",
 ]
 
+TRIAGE_DIMENSION_NAMES = [d.replace("score_", "triage_") for d in SCORE_DIMENSION_NAMES]
+
 
 # ---------------------------------------------------------------------------
-# Pass 1: Triage models
+# Dynamic calibration (same architecture as paths/frontier.py)
+# ---------------------------------------------------------------------------
+
+_calibration_cache: dict[str, tuple[float, dict]] = {}
+_CALIBRATION_TTL_SECONDS = 60.0
+
+
+def sample_code_dimension_calibration(
+    facility: str | None = None,
+    per_level: int = 3,
+    phase: str = "score",
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Sample calibration examples per score dimension at 5 levels.
+
+    Triage and score operate on different cohorts of the same 0-1 scale:
+
+    * **triage** -- draws ``triage_*`` from ALL triaged+scored CodeFiles
+      (general population).  Shows the full distribution.
+    * **score** -- draws ``score_*`` from scored-only CodeFiles (graduate
+      cohort that passed triage+enrichment).  Calibrates among peers.
+
+    Cached with 60s TTL -- stable within a batch, evolves over time.
+
+    Returns:
+        Nested dict: dimension -> level -> list of examples.
+        Each example: path, facility, score, purpose, description.
+    """
+    global _calibration_cache  # noqa: PLW0603
+
+    cache_key = f"{phase}:{facility}:{per_level}"
+    now = time.monotonic()
+
+    if cache_key in _calibration_cache:
+        cached_time, cached_data = _calibration_cache[cache_key]
+        if (now - cached_time) < _CALIBRATION_TTL_SECONDS:
+            return cached_data
+
+    samples = _fetch_code_dimension_calibration(facility, per_level, phase)
+    _calibration_cache[cache_key] = (now, samples)
+    return samples
+
+
+def _fetch_code_dimension_calibration(
+    facility: str | None,
+    per_level: int,
+    phase: str,
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Fetch dimension calibration from CodeFile nodes (uncached).
+
+    For triage: uses triage_* properties from all triaged+scored files
+    For score: uses score_* properties from scored files only
+    """
+    if phase == "triage":
+        status_clause = "cf.status IN ['triaged', 'scored', 'ingested']"
+        dims_to_query = TRIAGE_DIMENSION_NAMES
+    else:
+        status_clause = "cf.status IN ['scored', 'ingested']"
+        dims_to_query = SCORE_DIMENSION_NAMES
+
+    buckets: list[tuple[str, float, float]] = [
+        ("lowest", 0.0, 0.15),
+        ("low", 0.10, 0.30),
+        ("medium", 0.40, 0.60),
+        ("high", 0.70, 0.90),
+        ("highest", 0.90, 1.01),
+    ]
+
+    samples: dict[str, dict[str, list[dict[str, Any]]]] = {}
+
+    with GraphClient() as gc:
+        for dim, graph_prop in zip(SCORE_DIMENSION_NAMES, dims_to_query, strict=True):
+            samples[dim] = {}
+
+            for level_name, min_score, max_score in buckets:
+                desc_prop = (
+                    "cf.triage_description" if phase == "triage" else "cf.score_reason"
+                )
+
+                result = gc.query(
+                    f"""
+                    MATCH (cf:CodeFile)
+                    WHERE {status_clause}
+                        AND cf.{graph_prop} >= $min_score
+                        AND cf.{graph_prop} < $max_score
+                        AND cf.{graph_prop} IS NOT NULL
+                    RETURN cf.path AS path,
+                           cf.facility_id AS facility,
+                           cf.{graph_prop} AS score,
+                           {desc_prop} AS description
+                    ORDER BY rand()
+                    LIMIT $limit
+                    """,
+                    min_score=min_score,
+                    max_score=max_score,
+                    limit=per_level * 3,
+                )
+
+                current = [r for r in result if r["facility"] == facility]
+                other = [r for r in result if r["facility"] != facility]
+
+                chosen: list[dict[str, Any]] = []
+                for r in current[:per_level]:
+                    chosen.append(r)
+                for r in other[: per_level - len(chosen)]:
+                    chosen.append(r)
+
+                samples[dim][level_name] = [
+                    {
+                        "path": r["path"],
+                        "facility": r["facility"],
+                        "score": round(r["score"], 2),
+                        "purpose": "code file",
+                        "description": r["description"] or "",
+                    }
+                    for r in chosen[:per_level]
+                ]
+
+    return samples
+
+
+# ---------------------------------------------------------------------------
+# Pass 1: Triage models (per-dimension scoring, not keep/skip)
 # ---------------------------------------------------------------------------
 
 
 class FileTriageResult(BaseModel):
-    """Pass 1 triage result for a single file."""
+    """Triage result for a single file -- per-dimension scores from minimal context."""
 
     path: str = Field(description="The file path (echo from input)")
-    keep: bool = Field(description="Whether to keep this file for detailed scoring")
-    reason: str = Field(
+    description: str = Field(
         default="",
-        description="One-line explanation (max 50 chars)",
+        description="Brief description of what the file likely contains (1 sentence)",
     )
+
+    # Per-dimension triage scores (0.0-1.0 each)
+    score_modeling_code: float = Field(
+        default=0.0,
+        description="Forward modeling/simulation code value (0.0-1.0)",
+    )
+    score_analysis_code: float = Field(
+        default=0.0,
+        description="Experimental analysis code value (0.0-1.0)",
+    )
+    score_operations_code: float = Field(
+        default=0.0,
+        description="Real-time operations code value (0.0-1.0)",
+    )
+    score_data_access: float = Field(
+        default=0.0,
+        description="Data access tools value (0.0-1.0)",
+    )
+    score_workflow: float = Field(
+        default=0.0,
+        description="Workflow/orchestration value (0.0-1.0)",
+    )
+    score_visualization: float = Field(
+        default=0.0,
+        description="Visualization tools value (0.0-1.0)",
+    )
+    score_documentation: float = Field(
+        default=0.0,
+        description="Documentation value (0.0-1.0)",
+    )
+    score_imas: float = Field(
+        default=0.0,
+        description="IMAS relevance (0.0-1.0)",
+    )
+    score_convention: float = Field(
+        default=0.0,
+        description="Convention handling value (0.0-1.0)",
+    )
+
+    @property
+    def triage_composite(self) -> float:
+        """Composite = max(dims) * (1 + mean(nonzero_dims)) / 2.
+
+        Same formula as paths pipeline. Rewards breadth across
+        multiple dimensions rather than a single high dimension.
+        """
+        scores = [
+            self.score_modeling_code,
+            self.score_analysis_code,
+            self.score_operations_code,
+            self.score_data_access,
+            self.score_workflow,
+            self.score_visualization,
+            self.score_documentation,
+            self.score_imas,
+            self.score_convention,
+        ]
+        max_score = max(scores)
+        nonzero = [s for s in scores if s > 0]
+        if not nonzero:
+            return 0.0
+        mean_nonzero = sum(nonzero) / len(nonzero)
+        return max_score * (1 + mean_nonzero) / 2
 
 
 class FileTriageBatch(BaseModel):
@@ -65,12 +253,12 @@ class FileTriageBatch(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Pass 2: Score models
+# Pass 2: Score models (full scoring with enrichment evidence)
 # ---------------------------------------------------------------------------
 
 
 class FileScoreResult(BaseModel):
-    """LLM scoring result for a single file with multi-dimensional scores."""
+    """Full scoring result with enrichment evidence."""
 
     path: str = Field(description="The file path (echo from input)")
     file_category: str = Field(
@@ -117,13 +305,16 @@ class FileScoreResult(BaseModel):
     )
     score_convention: float = Field(
         default=0.0,
-        description="Convention handling value — COCOS, sign/coordinate conventions (0.0-1.0)",
+        description="Convention handling value (0.0-1.0)",
     )
 
     @property
     def interest_score(self) -> float:
-        """Composite score = max of all dimension scores."""
-        return max(
+        """Composite = max(dims) * (1 + mean(nonzero_dims)) / 2.
+
+        Same breadth-weighted formula as paths and triage.
+        """
+        scores = [
             self.score_modeling_code,
             self.score_analysis_code,
             self.score_operations_code,
@@ -133,7 +324,13 @@ class FileScoreResult(BaseModel):
             self.score_documentation,
             self.score_imas,
             self.score_convention,
-        )
+        ]
+        max_score = max(scores)
+        nonzero = [s for s in scores if s > 0]
+        if not nonzero:
+            return 0.0
+        mean_nonzero = sum(nonzero) / len(nonzero)
+        return max_score * (1 + mean_nonzero) / 2
 
 
 class FileScoreBatch(BaseModel):
@@ -143,155 +340,170 @@ class FileScoreBatch(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Prompt builders  (static portions first → maximize prefix cache hits)
+# Prompt builders
 # ---------------------------------------------------------------------------
 
 
-def _build_triage_system_prompt(focus: str | None = None) -> str:
-    """Build system prompt for pass 1 triage.
+def _build_triage_system_prompt(
+    facility: str | None = None,
+    focus: str | None = None,
+) -> str:
+    """Build triage system prompt with dimension calibration.
 
-    Static content first for cache reuse, focus appended at end.
+    Triage calibration draws from the full population (all triaged+scored
+    CodeFiles) using triage_* properties.
     """
     from imas_codex.agentic.prompt_loader import render_prompt
 
     context: dict[str, Any] = {}
     if focus:
         context["focus"] = focus
+
+    dimension_calibration = sample_code_dimension_calibration(
+        facility=facility, per_level=5, phase="triage"
+    )
+    has_calibration = any(
+        any(examples for examples in dim_levels.values())
+        for dim_levels in dimension_calibration.values()
+    )
+    if has_calibration:
+        context["dimension_calibration"] = dimension_calibration
+
     return render_prompt("code/triage", context)
 
 
-def _build_system_prompt(focus: str | None = None) -> str:
-    """Build system prompt for pass 2 scoring.
+def _build_score_system_prompt(
+    facility: str | None = None,
+    focus: str | None = None,
+) -> str:
+    """Build scorer system prompt with dimension calibration.
 
-    Static content first for cache reuse, focus appended at end.
+    Score calibration draws from the graduate cohort (scored-only
+    CodeFiles) using score_* properties.
     """
     from imas_codex.agentic.prompt_loader import render_prompt
 
     context: dict[str, Any] = {}
     if focus:
         context["focus"] = focus
+
+    dimension_calibration = sample_code_dimension_calibration(
+        facility=facility, per_level=5, phase="score"
+    )
+    has_calibration = any(
+        any(examples for examples in dim_levels.values())
+        for dim_levels in dimension_calibration.values()
+    )
+    if has_calibration:
+        context["dimension_calibration"] = dimension_calibration
 
     return render_prompt("code/scorer", context)
 
 
 def _build_triage_user_prompt(file_groups: list[dict[str, Any]]) -> str:
-    """Build user prompt for pass 1 triage.
+    """Build triage user prompt -- minimal context + sibling awareness.
 
-    Files grouped by parent directory with per-file enrichment evidence.
+    Each directory group provides:
+    - Parent dir full path + description (labelled as directory-level)
+    - Complete sibling file listing (all known files in dir)
+    - Indication of which files need triaging vs already processed
+
+    NO enrichment patterns, NO numeric scores from paths.
+    Sibling file names give batch context -- seeing `read_mds.py`
+    alongside `plot_profiles.py` is more informative than either alone.
     """
-    lines = ["Triage these files. Each group shows the parent directory context.\n"]
+    lines = ["Triage these files. Each group shares a parent directory.\n"]
 
     for i, group in enumerate(file_groups, 1):
         parent_path = group.get("parent_path", "unknown")
-        parent_score = group.get("parent_score") or 0
-        parent_purpose = group.get("parent_purpose") or "unknown"
+        parent_desc = group.get("parent_description") or ""
+        sibling_names = group.get("sibling_names") or []
 
         lines.append(f"\n## Directory {i}: {parent_path}")
-        lines.append(f"Score: {parent_score:.2f}, Purpose: {parent_purpose}")
+        if parent_desc:
+            lines.append(
+                f"Directory description (applies to the directory as a whole, "
+                f"not necessarily to each individual file): {parent_desc}"
+            )
 
-        # Parent dimension scores for context (compact)
-        dim_parts = []
-        for dim in SCORE_DIMENSION_NAMES:
-            parent_key = f"parent_{dim}"
-            val = group.get(parent_key) or 0
-            if val >= 0.3:
-                dim_parts.append(f"{dim.replace('score_', '')}: {val:.2f}")
-        if dim_parts:
-            lines.append(f"Parent scores: {', '.join(dim_parts)}")
+        # Show all siblings for neighborhood context
+        if sibling_names:
+            triage_paths = {f["path"] for f in group.get("files", [])}
+            other_siblings = [s for s in sibling_names if s not in triage_paths]
+            if other_siblings:
+                lines.append(
+                    f"\nOther files in this directory (already processed, "
+                    f"for context only): {', '.join(other_siblings)}"
+                )
 
-        lines.append("\nFiles:")
+        lines.append("\nFiles to triage:")
         for f in group.get("files", []):
             lang = f.get("language") or "unknown"
-            line_count = f.get("line_count") or 0
-            patterns = f.get("patterns") or {}
-            total_matches = f.get("total_matches") or 0
-
-            parts = [f"  - {f['path']} ({lang}, {line_count} lines)"]
-            if total_matches > 0:
-                pattern_str = ", ".join(f"{k}: {v}" for k, v in patterns.items())
-                parts.append(f"    patterns: {pattern_str} (total: {total_matches})")
-            lines.append("\n".join(parts))
+            lines.append(f"  - {f['path']} ({lang})")
 
     return "\n".join(lines)
 
 
-def _build_user_prompt(file_groups: list[dict[str, Any]]) -> str:
-    """Build user prompt for pass 2 scoring.
+def _build_score_user_prompt(file_groups: list[dict[str, Any]]) -> str:
+    """Build scorer user prompt -- enrichment evidence + triage description.
 
-    Files grouped by parent directory with per-file enrichment evidence.
-    Static parent context first, then per-file details.
+    Each file gets: parent dir path + description, per-file enrichment
+    (pattern matches, line count), triage description (qualitative,
+    NO triage numeric scores), and preview text.
     """
-    lines = ["Score these files. Each group shows the parent directory context.\n"]
+    lines = ["Score these files using their enrichment evidence and content preview.\n"]
 
     for i, group in enumerate(file_groups, 1):
         parent_path = group.get("parent_path", "unknown")
-        parent_score = group.get("parent_score") or 0
-        parent_purpose = group.get("parent_purpose") or "unknown"
         parent_desc = group.get("parent_description") or ""
 
         lines.append(f"\n## Directory {i}: {parent_path}")
-        lines.append(f"Score: {parent_score:.2f}, Purpose: {parent_purpose}")
         if parent_desc:
-            lines.append(f"Description: {parent_desc}")
+            lines.append(f"Directory description: {parent_desc}")
 
-        # Parent pattern evidence from enrichment
-        patterns = group.get("parent_patterns")
-        if patterns:
-            if isinstance(patterns, str):
-                try:
-                    patterns = json.loads(patterns)
-                except json.JSONDecodeError:
-                    patterns = {}
-            if patterns:
-                pattern_parts = [f"{k}: {v}" for k, v in patterns.items() if v]
-                if pattern_parts:
-                    lines.append(f"Dir pattern evidence: {', '.join(pattern_parts)}")
-
-        read_m = group.get("parent_read_matches") or 0
-        write_m = group.get("parent_write_matches") or 0
-        multiformat = group.get("parent_multiformat", False)
-        if read_m or write_m:
-            lines.append(
-                f"Read/write: {read_m} reads, {write_m} writes"
-                f" (multiformat: {multiformat})"
-            )
-
-        # Parent dimension scores for context
-        dim_parts = []
-        for dim in SCORE_DIMENSION_NAMES:
-            parent_key = f"parent_{dim}"
-            val = group.get(parent_key) or 0
-            if val >= 0.3:
-                dim_parts.append(f"{dim.replace('score_', '')}: {val:.2f}")
-        if dim_parts:
-            lines.append(f"Parent scores: {', '.join(dim_parts)}")
-
-        # Files to score — now with per-file enrichment
         lines.append("\nFiles:")
         for f in group.get("files", []):
             lang = f.get("language") or "unknown"
             line_count = f.get("line_count") or 0
-            patterns = f.get("patterns") or {}
-            total_matches = f.get("total_matches") or 0
+            patterns = f.get("pattern_categories") or {}
+            total_matches = f.get("total_pattern_matches") or 0
+            triage_desc = f.get("triage_description") or ""
+            preview = f.get("preview_text") or ""
 
-            parts = [f"  - {f['path']} ({lang}, {line_count} lines)"]
+            parts = [f"\n  ### {f['path']} ({lang}, {line_count} lines)"]
+
+            if triage_desc:
+                parts.append(f"  Triage assessment: {triage_desc}")
+
             if total_matches > 0:
-                pattern_str = ", ".join(f"{k}: {v}" for k, v in patterns.items())
-                parts.append(f"    patterns: {pattern_str}")
+                pattern_str = ", ".join(f"{k}: {v}" for k, v in patterns.items() if v)
+                parts.append(
+                    f"  Pattern matches: {pattern_str} (total: {total_matches})"
+                )
+
+            if preview:
+                truncated = preview[:500]
+                if len(preview) > 500:
+                    truncated += "..."
+                parts.append(f"  Content preview:\n  ```\n  {truncated}\n  ```")
+
             lines.append("\n".join(parts))
 
     return "\n".join(lines)
 
 
-def _group_files_by_parent(files: list[dict]) -> list[dict[str, Any]]:
-    """Group claimed files by their parent FacilityPath.
+def _group_files_by_parent(
+    files: list[dict],
+    include_siblings: bool = False,
+) -> list[dict[str, Any]]:
+    """Group files by their parent FacilityPath.
 
-    Args:
-        files: Flat list of file dicts from claim_files_for_scoring,
-               each containing parent_* fields from the join query.
+    When ``include_siblings=True``, queries the graph for ALL CodeFile
+    names under each parent directory.  This gives the triage LLM
+    neighborhood context -- seeing what other files exist alongside
+    the ones being triaged.
 
-    Returns:
-        List of group dicts with parent context and file lists.
+    Returns list of group dicts with parent context and file lists.
     """
     groups: dict[str, dict[str, Any]] = {}
 
@@ -301,51 +513,66 @@ def _group_files_by_parent(files: list[dict]) -> list[dict[str, Any]]:
             groups[parent_id] = {
                 "parent_path_id": parent_id,
                 "parent_path": f.get("parent_path") or "unknown",
-                "parent_score": f.get("parent_score") or 0,
-                "parent_purpose": f.get("parent_purpose") or "unknown",
                 "parent_description": f.get("parent_description") or "",
-                "parent_patterns": f.get("parent_patterns"),
-                "parent_read_matches": f.get("parent_read_matches") or 0,
-                "parent_write_matches": f.get("parent_write_matches") or 0,
-                "parent_multiformat": f.get("parent_multiformat") or False,
                 "files": [],
+                "sibling_names": [],
             }
-            # Copy parent dimension scores
-            for dim in SCORE_DIMENSION_NAMES:
-                groups[parent_id][f"parent_{dim}"] = f.get(f"parent_{dim}") or 0
 
-        file_entry = {
+        file_entry: dict[str, Any] = {
             "id": f["id"],
             "path": f["path"],
             "language": f.get("language") or "unknown",
         }
-        # Include per-file enrichment data if available
-        if "line_count" in f:
-            file_entry["line_count"] = f.get("line_count") or 0
-        if "patterns" in f:
-            file_entry["patterns"] = f.get("patterns") or {}
-        if "total_matches" in f:
-            file_entry["total_matches"] = f.get("total_matches") or 0
+        for key in (
+            "line_count",
+            "pattern_categories",
+            "total_pattern_matches",
+            "triage_description",
+            "preview_text",
+        ):
+            if key in f:
+                file_entry[key] = f[key]
 
         groups[parent_id]["files"].append(file_entry)
 
+    # Fetch sibling file names for triage context
+    if include_siblings and groups:
+        parent_ids = list(groups.keys())
+        with GraphClient() as gc:
+            rows = gc.query(
+                """
+                UNWIND $parent_ids AS pid
+                MATCH (cf:CodeFile)-[:IN_DIRECTORY]->(fp:FacilityPath {id: pid})
+                RETURN pid AS parent_id, cf.path AS path
+                """,
+                parent_ids=parent_ids,
+            )
+            for row in rows:
+                pid = row["parent_id"]
+                if pid in groups:
+                    groups[pid]["sibling_names"].append(row["path"])
+
     return list(groups.values())
+
+
+# ---------------------------------------------------------------------------
+# Graph persistence
+# ---------------------------------------------------------------------------
 
 
 def apply_triage_results(
     results: list[FileTriageResult],
     file_id_map: dict[str, str],
-) -> dict[str, int]:
-    """Apply triage results — mark skipped files, return kept file IDs.
+    threshold: float = 0.75,
+) -> dict[str, Any]:
+    """Persist triage dimension scores to CodeFile nodes.
 
-    Args:
-        results: List of FileTriageResult from LLM
-        file_id_map: Mapping from file path to CodeFile node ID
+    Files triaging above threshold -> status 'triaged' (proceed to enrichment).
+    Files below threshold -> status 'skipped'.
 
-    Returns:
-        Dict with kept_count, skipped_count, kept_ids (list)
+    Returns dict with triaged, skipped counts and triaged_ids.
     """
-    kept_ids = []
+    triaged_items = []
     skipped_items = []
 
     for result in results:
@@ -353,28 +580,80 @@ def apply_triage_results(
         if not sf_id:
             continue
 
-        if result.keep:
-            kept_ids.append(sf_id)
-        else:
-            skipped_items.append({"id": sf_id, "reason": result.reason})
+        composite = result.triage_composite
+        item = {
+            "id": sf_id,
+            "triage_composite": round(composite, 4),
+            "triage_description": result.description,
+            "triage_modeling_code": result.score_modeling_code,
+            "triage_analysis_code": result.score_analysis_code,
+            "triage_operations_code": result.score_operations_code,
+            "triage_data_access": result.score_data_access,
+            "triage_workflow": result.score_workflow,
+            "triage_visualization": result.score_visualization,
+            "triage_documentation": result.score_documentation,
+            "triage_imas": result.score_imas,
+            "triage_convention": result.score_convention,
+        }
 
-    if skipped_items:
-        with GraphClient() as client:
-            client.query(
+        if composite >= threshold:
+            triaged_items.append(item)
+        else:
+            skipped_items.append({**item, "reason": result.description})
+
+    with GraphClient() as gc:
+        if triaged_items:
+            gc.query(
+                """
+                UNWIND $items AS item
+                MATCH (sf:CodeFile {id: item.id})
+                SET sf.status = 'triaged',
+                    sf.triage_composite = item.triage_composite,
+                    sf.triage_description = item.triage_description,
+                    sf.triage_modeling_code = item.triage_modeling_code,
+                    sf.triage_analysis_code = item.triage_analysis_code,
+                    sf.triage_operations_code = item.triage_operations_code,
+                    sf.triage_data_access = item.triage_data_access,
+                    sf.triage_workflow = item.triage_workflow,
+                    sf.triage_visualization = item.triage_visualization,
+                    sf.triage_documentation = item.triage_documentation,
+                    sf.triage_imas = item.triage_imas,
+                    sf.triage_convention = item.triage_convention,
+                    sf.triaged_at = datetime(),
+                    sf.claimed_at = null
+                """,
+                items=triaged_items,
+            )
+
+        if skipped_items:
+            gc.query(
                 """
                 UNWIND $items AS item
                 MATCH (sf:CodeFile {id: item.id})
                 SET sf.status = 'skipped',
+                    sf.triage_composite = item.triage_composite,
+                    sf.triage_description = item.triage_description,
+                    sf.triage_modeling_code = item.triage_modeling_code,
+                    sf.triage_analysis_code = item.triage_analysis_code,
+                    sf.triage_operations_code = item.triage_operations_code,
+                    sf.triage_data_access = item.triage_data_access,
+                    sf.triage_workflow = item.triage_workflow,
+                    sf.triage_visualization = item.triage_visualization,
+                    sf.triage_documentation = item.triage_documentation,
+                    sf.triage_imas = item.triage_imas,
+                    sf.triage_convention = item.triage_convention,
                     sf.skip_reason = item.reason,
+                    sf.triaged_at = datetime(),
                     sf.claimed_at = null
                 """,
                 items=skipped_items,
             )
 
+    triaged_ids = [item["id"] for item in triaged_items]
     return {
-        "kept": len(kept_ids),
+        "triaged": len(triaged_items),
         "skipped": len(skipped_items),
-        "kept_ids": kept_ids,
+        "triaged_ids": triaged_ids,
     }
 
 
@@ -382,14 +661,9 @@ def apply_file_scores(
     results: list[FileScoreResult],
     file_id_map: dict[str, str],
 ) -> dict[str, int]:
-    """Apply multi-dimensional LLM scores to CodeFile nodes in graph.
+    """Persist full scoring results to CodeFile nodes.
 
-    Args:
-        results: List of FileScoreResult from LLM
-        file_id_map: Mapping from file path to CodeFile node ID
-
-    Returns:
-        Dict with scored, skipped counts
+    Sets status to 'scored' and writes all dimension scores.
     """
     scored_items = []
     skipped_items = []
@@ -405,8 +679,9 @@ def apply_file_scores(
             scored_items.append(
                 {
                     "id": sf_id,
-                    "interest_score": result.interest_score,
+                    "interest_score": round(result.interest_score, 4),
                     "score_reason": result.description,
+                    "file_category": result.file_category,
                     "score_modeling_code": result.score_modeling_code,
                     "score_analysis_code": result.score_analysis_code,
                     "score_operations_code": result.score_operations_code,
@@ -419,14 +694,16 @@ def apply_file_scores(
                 }
             )
 
-    with GraphClient() as client:
+    with GraphClient() as gc:
         if scored_items:
-            client.query(
+            gc.query(
                 """
                 UNWIND $items AS item
                 MATCH (sf:CodeFile {id: item.id})
-                SET sf.interest_score = item.interest_score,
+                SET sf.status = 'scored',
+                    sf.interest_score = item.interest_score,
                     sf.score_reason = item.score_reason,
+                    sf.file_category = item.file_category,
                     sf.score_modeling_code = item.score_modeling_code,
                     sf.score_analysis_code = item.score_analysis_code,
                     sf.score_operations_code = item.score_operations_code,
@@ -435,224 +712,24 @@ def apply_file_scores(
                     sf.score_visualization = item.score_visualization,
                     sf.score_documentation = item.score_documentation,
                     sf.score_imas = item.score_imas,
-                    sf.score_convention = item.score_convention
+                    sf.score_convention = item.score_convention,
+                    sf.scored_at = datetime(),
+                    sf.claimed_at = null
                 """,
                 items=scored_items,
             )
 
         if skipped_items:
-            client.query(
+            gc.query(
                 """
                 UNWIND $items AS item
                 MATCH (sf:CodeFile {id: item.id})
                 SET sf.status = 'skipped',
-                    sf.skip_reason = item.reason
+                    sf.skip_reason = item.reason,
+                    sf.scored_at = datetime(),
+                    sf.claimed_at = null
                 """,
                 items=skipped_items,
             )
 
     return {"scored": len(scored_items), "skipped": len(skipped_items)}
-
-
-def score_facility_files(
-    facility: str,
-    focus: str | None = None,
-    batch_size: int = 500,
-    limit: int = 2000,
-    cost_limit: float = 5.0,
-    progress_callback: ProgressCallback | None = None,
-) -> dict[str, Any]:
-    """Score discovered CodeFiles using dual-pass LLM scoring.
-
-    Pass 1: Triage — fast keep/skip from path + enrichment evidence.
-    Pass 2: Score — full multi-dimensional scoring for kept files.
-
-    Args:
-        facility: Facility ID
-        focus: Natural language focus (e.g., "equilibrium reconstruction")
-        batch_size: Files per LLM call
-        limit: Maximum files to score
-        cost_limit: Maximum LLM spend in USD
-        progress_callback: Optional progress callback
-
-    Returns:
-        Dict with total_scored, total_skipped, cost, batches
-    """
-    from imas_codex.discovery.code.graph_ops import (
-        claim_files_for_scoring,
-        release_file_score_claims,
-    )
-    from imas_codex.settings import get_model
-
-    model = get_model("language")
-
-    stats: dict[str, Any] = {
-        "total_scored": 0,
-        "total_skipped": 0,
-        "total_triaged": 0,
-        "cost": 0.0,
-        "batches": 0,
-        "errors": [],
-    }
-
-    def report(current: int, total: int, msg: str) -> None:
-        if progress_callback:
-            progress_callback(current, total, msg)
-        logger.info("[%d/%d] %s", current, total, msg)
-
-    # Claim files atomically (parallel-safe), grouped by parent path
-    files = claim_files_for_scoring(facility, limit=limit)
-    if not files:
-        report(0, 0, "No files to score (or all claimed by another worker)")
-        return stats
-
-    total = len(files)
-    report(0, total, f"Scoring {total} files")
-
-    # Build system prompts once (for prefix caching)
-    triage_system_prompt = _build_triage_system_prompt(focus=focus)
-    score_system_prompt = _build_system_prompt(focus=focus)
-
-    # Group by parent path
-    file_groups = _group_files_by_parent(files)
-
-    # Build batches from groups, respecting batch_size
-    current_batch: list[dict] = []
-    current_batch_groups: list[dict[str, Any]] = []
-    processed = 0
-
-    for group in file_groups:
-        group_files = group["files"]
-
-        if current_batch and len(current_batch) + len(group_files) > batch_size:
-            if stats["cost"] >= cost_limit:
-                remaining_ids = [f["id"] for f in files[processed:]]
-                release_file_score_claims(remaining_ids)
-                report(processed, total, f"Cost limit reached (${stats['cost']:.2f})")
-                break
-
-            _score_batch_dual_pass(
-                model,
-                triage_system_prompt,
-                score_system_prompt,
-                current_batch_groups,
-                current_batch,
-                stats,
-            )
-            processed += len(current_batch)
-            report(processed, total, f"${stats['cost']:.3f}")
-            current_batch = []
-            current_batch_groups = []
-
-        current_batch_groups.append(group)
-        current_batch.extend(group_files)
-
-    # Process remaining
-    if current_batch:
-        _score_batch_dual_pass(
-            model,
-            triage_system_prompt,
-            score_system_prompt,
-            current_batch_groups,
-            current_batch,
-            stats,
-        )
-
-    release_file_score_claims([f["id"] for f in files])
-    return stats
-
-
-def _score_batch_dual_pass(
-    model: str,
-    triage_system_prompt: str,
-    score_system_prompt: str,
-    file_groups: list[dict[str, Any]],
-    all_files: list[dict],
-    stats: dict[str, Any],
-) -> None:
-    """Run dual-pass LLM scoring on a batch of files.
-
-    Pass 1: Triage to filter noise.
-    Pass 2: Full scoring on kept files.
-    """
-    from imas_codex.discovery.base.llm import call_llm_structured
-
-    file_id_map = {f["path"]: f["id"] for f in all_files}
-
-    # --- Pass 1: Triage ---
-    triage_user_prompt = _build_triage_user_prompt(file_groups)
-    try:
-        triage_result, triage_cost, _ = call_llm_structured(
-            model=model,
-            messages=[
-                {"role": "system", "content": triage_system_prompt},
-                {"role": "user", "content": triage_user_prompt},
-            ],
-            response_model=FileTriageBatch,
-            temperature=0.1,
-        )
-        stats["cost"] += triage_cost
-
-        triage_applied = apply_triage_results(triage_result.results, file_id_map)
-        stats["total_skipped"] += triage_applied["skipped"]
-        stats["total_triaged"] += triage_applied["kept"] + triage_applied["skipped"]
-
-        # Build kept file groups for pass 2
-        kept_ids = set(triage_applied["kept_ids"])
-        if not kept_ids:
-            stats["batches"] += 1
-            return
-
-    except Exception as e:
-        logger.error("Triage batch failed: %s", e)
-        stats["errors"].append(str(e))
-        stats["batches"] += 1
-        # On triage failure, score all files (fail-open)
-        kept_ids = set(file_id_map.values())
-
-    # --- Pass 2: Score kept files ---
-    kept_groups = []
-    for group in file_groups:
-        kept_files = [f for f in group["files"] if f["id"] in kept_ids]
-        if kept_files:
-            kept_group = {**group, "files": kept_files}
-            kept_groups.append(kept_group)
-
-    if not kept_groups:
-        stats["batches"] += 1
-        return
-
-    score_user_prompt = _build_user_prompt(kept_groups)
-    try:
-        parsed, cost, _ = call_llm_structured(
-            model=model,
-            messages=[
-                {"role": "system", "content": score_system_prompt},
-                {"role": "user", "content": score_user_prompt},
-            ],
-            response_model=FileScoreBatch,
-            temperature=0.1,
-        )
-        stats["cost"] += cost
-
-        result = apply_file_scores(parsed.results, file_id_map)
-        stats["total_scored"] += result.get("scored", 0)
-        stats["total_skipped"] += result.get("skipped", 0)
-
-    except Exception as e:
-        logger.error("Score batch failed: %s", e)
-        stats["errors"].append(str(e))
-
-    stats["batches"] += 1
-
-
-__all__ = [
-    "FileScoreBatch",
-    "FileScoreResult",
-    "FileTriageBatch",
-    "FileTriageResult",
-    "SCORE_DIMENSION_NAMES",
-    "apply_file_scores",
-    "apply_triage_results",
-    "score_facility_files",
-]
