@@ -5,7 +5,7 @@ but no embeddings, embeds them in batches, and persists the results.
 Designed to run alongside LLM scoring workers in any discovery CLI.
 
 The worker is label-agnostic: it accepts a list of node labels to process
-(e.g., ["FacilityPath", "WikiPage", "WikiArtifact", "FacilitySignal", "Image"])
+(e.g., ["FacilityPath", "WikiPage", "WikiDocument", "FacilitySignal", "Image"])
 and embeds descriptions round-robin across all labels.
 
 Integration:
@@ -21,7 +21,7 @@ Integration:
                 "embed_worker",
                 state,
                 state.should_stop,
-                labels=["WikiPage", "WikiArtifact", "FacilitySignal"],
+                labels=["WikiPage", "WikiDocument", "FacilitySignal"],
                 on_progress=on_embed_progress,
                 status_tracker=embed_status,
             )
@@ -59,7 +59,7 @@ DESCRIPTION_LABELS = {
     "FacilitySignal",
     "Image",
     "TreeNode",
-    "WikiArtifact",
+    "WikiDocument",
     "WikiPage",
 }
 

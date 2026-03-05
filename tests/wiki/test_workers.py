@@ -413,17 +413,17 @@ class TestExtractAndPersistImages:
 
 
 # =============================================================================
-# _ingest_image_artifact
+# _ingest_image_document
 # =============================================================================
 
 
-class TestIngestImageArtifact:
-    """Tests for _ingest_image_artifact — wiki file images → Image nodes."""
+class TestIngestImageDocument:
+    """Tests for _ingest_image_document — wiki file images → Image nodes."""
 
     @pytest.mark.asyncio
     async def test_successful_ingestion(self):
-        """Successful image artifact should create Image node with HAS_IMAGE."""
-        from imas_codex.discovery.wiki.workers import _ingest_image_artifact
+        """Successful image document should create Image node with HAS_IMAGE."""
+        from imas_codex.discovery.wiki.workers import _ingest_image_document
 
         mock_gc = MagicMock()
         mock_gc.__enter__ = MagicMock(return_value=mock_gc)
@@ -448,19 +448,19 @@ class TestIngestImageArtifact:
                 return_value=mock_gc,
             ),
         ):
-            await _ingest_image_artifact(
-                artifact_id="tcv:wiki_file_image.png",
+            await _ingest_image_document(
+                document_id="tcv:wiki_file_image.png",
                 url="https://wiki.example.com/pub/image.png",
                 filename="image.png",
                 facility="tcv",
             )
-            # Should create Image node and link to artifact
+            # Should create Image node and link to document
             assert mock_gc.query.call_count == 2  # MERGE image + link pages
 
     @pytest.mark.asyncio
     async def test_too_small_image_skipped(self):
         """Images with fewer than 512 bytes should be skipped."""
-        from imas_codex.discovery.wiki.workers import _ingest_image_artifact
+        from imas_codex.discovery.wiki.workers import _ingest_image_document
 
         with patch(
             "imas_codex.discovery.wiki.workers._fetch_image_bytes",
@@ -468,8 +468,8 @@ class TestIngestImageArtifact:
             return_value=b"\x89PNG" + b"\x00" * 100,  # Only ~104 bytes
         ):
             # Should silently skip — no GraphClient needed
-            await _ingest_image_artifact(
-                artifact_id="tcv:tiny.png",
+            await _ingest_image_document(
+                document_id="tcv:tiny.png",
                 url="https://wiki.example.com/pub/tiny.png",
                 filename="tiny.png",
                 facility="tcv",
@@ -492,8 +492,8 @@ class TestPersistDocumentFigures:
 
         result = await _persist_document_figures(
             [],
-            artifact_id="tcv:doc.pdf",
-            artifact_url="https://example.com/doc.pdf",
+            document_id="tcv:doc.pdf",
+            document_url="https://example.com/doc.pdf",
             facility="tcv",
         )
         assert result == 0
@@ -506,8 +506,8 @@ class TestPersistDocumentFigures:
         images = [{"image_bytes": b"\x00" * 100, "page_num": 1}]
         result = await _persist_document_figures(
             images,
-            artifact_id="tcv:doc.pdf",
-            artifact_url="https://example.com/doc.pdf",
+            document_id="tcv:doc.pdf",
+            document_url="https://example.com/doc.pdf",
             facility="tcv",
         )
         assert result == 0
@@ -541,8 +541,8 @@ class TestPersistDocumentFigures:
         ):
             result = await _persist_document_figures(
                 images,
-                artifact_id="tcv:report.pdf",
-                artifact_url="https://example.com/report.pdf",
+                document_id="tcv:report.pdf",
+                document_url="https://example.com/report.pdf",
                 facility="tcv",
             )
             assert result == 1

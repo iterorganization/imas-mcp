@@ -130,8 +130,8 @@ class MockDiscoveredPage:
 
 
 @dataclass
-class MockDiscoveredArtifact:
-    """Matches DiscoveredArtifact from adapters."""
+class MockDiscoveredDocument:
+    """Matches DiscoveredDocument from adapters."""
 
     filename: str
     url: str
@@ -191,19 +191,19 @@ def make_ingest_results(page_ids: list[str], chunks: int = 5) -> list[dict[str, 
     ]
 
 
-def make_artifact_score_results(
-    artifact_ids: list[str], scores: list[float] | None = None
+def make_document_score_results(
+    document_ids: list[str], scores: list[float] | None = None
 ) -> list[dict[str, Any]]:
-    """Create mock LLM artifact scoring results."""
+    """Create mock LLM document scoring results."""
     if scores is None:
-        scores = [0.6] * len(artifact_ids)
+        scores = [0.6] * len(document_ids)
     return [
         {
             "id": aid,
             "score": score,
             "artifact_purpose": "data_documentation",
-            "description": f"Artifact {aid.split(':')[-1]}",
-            "reasoning": "Relevant artifact",
+            "description": f"Document {aid.split(':')[-1]}",
+            "reasoning": "Relevant document",
             "keywords": ["calibration"],
             "physics_domain": "diagnostics",
             "should_ingest": score >= 0.5,
@@ -215,11 +215,11 @@ def make_artifact_score_results(
             "score_calibration": 0.5,
             "score_imas_relevance": 0.3,
             "score_cost": 0.002,
-            "filename": f"artifact_{aid.split(':')[-1]}.pdf",
+            "filename": f"document_{aid.split(':')[-1]}.pdf",
             "artifact_type": "pdf",
-            "preview_text": "Preview of artifact",
+            "preview_text": "Preview of document",
         }
-        for aid, score in zip(artifact_ids, scores, strict=False)
+        for aid, score in zip(document_ids, scores, strict=False)
     ]
 
 
@@ -282,23 +282,23 @@ def mock_graph_ops():
     funcs = [
         "claim_pages_for_scoring",
         "claim_pages_for_ingesting",
-        "claim_artifacts_for_scoring",
-        "claim_artifacts_for_ingesting",
+        "claim_documents_for_scoring",
+        "claim_documents_for_ingesting",
         "claim_images_for_scoring",
         "mark_pages_scored",
         "mark_pages_ingested",
         "mark_page_failed",
-        "mark_artifacts_scored",
-        "mark_artifacts_ingested",
-        "mark_artifact_failed",
-        "mark_artifact_deferred",
+        "mark_documents_scored",
+        "mark_documents_ingested",
+        "mark_document_failed",
+        "mark_document_deferred",
         "mark_images_scored",
         "_release_claimed_pages",
         "_release_claimed_images",
         "has_pending_work",
-        "has_pending_artifact_work",
-        "has_pending_artifact_score_work",
-        "has_pending_artifact_ingest_work",
+        "has_pending_document_work",
+        "has_pending_document_score_work",
+        "has_pending_document_ingest_work",
         "has_pending_image_work",
         "reset_transient_pages",
     ]
@@ -352,18 +352,18 @@ def mock_state():
     state.score_stats = MockWorkerStats()
     state.ingest_stats = MockWorkerStats()
     state.docs_stats = MockWorkerStats()
-    state.artifact_score_stats = MockWorkerStats()
+    state.document_score_stats = MockWorkerStats()
     state.image_stats = MockWorkerStats()
 
     # Idle counts
     state.score_phase._idle_count = 0
     state.ingest_phase._idle_count = 0
     state.docs_phase._idle_count = 0
-    state.artifact_score_phase._idle_count = 0
+    state.document_score_phase._idle_count = 0
     state.image_phase._idle_count = 0
 
     # should_stop methods — all return False by default (run once)
-    _stop_counter = {"score": 0, "ingest": 0, "artifact": 0, "ascore": 0, "image": 0}
+    _stop_counter = {"score": 0, "ingest": 0, "document": 0, "ascore": 0, "image": 0}
 
     def _make_stop_fn(key: str, max_iterations: int = 1):
         """Return a function that returns False for max_iterations then True."""
@@ -376,7 +376,7 @@ def mock_state():
 
     state.should_stop_scoring = MagicMock(side_effect=_make_stop_fn("score"))
     state.should_stop_ingesting = MagicMock(side_effect=_make_stop_fn("ingest"))
-    state.should_stop_docs_worker = MagicMock(side_effect=_make_stop_fn("artifact"))
+    state.should_stop_docs_worker = MagicMock(side_effect=_make_stop_fn("document"))
     state.should_stop_docs_scoring = MagicMock(side_effect=_make_stop_fn("ascore"))
     state.should_stop_image_scoring = MagicMock(side_effect=_make_stop_fn("image"))
 

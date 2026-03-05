@@ -73,7 +73,7 @@ class TestWikiHierarchy:
     """Wiki content hierarchy integrity."""
 
     def test_wiki_chunks_have_parent(self, graph_client, label_counts):
-        """Every WikiChunk must have a parent via HAS_CHUNK (WikiPage or WikiArtifact)."""
+        """Every WikiChunk must have a parent via HAS_CHUNK (WikiPage or WikiDocument)."""
         if not label_counts.get("WikiChunk"):
             pytest.skip("No WikiChunk nodes in graph")
 
@@ -82,40 +82,40 @@ class TestWikiHierarchy:
         )
         count = result[0]["cnt"] if result else 0
         assert count == 0, (
-            f"{count} WikiChunk nodes without parent (WikiPage or WikiArtifact)"
+            f"{count} WikiChunk nodes without parent (WikiPage or WikiDocument)"
         )
 
-    def test_wiki_artifacts_have_parent_page(self, graph_client, label_counts):
-        """WikiArtifacts discovered via page crawling should link to a parent WikiPage.
+    def test_wiki_documents_have_parent_page(self, graph_client, label_counts):
+        """WikiDocuments discovered via page crawling should link to a parent WikiPage.
 
-        Bulk-discovered artifacts (bulk_discovered=true) may not have parent
-        page links until page crawling enriches them. Only non-bulk artifacts
-        are expected to have HAS_ARTIFACT relationships.
+        Bulk-discovered documents (bulk_discovered=true) may not have parent
+        page links until page crawling enriches them. Only non-bulk documents
+        are expected to have HAS_DOCUMENT relationships.
         """
-        if not label_counts.get("WikiArtifact"):
-            pytest.skip("No WikiArtifact nodes in graph")
+        if not label_counts.get("WikiDocument"):
+            pytest.skip("No WikiDocument nodes in graph")
 
-        # Check non-bulk artifacts (should always have parent)
+        # Check non-bulk documents (should always have parent)
         result = graph_client.query(
-            "MATCH (a:WikiArtifact) "
+            "MATCH (a:WikiDocument) "
             "WHERE (a.bulk_discovered IS NULL OR a.bulk_discovered = false) "
-            "AND NOT (:WikiPage)-[:HAS_ARTIFACT]->(a) "
+            "AND NOT (:WikiPage)-[:HAS_DOCUMENT]->(a) "
             "RETURN count(a) AS cnt"
         )
         non_bulk_orphans = result[0]["cnt"] if result else 0
 
-        # Check overall linkage rate for all artifacts (informational)
+        # Check overall linkage rate for all documents (informational)
         result = graph_client.query(
-            "MATCH (a:WikiArtifact) "
+            "MATCH (a:WikiDocument) "
             "RETURN count(a) AS total, "
-            "count(CASE WHEN (:WikiPage)-[:HAS_ARTIFACT]->(a) THEN 1 END) AS linked"
+            "count(CASE WHEN (:WikiPage)-[:HAS_DOCUMENT]->(a) THEN 1 END) AS linked"
         )
         total = result[0]["total"] if result else 0
         linked = result[0]["linked"] if result else 0
 
         assert non_bulk_orphans == 0, (
-            f"{non_bulk_orphans} non-bulk WikiArtifact nodes without parent WikiPage. "
-            f"Overall: {linked}/{total} artifacts linked to pages."
+            f"{non_bulk_orphans} non-bulk WikiDocument nodes without parent WikiPage. "
+            f"Overall: {linked}/{total} documents linked to pages."
         )
 
 

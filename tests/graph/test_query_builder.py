@@ -208,7 +208,7 @@ class TestGraphSearchFilterOps:
     def test_gt_operator(self, mock_gc, mock_embed):
         graph_search(
             "FacilityPath",
-            where={"score_composite__gt": 0.7},
+            where={"score__gt": 0.7},
             gc=mock_gc,
             embed_fn=mock_embed,
         )
@@ -250,7 +250,7 @@ class TestGraphSearchFilterOps:
     def test_multiple_operators(self, mock_gc, mock_embed):
         graph_search(
             "FacilityPath",
-            where={"score_composite__gte": 0.5, "status__ne": "failed"},
+            where={"score__gte": 0.5, "status__ne": "failed"},
             gc=mock_gc,
             embed_fn=mock_embed,
         )

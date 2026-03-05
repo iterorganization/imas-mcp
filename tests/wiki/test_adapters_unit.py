@@ -290,12 +290,12 @@ class TestStaticHtmlAdapterConstruction:
 
 
 # =============================================================================
-# DiscoveredPage / DiscoveredArtifact dataclasses
+# DiscoveredPage / DiscoveredDocument dataclasses
 # =============================================================================
 
 
 class TestDiscoveryDataclasses:
-    """Tests for DiscoveredPage and DiscoveredArtifact construction."""
+    """Tests for DiscoveredPage and DiscoveredDocument construction."""
 
     def test_discovered_page(self):
         from imas_codex.discovery.wiki.adapters import DiscoveredPage
@@ -311,10 +311,10 @@ class TestDiscoveryDataclasses:
         page = DiscoveredPage(name="Test", url=None, namespace="Main")
         assert page.namespace == "Main"
 
-    def test_discovered_artifact(self):
-        from imas_codex.discovery.wiki.adapters import DiscoveredArtifact
+    def test_discovered_document(self):
+        from imas_codex.discovery.wiki.adapters import DiscoveredDocument
 
-        artifact = DiscoveredArtifact(
+        document = DiscoveredDocument(
             filename="report.pdf",
             url="https://wiki.example.com/files/report.pdf",
             artifact_type="pdf",
@@ -322,19 +322,19 @@ class TestDiscoveryDataclasses:
             mime_type="application/pdf",
             linked_pages=["MainPage", "Reports"],
         )
-        assert artifact.filename == "report.pdf"
-        assert artifact.artifact_type == "pdf"
-        assert artifact.size_bytes == 1024
-        assert len(artifact.linked_pages) == 2
+        assert document.filename == "report.pdf"
+        assert document.artifact_type == "pdf"
+        assert document.size_bytes == 1024
+        assert len(document.linked_pages) == 2
 
-    def test_discovered_artifact_defaults(self):
-        from imas_codex.discovery.wiki.adapters import DiscoveredArtifact
+    def test_discovered_document_defaults(self):
+        from imas_codex.discovery.wiki.adapters import DiscoveredDocument
 
-        artifact = DiscoveredArtifact(
+        document = DiscoveredDocument(
             filename="file.xlsx",
             url="https://example.com/file.xlsx",
             artifact_type="spreadsheet",
         )
-        assert artifact.size_bytes is None
-        assert artifact.mime_type is None
-        assert artifact.linked_pages == []
+        assert document.size_bytes is None
+        assert document.mime_type is None
+        assert document.linked_pages == []
