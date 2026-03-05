@@ -283,10 +283,10 @@ def search_wiki(query: str, limit: int = 5, facility: str = "tcv") -> str:
     print(f"Searching wiki for: {query}")
 
     try:
-        from imas_codex.embeddings import get_embed_model
+        from imas_codex.embeddings import get_encoder
 
-        embed_model = get_embed_model()
-        query_embedding = embed_model.get_text_embedding(query)
+        encoder = get_encoder()
+        query_embedding = encoder.embed_texts([query])[0].tolist()
 
         with GraphClient() as gc:
             result = gc.query(

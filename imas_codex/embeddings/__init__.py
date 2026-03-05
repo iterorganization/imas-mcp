@@ -16,6 +16,7 @@ from .embed import (
     EncoderEmbedding,
     get_embed_model,
     get_embedding_source,
+    get_encoder,
 )
 from .embeddings import Embeddings
 from .encoder import EmbeddingBackendError, Encoder
@@ -38,5 +39,6 @@ __all__ = [
     "ensure_embedding_ready",
     "get_embed_model",
     "get_embedding_source",
+    "get_encoder",
     "get_remote_client",
 ]

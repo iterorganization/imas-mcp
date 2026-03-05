@@ -768,13 +768,13 @@ def _strip_twiki_formatting(text: str) -> str:
 
 
 def get_embed_model():
-    """Get embedding model respecting embedding-backend config (local/remote).
+    """Get embedding encoder respecting embedding-backend config (local/remote).
 
     Delegates to the canonical cached singleton in imas_codex.embeddings.
     """
-    from imas_codex.embeddings import get_embed_model
+    from imas_codex.embeddings import get_encoder
 
-    return get_embed_model()
+    return get_encoder()
 
 
 class WikiIngestionPipeline:
@@ -886,9 +886,10 @@ class WikiIngestionPipeline:
 
         # Generate embeddings in batch - BLOCKING HTTP, run in thread pool
         chunk_texts = [chunk.text for chunk in text_chunks]
-        embeddings = await asyncio.to_thread(
-            self.embed_model.get_text_embedding_batch, chunk_texts
+        embeddings_array = await asyncio.to_thread(
+            self.embed_model.embed_texts, chunk_texts
         )
+        embeddings = embeddings_array.tolist()
 
         # Prepare batch data with pre-computed embeddings
         chunk_batch: list[dict] = []
@@ -2114,9 +2115,10 @@ class DocumentPipeline:
 
         # Generate embeddings in batch - BLOCKING HTTP, run in thread pool
         chunk_texts = [chunk.text for chunk in text_chunks]
-        embeddings = await asyncio.to_thread(
-            self.embed_model.get_text_embedding_batch, chunk_texts
+        embeddings_array = await asyncio.to_thread(
+            self.embed_model.embed_texts, chunk_texts
         )
+        embeddings = embeddings_array.tolist()
 
         # Prepare batch with pre-computed embeddings
         chunk_batch: list[dict] = []
