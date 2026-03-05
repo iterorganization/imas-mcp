@@ -3229,12 +3229,25 @@ async def run_parallel_discovery(
             ],
         )
 
+        # Collect all phases so the supervision loop refreshes their
+        # has_work caches periodically.  Without this, PipelinePhase.done
+        # never transitions to True because _cached_has_work stays None.
+        all_phases = [
+            state.scan_phase,
+            state.expand_phase,
+            state.triage_phase,
+            state.enrich_phase,
+            state.score_phase,
+            state.user_phase,
+        ]
+
         # Run supervision loop — handles status updates and clean shutdown
         await run_supervised_loop(
             worker_group,
             state.should_stop,
             on_worker_status=on_worker_status,
             on_tick=orphan_tick,
+            phases=all_phases,
             shutdown_timeout=graceful_shutdown_timeout,
         )
 
