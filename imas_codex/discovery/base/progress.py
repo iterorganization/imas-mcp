@@ -936,6 +936,9 @@ def build_servers_section(
             # Flag credit/budget issues even when some models are healthy
             if "no credit" in label:
                 style = "yellow"
+            elif "↑" in label:
+                # Load indicator present — show load portion in yellow
+                style = "green"
             else:
                 style = "green"
         elif s.state == ServiceState.unknown:
@@ -976,7 +979,13 @@ def build_servers_section(
                 label += f" ({int(s.downtime_seconds)}s)"
 
         section.append(f"  {s.name}:", style="dim")
-        section.append(label, style=style)
+        # Split load indicator (↑) into separate yellow segment
+        if style == "green" and "↑" in label:
+            base, load_part = label.split("↑", 1)
+            section.append(base, style="green")
+            section.append(f"↑{load_part}", style="yellow")
+        else:
+            section.append(label, style=style)
 
     return section
 

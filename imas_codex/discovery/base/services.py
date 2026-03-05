@@ -276,6 +276,40 @@ def llm_health_check(section: str = "language") -> tuple[bool, str]:
     return _probe_litellm_local(section)
 
 
+def _get_host_load() -> tuple[float, int] | None:
+    """Read 1-minute load average and CPU count from ``/proc/loadavg``.
+
+    Returns:
+        (load_1min, ncpus) or None if unavailable.
+    """
+    import os
+
+    try:
+        with open("/proc/loadavg") as f:
+            load_1min = float(f.read().split()[0])
+        ncpus = os.cpu_count() or 1
+        return load_1min, ncpus
+    except (OSError, ValueError):
+        return None
+
+
+def _format_load_detail(location: str, suffix: str = "") -> str:
+    """Append load indicator to a location label.
+
+    Shows ``location ↑load_avg`` when load per-core exceeds 0.5,
+    otherwise returns the plain location (with optional suffix).
+    """
+    load_info = _get_host_load()
+    detail = f"{location}{suffix}" if suffix else location
+    if load_info is None:
+        return detail
+    load_1min, ncpus = load_info
+    load_per_core = load_1min / ncpus
+    if load_per_core >= 0.5:
+        return f"{detail} ↑{load_1min:.1f}"
+    return detail
+
+
 def _probe_litellm_proxy(location: str) -> tuple[bool, str]:
     """Probe LiteLLM proxy via its ``/health`` endpoint."""
     import json
@@ -298,13 +332,16 @@ def _probe_litellm_proxy(location: str) -> tuple[bool, str]:
             healthy_count = data.get("healthy_count", 0)
             unhealthy_count = data.get("unhealthy_count", 0)
             if healthy_count > 0 and unhealthy_count == 0:
-                return True, location
+                return True, _format_load_detail(location)
             if healthy_count > 0:
                 # Check unhealthy reasons for budget/credit exhaustion
                 reason = _classify_unhealthy_reason(data)
-                if reason:
-                    return True, f"{location} ({unhealthy_count} {reason})"
-                return True, f"{location} ({unhealthy_count} degraded)"
+                suffix = (
+                    f" ({unhealthy_count} {reason})"
+                    if reason
+                    else f" ({unhealthy_count} degraded)"
+                )
+                return True, _format_load_detail(location, suffix)
             # No healthy models — check if budget is the cause
             reason = _classify_unhealthy_reason(data)
             return False, reason or "no healthy models"
