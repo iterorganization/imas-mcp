@@ -335,7 +335,7 @@ def retry_on_deadlock(
     return decorator
 
 
-def has_pending_document_work(facility: str) -> bool:
+def has_pending_document_work(facility: str, *, base_url: str | None = None) -> bool:
     """Check if there are pending documents (scoring or ingestion).
 
     Documents are pending when:
@@ -343,29 +343,44 @@ def has_pending_document_work(facility: str) -> bool:
     - status = 'scored' AND score >= 0.5 AND ingestable type (needs ingestion)
 
     Uses ``claimed_at`` filter for multi-worker coordination.
+    When ``base_url`` is provided, only counts documents linked to pages
+    matching the site URL prefix.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    url_filter = (
+        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
+        if base_url
+        else ""
+    )
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "discovered": DocumentStatus.discovered.value,
+            "scored": DocumentStatus.scored.value,
+            "ingestable": list(INGESTABLE_DOCUMENT_TYPES),
+            "cutoff": cutoff,
+        }
+        if base_url:
+            params["base_url"] = base_url
         result = gc.query(
-            """
-            MATCH (wa:Document {facility_id: $facility})
+            f"""
+            MATCH (wa:Document {{facility_id: $facility}})
             WHERE ((wa.status = $discovered)
                OR (wa.status = $scored AND wa.score_composite >= 0.5
                    AND wa.document_type IN $ingestable))
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             RETURN count(wa) AS pending
             """,
-            facility=facility,
-            discovered=DocumentStatus.discovered.value,
-            scored=DocumentStatus.scored.value,
-            ingestable=list(INGESTABLE_DOCUMENT_TYPES),
-            cutoff=cutoff,
+            **params,
         )
         return result[0]["pending"] > 0 if result else False
 
 
-def has_pending_document_score_work(facility: str) -> bool:
+def has_pending_document_score_work(
+    facility: str, *, base_url: str | None = None
+) -> bool:
     """Check if there are discovered documents awaiting scoring.
 
     Returns True if there are documents with:
@@ -373,27 +388,42 @@ def has_pending_document_score_work(facility: str) -> bool:
     - document_type in SCORABLE_DOCUMENT_TYPES
 
     Uses ``claimed_at`` filter for multi-worker coordination.
+    When ``base_url`` is provided, only counts documents linked to pages
+    matching the site URL prefix.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    url_filter = (
+        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
+        if base_url
+        else ""
+    )
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "discovered": DocumentStatus.discovered.value,
+            "types": list(SCORABLE_DOCUMENT_TYPES),
+            "cutoff": cutoff,
+        }
+        if base_url:
+            params["base_url"] = base_url
         result = gc.query(
-            """
-            MATCH (wa:Document {facility_id: $facility})
+            f"""
+            MATCH (wa:Document {{facility_id: $facility}})
             WHERE wa.status = $discovered
               AND wa.document_type IN $types
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             RETURN count(wa) AS pending
             """,
-            facility=facility,
-            discovered=DocumentStatus.discovered.value,
-            types=list(SCORABLE_DOCUMENT_TYPES),
-            cutoff=cutoff,
+            **params,
         )
         return result[0]["pending"] > 0 if result else False
 
 
-def has_pending_document_ingest_work(facility: str) -> bool:
+def has_pending_document_ingest_work(
+    facility: str, *, base_url: str | None = None
+) -> bool:
     """Check if there are documents awaiting ingestion.
 
     Returns True if there are documents with:
@@ -401,12 +431,28 @@ def has_pending_document_ingest_work(facility: str) -> bool:
     - status = 'discovered' AND score_exempt = true (bypass LLM scoring)
 
     Uses ``claimed_at`` filter for multi-worker coordination.
+    When ``base_url`` is provided, only counts documents linked to pages
+    matching the site URL prefix.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    url_filter = (
+        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
+        if base_url
+        else ""
+    )
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "scored": DocumentStatus.scored.value,
+            "discovered": DocumentStatus.discovered.value,
+            "types": list(INGESTABLE_DOCUMENT_TYPES),
+            "cutoff": cutoff,
+        }
+        if base_url:
+            params["base_url"] = base_url
         result = gc.query(
-            """
-            MATCH (wa:Document {facility_id: $facility})
+            f"""
+            MATCH (wa:Document {{facility_id: $facility}})
             WHERE (
                 (wa.status = $scored AND wa.score_composite >= 0.5
                  AND wa.document_type IN $types)
@@ -414,18 +460,15 @@ def has_pending_document_ingest_work(facility: str) -> bool:
               )
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             RETURN count(wa) AS pending
             """,
-            facility=facility,
-            scored=DocumentStatus.scored.value,
-            discovered=DocumentStatus.discovered.value,
-            types=list(INGESTABLE_DOCUMENT_TYPES),
-            cutoff=cutoff,
+            **params,
         )
         return result[0]["pending"] > 0 if result else False
 
 
-def has_pending_work(facility: str) -> bool:
+def has_pending_work(facility: str, *, base_url: str | None = None) -> bool:
     """Check if there's pending wiki work in the graph.
 
     Work exists if there are:
@@ -437,130 +480,102 @@ def has_pending_work(facility: str) -> bool:
     "pending", which would cause workers to spin idle while other
     workers are actively processing those pages.  Orphaned claims
     (older than the timeout) are included as reclaimable work.
+
+    When ``base_url`` is provided, only counts pages whose URL starts
+    with the given prefix.  This scopes queries to a single wiki site
+    in multi-site mode.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    url_filter = "AND wp.url STARTS WITH $base_url" if base_url else ""
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "scanned": WikiPageStatus.scanned.value,
+            "scored": WikiPageStatus.scored.value,
+            "cutoff": cutoff,
+        }
+        if base_url:
+            params["base_url"] = base_url
         result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
+            f"""
+            MATCH (wp:WikiPage {{facility_id: $facility}})
             WHERE (wp.status = $scanned
                    OR (wp.status = $scored AND wp.score_composite >= 0.5))
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             RETURN count(wp) AS pending
             """,
-            facility=facility,
-            scanned=WikiPageStatus.scanned.value,
-            scored=WikiPageStatus.scored.value,
-            cutoff=cutoff,
+            **params,
         )
         return result[0]["pending"] > 0 if result else False
 
 
-def has_pending_scan_work(facility: str) -> bool:
+def has_pending_scan_work(facility: str, *, base_url: str | None = None) -> bool:
     """Check if there's pending scoring work in the graph.
 
     With bulk discovery, there's no scan phase. This checks for:
     - scanned pages awaiting content-aware scoring (unclaimed or orphaned)
+
+    When ``base_url`` is provided, only counts pages matching the site
+    URL prefix.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    url_filter = "AND wp.url STARTS WITH $base_url" if base_url else ""
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "scanned": WikiPageStatus.scanned.value,
+            "cutoff": cutoff,
+        }
+        if base_url:
+            params["base_url"] = base_url
         result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
+            f"""
+            MATCH (wp:WikiPage {{facility_id: $facility}})
             WHERE wp.status = $scanned
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             RETURN count(wp) AS pending
             """,
-            facility=facility,
-            scanned=WikiPageStatus.scanned.value,
-            cutoff=cutoff,
+            **params,
         )
         return result[0]["pending"] > 0 if result else False
 
 
-def has_pending_ingest_work(facility: str) -> bool:
+def has_pending_ingest_work(facility: str, *, base_url: str | None = None) -> bool:
     """Check if there's pending ingest work in the graph.
 
     Returns True if there are scored pages with score >= 0.5 awaiting
     ingestion (unclaimed or orphaned).
+
+    When ``base_url`` is provided, only counts pages matching the site
+    URL prefix.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    url_filter = "AND wp.url STARTS WITH $base_url" if base_url else ""
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "scored": WikiPageStatus.scored.value,
+            "cutoff": cutoff,
+        }
+        if base_url:
+            params["base_url"] = base_url
         result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
+            f"""
+            MATCH (wp:WikiPage {{facility_id: $facility}})
             WHERE wp.status = $scored
               AND wp.score_composite >= 0.5
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             RETURN count(wp) AS pending
             """,
-            facility=facility,
-            scored=WikiPageStatus.scored.value,
-            cutoff=cutoff,
+            **params,
         )
         return result[0]["pending"] > 0 if result else False
-
-
-# =============================================================================
-# Stop-condition checks (include in-flight claimed work)
-# =============================================================================
-# These functions check whether work REMAINS (including actively-claimed
-# pages), as opposed to the has_pending_* functions above which check
-# whether work is AVAILABLE for a new worker to pick up.
-#
-# The distinction matters:
-#   - has_pending_*:   "can I pick up new work?" → excludes active claims
-#   - has_remaining_*: "is there still work to do?" → includes active claims
-#
-# Stop conditions must use has_remaining_* to avoid prematurely terminating
-# while a worker is still processing its claimed batch.
-
-
-def has_remaining_work(facility: str) -> bool:
-    """Check if there's any non-terminal wiki work (including in-flight).
-
-    Used by stop conditions to avoid premature shutdown while workers
-    are actively processing claimed pages.
-    """
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $scanned
-               OR (wp.status = $scored AND wp.score_composite >= 0.5)
-            RETURN count(wp) AS remaining
-            """,
-            facility=facility,
-            scanned=WikiPageStatus.scanned.value,
-            scored=WikiPageStatus.scored.value,
-        )
-        return result[0]["remaining"] > 0 if result else False
-
-
-def has_remaining_document_work(facility: str) -> bool:
-    """Check if there are any non-terminal documents (including in-flight).
-
-    Used by stop conditions to avoid premature shutdown while workers
-    are actively processing claimed documents.
-    """
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (wa:Document {facility_id: $facility})
-            WHERE (wa.status = $discovered)
-               OR (wa.status = $scored AND wa.score_composite >= 0.5
-                   AND wa.document_type IN $ingestable)
-            RETURN count(wa) AS remaining
-            """,
-            facility=facility,
-            discovered=DocumentStatus.discovered.value,
-            scored=DocumentStatus.scored.value,
-            ingestable=list(INGESTABLE_DOCUMENT_TYPES),
-        )
-        return result[0]["remaining"] > 0 if result else False
 
 
 # =============================================================================
@@ -656,7 +671,9 @@ def reset_transient_pages(
 
 
 @retry_on_deadlock()
-def claim_pages_for_scoring(facility: str, limit: int = 50) -> list[dict[str, Any]]:
+def claim_pages_for_scoring(
+    facility: str, limit: int = 50, *, base_url: str | None = None
+) -> list[dict[str, Any]]:
     """Claim scanned pages for content-aware scoring.
 
     Workflow: scanned + unclaimed → set claimed_at
@@ -667,31 +684,41 @@ def claim_pages_for_scoring(facility: str, limit: int = 50) -> list[dict[str, An
     1. Generate unique claim token
     2. Atomically SET token on unclaimed pages
     3. Read back only pages with OUR token (pages we actually won)
+
+    When ``base_url`` is provided, only claims pages whose URL starts
+    with the given prefix (site-scoped in multi-site mode).
     """
     import uuid
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"  # ISO 8601 duration
     claim_token = str(uuid.uuid4())
+    url_filter = "AND wp.url STARTS WITH $base_url" if base_url else ""
 
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "scanned": WikiPageStatus.scanned.value,
+            "cutoff": cutoff,
+            "limit": limit,
+            "token": claim_token,
+        }
+        if base_url:
+            params["base_url"] = base_url
         # Step 1: Attempt to claim pages with our unique token
         # Using random() in ORDER BY reduces collision probability further
         gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
+            f"""
+            MATCH (wp:WikiPage {{facility_id: $facility}})
             WHERE wp.status = $scanned
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             WITH wp
             ORDER BY rand()
             LIMIT $limit
             SET wp.claimed_at = datetime(), wp.claim_token = $token
             """,
-            facility=facility,
-            scanned=WikiPageStatus.scanned.value,
-            cutoff=cutoff,
-            limit=limit,
-            token=claim_token,
+            **params,
         )
 
         # Step 2: Read back only pages WE successfully claimed
@@ -717,7 +744,11 @@ def claim_pages_for_scoring(facility: str, limit: int = 50) -> list[dict[str, An
 
 @retry_on_deadlock()
 def claim_pages_for_ingesting(
-    facility: str, min_score: float = 0.5, limit: int = 10
+    facility: str,
+    min_score: float = 0.5,
+    limit: int = 10,
+    *,
+    base_url: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim scored pages for ingestion (chunking and embedding).
 
@@ -725,32 +756,41 @@ def claim_pages_for_ingesting(
     After ingest: update status to 'ingested'.
 
     Uses claim token pattern to handle race conditions between workers.
+    When ``base_url`` is provided, only claims pages matching the site
+    URL prefix (site-scoped in multi-site mode).
     """
     import uuid
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(uuid.uuid4())
+    url_filter = "AND wp.url STARTS WITH $base_url" if base_url else ""
 
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "scored": WikiPageStatus.scored.value,
+            "min_score": min_score,
+            "cutoff": cutoff,
+            "limit": limit,
+            "token": claim_token,
+        }
+        if base_url:
+            params["base_url"] = base_url
         # Step 1: Attempt to claim pages with our unique token
         gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
+            f"""
+            MATCH (wp:WikiPage {{facility_id: $facility}})
             WHERE wp.status = $scored
               AND wp.score_composite >= $min_score
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             WITH wp
             ORDER BY rand()
             LIMIT $limit
             SET wp.claimed_at = datetime(), wp.claim_token = $token
             """,
-            facility=facility,
-            scored=WikiPageStatus.scored.value,
-            min_score=min_score,
-            cutoff=cutoff,
-            limit=limit,
-            token=claim_token,
+            **params,
         )
 
         # Step 2: Read back only pages WE successfully claimed
@@ -1222,6 +1262,8 @@ def recover_failed_pages(facility: str) -> int:
 def claim_documents_for_scoring(
     facility: str,
     limit: int = 20,
+    *,
+    base_url: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim discovered documents for scoring.
 
@@ -1234,32 +1276,45 @@ def claim_documents_for_scoring(
     After scoring: update status to 'scored' and set score/description/physics_domain.
 
     Uses claim token pattern to handle race conditions between workers.
+    When ``base_url`` is provided, only claims documents linked to pages
+    matching the site URL prefix.
     """
     import uuid
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(uuid.uuid4())
+    url_filter = (
+        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
+        if base_url
+        else ""
+    )
 
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "discovered": DocumentStatus.discovered.value,
+            "types": list(SCORABLE_DOCUMENT_TYPES),
+            "cutoff": cutoff,
+            "limit": limit,
+            "token": claim_token,
+        }
+        if base_url:
+            params["base_url"] = base_url
         # Step 1: Attempt to claim documents with our unique token
         gc.query(
-            """
-            MATCH (wa:Document {facility_id: $facility})
+            f"""
+            MATCH (wa:Document {{facility_id: $facility}})
             WHERE wa.status = $discovered
               AND wa.document_type IN $types
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             WITH wa
             ORDER BY rand()
             LIMIT $limit
             SET wa.claimed_at = datetime(), wa.claim_token = $token
             """,
-            facility=facility,
-            discovered=DocumentStatus.discovered.value,
-            types=list(SCORABLE_DOCUMENT_TYPES),
-            cutoff=cutoff,
-            limit=limit,
-            token=claim_token,
+            **params,
         )
 
         # Step 2: Read back only documents WE successfully claimed
@@ -1288,6 +1343,8 @@ def claim_documents_for_ingesting(
     facility: str,
     min_score: float = 0.5,
     limit: int = 5,
+    *,
+    base_url: str | None = None,
 ) -> list[dict[str, Any]]:
     """Claim documents for ingestion.
 
@@ -1302,19 +1359,38 @@ def claim_documents_for_ingesting(
     Data/archive types are scored but never claimed for ingestion.
 
     Uses claim token pattern to handle race conditions between workers.
+    When ``base_url`` is provided, only claims documents linked to pages
+    matching the site URL prefix.
     """
     import uuid
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     claim_token = str(uuid.uuid4())
+    url_filter = (
+        "AND EXISTS { MATCH (wa)<-[:HAS_DOCUMENT]-(wp:WikiPage) WHERE wp.url STARTS WITH $base_url }"
+        if base_url
+        else ""
+    )
 
     with GraphClient() as gc:
+        params: dict = {
+            "facility": facility,
+            "scored": DocumentStatus.scored.value,
+            "discovered": DocumentStatus.discovered.value,
+            "min_score": min_score,
+            "types": list(INGESTABLE_DOCUMENT_TYPES),
+            "cutoff": cutoff,
+            "limit": limit,
+            "token": claim_token,
+        }
+        if base_url:
+            params["base_url"] = base_url
         # Step 1: Attempt to claim documents with our unique token.
         # Score-exempt documents: claim from 'discovered' (bypass LLM scoring).
         # Text documents: claim from 'scored' with score >= threshold.
         gc.query(
-            """
-            MATCH (wa:Document {facility_id: $facility})
+            f"""
+            MATCH (wa:Document {{facility_id: $facility}})
             WHERE (
                 (wa.status = $scored AND wa.score_composite >= $min_score
                  AND wa.document_type IN $types)
@@ -1322,19 +1398,13 @@ def claim_documents_for_ingesting(
               )
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
+              {url_filter}
             WITH wa
             ORDER BY wa.score_composite DESC, rand()
             LIMIT $limit
             SET wa.claimed_at = datetime(), wa.claim_token = $token
             """,
-            facility=facility,
-            scored=DocumentStatus.scored.value,
-            discovered=DocumentStatus.discovered.value,
-            min_score=min_score,
-            types=list(INGESTABLE_DOCUMENT_TYPES),
-            cutoff=cutoff,
-            limit=limit,
-            token=claim_token,
+            **params,
         )
 
         # Step 2: Read back only documents WE successfully claimed

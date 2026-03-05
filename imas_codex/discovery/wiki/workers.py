@@ -173,7 +173,12 @@ async def score_worker(
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         logger.debug(f"score_worker {worker_id}: claiming pages...")
         try:
-            pages = await asyncio.to_thread(claim_pages_for_scoring, state.facility, 50)
+            pages = await asyncio.to_thread(
+                claim_pages_for_scoring,
+                state.facility,
+                50,
+                base_url=state.base_url,
+            )
         except Exception as e:
             # Neo4j connection error - backoff and retry
             logger.warning("score_worker %s: claim failed: %s", worker_id, e)
@@ -506,7 +511,11 @@ async def ingest_worker(
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         try:
             pages = await asyncio.to_thread(
-                claim_pages_for_ingesting, state.facility, min_score, 20
+                claim_pages_for_ingesting,
+                state.facility,
+                min_score,
+                20,
+                base_url=state.base_url,
             )
         except Exception as e:
             # Neo4j connection error - backoff and retry
@@ -629,7 +638,10 @@ async def docs_worker(
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         try:
             documents = await asyncio.to_thread(
-                claim_documents_for_ingesting, state.facility, limit=4
+                claim_documents_for_ingesting,
+                state.facility,
+                limit=4,
+                base_url=state.base_url,
             )
         except Exception as e:
             logger.warning("docs_worker: claim failed: %s", e)
@@ -849,7 +861,10 @@ async def docs_score_worker(
         # Claim documents for scoring
         try:
             documents = await asyncio.to_thread(
-                claim_documents_for_scoring, state.facility, 10
+                claim_documents_for_scoring,
+                state.facility,
+                10,
+                base_url=state.base_url,
             )
         except Exception as e:
             logger.warning("docs_score_worker %s: claim failed: %s", worker_id, e)
