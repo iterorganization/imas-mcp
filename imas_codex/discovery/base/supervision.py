@@ -162,9 +162,12 @@ class PipelinePhase:
     Workers call :meth:`record_activity` after processing items and
     :meth:`record_idle` when a claim attempt returns nothing.
 
-    The ``done`` property combines idle detection with an authoritative
-    graph query, eliminating the race where a worker goes idle before
-    upstream has flushed its output.
+    The ``done`` property combines idle detection with a **cached**
+    graph query result, eliminating the race where a worker goes idle
+    before upstream has flushed its output.  The cache prevents blocking
+    the event loop — graph checks run at most once per ``cache_ttl``
+    seconds and are expected to run in a background thread via
+    :meth:`refresh_has_work`.
 
     Downstream phases can wait on :meth:`wait_until_done` to avoid
     exiting before upstream finishes producing work.
@@ -177,6 +180,9 @@ class PipelinePhase:
             If None, only idle detection is used (no graph check).
         idle_threshold: Consecutive idle polls before considering idle.
             Default 3 (~3 seconds at 1s poll interval).
+        cache_ttl: Seconds to cache has_work_fn results.  The ``done``
+            property returns the cached value between refreshes, never
+            blocking the event loop on graph I/O.
     """
 
     def __init__(
@@ -184,6 +190,7 @@ class PipelinePhase:
         name: str,
         has_work_fn: Callable[[], bool] | None = None,
         idle_threshold: int = 3,
+        cache_ttl: float = 5.0,
     ) -> None:
         self.name = name
         self._has_work_fn = has_work_fn
@@ -192,11 +199,18 @@ class PipelinePhase:
         self._done_event = asyncio.Event()
         self._force_done = False
         self._total_processed = 0
+        # Cached has_work result — avoids blocking the event loop
+        self._cached_has_work: bool | None = None
+        self._cache_time: float = 0.0
+        self._cache_ttl = cache_ttl
 
     def record_activity(self, count: int = 1) -> None:
         """Record that the worker processed items — resets idle state."""
         self._idle_count = 0
         self._total_processed += count
+        # Invalidate cache — we know there's activity
+        self._cached_has_work = True
+        self._cache_time = time.time()
 
     def record_idle(self) -> None:
         """Record an idle poll (no work found)."""
@@ -211,6 +225,24 @@ class PipelinePhase:
         self._force_done = True
         self._done_event.set()
 
+    def refresh_has_work(self) -> None:
+        """Refresh the cached has_work result (call from a thread).
+
+        This runs the has_work_fn synchronously and updates the cache.
+        Designed to be called via ``asyncio.to_thread()`` from the
+        supervision loop so the event loop is never blocked.
+        """
+        if self._force_done or self._has_work_fn is None:
+            return
+        try:
+            self._cached_has_work = self._has_work_fn()
+            self._cache_time = time.time()
+            if self._cached_has_work:
+                # Graph still has work — reset idle count so workers re-poll
+                self._idle_count = 0
+        except Exception as e:
+            logger.debug("PipelinePhase %s: has_work_fn error: %s", self.name, e)
+
     @property
     def idle(self) -> bool:
         """True if idle for at least ``idle_threshold`` consecutive polls."""
@@ -223,24 +255,24 @@ class PipelinePhase:
     def done(self) -> bool:
         """True if the phase is complete: idle AND no pending graph work.
 
-        When ``has_work_fn`` is provided, idle alone is not sufficient —
-        we also verify that no unclaimed or claimed work remains in the
-        graph.  This prevents premature termination when the upstream
-        phase hasn't yet flushed to the graph.
+        Uses cached has_work_fn result to avoid blocking the event loop.
+        If the cache is stale or uninitialized, returns False (assume not
+        done) and waits for the next :meth:`refresh_has_work` call.
         """
         if self._force_done:
             return True
         if self._idle_count < self._idle_threshold:
             return False
-        # Idle threshold met — check graph for remaining work
+        # Idle threshold met — check cached graph result
         if self._has_work_fn is not None:
-            try:
-                if self._has_work_fn():
-                    # Graph still has work — reset idle count so workers re-poll
-                    self._idle_count = 0
-                    return False
-            except Exception as e:
-                logger.debug("PipelinePhase %s: has_work_fn error: %s", self.name, e)
+            if self._cached_has_work is None:
+                # No cached result yet — assume not done, don't block
+                return False
+            if self._cached_has_work:
+                return False
+            # Cache says no work — check staleness
+            if time.time() - self._cache_time > self._cache_ttl:
+                # Stale cache — assume not done until refreshed
                 return False
         # Genuinely done
         self._done_event.set()
@@ -635,10 +667,19 @@ class SupervisedWorkerGroup:
             _, still_pending = await asyncio.wait(pending, timeout=timeout)
             if still_pending:
                 logger.warning(
-                    "%d task(s) did not finish within %ss, abandoning",
+                    "%d task(s) did not finish within %ss — force-killing SSH pools",
                     len(still_pending),
                     timeout,
                 )
+                # Force-kill SSH subprocess pools so that threads
+                # blocked on to_thread(run_python_script, ...) can
+                # unblock when the underlying process is killed.
+                try:
+                    from imas_codex.remote.ssh_worker import force_kill_all_pools
+
+                    force_kill_all_pools()
+                except Exception:
+                    pass
         # Force-stop status for any workers still active so the display
         # transitions from "draining" to "done" immediately.
         for status in self._workers.values():
@@ -810,8 +851,10 @@ async def run_supervised_loop(
     *,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
     on_tick: Callable[[], Coroutine | None] | None = None,
+    phases: list[PipelinePhase] | None = None,
     status_interval: float = 0.5,
     poll_interval: float = 0.25,
+    phase_refresh_interval: float = 5.0,
     shutdown_timeout: float = 10.0,
 ) -> None:
     """Run the common supervision polling loop used by all discovery engines.
@@ -820,13 +863,21 @@ async def run_supervised_loop(
     display callback, and performs clean shutdown when discovery completes
     or is cancelled.
 
+    When ``phases`` is provided, their ``has_work_fn`` caches are
+    refreshed in a background thread every ``phase_refresh_interval``
+    seconds.  This prevents blocking the event loop with synchronous
+    graph queries that each ``PipelinePhase.done`` formerly performed
+    inline.
+
     Args:
         worker_group: Group of supervised workers to monitor
         should_stop: Function returning True when discovery should stop
         on_worker_status: Optional callback for worker status updates
         on_tick: Optional async callback called each tick (e.g., orphan recovery)
+        phases: Pipeline phases whose has_work caches should be refreshed
         status_interval: Seconds between worker status updates (default: 0.5)
         poll_interval: Seconds between stop-condition checks (default: 0.25)
+        phase_refresh_interval: Seconds between phase cache refreshes
         shutdown_timeout: Seconds to wait for workers after cancellation
     """
     # Send initial worker status update
@@ -837,10 +888,21 @@ async def run_supervised_loop(
             logger.warning("Initial worker status callback failed: %s", e)
 
     last_status_update = time.time()
+    last_phase_refresh = 0.0
+
+    def _refresh_all_phases() -> None:
+        """Refresh all phase caches (runs in thread pool)."""
+        for phase in phases or []:
+            phase.refresh_has_work()
 
     try:
         while not should_stop():
             await asyncio.sleep(poll_interval)
+
+            # Refresh phase caches periodically in a background thread
+            if phases and time.time() - last_phase_refresh > phase_refresh_interval:
+                await asyncio.to_thread(_refresh_all_phases)
+                last_phase_refresh = time.time()
 
             # Auto-exit when all workers have naturally completed
             if worker_group.all_tasks_done():

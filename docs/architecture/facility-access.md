@@ -503,7 +503,7 @@ The mappings discovered by Codex are exported to **imas-ambix** for deterministi
 ```cypher
 -- Extract validated EPFL/TCV mappings for ambix export
 MATCH (f:Facility {id: 'tcv'})-[:HAS_TREE]->(t:MDSplusTree)
-MATCH (tn:TreeNode)-[:TREE_NAME]->(t)
+MATCH (tn:TreeNode)-[:IN_TREE]->(t)
 MATCH (tn)-[:MAPS_TO]->(ip:IMASPath)
 WHERE tn.mapping_status = 'validated'
 RETURN tn.path AS mdsplus_path,

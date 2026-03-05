@@ -4,7 +4,7 @@
 Optimized for checking thousands of signals by:
 1. Grouping signals by (tree_name, shot) to minimize tree opens
 2. Processing all signals for a tree/shot combination in one batch
-3. Using efficient TDI execution with minimal overhead per signal
+3. Trying multiple check_shots per signal (all versions/epochs)
 
 Requirements:
 - Python 3.8+ (stdlib only except MDSplus)
@@ -16,33 +16,38 @@ Usage:
 Input (JSON on stdin):
     {
         "signals": [
-            {"id": "tcv:results:/ip", "accessor": "\\ip", "tree_name": "results", "shot": 80000},
-            {"id": "tcv:results:/ne", "accessor": "\\ne", "tree_name": "results", "shot": 80000,
-             "fallback_shots": [70000, 50000]},
+            {"id": "tcv:results:/ip", "accessor": "\\ip", "tree_name": "results",
+             "check_shots": [85000]},
+            {"id": "tcv:static:/r_c", "accessor": "\\STATIC::R_C", "tree_name": "static",
+             "check_shots": [1, 2, 3, 4, 5, 6, 7, 8]},
             ...
         ],
         "timeout_per_group": 30
     }
 
-    Each signal has a primary ``shot`` and optional ``fallback_shots``.
-    If the primary shot fails with a shot-dependent error (NODATA, NNF,
-    KEYNOTFOU), the signal is retried on each fallback shot in order.
-    Errors like MISS_ARG or UNKNOWN_VAR are structural and not retried.
+    Each signal has ``check_shots`` — an ordered list of shots to try.
+    The first shot is tried first; if that fails with a shot-dependent
+    error, remaining shots are tried in order until one succeeds.
+    Structural errors (SYNTAX, MISS_ARG) stop retries immediately.
+
+    Legacy format (``shot`` + optional ``fallback_shots``) is still
+    accepted for backward compatibility.
 
 Output (JSON on stdout):
     {
         "results": [
             {"id": "tcv:results:/ip", "success": true, "shape": [1000], "dtype": "float64",
-             "checked_shot": 80000},
-            {"id": "tcv:results:/ne", "success": true, "shape": [500], "dtype": "float64",
-             "checked_shot": 70000, "failed_shots": [80000]},
+             "checked_shot": 85000},
+            {"id": "tcv:static:/r_c", "success": true, "shape": [1], "dtype": "float64",
+             "checked_shot": 3, "failed_shots": [1, 2]},
             ...
         ],
         "stats": {
             "total": 100,
             "groups": 5,
             "success": 85,
-            "failed": 15
+            "failed": 15,
+            "retry_success": 3
         }
     }
 """
@@ -59,12 +64,14 @@ def timeout_handler(signum: int, frame: Any) -> None:
     raise TimeoutError("Group processing timed out")
 
 
-# Errors that are shot-dependent and worth retrying on fallback shots
+# Errors that are shot-dependent and worth retrying on other check_shots
 _SHOT_DEPENDENT_ERRORS = (
     "NODATA",  # No data for this shot
     "NNF",  # Node not found (may exist in other tree version)
     "KEYNOTFOU",  # Key not found (shot-dependent lookup)
     "TreeNOT_OPEN",  # Tree not available for this shot
+    "Unable to change",  # Unable to change current shot
+    "ROPRAND",  # Expression produced invalid result (may resolve at other version)
 )
 
 # Errors that are structural and never resolve by changing shots
@@ -74,12 +81,41 @@ _STRUCTURAL_ERRORS = (
     "INVCLADSC",  # Invalid class descriptor
     "INVDTYDSC",  # Invalid data type descriptor
     "SYNTAX",  # TDI syntax error
+    "EXTRA_ARG",  # Too many arguments (expression error)
+    "Error loading",  # Missing shared library
+    "cannot open shared object",  # Missing shared library (variant)
 )
 
 
 def _is_shot_dependent_error(error: str) -> bool:
-    """Check if an error might resolve on a different shot."""
+    """Check if an error might resolve on a different shot.
+
+    Structural errors take precedence — if an error matches both
+    structural and shot-dependent patterns, it is NOT retried.
+    """
+    if any(tag in error for tag in _STRUCTURAL_ERRORS):
+        return False
     return any(tag in error for tag in _SHOT_DEPENDENT_ERRORS)
+
+
+def _normalize_signal_shots(sig: dict) -> list:
+    """Extract check_shots from a signal, supporting both new and legacy formats.
+
+    New format: ``check_shots`` list (preferred).
+    Legacy format: ``shot`` + optional ``fallback_shots``.
+
+    Returns:
+        Ordered list of shots to try.
+    """
+    if "check_shots" in sig:
+        return [int(s) for s in sig["check_shots"]]
+    # Legacy format
+    shots = []
+    if "shot" in sig and sig["shot"] is not None:
+        shots.append(int(sig["shot"]))
+    for s in sig.get("fallback_shots", []):
+        shots.append(int(s))
+    return shots
 
 
 def check_signal_group(
@@ -228,20 +264,20 @@ def main() -> None:
         )
         return
 
-    # Group signals by (tree_name, shot) for efficient batch processing
+    # Group signals by (tree_name, first_check_shot) for efficient batch processing
     groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
-    # Track fallback shots per signal for retry
-    signal_fallbacks: dict[str, list[int]] = {}
+    # Track remaining check_shots per signal for retry
+    signal_remaining_shots: dict[str, list[int]] = {}
     for sig in signals:
         tree_name = sig.get("tree_name", "results")
-        shot = sig.get("shot")
-        if shot is not None:
-            groups[(tree_name, int(shot))].append(sig)
-            fallbacks = sig.get("fallback_shots", [])
-            if fallbacks:
-                signal_fallbacks[sig["id"]] = [int(s) for s in fallbacks]
+        check_shots = _normalize_signal_shots(sig)
+        if check_shots:
+            primary_shot = check_shots[0]
+            groups[(tree_name, primary_shot)].append(sig)
+            if len(check_shots) > 1:
+                signal_remaining_shots[sig["id"]] = check_shots[1:]
         else:
-            # No shot - immediate failure
+            # No shots — immediate failure
             pass
 
     # Process each group
@@ -258,20 +294,20 @@ def main() -> None:
             r["checked_shot"] = shot
         all_results.extend(group_results)
 
-    # Retry failed signals on fallback shots (shot-dependent errors only)
+    # Retry failed signals on remaining check_shots (shot-dependent errors only)
     retry_groups: dict[tuple[str, int], list[dict]] = defaultdict(list)
     final_results: list[dict] = []
-    failed_for_retry: dict[str, dict] = {}  # signal_id -> original result
+    failed_for_retry: dict[str, list[int]] = {}  # signal_id -> list of failed shots
 
     for result in all_results:
         sig_id = result["id"]
         if result.get("success"):
             final_results.append(result)
-        elif sig_id in signal_fallbacks and _is_shot_dependent_error(
+        elif sig_id in signal_remaining_shots and _is_shot_dependent_error(
             result.get("error", "")
         ):
-            # Queue for retry on fallback shots
-            failed_for_retry[sig_id] = result
+            # Track the failed shot and queue for retry
+            failed_for_retry.setdefault(sig_id, []).append(result["checked_shot"])
             # Find original signal data
             orig_sig = None
             for sig in signals:
@@ -280,8 +316,8 @@ def main() -> None:
                     break
             if orig_sig:
                 tree_name = orig_sig.get("tree_name", "results")
-                for fallback_shot in signal_fallbacks[sig_id]:
-                    retry_groups[(tree_name, fallback_shot)].append(orig_sig)
+                for retry_shot in signal_remaining_shots[sig_id]:
+                    retry_groups[(tree_name, retry_shot)].append(orig_sig)
         else:
             final_results.append(result)
 
@@ -290,7 +326,7 @@ def main() -> None:
         # Track which signals have already succeeded during retries
         succeeded: set[str] = set()
         for (tree_name, shot), group_signals in retry_groups.items():
-            # Skip signals that already succeeded on an earlier fallback
+            # Skip signals that already succeeded on an earlier retry
             pending = [s for s in group_signals if s["id"] not in succeeded]
             if not pending:
                 continue
@@ -302,13 +338,21 @@ def main() -> None:
                 if r.get("success") and sig_id not in succeeded:
                     succeeded.add(sig_id)
                     r["checked_shot"] = shot
-                    r["failed_shots"] = [failed_for_retry[sig_id]["checked_shot"]]
+                    r["failed_shots"] = failed_for_retry.get(sig_id, [])
                     final_results.append(r)
+                elif not r.get("success") and sig_id not in succeeded:
+                    # Track this shot as failed too
+                    failed_for_retry.setdefault(sig_id, []).append(shot)
 
         # Add remaining failures (never succeeded on any shot)
-        for sig_id, orig_result in failed_for_retry.items():
+        for sig_id, failed_shots in failed_for_retry.items():
             if sig_id not in succeeded:
-                final_results.append(orig_result)
+                # Find original signal to get error from primary attempt
+                for result in all_results:
+                    if result["id"] == sig_id:
+                        result["failed_shots"] = failed_shots
+                        final_results.append(result)
+                        break
 
     # Compute stats
     success_count = sum(1 for r in final_results if r.get("success"))

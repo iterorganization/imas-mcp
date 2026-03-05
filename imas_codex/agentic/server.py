@@ -1,7 +1,16 @@
 """
 Agents MCP Server - Streamlined tools for LLM-driven facility exploration.
 
-This server provides 9 MCP tools organized by purpose:
+This server provides 13 MCP tools organized by purpose:
+
+Unified Search (primary interface):
+- search_signals: Signal search with data access and IMAS enrichment
+- search_docs: Wiki/artifact/image search with cross-links
+- search_code: Code search with data reference enrichment
+- search_imas: IMAS DD search with cluster and facility cross-refs
+
+Retrieval:
+- fetch: Full content retrieval by ID or URL (WikiPage, WikiArtifact, CodeFile, Image)
 
 Graph Operations:
 - get_graph_schema: Schema introspection for query generation
@@ -11,30 +20,31 @@ Facility Infrastructure (Private Data):
 - update_facility_infrastructure: Deep-merge update to private YAML
 - get_facility_infrastructure: Read private infrastructure data
 - add_exploration_note: Append timestamped exploration note
-- update_facility_paths: Update path mappings
-- update_facility_tools: Update tool availability
 
-Legacy/General:
+Configuration:
 - update_facility_config: Read/update facility config (public or private)
-- python: Persistent Python REPL with rich pre-loaded utilities
+- get_discovery_context: Get facility discovery context
 
-The python() REPL provides advanced operations:
+Advanced:
+- python: Persistent Python REPL for custom queries
+
+The python() REPL provides advanced operations not covered by search tools:
 - Graph: query(), semantic_search(), embed()
+- Domain: find_signals(), find_wiki(), find_imas(), find_code(), graph_search()
 - Remote: run(), check_tools() (auto-detects local vs SSH)
 - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
 - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
 - COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
-- Code: search_code()
+
+Use search_* MCP tools for:
+- Common signal, documentation, code, and IMAS lookups
+- Formatted reports with enriched results in one call
 
 Use python() for:
 - Complex multi-step operations requiring state
 - Graph queries with Cypher
 - Chained processing with intermediate logic
 - IMAS/COCOS domain-specific operations
-
-Use dedicated MCP tools for:
-- Single-purpose infrastructure updates
-- Clear, type-safe operations
 - Better discoverability and documentation
 
 REPL state is initialized lazily on first use to avoid import deadlocks.
@@ -127,6 +137,42 @@ _repl_lock = threading.Lock()
 _imas_tools_instance = None
 
 
+# =============================================================================
+# API Reference — compact task-to-function mapping for python() docstring
+# =============================================================================
+
+
+def _generate_api_reference() -> str:
+    """Generate compact API reference with inline parameter names.
+
+    This runs at tool registration time — no REPL init needed.
+    Keeps the reference short so agents actually read it.
+    """
+    return "\n".join(
+        [
+            "Use search_signals/search_docs/search_code/search_imas for common lookups.",
+            "Use python() for custom queries not covered by the search tools.",
+            "",
+            "REPL functions (for custom queries in python()):",
+            "  find_wiki(query, facility=, text_contains=, page_title_contains=, k=10)",
+            "  wiki_page_chunks(title_contains, facility=, text_contains=, limit=50)",
+            "  find_signals(query, facility=, diagnostic=, physics_domain=, limit=20)",
+            "  find_imas(query) | find_code(query, facility=, limit=10)",
+            "  find_tree_nodes(query, facility=, tree_name=)",
+            "  map_signals_to_imas(facility, diagnostic=, physics_domain=)",
+            "  facility_overview(facility)",
+            "  graph_search(label, where={}, semantic=, traverse=[], return_props=[], limit=25)",
+            "  query(cypher, **params)  — raw Cypher, only if no domain function fits",
+            "  semantic_search(text, index=, k=5)",
+            "",
+            "  Format: as_table(pick(results, 'col1', 'col2'))",
+            "  Schema: schema_for(task='wiki') before raw Cypher",
+            "  Full API: repl_help()",
+            "",
+        ]
+    )
+
+
 def _get_imas_tools(gc: GraphClient | None = None):
     """Get or create singleton Tools instance with shared GraphClient."""
     global _imas_tools_instance
@@ -167,6 +213,11 @@ def _init_repl() -> dict[str, Any]:
         return _repl_globals
 
     logger.info("Initializing Python REPL...")
+
+    from imas_codex.graph import domain_queries as _dq
+    from imas_codex.graph.formatters import as_summary, as_table, pick
+    from imas_codex.graph.query_builder import graph_search as _graph_search
+    from imas_codex.graph.schema_context import schema_for as _schema_for
 
     gc = GraphClient()
 
@@ -927,53 +978,190 @@ def _init_repl() -> dict[str, Any]:
         return _install_all_tools(facility=facility, required_only=required_only)
 
     # =========================================================================
-    # Build REPL globals
+    # Domain query functions (bound to this REPL's gc/embed)
     # =========================================================================
 
-    _repl_globals = {
-        # Core utilities
-        "gc": gc,
-        "query": query,
-        "embed": embed,
-        "semantic_search": semantic_search,
-        # Embedding (lazy - only initialized when used)
-        "EmbeddingBackendError": EmbeddingBackendError,
-        # Facility utilities
-        "get_facility": get_facility,
-        "get_facility_infrastructure": get_facility_infrastructure,
-        "get_exploration_targets": get_exploration_targets,
-        "get_tree_structure": get_tree_structure,
-        # Facility configuration
-        "update_infrastructure": update_infrastructure,
-        "update_metadata": update_metadata,
-        # Tool management (unified local/remote)
-        "run": run,
-        "check_tools": check_tools,
-        "install_tools": install_tools,
-        "setup_tools": setup_tools,
-        "quick_setup": quick_setup,
-        # Code search
-        "search_code": search_code,
-        # IMAS DD utilities
-        "search_imas": search_imas,
-        "fetch_imas": fetch_imas,
-        "list_imas": list_imas,
-        "check_imas": check_imas,
-        "get_imas_overview": get_imas_overview,
-        # COCOS utilities
-        "validate_cocos": validate_cocos,
-        "determine_cocos": determine_cocos,
-        "cocos_sign_flip_paths": cocos_sign_flip_paths,
-        "cocos_info": cocos_info,
-        # Schema utilities
-        "get_schema": get_schema,
-        # REPL management
-        "reload": _reload_repl,
-        # Standard library
-        "subprocess": subprocess,
-        # Result storage
-        "_": None,
-    }
+    import functools as _ft
+
+    def _bind_dq(fn):
+        """Bind gc and embed_fn into a domain query function."""
+
+        @_ft.wraps(fn)
+        def wrapper(*args, **kwargs):
+            kwargs.setdefault("gc", gc)
+            kwargs.setdefault("embed_fn", embed)
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    find_signals = _bind_dq(_dq.find_signals)
+    find_wiki = _bind_dq(_dq.find_wiki)
+    wiki_page_chunks = _bind_dq(_dq.wiki_page_chunks)
+    find_imas = _bind_dq(_dq.find_imas)
+    find_code = _bind_dq(_dq.find_code)
+    find_tree_nodes = _bind_dq(_dq.find_tree_nodes)
+    map_signals_to_imas = _bind_dq(_dq.map_signals_to_imas)
+    facility_overview = _bind_dq(_dq.facility_overview)
+    graph_search = _bind_dq(_graph_search)
+
+    # =========================================================================
+    # REPL Registry — single source of truth for exposed functions
+    # =========================================================================
+    # To add a function: define it above, then add one entry here.
+    # This registry drives: _repl_globals, repl_help(), and the python()
+    # tool docstring. No other place needs updating.
+    #
+    # Format: list of (category, [(name, function), ...])
+    # The name is what agents type in the REPL.
+
+    _REPL_REGISTRY: list[tuple[str, list[tuple[str, Any]]]] = [
+        (
+            "DOMAIN QUERIES (prefer over raw Cypher)",
+            [
+                ("find_signals", find_signals),
+                ("find_wiki", find_wiki),
+                ("wiki_page_chunks", wiki_page_chunks),
+                ("find_code", find_code),
+                ("find_imas", find_imas),
+                ("find_tree_nodes", find_tree_nodes),
+                ("map_signals_to_imas", map_signals_to_imas),
+                ("facility_overview", facility_overview),
+            ],
+        ),
+        (
+            "QUERY BUILDER",
+            [("graph_search", graph_search)],
+        ),
+        (
+            "FORMATTERS",
+            [
+                ("as_table", as_table),
+                ("as_summary", as_summary),
+                ("pick", pick),
+            ],
+        ),
+        (
+            "SCHEMA (call before writing Cypher)",
+            [
+                ("schema_for", _schema_for),
+                ("get_schema", get_schema),
+            ],
+        ),
+        (
+            "GRAPH",
+            [
+                ("query", query),
+                ("semantic_search", semantic_search),
+                ("embed", embed),
+            ],
+        ),
+        (
+            "FACILITY",
+            [
+                ("get_facility", get_facility),
+                ("get_facility_infrastructure", get_facility_infrastructure),
+                ("update_infrastructure", update_infrastructure),
+                ("get_exploration_targets", get_exploration_targets),
+                ("get_tree_structure", get_tree_structure),
+            ],
+        ),
+        (
+            "REMOTE",
+            [
+                ("run", run),
+                ("check_tools", check_tools),
+            ],
+        ),
+        (
+            "IMAS DD",
+            [
+                ("search_imas", search_imas),
+                ("fetch_imas", fetch_imas),
+                ("list_imas", list_imas),
+                ("check_imas", check_imas),
+            ],
+        ),
+        (
+            "COCOS",
+            [
+                ("validate_cocos", validate_cocos),
+                ("determine_cocos", determine_cocos),
+                ("cocos_info", cocos_info),
+            ],
+        ),
+    ]
+
+    # Internal params injected by REPL binding — hidden from API reference
+    _INTERNAL_PARAMS = {"gc", "embed_fn"}
+
+    def _generate_repl_help() -> str:
+        """Generate compact API reference from the registry."""
+        import inspect
+
+        lines = ["=== CODEX REPL API ===", ""]
+
+        for cat, funcs in _REPL_REGISTRY:
+            lines.append(f"  {cat}:")
+            for name, fn in funcs:
+                try:
+                    sig = inspect.signature(fn)
+                    params = {
+                        k: v
+                        for k, v in sig.parameters.items()
+                        if k not in _INTERNAL_PARAMS
+                    }
+                    clean_sig = sig.replace(parameters=list(params.values()))
+                    lines.append(f"    {name}{clean_sig}")
+                except (ValueError, TypeError):
+                    lines.append(f"    {name}(...)")
+            lines.append("")
+
+        lines.extend(
+            [
+                "  TIPS:",
+                "  - Chain queries in a single python() call",
+                "  - Call schema_for(task='wiki') before raw Cypher",
+                "  - Use as_table(pick(results, 'col1', 'col2')) for output",
+                "  - Call help(fn) for full docstring",
+                "",
+            ]
+        )
+
+        return "\n".join(lines)
+
+    def repl_help() -> str:
+        """Print auto-generated API reference for all REPL functions."""
+        ref = _generate_repl_help()
+        print(ref)
+        return ref
+
+    # =========================================================================
+    # Build REPL globals from registry
+    # =========================================================================
+
+    _repl_globals = {name: fn for _, funcs in _REPL_REGISTRY for name, fn in funcs}
+    _repl_globals.update(
+        {
+            # Core objects
+            "gc": gc,
+            "EmbeddingBackendError": EmbeddingBackendError,
+            # Additional utilities not in the API reference
+            "update_metadata": update_metadata,
+            "install_tools": install_tools,
+            "setup_tools": setup_tools,
+            "quick_setup": quick_setup,
+            "search_code": search_code,
+            "get_imas_overview": get_imas_overview,
+            "cocos_sign_flip_paths": cocos_sign_flip_paths,
+            # REPL management
+            "reload": _reload_repl,
+            "repl_help": repl_help,
+            # Standard library
+            "subprocess": subprocess,
+            # Result storage
+            "_": None,
+        }
+    )
 
     logger.info(
         "Python REPL initialized with graph, IMAS, COCOS, and facility utilities"
@@ -1036,25 +1224,29 @@ def _reload_repl() -> str:
 @dataclass
 class AgentsServer:
     """
-    MCP server with 9 core tools for facility exploration.
+    MCP server with 7 core tools for facility exploration.
 
     Uses lazy initialization for the REPL — the first python() call
     triggers GraphClient connection and encoder setup. This avoids
     import deadlocks that occur when background threads perform imports.
 
     Tools:
-    - python: Persistent REPL with rich utilities (primary interface)
+    - search_signals: Signal search with data access and IMAS enrichment
+    - search_docs: Wiki/artifact/image search with cross-links
+    - search_code: Code search with data reference enrichment
+    - search_imas: IMAS DD search with cluster and facility cross-refs
+    - python: Persistent REPL for custom queries not covered above
     - get_graph_schema: Schema introspection for query generation
     - add_to_graph: Schema-validated node creation with privacy filtering
     - update_facility_config: Read/update facility config (public or private)
     - update_facility_infrastructure: Deep-merge update to private YAML
     - get_facility_infrastructure: Read private infrastructure data
     - add_exploration_note: Append timestamped exploration note
-    - update_facility_paths: Update path mappings
-    - update_facility_tools: Update tool availability
 
     The python() REPL provides access to:
-    - Graph: query(), semantic_search(), embed()
+    - Graph: query(), semantic_search(), embed(), graph_search()
+    - Domain: find_signals(), find_wiki(), wiki_page_chunks(), find_imas(), find_code()
+    - Formatters: as_table(), as_summary(), pick()
     - Remote: run(), check_tools() (auto-detects local vs SSH)
     - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
     - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
@@ -1079,11 +1271,16 @@ class AgentsServer:
         self._register_prompts()
 
         logger.info(
-            f"Agents MCP server ready with 9 tools and {len(self._prompts)} prompts"
+            f"Agents MCP server ready with 12 tools and {len(self._prompts)} prompts"
         )
 
     def _register_tools(self):
-        """Register the 4 core tools."""
+        """Register all MCP tools."""
+
+        # Generate API reference at registration time from the source
+        # functions (no REPL init needed — just inspect.signature on
+        # the unbound originals).
+        api_reference = _generate_api_reference()
 
         # =====================================================================
         # Tool 1: python - Persistent REPL (primary interface)
@@ -1091,79 +1288,6 @@ class AgentsServer:
 
         @self.mcp.tool()
         def python(code: str) -> str:
-            """
-            Execute Python code in a persistent REPL with rich pre-loaded utilities.
-
-            The REPL maintains state between calls - variables persist across invocations.
-            All utilities are loaded at server startup for instant response.
-
-            === DISCOVERY ===
-            List all functions: dir()
-            Get help: help(function_name)
-            Get signature: import inspect; inspect.signature(function_name)
-
-            === GRAPH OPERATIONS ===
-            query(cypher, **params) - Execute Cypher query, return list of dicts
-            semantic_search(text, index, k, include_deprecated) - Vector similarity search
-            embed(text) - Get 256-dim embedding vector
-
-            === FACILITY CONFIGURATION ===
-            get_facility(facility) - Load complete config (public + private merged)
-            get_facility_infrastructure(facility) - Load private infrastructure only
-            update_infrastructure(facility, data) - Update private config (tools, paths, notes)
-            update_metadata(facility, data) - Update public config (name, description)
-            get_exploration_targets(facility, limit) - Prioritized work items
-            get_tree_structure(tree, prefix, limit) - TreeNode hierarchy
-
-            === REMOTE EXECUTION ===
-            run(cmd, facility, timeout) - Execute command (auto-detects local/SSH)
-            check_tools(facility) - Check tool availability and versions
-
-            === CODE SEARCH ===
-            search_code(query, top_k, facility, min_score) - Semantic code search
-
-            === IMAS DATA DICTIONARY ===
-            search_imas(query, ids_filter, max_results) - Semantic DD search
-            fetch_imas(paths) - Full documentation for paths
-            list_imas(paths, leaf_only, max_paths) - List IDS structure
-            check_imas(paths) - Validate path existence
-            get_imas_overview(query) - High-level DD summary
-
-            === COCOS ===
-            validate_cocos(cocos) - Validate COCOS value
-            determine_cocos(psi_axis, psi_edge, ip, b0) - Infer COCOS from data
-            cocos_sign_flip_paths(ids_name) - Get sign-flip paths for DD3/DD4
-            cocos_info(cocos_value) - Get COCOS parameters
-
-            Vector indexes for semantic_search:
-            Call get_graph_schema() to list all available indexes.
-
-            Args:
-                code: Python code to execute (multi-line supported)
-
-            Returns:
-                stdout output, or repr of last expression if no print
-
-            Examples:
-                # Discover what's available
-                python("print([f for f in dir() if not f.startswith('_')])")
-
-                # Check locality
-                python("import socket; print(socket.gethostname())")
-
-                # Graph query
-                python("paths = query('MATCH (t:TreeNode) RETURN t.path LIMIT 5')")
-
-                # Update infrastructure (private)
-                python("update_infrastructure('iter', {'tools': {'rg': '14.1.1'}})")
-
-                # Facility info
-                python("info = get_facility('iter'); print(info['paths'])")
-
-                # Variables persist
-                python("x = 42")
-                python("print(x * 2)")  # prints 84
-            """
             repl = _get_repl()
 
             stdout_capture = io.StringIO()
@@ -1179,7 +1303,9 @@ class AgentsServer:
                         exec(code, repl)
 
                 output = stdout_capture.getvalue()
-                return output if output else "(no output)"
+                if not output:
+                    output = "(no output)"
+                return output
 
             except Exception as e:
                 import traceback
@@ -1187,53 +1313,51 @@ class AgentsServer:
                 tb = traceback.format_exc()
                 return f"Error: {e}\n\n{tb}"
 
+        # Set the docstring dynamically so it's always in sync with
+        # the actual registered functions (generated from introspection)
+        python.__doc__ = (
+            "Execute Python in a persistent REPL for custom graph queries "
+            "and operations not covered by the search_* tools. Variables "
+            "persist across calls.\n\n"
+            "Prefer search_signals/search_docs/search_code/search_imas for "
+            "common lookups — they return formatted reports in one call.\n\n"
+            f"{api_reference}\n"
+            "Args:\n"
+            "    code: Python code to execute (multi-line supported)\n\n"
+            "Returns:\n"
+            "    stdout output, or repr of last expression if no print"
+        )
+
         # =====================================================================
         # Tool 2: get_graph_schema - Schema introspection
         # =====================================================================
 
         @self.mcp.tool()
-        def get_graph_schema() -> dict[str, Any]:
+        def get_graph_schema(
+            scope: str = "overview",
+        ) -> str:
             """
-            Get complete graph schema for Cypher query generation.
+            Get graph schema context for Cypher query generation.
 
-            Returns node labels with all properties, enums with valid values,
-            relationship types, vector indexes, and private field annotations.
-            Call this before writing Cypher queries in the python() REPL.
+            Returns compact, task-relevant schema in text format. Use scope to
+            get only the schema slice you need, reducing token usage.
+
+            Args:
+                scope: One of "overview" (compact summary of all labels),
+                       "signals", "wiki", "imas", "code", "facility", "trees"
+                       (detailed schema for that domain).
 
             Returns:
-                Schema dict with node_labels, enums, relationship_types,
-                vector_indexes, notes
+                Compact text schema context for LLM consumption.
+
+            Examples:
+                get_graph_schema()  # Overview of all labels
+                get_graph_schema("signals")  # Signal-related schema
+                get_graph_schema("imas")  # IMAS DD schema
             """
-            schema = get_schema()
+            from imas_codex.graph.schema_context import schema_for
 
-            node_labels = {}
-            for label in schema.node_labels:
-                node_labels[label] = {
-                    "identifier": schema.get_identifier(label),
-                    "description": schema.get_class_description(label),
-                    "properties": schema.get_all_slots(label),
-                    "private_fields": schema.get_private_slots(label),
-                }
-
-            # Derive vector indexes from all schemas (facility + DD)
-            from imas_codex.graph.client import EXPECTED_VECTOR_INDEXES
-
-            vector_indexes = {
-                idx_name: {"label": label, "property": prop}
-                for idx_name, label, prop in EXPECTED_VECTOR_INDEXES
-            }
-
-            return {
-                "node_labels": node_labels,
-                "enums": schema.get_enums(),
-                "relationship_types": schema.relationship_types,
-                "vector_indexes": vector_indexes,
-                "notes": {
-                    "private_fields": "Fields with is_private:true are never stored in graph",
-                    "mutations": "Use add_to_graph() tool for writes, or query() for reads in python REPL",
-                    "semantic_search": "Use semantic_search(text, index, k) with any index from vector_indexes",
-                },
-            }
+            return schema_for(task=scope)
 
         # =====================================================================
         # Tool 3: add_to_graph - Schema-validated writes
@@ -1705,98 +1829,165 @@ class AgentsServer:
                 logger.exception(f"Failed to get discovery context for {facility}")
                 raise RuntimeError(f"Failed to get discovery context: {e}") from e
 
+        # NOTE: update_facility_paths and update_facility_tools were removed as
+        # MCP tools (Phase 5 consolidation). Use update_infrastructure() in the
+        # REPL instead: update_infrastructure('facility', {'paths': {...}})
+
         # =====================================================================
-        # Tool 8: update_facility_paths - Update facility path mappings
+        # Unified search tools — multi-index vector search + graph enrichment
         # =====================================================================
+
+        from imas_codex.agentic.search_tools import (
+            _fetch,
+            _search_code,
+            _search_docs,
+            _search_imas,
+            _search_signals,
+        )
 
         @self.mcp.tool()
-        def update_facility_paths(
+        def search_signals(
+            query: str,
             facility: str,
-            paths: dict[str, dict[str, str]],
-        ) -> dict[str, dict[str, str]]:
-            """
-            Update facility path mappings in private data.
+            diagnostic: str | None = None,
+            physics_domain: str | None = None,
+            k: int = 10,
+        ) -> str:
+            """Search facility signals with full graph enrichment.
 
-            Use this to record important directory paths discovered during exploration.
+            Performs semantic search on signal descriptions, then enriches
+            results with data access templates, IMAS mappings, diagnostic
+            context, and related tree nodes.
+
+            Use this for: "How do I access [quantity] at [facility]?"
 
             Args:
-                facility: Facility identifier (e.g., "tcv", "iter")
-                paths: Nested dict of path categories and paths
+                query: Natural language search text (e.g. "plasma current")
+                facility: Facility id (required, e.g. "tcv", "jet")
+                diagnostic: Optional diagnostic filter (e.g. "magnetics")
+                physics_domain: Optional physics domain filter
+                k: Number of results (default 10)
 
             Returns:
-                Updated paths section
-
-            Example:
-                update_facility_paths("iter", {
-                    "imas": {
-                        "root": "/work/imas",
-                        "core": "/work/imas/core",
-                        "shared": "/work/imas/shared"
-                    },
-                    "codes": {
-                        "chease": "/work/codes/chease",
-                        "helena": "/work/codes/helena"
-                    }
-                })
+                Formatted report with signals, data access, IMAS mappings,
+                and related tree nodes.
             """
-            try:
-                update_infrastructure(facility, {"paths": paths})
-                from imas_codex.discovery import (
-                    get_facility_infrastructure as _get_infra,
-                )
-
-                infra = _get_infra(facility) or {}
-                return infra.get("paths", {})
-            except Exception as e:
-                logger.exception(f"Failed to update paths for {facility}")
-                raise RuntimeError(f"Failed to update paths: {e}") from e
-
-        # =====================================================================
-        # Tool 9: update_facility_tools - Update tool availability
-        # =====================================================================
+            return _search_signals(
+                query,
+                facility,
+                diagnostic=diagnostic,
+                physics_domain=physics_domain,
+                k=k,
+            )
 
         @self.mcp.tool()
-        def update_facility_tools(
+        def search_docs(
+            query: str,
             facility: str,
-            tools: dict[str, dict[str, str]],
-        ) -> dict[str, dict[str, str]]:
-            """
-            Update tool availability and versions in private data.
+            k: int = 10,
+        ) -> str:
+            """Search documentation (wiki, artifacts, images) with cross-links.
 
-            Use this after running check_tools() to persist tool information.
+            Performs semantic search across wiki content, linked documents,
+            and images, enriched with cross-references to signals, tree nodes,
+            and IMAS paths.
+
+            Use this for: "What does the knowledge base say about [topic] at [facility]?"
 
             Args:
-                facility: Facility identifier (e.g., "tcv", "iter")
-                tools: Dict of tool_name -> {version, path, purpose}
+                query: Natural language search text (e.g. "fishbone instabilities")
+                facility: Facility id (required, e.g. "tcv", "jet")
+                k: Results per index (default 10)
 
             Returns:
-                Updated tools section
-
-            Example:
-                update_facility_tools("iter", {
-                    "rg": {
-                        "version": "14.1.1",
-                        "path": "/home/user/bin/rg",
-                        "purpose": "Fast pattern search"
-                    },
-                    "fd": {
-                        "version": "10.2.0",
-                        "path": "/home/user/bin/fd",
-                        "purpose": "Fast file finder"
-                    }
-                })
+                Formatted report with wiki documentation grouped by page,
+                cross-links to signals/IMAS paths, and related documents.
             """
-            try:
-                update_infrastructure(facility, {"tools": tools})
-                from imas_codex.discovery import (
-                    get_facility_infrastructure as _get_infra,
-                )
+            return _search_docs(query, facility, k=k)
 
-                infra = _get_infra(facility) or {}
-                return infra.get("tools", {})
-            except Exception as e:
-                logger.exception(f"Failed to update tools for {facility}")
-                raise RuntimeError(f"Failed to update tools: {e}") from e
+        @self.mcp.tool()
+        def search_code(
+            query: str,
+            facility: str | None = None,
+            k: int = 5,
+        ) -> str:
+            """Search ingested code with data reference enrichment.
+
+            Performs semantic search on code chunks, enriched with MDSplus
+            paths, TDI function calls, IMAS path references, and directory
+            context.
+
+            Use this for: "Show me code that does [task] at [facility]"
+
+            Args:
+                query: Natural language search text (e.g. "equilibrium reconstruction")
+                facility: Optional facility filter (e.g. "tcv")
+                k: Number of results (default 5)
+
+            Returns:
+                Formatted report with code examples, data references,
+                and directory context.
+            """
+            return _search_code(query, facility=facility, k=k)
+
+        @self.mcp.tool()
+        def search_imas(
+            query: str,
+            ids_filter: str | None = None,
+            facility: str | None = None,
+            include_version_context: bool = False,
+            k: int = 10,
+        ) -> str:
+            """Search IMAS Data Dictionary with cross-domain enrichment.
+
+            Performs semantic search across IMAS path and cluster embeddings,
+            enriched with cluster membership, coordinate context, units,
+            and optional facility cross-references and version history.
+
+            Use this for: "What IMAS paths represent [concept]?"
+
+            Args:
+                query: Natural language search text (e.g. "electron temperature")
+                ids_filter: Optional IDS name filter (e.g. "core_profiles")
+                facility: Optional facility for cross-references (e.g. "tcv")
+                include_version_context: Include DD version change history
+                k: Number of results (default 10)
+
+            Returns:
+                Formatted report with IMAS paths, clusters, facility
+                cross-references, and version context.
+            """
+            return _search_imas(
+                query,
+                ids_filter=ids_filter,
+                facility=facility,
+                include_version_context=include_version_context,
+                k=k,
+            )
+
+        @self.mcp.tool()
+        def fetch(resource: str) -> str:
+            """Fetch the full content of a graph resource by ID or URL.
+
+            Use after search_docs, search_code, or search_signals
+            identifies a resource of interest. Returns all chunks
+            or content for the resource.
+
+            Supported types: WikiPage, WikiArtifact, CodeFile, Image.
+
+            The resource parameter can be:
+            - A graph node ID from search results (e.g. "jet:Fishbone_proposal_2018.ppt")
+            - A URL (e.g. "https://wiki.jetdata.eu/tf/...")
+            - A partial title for fuzzy matching
+
+            Args:
+                resource: Node ID, URL, or title substring to fetch.
+
+            Returns:
+                Full content report with all chunks in reading order,
+                or image description/OCR text for images.
+            """
+            return _fetch(resource)
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files.

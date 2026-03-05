@@ -40,6 +40,7 @@ class FileDiscoveryState:
     score_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
     code_stats: WorkerStats = field(default_factory=WorkerStats)
+    link_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
@@ -51,6 +52,7 @@ class FileDiscoveryState:
     score_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("score"))
     enrich_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("enrich"))
     code_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("code"))
+    link_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("link"))
 
     def should_stop(self) -> bool:
         """Check if discovery should stop."""

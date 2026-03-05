@@ -786,6 +786,10 @@ def ingest_static_tree(
                 WITH v, epoch
                 MATCH (f:Facility {id: epoch.facility_id})
                 MERGE (v)-[:AT_FACILITY]->(f)
+                WITH v, epoch
+                MERGE (t:MDSplusTree {name: epoch.tree_name})
+                ON CREATE SET t.facility_id = epoch.facility_id
+                MERGE (v)-[:IN_TREE]->(t)
                 """,
                 epochs=epoch_records,
             )
@@ -957,6 +961,10 @@ def ingest_static_tree(
             WITH n
             MATCH (f:Facility {id: $facility})
             MERGE (n)-[:AT_FACILITY]->(f)
+            WITH n
+            MERGE (t:MDSplusTree {name: $tree_name})
+            ON CREATE SET t.facility_id = $facility
+            MERGE (n)-[:IN_TREE]->(t)
             """,
             tree_name=tree_name,
             facility=facility,

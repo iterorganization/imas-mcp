@@ -85,6 +85,118 @@ add_to_graph("SourceFile", [sf.model_dump()])
 
 **Full schema reference:** [agents/schema-reference.md](agents/schema-reference.md) — auto-generated list of all node labels, properties, vector indexes, relationships, and enums. Rebuilt on `uv sync`.
 
+### Schema Design Guidelines
+
+Follow these conventions when adding new classes, properties, or relationships to LinkML schemas. Consistency here is critical — the build pipeline, `create_nodes()`, and query builder all depend on predictable schema structure.
+
+#### Dual Property + Relationship Model
+
+Every slot that references another class produces **both** a node property AND a Neo4j relationship. This is intentional — it supports multiple search and traversal patterns:
+
+- **Property** (`n.facility_id = 'tcv'`): Fast `WHERE` filtering without relationship traversal. Enables simple queries and aggregation grouping.
+- **Relationship** (`(n)-[:AT_FACILITY]->(f:Facility)`): Graph traversal, multi-hop queries, path-finding. Enables joining across node types.
+
+`create_nodes()` in `client.py` implements this: `SET n += item` stores all properties on the node first, then for each slot with a class range it creates relationships via `MERGE (n)-[:REL_TYPE]->(t:TargetClass {id: item.slot_name})`.
+
+**Never remove one side of the dual model.** Both the property and the relationship must exist for every class-ranged slot.
+
+#### Relationship Type Annotations
+
+When a slot has `range: SomeClass`, the Cypher relationship type is derived as follows:
+
+1. **Explicit annotation (preferred for clarity)**:
+   ```yaml
+   facility_id:
+     range: Facility
+     annotations:
+       relationship_type: AT_FACILITY
+   ```
+   Use explicit annotations when the auto-derived name would be unclear (e.g., `FACILITY_ID` is less readable than `AT_FACILITY`).
+
+2. **Auto-derived fallback**: If no `relationship_type` annotation, the slot name is uppercased: `signal` → `SIGNAL`, `data_access` → `DATA_ACCESS`, `has_chunk` → `HAS_CHUNK`.
+
+**Rules for new relationships:**
+- Use `relationship_type: AT_FACILITY` for all `facility_id` slots — this is the standard pattern across the entire schema.
+- Prefer verb-based names: `MAPS_TO_IMAS`, `BELONGS_TO_DIAGNOSTIC`, `DOCUMENTED_BY`.
+- If the auto-derived name is clear enough (e.g., `has_chunk` → `HAS_CHUNK`), omit the annotation.
+- All `facility_id` slots MUST have `range: Facility` and `annotations: { relationship_type: AT_FACILITY }`. No exceptions.
+
+#### Class Structure Template
+
+Every concrete class should follow this structure:
+
+```yaml
+MyNewNode:
+  description: >-
+    What this node represents. Include example Cypher queries
+    that agents would use to query this node type.
+  class_uri: facility:MyNewNode
+  attributes:
+    id:
+      identifier: true
+      description: Composite key format (e.g., "facility:unique_part")
+      required: true
+    facility_id:
+      description: Parent facility ID
+      required: true
+      range: Facility
+      annotations:
+        relationship_type: AT_FACILITY
+    # ... domain-specific properties ...
+    status:
+      description: Lifecycle status
+      range: MyNewNodeStatus  # Define enum in same schema
+      required: true
+    description:
+      description: Human-readable description
+    embedding:
+      description: Vector embedding of description for semantic search
+      multivalued: true
+      range: float
+    embedded_at:
+      description: When the embedding was last computed
+      range: datetime
+```
+
+#### ID Conventions
+
+- Use `identifier: true` on exactly one slot per class (always `id` unless there's a domain reason).
+- Composite IDs use colon separator: `facility_id:unique_part` (e.g., `"tcv:/home/codes/liuqe.py"`, `"tcv:ip/measured"`).
+- IDs must be globally unique across all facilities.
+
+#### Vector Indexes
+
+Nodes with `embedding` + `description` slots automatically get a vector index named `{snake_case_label}_desc_embedding` (e.g., `FacilitySignal` → `facility_signal_desc_embedding`).
+
+For non-standard embedding slots, use the `vector_index_name` annotation:
+
+```yaml
+embedding:
+  multivalued: true
+  range: float
+  annotations:
+    vector_index_name: cluster_embedding
+```
+
+The build pipeline validates all vector indexes and generates them into `schema_context_data.py`.
+
+#### Status Enums and Lifecycles
+
+Define status enums in the same schema file as the class. Statuses must represent **durable states only** — no transient states like `scanning` or `processing`. Worker coordination uses `claimed_at` timestamps, not status values.
+
+#### Private Fields
+
+Slots annotated with `is_private: true` are excluded from the graph — they exist only in facility YAML configs.
+
+#### What NOT to Do in Schemas
+
+- **Don't hardcode enum values in Python** — import from generated models.
+- **Don't create a `facility_id` slot as plain `string`** — always use `range: Facility` + `relationship_type: AT_FACILITY` so both the property and relationship are created.
+- **Don't add transient states to status enums** — use `claimed_at` for worker coordination.
+- **Don't define the same relationship type with different semantics** — `AT_FACILITY` always means "belongs to this facility".
+- **Don't skip the `description` field** — it enables semantic search via embeddings.
+- **Don't use `multivalued: true` on relationship slots** unless the relationship is genuinely many-to-many. Cardinality affects query patterns.
+
 ## Facility Configuration
 
 Per-facility YAML configs define discovery roots, wiki sites, data sources, and infrastructure details. Schema enforced via LinkML (`imas_codex/schemas/facility_config.yaml`).
@@ -109,16 +221,7 @@ Per-facility YAML configs define discovery roots, wiki sites, data sources, and 
 - Login node names, local host overrides
 - User-specific paths, tool locations
 
-**How to load config in Python:**
-
-```python
-from imas_codex.discovery.base.facility import get_facility
-
-config = get_facility(facility)  # Loads <facility>.yaml + <facility>_private.yaml
-mdsplus = config.get("data_sources", {}).get("mdsplus", {})
-setup_commands = mdsplus.get("setup_commands", [])
-static_trees = mdsplus.get("static_trees", [])
-```
+**How to load config:** `get_facility(facility)` from `imas_codex.discovery.base.facility` loads both public + private YAML and returns a dict.
 
 **When adding a new discovery pipeline or data source**, add the required config fields to the facility YAML schema (`imas_codex/schemas/facility_config.yaml`) and load them via `get_facility()`. The Python code should work unchanged across all facilities — only the YAML differs.
 
@@ -130,14 +233,7 @@ update_facility_infrastructure('tcv', {'discovery_roots': ['/new/path']})
 add_exploration_note('tcv', 'Found equilibrium codes at /home/codes/liuqe')
 ```
 
-**Validation:** Configs are validated against schema at load time. Check compliance:
-
-```python
-from imas_codex.discovery.base.facility import validate_facility_config
-errors = validate_facility_config('tcv')  # Returns list of error strings
-```
-
-**Schema access:** The config schema is exposed via `get_graph_schema()` MCP tool — agents can query it to understand required/optional fields before editing.
+**Validation:** `validate_facility_config('tcv')` returns a list of error strings. The config schema is also exposed via the `get_graph_schema()` MCP tool.
 
 ## Graph State Machine
 
@@ -180,8 +276,6 @@ Ingestion is interrupt-safe — rerun to continue. Already-ingested files are sk
 - Dedicated MCP tools for single operations: `add_to_graph()`, `get_graph_schema()`, `update_facility_infrastructure()`, `add_exploration_note()`
 - `python()` REPL for chained processing, Cypher queries, IMAS/COCOS operations
 - Terminal for `rg`, `fd`, `git`, `uv run`; SSH for remote single commands
-
-**CLI in agent sessions:** Rich output is auto-detected. Non-TTY contexts (CI, stdio, pipes) automatically disable rich. Override with `IMAS_CODEX_RICH=0` if needed.
 
 ## LLM Prompts
 
@@ -251,18 +345,14 @@ uv run imas-codex graph stop                  # Stop Neo4j
 uv run imas-codex graph status                # Check graph status
 uv run imas-codex graph profiles              # List all profiles and ports
 uv run imas-codex graph shell                 # Interactive Cypher (active profile)
-uv run imas-codex graph export               # Export graph to archive
-uv run imas-codex graph export -f tcv        # Per-facility export (filtered)
+uv run imas-codex graph export               # Export graph to archive (add -f <facility> for filtered)
 uv run imas-codex graph load graph.tar.gz    # Load graph archive
-uv run imas-codex graph pull                 # Pull latest from GHCR
-uv run imas-codex graph pull --facility tcv  # Pull per-facility graph
-uv run imas-codex graph push --dev           # Push to GHCR
-uv run imas-codex graph push --facility tcv  # Push per-facility graph
+uv run imas-codex graph pull                 # Pull latest from GHCR (add --facility for per-facility)
+uv run imas-codex graph push --dev           # Push to GHCR (add --facility for per-facility)
 uv run imas-codex graph backup               # Create neo4j-admin dump backup
 uv run imas-codex graph restore              # Restore from backup
 uv run imas-codex graph clear                # Clear graph (with auto-backup)
-uv run imas-codex graph clean --dev          # Remove all dev GHCR tags
-uv run imas-codex graph clean --backups --older-than 30d  # Clean old backups
+uv run imas-codex graph clean --dev          # Remove all dev GHCR tags (or --backups --older-than 30d)
 uv run imas-codex tunnel start iter          # Start SSH tunnel to remote host
 uv run imas-codex tunnel status              # Show active tunnels
 uv run imas-codex config private push        # Push private YAML to Gist
@@ -406,28 +496,14 @@ Install on any facility: `uv run imas-codex tools install <facility>`
 ## Commit Workflow
 
 ```bash
-# 1. Lint and format
-uv run ruff check --fix .
-uv run ruff format .
-
-# 2. Stage specific files (never git add -A)
-# NEVER stage auto-generated files (models.py, dd_models.py, physics_domain.py)
-# NEVER stage gitignored files — run `git status --ignored` to check
-# NEVER commit *_private.yaml files — they contain sensitive infrastructure data
-git add <file1> <file2> ...
-
-# 3. Commit with conventional format
-uv run git commit -m "type: concise summary
-
-Detailed explanation.
-- Key changes
-
-BREAKING CHANGE: description (if applicable)"
-
-# 4. If pre-commit fails, fix and repeat 2-3
-# 5. Push
+uv run ruff check --fix .           # Lint (Python only)
+uv run ruff format .                # Format
+git add <file1> <file2> ...         # Stage specific files (never git add -A)
+uv run git commit -m "type: concise summary"  # Conventional format
 git push origin main
 ```
+
+**Never stage:** auto-generated files (models.py, dd_models.py, physics_domain.py), gitignored files, `*_private.yaml` files.
 
 | Type | Purpose |
 |------|---------|
@@ -507,26 +583,55 @@ uv run pytest tests/path/to/test.py::test_function  # Specific test
 
 ## Python REPL
 
-The `python()` MCP tool provides a persistent REPL with pre-loaded utilities:
+The `python()` MCP tool provides a persistent REPL for custom queries not covered by the search tools. Prefer `search_signals`, `search_docs`, `search_code`, and `search_imas` for common lookups — they perform multi-index vector search with graph enrichment and return formatted reports in one call.
 
-```python
-python("print([name for name in dir() if not name.startswith('_')])")
-python("help(search_imas)")
-python("import inspect; print(inspect.signature(get_facility))")
-python("print(reload())")  # After editing imas_codex/ source files
-```
+### REPL Workflow
+
+1. **Use search_* MCP tools first** for signal, documentation, code, and IMAS lookups. They handle embeddings, multi-index fan-out, enrichment, and formatting automatically.
+2. **Use python() for custom queries** — signal→IMAS mapping, facility overviews, flexible graph_search(), raw Cypher, or chaining multiple domain functions.
+3. **Chain operations** in a single `python()` call to minimize round-trips. Each call has overhead.
+4. **For raw Cypher** (only when no domain function fits), call `schema_for(task='wiki')` first to get node labels, properties, relationships, and enums derived from the LinkML schemas. Never guess property names — they are code-generated.
+5. **Format output** with `as_table(pick(results, 'col1', 'col2'))` for structured results.
+
+### Schema-First Queries
+
+All graph node types, properties, enums, and relationships are derived from LinkML schemas. The REPL exposes this via:
+
+- `schema_for(task='signals')` — schema context for a domain (signals, wiki, imas, code, facility, trees)
+- `schema_for('WikiChunk', 'WikiPage')` — schema for specific node labels
+- `get_schema()` — full `GraphSchema` object with `node_labels`, `get_model()`, `get_properties()`
+- `repl_help()` — auto-generated API reference with all function signatures
+
+**Never hardcode property names.** Before writing raw Cypher, call `schema_for(task='wiki')` to verify property names. Use `repl_help()` for the full API reference.
 
 ## Quick Reference
 
+**Primary MCP tools** — use these first, they return formatted reports:
+
+| Task | MCP Tool |
+|------|----------|
+| Signal lookup | `search_signals("plasma current", facility="tcv")` |
+| Documentation | `search_docs("fishbone instabilities", facility="jet")` |
+| Code examples | `search_code("equilibrium reconstruction", facility="tcv")` |
+| IMAS DD paths | `search_imas("electron temperature", facility="tcv")` |
+| Full content | `fetch("jet:Fishbone_proposal_2018.ppt")` — use IDs/URLs from search results |
+
+**python() REPL** — for custom queries not covered by the search tools:
+
 | Task | Command |
 |------|---------|
-| Graph query | `python("print(query('MATCH (n) RETURN n.id LIMIT 5'))")` |
-| IMAS search | `python("print(search_imas('electron temperature'))")` |
-| Code search | `python("print(search_code('equilibrium'))")` |
+| Wiki keyword | `python("print(find_wiki(text_contains='fishbone'))")` |
+| Page chunks | `python("print(wiki_page_chunks('equilibrium', facility='tcv'))")` |
+| Signal→IMAS map | `python("print(map_signals_to_imas(facility='tcv', physics_domain='magnetics'))")` |
+| Graph search | `python("print(graph_search('WikiChunk', where={'text__contains': 'IMAS'}))")` |
+| Format table | `python("print(as_table(find_signals('ip', facility='tcv')))")` |
 | Facility info | `python("print(get_facility('tcv'))")` |
+| Raw Cypher | `python("print(query('MATCH (n) RETURN n.id LIMIT 5'))")` |
 | Add to graph | `add_to_graph('SourceFile', [...])` |
 | Update infra | `update_facility_infrastructure('tcv', {...})` |
 | Remote command | `ssh facility "rg pattern /path"` |
+
+Chain multiple operations in a single `python()` call to minimize round-trips.
 
 ## Embedding Server
 

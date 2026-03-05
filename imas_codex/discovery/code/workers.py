@@ -44,7 +44,7 @@ async def scan_worker(
         release_path_file_scan_claim,
     )
     from imas_codex.discovery.code.scanner import (
-        _persist_discovered_files,
+        _persist_code_files,
         async_scan_remote_paths_batch,
     )
     from imas_codex.graph import GraphClient
@@ -109,7 +109,7 @@ async def scan_worker(
 
                 if files:
                     persist_result = await asyncio.to_thread(
-                        _persist_discovered_files,
+                        _persist_code_files,
                         state.facility,
                         files,
                         source_path_id=path_id,
@@ -387,11 +387,15 @@ async def score_worker(
 def _claim_code_files_for_ingestion(
     facility: str,
     limit: int = 20,
-    min_score: float = 0.0,
+    min_score: float = 0.75,
+    max_line_count: int = 10000,
 ) -> list[dict[str, Any]]:
     """Claim scored CodeFiles for ingestion.
 
-    Claims CodeFiles with status='discovered' that have been scored.
+    Claims CodeFiles with status='discovered' that have been scored
+    above the minimum interest score threshold (default: 0.75).
+    Skips files exceeding max_line_count to avoid tree-sitter hangs
+    on very large auto-generated files.
     """
     from imas_codex.discovery.base.claims import DEFAULT_CLAIM_TIMEOUT_SECONDS
     from imas_codex.graph import GraphClient
@@ -404,6 +408,7 @@ def _claim_code_files_for_ingestion(
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NOT NULL
               AND sf.interest_score >= $min_score
+              AND coalesce(sf.line_count, 0) <= $max_line_count
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
             WITH sf ORDER BY sf.interest_score DESC LIMIT $limit
@@ -413,6 +418,7 @@ def _claim_code_files_for_ingestion(
             """,
             facility=facility,
             min_score=min_score,
+            max_line_count=max_line_count,
             limit=limit,
             cutoff=cutoff,
         )
@@ -632,3 +638,85 @@ async def enrich_worker(
             await asyncio.to_thread(release_file_enrich_claims, batch_ids)
 
         await asyncio.sleep(0.1)
+
+
+# ============================================================================
+# Link Worker (code evidence → signal propagation)
+# ============================================================================
+
+
+async def link_worker(
+    state: FileDiscoveryState,
+    on_progress: Callable | None = None,
+) -> None:
+    """Link worker: Propagate code evidence to FacilitySignals.
+
+    After code ingestion creates DataReference → TreeNode links, this
+    worker propagates evidence to FacilitySignals via the chain:
+      DataReference → RESOLVES_TO_TREE_NODE → TreeNode ← SOURCE_NODE ← FacilitySignal
+
+    Sets code_evidence_count and has_code_evidence on matched signals.
+    Runs periodically while code workers are active, then one final pass.
+    """
+    from imas_codex.discovery.code.graph_ops import (
+        has_pending_link_work,
+        link_code_evidence_to_signals,
+    )
+
+    last_linked = 0
+
+    while not state.should_stop():
+        if state.scan_only or state.score_only:
+            break
+
+        has_work = await asyncio.to_thread(has_pending_link_work, state.facility)
+
+        if not has_work:
+            # If code phase is done, we're done too
+            if state.code_phase.done:
+                break
+            await asyncio.sleep(5.0)
+            continue
+
+        if on_progress:
+            on_progress("linking code evidence to signals", state.link_stats, None)
+
+        try:
+            result = await asyncio.to_thread(
+                link_code_evidence_to_signals, state.facility
+            )
+
+            signals_linked = result.get("signals_linked", 0)
+            refs_resolved = result.get("refs_resolved", 0)
+            state.link_stats.processed += signals_linked
+            last_linked = signals_linked
+
+            if on_progress:
+                on_progress(
+                    f"linked {signals_linked} signals ({refs_resolved} refs resolved)",
+                    state.link_stats,
+                    None,
+                )
+
+        except Exception as e:
+            logger.error("Code evidence linking failed: %s", e)
+            state.link_stats.errors += 1
+
+        # Link is cheap, run every 10s
+        await asyncio.sleep(10.0)
+
+    # Final pass after all code ingestion is done
+    if not (state.scan_only or state.score_only):
+        try:
+            result = await asyncio.to_thread(
+                link_code_evidence_to_signals, state.facility
+            )
+            final_linked = result.get("signals_linked", 0)
+            if final_linked > last_linked and on_progress:
+                on_progress(
+                    f"final link: {final_linked} signals",
+                    state.link_stats,
+                    None,
+                )
+        except Exception as e:
+            logger.error("Final code evidence linking failed: %s", e)

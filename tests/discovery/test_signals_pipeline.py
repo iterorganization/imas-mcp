@@ -269,6 +269,19 @@ class TestSeedWorker:
             facility=FACILITY,
             ssh_host=SSH_HOST,
             scanner_types=["mdsplus"],
+            facility_config=FACILITY_CONFIG,
+            initial_version_counts={
+                "total": 0,
+                "discovered": 0,
+                "ingested": 0,
+                "failed": 0,
+            },
+            initial_signal_counts={
+                "total": 0,
+                "discovered": 0,
+                "enriched": 0,
+                "checked": 0,
+            },
             cost_limit=10.0,
         )
 
@@ -278,10 +291,6 @@ class TestSeedWorker:
             progress_calls.append(msg)
 
         with (
-            patch(
-                "imas_codex.discovery.base.facility.get_facility",
-                return_value=FACILITY_CONFIG,
-            ),
             patch(
                 "imas_codex.discovery.mdsplus.graph_ops.seed_versions",
                 return_value=3,
@@ -310,15 +319,24 @@ class TestSeedWorker:
             facility=FACILITY,
             ssh_host=SSH_HOST,
             scanner_types=["mdsplus"],
+            facility_config=FACILITY_CONFIG,
+            initial_version_counts={
+                "total": 0,
+                "discovered": 0,
+                "ingested": 0,
+                "failed": 0,
+            },
+            initial_signal_counts={
+                "total": 0,
+                "discovered": 0,
+                "enriched": 0,
+                "checked": 0,
+            },
             cost_limit=10.0,
             reference_shot=5000,  # Provide reference shot
         )
 
         with (
-            patch(
-                "imas_codex.discovery.base.facility.get_facility",
-                return_value=FACILITY_CONFIG,
-            ),
             patch(
                 "imas_codex.discovery.mdsplus.graph_ops.seed_versions",
                 return_value=1,
@@ -364,11 +382,9 @@ class TestEpochWorker:
         def on_progress(msg, stats, results=None):
             progress_calls.append(msg)
 
+        state.facility_config = FACILITY_CONFIG
+
         with (
-            patch(
-                "imas_codex.discovery.base.facility.get_facility",
-                return_value=FACILITY_CONFIG,
-            ),
             patch(
                 "imas_codex.discovery.mdsplus.epochs.detect_epochs_for_tree",
                 return_value=mock_epochs,
@@ -410,12 +426,9 @@ class TestEpochWorker:
             cost_limit=10.0,
             reference_shot=5000,
         )
+        state.facility_config = config_all_static
 
-        with patch(
-            "imas_codex.discovery.base.facility.get_facility",
-            return_value=config_all_static,
-        ):
-            await epoch_worker(state)
+        await epoch_worker(state)
 
         assert state.epoch_phase.done
 
@@ -430,12 +443,9 @@ class TestEpochWorker:
             scanner_types=["tdi"],  # No mdsplus
             cost_limit=10.0,
         )
+        state.facility_config = FACILITY_CONFIG
 
-        with patch(
-            "imas_codex.discovery.base.facility.get_facility",
-            return_value=FACILITY_CONFIG,
-        ):
-            await epoch_worker(state)
+        await epoch_worker(state)
 
         assert state.epoch_phase.done
 
@@ -488,11 +498,21 @@ class TestExtractWorker:
         ):
             return _make_tree_nodes(tree_name, shot)
 
+        state.facility_config = FACILITY_CONFIG
+        state.initial_version_counts = {
+            "total": 0,
+            "discovered": 0,
+            "ingested": 0,
+            "failed": 0,
+        }
+        state.initial_signal_counts = {
+            "total": 0,
+            "discovered": 0,
+            "enriched": 0,
+            "checked": 0,
+        }
+
         with (
-            patch(
-                "imas_codex.discovery.base.facility.get_facility",
-                return_value=FACILITY_CONFIG,
-            ),
             patch(
                 "imas_codex.discovery.mdsplus.graph_ops.claim_version_for_extraction_facility",
                 side_effect=mock_claim,
@@ -545,6 +565,13 @@ class TestPromoteWorker:
                 return "magnetics"
             state.promote_phase.mark_done()
             return None
+
+        state.initial_signal_counts = {
+            "total": 0,
+            "discovered": 0,
+            "enriched": 0,
+            "checked": 0,
+        }
 
         with (
             patch(
@@ -734,6 +761,14 @@ class TestPipelineE2E:
             "has_pending_promote": patch(
                 "imas_codex.discovery.mdsplus.graph_ops.has_pending_promote_work_facility",
                 return_value=False,
+            ),
+            "get_version_counts": patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_version_counts",
+                return_value={"total": 0, "discovered": 0, "ingested": 0, "failed": 0},
+            ),
+            "get_signal_counts": patch(
+                "imas_codex.discovery.mdsplus.graph_ops.get_signal_counts",
+                return_value={"total": 0, "discovered": 0, "enriched": 0, "checked": 0},
             ),
             # --- Module-level imports in parallel.py ---
             "gc_module": patch(
@@ -1200,3 +1235,131 @@ class TestCLISignals:
 
         # CLI should complete successfully
         assert result.exit_code == 0, f"CLI failed: {result.output}"
+
+
+# ── Signal Pattern Detection Tests ───────────────────────────────────────
+
+
+class TestSignalPatternDetection:
+    """Tests for indexed signal pattern detection and propagation."""
+
+    def test_accessor_to_pattern(self):
+        """Numeric segments are replaced with NNN."""
+        from imas_codex.discovery.signals.parallel import _accessor_to_pattern
+
+        assert (
+            _accessor_to_pattern("CALIB_GAS_010:PROPERTIES:PARAM_048:LIM")
+            == "CALIB_GAS_NNN:PROPERTIES:PARAM_NNN:LIM"
+        )
+        assert (
+            _accessor_to_pattern("WAVE_GEN_A:OUTPUT_064:OFFSET")
+            == "WAVE_GEN_A:OUTPUT_NNN:OFFSET"
+        )
+        assert (
+            _accessor_to_pattern("TOP.INPUTS.S_DSP_003:ADC_GAIN")
+            == "TOP.INPUTS.S_DSP_NNN:ADC_GAIN"
+        )
+        # Single digit should NOT be replaced (min 2 digits)
+        assert _accessor_to_pattern("COIL_R:S1") == "COIL_R:S1"
+        # No numbers should be unchanged
+        assert _accessor_to_pattern("IP:VALUE") == "IP:VALUE"
+
+    def test_detect_signal_patterns(self):
+        """Pattern detection groups indexed signals and marks followers."""
+        from imas_codex.discovery.signals.parallel import detect_signal_patterns
+
+        # Mock GraphClient to return indexed signals
+        mock_results = [
+            {"id": f"tcv:sig_{i:03d}_param_a", "accessor": f"GAS_{i:03d}:PARAM:A"}
+            for i in range(10)
+        ] + [
+            {"id": "tcv:unique_signal", "accessor": "UNIQUE:SIGNAL"},
+        ]
+
+        mock_gc = MagicMock()
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        mock_gc.query = MagicMock(return_value=mock_results)
+
+        with patch(
+            "imas_codex.discovery.signals.parallel.GraphClient",
+            return_value=mock_gc,
+        ):
+            patterns, followers = detect_signal_patterns("tcv", min_instances=3)
+
+        # Should detect 1 pattern (GAS_NNN:PARAM:A) with 10 signals
+        assert patterns == 1
+        assert followers == 9  # 10 signals - 1 representative
+
+        # Second query should mark followers
+        assert mock_gc.query.call_count == 2
+        second_call_kwargs = mock_gc.query.call_args_list[1]
+        # Verify follower IDs were passed (9 of 10)
+        follower_ids = second_call_kwargs.kwargs.get(
+            "follower_ids"
+        ) or second_call_kwargs[1].get("follower_ids")
+        assert len(follower_ids) == 9
+
+    def test_detect_patterns_below_threshold(self):
+        """Groups below min_instances threshold are not detected as patterns."""
+        from imas_codex.discovery.signals.parallel import detect_signal_patterns
+
+        # Only 2 signals in the group (below default min_instances=3)
+        mock_results = [
+            {"id": "tcv:sig_01_a", "accessor": "GAS_01:A"},
+            {"id": "tcv:sig_02_a", "accessor": "GAS_02:A"},
+            {"id": "tcv:unique", "accessor": "UNIQUE:SIGNAL"},
+        ]
+
+        mock_gc = MagicMock()
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        mock_gc.query = MagicMock(return_value=mock_results)
+
+        with patch(
+            "imas_codex.discovery.signals.parallel.GraphClient",
+            return_value=mock_gc,
+        ):
+            patterns, followers = detect_signal_patterns("tcv", min_instances=3)
+
+        assert patterns == 0
+        assert followers == 0
+
+    def test_propagate_pattern_enrichment(self):
+        """Enrichment is propagated from representative to followers."""
+        from imas_codex.discovery.signals.parallel import (
+            propagate_pattern_enrichment,
+        )
+
+        mock_gc = MagicMock()
+        mock_gc.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc.__exit__ = MagicMock(return_value=False)
+        # First call: count discovered followers -> 5
+        # Second call: propagate discovered → enriched -> 5 updated
+        mock_gc.query = MagicMock(
+            side_effect=[
+                [{"cnt": 5}],
+                [{"updated": 5}],
+                [],  # diagnostic creation
+            ]
+        )
+
+        enrichment = {
+            "physics_domain": "plasma_control",
+            "description": "Gas injection parameter limit",
+            "name": "Gas Calibration Limit",
+            "diagnostic": "gas_injection",
+            "analysis_code": "",
+            "keywords": ["gas", "calibration", "limit"],
+            "sign_convention": "",
+        }
+
+        with patch(
+            "imas_codex.discovery.signals.parallel.GraphClient",
+            return_value=mock_gc,
+        ):
+            result = propagate_pattern_enrichment(
+                "tcv:rep_signal", enrichment, batch_cost=0.01
+            )
+
+        assert result == 5

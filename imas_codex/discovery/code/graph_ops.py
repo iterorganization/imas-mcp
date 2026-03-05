@@ -462,7 +462,9 @@ def has_pending_enrich_work(facility: str) -> bool:
         return result[0]["has_work"] if result else False
 
 
-def has_pending_code_work(facility: str, min_score: float = 0.0) -> bool:
+def has_pending_code_work(
+    facility: str, min_score: float = 0.75, max_line_count: int = 10000
+) -> bool:
     """Check if there are scored code files needing ingestion."""
     with GraphClient() as gc:
         result = gc.query(
@@ -471,12 +473,92 @@ def has_pending_code_work(facility: str, min_score: float = 0.0) -> bool:
             WHERE sf.status = 'discovered'
               AND sf.interest_score IS NOT NULL
               AND sf.interest_score >= $min_score
+              AND coalesce(sf.line_count, 0) <= $max_line_count
             RETURN count(sf) > 0 AS has_work
             """,
             facility=facility,
             min_score=min_score,
+            max_line_count=max_line_count,
         )
         return result[0]["has_work"] if result else False
+
+
+def has_pending_link_work(facility: str) -> bool:
+    """Check if there are ingested CodeFiles with unlinked code evidence."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'ingested'
+              AND coalesce(sf.evidence_linked, false) = false
+            RETURN count(sf) > 0 AS has_work
+            """,
+            facility=facility,
+        )
+        return result[0]["has_work"] if result else False
+
+
+def link_code_evidence_to_signals(facility: str) -> dict[str, int]:
+    """Link code evidence to FacilitySignals via DataReference → TreeNode → Signal.
+
+    Traverses the chain:
+      CodeChunk → CONTAINS_REF → DataReference → RESOLVES_TO_TREE_NODE → TreeNode
+      FacilitySignal → SOURCE_NODE → TreeNode
+
+    Sets code_evidence_count and has_code_evidence on matched signals.
+    Marks processed CodeFiles as evidence_linked=true.
+
+    Returns:
+        Dict with signals_linked, refs_resolved counts
+    """
+    with GraphClient() as gc:
+        # Step 1: Ensure DataReference → TreeNode links exist
+        # (may not have been created yet for new ingestions)
+        resolve_result = gc.query(
+            """
+            MATCH (d:DataReference {ref_type: 'mdsplus_path', facility_id: $facility})
+            WHERE NOT (d)-[:RESOLVES_TO_TREE_NODE]->()
+            MATCH (t:TreeNode {facility_id: $facility})
+            WHERE t.path = d.raw_string
+               OR toUpper(t.path) = toUpper(d.raw_string)
+            MERGE (d)-[:RESOLVES_TO_TREE_NODE]->(t)
+            RETURN count(*) AS resolved
+            """,
+            facility=facility,
+        )
+        refs_resolved = resolve_result[0]["resolved"] if resolve_result else 0
+
+        # Step 2: Propagate code evidence to FacilitySignals
+        # Find signals whose SOURCE_NODE TreeNode has DataReferences from code
+        link_result = gc.query(
+            """
+            MATCH (dr:DataReference {facility_id: $facility})
+                  -[:RESOLVES_TO_TREE_NODE]->(tn:TreeNode)
+                  <-[:SOURCE_NODE]-(sig:FacilitySignal {facility_id: $facility})
+            WITH sig, count(DISTINCT dr) AS ref_count
+            SET sig.code_evidence_count = ref_count,
+                sig.has_code_evidence = true
+            RETURN count(sig) AS signals_linked
+            """,
+            facility=facility,
+        )
+        signals_linked = link_result[0]["signals_linked"] if link_result else 0
+
+        # Step 3: Mark processed CodeFiles as evidence_linked
+        gc.query(
+            """
+            MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
+            WHERE sf.status = 'ingested'
+              AND coalesce(sf.evidence_linked, false) = false
+            SET sf.evidence_linked = true
+            """,
+            facility=facility,
+        )
+
+        return {
+            "refs_resolved": refs_resolved,
+            "signals_linked": signals_linked,
+        }
 
 
 __all__ = [
@@ -486,8 +568,10 @@ __all__ = [
     "claim_paths_for_file_scan",
     "has_pending_code_work",
     "has_pending_enrich_work",
+    "has_pending_link_work",
     "has_pending_scan_work",
     "has_pending_score_work",
+    "link_code_evidence_to_signals",
     "release_file_enrich_claims",
     "release_file_score_claim",
     "release_file_score_claims",

@@ -139,6 +139,19 @@ def format_count(count: int) -> str:
     return str(count)
 
 
+def format_rate(rate: float) -> str:
+    """Format items/second with adaptive units: 1.2M/s, 84K/s, 3.5/s"""
+    if rate >= 1_000_000:
+        return f"{rate / 1_000_000:.0f}M/s"
+    if rate >= 10_000:
+        return f"{rate / 1_000:.0f}K/s"
+    if rate >= 1_000:
+        return f"{rate / 1_000:.1f}K/s"
+    if rate >= 10:
+        return f"{rate:.0f}/s"
+    return f"{rate:.1f}/s"
+
+
 # =============================================================================
 # Progress Bar Utilities
 # =============================================================================
@@ -679,7 +692,7 @@ def build_pipeline_row(config: PipelineRowConfig, bar_width: int = 40) -> Text:
     # Pre-compute rate text for right-alignment at row_width
     rate_s = ""
     if config.rate and config.rate > 0:
-        rate_s = f"{config.rate:.2f}/s"
+        rate_s = format_rate(config.rate)
 
     if config.has_content:
         line2.append("  ", style="dim")
@@ -919,8 +932,12 @@ def build_servers_section(
 
     for s in statuses:
         if s.state == ServiceState.healthy:
-            style = "green"
             label = s.detail or "ok"
+            # Flag credit/budget issues even when some models are healthy
+            if "no credit" in label:
+                style = "yellow"
+            else:
+                style = "green"
         elif s.state == ServiceState.unknown:
             # Pending initial check — show grey "pending" instead of "unknown"
             style = "dim"
@@ -1181,6 +1198,7 @@ class BaseProgressDisplay(ABC):
 
         Each worker group gets a status indicator:
           SHUTDOWN  scan done  score draining (2)  enrich done  3.2s
+        After 15s, a hint is shown to press Ctrl+C again for forced exit.
         """
         section = Text()
         section.append("  SHUTDOWN", style="bold yellow")
@@ -1197,6 +1215,7 @@ class BaseProgressDisplay(ABC):
             seen.setdefault(grp, None)
         groups = list(seen)
 
+        any_draining = False
         for grp in groups:
             workers = [
                 s
@@ -1211,6 +1230,7 @@ class BaseProgressDisplay(ABC):
                 section.append(f"  {grp} ", style="dim")
                 section.append("done", style="green")
             else:
+                any_draining = True
                 section.append(f"  {grp} ", style="white")
                 section.append(f"draining ({active}/{total})", style="yellow")
 
@@ -1218,6 +1238,12 @@ class BaseProgressDisplay(ABC):
         if self._shutdown_start is not None:
             shutdown_elapsed = time.time() - self._shutdown_start
             section.append(f"  {shutdown_elapsed:.1f}s", style="dim")
+
+            # After 15s of draining, show hint about forced shutdown
+            if any_draining and shutdown_elapsed > 15:
+                section.append(
+                    "\n  Press Ctrl+C again to force exit", style="dim italic"
+                )
 
         return section
 
