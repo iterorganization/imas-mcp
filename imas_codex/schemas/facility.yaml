@@ -240,7 +240,7 @@ enums:
         description: Mix of static structure with dynamic population
 
   ProgrammingLanguage:
-    description: Programming languages for source code files
+    description: Programming languages for code examples
     permissible_values:
       python:
         description: Python source code
@@ -254,8 +254,6 @@ enums:
         description: TDI (Tree Data Interface) expressions
       cpp:
         description: C++ source code
-      c:
-        description: C source code
       julia:
         description: Julia source code
 
@@ -270,6 +268,75 @@ enums:
         description: Directory containing configuration files
       binary_directory:
         description: Directory containing executables
+
+  PathPurpose:
+    description: >-
+      LLM-classified purpose of a directory. Used during discovery scoring
+      to determine expansion priority (for containers) or ingestion priority
+      (for leaf directories). Score semantics vary by purpose type.
+      
+      Terminology aligns with DiscoveryRootCategory for consistent vocabulary.
+    permissible_values:
+      # === FORWARD MODELING CODE (predictive, offline simulation) ===
+      modeling_code:
+        description: Physics simulation/modeling code (CHEASE, ASTRA, JOREK, JINTRAC)
+      # === EXPERIMENTAL ANALYSIS CODE (shot processing, diagnostics) ===
+      analysis_code:
+        description: >-
+          Experimental data processing code: equilibrium reconstruction (LIUQE, EFIT),
+          diagnostic analysis (Thomson, bolometry), profile fitting, intershot tools
+      operations_code:
+        description: >-
+          Real-time facility operations: control systems, DAQ, hardware interfaces,
+          timing systems, feedback algorithms, actuator commands
+      # === SHARED INFRASTRUCTURE CODE ===
+      data_access:
+        description: Data access/conversion tools (IMAS wrappers, MDSplus readers, EQDSK, TDI)
+      workflow:
+        description: Orchestration and batch processing scripts
+      visualization:
+        description: Plotting and rendering tools
+      # === DATA CATEGORIES ===
+      experimental_data:
+        description: Experimental shot data, measurement databases (MDSplus trees, shot archives)
+      modeling_data:
+        description: Outputs from modeling codes (HDF5 runs, NetCDF outputs, parameter scans)
+      # === SUPPORT CATEGORIES ===
+      documentation:
+        description: Docs, papers, tutorials, READMEs
+      configuration:
+        description: Config files, settings, module files
+      test_suite:
+        description: Unit/integration tests (pytest directories)
+      # === STRUCTURAL CATEGORIES ===
+      container:
+        description: >-
+          Organizational directory with varied content (/home, /work, /work/imas).
+          Score reflects exploration potential of children, not content value.
+          High score = explore children; low score = skip subtree.
+      # === SKIP CATEGORIES (low score forced) ===
+      archive:
+        description: Old/backup content (backup/, old_projects/, deprecated/)
+      build_artifact:
+        description: Generated/cached files (__pycache__, .venv, node_modules)
+      system:
+        description: OS/infrastructure directories (/var, /tmp, /opt/modules)
+      empty_directory:
+        description: Empty directory with no files or subdirectories
+
+  DiscoveryStatus:
+    description: >-
+      Lifecycle status for graph-led discovery pipeline.
+      Simplified from PathStatus for scan/score workflow.
+    permissible_values:
+      pending:
+        description: Path awaiting scan (newly seeded or from expansion)
+      scanned:
+        description: Directory enumerated, DirStats collected
+      scored:
+        description: LLM has evaluated and scored
+      skipped:
+        description: Excluded (dead-end, error, or low value)
 
   DataReferenceType:
     description: Type of data reference found in source code
@@ -298,10 +365,6 @@ enums:
           A parameter accepted by a TDI function (e.g., tcv_eq("PSI")).
           Not a physical tree path but a logical data accessor name.
           Links to TreeNode via accessor_function relationship.
-      static_tree_extraction:
-        description: >-
-          Extracted from static MDSplus tree file via TDI introspection.
-          Tree was loaded from a versioned .characteristics or .datafile.
       manual:
         description: Manually created during exploration or testing
 
@@ -355,6 +418,23 @@ enums:
       disabled:
         description: Permanently disabled
 
+  FileCategory:
+    deprecated: Use CodeFile/Document node types instead of file_category property.
+    description: "[DEPRECATED] Category of a discovered file. Use node types instead."
+    permissible_values:
+      code:
+        description: Source code file (Python, Fortran, etc.)
+      document:
+        description: Document file (PDF, Word, README, etc.)
+      data:
+        description: Data file (HDF5, NetCDF, CSV, etc.)
+      config:
+        description: Configuration file (YAML, JSON, INI, etc.)
+      notebook:
+        description: Computational notebook (Jupyter, Mathematica)
+      other:
+        description: Other file types
+
   DocumentType:
     description: Type of non-code document or media file
     permissible_values:
@@ -380,6 +460,17 @@ enums:
         description: Data file (HDF5, NetCDF, MAT)
       other:
         description: Other document type
+
+  # Legacy alias - will be removed in future version
+  WikiSiteType:
+    description: "[DEPRECATED] Use DocSourceType instead"
+    permissible_values:
+      mediawiki:
+        description: MediaWiki-based sites (Wikipedia, SPCwiki)
+      confluence:
+        description: Atlassian Confluence (REST API available)
+      generic:
+        description: Generic HTML site (scrape only)
 
   WikiAuthType:
     description: Authentication methods for wiki sites
@@ -598,25 +689,23 @@ classes:
       - eza: Tree view for directory hierarchy context
       
       PARALLEL DISCOVERY PIPELINE:
-      1. Scan: discovered -> listed (enumerate files, set counts)
-      2. Triage: listed -> triaged (LLM classification, sets triage_composite/expand/enrich)
-      3. Expand: triaged + should_expand -> children created as discovered
-      4. Enrich: triaged + should_enrich + triage_composite >= threshold -> enriched
-      5. Score: enriched -> scored (independent LLM evaluation with enrichment evidence)
+      1. Scan: discovered -> listing -> listed (enumerate files, set counts)
+      2. Score: listed -> scoring -> scored (LLM evaluates, sets score/expand/enrich)
+      3. Expand: scored + should_expand -> children created as discovered
+      4. Enrich: scored + should_enrich -> enriched (du/tokei/patterns)
+      5. Refine: enriched -> refined (LLM re-evaluation with enrichment evidence)
       
       Expand and Enrich run in PARALLEL as independent workers.
-      Score runs after enrichment for high-value paths.
-      Paths below threshold remain terminal in triaged state.
+      Refine runs after enrichment for high-value paths.
       
       Terminal states:
-      - triaged: Below threshold, initial classification only
-      - scored: Fully evaluated with enrichment evidence
+      - scored: Has LLM score, ready for ingestion if high-value
       - skipped: Low score (< 0.2), not worth ingesting
       - excluded: Matched exclusion pattern (never scanned)
       - stale: May have changed, needs re-discovery
       
       Query paths by status to find work for each phase.
-      Use score field (set by scoring) to prioritize paths for code ingestion.
+      Use score field to prioritize paths for code ingestion.
     mixins:
       - LLMOperation
       - DiscoveryProvenance
@@ -701,6 +790,12 @@ classes:
         description: When this path was last examined by any pass
         range: datetime
       # Coverage tracking
+      file_count:
+        description: Total files in directory (set during listing)
+        range: integer
+      dir_count:
+        description: Total subdirectories (set during listing)
+        range: integer
       files_scanned:
         description: Files that matched patterns during scanning
         range: integer
@@ -716,58 +811,8 @@ classes:
       # Scoring dimensions (LLM-assigned, 0.0-1.0 each)
       # Per-purpose scores aligned with DiscoveryRootCategory taxonomy
       # Enables downstream actors to query specific dimensions
-      #
-      # Naming convention: triage_ prefix for 1st-pass (directory structure only),
-      # score_ prefix for 2nd-pass (enrichment evidence). Composites use
-      # triage_composite / score_composite. Shared suffixes are the dimension
-      # taxonomy: modeling_code, analysis_code, etc.
-      triage_composite:
-        description: >-
-          Composite triage score (0.0-1.0) from initial LLM classification.
-          Set during triage phase based on directory structure only.
-          Preserved permanently — never overwritten by scoring.
-        range: float
-      # Per-dimension triage scores — preserved permanently so calibration
-      # can draw from the full triage population (triaged + scored paths).
-      # Written at triage time, never overwritten by scoring.
-      triage_modeling_code:
-        description: Triage-phase dimension for forward modeling/simulation code
-        range: float
-      triage_analysis_code:
-        description: Triage-phase dimension for experimental analysis code
-        range: float
-      triage_operations_code:
-        description: Triage-phase dimension for real-time operations code
-        range: float
-      triage_modeling_data:
-        description: Triage-phase dimension for modeling outputs
-        range: float
-      triage_experimental_data:
-        description: Triage-phase dimension for experimental shot data
-        range: float
-      triage_data_access:
-        description: Triage-phase dimension for data access tools
-        range: float
-      triage_workflow:
-        description: Triage-phase dimension for orchestration and batch processing
-        range: float
-      triage_visualization:
-        description: Triage-phase dimension for plotting and rendering tools
-        range: float
-      triage_documentation:
-        description: Triage-phase dimension for documentation value
-        range: float
-      triage_imas:
-        description: Triage-phase dimension for IMAS relevance
-        range: float
-      triage_convention:
-        description: Triage-phase dimension for sign/coordinate/COCOS convention handling
-        range: float
-      score_composite:
-        description: >-
-          Authoritative composite score (0.0-1.0) from second-pass LLM evaluation
-          with enrichment evidence. Only set for paths that completed scoring.
-          Null for paths that remained in triaged state.
+      score:
+        description: Composite interest score (0.0-1.0), max of per-purpose scores
         range: float
       score_percentile:
         description: Percentile rank within facility (0.0-1.0), updated periodically
@@ -836,7 +881,7 @@ classes:
         description: Primary physics domain (equilibrium, transport, etc.)
       path_purpose:
         description: Classified purpose of the directory
-        range: ResourcePurpose
+        range: PathPurpose
       # Enrichment tracking (for high-value paths with du/tokei data)
       is_enriched:
         description: Whether this path has been enriched with deep scan data
@@ -866,16 +911,16 @@ classes:
         description: >-
           Why this path terminated exploration. Required when terminal
           (status=skipped OR should_expand=false). Enables filtering by
-          termination cause: access_denied vs low_value vs clone.
+          termination cause: access_denied vs low_value vs software_repo.
         range: TerminalReason
       skipped_at:
         description: When this path was marked as skipped
         range: datetime
-      triaged_at:
-        description: When this path was triaged (initial classification)
-        range: datetime
       scored_at:
-        description: When this path was scored (second-pass evaluation, null if not scored)
+        description: When this path was scored
+        range: datetime
+      refined_at:
+        description: When this path was refined with enrichment evidence (null if not refined)
         range: datetime
       session_id:
         description: Scout session that discovered/processed this path
@@ -965,8 +1010,8 @@ classes:
         description: Total count of data-write pattern matches across all categories
         range: integer
       # Refinement properties (set during LLM refinement with enrichment evidence)
-      score_reason:
-        description: Brief explanation of scoring rationale from second-pass evaluation
+      refine_reason:
+        description: Brief explanation of main score adjustment during refinement
       primary_evidence:
         description: JSON-encoded list of key pattern categories informing score adjustment
       evidence_summary:
@@ -1087,8 +1132,6 @@ classes:
       ingested_at:
         description: When repository was ingested (locally or via API)
         range: datetime
-      vcs_type:
-        description: Version control system type (git, svn, hg, bzr)
 
 # =============================================================================
 # User Classes
@@ -1334,20 +1377,6 @@ classes:
       discovery_date:
         description: When this epoch was discovered
         range: datetime
-      fingerprint:
-        description: Structure fingerprint for change detection (e.g., static_v67)
-      units_extracted:
-        description: >-
-          Whether unit extraction has been completed for this version.
-          Set to true after the units worker has extracted all units and
-          created Unit nodes with HAS_UNIT relationships. Enables the
-          units worker to skip already-processed versions on re-run.
-        range: boolean
-      units_count:
-        description: Number of nodes with units found during extraction
-        range: integer
-      description:
-        description: Human-readable description of this tree model version
 
   TreeNode:
     description: >-
@@ -1359,11 +1388,8 @@ classes:
       - LLMOperation
     class_uri: facility:TreeNode
     attributes:
-      id:
-        identifier: true
-        description: Compound identifier (facility:tree:path)
-        required: true
       path:
+        identifier: true
         description: Full node path (e.g., "\\RESULTS::LIUQE:PSI")
         required: true
       tree_name:
@@ -1394,16 +1420,11 @@ classes:
           The actual MDSplus tree path (if different from accessor name).
           For tdi_parameter nodes, this links to the physical storage.
           E.g., tdi_parameter "I_P" -> physical_path "\\RESULTS::TOP.EQ_RECON.TRACES:I_P"
-      has_unit:
+      unit:
         description: Physical units for this node (linked via HAS_UNIT relationship)
         range: Unit
         annotations:
           relationship_type: HAS_UNIT
-      unit:
-        description: >-
-          Normalized unit symbol string (e.g., "T/A", "m", "rad").
-          Set alongside the HAS_UNIT relationship for efficient Cypher
-          property filtering. Normalized via pint to prevent duplicates.
       description:
         description: Node description
       embedding:
@@ -1527,15 +1548,6 @@ classes:
         range: EnrichmentStatus
       enrichment_notes:
         description: Agent reasoning or notes about the enrichment
-      category:
-        description: >-
-          Category classification for this node (e.g., "coil", "vessel",
-          "diagnostic", "other"). Assigned during enrichment.
-      keywords:
-        description: >-
-          Keywords describing the physics or purpose of this node.
-          Assigned during enrichment.
-        multivalued: true
       follows_pattern:
         description: >-
           Pattern this node follows for indexed repetitions.
@@ -1943,10 +1955,10 @@ classes:
       embedded_at:
         description: When the description embedding was last computed
         range: datetime
-      unit:
+      units:
         description: >-
-          Normalized unit symbol string. Extracted from MDSplus node.units,
-          data system metadata, or documentation. Normalized via pint.
+          Physical units of the signal data. Extracted from MDSplus node.units,
+          data system metadata, or documentation.
           E.g., "A", "V", "T", "m^-3", "eV"
       sign_convention:
         description: >-
@@ -1990,22 +2002,6 @@ classes:
         range: datetime
       skip_reason:
         description: Why this signal was skipped during enrichment or access checking
-      temporality:
-        description: >-
-          Whether this signal's data varies with time or is static
-          (machine-description / constructional). Static signals come from
-          versioned MDSplus trees (e.g., vessel geometry, coil positions);
-          dynamic signals are shot-scoped measurements.
-        range: SignalTemporality
-      source_node:
-        description: >-
-          Link to the TreeNode that this signal was promoted from.
-          Set during the PROMOTE phase of MDSplus static tree discovery.
-          Preserves provenance from raw tree extraction through to the
-          unified FacilitySignal layer.
-        range: TreeNode
-        annotations:
-          relationship_type: SOURCE_NODE
 
   DataAccess:
     description: >-
@@ -2067,6 +2063,7 @@ classes:
           MDSplus: "tree = MDSplus.Tree('{data_source}', {shot}, 'readonly')"
           IMAS: "entry = imas.DBEntry(imas.imasdef.MDSPLUS_BACKEND, '{database}', {shot}, 1)"
           HDF5: "f = h5py.File('{data_source}'.format(shot={shot}), 'r')"
+        required: true
       data_template:
         description: >-
           Python code to retrieve data array.
@@ -2377,7 +2374,7 @@ classes:
         description: Category of evidence
         range: EvidenceType
         required: true
-      content:
+      text:
         description: Evidence content (text, code snippet, data summary)
         required: true
       supports_mapping:
@@ -2455,14 +2452,14 @@ classes:
       signals_processed:
         description: Signals with proposals created
         range: integer
-      mappings_created:
-        description: Number of IMASMapping nodes created
+      proposals_created:
+        description: Number of MappingProposal nodes created
         range: integer
-      mappings_validated:
-        description: Number of mappings that reached validated status
+      proposals_validated:
+        description: Number of proposals that reached validated status
         range: integer
-      mappings_rejected:
-        description: Number of mappings rejected
+      proposals_rejected:
+        description: Number of proposals rejected
         range: integer
       # Langfuse correlation
       langfuse_trace_id:
@@ -3023,8 +3020,8 @@ classes:
       page_count:
         description: Total WikiPage nodes from this source
         range: integer
-      artifact_count:
-        description: Total artifact nodes from this source
+      document_count:
+        description: Total WikiDocument nodes from this source
         range: integer
       created_at:
         description: When this source was added
@@ -3051,7 +3048,7 @@ classes:
       
       Relationships:
       - LINKS_TO -> WikiPage (wiki link structure, created during scan)
-      - HAS_ARTIFACT -> WikiArtifact (created during scan)
+      - HAS_DOCUMENT -> WikiDocument (created during scan)
       - HAS_CHUNK -> WikiChunk (created during ingest)
       - HAS_IMAGE -> Image (inline images in page HTML)
       - AT_FACILITY -> Facility
@@ -3079,6 +3076,18 @@ classes:
       doc_source_id:
         description: DocSource this page came from
         range: DocSource
+        annotations:
+          relationship_type: FROM_SOURCE
+      site_type:
+        description: >-
+          Wiki platform type (mediawiki, confluence, twiki, etc.).
+          Set during bulk discovery from facility config. Enables
+          super-site pattern where workers process all sites at once.
+      auth_type:
+        description: >-
+          Authentication method for fetching this page (keycloak,
+          tequila, basic, session, or null for public). Workers use this
+          to resolve the correct authenticated HTTP client per-page.
       url:
         description: Original wiki URL
         required: true
@@ -3107,13 +3116,13 @@ classes:
         inlined: false
         annotations:
           relationship_type: LINKS_TO
-      has_artifacts:
-        description: Artifacts linked from this page (PDFs, presentations, etc.)
-        range: WikiArtifact
+      has_documents:
+        description: Documents linked from this page (PDFs, presentations, etc.)
+        range: WikiDocument
         multivalued: true
         inlined: false
         annotations:
-          relationship_type: HAS_ARTIFACT
+          relationship_type: HAS_DOCUMENT
       has_chunks:
         description: Text chunks created during ingestion for semantic search
         range: WikiChunk
@@ -3236,9 +3245,9 @@ classes:
         description: Parent WikiPage ID (stored as property, relationship created via WikiPage.has_chunks)
         required: true
         range: WikiPage
-      artifact_id:
-        description: Parent WikiArtifact ID for chunks created from document artifacts
-        range: WikiArtifact
+      document_id:
+        description: Parent WikiDocument ID for chunks created from document artifacts
+        range: WikiDocument
       facility_id:
         description: Facility for efficient filtering
         required: true
@@ -3257,7 +3266,7 @@ classes:
       section:
         description: Section heading this chunk belongs to
       text:
-        description: The actual text content of this chunk
+        description: The actual text content
         required: true
       start_char:
         description: Starting character offset in original page
@@ -3318,22 +3327,23 @@ classes:
         annotations:
           relationship_type: MENTIONS_IMAS
 
-  WikiArtifact:
+  WikiDocument:
     description: >-
-      A linked artifact (PDF, PowerPoint, image, etc.) discovered during wiki scan.
+      A linked document (PDF, PowerPoint, image, etc.) discovered during wiki scan.
       Uses same state machine pattern as WikiPage with claimed_at for coordination.
       
       Workflow: discovered → scored → ingested
-      - Bulk discovery creates artifacts with status=discovered
+      - Bulk discovery creates documents with status=discovered
       - Score worker downloads preview, LLM scores based on content
       - Ingest worker downloads full content, parses, chunks, embeds
       
       Relationships:
       - AT_FACILITY -> Facility
-      - HAS_ARTIFACT <- WikiPage (pages that link to this artifact)
+      - HAS_DOCUMENT <- WikiPage (pages that link to this document)
       - HAS_CHUNK -> WikiChunk (created during ingest)
       - HAS_IMAGE -> Image (figures extracted from documents)
-    class_uri: facility:WikiArtifact
+      - FROM_SOURCE -> DocSource (which wiki site this came from)
+    class_uri: facility:WikiDocument
     mixins:
       - DiscoveryProvenance
       - ContentScoring
@@ -3348,54 +3358,69 @@ classes:
         range: Facility
         annotations:
           relationship_type: AT_FACILITY
+      doc_source_id:
+        description: DocSource this document came from
+        range: DocSource
+        annotations:
+          relationship_type: FROM_SOURCE
       has_chunks:
-        description: Text chunks created during artifact parsing
+        description: Text chunks created during document parsing
         range: WikiChunk
         multivalued: true
         inlined: false
         annotations:
           relationship_type: HAS_CHUNK
       has_images:
-        description: Images/figures extracted from this artifact
+        description: Images/figures extracted from this document
         range: Image
         multivalued: true
         inlined: false
         annotations:
           relationship_type: HAS_IMAGE
       url:
-        description: Full URL to artifact
+        description: Full URL to document
         required: true
       filename:
         description: Extracted filename (e.g., "ASTRA_manual_with_index.pdf")
         required: true
       artifact_type:
-        description: Type of artifact (pdf, docx, pptx, xlsx, ipynb, etc.)
+        description: Type of document (pdf, docx, pptx, xlsx, ipynb, etc.)
         range: ArtifactType
         required: true
+      site_type:
+        description: >-
+          Wiki platform type (mediawiki, confluence, twiki, etc.).
+          Set during bulk discovery from facility config. Enables
+          super-site pattern where workers process all sites at once.
+      auth_type:
+        description: >-
+          Authentication method for fetching this document (keycloak,
+          tequila, basic, session, or null for public). Workers use this
+          to resolve the correct authenticated HTTP client per-document.
       status:
         description: Lifecycle status
-        range: WikiArtifactStatus
+        range: WikiDocumentStatus
         required: true
       
       # Worker coordination (same pattern as WikiPage)
       claimed_at:
         description: >-
-          Timestamp when a worker claimed this artifact for processing.
+          Timestamp when a worker claimed this document for processing.
           Null when not being processed. Used for orphan recovery (>5min = reclaim).
         range: datetime
       claim_token:
         description: UUID token for atomic work claiming between parallel workers
       bulk_discovered:
-        description: Flag set when artifact was created by bulk discovery scan
+        description: Flag set when document was created by bulk discovery scan
         range: boolean
       mime_type:
-        description: MIME type of the artifact file (e.g., "application/pdf", "image/png")
+        description: MIME type of the document file (e.g., "application/pdf", "image/png")
       score_exempt:
         description: >-
-          When true, artifact bypasses LLM text scoring and goes directly
-          from discovered → ingested. Set at discovery time for artifact types
+          When true, document bypasses LLM text scoring and goes directly
+          from discovered → ingested. Set at discovery time for document types
           that use a different scoring pipeline (e.g. images use VLM captioning
-          instead of text scoring). Ingestion worker claims discovered artifacts
+          instead of text scoring). Ingestion worker claims discovered documents
           with this flag set.
         range: boolean
       
@@ -3469,8 +3494,8 @@ classes:
       Relationships:
       - AT_FACILITY -> Facility
       - HAS_IMAGE <- WikiPage (inline images in page HTML)
-      - HAS_IMAGE <- WikiArtifact (standalone wiki image files)
-      - HAS_IMAGE <- WikiArtifact (figures extracted from PDFs/PPTX, future)
+      - HAS_IMAGE <- WikiDocument (standalone wiki image files)
+      - HAS_IMAGE <- WikiDocument (figures extracted from PDFs/PPTX, future)
       - HAS_IMAGE <- SourceFile (code-generated plots, future)
       - DEPICTS -> TreeNode (what the image documents, future)
       - DEPICTS -> IMASPath (IMAS concepts shown, future)
@@ -3583,6 +3608,20 @@ classes:
         description: >-
           Text immediately before/after image in source document.
           Truncated to ~500 chars. Provides fusion context for VLM captioning.
+      doc_source_id:
+        description: DocSource this image came from (for wiki images)
+        range: DocSource
+        annotations:
+          relationship_type: FROM_SOURCE
+      site_type:
+        description: >-
+          Wiki platform type (mediawiki, confluence, twiki, etc.).
+          Null for non-wiki images. Enables super-site pattern.
+      auth_type:
+        description: >-
+          Authentication method for fetching this image (keycloak,
+          tequila, basic, session, or null for public/non-wiki).
+          Workers use this to resolve the correct authenticated HTTP client.
       
       # Worker coordination (same pattern as WikiPage)
       claimed_at:

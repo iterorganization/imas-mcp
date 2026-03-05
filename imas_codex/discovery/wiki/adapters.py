@@ -1,6 +1,6 @@
 """Site-specific adapters for wiki discovery.
 
-This module provides a unified interface for discovering pages and artifacts
+This module provides a unified interface for discovering pages and documents
 across different wiki platforms (MediaWiki, TWiki, Confluence).
 
 The key insight is separating:
@@ -9,7 +9,7 @@ The key insight is separating:
 
 Each adapter implements:
 - bulk_discover_pages() - List all pages via platform API
-- bulk_discover_artifacts() - List all files/attachments via platform API
+- bulk_discover_documents() - List all files/attachments via platform API
 """
 
 from __future__ import annotations
@@ -40,15 +40,15 @@ class DiscoveredPage:
 
 
 @dataclass
-class DiscoveredArtifact:
-    """An artifact (file) discovered via bulk discovery."""
+class DiscoveredDocument:
+    """An document (file) discovered via bulk discovery."""
 
     filename: str
     url: str
     artifact_type: str
     size_bytes: int | None = None
     mime_type: str | None = None
-    # Pages that link to this artifact (for scoring by association)
+    # Pages that link to this document (for scoring by association)
     linked_pages: list[str] = field(default_factory=list)
 
 
@@ -77,13 +77,13 @@ class WikiAdapter(ABC):
         pass
 
     @abstractmethod
-    def bulk_discover_artifacts(
+    def bulk_discover_documents(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover all artifacts (files) via platform API.
+    ) -> list[DiscoveredDocument]:
+        """Discover all documents (files) via platform API.
 
         Args:
             facility: Facility ID
@@ -91,7 +91,7 @@ class WikiAdapter(ABC):
             on_progress: Progress callback (message, stats)
 
         Returns:
-            List of discovered artifacts with metadata
+            List of discovered documents with metadata
         """
         pass
 
@@ -100,7 +100,7 @@ class MediaWikiAdapter(WikiAdapter):
     """Adapter for MediaWiki sites.
 
     Page discovery: Special:AllPages (HTML scraping) or allpages API (JSON)
-    Artifact discovery: list=allimages API
+    Document discovery: list=allimages API
 
     Supports multiple auth backends:
     - SSH proxy for shell commands
@@ -413,13 +413,13 @@ class MediaWikiAdapter(WikiAdapter):
 
         return pages
 
-    def bulk_discover_artifacts(
+    def bulk_discover_documents(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover all artifacts via MediaWiki API list=allimages.
+    ) -> list[DiscoveredDocument]:
+        """Discover all documents via MediaWiki API list=allimages.
 
         The API returns all uploaded files with metadata:
         - filename, url, size, mime type
@@ -435,25 +435,25 @@ class MediaWikiAdapter(WikiAdapter):
         """
         # Prefer SSH — stateless curl avoids session-timeout truncation
         if self.ssh_host:
-            artifacts = self._discover_artifacts_ssh(facility, base_url, on_progress)
-            if artifacts:
-                return artifacts
-            logger.debug("SSH artifact discovery returned nothing, trying HTTP")
+            documents = self._discover_documents_ssh(facility, base_url, on_progress)
+            if documents:
+                return documents
+            logger.debug("SSH document discovery returned nothing, trying HTTP")
         if self.session:
-            return self._discover_artifacts_via_session(facility, base_url, on_progress)
+            return self._discover_documents_via_session(facility, base_url, on_progress)
         elif self.wiki_client:
-            return self._discover_artifacts_http(facility, base_url, on_progress)
+            return self._discover_documents_http(facility, base_url, on_progress)
         else:
             logger.warning("No SSH host or wiki client configured")
             return []
 
-    def _discover_artifacts_via_session(
+    def _discover_documents_via_session(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts via pre-authenticated session (Keycloak, Basic auth).
+    ) -> list[DiscoveredDocument]:
+        """Discover documents via pre-authenticated session (Keycloak, Basic auth).
 
         Uses the same allimages API + fileusage enrichment as the wiki_client
         path, but with the pre-authenticated requests.Session directly.
@@ -461,7 +461,7 @@ class MediaWikiAdapter(WikiAdapter):
         if not self.session:
             return []
 
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
 
         # Find working API URL
         parsed = urllib.parse.urlparse(base_url)
@@ -488,7 +488,7 @@ class MediaWikiAdapter(WikiAdapter):
 
         if not api_url:
             logger.debug(
-                "No working API URL found for session-based artifact discovery"
+                "No working API URL found for session-based document discovery"
             )
             return []
 
@@ -519,28 +519,28 @@ class MediaWikiAdapter(WikiAdapter):
                         break
                     # Mid-pagination HTML → session expiry
                     logger.warning(
-                        "Session expired mid-pagination (batch %d, %d artifacts). "
+                        "Session expired mid-pagination (batch %d, %d documents). "
                         "Cannot re-authenticate a raw session, stopping.",
                         batch,
-                        len(artifacts),
+                        len(documents),
                     )
                     break
 
                 data = response.json()
                 images = data.get("query", {}).get("allimages", [])
 
-                prev_count = len(artifacts)
+                prev_count = len(documents)
                 for img in images:
-                    artifact = self._parse_image_info(img, facility)
-                    if artifact:
-                        artifacts.append(artifact)
+                    document = self._parse_image_info(img, facility)
+                    if document:
+                        documents.append(document)
 
                 batch += 1
                 if on_progress:
-                    on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
+                    on_progress(f"batch {batch}: {len(documents)} documents", None)
 
-                # Stop if API returned 0 new artifacts (pagination exhausted)
-                if len(artifacts) == prev_count:
+                # Stop if API returned 0 new documents (pagination exhausted)
+                if len(documents) == prev_count:
                     break
 
                 if "continue" in data:
@@ -552,22 +552,22 @@ class MediaWikiAdapter(WikiAdapter):
                     break
 
             except Exception as e:
-                logger.warning(f"Error during session artifact discovery: {e}")
+                logger.warning(f"Error during session document discovery: {e}")
                 break
 
-        # Enrich artifacts with page links via prop=fileusage API
-        if artifacts and api_url:
-            self._enrich_artifact_page_links_http(artifacts, api_url, on_progress)
+        # Enrich documents with page links via prop=fileusage API
+        if documents and api_url:
+            self._enrich_document_page_links_http(documents, api_url, on_progress)
 
-        return artifacts
+        return documents
 
-    def _discover_artifacts_ssh(
+    def _discover_documents_ssh(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts via SSH using MediaWiki API.
+    ) -> list[DiscoveredDocument]:
+        """Discover documents via SSH using MediaWiki API.
 
         Tries two API URL candidates since MediaWiki installations vary:
         1. {base_url}/api.php  (e.g. https://spcwiki.epfl.ch/wiki/api.php)
@@ -579,7 +579,7 @@ class MediaWikiAdapter(WikiAdapter):
         import json
         from urllib.parse import urlparse
 
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
 
         # Build candidate API URLs - try wiki path first, then root
         parsed = urlparse(base_url)
@@ -651,18 +651,18 @@ class MediaWikiAdapter(WikiAdapter):
                 data = json.loads(stdout)
                 images = data.get("query", {}).get("allimages", [])
 
-                prev_count = len(artifacts)
+                prev_count = len(documents)
                 for img in images:
-                    artifact = self._parse_image_info(img, facility)
-                    if artifact:
-                        artifacts.append(artifact)
+                    document = self._parse_image_info(img, facility)
+                    if document:
+                        documents.append(document)
 
                 batch += 1
                 if on_progress:
-                    on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
+                    on_progress(f"batch {batch}: {len(documents)} documents", None)
 
-                # Stop if API returned 0 new artifacts (pagination exhausted)
-                if len(artifacts) == prev_count:
+                # Stop if API returned 0 new documents (pagination exhausted)
+                if len(documents) == prev_count:
                     break
 
                 # Check for continuation
@@ -674,40 +674,40 @@ class MediaWikiAdapter(WikiAdapter):
                     break
 
             except subprocess.TimeoutExpired:
-                logger.warning("Timeout during artifact discovery")
+                logger.warning("Timeout during document discovery")
                 break
             except json.JSONDecodeError:
                 logger.warning("Invalid JSON response from MediaWiki API")
                 break
             except Exception as e:
-                logger.warning(f"Error during artifact discovery: {e}")
+                logger.warning(f"Error during document discovery: {e}")
                 break
 
-        # Enrich artifacts with page links via prop=images API
-        if artifacts and api_url:
-            self._enrich_artifact_page_links_ssh(artifacts, api_url, on_progress)
+        # Enrich documents with page links via prop=images API
+        if documents and api_url:
+            self._enrich_document_page_links_ssh(documents, api_url, on_progress)
 
-        return artifacts
+        return documents
 
-    def _discover_artifacts_http(
+    def _discover_documents_http(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts via HTTP with Tequila auth.
+    ) -> list[DiscoveredDocument]:
+        """Discover documents via HTTP with Tequila auth.
 
         Tries MediaWiki API first, falls back to HTML scraping of Special:ListFiles
         for older MediaWiki versions that don't support list=allimages API.
         """
         if not self.wiki_client:
-            logger.warning("No wiki_client provided for artifact discovery")
+            logger.warning("No wiki_client provided for document discovery")
             return []
 
         # Ensure client is authenticated before using session
         if hasattr(self.wiki_client, "authenticate"):
             try:
-                logger.debug("Authenticating wiki client for artifact discovery...")
+                logger.debug("Authenticating wiki client for document discovery...")
                 self.wiki_client.authenticate()
                 logger.debug("Wiki client authenticated successfully")
             except Exception as e:
@@ -715,41 +715,41 @@ class MediaWikiAdapter(WikiAdapter):
                 return []
 
         # Try API first
-        artifacts = self._discover_artifacts_via_api(facility, base_url, on_progress)
-        if artifacts:
-            return artifacts
+        documents = self._discover_documents_via_api(facility, base_url, on_progress)
+        if documents:
+            return documents
 
         # API didn't work, fall back to HTML scraping
         logger.debug(
             "API unavailable, falling back to HTML scraping of Special:ListFiles"
         )
-        artifacts = self._discover_artifacts_via_html(facility, base_url, on_progress)
+        documents = self._discover_documents_via_html(facility, base_url, on_progress)
 
         # Try API enrichment even though list=allimages failed — the API
         # may partially work (e.g. prop=fileusage available on older wikis
         # where list=allimages isn't). This is best-effort: the primary
         # enrichment path is via page file references stored during ingestion.
-        if artifacts:
+        if documents:
             api_url = self._probe_api_url(base_url)
             if api_url:
                 logger.info("API URL found after HTML fallback, attempting enrichment")
-                self._enrich_artifact_page_links_http(artifacts, api_url, on_progress)
+                self._enrich_document_page_links_http(documents, api_url, on_progress)
 
-        return artifacts
+        return documents
 
-    def _discover_artifacts_via_api(
+    def _discover_documents_via_api(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts via MediaWiki API (list=allimages).
+    ) -> list[DiscoveredDocument]:
+        """Discover documents via MediaWiki API (list=allimages).
 
         Tries two API URL candidates since MediaWiki installations vary:
         1. {base_url}/api.php  (e.g. https://spcwiki.epfl.ch/wiki/api.php)
         2. {scheme}://{netloc}/api.php  (e.g. https://spcwiki.epfl.ch/api.php)
         """
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
 
         # Build candidate API URLs
         parsed = urllib.parse.urlparse(base_url)
@@ -799,7 +799,7 @@ class MediaWikiAdapter(WikiAdapter):
                 params["aicontinue"] = continue_token
 
             try:
-                logger.debug(f"Requesting artifacts from {api_url}")
+                logger.debug(f"Requesting documents from {api_url}")
                 response = self.wiki_client.session.get(
                     api_url, params=params, verify=False, timeout=60
                 )
@@ -823,10 +823,10 @@ class MediaWikiAdapter(WikiAdapter):
 
                     # Mid-pagination HTML → likely session expiry (Tequila/Keycloak)
                     logger.warning(
-                        "Session expired mid-pagination (batch %d, %d artifacts so far). "
+                        "Session expired mid-pagination (batch %d, %d documents so far). "
                         "Attempting re-authentication...",
                         batch,
-                        len(artifacts),
+                        len(documents),
                     )
                     if hasattr(self.wiki_client, "authenticate"):
                         try:
@@ -854,18 +854,18 @@ class MediaWikiAdapter(WikiAdapter):
                 data = response.json()
                 images = data.get("query", {}).get("allimages", [])
 
-                prev_count = len(artifacts)
+                prev_count = len(documents)
                 for img in images:
-                    artifact = self._parse_image_info(img, facility)
-                    if artifact:
-                        artifacts.append(artifact)
+                    document = self._parse_image_info(img, facility)
+                    if document:
+                        documents.append(document)
 
                 batch += 1
                 if on_progress:
-                    on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
+                    on_progress(f"batch {batch}: {len(documents)} documents", None)
 
-                # Stop if API returned 0 new artifacts (pagination exhausted)
-                if len(artifacts) == prev_count:
+                # Stop if API returned 0 new documents (pagination exhausted)
+                if len(documents) == prev_count:
                     break
 
                 # Check for continuation
@@ -879,14 +879,14 @@ class MediaWikiAdapter(WikiAdapter):
                     break
 
             except Exception as e:
-                logger.warning(f"Error during HTTP artifact discovery: {e}")
+                logger.warning(f"Error during HTTP document discovery: {e}")
                 break
 
-        # Enrich artifacts with page links via prop=fileusage API
-        if artifacts and api_url:
-            self._enrich_artifact_page_links_http(artifacts, api_url, on_progress)
+        # Enrich documents with page links via prop=fileusage API
+        if documents and api_url:
+            self._enrich_document_page_links_http(documents, api_url, on_progress)
 
-        return artifacts
+        return documents
 
     def _probe_api_url(self, base_url: str) -> str | None:
         """Find a working MediaWiki API URL using an authenticated session.
@@ -922,8 +922,8 @@ class MediaWikiAdapter(WikiAdapter):
                 continue
         return None
 
-    def _parse_image_info(self, img: dict, facility: str) -> DiscoveredArtifact | None:
-        """Parse MediaWiki API image info into DiscoveredArtifact."""
+    def _parse_image_info(self, img: dict, facility: str) -> DiscoveredDocument | None:
+        """Parse MediaWiki API image info into DiscoveredDocument."""
         filename = img.get("name", "")
         url = img.get("url", "")
         size = img.get("size")
@@ -932,10 +932,10 @@ class MediaWikiAdapter(WikiAdapter):
         if not filename or not url:
             return None
 
-        # Determine artifact type from extension or mime type
+        # Determine document type from extension or mime type
         artifact_type = self._get_artifact_type(filename, mime)
 
-        return DiscoveredArtifact(
+        return DiscoveredDocument(
             filename=filename,
             url=url,
             artifact_type=artifact_type,
@@ -943,25 +943,25 @@ class MediaWikiAdapter(WikiAdapter):
             mime_type=mime,
         )
 
-    def _enrich_artifact_page_links_ssh(
+    def _enrich_document_page_links_ssh(
         self,
-        artifacts: list[DiscoveredArtifact],
+        documents: list[DiscoveredDocument],
         api_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
         *,
         max_retries: int = 3,
     ) -> None:
-        """Enrich artifacts with page links via SSH using prop=fileusage API.
+        """Enrich documents with page links via SSH using prop=fileusage API.
 
-        Queries which pages use each file by batching artifact filenames
+        Queries which pages use each file by batching document filenames
         into prop=fileusage requests (50 files per batch). This is
-        O(num_artifacts / 50) instead of O(all_pages * images_per_page).
+        O(num_documents / 50) instead of O(all_pages * images_per_page).
 
         Retries each batch up to max_retries times on transient failures
         (SSH timeout, non-zero exit, invalid JSON).
 
         Args:
-            artifacts: Discovered artifacts to enrich (modified in place)
+            documents: Discovered documents to enrich (modified in place)
             api_url: Working MediaWiki API URL
             on_progress: Optional progress callback
             max_retries: Max retries per batch on transient failure
@@ -969,13 +969,13 @@ class MediaWikiAdapter(WikiAdapter):
         import json
         import time
 
-        # Build case-insensitive filename -> artifact lookup
-        artifact_by_name: dict[str, list[DiscoveredArtifact]] = {}
-        for a in artifacts:
+        # Build case-insensitive filename -> document lookup
+        document_by_name: dict[str, list[DiscoveredDocument]] = {}
+        for a in documents:
             key = a.filename.lower()
-            artifact_by_name.setdefault(key, []).append(a)
+            document_by_name.setdefault(key, []).append(a)
 
-        if not artifact_by_name:
+        if not document_by_name:
             return
 
         # Build list of File: titles using ORIGINAL case filenames.
@@ -984,7 +984,7 @@ class MediaWikiAdapter(WikiAdapter):
         # causes lookups to fail for files like "IOS_TCV_NBIs_ALD7.pdf".
         seen_lower: set[str] = set()
         file_titles: list[str] = []
-        for a in artifacts:
+        for a in documents:
             key = a.filename.lower()
             if key not in seen_lower:
                 seen_lower.add(key)
@@ -1092,10 +1092,10 @@ class MediaWikiAdapter(WikiAdapter):
                     fname = file_title.removeprefix("File:").lower()
                     for usage in page_data.get("fileusage", []):
                         page_title = usage.get("title", "")
-                        if fname in artifact_by_name and page_title:
-                            for artifact in artifact_by_name[fname]:
-                                if page_title not in artifact.linked_pages:
-                                    artifact.linked_pages.append(page_title)
+                        if fname in document_by_name and page_title:
+                            for document in document_by_name[fname]:
+                                if page_title not in document.linked_pages:
+                                    document.linked_pages.append(page_title)
                                     linked_count += 1
 
                 batch += 1
@@ -1117,33 +1117,33 @@ class MediaWikiAdapter(WikiAdapter):
 
         if failed_batches > 0:
             logger.warning(
-                "Artifact-page linking incomplete: %d/%d batches failed "
-                "(re-run with --rescan-artifacts to retry)",
+                "Document-page linking incomplete: %d/%d batches failed "
+                "(re-run with --rescan-documents to retry)",
                 failed_batches,
                 total_batches,
             )
 
         logger.info(
-            "Enriched %d artifact-page links across %d API batches (%d failed)",
+            "Enriched %d document-page links across %d API batches (%d failed)",
             linked_count,
             batch,
             failed_batches,
         )
 
-    def _enrich_artifact_page_links_http(
+    def _enrich_document_page_links_http(
         self,
-        artifacts: list[DiscoveredArtifact],
+        documents: list[DiscoveredDocument],
         api_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
     ) -> None:
-        """Enrich artifacts with page links via HTTP using prop=fileusage API.
+        """Enrich documents with page links via HTTP using prop=fileusage API.
 
-        Queries which pages use each file by batching artifact filenames
+        Queries which pages use each file by batching document filenames
         into prop=fileusage requests (50 files per batch). This is
-        O(num_artifacts / 50) instead of O(all_pages * images_per_page).
+        O(num_documents / 50) instead of O(all_pages * images_per_page).
 
         Args:
-            artifacts: Discovered artifacts to enrich (modified in place)
+            documents: Discovered documents to enrich (modified in place)
             api_url: Working MediaWiki API URL
             on_progress: Optional progress callback
         """
@@ -1156,13 +1156,13 @@ class MediaWikiAdapter(WikiAdapter):
         if not session:
             return
 
-        # Build case-insensitive filename -> artifact lookup
-        artifact_by_name: dict[str, list[DiscoveredArtifact]] = {}
-        for a in artifacts:
+        # Build case-insensitive filename -> document lookup
+        document_by_name: dict[str, list[DiscoveredDocument]] = {}
+        for a in documents:
             key = a.filename.lower()
-            artifact_by_name.setdefault(key, []).append(a)
+            document_by_name.setdefault(key, []).append(a)
 
-        if not artifact_by_name:
+        if not document_by_name:
             return
 
         # Build list of File: titles using ORIGINAL case filenames.
@@ -1171,7 +1171,7 @@ class MediaWikiAdapter(WikiAdapter):
         # causes lookups to fail for files like "IOS_TCV_NBIs_ALD7.pdf".
         seen_lower: set[str] = set()
         file_titles: list[str] = []
-        for a in artifacts:
+        for a in documents:
             key = a.filename.lower()
             if key not in seen_lower:
                 seen_lower.add(key)
@@ -1220,10 +1220,10 @@ class MediaWikiAdapter(WikiAdapter):
                     fname = file_title.removeprefix("File:").lower()
                     for usage in page_data.get("fileusage", []):
                         page_title = usage.get("title", "")
-                        if fname in artifact_by_name and page_title:
-                            for artifact in artifact_by_name[fname]:
-                                if page_title not in artifact.linked_pages:
-                                    artifact.linked_pages.append(page_title)
+                        if fname in document_by_name and page_title:
+                            for document in document_by_name[fname]:
+                                if page_title not in document.linked_pages:
+                                    document.linked_pages.append(page_title)
                                     linked_count += 1
 
                 batch += 1
@@ -1244,25 +1244,25 @@ class MediaWikiAdapter(WikiAdapter):
                 )
 
         logger.info(
-            "Enriched %d artifact-page links across %d API batches",
+            "Enriched %d document-page links across %d API batches",
             linked_count,
             batch,
         )
 
-    def _discover_artifacts_via_html(
+    def _discover_documents_via_html(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts by scraping Special:ListFiles page.
+    ) -> list[DiscoveredDocument]:
+        """Discover documents by scraping Special:ListFiles page.
 
         Fallback for older MediaWiki installations (< 1.17) that don't support
         the list=allimages API action.
         """
         from urllib.parse import unquote, urljoin
 
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
         seen_filenames: set[str] = set()
         seen_offsets: set[str] = set()
 
@@ -1305,24 +1305,24 @@ class MediaWikiAdapter(WikiAdapter):
                         img_path = img_match.group(1)
                         url = urljoin(base_url, img_path)
                     else:
-                        # Skip this artifact - we couldn't find the actual file URL
+                        # Skip this document - we couldn't find the actual file URL
                         # The File: prefix URL is just a description page, not the file
                         logger.debug(
-                            "Skipping artifact %s: could not find images/ URL",
+                            "Skipping document %s: could not find images/ URL",
                             filename,
                         )
                         continue
 
-                    artifact = DiscoveredArtifact(
+                    document = DiscoveredDocument(
                         filename=filename,
                         url=url,
                         artifact_type=self._get_artifact_type(filename),
                     )
-                    artifacts.append(artifact)
+                    documents.append(document)
 
                 batch += 1
                 if on_progress:
-                    on_progress(f"batch {batch}: {len(artifacts)} artifacts", None)
+                    on_progress(f"batch {batch}: {len(documents)} documents", None)
 
                 # Find all offset links and pick one we haven't visited
                 # Pattern: offset=TIMESTAMP (timestamps are numeric)
@@ -1344,11 +1344,11 @@ class MediaWikiAdapter(WikiAdapter):
                 logger.warning(f"Error scraping Special:ListFiles: {e}")
                 break
 
-        logger.debug(f"Discovered {len(artifacts)} artifacts via HTML scraping")
-        return artifacts
+        logger.debug(f"Discovered {len(documents)} documents via HTML scraping")
+        return documents
 
     def _get_artifact_type(self, filename: str, mime: str | None = None) -> str:
-        """Get artifact type from filename extension or MIME type."""
+        """Get document type from filename extension or MIME type."""
         filename_lower = filename.lower()
 
         if filename_lower.endswith(".pdf"):
@@ -1392,7 +1392,7 @@ class TWikiAdapter(WikiAdapter):
     bypass for sites behind corporate firewalls.
 
     Page discovery: WebTopicList page per web
-    Artifact discovery: /pub/<Web>/ directory listing
+    Document discovery: /pub/<Web>/ directory listing
     """
 
     site_type = "twiki"
@@ -1411,9 +1411,9 @@ class TWikiAdapter(WikiAdapter):
             webs: TWiki webs to discover (default: ["Main"])
             base_url: Base URL of TWiki installation (e.g. http://host/twiki)
             pub_path: Absolute path to TWiki pub/ directory on the server.
-                When set, artifact discovery uses fd over SSH to scan
+                When set, document discovery uses fd over SSH to scan
                 pub/<web>/ for files, which is instant and provides
-                inherent topic→artifact linkage from the directory structure.
+                inherent topic→document linkage from the directory structure.
         """
         self.ssh_host = ssh_host
         self.webs = webs or ["Main"]
@@ -1527,46 +1527,46 @@ class TWikiAdapter(WikiAdapter):
 
         return pages
 
-    def bulk_discover_artifacts(
+    def bulk_discover_documents(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts via fd scanning of the pub/ directory tree.
+    ) -> list[DiscoveredDocument]:
+        """Discover documents via fd scanning of the pub/ directory tree.
 
         When pub_path is configured, uses a single SSH call with fd to list
-        all artifact files across all webs. The directory structure
-        pub/<web>/<topic>/<filename> provides inherent topic→artifact linkage.
+        all document files across all webs. The directory structure
+        pub/<web>/<topic>/<filename> provides inherent topic→document linkage.
 
         Falls back to HTTP directory listing when pub_path is not available.
 
         Args:
             facility: Facility ID
-            base_url: TWiki base URL (used for building artifact URLs)
+            base_url: TWiki base URL (used for building document URLs)
             on_progress: Progress callback
 
         Returns:
-            List of discovered artifacts with page linkage
+            List of discovered documents with page linkage
         """
         if not self.ssh_host:
             logger.warning("TWiki adapter requires SSH host")
             return []
 
         if self._pub_path:
-            return self._discover_artifacts_via_fd(base_url, on_progress)
+            return self._discover_documents_via_fd(base_url, on_progress)
 
-        logger.info("No pub_path configured, skipping artifact discovery")
+        logger.info("No pub_path configured, skipping document discovery")
         return []
 
-    def _discover_artifacts_via_fd(
+    def _discover_documents_via_fd(
         self,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts by scanning the pub/ filesystem via fd over SSH.
+    ) -> list[DiscoveredDocument]:
+        """Discover documents by scanning the pub/ filesystem via fd over SSH.
 
-        Single SSH call using fd to find all artifact files. The TWiki pub/
+        Single SSH call using fd to find all document files. The TWiki pub/
         directory structure (pub/<web>/<topic>/<filename>) maps each file
         to its parent topic for page linkage.
 
@@ -1575,10 +1575,10 @@ class TWikiAdapter(WikiAdapter):
             on_progress: Progress callback
 
         Returns:
-            List of discovered artifacts with topic linkage
+            List of discovered documents with topic linkage
         """
         effective_url = (self._base_url or base_url).rstrip("/")
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
 
         for web in self.webs:
             web_pub_path = f"{self._pub_path}/{web}"
@@ -1589,7 +1589,7 @@ class TWikiAdapter(WikiAdapter):
                 on_progress(f"scanning {web_pub_path} via fd", None)
 
             logger.info(
-                "Running fd artifact scan: %s via %s", web_pub_path, self.ssh_host
+                "Running fd document scan: %s via %s", web_pub_path, self.ssh_host
             )
 
             try:
@@ -1630,24 +1630,24 @@ class TWikiAdapter(WikiAdapter):
                 # Build web-accessible URL: /twiki/pub/<web>/<topic>/<filename>
                 url_path = f"/twiki/pub/{web}/{rel_path}"
                 parsed = urllib.parse.urlparse(effective_url)
-                artifact_url = f"{parsed.scheme}://{parsed.netloc}{url_path}"
+                document_url = f"{parsed.scheme}://{parsed.netloc}{url_path}"
 
-                artifact = DiscoveredArtifact(
+                document = DiscoveredDocument(
                     filename=filename,
-                    url=artifact_url,
+                    url=document_url,
                     artifact_type=artifact_type,
                 )
-                artifact.linked_pages.append(f"{web}/{topic_name}")
-                artifacts.append(artifact)
+                document.linked_pages.append(f"{web}/{topic_name}")
+                documents.append(document)
 
             logger.info(
-                "fd scan complete for web '%s': %d artifacts", web, len(artifacts)
+                "fd scan complete for web '%s': %d documents", web, len(documents)
             )
 
         if on_progress:
-            on_progress(f"discovered {len(artifacts)} artifacts", None)
+            on_progress(f"discovered {len(documents)} documents", None)
 
-        return artifacts
+        return documents
 
 
 def _fetch_html_direct(url: str, timeout: float = 10.0) -> str | None:
@@ -1896,7 +1896,7 @@ class TWikiStaticAdapter(WikiAdapter):
     a complete manifest of all topics without requiring crawling.
 
     Page discovery: WebTopicList.html (bullet list of all topics)
-    Artifact discovery: Parse topic pages for linked files
+    Document discovery: Parse topic pages for linked files
     """
 
     site_type = "twiki_static"
@@ -1915,7 +1915,7 @@ class TWikiStaticAdapter(WikiAdapter):
             ssh_host: SSH host for proxied access (only used when access_method="vpn")
             access_method: "direct" (auth-protected) or "vpn" (requires proxy)
             pub_path: Absolute path to the static export's resource directory.
-                When set, artifact discovery uses fd over SSH instead of
+                When set, document discovery uses fd over SSH instead of
                 curl+rg page scraping.
         """
         self._base_url = base_url
@@ -2012,13 +2012,13 @@ class TWikiStaticAdapter(WikiAdapter):
 
         return pages
 
-    def bulk_discover_artifacts(
+    def bulk_discover_documents(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts by scanning topic pages for linked files.
+    ) -> list[DiscoveredDocument]:
+        """Discover documents by scanning topic pages for linked files.
 
         When SSH is available, uses a single SSH command with server-side
         curl + rg to scan all pages in one shot (seconds instead of minutes).
@@ -2030,7 +2030,7 @@ class TWikiStaticAdapter(WikiAdapter):
             on_progress: Progress callback (message, stats)
 
         Returns:
-            List of discovered artifacts
+            List of discovered documents
         """
         effective_base_url = (base_url or self._base_url or "").rstrip("/")
         if not effective_base_url:
@@ -2038,7 +2038,7 @@ class TWikiStaticAdapter(WikiAdapter):
 
         # Fastest path: fd scan of the resource directory on disk
         if self._pub_path and self._ssh_host:
-            return self._discover_artifacts_via_fd(effective_base_url, on_progress)
+            return self._discover_documents_via_fd(effective_base_url, on_progress)
 
         # Fast path: single SSH command with server-side curl + rg
         if self._ssh_host:
@@ -2049,7 +2049,7 @@ class TWikiStaticAdapter(WikiAdapter):
                 on_progress(
                     f"scanning {len(pages)} pages via SSH+rg (single connection)", None
                 )
-            return _discover_artifacts_via_ssh_rg(
+            return _discover_documents_via_ssh_rg(
                 pages, effective_base_url, self._ssh_host, on_progress
             )
 
@@ -2057,14 +2057,14 @@ class TWikiStaticAdapter(WikiAdapter):
         pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
         if not pages:
             return []
-        return self._discover_artifacts_per_page(pages, effective_base_url, on_progress)
+        return self._discover_documents_per_page(pages, effective_base_url, on_progress)
 
-    def _discover_artifacts_via_fd(
+    def _discover_documents_via_fd(
         self,
         effective_base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts by scanning the resource directory via fd over SSH.
+    ) -> list[DiscoveredDocument]:
+        """Discover documents by scanning the resource directory via fd over SSH.
 
         The static export stores resources in rsrc/<web>/<topic>/<filename>,
         which maps directly to topic linkage.
@@ -2074,7 +2074,7 @@ class TWikiStaticAdapter(WikiAdapter):
             on_progress: Progress callback
 
         Returns:
-            List of discovered artifacts with topic linkage
+            List of discovered documents with topic linkage
         """
         ext_args = " ".join(f"-e {ext.lstrip('.')}" for ext in _ARTIFACT_EXTENSIONS)
         cmd = f"fd {ext_args} . {shlex.quote(self._pub_path)}"
@@ -2083,7 +2083,7 @@ class TWikiStaticAdapter(WikiAdapter):
             on_progress(f"scanning {self._pub_path} via fd", None)
 
         logger.info(
-            "Running fd artifact scan: %s via %s", self._pub_path, self._ssh_host
+            "Running fd document scan: %s via %s", self._pub_path, self._ssh_host
         )
 
         try:
@@ -2106,7 +2106,7 @@ class TWikiStaticAdapter(WikiAdapter):
             return []
 
         output = result.stdout.decode("utf-8", errors="replace")
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
 
         for line in output.strip().split("\n"):
             if not line:
@@ -2125,38 +2125,38 @@ class TWikiStaticAdapter(WikiAdapter):
             artifact_type = _get_artifact_type_from_filename(filename)
 
             # Build web-accessible URL: base_url/rsrc/<rel_path>
-            artifact_url = f"{effective_base_url}/rsrc/{rel_path}"
+            document_url = f"{effective_base_url}/rsrc/{rel_path}"
 
-            artifact = DiscoveredArtifact(
+            document = DiscoveredDocument(
                 filename=filename,
-                url=artifact_url,
+                url=document_url,
                 artifact_type=artifact_type,
             )
-            artifact.linked_pages.append(topic_name)
-            artifacts.append(artifact)
+            document.linked_pages.append(topic_name)
+            documents.append(document)
 
         if on_progress:
-            on_progress(f"discovered {len(artifacts)} artifacts", None)
+            on_progress(f"discovered {len(documents)} documents", None)
 
         logger.info(
-            "fd scan complete: %d artifacts from %s", len(artifacts), self._pub_path
+            "fd scan complete: %d documents from %s", len(documents), self._pub_path
         )
-        return artifacts
+        return documents
 
-    def _discover_artifacts_per_page(
+    def _discover_documents_per_page(
         self,
         pages: list[DiscoveredPage],
         effective_base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Fallback: fetch each page individually to find artifact links."""
+    ) -> list[DiscoveredDocument]:
+        """Fallback: fetch each page individually to find document links."""
         from bs4 import BeautifulSoup
 
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
         seen_urls: set[str] = set()
 
         if on_progress:
-            on_progress(f"scanning {len(pages)} pages for artifacts", None)
+            on_progress(f"scanning {len(pages)} pages for documents", None)
 
         try:
             for i, page in enumerate(pages):
@@ -2179,51 +2179,51 @@ class TWikiStaticAdapter(WikiAdapter):
 
                     if any(href_lower.endswith(ext) for ext in _ARTIFACT_EXTENSIONS):
                         if href.startswith("http"):
-                            artifact_url = href
+                            document_url = href
                         elif href.startswith("/"):
-                            artifact_url = (
+                            document_url = (
                                 f"{effective_base_url.rsplit('/', 1)[0]}{href}"
                             )
                         else:
-                            artifact_url = f"{effective_base_url}/{href}"
+                            document_url = f"{effective_base_url}/{href}"
 
-                        if artifact_url in seen_urls:
+                        if document_url in seen_urls:
                             continue
-                        seen_urls.add(artifact_url)
+                        seen_urls.add(document_url)
 
-                        filename = artifact_url.split("/")[-1]
+                        filename = document_url.split("/")[-1]
                         artifact_type = self._get_artifact_type(filename)
 
-                        artifact = DiscoveredArtifact(
+                        document = DiscoveredDocument(
                             filename=filename,
-                            url=artifact_url,
+                            url=document_url,
                             artifact_type=artifact_type,
                         )
-                        artifact.linked_pages.append(page.name)
-                        artifacts.append(artifact)
+                        document.linked_pages.append(page.name)
+                        documents.append(document)
 
                 if on_progress and (i + 1) % 5 == 0:
                     on_progress(
                         f"scanned {i + 1}/{len(pages)} pages, "
-                        f"found {len(artifacts)} artifacts",
+                        f"found {len(documents)} documents",
                         None,
                     )
 
             if on_progress:
-                on_progress(f"discovered {len(artifacts)} artifacts", None)
+                on_progress(f"discovered {len(documents)} documents", None)
 
         except Exception as e:
-            logger.warning(f"Error during TWiki static artifact discovery: {e}")
+            logger.warning(f"Error during TWiki static document discovery: {e}")
 
-        return artifacts
+        return documents
 
     def _get_artifact_type(self, filename: str) -> str:
-        """Get artifact type from filename."""
+        """Get document type from filename."""
         return _get_artifact_type_from_filename(filename)
 
 
 # =============================================================================
-# Shared artifact discovery helpers
+# Shared document discovery helpers
 # =============================================================================
 
 _ARTIFACT_EXTENSIONS = (
@@ -2241,17 +2241,17 @@ _ARTIFACT_EXTENSIONS = (
 )
 
 
-def _discover_artifacts_via_ssh_rg(
+def _discover_documents_via_ssh_rg(
     pages: list[DiscoveredPage],
     base_url: str,
     ssh_host: str,
     on_progress: Callable[[str, Any], None] | None = None,
     timeout: int = 300,
-) -> list[DiscoveredArtifact]:
-    """Discover artifacts across all pages using a single SSH command.
+) -> list[DiscoveredDocument]:
+    """Discover documents across all pages using a single SSH command.
 
     Pipes page name/URL pairs into a server-side script that curls each
-    page locally (loopback — near-instant) and extracts artifact links
+    page locally (loopback — near-instant) and extracts document links
     via rg. This replaces N individual SSH+curl calls with 1 SSH call.
 
     Performance: ~5-10s for 272 pages vs ~5-15 minutes with per-page SSH.
@@ -2264,7 +2264,7 @@ def _discover_artifacts_via_ssh_rg(
         timeout: SSH command timeout in seconds
 
     Returns:
-        List of discovered artifacts with page linkage
+        List of discovered documents with page linkage
     """
     if not pages:
         return []
@@ -2281,8 +2281,8 @@ def _discover_artifacts_via_ssh_rg(
     page_input = "\n".join(page_lines)
 
     # Server-side script: read name/url pairs from stdin, curl each locally,
-    # extract artifact hrefs. rg is used for fast regex; grep -oP as fallback.
-    # Each match is prefixed with PAGE:name for page→artifact mapping.
+    # extract document hrefs. rg is used for fast regex; grep -oP as fallback.
+    # Each match is prefixed with PAGE:name for page→document mapping.
     remote_script = r"""
 while IFS=$'\t' read -r name url; do
   html=$(curl -sk --noproxy '*' --max-time 5 "$url" 2>/dev/null) || continue
@@ -2301,7 +2301,7 @@ done
     ssh_command = f"bash -c {shlex.quote(remote_script)}"
 
     logger.info(
-        "Running SSH+rg artifact scan: %d pages via %s", len(page_lines), ssh_host
+        "Running SSH+rg document scan: %d pages via %s", len(page_lines), ssh_host
     )
 
     try:
@@ -2313,21 +2313,21 @@ done
         )
     except subprocess.TimeoutExpired:
         logger.warning(
-            "SSH+rg artifact scan timed out after %ds for %s", timeout, ssh_host
+            "SSH+rg document scan timed out after %ds for %s", timeout, ssh_host
         )
         return []
     except Exception as e:
-        logger.warning("SSH+rg artifact scan failed: %s", e)
+        logger.warning("SSH+rg document scan failed: %s", e)
         return []
 
     if result.returncode not in (0, 1):  # rg returns 1 for no matches
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         if stderr:
-            logger.warning("SSH+rg artifact scan stderr: %s", stderr[:200])
+            logger.warning("SSH+rg document scan stderr: %s", stderr[:200])
 
     # Parse output: "PAGE:TopicName\thref="path/to/file.pdf""
     output = result.stdout.decode("utf-8", errors="replace")
-    artifacts: list[DiscoveredArtifact] = []
+    documents: list[DiscoveredDocument] = []
     seen_urls: set[str] = set()
     parsed_base = urllib.parse.urlparse(base_url)
 
@@ -2349,47 +2349,47 @@ done
 
         # Resolve to absolute URL
         if href_clean.startswith("http"):
-            artifact_url = href_clean
+            document_url = href_clean
         elif href_clean.startswith("/"):
-            artifact_url = f"{parsed_base.scheme}://{parsed_base.netloc}{href_clean}"
+            document_url = f"{parsed_base.scheme}://{parsed_base.netloc}{href_clean}"
         else:
-            artifact_url = f"{base_url}/{href_clean}"
+            document_url = f"{base_url}/{href_clean}"
 
-        if artifact_url in seen_urls:
-            # Still add page linkage to existing artifact
-            for a in artifacts:
-                if a.url == artifact_url and page_name not in a.linked_pages:
+        if document_url in seen_urls:
+            # Still add page linkage to existing document
+            for a in documents:
+                if a.url == document_url and page_name not in a.linked_pages:
                     a.linked_pages.append(page_name)
                     break
             continue
-        seen_urls.add(artifact_url)
+        seen_urls.add(document_url)
 
-        filename = artifact_url.split("/")[-1]
+        filename = document_url.split("/")[-1]
         artifact_type = _get_artifact_type_from_filename(filename)
 
-        artifact = DiscoveredArtifact(
+        document = DiscoveredDocument(
             filename=filename,
-            url=artifact_url,
+            url=document_url,
             artifact_type=artifact_type,
         )
-        artifact.linked_pages.append(page_name)
-        artifacts.append(artifact)
+        document.linked_pages.append(page_name)
+        documents.append(document)
 
     if on_progress:
-        on_progress(f"discovered {len(artifacts)} artifacts", None)
+        on_progress(f"discovered {len(documents)} documents", None)
 
     logger.info(
-        "SSH+rg artifact scan complete: %d artifacts from %d pages",
-        len(artifacts),
+        "SSH+rg document scan complete: %d documents from %d pages",
+        len(documents),
         len(page_lines),
     )
-    return artifacts
+    return documents
 
 
 def _get_artifact_type_from_filename(filename: str) -> str:
-    """Get artifact type from filename extension.
+    """Get document type from filename extension.
 
-    Shared utility for all adapters that discover artifacts.
+    Shared utility for all adapters that discover documents.
     Returns semantic type names matching ArtifactType enum values.
     """
     filename_lower = filename.lower()
@@ -2421,7 +2421,7 @@ class StaticHtmlAdapter(WikiAdapter):
     the server landing page).
 
     Page discovery: BFS crawl from portal page
-    Artifact discovery: Extract PDF/document links during crawl
+    Document discovery: Extract PDF/document links during crawl
     """
 
     site_type = "static_html"
@@ -2613,17 +2613,17 @@ class StaticHtmlAdapter(WikiAdapter):
         if on_progress:
             on_progress(f"discovered {len(pages)} pages", None)
 
-        # Cache for reuse in bulk_discover_artifacts (avoids re-crawling)
+        # Cache for reuse in bulk_discover_documents (avoids re-crawling)
         self._cached_pages = pages
         return pages
 
-    def bulk_discover_artifacts(
+    def bulk_discover_documents(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts by scanning discovered pages for file links.
+    ) -> list[DiscoveredDocument]:
+        """Discover documents by scanning discovered pages for file links.
 
         When SSH is available, uses a single SSH command with server-side
         curl + rg to scan all pages in one shot. Falls back to per-page
@@ -2635,7 +2635,7 @@ class StaticHtmlAdapter(WikiAdapter):
             on_progress: Progress callback (message, stats)
 
         Returns:
-            List of discovered artifacts
+            List of discovered documents
         """
         effective_base_url = (base_url or self._base_url or "").rstrip("/")
         if not effective_base_url:
@@ -2654,27 +2654,27 @@ class StaticHtmlAdapter(WikiAdapter):
                 on_progress(
                     f"scanning {len(pages)} pages via SSH+rg (single connection)", None
                 )
-            return _discover_artifacts_via_ssh_rg(
+            return _discover_documents_via_ssh_rg(
                 pages, effective_base_url, self._ssh_host, on_progress
             )
 
         # Slow fallback: per-page HTTP fetch (no SSH available)
-        return self._discover_artifacts_per_page(pages, effective_base_url, on_progress)
+        return self._discover_documents_per_page(pages, effective_base_url, on_progress)
 
-    def _discover_artifacts_per_page(
+    def _discover_documents_per_page(
         self,
         pages: list[DiscoveredPage],
         effective_base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Fallback: fetch each page individually to find artifact links."""
+    ) -> list[DiscoveredDocument]:
+        """Fallback: fetch each page individually to find document links."""
         from bs4 import BeautifulSoup
 
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
         seen_urls: set[str] = set()
 
         if on_progress:
-            on_progress(f"scanning {len(pages)} pages for artifacts", None)
+            on_progress(f"scanning {len(pages)} pages for documents", None)
 
         try:
             for i, page in enumerate(pages):
@@ -2697,51 +2697,51 @@ class StaticHtmlAdapter(WikiAdapter):
 
                     if any(href_lower.endswith(ext) for ext in _ARTIFACT_EXTENSIONS):
                         if href.startswith("http"):
-                            artifact_url = href
+                            document_url = href
                         elif href.startswith("/"):
                             parsed_base = urllib.parse.urlparse(effective_base_url)
-                            artifact_url = (
+                            document_url = (
                                 f"{parsed_base.scheme}://{parsed_base.netloc}{href}"
                             )
                         else:
-                            artifact_url = urllib.parse.urljoin(page.url, href)
+                            document_url = urllib.parse.urljoin(page.url, href)
 
-                        if artifact_url in seen_urls:
+                        if document_url in seen_urls:
                             continue
-                        seen_urls.add(artifact_url)
+                        seen_urls.add(document_url)
 
-                        filename = artifact_url.split("/")[-1]
+                        filename = document_url.split("/")[-1]
                         artifact_type = _get_artifact_type_from_filename(filename)
 
-                        artifact = DiscoveredArtifact(
+                        document = DiscoveredDocument(
                             filename=filename,
-                            url=artifact_url,
+                            url=document_url,
                             artifact_type=artifact_type,
                         )
-                        artifact.linked_pages.append(page.name)
-                        artifacts.append(artifact)
+                        document.linked_pages.append(page.name)
+                        documents.append(document)
 
                 if on_progress and (i + 1) % 5 == 0:
                     on_progress(
                         f"scanned {i + 1}/{len(pages)} pages, "
-                        f"found {len(artifacts)} artifacts",
+                        f"found {len(documents)} documents",
                         None,
                     )
 
             if on_progress:
-                on_progress(f"discovered {len(artifacts)} artifacts", None)
+                on_progress(f"discovered {len(documents)} documents", None)
 
         except Exception as e:
-            logger.warning(f"Error during static HTML artifact discovery: {e}")
+            logger.warning(f"Error during static HTML document discovery: {e}")
 
-        return artifacts
+        return documents
 
 
 class ConfluenceAdapter(WikiAdapter):
     """Adapter for Confluence sites.
 
     Page discovery: GET /rest/api/content?spaceKey=X
-    Artifact discovery: GET /rest/api/content/{pageId}/child/attachment
+    Document discovery: GET /rest/api/content/{pageId}/child/attachment
     """
 
     site_type = "confluence"
@@ -2909,12 +2909,12 @@ class ConfluenceAdapter(WikiAdapter):
 
         return None
 
-    def bulk_discover_artifacts(
+    def bulk_discover_documents(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
+    ) -> list[DiscoveredDocument]:
         """Discover all attachments via Confluence REST API.
 
         Iterates through all pages and fetches attachments for each
@@ -2926,7 +2926,7 @@ class ConfluenceAdapter(WikiAdapter):
             on_progress: Progress callback
 
         Returns:
-            List of discovered artifacts
+            List of discovered documents
         """
         # Step 1: Get all page IDs (reuse _fetch_page_batch)
         api_url = f"{base_url}/rest/api/content"
@@ -2954,13 +2954,13 @@ class ConfluenceAdapter(WikiAdapter):
             start += limit
 
         if not page_ids:
-            logger.info("No pages found for Confluence artifact discovery")
+            logger.info("No pages found for Confluence document discovery")
             return []
 
         logger.info("Scanning %d pages for attachments in %s", len(page_ids), base_url)
 
         # Step 2: Fetch attachments for each page
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
         seen_urls: set[str] = set()
 
         for i, (page_id, title) in enumerate(page_ids):
@@ -2977,46 +2977,46 @@ class ConfluenceAdapter(WikiAdapter):
                 if not download:
                     continue
 
-                artifact_url = f"{base_url}{download}"
-                if artifact_url in seen_urls:
-                    # Add page linkage to existing artifact
-                    for a in artifacts:
-                        if a.url == artifact_url and title not in a.linked_pages:
+                document_url = f"{base_url}{download}"
+                if document_url in seen_urls:
+                    # Add page linkage to existing document
+                    for a in documents:
+                        if a.url == document_url and title not in a.linked_pages:
                             a.linked_pages.append(title)
                             break
                     continue
-                seen_urls.add(artifact_url)
+                seen_urls.add(document_url)
 
                 media_type = att.get("metadata", {}).get("mediaType", "")
                 size = att.get("extensions", {}).get("fileSize", 0)
                 artifact_type = _get_artifact_type_from_filename(att_title)
 
-                artifact = DiscoveredArtifact(
+                document = DiscoveredDocument(
                     filename=att_title,
-                    url=artifact_url,
+                    url=document_url,
                     artifact_type=artifact_type,
                     size_bytes=size if size else None,
                     mime_type=media_type if media_type else None,
                 )
-                artifact.linked_pages.append(title)
-                artifacts.append(artifact)
+                document.linked_pages.append(title)
+                documents.append(document)
 
             if on_progress and (i + 1) % 50 == 0:
                 on_progress(
                     f"scanned {i + 1}/{len(page_ids)} pages, "
-                    f"found {len(artifacts)} attachments",
+                    f"found {len(documents)} attachments",
                     None,
                 )
 
         if on_progress:
-            on_progress(f"discovered {len(artifacts)} attachments", None)
+            on_progress(f"discovered {len(documents)} attachments", None)
 
         logger.info(
-            "Confluence attachment discovery: %d artifacts from %d pages",
-            len(artifacts),
+            "Confluence attachment discovery: %d documents from %d pages",
+            len(documents),
             len(page_ids),
         )
-        return artifacts
+        return documents
 
 
 class TWikiRawAdapter(WikiAdapter):
@@ -3027,7 +3027,7 @@ class TWikiRawAdapter(WikiAdapter):
     common for TWiki "webs" that were never exported to static HTML.
 
     Page discovery: List *.txt files in data/<web>/ directory via SSH
-    Artifact discovery: List files in pub/<web>/ directory via SSH
+    Document discovery: List files in pub/<web>/ directory via SSH
     """
 
     site_type = "twiki_raw"
@@ -3045,7 +3045,7 @@ class TWikiRawAdapter(WikiAdapter):
         Args:
             ssh_host: SSH host for filesystem access
             data_path: Absolute path to TWiki data/<web>/ directory
-            pub_path: Absolute path to TWiki pub/<web>/ directory (for artifacts)
+            pub_path: Absolute path to TWiki pub/<web>/ directory (for documents)
             web_name: TWiki web name (e.g., "Main", "Code")
             exclude_patterns: Regex patterns for topic names to skip.
                 Defaults to excluding system pages, watchlists, and TWiki internals.
@@ -3142,16 +3142,16 @@ class TWikiRawAdapter(WikiAdapter):
         )
         return pages
 
-    def bulk_discover_artifacts(
+    def bulk_discover_documents(
         self,
         facility: str,
         base_url: str,
         on_progress: Callable[[str, Any], None] | None = None,
-    ) -> list[DiscoveredArtifact]:
-        """Discover artifacts by listing pub directory via SSH.
+    ) -> list[DiscoveredDocument]:
+        """Discover documents by listing pub directory via SSH.
 
         TWiki stores attachments in pub/<web>/<topic>/<filename>.
-        Scans the pub directory tree for common artifact types.
+        Scans the pub directory tree for common document types.
 
         Args:
             facility: Facility ID
@@ -3159,15 +3159,15 @@ class TWikiRawAdapter(WikiAdapter):
             on_progress: Progress callback
 
         Returns:
-            List of discovered artifacts
+            List of discovered documents
         """
         if not self._pub_path:
             logger.info(
-                "No pub_path configured for TWiki raw adapter, skipping artifacts"
+                "No pub_path configured for TWiki raw adapter, skipping documents"
             )
             return []
 
-        artifact_extensions = (
+        document_extensions = (
             ".pdf",
             ".doc",
             ".docx",
@@ -3188,11 +3188,11 @@ class TWikiRawAdapter(WikiAdapter):
         )
 
         if on_progress:
-            on_progress(f"scanning {self._pub_path} for artifacts via SSH", None)
+            on_progress(f"scanning {self._pub_path} for documents via SSH", None)
 
         try:
             # Use find to list all files in the pub directory
-            ext_args = " -o ".join(f'-name "*{ext}"' for ext in artifact_extensions)
+            ext_args = " -o ".join(f'-name "*{ext}"' for ext in document_extensions)
             cmd = f"find {self._pub_path} -type f \\( {ext_args} \\) 2>/dev/null"
             result = subprocess.run(
                 ["ssh", "-o", "ClearAllForwardings=yes", self._ssh_host, cmd],
@@ -3213,7 +3213,7 @@ class TWikiRawAdapter(WikiAdapter):
             logger.warning("Error scanning pub dir: %s", e)
             return []
 
-        artifacts: list[DiscoveredArtifact] = []
+        documents: list[DiscoveredDocument] = []
         for filepath in files:
             filename = filepath.rsplit("/", 1)[-1]
             artifact_type = _get_artifact_type_from_filename(filename)
@@ -3222,19 +3222,19 @@ class TWikiRawAdapter(WikiAdapter):
             parts = filepath.replace(self._pub_path + "/", "").split("/")
             topic_name = parts[0] if len(parts) > 1 else ""
 
-            artifact = DiscoveredArtifact(
+            document = DiscoveredDocument(
                 filename=filename,
                 url=f"ssh://{self._ssh_host}{filepath}",
                 artifact_type=artifact_type,
             )
             if topic_name:
-                artifact.linked_pages.append(topic_name)
-            artifacts.append(artifact)
+                document.linked_pages.append(topic_name)
+            documents.append(document)
 
         if on_progress:
-            on_progress(f"discovered {len(artifacts)} artifacts", None)
+            on_progress(f"discovered {len(documents)} documents", None)
 
-        return artifacts
+        return documents
 
 
 def fetch_twiki_raw_content(ssh_host: str, filepath: str) -> str | None:

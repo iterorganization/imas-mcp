@@ -210,9 +210,9 @@ def _search_docs(
     gc: GraphClient | None = None,
     encoder: Encoder | None = None,
 ) -> str:
-    """Search documentation (wiki, artifacts, images) with enrichment.
+    """Search documentation (wiki, documents, images) with enrichment.
 
-    Performs vector search across wiki chunks, artifacts, and images,
+    Performs vector search across wiki chunks, documents, and images,
     enriches with cross-links to signals, tree nodes, and IMAS paths.
     """
     try:
@@ -235,13 +235,13 @@ def _search_docs(
         # Step 1: Vector search on wiki chunks
         chunk_ids, scores = _vector_search_wiki_chunks(gc, embedding, facility, k)
 
-        # Step 2: Vector search on artifacts/images
-        artifact_results, artifact_scores = _vector_search_artifacts(
+        # Step 2: Vector search on documents/images
+        document_results, document_scores = _vector_search_documents(
             gc, embedding, facility, k
         )
-        scores.update(artifact_scores)
+        scores.update(document_scores)
 
-        if not chunk_ids and not artifact_results:
+        if not chunk_ids and not document_results:
             return (
                 f"No documentation found for '{query}' at {facility}. "
                 "Try search_signals() or search_code() instead."
@@ -253,7 +253,7 @@ def _search_docs(
             enriched_chunks = _enrich_wiki_chunks(gc, chunk_ids)
 
         # Step 4: Format
-        return format_docs_report(enriched_chunks, artifact_results, scores)
+        return format_docs_report(enriched_chunks, document_results, scores)
 
     except ServiceUnavailable:
         return NEO4J_NOT_RUNNING_MSG
@@ -303,33 +303,33 @@ def _enrich_wiki_chunks(
     return gc.query(cypher, chunk_ids=chunk_ids)
 
 
-def _vector_search_artifacts(
+def _vector_search_documents(
     gc: GraphClient,
     embedding: list[float],
     facility: str,
     k: int,
 ) -> tuple[list[dict[str, Any]], dict[str, float]]:
-    """Vector search on wiki_artifact_desc_embedding and image_desc_embedding."""
-    results: list[dict[str, Any]] = []
+    """Vector search on wiki_document_desc_embedding and image_desc_embedding."""
+    results: list[dict[str, Any]] = {}
     scores: dict[str, float] = {}
 
-    # Search artifacts
+    # Search documents
     try:
-        artifact_cypher = (
-            'CALL db.index.vector.queryNodes("wiki_artifact_desc_embedding", $k, $embedding) '
+        document_cypher = (
+            'CALL db.index.vector.queryNodes("wiki_document_desc_embedding", $k, $embedding) '
             "YIELD node AS a, score "
             "WHERE (a)-[:AT_FACILITY]->(:Facility {id: $facility}) "
-            "OPTIONAL MATCH (p:WikiPage)-[:HAS_ARTIFACT]->(a) "
+            "OPTIONAL MATCH (p:WikiPage)-[:HAS_DOCUMENT]->(a) "
             "RETURN a.id AS id, a.title AS title, a.description AS description, "
             "a.url AS url, p.title AS page_title, score "
             "ORDER BY score DESC"
         )
-        arts = gc.query(artifact_cypher, k=k, embedding=embedding, facility=facility)
+        arts = gc.query(document_cypher, k=k, embedding=embedding, facility=facility)
         for a in arts:
             scores[a["id"]] = round(a["score"], 3)
             results.append(a)
     except Exception:
-        logger.debug("wiki_artifact_desc_embedding index not available", exc_info=True)
+        logger.debug("wiki_document_desc_embedding index not available", exc_info=True)
 
     # Search images
     try:
@@ -369,7 +369,7 @@ def _fetch(
 
     Supported node types (resolved in order):
     - WikiPage: all chunks in reading order
-    - WikiArtifact: all parsed document chunks
+    - WikiDocument: all parsed document chunks
     - CodeFile: all code chunks with function names
     - Image: description, OCR text, and source URL
 
@@ -390,7 +390,7 @@ def _fetch(
         # Try each node type in order until we find a match
         for resolver in [
             _fetch_wiki_page,
-            _fetch_wiki_artifact,
+            _fetch_wiki_document,
             _fetch_code_file,
             _fetch_image,
         ]:
@@ -430,14 +430,14 @@ def _fetch_wiki_page(gc: GraphClient, resource: str) -> str | None:
     return format_fetch_report(chunks)
 
 
-def _fetch_wiki_artifact(gc: GraphClient, resource: str) -> str | None:
-    """Resolve and fetch a WikiArtifact by ID, URL, or filename."""
+def _fetch_wiki_document(gc: GraphClient, resource: str) -> str | None:
+    """Resolve and fetch a WikiDocument by ID, URL, or filename."""
     chunks = gc.query(
-        "MATCH (a:WikiArtifact)-[:HAS_CHUNK]->(c:WikiChunk) "
+        "MATCH (a:WikiDocument)-[:HAS_CHUNK]->(c:WikiChunk) "
         "WHERE a.id = $resource OR a.url = $resource "
         "   OR toLower(a.filename) CONTAINS toLower($resource) "
         "   OR toLower(a.title) CONTAINS toLower($resource) "
-        "RETURN 'artifact' AS source_type, "
+        "RETURN 'document' AS source_type, "
         "a.title AS title, a.url AS url, a.id AS source_id, "
         "c.section AS section, c.text AS text, "
         "c.chunk_index AS chunk_index, "
@@ -476,7 +476,7 @@ def _fetch_image(gc: GraphClient, resource: str) -> str | None:
         "MATCH (img:Image) "
         "WHERE img.id = $resource OR img.source_url = $resource "
         "OPTIONAL MATCH (p)-[:HAS_IMAGE]->(img) "
-        "WHERE p:WikiPage OR p:WikiArtifact "
+        "WHERE p:WikiPage OR p:WikiDocument "
         "RETURN 'image' AS source_type, "
         "coalesce(img.description, img.alt_text, img.filename, 'Untitled') AS title, "
         "img.source_url AS url, img.id AS source_id, "

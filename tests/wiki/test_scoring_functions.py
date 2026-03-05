@@ -17,7 +17,7 @@ import pytest
 
 
 class TestExtractTextFromBytes:
-    """Tests for _extract_text_from_bytes — artifact text extraction."""
+    """Tests for _extract_text_from_bytes — document text extraction."""
 
     def _extract(self, content: bytes, artifact_type: str) -> str:
         from imas_codex.discovery.wiki.scoring import _extract_text_from_bytes
@@ -75,7 +75,7 @@ class TestExtractTextFromBytes:
         assert result == ""
 
     def test_unknown_type_returns_empty(self):
-        """Unknown artifact types should return empty string."""
+        """Unknown document types should return empty string."""
         result = self._extract(b"some bytes", "unknown_type")
         assert result == ""
 

@@ -1,11 +1,11 @@
-"""Tests for StaticHtmlAdapter artifact discovery and shared utilities."""
+"""Tests for StaticHtmlAdapter document discovery and shared utilities."""
 
 from unittest.mock import patch
 
 import pytest
 
 from imas_codex.discovery.wiki.adapters import (
-    DiscoveredArtifact,
+    DiscoveredDocument,
     DiscoveredPage,
     StaticHtmlAdapter,
     _get_artifact_type_from_filename,
@@ -46,11 +46,11 @@ class TestGetArtifactTypeFromFilename:
 
 
 # ---------------------------------------------------------------------------
-# StaticHtmlAdapter.bulk_discover_artifacts
+# StaticHtmlAdapter.bulk_discover_documents
 # ---------------------------------------------------------------------------
 
 
-class TestStaticHtmlAdapterArtifactDiscovery:
+class TestStaticHtmlAdapterDocumentDiscovery:
     def _make_adapter(self, **kwargs):
         return StaticHtmlAdapter(
             base_url="https://example.org/docs",
@@ -58,8 +58,8 @@ class TestStaticHtmlAdapterArtifactDiscovery:
         )
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
-    def test_discovers_artifacts_from_pages(self, mock_fetch):
-        """Artifacts linked from discovered pages are collected."""
+    def test_discovers_documents_from_pages(self, mock_fetch):
+        """Documents linked from discovered pages are collected."""
         adapter = self._make_adapter()
 
         # Mock bulk_discover_pages to return 2 pages
@@ -75,20 +75,20 @@ class TestStaticHtmlAdapterArtifactDiscovery:
                 '<html><a href="/docs/data/results.xlsx">Results</a></html>',
             ]
 
-            artifacts = adapter.bulk_discover_artifacts(
+            documents = adapter.bulk_discover_documents(
                 "test", "https://example.org/docs"
             )
 
-        assert len(artifacts) == 2
-        assert isinstance(artifacts[0], DiscoveredArtifact)
+        assert len(documents) == 2
+        assert isinstance(documents[0], DiscoveredDocument)
 
-        filenames = {a.filename for a in artifacts}
+        filenames = {a.filename for a in documents}
         assert "manual.pdf" in filenames
         assert "results.xlsx" in filenames
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
-    def test_deduplicates_artifacts(self, mock_fetch):
-        """Same artifact linked from multiple pages is only counted once."""
+    def test_deduplicates_documents(self, mock_fetch):
+        """Same document linked from multiple pages is only counted once."""
         adapter = self._make_adapter()
 
         with patch.object(adapter, "bulk_discover_pages") as mock_pages:
@@ -103,16 +103,16 @@ class TestStaticHtmlAdapterArtifactDiscovery:
                 '<html><a href="shared.pdf">PDF</a></html>',
             ]
 
-            artifacts = adapter.bulk_discover_artifacts(
+            documents = adapter.bulk_discover_documents(
                 "test", "https://example.org/docs"
             )
 
         # Should deduplicate — same resolved URL
-        assert len(artifacts) == 1
-        assert artifacts[0].filename == "shared.pdf"
+        assert len(documents) == 1
+        assert documents[0].filename == "shared.pdf"
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
-    def test_ignores_non_artifact_links(self, mock_fetch):
+    def test_ignores_non_document_links(self, mock_fetch):
         """Links to HTML pages and images are ignored."""
         adapter = self._make_adapter()
 
@@ -130,12 +130,12 @@ class TestStaticHtmlAdapterArtifactDiscovery:
             </html>
             """
 
-            artifacts = adapter.bulk_discover_artifacts(
+            documents = adapter.bulk_discover_documents(
                 "test", "https://example.org/docs"
             )
 
-        assert len(artifacts) == 1
-        assert artifacts[0].filename == "actual.pdf"
+        assert len(documents) == 1
+        assert documents[0].filename == "actual.pdf"
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
     def test_resolves_relative_urls(self, mock_fetch):
@@ -154,12 +154,12 @@ class TestStaticHtmlAdapterArtifactDiscovery:
                 '<html><a href="../files/report.pdf">Report</a></html>'
             )
 
-            artifacts = adapter.bulk_discover_artifacts(
+            documents = adapter.bulk_discover_documents(
                 "test", "https://example.org/docs"
             )
 
-        assert len(artifacts) == 1
-        assert artifacts[0].url == "https://example.org/docs/files/report.pdf"
+        assert len(documents) == 1
+        assert documents[0].url == "https://example.org/docs/files/report.pdf"
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
     def test_resolves_absolute_path_urls(self, mock_fetch):
@@ -175,17 +175,17 @@ class TestStaticHtmlAdapterArtifactDiscovery:
                 '<html><a href="/downloads/data.xlsx">Data</a></html>'
             )
 
-            artifacts = adapter.bulk_discover_artifacts(
+            documents = adapter.bulk_discover_documents(
                 "test", "https://example.org/docs"
             )
 
-        assert len(artifacts) == 1
-        assert artifacts[0].url == "https://example.org/downloads/data.xlsx"
+        assert len(documents) == 1
+        assert documents[0].url == "https://example.org/downloads/data.xlsx"
 
     def test_no_base_url_returns_empty(self):
         """No base URL configured returns empty list."""
         adapter = StaticHtmlAdapter()
-        assert adapter.bulk_discover_artifacts("test", "") == []
+        assert adapter.bulk_discover_documents("test", "") == []
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
     def test_unreachable_pages_skipped(self, mock_fetch):
@@ -204,12 +204,12 @@ class TestStaticHtmlAdapterArtifactDiscovery:
                 None,
             ]
 
-            artifacts = adapter.bulk_discover_artifacts(
+            documents = adapter.bulk_discover_documents(
                 "test", "https://example.org/docs"
             )
 
-        assert len(artifacts) == 1
-        assert artifacts[0].filename == "file.pdf"
+        assert len(documents) == 1
+        assert documents[0].filename == "file.pdf"
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
     def test_progress_callback(self, mock_fetch):
@@ -223,7 +223,7 @@ class TestStaticHtmlAdapterArtifactDiscovery:
             ]
             mock_fetch.return_value = '<html><a href="f.pdf">F</a></html>'
 
-            adapter.bulk_discover_artifacts(
+            adapter.bulk_discover_documents(
                 "test",
                 "https://example.org/docs",
                 on_progress=lambda msg, _: progress_msgs.append(msg),
@@ -235,7 +235,7 @@ class TestStaticHtmlAdapterArtifactDiscovery:
 
     @patch("imas_codex.discovery.wiki.adapters._fetch_html")
     def test_artifact_type_mapping(self, mock_fetch):
-        """All supported artifact types are correctly identified."""
+        """All supported document types are correctly identified."""
         adapter = self._make_adapter()
 
         with patch.object(adapter, "bulk_discover_pages") as mock_pages:
@@ -254,11 +254,11 @@ class TestStaticHtmlAdapterArtifactDiscovery:
             </html>
             """
 
-            artifacts = adapter.bulk_discover_artifacts(
+            documents = adapter.bulk_discover_documents(
                 "test", "https://example.org/docs"
             )
 
-        type_map = {a.filename: a.artifact_type for a in artifacts}
+        type_map = {a.filename: a.artifact_type for a in documents}
         assert type_map["a.pdf"] == "pdf"
         assert type_map["b.docx"] == "document"
         assert type_map["c.pptx"] == "presentation"
