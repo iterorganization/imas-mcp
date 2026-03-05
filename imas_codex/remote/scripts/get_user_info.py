@@ -58,7 +58,8 @@ def get_user_via_getent(username: str) -> Optional[Dict[str, Any]]:
     try:
         proc = subprocess.run(
             ["getent", "passwd", username],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             timeout=5,
         )
@@ -102,7 +103,8 @@ def get_user_via_id(username: str) -> Optional[Dict[str, Any]]:
     try:
         proc = subprocess.run(
             ["id", username],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             timeout=5,
         )

@@ -136,7 +136,8 @@ def count_pattern_matches(path: str, pattern: str, timeout: int = 30) -> int:
     try:
         proc = subprocess.run(
             ["rg", "-c", "--no-messages", "--max-depth", "1", "-e", pattern, path],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             timeout=timeout,
         )
@@ -224,7 +225,8 @@ def enrich_directory(
         try:
             proc = subprocess.run(
                 ["find", path, "-maxdepth", "1", "-type", "f", "-printf", "%s\n"],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 timeout=du_timeout,
             )
@@ -307,7 +309,8 @@ def enrich_directory(
             try:
                 proc = subprocess.run(
                     ["tokei", "-o", "json"] + current_files,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                     timeout=tokei_timeout,
                 )

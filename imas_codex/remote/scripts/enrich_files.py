@@ -47,7 +47,8 @@ def count_lines(path: str) -> int:
     try:
         result = subprocess.run(
             ["wc", "-l", path],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             timeout=5,
         )
@@ -90,7 +91,8 @@ def run_rg_on_file(pattern: str, path: str) -> int:
     try:
         result = subprocess.run(
             ["rg", "-c", "--no-filename", pattern, path],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             timeout=10,
         )
@@ -123,7 +125,12 @@ def enrich_file(path: str, pattern_categories: Dict[str, str]) -> Dict[str, Any]
 
     # Pattern matching — batch all categories via single rg call where possible
     # For accuracy, run per-category to get per-category counts
-    has_rg = subprocess.run(["which", "rg"], capture_output=True).returncode == 0
+    has_rg = (
+        subprocess.run(
+            ["which", "rg"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ).returncode
+        == 0
+    )
 
     if has_rg and pattern_categories:
         total = 0
