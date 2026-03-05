@@ -272,7 +272,7 @@ async def triage_worker(
 
         try:
             triage_user_prompt = _build_triage_user_prompt(file_groups)
-            triage_parsed, triage_cost, _ = await asyncio.to_thread(
+            triage_raw, triage_cost, _ = await asyncio.to_thread(
                 call_llm_structured,
                 model=model,
                 messages=[
@@ -282,6 +282,8 @@ async def triage_worker(
                 response_model=FileTriageBatch,
                 temperature=0.1,
             )
+            assert isinstance(triage_raw, FileTriageBatch)
+            triage_parsed = triage_raw
             state.triage_stats.cost += triage_cost
 
             triage_applied = await asyncio.to_thread(
@@ -293,10 +295,36 @@ async def triage_worker(
             state.triage_stats.processed += triaged + skipped
 
             if on_progress:
+                # Stream per-file triage results with scores and descriptions
+                triage_results = []
+                for r in triage_parsed.results:
+                    composite = r.triage_composite
+                    # Find top dimension
+                    dim_scores = {
+                        "modeling": r.score_modeling_code,
+                        "analysis": r.score_analysis_code,
+                        "operations": r.score_operations_code,
+                        "data_access": r.score_data_access,
+                        "workflow": r.score_workflow,
+                        "visualization": r.score_visualization,
+                        "documentation": r.score_documentation,
+                        "imas": r.score_imas,
+                        "convention": r.score_convention,
+                    }
+                    top_dim = max(dim_scores, key=lambda k: dim_scores[k])
+                    triage_results.append(
+                        {
+                            "path": r.path,
+                            "score": round(composite, 3),
+                            "description": r.description,
+                            "category": top_dim,
+                            "skipped": composite < 0.75,
+                        }
+                    )
                 on_progress(
                     f"triaged {triaged}, skipped {skipped} (${triage_cost:.3f})",
                     state.triage_stats,
-                    None,
+                    triage_results,
                 )
 
             # Release claims (apply_triage_results already clears claimed_at
@@ -402,7 +430,7 @@ async def score_worker(
 
         try:
             score_user_prompt = _build_score_user_prompt(file_groups)
-            parsed, cost, _tokens = await asyncio.to_thread(
+            parsed_raw, cost, _tokens = await asyncio.to_thread(
                 call_llm_structured,
                 model=model,
                 messages=[
@@ -412,6 +440,8 @@ async def score_worker(
                 response_model=FileScoreBatch,
                 temperature=0.1,
             )
+            assert isinstance(parsed_raw, FileScoreBatch)
+            parsed = parsed_raw
             state.score_stats.cost += cost
 
             result = await asyncio.to_thread(
@@ -424,10 +454,22 @@ async def score_worker(
             await asyncio.to_thread(release_file_score_claims, batch_ids)
 
             if on_progress:
+                # Stream per-file score results with composite, category, description
+                score_results = []
+                for r in parsed.results:
+                    score_results.append(
+                        {
+                            "path": r.path,
+                            "score": round(r.score_composite, 3),
+                            "category": r.file_category,
+                            "description": r.description,
+                            "skipped": r.skip,
+                        }
+                    )
                 on_progress(
                     f"scored {result.get('scored', 0)}, skipped {result.get('skipped', 0)} (${cost:.3f})",
                     state.score_stats,
-                    None,
+                    score_results,
                 )
 
         except Exception as e:
@@ -677,17 +719,28 @@ async def enrich_worker(
             await asyncio.to_thread(release_file_enrich_claims, batch_ids)
 
             if on_progress:
-                # Stream all enriched files (with and without patterns)
-                on_progress(
-                    f"enriched {enriched}",
-                    state.enrich_stats,
-                    [
+                # Stream enriched files with line count + pattern categories
+                enrich_results = []
+                for r in results:
+                    cats = r.get("pattern_categories", {})
+                    # Find top pattern categories by count
+                    top_cats = (
+                        sorted(cats.items(), key=lambda x: x[1], reverse=True)[:4]
+                        if cats
+                        else []
+                    )
+                    enrich_results.append(
                         {
                             "path": r["path"],
                             "patterns": r.get("total_pattern_matches", 0),
+                            "line_count": r.get("line_count", 0),
+                            "pattern_categories": dict(top_cats),
                         }
-                        for r in results
-                    ],
+                    )
+                on_progress(
+                    f"enriched {enriched}",
+                    state.enrich_stats,
+                    enrich_results,
                 )
 
         except Exception as e:

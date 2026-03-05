@@ -413,6 +413,7 @@ def claim_files_for_scoring(
                    sf.pattern_categories AS pattern_categories_json,
                    sf.total_pattern_matches AS total_pattern_matches,
                    sf.line_count AS line_count,
+                   sf.preview_text AS preview_text,
                    p.id AS parent_path_id, p.path AS parent_path,
                    p.description AS parent_description
             """,

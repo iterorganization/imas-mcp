@@ -96,8 +96,9 @@ def persist_file_enrichment(
 ) -> int:
     """Write enrichment results to CodeFile nodes in the graph.
 
-    NOTE: preview_text is intentionally NOT persisted — it's only used
-    by the score worker in memory to provide content context.
+    Persists pattern matches, line count, and preview text (head of file).
+    Preview text is used by the score worker to provide content context
+    in the scoring prompt.
 
     Args:
         results: List of enrichment result dicts from enrich_files()
@@ -114,15 +115,17 @@ def persist_file_enrichment(
         if r.get("error"):
             continue
 
-        items.append(
-            {
-                "id": sf_id,
-                "is_enriched": True,
-                "pattern_categories": json.dumps(r.get("pattern_categories", {})),
-                "total_pattern_matches": r.get("total_pattern_matches", 0),
-                "line_count": r.get("line_count", 0),
-            }
-        )
+        item = {
+            "id": sf_id,
+            "is_enriched": True,
+            "pattern_categories": json.dumps(r.get("pattern_categories", {})),
+            "total_pattern_matches": r.get("total_pattern_matches", 0),
+            "line_count": r.get("line_count", 0),
+        }
+        preview = r.get("preview_text", "")
+        if preview:
+            item["preview_text"] = preview[:2000]
+        items.append(item)
 
     if not items:
         return 0
@@ -136,7 +139,8 @@ def persist_file_enrichment(
                 sf.enriched_at = datetime(),
                 sf.pattern_categories = item.pattern_categories,
                 sf.total_pattern_matches = item.total_pattern_matches,
-                sf.line_count = item.line_count
+                sf.line_count = item.line_count,
+                sf.preview_text = item.preview_text
             """,
             items=items,
         )

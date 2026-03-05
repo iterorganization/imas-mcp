@@ -46,6 +46,18 @@ logger = logging.getLogger(__name__)
     help="Number of parallel scan workers (default: 2)",
 )
 @click.option(
+    "--triage-workers",
+    type=int,
+    default=2,
+    help="Number of parallel triage workers (default: 2)",
+)
+@click.option(
+    "--enrich-workers",
+    type=int,
+    default=2,
+    help="Number of parallel enrich workers (default: 2)",
+)
+@click.option(
     "--score-workers",
     type=int,
     default=1,
@@ -88,6 +100,8 @@ def code(
     focus: str | None,
     cost_limit: float,
     scan_workers: int,
+    triage_workers: int,
+    enrich_workers: int,
     score_workers: int,
     code_workers: int,
     scan_only: bool,
@@ -218,6 +232,8 @@ def code(
                     max_paths=max_paths,
                     focus=focus,
                     num_scan_workers=scan_workers,
+                    num_triage_workers=triage_workers,
+                    num_enrich_workers=enrich_workers,
                     num_score_workers=score_workers,
                     num_code_workers=code_workers,
                     scan_only=scan_only,
@@ -322,6 +338,8 @@ def code(
                             max_paths=max_paths,
                             focus=focus,
                             num_scan_workers=scan_workers,
+                            num_triage_workers=triage_workers,
+                            num_enrich_workers=enrich_workers,
                             num_score_workers=score_workers,
                             num_code_workers=code_workers,
                             scan_only=scan_only,
