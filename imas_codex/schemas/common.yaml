@@ -65,7 +65,7 @@ enums:
       Uses claimed_at timestamp for transient worker coordination.
       No transient states - workers claim by setting claimed_at, not by changing status.
       
-      Pipeline: discovered → scanned → triaged → scored → skipped/excluded/stale
+      Pipeline: discovered → scanned → triaged → scored → skipped/excluded/explored/stale
       
       Triage is an initial LLM classification using directory structure only.
       Paths with triage_composite >= threshold proceed to enrichment (du/tokei/patterns)
@@ -85,6 +85,10 @@ enums:
         description: >-
           Fully scored with enrichment evidence (second-pass LLM evaluation).
           Authoritative score for downstream ingestion decisions.
+      explored:
+        description: >-
+          Root or navigation path that was scanned for structural expansion
+          but is not itself a code directory worth triaging.
       skipped:
         description: Intentionally not processed (low-score, excluded, empty)
       failed:
