@@ -1,7 +1,7 @@
 """Graph operations for wiki discovery.
 
-Neo4j graph helpers for wiki page and artifact lifecycle management:
-- Bulk node creation (WikiPage, WikiArtifact)
+Neo4j graph helpers for wiki page and document lifecycle management:
+- Bulk node creation (WikiPage, WikiDocument)
 - Work claiming with claim_token pattern
 - Status transitions (mark scored, ingested, failed)
 - Orphan recovery and transient reset
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from neo4j.exceptions import TransientError
 
 from imas_codex.graph import GraphClient
-from imas_codex.graph.models import WikiArtifactStatus, WikiPageStatus
+from imas_codex.graph.models import WikiDocumentStatus, WikiPageStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,7 +36,7 @@ MAX_RETRY_ATTEMPTS = 5
 RETRY_BASE_DELAY = 0.1  # seconds
 RETRY_MAX_DELAY = 2.0  # seconds
 
-# Artifact type classification using semantic names (matching ArtifactType enum).
+# Document type classification using semantic names (matching ArtifactType enum).
 # Adapters produce these names; all downstream code uses them consistently.
 
 # Types we can extract full text from for chunking and embedding
@@ -54,7 +54,7 @@ INGESTABLE_ARTIFACT_TYPES = {
 IMAGE_ARTIFACT_TYPES = {"image"}
 
 # All types worth scoring via LLM (metadata-only scoring for data/archive/other).
-# Image artifacts are excluded — they are score_exempt and bypass LLM text scoring,
+# Image documents are excluded — they are score_exempt and bypass LLM text scoring,
 # going directly from discovered → ingested via the VLM captioning pipeline.
 SCORABLE_ARTIFACT_TYPES = INGESTABLE_ARTIFACT_TYPES | {
     "data",
@@ -122,7 +122,7 @@ def _bulk_create_wiki_pages(
     return created
 
 
-def _bulk_create_wiki_artifacts(
+def _bulk_create_wiki_documents(
     gc: GraphClient,
     facility: str,
     batch_data: list[dict],
@@ -130,7 +130,7 @@ def _bulk_create_wiki_artifacts(
     batch_size: int = 500,
     on_progress: Callable | None = None,
 ) -> int:
-    """Create WikiArtifact nodes with AT_FACILITY and HAS_ARTIFACT relationships.
+    """Create WikiDocument nodes with AT_FACILITY and HAS_DOCUMENT relationships.
 
     Args:
         gc: Open GraphClient
@@ -141,10 +141,10 @@ def _bulk_create_wiki_artifacts(
         on_progress: Optional progress callback
 
     Returns:
-        Number of artifacts created/updated
+        Number of documents created/updated
     """
-    # Pre-compute score_exempt flag for each artifact.
-    # Image artifacts bypass LLM text scoring and go directly to ingestion
+    # Pre-compute score_exempt flag for each document.
+    # Image documents bypass LLM text scoring and go directly to ingestion
     # (discovered → ingested) via the VLM captioning pipeline.
     for a in batch_data:
         a.setdefault(
@@ -157,8 +157,8 @@ def _bulk_create_wiki_artifacts(
         batch = batch_data[i : i + batch_size]
         result = gc.query(
             """
-            UNWIND $artifacts AS a
-            MERGE (wa:WikiArtifact {id: a.id})
+            UNWIND $documents AS a
+            MERGE (wa:WikiDocument {id: a.id})
             ON CREATE SET wa.facility_id = $facility,
                           wa.filename = a.filename,
                           wa.url = a.url,
@@ -175,27 +175,27 @@ def _bulk_create_wiki_artifacts(
             MERGE (wa)-[:AT_FACILITY]->(f)
             RETURN count(wa) AS count
             """,
-            artifacts=batch,
+            documents=batch,
             facility=facility,
-            discovered=WikiArtifactStatus.discovered.value,
+            discovered=WikiDocumentStatus.discovered.value,
         )
         if result:
             created += result[0]["count"]
 
         if on_progress:
-            on_progress(f"created {i + len(batch)}/{total} artifacts", None)
+            on_progress(f"created {i + len(batch)}/{total} documents", None)
 
-    # Create HAS_ARTIFACT relationships from linked pages
+    # Create HAS_DOCUMENT relationships from linked pages
     # This is done in a separate pass to handle pages that may not exist yet
     page_links = []
     for a in batch_data:
-        artifact_id = a["id"]
+        document_id = a["id"]
         for page_name in a.get("linked_pages", []):
             page_id = f"{facility}:{page_name}"
-            page_links.append({"artifact_id": artifact_id, "page_id": page_id})
+            page_links.append({"document_id": document_id, "page_id": page_id})
 
     if page_links:
-        # Link artifacts to their parent pages
+        # Link documents to their parent pages
         # Use MERGE for WikiPage to handle cases where the page hasn't been
         # fully ingested yet — creates a stub node that will be enriched later
         # when the page is actually crawled and ingested.
@@ -203,14 +203,14 @@ def _bulk_create_wiki_artifacts(
         gc.query(
             """
             UNWIND $links AS link
-            MATCH (wa:WikiArtifact {id: link.artifact_id})
+            MATCH (wa:WikiDocument {id: link.document_id})
             MERGE (wp:WikiPage {id: link.page_id})
             ON CREATE SET wp.facility_id = $facility,
                           wp.status = 'scanned',
                           wp.title = link.page_id,
                           wp.url = '',
                           wp.discovered_at = datetime()
-            MERGE (wp)-[:HAS_ARTIFACT]->(wa)
+            MERGE (wp)-[:HAS_DOCUMENT]->(wa)
             WITH wp
             MATCH (f:Facility {id: $facility})
             MERGE (wp)-[:AT_FACILITY]->(f)
@@ -223,11 +223,11 @@ def _bulk_create_wiki_artifacts(
 
 
 def save_page_file_references(page_id: str, filenames: list[str]) -> None:
-    """Store file references on a WikiPage node for later HAS_ARTIFACT linking.
+    """Store file references on a WikiPage node for later HAS_DOCUMENT linking.
 
-    Called during page ingestion when HTML contains file/artifact references.
-    The DOC phase uses these references to create HAS_ARTIFACT relationships
-    after WikiArtifact nodes are created.
+    Called during page ingestion when HTML contains file/document references.
+    The DOC phase uses these references to create HAS_DOCUMENT relationships
+    after WikiDocument nodes are created.
     """
     with GraphClient() as gc:
         gc.query(
@@ -240,39 +240,39 @@ def save_page_file_references(page_id: str, filenames: list[str]) -> None:
         )
 
 
-def link_artifacts_from_page_refs(
+def link_documents_from_page_refs(
     gc: GraphClient,
     facility: str,
     on_progress: Callable | None = None,
 ) -> int:
-    """Create HAS_ARTIFACT relationships from stored WikiPage file references.
+    """Create HAS_DOCUMENT relationships from stored WikiPage file references.
 
-    After artifact discovery creates WikiArtifact nodes, this function
+    After document discovery creates WikiDocument nodes, this function
     matches them against file references extracted during page ingestion
-    (stored in WikiPage.referenced_files). This provides artifact-page
+    (stored in WikiPage.referenced_files). This provides document-page
     linking that works regardless of whether the MediaWiki API supports
     prop=fileusage.
 
     Returns:
-        Number of HAS_ARTIFACT links created
+        Number of HAS_DOCUMENT links created
     """
     result = gc.query(
         """
         MATCH (wp:WikiPage {facility_id: $facility})
         WHERE wp.referenced_files IS NOT NULL
         UNWIND wp.referenced_files AS fn
-        MATCH (wa:WikiArtifact {facility_id: $facility})
+        MATCH (wa:WikiDocument {facility_id: $facility})
         WHERE wa.filename = fn
-        MERGE (wp)-[:HAS_ARTIFACT]->(wa)
+        MERGE (wp)-[:HAS_DOCUMENT]->(wa)
         RETURN count(*) AS created
         """,
         facility=facility,
     )
     created = result[0]["created"] if result else 0
     if created > 0:
-        logger.info("Created %d HAS_ARTIFACT links from page file references", created)
+        logger.info("Created %d HAS_DOCUMENT links from page file references", created)
     if on_progress:
-        on_progress(f"linked {created} artifacts from page refs", None)
+        on_progress(f"linked {created} documents from page refs", None)
     return created
 
 
@@ -335,10 +335,10 @@ def retry_on_deadlock(
     return decorator
 
 
-def has_pending_artifact_work(facility: str) -> bool:
-    """Check if there are pending artifacts (scoring or ingestion).
+def has_pending_document_work(facility: str) -> bool:
+    """Check if there are pending documents (scoring or ingestion).
 
-    Artifacts are pending when:
+    Documents are pending when:
     - status = 'discovered' AND NOT score_exempt (needs LLM scoring)
     - status = 'discovered' AND score_exempt (needs direct ingestion)
     - status = 'scored' AND score >= 0.5 AND ingestable type (needs ingestion)
@@ -348,7 +348,7 @@ def has_pending_artifact_work(facility: str) -> bool:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
+            MATCH (wa:WikiDocument {facility_id: $facility})
             WHERE (
                 (wa.status = $discovered)
                 OR (wa.status = $scored AND wa.score >= 0.5
@@ -358,18 +358,18 @@ def has_pending_artifact_work(facility: str) -> bool:
             RETURN count(wa) AS pending
             """,
             facility=facility,
-            discovered=WikiArtifactStatus.discovered.value,
-            scored=WikiArtifactStatus.scored.value,
+            discovered=WikiDocumentStatus.discovered.value,
+            scored=WikiDocumentStatus.scored.value,
             ingestable=list(INGESTABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
 
-def has_pending_artifact_score_work(facility: str) -> bool:
-    """Check if there are discovered artifacts awaiting scoring.
+def has_pending_document_score_work(facility: str) -> bool:
+    """Check if there are discovered documents awaiting scoring.
 
-    Returns True if there are artifacts with:
+    Returns True if there are documents with:
     - status = 'discovered'
     - artifact_type in SCORABLE_ARTIFACT_TYPES
     - claimed_at is null or expired
@@ -378,24 +378,24 @@ def has_pending_artifact_score_work(facility: str) -> bool:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
+            MATCH (wa:WikiDocument {facility_id: $facility})
             WHERE wa.status = $discovered
               AND wa.artifact_type IN $types
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
-            discovered=WikiArtifactStatus.discovered.value,
+            discovered=WikiDocumentStatus.discovered.value,
             types=list(SCORABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
 
-def has_pending_artifact_ingest_work(facility: str) -> bool:
-    """Check if there are artifacts awaiting ingestion.
+def has_pending_document_ingest_work(facility: str) -> bool:
+    """Check if there are documents awaiting ingestion.
 
-    Returns True if there are artifacts with:
+    Returns True if there are documents with:
     - status = 'scored' AND score >= 0.5 AND ingestable type (text-extractable)
     - status = 'discovered' AND score_exempt = true (bypass LLM scoring)
     - claimed_at is null or expired
@@ -404,7 +404,7 @@ def has_pending_artifact_ingest_work(facility: str) -> bool:
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
+            MATCH (wa:WikiDocument {facility_id: $facility})
             WHERE (
                 (wa.status = $scored AND wa.score >= 0.5
                  AND wa.artifact_type IN $types)
@@ -414,8 +414,8 @@ def has_pending_artifact_ingest_work(facility: str) -> bool:
             RETURN count(wa) AS pending
             """,
             facility=facility,
-            scored=WikiArtifactStatus.scored.value,
-            discovered=WikiArtifactStatus.discovered.value,
+            scored=WikiDocumentStatus.scored.value,
+            discovered=WikiDocumentStatus.discovered.value,
             types=list(INGESTABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
         )
@@ -505,7 +505,7 @@ def reset_transient_pages(
     Only claims older than the timeout are considered orphaned.
 
     Delegates to the common claims module for both WikiPage and
-    WikiArtifact node types.
+    WikiDocument node types.
 
     Args:
         facility: Facility ID
@@ -523,24 +523,24 @@ def reset_transient_pages(
         silent=True,  # We log our own combined message
     )
 
-    artifact_reset = reset_stale_claims(
-        "WikiArtifact",
+    document_reset = reset_stale_claims(
+        "WikiDocument",
         facility,
         timeout_seconds=timeout,
         silent=True,
     )
 
-    total_reset = page_reset + artifact_reset
+    total_reset = page_reset + document_reset
     if not silent and total_reset > 0:
         logger.info(
-            "Released %d orphaned claims%s (%d pages, %d artifacts)",
+            "Released %d orphaned claims%s (%d pages, %d documents)",
             total_reset,
             "" if force else f" older than {CLAIM_TIMEOUT_SECONDS}s",
             page_reset,
-            artifact_reset,
+            document_reset,
         )
 
-    return {"orphan_reset": page_reset, "artifact_reset": artifact_reset}
+    return {"orphan_reset": page_reset, "document_reset": document_reset}
 
 
 # =============================================================================
@@ -947,10 +947,10 @@ def release_orphaned_claims(facility: str) -> dict[str, int]:
             )
             pages = list(result)
 
-            # Release stale artifact claims
+            # Release stale document claims
             result = gc.query(
                 """
-                MATCH (wa:WikiArtifact {facility_id: $facility})
+                MATCH (wa:WikiDocument {facility_id: $facility})
                 WHERE wa.claimed_at IS NOT NULL
                   AND wa.claimed_at < datetime() - duration($cutoff)
                 SET wa.claimed_at = null
@@ -959,27 +959,27 @@ def release_orphaned_claims(facility: str) -> dict[str, int]:
                 facility=facility,
                 cutoff=cutoff,
             )
-            artifacts = list(result)
+            documents = list(result)
 
-            total = len(pages) + len(artifacts)
+            total = len(pages) + len(documents)
             if total > 0:
                 logger.info(
-                    "Released %d orphaned claims (%d pages, %d artifacts) for %s",
+                    "Released %d orphaned claims (%d pages, %d documents) for %s",
                     total,
                     len(pages),
-                    len(artifacts),
+                    len(documents),
                     facility,
                 )
 
             return {
                 "released_pages": len(pages),
-                "released_artifacts": len(artifacts),
+                "released_documents": len(documents),
                 "page_ids": [p["id"] for p in pages],
-                "artifact_ids": [a["id"] for a in artifacts],
+                "document_ids": [a["id"] for a in documents],
             }
     except Exception as e:
         logger.warning("Could not release orphaned claims: %s", e)
-        return {"released_pages": 0, "released_artifacts": 0, "error": str(e)}
+        return {"released_pages": 0, "released_documents": 0, "error": str(e)}
 
 
 def recover_failed_pages(facility: str) -> int:
@@ -1033,20 +1033,20 @@ def recover_failed_pages(facility: str) -> int:
 
 
 # =============================================================================
-# Artifact Claim/Mark Functions
+# Document Claim/Mark Functions
 # =============================================================================
 
 
 @retry_on_deadlock()
-def claim_artifacts_for_scoring(
+def claim_documents_for_scoring(
     facility: str,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Claim discovered artifacts for scoring.
+    """Claim discovered documents for scoring.
 
-    Claims artifacts with status='discovered' and any scorable artifact_type.
-    Image artifacts are NOT scored here — they bypass LLM scoring and go
-    directly to ingestion via claim_artifacts_for_ingesting.
+    Claims documents with status='discovered' and any scorable artifact_type.
+    Image documents are NOT scored here — they bypass LLM scoring and go
+    directly to ingestion via claim_documents_for_ingesting.
 
     Workflow: discovered + scorable_type + unclaimed → set claimed_at
     Score worker extracts text preview and scores with LLM.
@@ -1060,10 +1060,10 @@ def claim_artifacts_for_scoring(
     claim_token = str(uuid.uuid4())
 
     with GraphClient() as gc:
-        # Step 1: Attempt to claim artifacts with our unique token
+        # Step 1: Attempt to claim documents with our unique token
         gc.query(
             """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
+            MATCH (wa:WikiDocument {facility_id: $facility})
             WHERE wa.status = $discovered
               AND wa.artifact_type IN $types
               AND (wa.claimed_at IS NULL
@@ -1074,17 +1074,17 @@ def claim_artifacts_for_scoring(
             SET wa.claimed_at = datetime(), wa.claim_token = $token
             """,
             facility=facility,
-            discovered=WikiArtifactStatus.discovered.value,
+            discovered=WikiDocumentStatus.discovered.value,
             types=list(SCORABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
             limit=limit,
             token=claim_token,
         )
 
-        # Step 2: Read back only artifacts WE successfully claimed
+        # Step 2: Read back only documents WE successfully claimed
         result = gc.query(
             """
-            MATCH (wa:WikiArtifact {facility_id: $facility, claim_token: $token})
+            MATCH (wa:WikiDocument {facility_id: $facility, claim_token: $token})
             RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
                    wa.artifact_type AS artifact_type, wa.size_bytes AS size_bytes
             """,
@@ -1094,7 +1094,7 @@ def claim_artifacts_for_scoring(
         claimed = list(result)
 
         logger.debug(
-            "claim_artifacts_for_scoring: requested %d, won %d (token=%s)",
+            "claim_documents_for_scoring: requested %d, won %d (token=%s)",
             limit,
             len(claimed),
             claim_token[:8],
@@ -1103,18 +1103,18 @@ def claim_artifacts_for_scoring(
 
 
 @retry_on_deadlock()
-def claim_artifacts_for_ingesting(
+def claim_documents_for_ingesting(
     facility: str,
     min_score: float = 0.5,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Claim artifacts for ingestion.
+    """Claim documents for ingestion.
 
-    Claims two categories of artifacts:
-    1. Scored text-extractable artifacts with score >= min_score
-    2. Score-exempt artifacts (e.g. images) directly from discovered status
+    Claims two categories of documents:
+    1. Scored text-extractable documents with score >= min_score
+    2. Score-exempt documents (e.g. images) directly from discovered status
 
-    Score-exempt artifacts bypass LLM text scoring and go directly to the
+    Score-exempt documents bypass LLM text scoring and go directly to the
     ingestion pipeline, where type-specific handlers (e.g. VLM captioning
     for images) process them.
 
@@ -1128,12 +1128,12 @@ def claim_artifacts_for_ingesting(
     claim_token = str(uuid.uuid4())
 
     with GraphClient() as gc:
-        # Step 1: Attempt to claim artifacts with our unique token.
-        # Score-exempt artifacts: claim from 'discovered' (bypass LLM scoring).
-        # Text artifacts: claim from 'scored' with score >= threshold.
+        # Step 1: Attempt to claim documents with our unique token.
+        # Score-exempt documents: claim from 'discovered' (bypass LLM scoring).
+        # Text documents: claim from 'scored' with score >= threshold.
         gc.query(
             """
-            MATCH (wa:WikiArtifact {facility_id: $facility})
+            MATCH (wa:WikiDocument {facility_id: $facility})
             WHERE (
                 (wa.status = $scored AND wa.score >= $min_score
                  AND wa.artifact_type IN $types)
@@ -1147,8 +1147,8 @@ def claim_artifacts_for_ingesting(
             SET wa.claimed_at = datetime(), wa.claim_token = $token
             """,
             facility=facility,
-            scored=WikiArtifactStatus.scored.value,
-            discovered=WikiArtifactStatus.discovered.value,
+            scored=WikiDocumentStatus.scored.value,
+            discovered=WikiDocumentStatus.discovered.value,
             min_score=min_score,
             types=list(INGESTABLE_ARTIFACT_TYPES),
             cutoff=cutoff,
@@ -1156,10 +1156,10 @@ def claim_artifacts_for_ingesting(
             token=claim_token,
         )
 
-        # Step 2: Read back only artifacts WE successfully claimed
+        # Step 2: Read back only documents WE successfully claimed
         result = gc.query(
             """
-            MATCH (wa:WikiArtifact {facility_id: $facility, claim_token: $token})
+            MATCH (wa:WikiDocument {facility_id: $facility, claim_token: $token})
             RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
                    wa.artifact_type AS artifact_type, wa.score AS score,
                    wa.description AS description, wa.physics_domain AS physics_domain
@@ -1170,7 +1170,7 @@ def claim_artifacts_for_ingesting(
         claimed = list(result)
 
         logger.debug(
-            "claim_artifacts_for_ingesting: requested %d, won %d (token=%s)",
+            "claim_documents_for_ingesting: requested %d, won %d (token=%s)",
             limit,
             len(claimed),
             claim_token[:8],
@@ -1178,27 +1178,27 @@ def claim_artifacts_for_ingesting(
         return claimed
 
 
-def mark_artifacts_scored(
+def mark_documents_scored(
     facility: str,
     results: list[dict[str, Any]],
 ) -> int:
-    """Mark artifacts as scored with scoring data.
+    """Mark documents as scored with scoring data.
 
     Uses batched UNWIND for O(1) graph operations.
-    All artifacts move to 'scored' status. The ingester filters by score >= threshold.
+    All documents move to 'scored' status. The ingester filters by score >= threshold.
     """
     if not results:
         return 0
 
     batch_data = []
     for r in results:
-        artifact_id = r.get("id")
-        if not artifact_id:
+        document_id = r.get("id")
+        if not document_id:
             continue
 
         batch_data.append(
             {
-                "id": artifact_id,
+                "id": document_id,
                 "score": r.get("score", 0.0),
                 "artifact_purpose": r.get("artifact_purpose", "other"),
                 "description": r.get("description", "") or "",
@@ -1225,7 +1225,7 @@ def mark_artifacts_scored(
         gc.query(
             """
             UNWIND $batch AS item
-            MATCH (wa:WikiArtifact {id: item.id})
+            MATCH (wa:WikiDocument {id: item.id})
             SET wa.status = $status,
                 wa.score = item.score,
                 wa.artifact_purpose = item.artifact_purpose,
@@ -1247,17 +1247,17 @@ def mark_artifacts_scored(
                 wa.claimed_at = null
             """,
             batch=batch_data,
-            status=WikiArtifactStatus.scored.value,
+            status=WikiDocumentStatus.scored.value,
         )
 
     return len(batch_data)
 
 
-def mark_artifacts_ingested(
+def mark_documents_ingested(
     facility: str,
     results: list[dict[str, Any]],
 ) -> int:
-    """Mark artifacts as ingested with chunk data.
+    """Mark documents as ingested with chunk data.
 
     Uses batched UNWIND for O(1) graph operations.
     """
@@ -1277,62 +1277,62 @@ def mark_artifacts_ingested(
         gc.query(
             """
             UNWIND $batch AS item
-            MATCH (wa:WikiArtifact {id: item.id})
+            MATCH (wa:WikiDocument {id: item.id})
             SET wa.status = $ingested,
                 wa.chunk_count = item.chunks,
                 wa.ingested_at = datetime(),
                 wa.claimed_at = null
             """,
             batch=batch_data,
-            ingested=WikiArtifactStatus.ingested.value,
+            ingested=WikiDocumentStatus.ingested.value,
         )
 
     return len(batch_data)
 
 
-def mark_artifact_failed(artifact_id: str, error: str) -> None:
-    """Mark an artifact as failed with error message."""
+def mark_document_failed(document_id: str, error: str) -> None:
+    """Mark an document as failed with error message."""
     try:
         with GraphClient() as gc:
             gc.query(
                 """
-                MATCH (wa:WikiArtifact {id: $id})
+                MATCH (wa:WikiDocument {id: $id})
                 SET wa.status = $failed,
                     wa.error = $error,
                     wa.failed_at = datetime(),
                     wa.claimed_at = null
                 """,
-                id=artifact_id,
-                failed=WikiArtifactStatus.failed.value,
+                id=document_id,
+                failed=WikiDocumentStatus.failed.value,
                 error=error,
             )
     except Exception as e:
         logger.warning(
-            "Could not mark artifact %s as failed (Neo4j unavailable): %s",
-            artifact_id,
+            "Could not mark document %s as failed (Neo4j unavailable): %s",
+            document_id,
             e,
         )
 
 
-def mark_artifact_deferred(artifact_id: str, reason: str) -> None:
-    """Mark an artifact as deferred (unsupported type or too large)."""
+def mark_document_deferred(document_id: str, reason: str) -> None:
+    """Mark an document as deferred (unsupported type or too large)."""
     try:
         with GraphClient() as gc:
             gc.query(
                 """
-                MATCH (wa:WikiArtifact {id: $id})
+                MATCH (wa:WikiDocument {id: $id})
                 SET wa.status = $deferred,
                     wa.defer_reason = $reason,
                     wa.claimed_at = null
                 """,
-                id=artifact_id,
-                deferred=WikiArtifactStatus.deferred.value,
+                id=document_id,
+                deferred=WikiDocumentStatus.deferred.value,
                 reason=reason,
             )
     except Exception as e:
         logger.warning(
-            "Could not mark artifact %s as deferred (Neo4j unavailable): %s",
-            artifact_id,
+            "Could not mark document %s as deferred (Neo4j unavailable): %s",
+            document_id,
             e,
         )
 
@@ -1359,7 +1359,7 @@ def claim_images_for_scoring(
     """Claim ingested images for VLM scoring.
 
     Images with status='ingested' and no description are ready for VLM processing.
-    Uses same claim token pattern as page/artifact claiming.
+    Uses same claim token pattern as page/document claiming.
     """
     from imas_codex.discovery.base.image import (
         claim_images_for_scoring as _claim,

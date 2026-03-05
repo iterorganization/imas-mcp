@@ -344,7 +344,7 @@ class TestSearchDocs:
 
     def test_empty_results(self, mock_gc, mock_encoder):
         """Empty results produce a descriptive message."""
-        # wiki chunks, artifacts, images — all return empty
+        # wiki chunks, documents, images — all return empty
         mock_gc.query.side_effect = [[], [], []]
         result = _search_docs(
             query="equilibrium",
@@ -382,7 +382,7 @@ class TestSearchDocs:
                 "imas_refs": [],
             },
         ]
-        # Calls: wiki chunks vector, artifact vector, image vector, enrichment
+        # Calls: wiki chunks vector, document vector, image vector, enrichment
         mock_gc.query.side_effect = [chunk_vector, [], [], enrichment]
 
         result = _search_docs(
@@ -475,9 +475,9 @@ class TestFormatDocsReport:
         result = format_docs_report([], [], {})
         assert "No documentation found" in result
 
-    def test_artifacts_section(self):
-        """Artifacts appear in Related Documents section."""
-        artifacts = [
+    def test_documents_section(self):
+        """Documents appear in Related Documents section."""
+        documents = [
             {
                 "id": "art1",
                 "title": "Analysis Report.pdf",
@@ -485,7 +485,7 @@ class TestFormatDocsReport:
                 "page_title": "MHD diagnostics",
             },
         ]
-        result = format_docs_report([], artifacts, {})
+        result = format_docs_report([], documents, {})
         assert "Related Documents" in result
         assert "Analysis Report.pdf" in result
         assert "MHD diagnostics" in result
@@ -992,7 +992,7 @@ class TestFetch:
                 "imas_paths": None,
             },
         ]
-        # WikiPage empty, artifact empty, code returns chunks
+        # WikiPage empty, document empty, code returns chunks
         mock_gc.query.side_effect = [[], [], code_chunks, []]
 
         result = _fetch("tcv:/home/codes/liuqe.py", gc=mock_gc)
@@ -1018,7 +1018,7 @@ class TestFetch:
                 "parent_pages": ["Magnetics Overview"],
             },
         ]
-        # WikiPage, artifact, code all empty; image returns results
+        # WikiPage, document, code all empty; image returns results
         mock_gc.query.side_effect = [[], [], [], image_results]
 
         result = _fetch("tcv:topo.png", gc=mock_gc)
@@ -1148,8 +1148,8 @@ class TestDocsFetchHints:
         result = format_docs_report(chunks, [], scores)
         assert "fetch('tcv:Diagnostics')" in result
 
-    def test_artifact_includes_fetch_hint(self):
-        artifacts = [
+    def test_document_includes_fetch_hint(self):
+        documents = [
             {
                 "id": "jet:fishbone.ppt",
                 "title": "Fishbone Presentation",
@@ -1158,7 +1158,7 @@ class TestDocsFetchHints:
             },
         ]
         scores = {"jet:fishbone.ppt": 0.88}
-        result = format_docs_report([], artifacts, scores)
+        result = format_docs_report([], documents, scores)
         assert "fetch('jet:fishbone.ppt')" in result
 
 

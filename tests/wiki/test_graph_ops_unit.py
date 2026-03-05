@@ -17,7 +17,7 @@ from imas_codex.discovery.wiki.graph_ops import (
     IMAGE_ARTIFACT_TYPES,
     INGESTABLE_ARTIFACT_TYPES,
     SCORABLE_ARTIFACT_TYPES,
-    _bulk_create_wiki_artifacts,
+    _bulk_create_wiki_documents,
     _bulk_create_wiki_pages,
     retry_on_deadlock,
 )
@@ -28,7 +28,7 @@ from imas_codex.discovery.wiki.graph_ops import (
 
 
 class TestTypeClassification:
-    """Tests for artifact type classification constants."""
+    """Tests for document type classification constants."""
 
     def test_ingestable_types(self):
         """Ingestable types should include text-extractable formats."""
@@ -192,19 +192,19 @@ class TestBulkCreateWikiPages:
 
 
 # =============================================================================
-# _bulk_create_wiki_artifacts
+# _bulk_create_wiki_documents
 # =============================================================================
 
 
-class TestBulkCreateWikiArtifacts:
-    """Tests for _bulk_create_wiki_artifacts with mocked GraphClient."""
+class TestBulkCreateWikiDocuments:
+    """Tests for _bulk_create_wiki_documents with mocked GraphClient."""
 
-    def test_creates_artifacts(self):
-        """Should create artifact nodes."""
+    def test_creates_documents(self):
+        """Should create document nodes."""
         gc = MagicMock()
         gc.query.return_value = [{"count": 2}]
 
-        artifacts = [
+        documents = [
             {
                 "id": "tcv:report.pdf",
                 "filename": "report.pdf",
@@ -219,15 +219,15 @@ class TestBulkCreateWikiArtifacts:
             },
         ]
 
-        result = _bulk_create_wiki_artifacts(gc, "tcv", artifacts)
+        result = _bulk_create_wiki_documents(gc, "tcv", documents)
         assert result == 2
 
     def test_score_exempt_flag_set(self):
-        """Image artifacts should get score_exempt=True."""
+        """Image documents should get score_exempt=True."""
         gc = MagicMock()
         gc.query.return_value = [{"count": 1}]
 
-        artifacts = [
+        documents = [
             {
                 "id": "tcv:photo.png",
                 "filename": "photo.png",
@@ -236,16 +236,16 @@ class TestBulkCreateWikiArtifacts:
             },
         ]
 
-        _bulk_create_wiki_artifacts(gc, "tcv", artifacts)
-        # Verify score_exempt was set to True for image artifact
-        assert artifacts[0]["score_exempt"] is True
+        _bulk_create_wiki_documents(gc, "tcv", documents)
+        # Verify score_exempt was set to True for image document
+        assert documents[0]["score_exempt"] is True
 
     def test_non_image_not_exempt(self):
-        """Non-image artifacts should not be score_exempt."""
+        """Non-image documents should not be score_exempt."""
         gc = MagicMock()
         gc.query.return_value = [{"count": 1}]
 
-        artifacts = [
+        documents = [
             {
                 "id": "tcv:report.pdf",
                 "filename": "report.pdf",
@@ -254,15 +254,15 @@ class TestBulkCreateWikiArtifacts:
             },
         ]
 
-        _bulk_create_wiki_artifacts(gc, "tcv", artifacts)
-        assert artifacts[0]["score_exempt"] is False
+        _bulk_create_wiki_documents(gc, "tcv", documents)
+        assert documents[0]["score_exempt"] is False
 
     def test_linked_pages_relationships(self):
-        """Should create HAS_ARTIFACT relationships for linked_pages."""
+        """Should create HAS_DOCUMENT relationships for linked_pages."""
         gc = MagicMock()
         gc.query.return_value = [{"count": 1}]
 
-        artifacts = [
+        documents = [
             {
                 "id": "tcv:file.pdf",
                 "filename": "file.pdf",
@@ -272,8 +272,8 @@ class TestBulkCreateWikiArtifacts:
             },
         ]
 
-        _bulk_create_wiki_artifacts(gc, "tcv", artifacts)
-        # Should have 2 query calls: 1 for artifacts + 1 for page links
+        _bulk_create_wiki_documents(gc, "tcv", documents)
+        # Should have 2 query calls: 1 for documents + 1 for page links
         assert gc.query.call_count == 2
 
     def test_no_linked_pages_skips_link_query(self):
@@ -281,7 +281,7 @@ class TestBulkCreateWikiArtifacts:
         gc = MagicMock()
         gc.query.return_value = [{"count": 1}]
 
-        artifacts = [
+        documents = [
             {
                 "id": "tcv:file.pdf",
                 "filename": "file.pdf",
@@ -290,8 +290,8 @@ class TestBulkCreateWikiArtifacts:
             },
         ]
 
-        _bulk_create_wiki_artifacts(gc, "tcv", artifacts)
-        # Only 1 query (artifact creation, no page links)
+        _bulk_create_wiki_documents(gc, "tcv", documents)
+        # Only 1 query (document creation, no page links)
         assert gc.query.call_count == 1
 
 
@@ -330,16 +330,16 @@ class TestPendingWorkChecks:
         assert result is False
 
     @patch("imas_codex.discovery.wiki.graph_ops.GraphClient")
-    def test_has_pending_artifact_work(self, mock_gc_class):
-        """Should check artifact pending state."""
-        from imas_codex.discovery.wiki.graph_ops import has_pending_artifact_work
+    def test_has_pending_document_work(self, mock_gc_class):
+        """Should check document pending state."""
+        from imas_codex.discovery.wiki.graph_ops import has_pending_document_work
 
         mock_gc = MagicMock()
         mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
         mock_gc_class.return_value.__exit__ = MagicMock(return_value=False)
         mock_gc.query.return_value = [{"pending": 5}]
 
-        result = has_pending_artifact_work("tcv")
+        result = has_pending_document_work("tcv")
         assert result is True
 
     @patch("imas_codex.discovery.wiki.graph_ops.GraphClient")

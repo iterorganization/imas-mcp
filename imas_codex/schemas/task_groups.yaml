@@ -19,7 +19,7 @@ wiki:
   labels:
     - WikiPage
     - WikiChunk
-    - WikiArtifact
+    - WikiDocument
     - Image
   description: Wiki content search and page navigation
 

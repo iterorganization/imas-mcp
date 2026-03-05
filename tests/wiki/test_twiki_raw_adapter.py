@@ -174,16 +174,16 @@ class TestTWikiRawAdapterDiscovery:
         assert pages[0].name == "EGIS"
 
 
-class TestTWikiRawAdapterArtifacts:
-    """Test TWikiRawAdapter artifact discovery."""
+class TestTWikiRawAdapterDocuments:
+    """Test TWikiRawAdapter document discovery."""
 
     def test_no_pub_path_returns_empty(self):
         adapter = TWikiRawAdapter(ssh_host="h", data_path="/d")
-        artifacts = adapter.bulk_discover_artifacts("jt-60sa", "")
-        assert len(artifacts) == 0
+        documents = adapter.bulk_discover_documents("jt-60sa", "")
+        assert len(documents) == 0
 
     @patch("subprocess.run")
-    def test_discovers_artifacts(self, mock_run):
+    def test_discovers_documents(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=b"/pub/Main/EGIS/fig1-1.png\n/pub/Main/EGIS/manual.pdf\n",
@@ -194,14 +194,14 @@ class TestTWikiRawAdapterArtifacts:
             data_path="/d",
             pub_path="/pub/Main",
         )
-        artifacts = adapter.bulk_discover_artifacts("jt-60sa", "")
+        documents = adapter.bulk_discover_documents("jt-60sa", "")
 
-        assert len(artifacts) == 2
-        types = {a.artifact_type for a in artifacts}
+        assert len(documents) == 2
+        types = {a.artifact_type for a in documents}
         assert "pdf" in types
 
         # Should link to topic name
-        assert artifacts[0].linked_pages == ["EGIS"]
+        assert documents[0].linked_pages == ["EGIS"]
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -352,7 +352,7 @@ class TestTWikiMarkupToHtml:
         assert "eddbWrapper" in html
         assert "ソケット接続" in html
 
-        # No TWiki artifacts
+        # No TWiki documents
         assert "%META:" not in html
 
 

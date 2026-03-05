@@ -29,7 +29,7 @@ def _set_all_idle(state: WikiDiscoveryState, count: int = 3) -> None:
     state.score_phase._idle_count = count
     state.ingest_phase._idle_count = count
     state.docs_phase._idle_count = count
-    state.artifact_score_phase._idle_count = count
+    state.document_score_phase._idle_count = count
     state.image_phase._idle_count = count
 
 
@@ -46,7 +46,7 @@ class TestShouldStop:
         _set_all_idle(state)
         mock_ops = mock_graph_ops.return_value
         mock_ops.has_pending_work.return_value = False
-        mock_ops.has_pending_artifact_work.return_value = False
+        mock_ops.has_pending_document_work.return_value = False
         mock_ops.has_pending_image_work.return_value = False
 
         assert state.should_stop() is True
@@ -76,7 +76,7 @@ class TestShouldStop:
         # I/O workers drained queues (idle=3), scan idle (3)
         state.score_stats.cost = 2.50  # Exceeds cost_limit=2.0
         state.score_phase._idle_count = 0  # Exited due to budget, never incremented
-        state.artifact_score_phase._idle_count = 0  # Same
+        state.document_score_phase._idle_count = 0  # Same
         state.image_phase._idle_count = 0  # Same
 
         state.scan_phase._idle_count = 3
@@ -88,7 +88,7 @@ class TestShouldStop:
         # No pending I/O work
         mock_ops = mock_graph_ops.return_value
         mock_ops.has_pending_ingest_work.return_value = False
-        mock_ops.has_pending_artifact_ingest_work.return_value = False
+        mock_ops.has_pending_document_ingest_work.return_value = False
 
         assert state.should_stop() is True
 
@@ -97,7 +97,7 @@ class TestShouldStop:
         """Budget exhausted but I/O ingest work pending -> don't stop yet."""
         state.score_stats.cost = 2.50
         state.score_phase._idle_count = 0
-        state.artifact_score_phase._idle_count = 0
+        state.document_score_phase._idle_count = 0
         state.image_phase._idle_count = 0
 
         state.scan_phase._idle_count = 3
@@ -107,7 +107,7 @@ class TestShouldStop:
         # Pending ingest work (scored pages waiting for embedding)
         mock_ops = mock_graph_ops.return_value
         mock_ops.has_pending_ingest_work.return_value = True
-        mock_ops.has_pending_artifact_ingest_work.return_value = False
+        mock_ops.has_pending_document_ingest_work.return_value = False
 
         assert state.should_stop() is False
         # I/O idle counts should be reset
@@ -115,7 +115,7 @@ class TestShouldStop:
         assert state.docs_phase.idle_count == 0
         # LLM idle counts should NOT be reset (they've exited)
         assert state.score_phase.idle_count == 0
-        assert state.artifact_score_phase.idle_count == 0
+        assert state.document_score_phase.idle_count == 0
         assert state.image_phase.idle_count == 0
 
     @patch("imas_codex.discovery.wiki.state._get_graph_ops")
@@ -127,7 +127,7 @@ class TestShouldStop:
         """
         state.score_stats.cost = 2.50
         state.score_phase._idle_count = 0
-        state.artifact_score_phase._idle_count = 0
+        state.document_score_phase._idle_count = 0
         state.image_phase._idle_count = 0
 
         state.scan_phase._idle_count = 3
@@ -137,7 +137,7 @@ class TestShouldStop:
         # No I/O work pending — only LLM work pending
         mock_ops = mock_graph_ops.return_value
         mock_ops.has_pending_ingest_work.return_value = False
-        mock_ops.has_pending_artifact_ingest_work.return_value = False
+        mock_ops.has_pending_document_ingest_work.return_value = False
         # These should NOT be called when budget is exhausted:
         mock_ops.has_pending_work.return_value = True  # 12K scanned pages
         mock_ops.has_pending_image_work.return_value = True  # VLM pending
@@ -146,7 +146,7 @@ class TestShouldStop:
         # Verify LLM pending work checks were NOT called
         mock_ops.has_pending_work.assert_not_called()
         mock_ops.has_pending_image_work.assert_not_called()
-        mock_ops.has_pending_artifact_work.assert_not_called()
+        mock_ops.has_pending_document_work.assert_not_called()
 
     @patch("imas_codex.discovery.wiki.state._get_graph_ops")
     def test_no_budget_resets_all_idle_on_pending(self, mock_graph_ops, state):
@@ -157,7 +157,7 @@ class TestShouldStop:
 
         mock_ops = mock_graph_ops.return_value
         mock_ops.has_pending_work.return_value = True
-        mock_ops.has_pending_artifact_work.return_value = False
+        mock_ops.has_pending_document_work.return_value = False
         mock_ops.has_pending_image_work.return_value = False
 
         assert state.should_stop() is False
@@ -166,7 +166,7 @@ class TestShouldStop:
         assert state.score_phase.idle_count == 0
         assert state.ingest_phase.idle_count == 0
         assert state.docs_phase.idle_count == 0
-        assert state.artifact_score_phase.idle_count == 0
+        assert state.document_score_phase.idle_count == 0
         assert state.image_phase.idle_count == 0
 
 
@@ -238,10 +238,10 @@ class TestBudgetExhausted:
         assert state.budget_exhausted is True
 
     def test_includes_all_cost_sources(self, state):
-        """Budget accounts for score + ingest + image + artifact_score costs."""
+        """Budget accounts for score + ingest + image + document_score costs."""
         state.score_stats.cost = 0.5
         state.ingest_stats.cost = 0.5
         state.image_stats.cost = 0.5
-        state.artifact_score_stats.cost = 0.5
+        state.document_score_stats.cost = 0.5
         assert state.total_cost == 2.0
         assert state.budget_exhausted is True

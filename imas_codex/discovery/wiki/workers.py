@@ -3,8 +3,8 @@
 Five supervised workers that process wiki content through the pipeline:
 - score_worker: LLM content-aware scoring (scanned → scored)
 - ingest_worker: Chunk and embed high-value pages (scored → ingested)
-- docs_worker: Download and ingest scored artifacts (scored → ingested)
-- docs_score_worker: LLM scoring for artifacts (discovered → scored)
+- docs_worker: Download and ingest scored documents (scored → ingested)
+- docs_score_worker: LLM scoring for documents (discovered → scored)
 - image_score_worker: VLM captioning and scoring (ingested → captioned)
 
 Workers are supervised via base.supervision for automatic restart on crash.
@@ -26,25 +26,25 @@ from .graph_ops import (
     INGESTABLE_ARTIFACT_TYPES,
     _release_claimed_images,
     _release_claimed_pages,
-    claim_artifacts_for_ingesting,
-    claim_artifacts_for_scoring,
+    claim_documents_for_ingesting,
+    claim_documents_for_scoring,
     claim_images_for_scoring,
     claim_pages_for_ingesting,
     claim_pages_for_scoring,
-    mark_artifact_deferred,
-    mark_artifact_failed,
-    mark_artifacts_ingested,
-    mark_artifacts_scored,
+    mark_document_deferred,
+    mark_document_failed,
+    mark_documents_ingested,
+    mark_documents_scored,
     mark_images_scored,
     mark_page_failed,
     mark_pages_ingested,
     mark_pages_scored,
 )
 from .scoring import (
-    _extract_artifact_preview,
+    _extract_document_preview,
     _fetch_and_summarize,
     _fetch_html,
-    _score_artifacts_batch,
+    _score_documents_batch,
     _score_images_batch,
     _score_pages_batch,
 )
@@ -532,29 +532,29 @@ async def docs_worker(
     on_progress: Callable | None = None,
     max_size_mb: float = 5.0,
 ) -> None:
-    """Artifact worker: Download and ingest wiki artifacts.
+    """Document worker: Download and ingest wiki documents.
 
     Transitions: scored → ingested
 
-    Routes artifacts by type:
+    Routes documents by type:
     - Text-extractable (pdf, document, presentation, spreadsheet, notebook, json):
       Download, extract text, chunk, embed. Also extract embedded images from PDF/PPTX.
-    - Image artifacts: Download, downsample, create Image nodes for VLM pipeline.
+    - Image documents: Download, downsample, create Image nodes for VLM pipeline.
     - Oversized files: Deferred with DEBUG-level logging (node preserved with metadata).
 
     Args:
         state: Shared discovery state
         on_progress: Progress callback (msg, stats, results=None)
-        max_size_mb: Maximum artifact size in MB
+        max_size_mb: Maximum document size in MB
     """
     from imas_codex.discovery.wiki.pipeline import (
-        WikiArtifactPipeline,
-        fetch_artifact_content,
-        fetch_artifact_size,
+        WikiDocumentPipeline,
+        fetch_document_content,
+        fetch_document_size,
     )
 
     max_size_bytes = int(max_size_mb * 1024 * 1024)
-    pipeline = WikiArtifactPipeline(
+    pipeline = WikiDocumentPipeline(
         facility_id=state.facility,
         max_size_mb=max_size_mb,
         use_rich=False,
@@ -581,15 +581,15 @@ async def docs_worker(
 
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         try:
-            artifacts = await asyncio.to_thread(
-                claim_artifacts_for_ingesting, state.facility, limit=4
+            documents = await asyncio.to_thread(
+                claim_documents_for_ingesting, state.facility, limit=4
             )
         except Exception as e:
             logger.warning("docs_worker: claim failed: %s", e)
             await asyncio.sleep(5.0)
             continue
 
-        if not artifacts:
+        if not documents:
             state.docs_phase.record_idle()
             if on_progress:
                 on_progress("idle", state.docs_stats)
@@ -599,16 +599,16 @@ async def docs_worker(
         state.docs_phase.record_activity()
 
         if on_progress:
-            on_progress(f"ingesting {len(artifacts)} artifacts", state.docs_stats)
+            on_progress(f"ingesting {len(documents)} documents", state.docs_stats)
 
         results = []
-        for artifact in artifacts:
-            artifact_id = artifact["id"]
-            artifact_type = artifact.get("artifact_type", "unknown")
-            url = artifact.get("url", "")
-            filename = artifact.get("filename", "unknown")
+        for document in documents:
+            document_id = document["id"]
+            artifact_type = document.get("artifact_type", "unknown")
+            url = document.get("url", "")
+            filename = document.get("filename", "unknown")
 
-            # Send per-artifact progress so the display shows what's being processed
+            # Send per-document progress so the display shows what's being processed
             if on_progress:
                 on_progress(
                     f"ingesting {filename}",
@@ -617,25 +617,25 @@ async def docs_worker(
                         {
                             "filename": filename,
                             "artifact_type": artifact_type,
-                            "score": artifact.get("score"),
-                            "physics_domain": artifact.get("physics_domain"),
-                            "description": artifact.get("description", ""),
+                            "score": document.get("score"),
+                            "physics_domain": document.get("physics_domain"),
+                            "description": document.get("description", ""),
                         }
                     ],
                 )
 
         results = []
-        for artifact in artifacts:
-            artifact_id = artifact["id"]
-            artifact_type = artifact.get("artifact_type", "unknown")
-            url = artifact.get("url", "")
-            filename = artifact.get("filename", "unknown")
+        for document in documents:
+            document_id = document["id"]
+            artifact_type = document.get("artifact_type", "unknown")
+            url = document.get("url", "")
+            filename = document.get("filename", "unknown")
 
             try:
-                # Route image artifacts to Image node pipeline
+                # Route image documents to Image node pipeline
                 if artifact_type.lower() in IMAGE_ARTIFACT_TYPES:
-                    await _ingest_image_artifact(
-                        artifact_id=artifact_id,
+                    await _ingest_image_document(
+                        document_id=document_id,
                         url=url,
                         filename=filename,
                         facility=state.facility,
@@ -644,19 +644,19 @@ async def docs_worker(
                     )
                     results.append(
                         {
-                            "id": artifact_id,
+                            "id": document_id,
                             "chunk_count": 0,
                             "filename": filename,
                             "artifact_type": artifact_type,
-                            "score": artifact.get("score"),
-                            "physics_domain": artifact.get("physics_domain"),
-                            "description": artifact.get("description", ""),
+                            "score": document.get("score"),
+                            "physics_domain": document.get("physics_domain"),
+                            "description": document.get("description", ""),
                         }
                     )
                     continue
 
-                # Check size before downloading text-extractable artifacts
-                size_bytes = fetch_artifact_size(
+                # Check size before downloading text-extractable documents
+                size_bytes = fetch_document_size(
                     url, facility=state.facility, session=auth_session
                 )
 
@@ -667,26 +667,26 @@ async def docs_worker(
                     )
                     # Demote to DEBUG — node is preserved with metadata, just not ingested
                     logger.debug(
-                        "Deferring oversized artifact %s: %s", filename, reason
+                        "Deferring oversized document %s: %s", filename, reason
                     )
-                    await asyncio.to_thread(mark_artifact_deferred, artifact_id, reason)
+                    await asyncio.to_thread(mark_document_deferred, document_id, reason)
                     continue
 
                 # Check if type is text-extractable
                 if artifact_type.lower() not in INGESTABLE_ARTIFACT_TYPES:
-                    reason = f"Artifact type '{artifact_type}' not text-extractable"
+                    reason = f"Document type '{artifact_type}' not text-extractable"
                     logger.debug(
-                        "Deferring non-ingestable artifact %s: %s", filename, reason
+                        "Deferring non-ingestable document %s: %s", filename, reason
                     )
-                    await asyncio.to_thread(mark_artifact_deferred, artifact_id, reason)
+                    await asyncio.to_thread(mark_document_deferred, document_id, reason)
                     continue
 
                 # Download and ingest
-                _, content = await fetch_artifact_content(
+                _, content = await fetch_document_content(
                     url, facility=state.facility, session=auth_session
                 )
-                stats = await pipeline.ingest_artifact(
-                    artifact_id, content, artifact_type
+                stats = await pipeline.ingest_document(
+                    document_id, content, artifact_type
                 )
 
                 # If pipeline extracted images (PDF/PPTX), create Image nodes
@@ -694,20 +694,20 @@ async def docs_worker(
                 if extracted_images:
                     await _persist_document_figures(
                         extracted_images,
-                        artifact_id=artifact_id,
-                        artifact_url=url,
+                        document_id=document_id,
+                        document_url=url,
                         facility=state.facility,
                     )
 
                 results.append(
                     {
-                        "id": artifact_id,
+                        "id": document_id,
                         "chunk_count": stats["chunks"],
                         "filename": filename,
                         "artifact_type": artifact_type,
-                        "score": artifact.get("score"),
-                        "physics_domain": artifact.get("physics_domain"),
-                        "description": artifact.get("description", ""),
+                        "score": document.get("score"),
+                        "physics_domain": document.get("physics_domain"),
+                        "description": document.get("description", ""),
                     }
                 )
 
@@ -723,18 +723,18 @@ async def docs_worker(
                     except Exception:
                         pass
                 logger.warning(
-                    "Error ingesting artifact %s: %s", artifact_id, error_msg
+                    "Error ingesting document %s: %s", document_id, error_msg
                 )
                 # Run blocking Neo4j call in thread pool
-                await asyncio.to_thread(mark_artifact_failed, artifact_id, error_msg)
+                await asyncio.to_thread(mark_document_failed, document_id, error_msg)
 
         # Run blocking Neo4j call in thread pool
-        await asyncio.to_thread(mark_artifacts_ingested, state.facility, results)
+        await asyncio.to_thread(mark_documents_ingested, state.facility, results)
         state.docs_stats.processed += len(results)
 
         if on_progress:
             on_progress(
-                f"ingested {len(results)} artifacts",
+                f"ingested {len(results)} documents",
                 state.docs_stats,
                 results=results,
             )
@@ -744,13 +744,13 @@ async def docs_score_worker(
     state: WikiDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
-    """Artifact score worker: LLM scoring with text preview extraction.
+    """Document score worker: LLM scoring with text preview extraction.
 
     Transitions: discovered → scored
 
-    Claims discovered artifacts with supported types, downloads a small
+    Claims discovered documents with supported types, downloads a small
     portion of content to extract a text preview, then scores with LLM.
-    After scoring, artifacts with score >= 0.5 become eligible for full ingestion.
+    After scoring, documents with score >= 0.5 become eligible for full ingestion.
 
     Uses the same scoring dimensions as wiki page scoring for consistency.
     """
@@ -759,7 +759,7 @@ async def docs_score_worker(
     worker_id = id(asyncio.current_task())
     logger.info(f"docs_score_worker started (task={worker_id})")
 
-    # Confluence session for artifact preview downloads (lazily acquired)
+    # Confluence session for document preview downloads (lazily acquired)
     auth_session = None
 
     # Load facility-specific data access patterns for scorer context
@@ -794,83 +794,83 @@ async def docs_score_worker(
         # Gate on service health (SSH/VPN) before claiming work
         if state.service_monitor and not state.service_monitor.all_healthy:
             if on_progress:
-                on_progress("paused", state.artifact_score_stats)
+                on_progress("paused", state.document_score_stats)
             await state.service_monitor.await_services_ready()
             if state.should_stop_docs_scoring():
                 break
 
-        # Claim artifacts for scoring
+        # Claim documents for scoring
         try:
-            artifacts = await asyncio.to_thread(
-                claim_artifacts_for_scoring, state.facility, 10
+            documents = await asyncio.to_thread(
+                claim_documents_for_scoring, state.facility, 10
             )
         except Exception as e:
             logger.warning("docs_score_worker %s: claim failed: %s", worker_id, e)
             await asyncio.sleep(5.0)
             continue
 
-        if not artifacts:
-            state.artifact_score_phase.record_idle()
+        if not documents:
+            state.document_score_phase.record_idle()
             if on_progress:
-                on_progress("idle", state.artifact_score_stats)
+                on_progress("idle", state.document_score_stats)
             await asyncio.sleep(1.0)
             continue
 
-        state.artifact_score_phase.record_activity()
+        state.document_score_phase.record_activity()
 
         if on_progress:
             on_progress(
-                f"extracting text from {len(artifacts)} artifacts",
-                state.artifact_score_stats,
+                f"extracting text from {len(documents)} documents",
+                state.document_score_stats,
             )
 
-        # Step 1: Extract text preview from each artifact
-        artifacts_with_text = []
-        for artifact in artifacts:
-            artifact_id = artifact["id"]
-            url = artifact.get("url", "")
-            filename = artifact.get("filename", "")
-            artifact_type = artifact.get("artifact_type", "unknown")
+        # Step 1: Extract text preview from each document
+        documents_with_text = []
+        for document in documents:
+            document_id = document["id"]
+            url = document.get("url", "")
+            filename = document.get("filename", "")
+            artifact_type = document.get("artifact_type", "unknown")
 
             try:
-                preview_text = await _extract_artifact_preview(
+                preview_text = await _extract_document_preview(
                     url=url,
                     artifact_type=artifact_type,
                     facility=state.facility,
                     max_chars=1500,
                     session=auth_session,
                 )
-                artifacts_with_text.append(
+                documents_with_text.append(
                     {
-                        "id": artifact_id,
+                        "id": document_id,
                         "filename": filename,
                         "url": url,
                         "artifact_type": artifact_type,
-                        "size_bytes": artifact.get("size_bytes"),
+                        "size_bytes": document.get("size_bytes"),
                         "preview_text": preview_text,
                     }
                 )
             except Exception as e:
                 logger.debug("Failed to extract preview for %s: %s", filename, e)
                 # Track failed extractions for release
-                artifacts_with_text.append(
+                documents_with_text.append(
                     {
-                        "id": artifact_id,
+                        "id": document_id,
                         "filename": filename,
                         "url": url,
                         "artifact_type": artifact_type,
-                        "size_bytes": artifact.get("size_bytes"),
+                        "size_bytes": document.get("size_bytes"),
                         "preview_text": "",
                     }
                 )
 
-        # Separate artifacts with content from those where extraction failed.
+        # Separate documents with content from those where extraction failed.
         # For types that can't have text preview (data, archive, image), use
         # filename-based metadata as the preview rather than releasing for retry.
-        artifacts_to_score = []
-        for a in artifacts_with_text:
+        documents_to_score = []
+        for a in documents_with_text:
             if a.get("preview_text"):
-                artifacts_to_score.append(a)
+                documents_to_score.append(a)
             else:
                 # Generate metadata-only preview from filename and type
                 at = a.get("artifact_type", "unknown")
@@ -883,96 +883,96 @@ async def docs_score_worker(
                     f"Type: {at}{size_str}\n"
                     f"This is a {at} file attached to a facility wiki page."
                 )
-                artifacts_to_score.append(a)
+                documents_to_score.append(a)
 
-        if not artifacts_to_score:
+        if not documents_to_score:
             logger.debug(
-                "docs_score_worker %s: no artifacts with content, skipping LLM",
+                "docs_score_worker %s: no documents with content, skipping LLM",
                 worker_id,
             )
             continue
 
         if on_progress:
             on_progress(
-                f"scoring {len(artifacts_to_score)} artifacts",
-                state.artifact_score_stats,
+                f"scoring {len(documents_to_score)} documents",
+                state.document_score_stats,
             )
 
         try:
-            # Step 2: Score batch with LLM (only artifacts that have content)
+            # Step 2: Score batch with LLM (only documents that have content)
             model = get_model("language")
-            results, cost = await _score_artifacts_batch(
-                artifacts_to_score, model, state.focus, facility_access_patterns
+            results, cost = await _score_documents_batch(
+                documents_to_score, model, state.focus, facility_access_patterns
             )
 
             # Add preview_text to results for persistence
             for r in results:
                 matching = next(
-                    (a for a in artifacts_to_score if a["id"] == r["id"]), {}
+                    (a for a in documents_to_score if a["id"] == r["id"]), {}
                 )
                 r["preview_text"] = matching.get("preview_text", "")[:500]
                 r["score_cost"] = cost / len(results) if results else 0.0
 
             # Persist scores to graph
-            await asyncio.to_thread(mark_artifacts_scored, state.facility, results)
-            state.artifact_score_stats.processed += len(results)
-            state.artifact_score_stats.cost += cost
+            await asyncio.to_thread(mark_documents_scored, state.facility, results)
+            state.document_score_stats.processed += len(results)
+            state.document_score_stats.cost += cost
 
             if on_progress:
                 on_progress(
-                    f"scored {len(results)} artifacts",
-                    state.artifact_score_stats,
+                    f"scored {len(results)} documents",
+                    state.document_score_stats,
                     results=results,
                 )
 
         except ValueError as e:
             logger.warning(
-                "LLM failed for artifact batch of %d: %s. "
-                "Artifacts reverted to discovered status for retry.",
-                len(artifacts),
+                "LLM failed for document batch of %d: %s. "
+                "Documents reverted to discovered status for retry.",
+                len(documents),
                 e,
             )
-            state.artifact_score_stats.errors = (
-                getattr(state.artifact_score_stats, "errors", 0) + 1
+            state.document_score_stats.errors = (
+                getattr(state.document_score_stats, "errors", 0) + 1
             )
-            # Release artifacts by clearing claimed_at
+            # Release documents by clearing claimed_at
             try:
                 with GraphClient() as gc:
                     gc.query(
                         """
                         UNWIND $ids AS id
-                        MATCH (wa:WikiArtifact {id: id})
+                        MATCH (wa:WikiDocument {id: id})
                         SET wa.claimed_at = null
                         """,
-                        ids=[a["id"] for a in artifacts],
+                        ids=[a["id"] for a in documents],
                     )
             except Exception:
                 pass
             continue
         except ProviderBudgetExhausted as e:
             logger.error(
-                "API key budget exhausted — halting artifact score workers: %s", e
+                "API key budget exhausted — halting document score workers: %s", e
             )
             try:
                 with GraphClient() as gc:
                     gc.query(
                         """
                         UNWIND $ids AS id
-                        MATCH (wa:WikiArtifact {id: id})
+                        MATCH (wa:WikiDocument {id: id})
                         SET wa.claimed_at = null
                         """,
-                        ids=[a["id"] for a in artifacts],
+                        ids=[a["id"] for a in documents],
                     )
             except Exception:
                 pass
             state.provider_budget_exhausted = True
             if on_progress:
-                on_progress("provider_budget_exhausted", state.artifact_score_stats)
+                on_progress("provider_budget_exhausted", state.document_score_stats)
             break
         except Exception as e:
-            logger.error("Error in artifact scoring batch: %s", e)
-            for artifact in artifacts:
-                await asyncio.to_thread(mark_artifact_failed, artifact["id"], str(e))
+            logger.error("Error in document scoring batch: %s", e)
+            for document in documents:
+                await asyncio.to_thread(mark_document_failed, document["id"], str(e))
 
 
 async def image_score_worker(
@@ -1304,9 +1304,9 @@ async def _ingest_page(
             except Exception as img_err:
                 logger.debug("Image extraction failed for %s: %s", page_id, img_err)
 
-        # Extract file/artifact references from HTML for HAS_ARTIFACT linking.
+        # Extract file/document references from HTML for HAS_DOCUMENT linking.
         # Stored on WikiPage node so DOC phase can create relationships after
-        # WikiArtifact nodes are created (DOC runs after INGEST).
+        # WikiDocument nodes are created (DOC runs after INGEST).
         if html and chunks > 0:
             try:
                 file_refs = _extract_file_references(html)
@@ -1328,26 +1328,26 @@ async def _ingest_page(
 
 
 # =============================================================================
-# Image Artifact Ingestion (standalone wiki image files)
+# Image Document Ingestion (standalone wiki image files)
 # =============================================================================
 
 
-async def _ingest_image_artifact(
-    artifact_id: str,
+async def _ingest_image_document(
+    document_id: str,
     url: str,
     filename: str,
     facility: str,
     ssh_host: str | None = None,
     session: Any = None,
 ) -> None:
-    """Convert an image-type WikiArtifact into an Image node.
+    """Convert an image-type WikiDocument into an Image node.
 
     Downloads the image, downsamples to WebP, creates an Image node with
-    status='ingested', and links it to both the WikiArtifact (HAS_IMAGE)
+    status='ingested', and links it to both the WikiDocument (HAS_IMAGE)
     and any linked WikiPages.
 
     Args:
-        artifact_id: WikiArtifact node ID
+        document_id: WikiDocument node ID
         url: Image download URL
         filename: Original filename
         facility: Facility ID
@@ -1363,7 +1363,7 @@ async def _ingest_image_artifact(
         image_bytes = await _fetch_image_bytes(url, ssh_host)
     if not image_bytes or len(image_bytes) < 512:
         logger.debug(
-            "Image artifact %s: insufficient bytes (%d)",
+            "Image document %s: insufficient bytes (%d)",
             filename,
             len(image_bytes) if image_bytes else 0,
         )
@@ -1372,13 +1372,13 @@ async def _ingest_image_artifact(
     # Downsample to WebP
     result = downsample_image(image_bytes)
     if result is None:
-        logger.debug("Image artifact %s: downsample failed", filename)
+        logger.debug("Image document %s: downsample failed", filename)
         return
 
     b64_data, stored_w, stored_h, orig_w, orig_h = result
     image_id = make_image_id(facility, url)
 
-    # Persist Image node and link to WikiArtifact + facility
+    # Persist Image node and link to WikiDocument + facility
     with GraphClient() as gc:
         gc.query(
             """
@@ -1395,7 +1395,7 @@ async def _ingest_image_artifact(
                           i.original_height = $orig_h,
                           i.ingested_at = datetime()
             WITH i
-            MATCH (wa:WikiArtifact {id: $artifact_id})
+            MATCH (wa:WikiDocument {id: $document_id})
             MERGE (wa)-[:HAS_IMAGE]->(i)
             WITH i
             MATCH (f:Facility {id: $facility})
@@ -1405,42 +1405,42 @@ async def _ingest_image_artifact(
             facility=facility,
             url=url,
             filename=filename,
-            artifact_id=artifact_id,
+            document_id=document_id,
             stored_w=stored_w,
             stored_h=stored_h,
             orig_w=orig_w,
             orig_h=orig_h,
         )
 
-        # Also link to pages that reference this artifact
+        # Also link to pages that reference this document
         gc.query(
             """
-            MATCH (wa:WikiArtifact {id: $artifact_id})<-[:HAS_ARTIFACT]-(wp:WikiPage)
+            MATCH (wa:WikiDocument {id: $document_id})<-[:HAS_DOCUMENT]-(wp:WikiPage)
             MATCH (i:Image {id: $image_id})
             MERGE (wp)-[:HAS_IMAGE]->(i)
             """,
-            artifact_id=artifact_id,
+            document_id=document_id,
             image_id=image_id,
         )
 
-    logger.debug("Created Image node %s from artifact %s", image_id, filename)
+    logger.debug("Created Image node %s from document %s", image_id, filename)
 
 
 async def _persist_document_figures(
     extracted_images: list[dict[str, Any]],
-    artifact_id: str,
-    artifact_url: str,
+    document_id: str,
+    document_url: str,
     facility: str,
 ) -> int:
     """Persist images extracted from PDF/PPTX as Image nodes.
 
     Delegates to the shared ``persist_document_figures`` from base.image,
-    using WikiArtifact as the parent label.
+    using WikiDocument as the parent label.
 
     Args:
         extracted_images: List from pipeline._extract_pdf_images or _extract_pptx_images
-        artifact_id: WikiArtifact node ID
-        artifact_url: Download URL of the parent document (for re-fetching)
+        document_id: WikiDocument node ID
+        document_url: Download URL of the parent document (for re-fetching)
         facility: Facility ID
 
     Returns:
@@ -1451,8 +1451,8 @@ async def _persist_document_figures(
     return await asyncio.to_thread(
         persist_document_figures,
         extracted_images,
-        parent_id=artifact_id,
-        parent_label="WikiArtifact",
+        parent_id=document_id,
+        parent_label="WikiDocument",
         facility=facility,
     )
 
@@ -1468,7 +1468,7 @@ _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", 
 def _extract_file_references(html: str) -> list[str]:
     """Extract filenames of all wiki files referenced in page HTML.
 
-    Captures both image and document references for HAS_ARTIFACT linking:
+    Captures both image and document references for HAS_DOCUMENT linking:
     - MediaWiki: /wiki/images/X/XX/Filename.ext, File:Filename.ext
     - Confluence: ri:filename="Filename.ext"
 

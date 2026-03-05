@@ -52,10 +52,10 @@ from imas_codex.discovery.wiki.parallel import (
     run_parallel_wiki_discovery,
 )
 from imas_codex.discovery.wiki.pipeline import (
-    WikiArtifactPipeline,
+    WikiDocumentPipeline,
     WikiIngestionPipeline,
     clear_facility_wiki,
-    get_pending_wiki_artifacts,
+    get_pending_wiki_documents,
     get_pending_wiki_pages,
     get_wiki_queue_stats,
     get_wiki_stats,
@@ -100,7 +100,7 @@ __all__ = [
     "WikiDiscoveryState",
     "run_parallel_wiki_discovery",
     # Ingestion pipeline
-    "WikiArtifactPipeline",
+    "WikiDocumentPipeline",
     "WikiIngestionPipeline",
     "WikiPage",
     # Extraction utilities
@@ -114,7 +114,7 @@ __all__ = [
     "fetch_wiki_page",
     # Queue management
     "clear_facility_wiki",
-    "get_pending_wiki_artifacts",
+    "get_pending_wiki_documents",
     "get_pending_wiki_pages",
     "get_wiki_queue_stats",
     "get_wiki_stats",

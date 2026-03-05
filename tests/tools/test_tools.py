@@ -127,8 +127,8 @@ class TestToolsCompositionPattern:
         """Test tools component is configured with correct IDS set."""
         assert tools.ids_set == STANDARD_TEST_IDS_SET
 
-    def test_tools_no_direct_instantiation_artifacts(self, tools):
-        """Test tools component doesn't have direct instantiation artifacts."""
+    def test_tools_no_direct_instantiation_documents(self, tools):
+        """Test tools component doesn't have direct instantiation documents."""
         # Should not have old-style individual tool instances
         old_style_attributes = [
             "search_composer",

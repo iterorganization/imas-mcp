@@ -57,10 +57,10 @@ logger = logging.getLogger(__name__)
     help="Number of parallel ingest workers (default: 4)",
 )
 @click.option(
-    "--rescan-artifacts",
+    "--rescan-documents",
     is_flag=True,
     default=False,
-    help="Re-scan artifacts even if already in graph",
+    help="Re-scan documents even if already in graph",
 )
 @click.option(
     "--time",
@@ -88,7 +88,7 @@ def wiki(
     rescan: bool,
     score_workers: int,
     ingest_workers: int,
-    rescan_artifacts: bool,
+    rescan_documents: bool,
     time_limit: int | None,
     store_images: bool,
 ) -> None:
@@ -266,19 +266,19 @@ def wiki(
     existing_pages = wiki_stats.get("pages", 0) or wiki_stats.get("total", 0)
     should_bulk_discover = rescan or existing_pages == 0
 
-    # Check existing artifact count
-    existing_artifacts = 0
+    # Check existing document count
+    existing_documents = 0
     _site_page_counts: list[tuple[str, int]] = []
-    _site_artifact_counts: list[tuple[str, int]] = []
+    _site_document_counts: list[tuple[str, int]] = []
     try:
         from imas_codex.graph.client import GraphClient
 
         with GraphClient() as _gc:
             _art_result = _gc.query(
-                "MATCH (wa:WikiArtifact {facility_id: $f}) RETURN count(wa) AS cnt",
+                "MATCH (wa:WikiDocument {facility_id: $f}) RETURN count(wa) AS cnt",
                 f=facility,
             )
-            existing_artifacts = _art_result[0]["cnt"] if _art_result else 0
+            existing_documents = _art_result[0]["cnt"] if _art_result else 0
 
             # Per-site page counts
             _page_rows = _gc.query(
@@ -314,10 +314,10 @@ def wiki(
                 (_site_names[si], cnt) for si, cnt in sorted(_spc.items())
             ]
 
-            # Per-site artifact counts
+            # Per-site document counts
             _art_rows = _gc.query(
                 """
-                MATCH (wa:WikiArtifact {facility_id: $f})<-[:HAS_ARTIFACT]-(wp:WikiPage)
+                MATCH (wa:WikiDocument {facility_id: $f})<-[:HAS_DOCUMENT]-(wp:WikiPage)
                 WITH wp.url AS url, count(wa) AS cnt
                 RETURN url, cnt
                 """,
@@ -331,7 +331,7 @@ def wiki(
                     if purl == surl or purl.startswith(surl + "/"):
                         _sac[si] = _sac.get(si, 0) + row["cnt"]
                         break
-            _site_artifact_counts = [
+            _site_document_counts = [
                 (_site_names[si], cnt) for si, cnt in sorted(_sac.items())
             ]
     except Exception:
@@ -344,13 +344,13 @@ def wiki(
                 log_print(f"[dim]  {sname}: {cnt:,} pages[/dim]")
         log_print("[dim]Use --rescan to re-enumerate pages[/dim]")
 
-        if existing_artifacts > 0:
+        if existing_documents > 0:
             log_print("")
-            log_print(f"[dim]Found {existing_artifacts:,} artifacts in graph[/dim]")
-            if _site_artifact_counts and len(_site_artifact_counts) > 1:
-                for sname, cnt in _site_artifact_counts:
-                    log_print(f"[dim]  {sname}: {cnt:,} artifacts[/dim]")
-            log_print("[dim]Use --rescan-artifacts to re-enumerate artifacts[/dim]")
+            log_print(f"[dim]Found {existing_documents:,} documents in graph[/dim]")
+            if _site_document_counts and len(_site_document_counts) > 1:
+                for sname, cnt in _site_document_counts:
+                    log_print(f"[dim]  {sname}: {cnt:,} documents[/dim]")
+            log_print("[dim]Use --rescan-documents to re-enumerate documents[/dim]")
     elif rescan and existing_pages > 0:
         log_print(
             f"[yellow]Rescan: adding new pages (keeping {existing_pages} existing)[/yellow]"
@@ -557,16 +557,16 @@ def wiki(
                 wiki_logger.warning("Bulk discovery failed for %s: %s", base_url, e)
                 continue
 
-        # Artifact scanning
-        should_discover_artifacts_site = (
-            rescan_artifacts
+        # Document scanning
+        should_discover_documents_site = (
+            rescan_documents
             or (bulk_discovered > 0)
-            or (existing_pages > 0 and existing_artifacts == 0)
+            or (existing_pages > 0 and existing_documents == 0)
         ) and not score_only
-        if should_discover_artifacts_site:
-            from imas_codex.discovery.wiki.parallel import bulk_discover_artifacts
+        if should_discover_documents_site:
+            from imas_codex.discovery.wiki.parallel import bulk_discover_documents
 
-            def artifact_progress_log(msg, _):
+            def document_progress_log(msg, _):
                 wiki_logger.info(f"ARTIFACTS: {msg}")
 
             wiki_client = None
@@ -604,35 +604,35 @@ def wiki(
                         wiki_client = kc
                     else:
                         log_print(
-                            "  [yellow]Keycloak auth failed, artifact discovery will use SSH[/yellow]"
+                            "  [yellow]Keycloak auth failed, document discovery will use SSH[/yellow]"
                         )
 
-            artifacts_discovered = 0
-            page_artifacts = {}
+            documents_discovered = 0
+            page_documents = {}
 
             if use_rich:
                 from rich.status import Status
 
                 with Status(
-                    f"[cyan]Artifact discovery: {rich_escape(base_url)}...[/cyan]",
+                    f"[cyan]Document discovery: {rich_escape(base_url)}...[/cyan]",
                     console=console,
                     spinner="dots",
                 ) as status:
 
-                    def artifact_progress_rich(msg, _, _url=base_url):
+                    def document_progress_rich(msg, _, _url=base_url):
                         safe_url = rich_escape(_url)
                         safe_msg = rich_escape(msg)
                         if "scanned" in msg or "scanning" in msg:
                             status.update(f"[cyan]{safe_url}: {safe_msg}[/cyan]")
                         elif "batch" in msg:
                             status.update(
-                                f"[cyan]{safe_url} artifacts: {safe_msg}[/cyan]"
+                                f"[cyan]{safe_url} documents: {safe_msg}[/cyan]"
                             )
                         elif "created" in msg or "discovered" in msg:
                             status.update(f"[green]{safe_url}: {safe_msg}[/green]")
 
                     try:
-                        artifacts_discovered, page_artifacts = bulk_discover_artifacts(
+                        documents_discovered, page_documents = bulk_discover_documents(
                             facility=facility,
                             base_url=base_url,
                             site_type=site_type,
@@ -645,16 +645,16 @@ def wiki(
                             space_key=portal_page
                             if site_type == "confluence"
                             else None,
-                            on_progress=artifact_progress_rich,
+                            on_progress=document_progress_rich,
                         )
                     except Exception:
-                        logger.exception("Artifact discovery failed for %s", base_url)
+                        logger.exception("Document discovery failed for %s", base_url)
                         log_print(
-                            f"  [red]Artifact discovery failed for {short_name}[/red]"
+                            f"  [red]Document discovery failed for {short_name}[/red]"
                         )
             else:
                 try:
-                    artifacts_discovered, page_artifacts = bulk_discover_artifacts(
+                    documents_discovered, page_documents = bulk_discover_documents(
                         facility=facility,
                         base_url=base_url,
                         site_type=site_type,
@@ -665,19 +665,19 @@ def wiki(
                         data_path=site.get("data_path"),
                         pub_path=site.get("pub_path"),
                         space_key=portal_page if site_type == "confluence" else None,
-                        on_progress=artifact_progress_log,
+                        on_progress=document_progress_log,
                     )
                 except Exception:
-                    logger.exception("Artifact discovery failed for %s", base_url)
+                    logger.exception("Document discovery failed for %s", base_url)
                     log_print(
-                        f"  [red]Artifact discovery failed for {short_name}[/red]"
+                        f"  [red]Document discovery failed for {short_name}[/red]"
                     )
 
             if wiki_client:
                 wiki_client.close()
 
-            if artifacts_discovered > 0:
-                log_print(f"  [green]{artifacts_discovered:,} artifacts[/green]")
+            if documents_discovered > 0:
+                log_print(f"  [green]{documents_discovered:,} documents[/green]")
 
         site_configs.append(
             {
@@ -704,7 +704,7 @@ def wiki(
     if not scan_only:
         worker_parts.append(f"{score_workers} score")
         worker_parts.append(f"{ingest_workers} ingest")
-        worker_parts.append("2 artifact")
+        worker_parts.append("2 document")
     log_print(f"\nWorkers: {', '.join(worker_parts)}")
     if not scan_only:
         log_print(f"Cost limit: ${cost_limit:.2f}")
@@ -742,7 +742,7 @@ def wiki(
                 "scanned": 0,
                 "scored": 0,
                 "ingested": 0,
-                "artifacts": 0,
+                "documents": 0,
                 "images_scored": 0,
                 "cost": 0.0,
                 "elapsed_seconds": 0.0,
@@ -858,7 +858,7 @@ def wiki(
                         wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
                         continue
 
-                    for key in ("scanned", "scored", "ingested", "artifacts"):
+                    for key in ("scanned", "scored", "ingested", "documents"):
                         combined[key] += result.get(key, 0)
                     combined["cost"] += result.get("cost", 0)
                     combined["elapsed_seconds"] += result.get("elapsed_seconds", 0)
@@ -957,28 +957,28 @@ def wiki(
                                     stats.get("scanned", 0),
                                 ),
                                 pending_ingest=stats.get("pending_ingest", 0),
-                                pending_artifact_score=stats.get(
-                                    "pending_artifact_score", 0
+                                pending_document_score=stats.get(
+                                    "pending_document_score", 0
                                 ),
-                                pending_artifact_ingest=stats.get(
-                                    "pending_artifact_ingest", 0
+                                pending_document_ingest=stats.get(
+                                    "pending_document_ingest", 0
                                 ),
                                 accumulated_cost=stats.get("accumulated_cost", 0.0),
                                 accumulated_page_cost=stats.get(
                                     "accumulated_page_cost", 0.0
                                 ),
-                                accumulated_artifact_cost=stats.get(
-                                    "accumulated_artifact_cost", 0.0
+                                accumulated_document_cost=stats.get(
+                                    "accumulated_document_cost", 0.0
                                 ),
                                 accumulated_image_cost=stats.get(
                                     "accumulated_image_cost", 0.0
                                 ),
-                                total_artifacts=stats.get("total_artifacts", 0),
+                                total_documents=stats.get("total_documents", 0),
                                 docs_ingested=stats.get("docs_ingested", 0),
-                                docs_scored=stats.get("artifacts_scored", 0),
-                                artifacts_failed=stats.get("artifacts_failed", 0),
-                                artifacts_deferred=stats.get("artifacts_deferred", 0),
-                                artifacts_skipped=stats.get("artifacts_skipped", 0),
+                                docs_scored=stats.get("documents_scored", 0),
+                                documents_failed=stats.get("documents_failed", 0),
+                                documents_deferred=stats.get("documents_deferred", 0),
+                                documents_skipped=stats.get("documents_skipped", 0),
                                 images_scored=stats.get("images_scored", 0),
                                 pending_image_score=stats.get("pending_image_score", 0),
                                 historic_score_rate=stats.get("historic_score_rate"),
@@ -1051,7 +1051,7 @@ def wiki(
                         ]
                     display.update_ingest(msg, stats, result_dicts)
 
-                def on_artifact(msg, stats, results=None):
+                def on_document(msg, stats, results=None):
                     result_dicts = None
                     if results:
                         result_dicts = [
@@ -1067,7 +1067,7 @@ def wiki(
                         ]
                     display.update_docs(msg, stats, result_dicts)
 
-                def on_artifact_score(msg, stats, results=None):
+                def on_document_score(msg, stats, results=None):
                     if msg == "provider_budget_exhausted":
                         display.state.provider_budget_exhausted = True
                         return
@@ -1174,8 +1174,8 @@ def wiki(
                                 on_scan_progress=on_scan,
                                 on_score_progress=on_score,
                                 on_ingest_progress=on_ingest,
-                                on_docs_progress=on_artifact,
-                                on_artifact_score_progress=on_artifact_score,
+                                on_docs_progress=on_document,
+                                on_document_score_progress=on_document_score,
                                 on_image_progress=on_image,
                                 on_worker_status=on_worker_status,
                                 service_monitor=service_monitor,
@@ -1190,7 +1190,7 @@ def wiki(
                             "scanned",
                             "scored",
                             "ingested",
-                            "artifacts",
+                            "documents",
                             "images_scored",
                         ):
                             combined[key] += result.get(key, 0)
@@ -1240,28 +1240,28 @@ def wiki(
                                 stats.get("scanned", 0),
                             ),
                             pending_ingest=stats.get("pending_ingest", 0),
-                            pending_artifact_score=stats.get(
-                                "pending_artifact_score", 0
+                            pending_document_score=stats.get(
+                                "pending_document_score", 0
                             ),
-                            pending_artifact_ingest=stats.get(
-                                "pending_artifact_ingest", 0
+                            pending_document_ingest=stats.get(
+                                "pending_document_ingest", 0
                             ),
                             accumulated_cost=stats.get("accumulated_cost", 0.0),
                             accumulated_page_cost=stats.get(
                                 "accumulated_page_cost", 0.0
                             ),
-                            accumulated_artifact_cost=stats.get(
-                                "accumulated_artifact_cost", 0.0
+                            accumulated_document_cost=stats.get(
+                                "accumulated_document_cost", 0.0
                             ),
                             accumulated_image_cost=stats.get(
                                 "accumulated_image_cost", 0.0
                             ),
-                            total_artifacts=stats.get("total_artifacts", 0),
+                            total_documents=stats.get("total_documents", 0),
                             docs_ingested=stats.get("docs_ingested", 0),
-                            docs_scored=stats.get("artifacts_scored", 0),
-                            artifacts_failed=stats.get("artifacts_failed", 0),
-                            artifacts_deferred=stats.get("artifacts_deferred", 0),
-                            artifacts_skipped=stats.get("artifacts_skipped", 0),
+                            docs_scored=stats.get("documents_scored", 0),
+                            documents_failed=stats.get("documents_failed", 0),
+                            documents_deferred=stats.get("documents_deferred", 0),
+                            documents_skipped=stats.get("documents_skipped", 0),
                             images_scored=stats.get("images_scored", 0),
                             pending_image_score=stats.get("pending_image_score", 0),
                             historic_score_rate=stats.get("historic_score_rate"),
@@ -1316,7 +1316,7 @@ def wiki(
             f"  [green]{result.get('scanned', 0)} pages scanned, "
             f"{result.get('scored', 0)} scored, "
             f"{result.get('ingested', 0)} ingested, "
-            f"{result.get('artifacts', 0)} artifacts[/green]"
+            f"{result.get('documents', 0)} documents[/green]"
         )
         log_print(
             f"  [dim]Cost: ${result.get('cost', 0):.2f}, "
