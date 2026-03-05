@@ -224,6 +224,10 @@ def install_shutdown_handlers(
             # Force-kill SSH worker pools so leaked threads don't
             # block process exit.
             _force_kill_ssh_pools()
+            # Start exit watchdog NOW — loop.run_until_complete may be
+            # stuck on unkillable to_thread tasks, so the watchdog in
+            # safe_asyncio_run's finally block would never start.
+            _start_exit_watchdog(5)
             # Cancel all running tasks from the event loop so the
             # coroutine chain unwinds.
             for task in asyncio.all_tasks(loop):
