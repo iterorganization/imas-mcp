@@ -49,7 +49,7 @@ def count_lines(path: str) -> int:
             ["wc", "-l", path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=5,
         )
         if result.returncode == 0:
@@ -93,7 +93,7 @@ def run_rg_on_file(pattern: str, path: str) -> int:
             ["rg", "-c", "--no-filename", pattern, path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():

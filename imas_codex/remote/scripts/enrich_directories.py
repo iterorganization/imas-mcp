@@ -138,7 +138,7 @@ def count_pattern_matches(path: str, pattern: str, timeout: int = 30) -> int:
             ["rg", "-c", "--no-messages", "--max-depth", "1", "-e", pattern, path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=timeout,
         )
         if proc.returncode == 0 and proc.stdout.strip():
@@ -227,7 +227,7 @@ def enrich_directory(
                 ["find", path, "-maxdepth", "1", "-type", "f", "-printf", "%s\n"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                universal_newlines=True,
                 timeout=du_timeout,
             )
             if proc.stdout.strip():
@@ -311,7 +311,7 @@ def enrich_directory(
                     ["tokei", "-o", "json"] + current_files,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=tokei_timeout,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():

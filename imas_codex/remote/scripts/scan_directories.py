@@ -227,7 +227,7 @@ def scan_directory(
                     ["eza", "--tree", "--level", "2", "--only-dirs", path],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=10,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
@@ -248,7 +248,7 @@ def scan_directory(
                     ["tree", "-L", "2", "-d", "--dirsfirst", "--noreport", path],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=10,
                 )
                 if proc.returncode == 0 and proc.stdout.strip():
@@ -301,7 +301,7 @@ def scan_directory(
                 ["rg", "-c", "--max-depth", "1", all_patterns, path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                universal_newlines=True,
                 timeout=10,
             )
             if proc.returncode == 0 and proc.stdout.strip():
@@ -326,7 +326,7 @@ def scan_directory(
                 ["du", "-sb", path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                universal_newlines=True,
                 timeout=30,
             )
             if proc.returncode == 0 and proc.stdout.strip():
@@ -357,7 +357,7 @@ def scan_directory(
                     git_base + ["config", "--get", "remote.origin.url"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=3,
                     env=git_env,
                 )
@@ -372,7 +372,7 @@ def scan_directory(
                     git_base + ["rev-parse", "HEAD"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=3,
                     env=git_env,
                 )
@@ -387,7 +387,7 @@ def scan_directory(
                     git_base + ["symbolic-ref", "--short", "HEAD"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=3,
                     env=git_env,
                 )
@@ -402,7 +402,7 @@ def scan_directory(
                     git_base + ["rev-list", "--max-parents=0", "HEAD"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=3,
                     env=git_env,
                 )
@@ -427,7 +427,7 @@ def scan_directory(
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                universal_newlines=True,
                 timeout=5,
             )
             if proc.returncode == 0 and proc.stdout.strip():
@@ -440,7 +440,7 @@ def scan_directory(
                 ["hg", "paths", "default", "-R", path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                universal_newlines=True,
                 timeout=5,
             )
             if proc.returncode == 0 and proc.stdout.strip():
@@ -459,7 +459,7 @@ def scan_directory(
                     ["git", "ls-remote", "--exit-code", effective_remote, "HEAD"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=3,
                     env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
                 )
@@ -478,7 +478,7 @@ def scan_directory(
                     ],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=3,
                 )
                 vcs_remote_accessible = proc.returncode == 0
@@ -490,7 +490,7 @@ def scan_directory(
                     ["hg", "identify", effective_remote],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    universal_newlines=True,
                     timeout=3,
                 )
                 vcs_remote_accessible = proc.returncode == 0

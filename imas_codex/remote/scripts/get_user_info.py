@@ -60,7 +60,7 @@ def get_user_via_getent(username: str) -> Optional[Dict[str, Any]]:
             ["getent", "passwd", username],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=5,
         )
         if proc.returncode == 0 and proc.stdout.strip():
@@ -105,7 +105,7 @@ def get_user_via_id(username: str) -> Optional[Dict[str, Any]]:
             ["id", username],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             timeout=5,
         )
         if proc.returncode == 0:
