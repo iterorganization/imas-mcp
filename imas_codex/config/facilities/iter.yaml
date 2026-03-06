@@ -36,14 +36,9 @@ compute_locations:
     partition: titan
     service_job_name: imas-codex-services
 
-# Data systems available at this facility
-data_systems:
-  - imas
-  - mdsplus
-
-# Data source configuration for signal discovery
+# Data system configuration for signal discovery
 # Used by: imas-codex discover signals iter
-data_sources:
+data_systems:
   # IMAS is ITER's native data format.
   imas:
     backends:

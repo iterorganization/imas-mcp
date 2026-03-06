@@ -12,16 +12,9 @@ location: Culham, United Kingdom
 # SSH connection (user configures ~/.ssh/config with this alias)
 ssh_host: jet
 
-# Data systems available at this facility
-data_systems:
-  - ppf    # JET Processed Pulse File system
-  - uda    # Universal Data Access (SAL)
-  - imas   # IMAS data format
-  - mdsplus  # MDSplus (limited use)
-
-# Data source configuration for signal discovery
+# Data system configuration for signal discovery
 # Used by: imas-codex discover signals jet
-data_sources:
+data_systems:
   # PPF is JET's primary processed data system.
   # Organized as Owner/DDA/Dtype. Accessed via SAL REST API, ppfget, or getdat.
   ppf:
