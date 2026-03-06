@@ -150,6 +150,236 @@ All of these are *data* sources. The `data_` prefix groups them correctly and di
 
 Auto-generated from schema, no manual change needed — just rebuild after schema update.
 
+## Static Value Properties on DataNode
+
+The `DataNode` schema gains explicit typed properties for storing static/immutable values (machine geometry, hardware configuration). These are populated by scanners when the data is static and should be preserved in the graph — either for offline facilities (JET) or for static trees (TCV).
+
+### Design Rationale
+
+Why explicit typed properties instead of a JSON blob or ad-hoc properties:
+1. **Schema-visible** — `get_graph_schema()` exposes them to agents automatically
+2. **Pydantic-validated** — generated model catches type errors at ingest time
+3. **Cypher-queryable** — `WHERE n.r > 4.0 AND n.z < 1.0` without JSON parsing
+4. **Cross-facility** — same property names map the same physics across JET XML, TCV static trees, future facilities
+
+### Field Inventory (SSH-verified)
+
+**JET device XML sub-elements** (332 instances × 10 sections × 4 distinct XMLs):
+
+| Section | Fields | Types |
+|---------|--------|-------|
+| magprobes (191) | r, z, angle, abs_error, rel_error | float scalars |
+| flux (36) | r, z, dphi, abs_error, rel_error | float scalars |
+| pfcoils (22) | r, z, dr, dz, turnsperelement, abs_error, rel_error | float/float arrays (multi-element coils have space-separated values) |
+| pfcircuits (16) | coil_connect, supply_connect | int lists (topology) |
+| pfsupplies (16) | abs_error, rel_error | float scalars |
+| toroidalfield (1) | abs_error, rel_error | float scalars |
+| plasmacurrent (1) | abs_error, rel_error | float scalars |
+| diamagneticflux (1) | abs_error, rel_error | float scalars |
+| pfpassive (48) | r, z, dr, dz, ang1, ang2, resistance, abs_error, rel_error | float scalars |
+
+Instance-level attributes (metadata, not values): `id`, `archive`, `file`, `owner`, `seq`, `signal`, `status`, `factor`
+
+**TCV static tree** (`\STATIC::` NUMERIC nodes in graph — 34,082 FacilitySignals via `tcv:mdsplus:static` DataAccess):
+
+| Category | Leaf fields | Types |
+|----------|-------------|-------|
+| COIL (18 nodes) | R, Z, A, B, D, W, H, ANG, N, NA, NB, NT, RHO, XSECT, INOM, UNOM, TRANSI, TRANSU | float arrays (per-coil), shape varies |
+| ACTIVE_COIL (5) | INOM, UNOM, N, TRANSI, TRANSU | float arrays |
+| FLUX_LOOP (8) | R, Z, A, B, D, N, ANG | float arrays |
+| FLUX_LOOP_3D (9) | R, Z, A, B, D, N, ANG, PHI | float arrays |
+| VESSEL (24) | R, Z, A, B, D, N, ANG, RHO, W, S, PERIM, XSECT, R:IN, Z:IN, R:OUT, Z:OUT, PP:BREAKS, PP:COEFS | float arrays, nested structure |
+| VESSEL_EXP (11) | R, Z, A, B, D, N, RHO, W, S, PERIM, XSECT | float arrays |
+| TILES (8+) | R, Z, ANG, N, PERIM, S, PP:BREAKS, PP:COEFS | float arrays |
+| SLOOP (9) | R, Z, A, B, D, N, ANG, PHI, TRANSU | float arrays |
+| WINDING (9) | R, Z, A, B, D, N, ANG, RHO, XSECT | float arrays |
+| MESH/COARSE_MESH/FAR_MESH/FBT_MESH (15 each) | R, Z, A, B, D, N, NA, NB, RHO, MESH | float arrays |
+| PP_* probes (26 coil names × 8 each) | BREAKS, COEFS, IN, OUT, IN:BREAKS, IN:COEFS, OUT:BREAKS, OUT:COEFS | float arrays (magnetic probe transfer functions) |
+| Greens matrix nodes | VAL, PRE | float matrices (require libjmmshr_gsl.so) |
+
+### Proposed DataNode Schema Additions
+
+Properties are grouped by physics category. All are optional (nullable) — only populated for nodes where the value is static/immutable.
+
+```yaml
+# === Geometry: Position ===
+r:
+  description: >-
+    Major radius position [m]. Scalar for probes/loops, array for
+    multi-element coils. JET: device XML r sub-element. TCV: COIL:VAL:R.
+  range: float
+z:
+  description: >-
+    Vertical position [m]. Same dimensionality as r.
+  range: float
+phi:
+  description: >-
+    Toroidal angle [rad]. For 3D flux loops, saddle coils.
+    TCV: FLUX_LOOP_3D:VAL:PHI, SLOOP:VAL:PHI.
+  range: float
+
+# === Geometry: Extent ===
+dr:
+  description: >-
+    Radial extent/width [m]. For rectangular cross-section elements
+    (PF coils, passive structures). JET: pfcoils/pfpassive dr.
+  range: float
+dz:
+  description: >-
+    Vertical extent/height [m]. JET: pfcoils/pfpassive dz.
+  range: float
+width:
+  description: >-
+    Element width [m]. TCV: COIL:VAL:W, VESSEL:VAL:W.
+  range: float
+height:
+  description: >-
+    Element height [m]. TCV: COIL:VAL:H.
+  range: float
+cross_section:
+  description: >-
+    Cross-sectional area [m²]. TCV: COIL:VAL:XSECT, VESSEL:VAL:XSECT.
+  range: float
+perimeter:
+  description: >-
+    Perimeter length [m]. TCV: VESSEL:VAL:PERIM, TILES:VAL:PERIM.
+  range: float
+surface:
+  description: >-
+    Surface area [m²]. TCV: VESSEL:VAL:S, TILES:VAL:S.
+  range: float
+
+# === Geometry: Orientation ===
+angle:
+  description: >-
+    Orientation angle [deg]. JET magprobes: probe tilt. TCV: COIL:VAL:ANG.
+    For multiple angles, use angle, angle_2 convention or store as array.
+  range: float
+angle_2:
+  description: >-
+    Second orientation angle [deg]. JET pfpassive has ang1 + ang2.
+  range: float
+dphi:
+  description: >-
+    Toroidal angular extent. JET flux loops: dphi in units of pi.
+  range: float
+
+# === Electrical ===
+turns:
+  description: >-
+    Number of turns per element. JET: pfcoils turnsperelement.
+    TCV: COIL:VAL:N, ACTIVE_COIL:VAL:N (array per coil).
+  range: float
+resistance:
+  description: >-
+    Electrical resistance [Ohm]. JET: pfpassive resistance.
+    TCV: via COIL:VAL:RHO (resistivity).
+  range: float
+resistivity:
+  description: >-
+    Electrical resistivity [Ohm·m]. TCV: COIL:VAL:RHO, VESSEL:VAL:RHO.
+  range: float
+nominal_current:
+  description: >-
+    Nominal operating current [A]. TCV: COIL:VAL:INOM, ACTIVE_COIL:VAL:INOM.
+  range: float
+nominal_voltage:
+  description: >-
+    Nominal operating voltage [V]. TCV: COIL:VAL:UNOM, ACTIVE_COIL:VAL:UNOM.
+  range: float
+
+# === Error/Uncertainty ===
+abs_error:
+  description: >-
+    Absolute measurement uncertainty. JET: all sections have abs_error.
+  range: float
+rel_error:
+  description: >-
+    Relative measurement uncertainty [fraction]. JET: all sections have rel_error.
+  range: float
+
+# === Topology (connectivity) ===
+coil_ids:
+  description: >-
+    Connected coil indices (circuit topology). JET: pfcircuits coil_connect.
+    Stored as integer list.
+  multivalued: true
+  range: integer
+supply_ids:
+  description: >-
+    Connected supply indices (circuit topology). JET: pfcircuits supply_connect.
+  multivalued: true
+  range: integer
+
+# === Transfer Functions ===
+transfer_current:
+  description: >-
+    Current transfer function coefficient. TCV: COIL/ACTIVE_COIL:VAL:TRANSI.
+  range: float
+transfer_voltage:
+  description: >-
+    Voltage transfer function coefficient. TCV: COIL/ACTIVE_COIL:VAL:TRANSU.
+  range: float
+transfer_inverse:
+  description: >-
+    Inverse transfer function. TCV: CRS_SEG:VAL:TRANSINV.
+  range: float
+
+# === Scaling/Calibration ===
+factor:
+  description: >-
+    Scaling factor for measurement. JET: instance attribute 'factor'
+    on pfsupplies, toroidalfield, diamagneticflux.
+  range: float
+
+# === Generic Scalar Fallback ===
+scalar_value:
+  description: >-
+    Generic scalar value for static data that doesn't fit named properties.
+    Use named properties (r, z, turns, etc.) whenever possible.
+    This is a fallback for facility-specific fields that appear rarely.
+  range: float
+```
+
+### Array-Valued Properties
+
+Many TCV static tree values are arrays (e.g., `COIL:VAL:R` has shape `(32,)` — one R value per coil). Neo4j supports `multivalued: true` for list properties, but this creates complications:
+
+- **Schema**: Each property would need both scalar and array variants, or always be `multivalued`
+- **Queries**: `WHERE n.r > 4.0` doesn't work on arrays; need `ANY(x IN n.r WHERE x > 4.0)`
+- **IMAS mapping**: Array indices map to IMAS array indices (e.g., `pf_active.coil[i].element[j].geometry.rectangle.r`)
+
+**Recommendation**: Store scalars as scalar properties. For array data, store only when the node represents a single element (JET magprobe #1: `r=4.292`) not when it represents the whole collection. TCV `COIL:VAL:R` is a collection node — its children are individual coils that get scalar `r` values.
+
+When a node genuinely represents an array (e.g., a limiter contour R,Z profile), use `multivalued: true`:
+
+```yaml
+r_contour:
+  description: >-
+    Array of R values defining a contour [m].
+    Used for limiter outlines, vessel cross-sections.
+  multivalued: true
+  range: float
+z_contour:
+  description: >-
+    Array of Z values defining a contour [m].
+    Parallel array to r_contour.
+  multivalued: true
+  range: float
+```
+
+### Properties NOT Added to Schema
+
+These exist in the source data but are stored as DataNode metadata or relationships, not as typed value properties:
+
+| Field | Why Not a Value Property | Where It Goes |
+|-------|------------------------|---------------|
+| `archive`, `file`, `owner`, `seq`, `signal`, `status` | JET PPF routing metadata, not physics values | DataNode.description or custom metadata property |
+| `BREAKS`, `COEFS` | Spline coefficients — large arrays, not queried by value | Store if needed as `multivalued` blob, but likely catalog-only (DataAccess) |
+| Greens matrices (`VAL`, `PRE`) | Large float matrices, computed on-demand | Catalog-only — `DataAccess` template shows how to compute |
+| `MESH` grid data | Computational mesh, not measurement geometry | Catalog-only |
+| `DIM` labels | Text metadata describing array dimensions | DataNode.description |
+
 ## Format-Specific Properties
 
 The question: should we have format-specific nodes (e.g., `MDSplusDataNode` vs `XMLDataNode`) or format-specific *properties* on generic nodes?
