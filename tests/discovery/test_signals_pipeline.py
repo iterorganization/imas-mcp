@@ -787,7 +787,7 @@ class TestPipelineE2E:
                 "imas_codex.discovery.signals.parallel.ingest_epochs",
             ),
             "orphan_recovery": patch(
-                "imas_codex.discovery.signals.parallel.make_orphan_recovery_tick",
+                "imas_codex.discovery.base.engine.make_orphan_recovery_tick",
                 return_value=AsyncMock(),
             ),
         }
@@ -1089,15 +1089,14 @@ class TestPipelineE2E:
 
         stop_event = asyncio.Event()
 
-        # Trigger stop after a short delay
-        async def trigger_stop():
+        async def fake_watch_stop_event(event, state):
             await asyncio.sleep(0.2)
-            stop_event.set()
+            state.stop_requested = True
+            event.set()
 
         with patch(
-            "imas_codex.discovery.signals.parallel.watch_stop_event",
-            new_callable=lambda: lambda *a, **k: AsyncMock(side_effect=trigger_stop),
-            create=True,
+            "imas_codex.cli.shutdown.watch_stop_event",
+            side_effect=fake_watch_stop_event,
         ):
             try:
                 result = await run_parallel_data_discovery(

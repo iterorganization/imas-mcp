@@ -19,11 +19,9 @@ import urllib.parse
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.embed_worker import embed_description_worker
+from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
-    SupervisedWorkerGroup,
-    make_orphan_recovery_tick,
-    run_supervised_loop,
     supervised_worker,
 )
 from imas_codex.graph import GraphClient
@@ -47,6 +45,8 @@ from .workers import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from imas_codex.discovery.base.supervision import SupervisedWorkerGroup
 
 logger = logging.getLogger(__name__)
 
@@ -574,9 +574,6 @@ async def run_parallel_wiki_discovery(
             except Exception as e:
                 logger.warning("Failed to pre-warm SSH to %s: %s", ssh_host, e)
 
-    # Create worker group for status tracking
-    worker_group = SupervisedWorkerGroup()
-
     # Bulk discovery: use adapter-based APIs to find all pages instantly
     # This replaces the slow scan phase (crawling links page-by-page)
     bulk_discovered = 0
@@ -684,113 +681,81 @@ async def run_parallel_wiki_discovery(
 
     # --- LLM scoring workers (run in both default and score_only modes) ---
 
-    for i in range(num_score_workers):
-        worker_name = f"score_worker_{i}"
-        status = worker_group.create_status(worker_name, group="triage")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    score_worker,
-                    worker_name,
-                    state,
-                    state.should_stop_scoring,
-                    on_progress=on_score_progress,
-                    status_tracker=status,
-                )
-            )
-        )
+    workers: list[WorkerSpec] = [
+        WorkerSpec(
+            "score",
+            "score_phase",
+            score_worker,
+            count=num_score_workers,
+            should_stop_fn=state.should_stop_scoring,
+            on_progress=on_score_progress,
+            group="triage",
+        ),
+    ]
 
     if ingest_documents:
         # Document score worker: LLM scoring with text preview extraction
-        document_score_status = worker_group.create_status(
-            "docs_score_worker", group="docs"
-        )
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    docs_score_worker,
-                    "docs_score_worker",
-                    state,
-                    state.should_stop_docs_scoring,
-                    on_progress=on_document_score_progress,
-                    status_tracker=document_score_status,
-                )
+        workers.append(
+            WorkerSpec(
+                "docs_score",
+                "document_score_phase",
+                docs_score_worker,
+                should_stop_fn=state.should_stop_docs_scoring,
+                on_progress=on_document_score_progress,
+                group="docs",
             )
         )
 
     # Image score + embed workers — skipped when managed externally
     if not skip_facility_workers:
-        image_score_status = worker_group.create_status(
-            "image_score_worker", group="images"
-        )
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    image_score_worker,
-                    "image_score_worker",
-                    state,
-                    state.should_stop_image_scoring,
-                    on_progress=on_image_progress,
-                    status_tracker=image_score_status,
-                )
+        workers.append(
+            WorkerSpec(
+                "image_score",
+                "image_phase",
+                image_score_worker,
+                should_stop_fn=state.should_stop_image_scoring,
+                on_progress=on_image_progress,
+                group="images",
             )
         )
 
-        embed_status = worker_group.create_status("embed_worker", group="pages")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    embed_description_worker,
-                    "embed_worker",
-                    state,
-                    state.should_stop,
-                    labels=["WikiPage", "Document", "Image"],
-                    status_tracker=embed_status,
-                )
+        workers.append(
+            WorkerSpec(
+                "embed",
+                "ingest_phase",  # embed lifecycle follows ingest
+                embed_description_worker,
+                group="pages",
+                kwargs={"labels": ["WikiPage", "Document", "Image"]},
             )
         )
 
     # --- I/O ingest workers (skipped in score_only mode) ---
 
-    if not score_only:
-        for i in range(num_ingest_workers):
-            worker_name = f"ingest_worker_{i}"
-            ingest_status = worker_group.create_status(worker_name, group="pages")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        ingest_worker,
-                        worker_name,
-                        state,
-                        state.should_stop_ingesting,
-                        on_progress=on_ingest_progress,
-                        status_tracker=ingest_status,
-                    )
-                )
-            )
+    workers.append(
+        WorkerSpec(
+            "ingest",
+            "ingest_phase",
+            ingest_worker,
+            count=num_ingest_workers,
+            enabled=not score_only,
+            should_stop_fn=state.should_stop_ingesting,
+            on_progress=on_ingest_progress,
+            group="pages",
+        )
+    )
 
-        if ingest_documents:
-            # Document ingest worker: download and embed scored documents
-            document_ingest_status = worker_group.create_status(
-                "docs_worker", group="docs"
+    if ingest_documents:
+        workers.append(
+            WorkerSpec(
+                "docs",
+                "docs_phase",
+                docs_worker,
+                enabled=not score_only,
+                should_stop_fn=state.should_stop_docs_worker,
+                on_progress=on_docs_progress,
+                group="docs",
             )
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        docs_worker,
-                        "docs_worker",
-                        state,
-                        state.should_stop_docs_worker,
-                        on_progress=on_docs_progress,
-                        status_tracker=document_ingest_status,
-                    )
-                )
-            )
-    else:
-        # In score_only mode, mark I/O worker phases as done so should_stop()
-        # doesn't hang waiting for workers that were never started.
-        state.ingest_phase.mark_done()
-        state.docs_phase.mark_done()
+        )
 
     # When facility workers are managed externally, mark their phases done
     # so the per-site stop condition doesn't block on them.
@@ -801,41 +766,31 @@ async def run_parallel_wiki_discovery(
     # Mark scan phase as done so should_stop() doesn't block on a non-existent worker.
     state.scan_phase.mark_done()
 
-    logger.info(
-        f"Started {worker_group.get_active_count()} workers: "
-        f"score_only={score_only}, scan_only={scan_only}, "
-        f"ingest_documents={ingest_documents}, "
-        f"skip_facility_workers={skip_facility_workers}"
-    )
-
-    # Periodic orphan recovery during discovery (every 60s)
-    orphan_tick = make_orphan_recovery_tick(
-        facility,
-        [
-            OrphanRecoverySpec("WikiPage"),
-            OrphanRecoverySpec("Document"),
-        ],
-    )
-
     # Choose stop condition: site-only when facility workers are external
     stop_fn = (
         state.should_stop_site_workers if skip_facility_workers else state.should_stop
     )
 
-    # Run supervision loop — handles status updates and clean shutdown
-    await run_supervised_loop(
-        worker_group,
-        stop_fn,
-        on_worker_status=on_worker_status,
-        on_tick=orphan_tick,
-    )
-    state.stop_requested = True
+    orphan_specs = [
+        OrphanRecoverySpec("WikiPage"),
+        OrphanRecoverySpec("Document"),
+    ]
 
-    # Clean up async wiki client
-    await state.close_async_wiki_client()
-    await state.close_confluence_client()
-    await state.close_keycloak_client()
-    await state.close_basic_auth_client()
+    async def cleanup():
+        """Clean up async wiki client and auth sessions."""
+        await state.close_async_wiki_client()
+        await state.close_confluence_client()
+        await state.close_keycloak_client()
+        await state.close_basic_auth_client()
+
+    await run_discovery_engine(
+        state,
+        workers,
+        orphan_specs=orphan_specs,
+        on_worker_status=on_worker_status,
+        stop_fn=stop_fn,
+        cleanup=cleanup,
+    )
 
     elapsed = time.time() - start_time
 

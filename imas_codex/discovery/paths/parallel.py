@@ -25,15 +25,13 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.base.engine import WorkerSpec, run_discovery_engine
 from imas_codex.discovery.base.llm import ProviderBudgetExhausted
 from imas_codex.discovery.base.progress import WorkerStats
+from imas_codex.discovery.base.state import DiscoveryStateBase
 from imas_codex.discovery.base.supervision import (
     OrphanRecoverySpec,
     PipelinePhase,
-    SupervisedWorkerGroup,
-    make_orphan_recovery_tick,
-    run_supervised_loop,
-    supervised_worker,
 )
 from imas_codex.discovery.paths.models import ScoreBatch
 from imas_codex.graph.models import PathStatus, TerminalReason
@@ -41,23 +39,21 @@ from imas_codex.graph.models import PathStatus, TerminalReason
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from imas_codex.discovery.base.supervision import SupervisedWorkerGroup
     from imas_codex.remote.ssh_worker import SSHWorkerPool
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DiscoveryState:
+class DiscoveryState(DiscoveryStateBase):
     """Shared state for parallel discovery."""
 
-    facility: str
-    cost_limit: float
     path_limit: int | None = None
     focus: str | None = None
     threshold: float | None = None  # Uses get_discovery_threshold() when None
     root_filter: list[str] | None = None  # Restrict work to these roots
     auto_enrich_threshold: float | None = None  # Also enrich paths scoring >= this
-    deadline: float | None = None  # Unix timestamp when discovery should stop
 
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -69,7 +65,6 @@ class DiscoveryState:
     user_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
-    stop_requested: bool = False
     provider_budget_exhausted: bool = False  # API key credit limit hit (402)
 
     # Pipeline phases (initialized in __post_init__)
@@ -139,16 +134,7 @@ class DiscoveryState:
 
     @property
     def budget_exhausted(self) -> bool:
-        return self.total_cost >= self.cost_limit or self.provider_budget_exhausted
-
-    @property
-    def deadline_expired(self) -> bool:
-        """Check if the deadline has been reached."""
-        if self.deadline is None:
-            return False
-        import time
-
-        return time.time() >= self.deadline
+        return super().budget_exhausted or self.provider_budget_exhausted
 
     @property
     def path_limit_reached(self) -> bool:
@@ -169,13 +155,11 @@ class DiscoveryState:
         has_pending_work().  This replaces the old idle-counter
         approach that was prone to race conditions.
         """
-        if self.stop_requested:
+        if super().should_stop():
             return True
         if self.budget_exhausted:
             return True
         if self.path_limit_reached:
-            return True
-        if self.deadline_expired:
             return True
         # All phases must be done (idle + no graph work)
         all_done = (
@@ -3003,28 +2987,12 @@ async def run_parallel_discovery(
         lambda: _has_pending_user_work(facility) or not state.scan_phase.done
     )
 
-    # Mark phases as done for disabled workers so should_stop() works correctly
-    # When num_*_workers=0, those workers never run and never produce/consume work
-    if num_scan_workers == 0:
-        state.scan_phase.mark_done()
-    if num_expand_workers == 0:
-        state.expand_phase.mark_done()
-    if num_triage_workers == 0:
-        state.triage_phase.mark_done()
-    if num_enrich_workers == 0:
-        state.enrich_phase.mark_done()
-    if num_score_workers == 0:
-        state.score_phase.mark_done()
-
     # Capture initial terminal count for session-based --limit tracking
     state.initial_terminal_count = state.terminal_count
 
     # Watch external stop event (from CLI signal handler)
-    stop_watcher: asyncio.Task | None = None
-    if stop_event is not None:
-        from imas_codex.cli.shutdown import watch_stop_event
-
-        stop_watcher = asyncio.create_task(watch_stop_event(stop_event, state))
+    # NOTE: run_discovery_engine handles stop_event internally, but we need
+    # to track user_interrupted separately for post-engine cleanup decisions.
 
     # Create persistent SSH worker pool to amortize PAM session overhead.
     # Each SSH session to some facilities costs ~2.6s (pam_systemd.so scope
@@ -3066,188 +3034,96 @@ async def run_parallel_discovery(
                 ssh_pool = None
 
     try:
-        # Create supervised worker group
-        worker_group = SupervisedWorkerGroup()
-
-        # Scan workers (group="scan")
-        for i in range(num_scan_workers):
-            worker_name = f"scan_worker_{i}"
-            status = worker_group.create_status(worker_name, group="scan")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        scan_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_scan_progress,
-                        batch_size=scan_batch_size,
-                        pool=ssh_pool,
-                        status_tracker=status,
-                    )
-                )
-            )
-
-        # Expand workers (group="expand")
-        for i in range(num_expand_workers):
-            worker_name = f"expand_worker_{i}"
-            status = worker_group.create_status(worker_name, group="expand")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        expand_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_expand_progress,
-                        batch_size=expand_batch_size,
-                        pool=ssh_pool,
-                        status_tracker=status,
-                    )
-                )
-            )
-
-        # Triage workers (group="triage")
-        for i in range(num_triage_workers):
-            worker_name = f"triage_worker_{i}"
-            status = worker_group.create_status(worker_name, group="triage")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        triage_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_triage_progress,
-                        batch_size=triage_batch_size,
-                        status_tracker=status,
-                    )
-                )
-            )
-
-        # Enrich workers (group="enrich")
-        for i in range(num_enrich_workers):
-            worker_name = f"enrich_worker_{i}"
-            status = worker_group.create_status(worker_name, group="enrich")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        enrich_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_enrich_progress,
-                        batch_size=enrich_batch_size,
-                        pool=ssh_pool,
-                        status_tracker=status,
-                    )
-                )
-            )
-
-        # Score workers (group="score" — uses enrichment evidence)
-        for i in range(num_score_workers):
-            worker_name = f"score_worker_{i}"
-            status = worker_group.create_status(worker_name, group="score")
-            worker_group.add_task(
-                asyncio.create_task(
-                    supervised_worker(
-                        score_worker,
-                        worker_name,
-                        state,
-                        state.should_stop,
-                        on_progress=on_score_progress,
-                        batch_size=score_batch_size,
-                        status_tracker=status,
-                    )
-                )
-            )
-
-        # Embed description worker (group="embed")
-        from imas_codex.discovery.base.embed_worker import embed_description_worker
-
-        embed_status = worker_group.create_status("embed_worker", group="embed")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    embed_description_worker,
-                    "embed_worker",
-                    state,
-                    state.should_stop,
-                    labels=["FacilityPath"],
-                    status_tracker=embed_status,
-                )
-            )
-        )
-
-        # Dedup worker (own group for independent display/completion tracking)
-        dedup_status = worker_group.create_status("dedup_worker", group="dedup")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    dedup_worker,
-                    "dedup_worker",
-                    state,
-                    state.should_stop,
-                    on_progress=on_dedup_progress,
-                    batch_size=dedup_batch_size,
-                    status_tracker=dedup_status,
-                )
-            )
-        )
-
-        # User worker (async Person linking with ORCID — non-blocking)
-        user_status = worker_group.create_status("user_worker", group="user")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    user_worker,
-                    "user_worker",
-                    state,
-                    state.should_stop,
-                    status_tracker=user_status,
-                )
-            )
-        )
-
-        logger.info(
-            f"Started {worker_group.get_active_count()} supervised workers: "
-            f"scan={num_scan_workers}, expand={num_expand_workers}, "
-            f"triage={num_triage_workers}, enrich={num_enrich_workers}, "
-            f"score={num_score_workers}, dedup=1, embed=1, user=1"
-        )
-
-        # Periodic orphan recovery during discovery (every 60s)
-        orphan_tick = make_orphan_recovery_tick(
-            facility,
-            [
-                OrphanRecoverySpec(
-                    "FacilityPath", timeout_seconds=CLAIM_TIMEOUT_SECONDS
-                ),
-                OrphanRecoverySpec(
-                    "FacilityUser", timeout_seconds=CLAIM_TIMEOUT_SECONDS
-                ),
-            ],
-        )
-
-        # Collect all phases so the supervision loop refreshes their
-        # has_work caches periodically.  Without this, PipelinePhase.done
-        # never transitions to True because _cached_has_work stays None.
-        all_phases = [
-            state.scan_phase,
-            state.expand_phase,
-            state.triage_phase,
-            state.enrich_phase,
-            state.score_phase,
-            state.user_phase,
+        # Build worker specs
+        workers: list[WorkerSpec] = [
+            WorkerSpec(
+                "scan",
+                "scan_phase",
+                scan_worker,
+                count=num_scan_workers,
+                on_progress=on_scan_progress,
+                kwargs={"batch_size": scan_batch_size, "pool": ssh_pool},
+            ),
+            WorkerSpec(
+                "expand",
+                "expand_phase",
+                expand_worker,
+                count=num_expand_workers,
+                on_progress=on_expand_progress,
+                kwargs={"batch_size": expand_batch_size, "pool": ssh_pool},
+            ),
+            WorkerSpec(
+                "triage",
+                "triage_phase",
+                triage_worker,
+                count=num_triage_workers,
+                on_progress=on_triage_progress,
+                kwargs={"batch_size": triage_batch_size},
+            ),
+            WorkerSpec(
+                "enrich",
+                "enrich_phase",
+                enrich_worker,
+                count=num_enrich_workers,
+                on_progress=on_enrich_progress,
+                kwargs={"batch_size": enrich_batch_size, "pool": ssh_pool},
+            ),
+            WorkerSpec(
+                "score",
+                "score_phase",
+                score_worker,
+                count=num_score_workers,
+                on_progress=on_score_progress,
+                kwargs={"batch_size": score_batch_size},
+            ),
         ]
 
-        # Run supervision loop — handles status updates and clean shutdown
-        await run_supervised_loop(
-            worker_group,
-            state.should_stop,
+        # Embed description worker
+        from imas_codex.discovery.base.embed_worker import embed_description_worker
+
+        workers.append(
+            WorkerSpec(
+                "embed",
+                "score_phase",  # embed lifecycle follows score
+                embed_description_worker,
+                group="embed",
+                kwargs={"labels": ["FacilityPath"]},
+            )
+        )
+
+        # Dedup worker (graph-only, independent)
+        workers.append(
+            WorkerSpec(
+                "dedup",
+                "triage_phase",  # dedup lifecycle follows triage
+                dedup_worker,
+                group="dedup",
+                on_progress=on_dedup_progress,
+                kwargs={"batch_size": dedup_batch_size},
+            )
+        )
+
+        # User worker (async Person linking with ORCID)
+        workers.append(
+            WorkerSpec(
+                "user",
+                "user_phase",
+                user_worker,
+                group="user",
+            )
+        )
+
+        orphan_specs = [
+            OrphanRecoverySpec("FacilityPath", timeout_seconds=CLAIM_TIMEOUT_SECONDS),
+            OrphanRecoverySpec("FacilityUser", timeout_seconds=CLAIM_TIMEOUT_SECONDS),
+        ]
+
+        await run_discovery_engine(
+            state,
+            workers,
+            stop_event=stop_event,
+            orphan_specs=orphan_specs,
             on_worker_status=on_worker_status,
-            on_tick=orphan_tick,
-            phases=all_phases,
             shutdown_timeout=graceful_shutdown_timeout,
         )
 
@@ -3256,13 +3132,12 @@ async def run_parallel_discovery(
             logger.info("Budget limit reached")
         elif state.path_limit_reached:
             logger.info("Path limit reached")
-        elif state.stop_requested:
+        elif stop_event is not None and stop_event.is_set():
             logger.info("Stop requested")
         else:
             logger.info("Discovery complete (no pending work)")
 
-        user_interrupted = state.stop_requested
-        state.stop_requested = True
+        user_interrupted = stop_event is not None and stop_event.is_set()
 
         # Skip heavyweight cleanup when the user pressed Ctrl+C — these are
         # nice-to-have ops that will run at the start of the next session.
@@ -3323,16 +3198,9 @@ async def run_parallel_discovery(
             "user_errors": state.user_stats.errors,
         }
     finally:
-        # Cancel stop watcher if still running
-        if stop_watcher is not None and not stop_watcher.done():
-            stop_watcher.cancel()
-            try:
-                await stop_watcher
-            except asyncio.CancelledError:
-                pass
         # Clean up persistent SSH workers on exit (normal, exception, or Ctrl+C)
         if ssh_pool is not None:
-            if state.stop_requested:
+            if stop_event is not None and stop_event.is_set():
                 # User interrupted — force-kill immediately instead of
                 # waiting 3-5s per worker for graceful close.
                 logger.info("Force-killing SSH worker pool (user interrupt)")

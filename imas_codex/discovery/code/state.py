@@ -8,32 +8,26 @@ the SSH host connection.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
-from typing import Any
 
 from imas_codex.discovery.base.progress import WorkerStats
+from imas_codex.discovery.base.state import DiscoveryStateBase
 from imas_codex.discovery.base.supervision import PipelinePhase
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class FileDiscoveryState:
+class FileDiscoveryState(DiscoveryStateBase):
     """Shared state for parallel file discovery."""
 
-    facility: str
-    ssh_host: str
-
-    # Service monitor for worker gating (set by parallel.py)
-    service_monitor: Any = field(default=None, repr=False)
+    ssh_host: str = ""
 
     # Limits
     cost_limit: float = 5.0
     min_score: float = 0.5
     max_paths: int = 100
     focus: str | None = None
-    deadline: float | None = None
 
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -44,7 +38,6 @@ class FileDiscoveryState:
     link_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
-    stop_requested: bool = False
     scan_only: bool = False
     score_only: bool = False
 
@@ -55,19 +48,6 @@ class FileDiscoveryState:
     enrich_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("enrich"))
     code_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("code"))
     link_phase: PipelinePhase = field(default_factory=lambda: PipelinePhase("link"))
-
-    def should_stop(self) -> bool:
-        """Check if discovery should stop."""
-        if self.stop_requested:
-            return True
-        if self.deadline is not None and time.time() >= self.deadline:
-            return True
-        return False
-
-    @property
-    def budget_exhausted(self) -> bool:
-        """Check if cost limit reached."""
-        return self.total_cost >= self.cost_limit
 
     @property
     def total_cost(self) -> float:

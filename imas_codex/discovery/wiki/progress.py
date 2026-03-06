@@ -761,7 +761,9 @@ class WikiProgressDisplay(BaseProgressDisplay):
             display_name = document.filename
             if document.chunk_count > 0:
                 display_name += f" ({document.chunk_count} chunks)"
-            elif document.score_composite is not None and document.score_composite < 0.5:
+            elif (
+                document.score_composite is not None and document.score_composite < 0.5
+            ):
                 display_name += " (skipped)"
             docs_text = display_name
             docs_score = document.score_composite
