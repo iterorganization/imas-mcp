@@ -55,16 +55,50 @@ JET's machine description lives in XML files versioned in git. ITER will use IMA
 
 The name `DataSource` already exists heavily in the config schema layer:
 
-| Existing Name | Layer | What It Is |
-|---|---|---|
-| `DataSourceType` | Graph enum | mdsplus, tdi, uda, hdf5, netcdf, imas, ppf, allas |
-| `DataSourceBase` | Config mixin | Common fields (setup_commands, python_command) |
-| `DataSourcesConfig` | Config class | Container: tdi, mdsplus, ppf, edas, hdf5, imas |
-| `data_sources:` | YAML key | Top-level config section in facility YAMLs |
+| Existing Name | Layer | Schema File | Generated Into | What It Is |
+|---|---|---|---|---|
+| `DataSystemType` | Config | `facility_config.yaml:43` | `config/models.py` | Enum: mdsplus, tdi, uda, hdf5, netcdf, imas, ppf, edas |
+| `DataSourceType` | Graph | `facility.yaml:46` | `graph/models.py` | Enum: mdsplus, tdi, uda, hdf5, netcdf, imas, ppf, allas |
+| `DataSourceBase` | Config | `facility_config.yaml:361` | `config/models.py` | Mixin: setup_commands, python_command |
+| `DataSourcesConfig` | Config | `facility_config.yaml:381` | `config/models.py` | Container: tdi, mdsplus, ppf, edas, hdf5, imas |
+| `data_sources:` | Config | `facility_config.yaml:177` | YAML key | Top-level config section in facility YAMLs |
+| `data_sources` | Graph | `facility.yaml:634` | `graph/models.py` | Private property on `Facility` (mirrors YAML) |
+| `data_source` | Common | `common.yaml:456` | `graph/models.py` | `ContentPurpose` enum value |
 
 Using `DataSource` as both a **graph node label** and a **config mixin name** creates genuine ambiguity. An agent seeing `DataSource` won't know if we mean the Neo4j node or the config class.
 
-**However**, `DataSourceBase` is a *config-layer mixin* (never appears in the graph), while the proposed `DataSource` would be a *graph node label* (never appears in config). The namespaces don't overlap at runtime, but they do overlap in developer mental models and grep results.
+**Technical collision**: No Python import collision exists — the two schemas generate into separate modules (`graph/models.py` vs `config/models.py`), and none of the `DataSource*` config classes are imported by name in handwritten code. The collision is **conceptual and ergonomic**, not technical.
+
+**The deeper problem**: The config layer already partially uses "System" vocabulary (`DataSystemType` enum) but inconsistently uses "Source" for the mixin and container (`DataSourceBase`, `DataSourcesConfig`). This half-migration is the root cause of the naming tension.
+
+#### Resolution: "Data System" for Config, "Data Source" for Graph
+
+The two layers model related but distinct concepts:
+
+| Concept | Layer | Vocabulary | Example |
+|---|---|---|---|
+| A **technology/protocol** for accessing data | Config | **Data System** | MDSplus, TDI, UDA, HDF5, IMAS |
+| A **specific instance** of data at a facility | Graph | **Data Source** | TCV's `results` tree, JET's `device_xml` archive |
+
+The config YAML configures how to connect to **data systems**. The graph catalogs what **data sources** exist within those systems. MDSplus is a data system; TCV's `results` tree is a data source running on MDSplus.
+
+The config enum `DataSystemType` already follows this convention — the fix is making the rest of the config layer consistent:
+
+| Current | Proposed | Layer | Rationale |
+|---|---|---|---|
+| `DataSourceBase` | `DataSystemBase` | Config | Mixin for data system configs — aligns with `DataSystemType` |
+| `DataSourcesConfig` | `DataSystemsConfig` | Config | Container for all system configs |
+| `data_sources:` (YAML key) | `data_systems:` | Config | Consistent with class rename |
+| `data_sources` (Facility private) | `data_systems` | Graph | Private property mirrors YAML key |
+
+What stays unchanged:
+- `DataSourceType` (graph enum) — already correct, describes what type a `DataSource` is
+- `DataSystemType` (config enum) — already correct, names the technology types
+- `data_source` value on `ContentPurpose` (common) — describes page content about data sources, semantically correct
+
+**Impact assessment**: ~50 Python occurrences of `config.get("data_sources")` become `config.get("data_systems")`, 4 facility YAML files update `data_sources:` → `data_systems:`, ~6 mixin references in the config schema, and ~20 docstring/comment updates. All scanner `source_type` properties (returning `"tdi"`, `"mdsplus"`, etc.) remain unchanged — they match the YAML keys under `data_systems:`, which still use the same sub-keys.
+
+**Grep disambiguation**: After the rename, searching for "DataSource" finds only graph-layer code. Searching for "DataSystem" finds only config-layer code. No ambiguity remains.
 
 ### Should We Use `data_source_*` Prefixes?
 
@@ -98,7 +132,7 @@ All of these are *data* sources. The `data_` prefix groups them correctly and di
 
 | Current | Proposed | Rationale |
 |---|---|---|
-| `MDSplusTree` | `DataSource` | Despite config-layer collision, this is the correct domain term. The config classes are prefixed (`DataSourceBase`, `DataSourcesConfig`), and the graph label is used in a different context. `DataSource` is what agents and Cypher queries will see; `DataSourceBase` is what pipeline developers import. |
+| `MDSplusTree` | `DataSource` | Collision with config-layer `DataSourceBase`/`DataSourcesConfig` resolved by renaming config classes to `DataSystemBase`/`DataSystemsConfig` (see "DataSource Collision Resolution" section). Graph owns "data source" vocabulary; config owns "data system" vocabulary. |
 | `TreeModelVersion` | `StructuralEpoch` | Precise, aligns with existing `EpochConfig`. IMAS uses "version" not "epoch" — no collision. |
 | `TreeNode` | `DataNode` | Format-agnostic hierarchical data point. |
 | `TreeNodePattern` | `DataNodePattern` | Follows from DataNode. |
@@ -133,12 +167,23 @@ All of these are *data* sources. The `data_` prefix groups them correctly and di
 
 ### Tier 4: Config Schema (facility_config.yaml)
 
+#### DataSource Collision Resolution (data system vocabulary)
+
+| Current | Proposed | Rationale |
+|---|---|---|
+| `DataSourceBase` | `DataSystemBase` | Mixin for data system configs — aligns with existing `DataSystemType` enum |
+| `DataSourcesConfig` | `DataSystemsConfig` | Container for all system type configs |
+| `data_sources` (YAML key) | `data_systems` | Config YAML top-level section |
+| `data_sources` (Facility private) | `data_systems` | Graph's private property mirrors YAML key |
+
+#### Tree-specific renames
+
 | Current | Proposed | Rationale |
 |---|---|---|
 | `TreeConfig` | `SourceConfig` | Configuration for a data source (MDSplus tree, XML archive, HDF5 store). |
 | `TreeVersion` | `SourceVersion` | Version definition within a data source config. |
 | `TreeSystem` | `SourceSystem` | Named subsystem within a data source. |
-| `tree_name` (property) | `source_name` | Config-layer property — shorter is fine here since context is unambiguous within `data_sources.mdsplus.trees[].source_name`. |
+| `tree_name` (property) | `source_name` | Config-layer property — shorter is fine here since context is unambiguous within `data_systems.mdsplus.trees[].source_name`. |
 
 `MDSplusConfig`, `EpochConfig` stay unchanged — they are already correctly scoped as format-specific configuration.
 
@@ -359,10 +404,12 @@ Based on the comprehensive audit:
 | Category | Files | Estimated Changes |
 |---|---|---|
 | **LinkML Schemas** | 3 files | ~8 class/enum renames, ~20 property renames |
+| **Config schema collision resolution** | 1 file | ~8 class/mixin renames, 1 YAML key rename |
 | **Auto-generated** (rebuild only) | 4 files | `uv run build-models --force` |
 | **Core pipeline** — graph_ops.py | 1 file | ~50 Cypher query updates |
 | **Core pipeline** — extraction.py | 1 file | ~15 Cypher query updates |
 | **Core pipeline** — batch_discovery.py | 1 file | ~8 Cypher query updates |
+| **Discovery scanners** — base.py + plugins | 7 files | ~30 `data_sources` → `data_systems` key refs |
 | **Discovery** — parallel.py (signals) | 1 file | ~40 Cypher + variable renames |
 | **Discovery** — parallel.py (static) | 1 file | ~10 Cypher updates |
 | **Discovery** — pipeline.py, workers.py, epochs.py | 3 files | ~15 label references |
@@ -375,10 +422,10 @@ Based on the comprehensive audit:
 | **Scripts** | 3 files | ~10 Cypher updates |
 | **Documentation** | 10 files | ~60 text references |
 | **Config YAML** | facility_config.yaml | ~6 class renames |
-| **Facility YAMLs** | tcv.yaml, jet.yaml | Property name updates |
+| **Facility YAMLs** | tcv.yaml, jet.yaml, iter.yaml, jt-60sa.yaml | Property name updates + `data_sources` → `data_systems` key |
 | **Plans/agents** | 8 files | ~30 references |
 
-**Total: ~55 source files, ~400 individual string replacements.**
+**Total: ~60 source files, ~460 individual string replacements** (increased from ~400 due to collision resolution renames).
 
 ### Risk Assessment
 
@@ -389,13 +436,15 @@ Based on the comprehensive audit:
 | Vector index name change | Low | Auto-generated from schema, just rebuild |
 | Other agents' code references old names | Medium | Schema reference doc auto-regenerates |
 | Possible missed references | Low | Grep + test suite + vector index rebuild as safety net |
-| `DataSource` label vs `DataSourceBase` config mixin | Low | Different layers — graph vs config. Docstrings clarify. |
+| `DataSource` label vs `DataSystemBase` config mixin | **Resolved** | Config layer renamed to "DataSystem" vocabulary — zero conceptual overlap, clean grep separation |
 
 ## Implementation Plan
 
 ### Phase 1: Schema + Models
 
 **Goal:** Single source of truth updated; all generated code rebuilt.
+
+**1a. Graph schema renames (facility.yaml)**
 
 1. Rename classes in `facility.yaml`:
    - `MDSplusTree` → `DataSource`
@@ -415,34 +464,50 @@ Based on the comprehensive audit:
    - `node_path` → `data_source_path` (on FacilitySignal)
 5. Add `data_source_node` slot to FacilitySignal:
    - `range: DataNode`, `annotations: { relationship_type: HAS_DATA_SOURCE_NODE }`
-6. Update config schema (`facility_config.yaml`):
+6. Rename `data_sources` → `data_systems` on `Facility` private property
+
+**1b. Config schema collision resolution (facility_config.yaml)**
+
+7. Rename config classes to use "DataSystem" vocabulary:
+   - `DataSourceBase` → `DataSystemBase`
+   - `DataSourcesConfig` → `DataSystemsConfig`
+   - `data_sources` property on `FacilityConfig` → `data_systems`
+8. Update all mixin references (6 classes: `TDIConfig`, `MDSplusConfig`, `PPFConfig`, `EDASConfig`, `HDF5Config`, `IMASConfig`)
+9. Rename tree-specific config classes:
    - `TreeConfig` → `SourceConfig`
    - `TreeVersion` → `SourceVersion`
    - `TreeSystem` → `SourceSystem`
    - `tree_name` → `source_name` (config property)
-7. Update description references in `common.yaml`, `task_groups.yaml`
-8. Rebuild: `uv run build-models --force`
+10. Update description references in `common.yaml`, `task_groups.yaml`
+11. Rebuild: `uv run build-models --force`
+
+**1c. Facility YAML updates**
+
+12. Rename `data_sources:` → `data_systems:` in all facility YAML files (tcv.yaml, jet.yaml, iter.yaml, jt-60sa.yaml)
 
 ### Phase 2: Core Pipeline
 
-**Goal:** All discovery/ingestion code uses new labels.
+**Goal:** All discovery/ingestion code uses new labels and config keys.
 
 1. `discovery/mdsplus/graph_ops.py` — ~50 Cypher label/property/relationship updates
-2. `mdsplus/extraction.py` — ~15 updates
+2. `mdsplus/extraction.py` — ~15 updates + `data_sources` → `data_systems` config key
 3. `mdsplus/batch_discovery.py` — ~8 updates
 4. `discovery/mdsplus/pipeline.py`, `workers.py`, `epochs.py` — ~15 updates
 5. `discovery/static/parallel.py` — ~10 updates
-6. `discovery/signals/parallel.py` — ~40 updates (largest single file)
+6. `discovery/signals/parallel.py` — ~40 updates (largest single file) + `data_sources` → `data_systems`
 7. `discovery/signals/progress.py` — `signals_in_tree` field rename consideration
 8. `discovery/mdsplus/tdi_linkage.py` — ~8 updates
 9. `discovery/base/engine.py` — orphan labels list
+10. `discovery/signals/scanners/base.py` — ~10 `data_sources` → `data_systems` config key refs
+11. `discovery/signals/scanners/*.py` — docstring updates for config key path
+12. `discovery/signals/tdi.py` — `data_sources` → `data_systems` config key
 
 ### Phase 3: Agentic + Graph Layer
 
-**Goal:** MCP tools, search, and REPL use new labels.
+**Goal:** MCP tools, search, and REPL use new labels and config vocabulary.
 
 1. `agentic/search_tools.py` — Cypher queries, vector index name
-2. `agentic/server.py` — MCP tool definitions, example queries
+2. `agentic/server.py` — MCP tool definitions, example queries, `data_sources` → `data_systems` references
 3. `agentic/tools.py` — Cypher queries
 4. `agentic/enrich.py` — enrichment Cypher
 5. `graph/domain_queries.py` — `find_tree_nodes()` → `find_data_nodes()`
@@ -456,7 +521,7 @@ Based on the comprehensive audit:
 
 1. `cli/enrich.py` — label references
 2. `cli/ingest.py` — output labels
-3. `cli/discover/signals.py` — scanner references
+3. `cli/discover/signals.py` — scanner references, `data_sources` → `data_systems` in help text and config access
 4. All 12 test files — labels, mocks, assertions
 5. Full test suite must pass
 
@@ -466,7 +531,7 @@ Based on the comprehensive audit:
 
 1. Update 10 documentation files (docs/architecture/*.md, docs/api/REPL_API.md)
 2. Update 8 plans/agents files
-3. Update facility YAMLs: `tree_name` → `source_name` in tcv.yaml, jet.yaml
+3. Update facility YAMLs: `tree_name` → `source_name` in tcv.yaml, jet.yaml (Phase 1c handles `data_sources` → `data_systems`)
 4. **Write migration script** (see below)
 5. **Execute migration sequence** (see below)
 
