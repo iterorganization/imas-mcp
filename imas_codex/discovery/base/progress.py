@@ -34,6 +34,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -1452,3 +1453,161 @@ def build_resource_section(
                 section.append(f"  pending=[{' '.join(parts)}]", style="cyan dim")
 
     return section
+
+
+# =============================================================================
+# Data-Driven Progress Display
+# =============================================================================
+
+
+@dataclass
+class StageDisplaySpec:
+    """Declarative pipeline stage for :class:`DataDrivenProgressDisplay`.
+
+    Each spec maps a discovery engine worker group to a pipeline row in the
+    progress display.  The display observes the engine state directly via
+    ``stats_attr`` and ``phase_attr`` field names — no manual callbacks or
+    separate ProgressState required.
+    """
+
+    name: str
+    """Display label (e.g. ``"SCAN"``, ``"VLM"``)."""
+
+    style: str
+    """Rich style for the label (e.g. ``"bold blue"``)."""
+
+    group: str
+    """Worker group name — used for worker count and completion detection."""
+
+    stats_attr: str
+    """Name of the :class:`WorkerStats` field on the engine state."""
+
+    phase_attr: str = ""
+    """Name of the :class:`PipelinePhase` field on the engine state (optional)."""
+
+    disabled: bool = False
+    """Whether this stage is disabled (shown as ``"disabled"``)."""
+
+    disabled_msg: str = "disabled"
+    """Message shown when the stage is disabled."""
+
+
+class DataDrivenProgressDisplay(BaseProgressDisplay):
+    """Progress display driven by :class:`StageDisplaySpec` declarations.
+
+    Observes the engine state directly for :class:`WorkerStats` and
+    :class:`PipelinePhase`, eliminating the need for a separate
+    ``ProgressState`` dataclass and manual callback wiring.
+
+    Usage::
+
+        display = DataDrivenProgressDisplay(
+            facility="tcv",
+            cost_limit=2.0,
+            stages=[
+                StageDisplaySpec("FETCH", "bold blue", "image", "image_stats", "image_phase"),
+                StageDisplaySpec("VLM", "bold magenta", "vlm", "image_score_stats",
+                                 disabled=scan_only),
+            ],
+            title_suffix="Document Discovery",
+        )
+        display.set_engine_state(state)
+    """
+
+    def __init__(
+        self,
+        facility: str,
+        cost_limit: float,
+        stages: list[StageDisplaySpec],
+        *,
+        console: Any | None = None,
+        focus: str = "",
+        title_suffix: str = "Discovery",
+        mode_label: str | None = None,
+        graph_refresh_fn: Callable[[str], None] | None = None,
+    ) -> None:
+        super().__init__(
+            facility=facility,
+            cost_limit=cost_limit,
+            console=console,
+            focus=focus,
+            title_suffix=title_suffix,
+        )
+        self.stages = stages
+        self._mode_label = mode_label
+        self._engine_state: Any | None = None
+        self._graph_refresh_fn = graph_refresh_fn
+
+    def set_engine_state(self, state: Any) -> None:
+        """Connect display to the live engine state."""
+        self._engine_state = state
+
+    def _header_mode_label(self) -> str | None:
+        return self._mode_label
+
+    def _build_pipeline_section(self) -> Text:
+        rows: list[PipelineRowConfig] = []
+        for stage in self.stages:
+            stats: WorkerStats | None = None
+            if self._engine_state and stage.stats_attr:
+                stats = getattr(self._engine_state, stage.stats_attr, None)
+
+            count, ann = self._count_group_workers(stage.group)
+            completed = stats.processed if stats else 0
+            total = max(completed, 1)
+            complete = self._worker_complete(stage.group)
+
+            rows.append(
+                PipelineRowConfig(
+                    name=stage.name,
+                    style=stage.style,
+                    completed=completed,
+                    total=total,
+                    rate=stats.ema_rate if stats else None,
+                    cost=stats.cost if stats and stats.cost > 0 else None,
+                    disabled=stage.disabled,
+                    disabled_msg=stage.disabled_msg,
+                    worker_count=count,
+                    worker_annotation=ann,
+                    is_complete=complete,
+                )
+            )
+        return build_pipeline_section(rows, self.bar_width)
+
+    def _build_resources_section(self) -> Text:
+        total_cost = 0.0
+        if self._engine_state:
+            for stats in getattr(self._engine_state, "all_stats", {}).values():
+                total_cost += stats.cost
+        config = ResourceConfig(
+            elapsed=self.elapsed,
+            run_cost=total_cost if total_cost > 0 else None,
+            cost_limit=self.cost_limit,
+        )
+        return build_resource_section(config, self.gauge_width)
+
+    def refresh_from_graph(self, facility: str) -> None:
+        """Refresh display data from graph.
+
+        Delegates to the ``graph_refresh_fn`` provided at construction, if any.
+        """
+        if self._graph_refresh_fn:
+            self._graph_refresh_fn(facility)
+        self._refresh()
+
+    def print_summary(self) -> None:
+        """Print a brief summary after discovery completes."""
+        if self._engine_state is None:
+            return
+        lines: list[str] = []
+        for stage in self.stages:
+            stats = getattr(self._engine_state, stage.stats_attr, None)
+            if stats and stats.processed > 0:
+                parts = [f"{stage.name}: {stats.processed:,}"]
+                if stats.cost > 0:
+                    parts.append(f"${stats.cost:.2f}")
+                lines.append("  ".join(parts))
+        if lines:
+            self.console.print()
+            for line in lines:
+                self.console.print(f"  {line}")

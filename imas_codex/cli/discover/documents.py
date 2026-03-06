@@ -104,10 +104,12 @@ def documents(
         make_log_print,
         run_discovery,
         setup_logging,
+        use_rich_output,
     )
     from imas_codex.discovery.base.facility import get_facility
 
-    console = setup_logging("documents", facility, use_rich=False, verbose=verbose)
+    use_rich = use_rich_output()
+    console = setup_logging("documents", facility, use_rich=use_rich, verbose=verbose)
     log_print = make_log_print("documents", console)
 
     try:
@@ -154,12 +156,57 @@ def documents(
             return
 
         # Step 2: Process images (fetch + VLM captioning) via harness
-        from imas_codex.discovery.documents.pipeline import run_document_discovery
+        from imas_codex.discovery.documents.pipeline import (
+            DocumentDiscoveryState,
+            run_document_discovery,
+        )
+
+        # Create state externally so the display can observe it
+        state = DocumentDiscoveryState(
+            facility=facility,
+            ssh_host=ssh_host,
+            cost_limit=cost_limit,
+            min_score=min_score,
+            deadline=deadline,
+            store_images=store_bytes,
+            scan_only=False,
+            focus=focus,
+        )
+
+        # Build display for rich mode
+        display = None
+        if use_rich:
+            from imas_codex.discovery.base.progress import (
+                DataDrivenProgressDisplay,
+                StageDisplaySpec,
+            )
+
+            display = DataDrivenProgressDisplay(
+                facility=facility,
+                cost_limit=cost_limit,
+                stages=[
+                    StageDisplaySpec(
+                        "FETCH", "bold blue", "image", "image_stats", "image_phase"
+                    ),
+                    StageDisplaySpec(
+                        "VLM",
+                        "bold magenta",
+                        "vlm",
+                        "image_score_stats",
+                        "image_score_phase",
+                    ),
+                ],
+                console=console,
+                focus=focus or "",
+                title_suffix="Document Discovery",
+            )
+            display.set_engine_state(state)
 
         disc_config = DiscoveryConfig(
             domain="documents",
             facility=facility,
             facility_config=config,
+            display=display,
             check_graph=False,
             check_embed=False,
             check_ssh=False,
@@ -168,27 +215,25 @@ def documents(
 
         async def async_main(stop_event, service_monitor):
             return await run_document_discovery(
-                facility=facility,
-                ssh_host=ssh_host,
-                cost_limit=cost_limit,
-                min_score=min_score,
+                state,
                 num_image_workers=workers,
                 num_vlm_workers=vlm_workers,
-                store_images=store_bytes,
-                focus=focus,
-                deadline=deadline,
                 stop_event=stop_event,
+                on_worker_status=(display.update_worker_status if display else None),
             )
 
         result = run_discovery(disc_config, async_main)
 
-        fetched = result.get("images_fetched", 0)
-        captioned = result.get("images_captioned", 0)
-        cost = result.get("cost", 0)
-        elapsed = result.get("elapsed_seconds", 0)
+        if not display:
+            fetched = result.get("images_fetched", 0)
+            captioned = result.get("images_captioned", 0)
+            cost = result.get("cost", 0)
+            elapsed = result.get("elapsed_seconds", 0)
 
-        log_print(f"\n  [green]{fetched} images fetched, {captioned} captioned[/green]")
-        log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
+            log_print(
+                f"\n  [green]{fetched} images fetched, {captioned} captioned[/green]"
+            )
+            log_print(f"  [dim]Cost: ${cost:.2f}, Time: {elapsed:.1f}s[/dim]")
 
     except Exception as e:
         log_print(f"[red]Error: {e}[/red]")
