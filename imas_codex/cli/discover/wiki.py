@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 
 import click
-from rich.console import Console
 from rich.markup import escape as rich_escape
 
 logger = logging.getLogger(__name__)
@@ -112,9 +110,7 @@ def wiki(
       imas-codex discover wiki tcv -f equilibrium  # Focus scoring
       imas-codex discover wiki jet -c 5.0          # $5 budget
     """
-    from imas_codex.cli.logging import configure_cli_logging
-
-    # Auto-detect if rich can run
+    from imas_codex.cli.discover.common import make_log_print, setup_logging
     from imas_codex.cli.rich_output import should_use_rich
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki import get_wiki_stats
@@ -127,31 +123,9 @@ def wiki(
     from imas_codex.discovery.wiki.parallel import run_parallel_wiki_discovery
 
     use_rich = should_use_rich()
-
-    # Always configure file logging (DEBUG level to disk)
-    configure_cli_logging("wiki", facility=facility, verbose=verbose)
-
-    if use_rich:
-        console = Console()
-    else:
-        console = None
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(message)s",
-            datefmt="%H:%M:%S",
-        )
-
+    console = setup_logging("wiki", facility, use_rich, verbose)
+    log_print = make_log_print("wiki", console)
     wiki_logger = logging.getLogger("imas_codex.discovery.wiki")
-    if not use_rich:
-        wiki_logger.setLevel(logging.INFO)
-
-    def log_print(msg: str, style: str = "") -> None:
-        """Print to console or log, stripping rich markup."""
-        clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
-        if console:
-            console.print(msg)
-        else:
-            wiki_logger.info(clean_msg)
 
     try:
         config = get_facility(facility)
@@ -744,26 +718,228 @@ def wiki(
         log_print(f"Sites to process: {len(site_configs)}")
 
     try:
+        from imas_codex.cli.discover.common import (
+            DiscoveryConfig,
+            run_discovery,
+        )
 
-        async def run_all_sites_unified(
-            _facility: str,
-            _site_configs: list[dict],
-            _cost_limit: float,
-            _max_pages: int | None,
-            _max_depth: int | None,
-            _focus: str | None,
-            _scan_only: bool,
-            _score_only: bool,
-            _use_rich: bool,
-            _num_score_workers: int,
-            _num_ingest_workers: int,
-            _deadline: float | None = None,
-            _store_images: bool = False,
-        ):
-            from imas_codex.cli.shutdown import install_shutdown_handlers
+        deadline: float | None = None
+        if time_limit is not None:
+            deadline = time.time() + (time_limit * 60)
 
-            stop_event = asyncio.Event()
+        multi_site = len(site_configs) > 1
 
+        # Build display and config based on rich/non-rich mode
+        display = None
+        if use_rich:
+            from imas_codex.discovery.wiki.progress import WikiProgressDisplay
+
+            display = WikiProgressDisplay(
+                facility=facility,
+                cost_limit=cost_limit,
+                page_limit=max_pages,
+                focus=focus or "",
+                console=console,
+                scan_only=scan_only,
+                score_only=score_only,
+            )
+
+        # Custom graph refresh for wiki — calls get_wiki_discovery_stats
+        # and pushes ~25 keyword args into the display.
+        async def wiki_graph_refresh():
+            from imas_codex.discovery.wiki.parallel import (
+                get_wiki_discovery_stats,
+            )
+
+            stats = await asyncio.to_thread(get_wiki_discovery_stats, facility)
+            display.update_from_graph(
+                total_pages=stats.get("total", 0),
+                pages_scanned=stats.get("scanned", 0),
+                pages_scored=stats.get("scored", 0),
+                pages_ingested=stats.get("ingested", 0),
+                pages_skipped=stats.get("skipped", 0),
+                pages_failed=stats.get("failed", 0),
+                pending_score=stats.get(
+                    "pending_score",
+                    stats.get("scanned", 0),
+                ),
+                pending_ingest=stats.get("pending_ingest", 0),
+                pending_document_score=stats.get("pending_document_score", 0),
+                pending_document_ingest=stats.get("pending_document_ingest", 0),
+                accumulated_cost=stats.get("accumulated_cost", 0.0),
+                accumulated_page_cost=stats.get("accumulated_page_cost", 0.0),
+                accumulated_document_cost=stats.get("accumulated_document_cost", 0.0),
+                accumulated_image_cost=stats.get("accumulated_image_cost", 0.0),
+                total_documents=stats.get("total_documents", 0),
+                docs_ingested=stats.get("docs_ingested", 0),
+                docs_scored=stats.get("documents_scored", 0),
+                documents_failed=stats.get("documents_failed", 0),
+                documents_deferred=stats.get("documents_deferred", 0),
+                documents_skipped=stats.get("documents_skipped", 0),
+                images_scored=stats.get("images_scored", 0),
+                pending_image_score=stats.get("pending_image_score", 0),
+                historic_score_rate=stats.get("historic_score_rate"),
+                historic_ingest_rate=stats.get("historic_ingest_rate"),
+            )
+
+        disc_config = DiscoveryConfig(
+            domain="wiki",
+            facility=facility,
+            facility_config=config,
+            display=display,
+            check_graph=True,
+            check_embed=not (scan_only or score_only),
+            check_model=not scan_only,
+            graph_refresh_fn=wiki_graph_refresh if display else None,
+            graph_refresh_interval=2.0,
+            suppress_loggers=[
+                "imas_codex.embeddings",
+                "imas_codex.discovery.wiki.adapters",
+                "imas_codex.discovery.wiki.mediawiki",
+                "imas_codex.discovery.wiki.pipeline",
+                "imas_codex.discovery.wiki.scoring",
+                "imas_codex.discovery.wiki.prefetch",
+            ],
+        )
+
+        # Build callbacks based on rich/non-rich mode
+        if display:
+
+            def on_scan(msg, stats, results=None):
+                result_dicts = None
+                if results:
+                    result_dicts = [
+                        {
+                            "title": r.get("id", "?").split(":")[-1],
+                            "out_links": r.get("out_degree", 0),
+                            "depth": r.get("depth", 0),
+                        }
+                        for r in results[:5]
+                    ]
+                display.update_scan(msg, stats, result_dicts)
+
+            def on_score(msg, stats, results=None):
+                if msg == "provider_budget_exhausted":
+                    display.state.provider_budget_exhausted = True
+                    return
+                result_dicts = None
+                if results:
+                    result_dicts = [
+                        {
+                            "title": r.get("id", "?").split(":")[-1],
+                            "score": r.get("score"),
+                            "physics_domain": r.get("physics_domain"),
+                            "description": r.get("description", ""),
+                            "is_physics": r.get("is_physics", False),
+                            "skipped": r.get("skipped", False),
+                            "skip_reason": r.get("skip_reason", ""),
+                        }
+                        for r in results[:5]
+                    ]
+                display.update_score(msg, stats, result_dicts)
+
+            def on_ingest(msg, stats, results=None):
+                result_dicts = None
+                if results:
+                    result_dicts = [
+                        {
+                            "title": r.get("id", "?").split(":")[-1],
+                            "score": r.get("score"),
+                            "description": r.get("description", ""),
+                            "physics_domain": r.get("physics_domain"),
+                            "chunk_count": r.get("chunk_count", 0),
+                        }
+                        for r in results[:5]
+                    ]
+                display.update_ingest(msg, stats, result_dicts)
+
+            def on_document(msg, stats, results=None):
+                result_dicts = None
+                if results:
+                    result_dicts = [
+                        {
+                            "filename": r.get("filename", "unknown"),
+                            "document_type": r.get("document_type", ""),
+                            "score": r.get("score"),
+                            "physics_domain": r.get("physics_domain"),
+                            "description": r.get("description", ""),
+                            "chunk_count": r.get("chunk_count", 0),
+                        }
+                        for r in results[:5]
+                    ]
+                display.update_docs(msg, stats, result_dicts)
+
+            def on_document_score(msg, stats, results=None):
+                if msg == "provider_budget_exhausted":
+                    display.state.provider_budget_exhausted = True
+                    return
+                result_dicts = None
+                if results:
+                    result_dicts = [
+                        {
+                            "filename": r.get("filename", "unknown"),
+                            "document_type": r.get("document_type", ""),
+                            "score": r.get("score"),
+                            "physics_domain": r.get("physics_domain"),
+                            "description": r.get("description", ""),
+                        }
+                        for r in results[:5]
+                    ]
+                display.update_docs_score(msg, stats, result_dicts)
+
+            def on_image(msg, stats, results=None):
+                if msg == "provider_budget_exhausted":
+                    display.state.provider_budget_exhausted = True
+                    return
+                result_dicts = None
+                if results:
+                    result_dicts = [
+                        {
+                            "id": r.get("id", "unknown"),
+                            "score": r.get("score"),
+                            "physics_domain": r.get("physics_domain"),
+                            "description": r.get("description", ""),
+                            "purpose": r.get("purpose", ""),
+                        }
+                        for r in results[:5]
+                    ]
+                display.update_image(msg, stats, result_dicts)
+
+            def on_worker_status(worker_group):
+                display.update_worker_status(worker_group)
+
+        else:
+
+            def on_scan(msg, stats, results=None):
+                if msg != "idle":
+                    wiki_logger.info("SCAN: %s", msg)
+
+            def on_score(msg, stats, results=None):
+                if msg == "provider_budget_exhausted":
+                    wiki_logger.warning(
+                        "API key budget exhausted — LLM workers halting"
+                    )
+                elif msg != "idle":
+                    wiki_logger.info("SCORE: %s", msg)
+
+            def on_ingest(msg, stats, results=None):
+                if msg != "idle":
+                    wiki_logger.info("INGEST: %s", msg)
+
+            on_document = None
+            on_document_score = None
+            on_image = None
+            on_worker_status = None
+
+        # Multi-site display setup
+        if display and multi_site:
+            display.set_site_info(
+                site_name=site_configs[0]["base_url"],
+                site_index=0,
+                total_sites=len(site_configs),
+            )
+
+        async def async_main(stop_event, service_monitor):
             combined: dict = {
                 "scanned": 0,
                 "scored": 0,
@@ -773,75 +949,60 @@ def wiki(
                 "cost": 0.0,
                 "elapsed_seconds": 0.0,
             }
-            remaining_budget = _cost_limit
-            remaining_pages = _max_pages
+            remaining_budget = cost_limit
+            remaining_pages = max_pages
 
-            # Logging-only callbacks for non-rich mode
-            def log_on_scan(msg, stats, results=None):
-                if msg != "idle":
-                    wiki_logger.info(f"SCAN: {msg}")
+            # Start facility-scoped workers for multi-site mode
+            facility_group = None
+            facility_state = None
+            if multi_site and not scan_only:
+                from imas_codex.discovery.base.supervision import (
+                    SupervisedWorkerGroup,
+                    run_supervised_loop,
+                )
+                from imas_codex.discovery.wiki.parallel import (
+                    create_facility_worker_state,
+                    start_facility_workers,
+                )
 
-            def log_on_score(msg, stats, results=None):
-                if msg == "provider_budget_exhausted":
-                    wiki_logger.warning(
-                        "API key budget exhausted — LLM workers halting"
-                    )
-                elif msg != "idle":
-                    wiki_logger.info(f"SCORE: {msg}")
+                _shared_ssh = site_configs[0].get("ssh_host")
+                facility_state = create_facility_worker_state(
+                    facility,
+                    ssh_host=_shared_ssh,
+                    focus=focus,
+                    cost_limit=cost_limit,
+                    deadline=deadline,
+                    store_images=store_images,
+                    service_monitor=service_monitor,
+                )
+                facility_group = SupervisedWorkerGroup()
 
-            def log_on_ingest(msg, stats, results=None):
-                if msg != "idle":
-                    wiki_logger.info(f"INGEST: {msg}")
+                # Non-rich: use logging callback for images
+                fac_image_cb = on_image
+                if not display:
 
-            if not _use_rich:
-                install_shutdown_handlers(stop_event=stop_event)
+                    def fac_image_cb(msg, stats, results=None):
+                        if msg != "idle":
+                            wiki_logger.info("IMAGE: %s", msg)
 
-                _multi = len(_site_configs) > 1
+                start_facility_workers(
+                    facility_state,
+                    facility_group,
+                    on_image_progress=fac_image_cb,
+                )
 
-                # When processing multiple sites, start facility-scoped
-                # workers (IMAGE, EMBED) once — they drain the global queue
-                # while per-site workers advance through sites.
-                facility_group = None
-                facility_state = None
-                if _multi and not _scan_only:
-                    from imas_codex.discovery.base.supervision import (
-                        SupervisedWorkerGroup,
-                        run_supervised_loop,
-                    )
-                    from imas_codex.discovery.wiki.parallel import (
-                        create_facility_worker_state,
-                        start_facility_workers,
-                    )
+            try:
+                for i, sc in enumerate(site_configs):
+                    if i > 0 and multi_site and display:
+                        display.advance_site(sc["base_url"], i)
 
-                    # Determine shared SSH host from first site config
-                    _shared_ssh = _site_configs[0].get("ssh_host")
-
-                    facility_state = create_facility_worker_state(
-                        _facility,
-                        ssh_host=_shared_ssh,
-                        focus=_focus,
-                        cost_limit=_cost_limit,
-                        deadline=_deadline,
-                        store_images=_store_images,
-                    )
-
-                    facility_group = SupervisedWorkerGroup()
-                    start_facility_workers(
-                        facility_state,
-                        facility_group,
-                        on_image_progress=lambda msg, stats, results=None: (
-                            wiki_logger.info(f"IMAGE: {msg}") if msg != "idle" else None
-                        ),
-                    )
-
-                for i, sc in enumerate(_site_configs):
                     if remaining_budget <= 0:
                         wiki_logger.info("Budget exhausted, skipping remaining sites")
                         break
                     if remaining_pages is not None and remaining_pages <= 0:
                         wiki_logger.info("Page limit reached, skipping remaining sites")
                         break
-                    if _deadline is not None and time.time() >= _deadline:
+                    if deadline is not None and time.time() >= deadline:
                         wiki_logger.info("Time limit reached, skipping remaining sites")
                         break
 
@@ -853,12 +1014,12 @@ def wiki(
 
                     site_url = sc["base_url"]
                     if not _has_page_work(
-                        _facility, base_url=site_url
-                    ) and not _has_doc_work(_facility, base_url=site_url):
+                        facility, base_url=site_url
+                    ) and not _has_doc_work(facility, base_url=site_url):
                         wiki_logger.info(
                             "Skipping site %d/%d (no pending work): %s",
                             i + 1,
-                            len(_site_configs),
+                            len(site_configs),
                             site_url,
                         )
                         continue
@@ -866,43 +1027,61 @@ def wiki(
                     wiki_logger.info(
                         "Processing site %d/%d: %s",
                         i + 1,
-                        len(_site_configs),
+                        len(site_configs),
                         sc["base_url"],
                     )
 
-                    try:
-                        result = await run_parallel_wiki_discovery(
-                            facility=_facility,
-                            site_type=sc["site_type"],
-                            base_url=sc["base_url"],
-                            portal_page=sc["portal_page"],
-                            ssh_host=sc["ssh_host"],
-                            auth_type=sc["auth_type"],
-                            credential_service=sc["credential_service"],
-                            cost_limit=remaining_budget,
-                            page_limit=remaining_pages,
-                            max_depth=_max_depth,
-                            focus=_focus,
-                            num_scan_workers=1,
-                            num_score_workers=_num_score_workers,
-                            num_ingest_workers=_num_ingest_workers,
-                            scan_only=_scan_only,
-                            score_only=_score_only,
-                            store_images=_store_images,
-                            bulk_discover=False,
-                            skip_reset=_multi,
-                            deadline=_deadline,
-                            on_scan_progress=log_on_scan,
-                            on_score_progress=log_on_score,
-                            on_ingest_progress=log_on_ingest,
-                            max_wiki_connections=sc.get("max_wiki_connections", 10),
-                            skip_facility_workers=_multi and not _scan_only,
+                    disco_kwargs: dict = {
+                        "facility": facility,
+                        "site_type": sc["site_type"],
+                        "base_url": sc["base_url"],
+                        "portal_page": sc["portal_page"],
+                        "ssh_host": sc["ssh_host"],
+                        "auth_type": sc["auth_type"],
+                        "credential_service": sc["credential_service"],
+                        "cost_limit": remaining_budget,
+                        "page_limit": remaining_pages,
+                        "max_depth": max_depth,
+                        "focus": focus,
+                        "num_scan_workers": 1,
+                        "num_score_workers": score_workers,
+                        "num_ingest_workers": ingest_workers,
+                        "scan_only": scan_only,
+                        "score_only": score_only,
+                        "store_images": store_images,
+                        "bulk_discover": False,
+                        "skip_reset": multi_site,
+                        "deadline": deadline,
+                        "on_scan_progress": on_scan,
+                        "on_score_progress": on_score,
+                        "on_ingest_progress": on_ingest,
+                        "max_wiki_connections": sc.get("max_wiki_connections", 10),
+                        "skip_facility_workers": multi_site and not scan_only,
+                    }
+
+                    # Rich-only callbacks
+                    if display:
+                        disco_kwargs.update(
+                            on_docs_progress=on_document,
+                            on_document_score_progress=on_document_score,
+                            on_image_progress=on_image,
+                            on_worker_status=on_worker_status,
+                            service_monitor=service_monitor,
                         )
+
+                    try:
+                        result = await run_parallel_wiki_discovery(**disco_kwargs)
                     except Exception as e:
                         wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
                         continue
 
-                    for key in ("scanned", "scored", "ingested", "documents"):
+                    for key in (
+                        "scanned",
+                        "scored",
+                        "ingested",
+                        "documents",
+                        "images_scored",
+                    ):
                         combined[key] += result.get(key, 0)
                     combined["cost"] += result.get("cost", 0)
                     combined["elapsed_seconds"] += result.get("elapsed_seconds", 0)
@@ -911,467 +1090,72 @@ def wiki(
                     if remaining_pages is not None:
                         remaining_pages -= result.get("scored", 0)
 
+            finally:
                 # Drain facility-scoped workers after all sites complete
                 if facility_state is not None and facility_group is not None:
                     wiki_logger.info(
                         "All sites processed — draining facility workers "
                         "(images, embeddings)"
                     )
-                    # Signal that no more ingest work will arrive
                     facility_state.image_phase.record_idle()
                     await run_supervised_loop(
                         facility_group,
                         facility_state.should_stop,
+                        on_worker_status=on_worker_status if display else None,
                     )
                     facility_state.stop_requested = True
                     combined["images_scored"] += facility_state.image_stats.processed
                     combined["cost"] += facility_state.total_cost
 
-                return combined
+            return combined
 
-            # Rich mode: single unified display across all sites
-            from imas_codex.cli.discover.common import create_discovery_monitor
-            from imas_codex.discovery.wiki.progress import WikiProgressDisplay
-
-            multi_site = len(_site_configs) > 1
-
-            service_monitor = create_discovery_monitor(
-                config,
-                check_graph=True,
-                check_embed=not (_scan_only or _score_only),
-                check_model=not _scan_only,
-            )
-
-            # Suppress noisy INFO logs during rich display.
-            # Note: discovery.wiki.state is NOT suppressed — its WARNING-level
-            # messages about wiki overwhelm, backoff and recovery are critical.
-            for mod in (
-                "imas_codex.embeddings",
-                "imas_codex.discovery.wiki.adapters",
-                "imas_codex.discovery.wiki.mediawiki",
-                "imas_codex.discovery.wiki.pipeline",
-                "imas_codex.discovery.wiki.scoring",
-                "imas_codex.discovery.wiki.prefetch",
-            ):
-                logging.getLogger(mod).setLevel(logging.WARNING)
-
-            display = WikiProgressDisplay(
-                facility=_facility,
-                cost_limit=_cost_limit,
-                page_limit=_max_pages,
-                focus=_focus or "",
-                console=console,
-                scan_only=_scan_only,
-                score_only=_score_only,
-            )
-            # Set service_monitor BEFORE entering the Live context so the
-            # SERVERS row renders from the very first frame.
-            display.service_monitor = service_monitor
-            await service_monitor.__aenter__()
-
-            with display:
-                install_shutdown_handlers(stop_event=stop_event, display=display)
-
-                if multi_site:
-                    display.set_site_info(
-                        site_name=_site_configs[0]["base_url"],
-                        site_index=0,
-                        total_sites=len(_site_configs),
-                    )
-
-                async def refresh_graph_state():
+        def on_complete(result):
+            if display:
+                try:
                     from imas_codex.discovery.wiki.parallel import (
                         get_wiki_discovery_stats,
                     )
 
-                    while True:
-                        try:
-                            stats = await asyncio.to_thread(
-                                get_wiki_discovery_stats, _facility
-                            )
-                            display.update_from_graph(
-                                total_pages=stats.get("total", 0),
-                                pages_scanned=stats.get("scanned", 0),
-                                pages_scored=stats.get("scored", 0),
-                                pages_ingested=stats.get("ingested", 0),
-                                pages_skipped=stats.get("skipped", 0),
-                                pages_failed=stats.get("failed", 0),
-                                pending_score=stats.get(
-                                    "pending_score",
-                                    stats.get("scanned", 0),
-                                ),
-                                pending_ingest=stats.get("pending_ingest", 0),
-                                pending_document_score=stats.get(
-                                    "pending_document_score", 0
-                                ),
-                                pending_document_ingest=stats.get(
-                                    "pending_document_ingest", 0
-                                ),
-                                accumulated_cost=stats.get("accumulated_cost", 0.0),
-                                accumulated_page_cost=stats.get(
-                                    "accumulated_page_cost", 0.0
-                                ),
-                                accumulated_document_cost=stats.get(
-                                    "accumulated_document_cost", 0.0
-                                ),
-                                accumulated_image_cost=stats.get(
-                                    "accumulated_image_cost", 0.0
-                                ),
-                                total_documents=stats.get("total_documents", 0),
-                                docs_ingested=stats.get("docs_ingested", 0),
-                                docs_scored=stats.get("documents_scored", 0),
-                                documents_failed=stats.get("documents_failed", 0),
-                                documents_deferred=stats.get("documents_deferred", 0),
-                                documents_skipped=stats.get("documents_skipped", 0),
-                                images_scored=stats.get("images_scored", 0),
-                                pending_image_score=stats.get("pending_image_score", 0),
-                                historic_score_rate=stats.get("historic_score_rate"),
-                                historic_ingest_rate=stats.get("historic_ingest_rate"),
-                            )
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as e:
-                            wiki_logger.debug("Graph refresh failed: %s", e)
-                        await asyncio.sleep(2.0)
-
-                async def queue_ticker():
-                    while True:
-                        try:
-                            display.tick()
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as e:
-                            wiki_logger.debug("Display tick failed: %s", e)
-                        await asyncio.sleep(0.15)
-
-                refresh_task = asyncio.create_task(refresh_graph_state())
-                ticker_task = asyncio.create_task(queue_ticker())
-
-                def on_scan(msg, stats, results=None):
-                    result_dicts = None
-                    if results:
-                        result_dicts = [
-                            {
-                                "title": r.get("id", "?").split(":")[-1],
-                                "out_links": r.get("out_degree", 0),
-                                "depth": r.get("depth", 0),
-                            }
-                            for r in results[:5]
-                        ]
-                    display.update_scan(msg, stats, result_dicts)
-
-                def on_score(msg, stats, results=None):
-                    if msg == "provider_budget_exhausted":
-                        display.state.provider_budget_exhausted = True
-                        return
-                    result_dicts = None
-                    if results:
-                        result_dicts = [
-                            {
-                                "title": r.get("id", "?").split(":")[-1],
-                                "score": r.get("score"),
-                                "physics_domain": r.get("physics_domain"),
-                                "description": r.get("description", ""),
-                                "is_physics": r.get("is_physics", False),
-                                "skipped": r.get("skipped", False),
-                                "skip_reason": r.get("skip_reason", ""),
-                            }
-                            for r in results[:5]
-                        ]
-                    display.update_score(msg, stats, result_dicts)
-
-                def on_ingest(msg, stats, results=None):
-                    result_dicts = None
-                    if results:
-                        result_dicts = [
-                            {
-                                "title": r.get("id", "?").split(":")[-1],
-                                "score": r.get("score"),
-                                "description": r.get("description", ""),
-                                "physics_domain": r.get("physics_domain"),
-                                "chunk_count": r.get("chunk_count", 0),
-                            }
-                            for r in results[:5]
-                        ]
-                    display.update_ingest(msg, stats, result_dicts)
-
-                def on_document(msg, stats, results=None):
-                    result_dicts = None
-                    if results:
-                        result_dicts = [
-                            {
-                                "filename": r.get("filename", "unknown"),
-                                "document_type": r.get("document_type", ""),
-                                "score": r.get("score"),
-                                "physics_domain": r.get("physics_domain"),
-                                "description": r.get("description", ""),
-                                "chunk_count": r.get("chunk_count", 0),
-                            }
-                            for r in results[:5]
-                        ]
-                    display.update_docs(msg, stats, result_dicts)
-
-                def on_document_score(msg, stats, results=None):
-                    if msg == "provider_budget_exhausted":
-                        display.state.provider_budget_exhausted = True
-                        return
-                    result_dicts = None
-                    if results:
-                        result_dicts = [
-                            {
-                                "filename": r.get("filename", "unknown"),
-                                "document_type": r.get("document_type", ""),
-                                "score": r.get("score"),
-                                "physics_domain": r.get("physics_domain"),
-                                "description": r.get("description", ""),
-                            }
-                            for r in results[:5]
-                        ]
-                    display.update_docs_score(msg, stats, result_dicts)
-
-                def on_image(msg, stats, results=None):
-                    if msg == "provider_budget_exhausted":
-                        display.state.provider_budget_exhausted = True
-                        return
-                    result_dicts = None
-                    if results:
-                        result_dicts = [
-                            {
-                                "id": r.get("id", "unknown"),
-                                "score": r.get("score"),
-                                "physics_domain": r.get("physics_domain"),
-                                "description": r.get("description", ""),
-                                "purpose": r.get("purpose", ""),
-                            }
-                            for r in results[:5]
-                        ]
-                    display.update_image(msg, stats, result_dicts)
-
-                def on_worker_status(worker_group):
-                    display.update_worker_status(worker_group)
-
-                # Start facility-scoped workers for multi-site Rich path
-                facility_group_rich = None
-                facility_state_rich = None
-                if multi_site and not _scan_only:
-                    from imas_codex.discovery.base.supervision import (
-                        SupervisedWorkerGroup,
-                        run_supervised_loop,
+                    stats = get_wiki_discovery_stats(facility)
+                    display.update_from_graph(
+                        total_pages=stats.get("total", 0),
+                        pages_scanned=stats.get("scanned", 0),
+                        pages_scored=stats.get("scored", 0),
+                        pages_ingested=stats.get("ingested", 0),
+                        pages_skipped=stats.get("skipped", 0),
+                        pages_failed=stats.get("failed", 0),
+                        pending_score=stats.get(
+                            "pending_score",
+                            stats.get("scanned", 0),
+                        ),
+                        pending_ingest=stats.get("pending_ingest", 0),
+                        pending_document_score=stats.get("pending_document_score", 0),
+                        pending_document_ingest=stats.get("pending_document_ingest", 0),
+                        accumulated_cost=stats.get("accumulated_cost", 0.0),
+                        accumulated_page_cost=stats.get("accumulated_page_cost", 0.0),
+                        accumulated_document_cost=stats.get(
+                            "accumulated_document_cost", 0.0
+                        ),
+                        accumulated_image_cost=stats.get("accumulated_image_cost", 0.0),
+                        total_documents=stats.get("total_documents", 0),
+                        docs_ingested=stats.get("docs_ingested", 0),
+                        docs_scored=stats.get("documents_scored", 0),
+                        documents_failed=stats.get("documents_failed", 0),
+                        documents_deferred=stats.get("documents_deferred", 0),
+                        documents_skipped=stats.get("documents_skipped", 0),
+                        images_scored=stats.get("images_scored", 0),
+                        pending_image_score=stats.get("pending_image_score", 0),
+                        historic_score_rate=stats.get("historic_score_rate"),
+                        historic_ingest_rate=stats.get("historic_ingest_rate"),
                     )
-                    from imas_codex.discovery.wiki.parallel import (
-                        create_facility_worker_state,
-                        start_facility_workers,
-                    )
+                    display.tick()
+                except Exception:
+                    pass
 
-                    _shared_ssh = _site_configs[0].get("ssh_host")
-                    facility_state_rich = create_facility_worker_state(
-                        _facility,
-                        ssh_host=_shared_ssh,
-                        focus=_focus,
-                        cost_limit=_cost_limit,
-                        deadline=_deadline,
-                        store_images=_store_images,
-                        service_monitor=service_monitor,
-                    )
-                    facility_group_rich = SupervisedWorkerGroup()
-                    start_facility_workers(
-                        facility_state_rich,
-                        facility_group_rich,
-                        on_image_progress=on_image,
-                    )
+        result = run_discovery(disc_config, async_main, on_complete=on_complete)
 
-                try:
-                    for i, sc in enumerate(_site_configs):
-                        if i > 0 and multi_site:
-                            display.advance_site(sc["base_url"], i)
-
-                        if remaining_budget <= 0:
-                            break
-                        if remaining_pages is not None and remaining_pages <= 0:
-                            break
-                        if _deadline is not None and time.time() >= _deadline:
-                            break
-
-                        # Skip sites with no pending work (idempotent restart)
-                        from imas_codex.discovery.wiki.graph_ops import (
-                            has_pending_document_work as _has_doc_work_r,
-                            has_pending_work as _has_page_work_r,
-                        )
-
-                        site_url = sc["base_url"]
-                        if not _has_page_work_r(
-                            _facility, base_url=site_url
-                        ) and not _has_doc_work_r(_facility, base_url=site_url):
-                            wiki_logger.info(
-                                "Skipping site %d/%d (no pending work): %s",
-                                i + 1,
-                                len(_site_configs),
-                                site_url,
-                            )
-                            continue
-
-                        try:
-                            result = await run_parallel_wiki_discovery(
-                                facility=_facility,
-                                site_type=sc["site_type"],
-                                base_url=sc["base_url"],
-                                portal_page=sc["portal_page"],
-                                ssh_host=sc["ssh_host"],
-                                auth_type=sc["auth_type"],
-                                credential_service=sc["credential_service"],
-                                cost_limit=remaining_budget,
-                                page_limit=remaining_pages,
-                                max_depth=_max_depth,
-                                focus=_focus,
-                                num_scan_workers=1,
-                                num_score_workers=_num_score_workers,
-                                num_ingest_workers=_num_ingest_workers,
-                                scan_only=_scan_only,
-                                score_only=_score_only,
-                                store_images=_store_images,
-                                bulk_discover=False,
-                                skip_reset=multi_site,
-                                deadline=_deadline,
-                                on_scan_progress=on_scan,
-                                on_score_progress=on_score,
-                                on_ingest_progress=on_ingest,
-                                on_docs_progress=on_document,
-                                on_document_score_progress=on_document_score,
-                                on_image_progress=on_image,
-                                on_worker_status=on_worker_status,
-                                service_monitor=service_monitor,
-                                max_wiki_connections=sc.get("max_wiki_connections", 10),
-                                skip_facility_workers=multi_site and not _scan_only,
-                            )
-                        except Exception as e:
-                            wiki_logger.warning("Site %s failed: %s", sc["base_url"], e)
-                            continue
-
-                        for key in (
-                            "scanned",
-                            "scored",
-                            "ingested",
-                            "documents",
-                            "images_scored",
-                        ):
-                            combined[key] += result.get(key, 0)
-                        combined["cost"] += result.get("cost", 0)
-                        combined["elapsed_seconds"] += result.get("elapsed_seconds", 0)
-
-                        remaining_budget -= result.get("cost", 0)
-                        if remaining_pages is not None:
-                            remaining_pages -= result.get("scored", 0)
-
-                    # Drain facility-scoped workers after all sites
-                    if (
-                        facility_state_rich is not None
-                        and facility_group_rich is not None
-                    ):
-                        wiki_logger.info(
-                            "All sites processed — draining facility workers"
-                        )
-                        facility_state_rich.image_phase.record_idle()
-                        await run_supervised_loop(
-                            facility_group_rich,
-                            facility_state_rich.should_stop,
-                            on_worker_status=on_worker_status,
-                        )
-                        facility_state_rich.stop_requested = True
-                        combined["images_scored"] += (
-                            facility_state_rich.image_stats.processed
-                        )
-                        combined["cost"] += facility_state_rich.total_cost
-
-                finally:
-                    # Final graph refresh so progress bars show 100% state
-                    try:
-                        from imas_codex.discovery.wiki.parallel import (
-                            get_wiki_discovery_stats,
-                        )
-
-                        stats = get_wiki_discovery_stats(_facility)
-                        display.update_from_graph(
-                            total_pages=stats.get("total", 0),
-                            pages_scanned=stats.get("scanned", 0),
-                            pages_scored=stats.get("scored", 0),
-                            pages_ingested=stats.get("ingested", 0),
-                            pages_skipped=stats.get("skipped", 0),
-                            pages_failed=stats.get("failed", 0),
-                            pending_score=stats.get(
-                                "pending_score",
-                                stats.get("scanned", 0),
-                            ),
-                            pending_ingest=stats.get("pending_ingest", 0),
-                            pending_document_score=stats.get(
-                                "pending_document_score", 0
-                            ),
-                            pending_document_ingest=stats.get(
-                                "pending_document_ingest", 0
-                            ),
-                            accumulated_cost=stats.get("accumulated_cost", 0.0),
-                            accumulated_page_cost=stats.get(
-                                "accumulated_page_cost", 0.0
-                            ),
-                            accumulated_document_cost=stats.get(
-                                "accumulated_document_cost", 0.0
-                            ),
-                            accumulated_image_cost=stats.get(
-                                "accumulated_image_cost", 0.0
-                            ),
-                            total_documents=stats.get("total_documents", 0),
-                            docs_ingested=stats.get("docs_ingested", 0),
-                            docs_scored=stats.get("documents_scored", 0),
-                            documents_failed=stats.get("documents_failed", 0),
-                            documents_deferred=stats.get("documents_deferred", 0),
-                            documents_skipped=stats.get("documents_skipped", 0),
-                            images_scored=stats.get("images_scored", 0),
-                            pending_image_score=stats.get("pending_image_score", 0),
-                            historic_score_rate=stats.get("historic_score_rate"),
-                            historic_ingest_rate=stats.get("historic_ingest_rate"),
-                        )
-                        display.tick()
-                    except Exception:
-                        pass
-                    refresh_task.cancel()
-                    ticker_task.cancel()
-                    try:
-                        await refresh_task
-                    except asyncio.CancelledError:
-                        pass
-                    try:
-                        await ticker_task
-                    except asyncio.CancelledError:
-                        pass
-                    await service_monitor.__aexit__(None, None, None)
-
-            # Print summary AFTER Live display exits
+        if display:
             display.print_summary()
-
-            return combined
-
-        deadline: float | None = None
-        if time_limit is not None:
-            deadline = time.time() + (time_limit * 60)
-
-        from imas_codex.cli.shutdown import safe_asyncio_run
-
-        result = safe_asyncio_run(
-            run_all_sites_unified(
-                _facility=facility,
-                _site_configs=site_configs,
-                _cost_limit=cost_limit,
-                _max_pages=max_pages,
-                _max_depth=max_depth,
-                _focus=focus,
-                _scan_only=scan_only,
-                _score_only=score_only,
-                _use_rich=use_rich,
-                _num_score_workers=score_workers,
-                _num_ingest_workers=ingest_workers,
-                _deadline=deadline,
-                _store_images=store_images,
-            )
-        )
 
         # Display final results
         log_print(

@@ -1154,8 +1154,15 @@ async def _create_person_link(
     await loop.run_in_executor(
         None,
         lambda: _persist_person_link(
-            gc, person_id, person_name, given_name, family_name,
-            email, orcid, now, facility_user_id,
+            gc,
+            person_id,
+            person_name,
+            given_name,
+            family_name,
+            email,
+            orcid,
+            now,
+            facility_user_id,
         ),
     )
 
@@ -3074,7 +3081,7 @@ def claim_paths_for_scoring(facility: str, limit: int = 10) -> list[dict[str, An
 _calibration_cache: dict[
     str, tuple[float, dict[str, dict[str, list[dict[str, Any]]]]]
 ] = {}
-_CALIBRATION_TTL_SECONDS = 60  # 1 minute — short enough to track graph growth
+_CALIBRATION_TTL_SECONDS = 300  # 5 minutes — balances freshness vs query cost
 
 
 def sample_dimension_calibration_examples(

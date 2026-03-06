@@ -12,7 +12,6 @@ import logging
 import time
 
 import click
-from rich.console import Console
 
 logger = logging.getLogger(__name__)
 
@@ -109,40 +108,22 @@ def signals(
       imas-codex discover signals tcv -s tdi,mdsplus -f equilibrium
     """
     # Auto-detect rich output
-    from imas_codex.cli.rich_output import should_use_rich
+    from imas_codex.cli.discover.common import (
+        DiscoveryConfig,
+        make_log_print,
+        run_discovery,
+        setup_logging,
+        use_rich_output,
+    )
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.signals.scanners.base import (
         get_scanners_for_facility,
         list_scanners,
     )
 
-    use_rich = should_use_rich()
-
-    # Always configure file logging (DEBUG level to disk)
-    from imas_codex.cli.logging import configure_cli_logging
-
-    configure_cli_logging("signals", facility=facility)
-
-    if use_rich:
-        console = Console()
-    else:
-        console = None
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(message)s",
-            datefmt="%H:%M:%S",
-        )
-
-    sig_logger = logging.getLogger("imas_codex.discovery.signals")
-
-    def log_print(msg: str, style: str | None = None) -> None:
-        import re
-
-        clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
-        if console:
-            console.print(msg)
-        else:
-            sig_logger.info(clean_msg)
+    use_rich = use_rich_output()
+    console = setup_logging("signals", facility, use_rich)
+    log_print = make_log_print("signals", console)
 
     try:
         config = get_facility(facility)
@@ -213,78 +194,14 @@ def signals(
         if time_limit is not None:
             deadline = time.time() + (time_limit * 60)
 
-        def log_on_scan(msg, stats, results=None):
-            if msg != "idle":
-                sig_logger.info(f"SEED: {msg}")
+        sig_logger = logging.getLogger("imas_codex.discovery.signals")
 
-        def log_on_extract(msg, stats, results=None):
-            if msg != "idle":
-                sig_logger.info(f"EXTRACT: {msg}")
-
-        def log_on_promote(msg, stats, results=None):
-            if msg != "idle":
-                sig_logger.info(f"PROMOTE: {msg}")
-
-        def log_on_enrich(msg, stats, results=None):
-            if msg != "idle":
-                sig_logger.info(f"ENRICH: {msg}")
-
-        def log_on_check(msg, stats, results=None):
-            if msg != "idle":
-                sig_logger.info(f"CHECK: {msg}")
-
-        if not use_rich:
-
-            async def _run_non_rich():
-                from imas_codex.cli.shutdown import install_shutdown_handlers
-
-                stop_event = asyncio.Event()
-                install_shutdown_handlers(stop_event=stop_event)
-                return await run_parallel_data_discovery(
-                    facility=facility,
-                    ssh_host=ssh_host,
-                    scanner_types=scanner_types,
-                    reference_shot=reference_shot,
-                    cost_limit=cost_limit,
-                    signal_limit=signal_limit,
-                    focus=focus,
-                    discover_only=scan_only,
-                    enrich_only=enrich_only,
-                    deadline=deadline,
-                    num_enrich_workers=enrich_workers,
-                    num_check_workers=check_workers,
-                    on_discover_progress=log_on_scan,
-                    on_extract_progress=log_on_extract,
-                    on_promote_progress=log_on_promote,
-                    on_enrich_progress=log_on_enrich,
-                    on_check_progress=log_on_check,
-                    stop_event=stop_event,
-                )
-
-            from imas_codex.cli.shutdown import safe_asyncio_run
-
-            result = safe_asyncio_run(_run_non_rich())
-        else:
-            # Rich progress display
-            from imas_codex.cli.discover.common import create_discovery_monitor
+        # Build display for rich mode
+        display = None
+        if use_rich:
             from imas_codex.discovery.signals.progress import DataProgressDisplay
 
-            service_monitor = create_discovery_monitor(
-                config,
-                check_graph=True,
-                check_embed=not scan_only,
-                check_model=not scan_only,
-                check_auth=False,
-            )
-
-            # Suppress noisy INFO during rich display
-            for mod in (
-                "imas_codex.embeddings",
-                "imas_codex.discovery.signals",
-            ):
-                logging.getLogger(mod).setLevel(logging.WARNING)
-
-            with DataProgressDisplay(
+            display = DataProgressDisplay(
                 facility=facility,
                 cost_limit=cost_limit,
                 signal_limit=signal_limit,
@@ -292,118 +209,115 @@ def signals(
                 console=console,
                 discover_only=scan_only,
                 enrich_only=enrich_only,
-            ) as display:
-                display.service_monitor = service_monitor
+            )
 
-                async def run_with_display():
-                    from imas_codex.cli.shutdown import install_shutdown_handlers
+        # Custom async graph refresh for signals (uses update_from_graph with kwargs)
+        async def signals_graph_refresh():
+            from imas_codex.discovery.signals.parallel import (
+                get_data_discovery_stats,
+            )
 
-                    stop_event = asyncio.Event()
-                    install_shutdown_handlers(stop_event=stop_event, display=display)
+            stats = await asyncio.to_thread(get_data_discovery_stats, facility)
+            if stats and display:
+                display.update_from_graph(
+                    total_signals=stats.get("total", 0),
+                    signals_discovered=stats.get("discovered", 0),
+                    signals_enriched=stats.get("enriched", 0),
+                    signals_checked=stats.get("checked", 0),
+                    signals_skipped=stats.get("skipped", 0),
+                    signals_failed=stats.get("failed", 0),
+                    pending_enrich=stats.get("pending_enrich", 0),
+                    pending_check=stats.get("pending_check", 0),
+                    accumulated_cost=stats.get("accumulated_cost", 0.0),
+                )
 
-                    await service_monitor.__aenter__()
+        disc_config = DiscoveryConfig(
+            domain="signals",
+            facility=facility,
+            facility_config=config,
+            display=display,
+            check_graph=True,
+            check_embed=not scan_only,
+            check_model=not scan_only,
+            check_ssh=True,
+            check_auth=False,
+            graph_refresh_interval=2.0,
+            graph_refresh_fn=signals_graph_refresh if use_rich else None,
+            suppress_loggers=[
+                "imas_codex.embeddings",
+                "imas_codex.discovery.signals",
+            ],
+        )
 
-                    async def refresh_graph_state():
-                        from imas_codex.discovery.signals.parallel import (
-                            get_data_discovery_stats,
-                        )
+        # Callbacks — wire to display or logging
+        if display:
 
-                        while True:
-                            try:
-                                stats = await asyncio.to_thread(
-                                    get_data_discovery_stats, facility
-                                )
-                                if stats:
-                                    display.update_from_graph(
-                                        total_signals=stats.get("total", 0),
-                                        signals_discovered=stats.get("discovered", 0),
-                                        signals_enriched=stats.get("enriched", 0),
-                                        signals_checked=stats.get("checked", 0),
-                                        signals_skipped=stats.get("skipped", 0),
-                                        signals_failed=stats.get("failed", 0),
-                                        pending_enrich=stats.get("pending_enrich", 0),
-                                        pending_check=stats.get("pending_check", 0),
-                                        accumulated_cost=stats.get(
-                                            "accumulated_cost", 0.0
-                                        ),
-                                    )
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception:
-                                pass
-                            await asyncio.sleep(2.0)
+            def on_scan(msg, stats, results=None):
+                display.update_scan(msg, stats, results)
 
-                    async def queue_ticker():
-                        while True:
-                            try:
-                                display.tick()
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception:
-                                pass
-                            await asyncio.sleep(0.15)
+            def on_extract(msg, stats, results=None):
+                display.update_extract(msg, stats, results)
 
-                    refresh_task = asyncio.create_task(refresh_graph_state())
-                    ticker_task = asyncio.create_task(queue_ticker())
+            def on_promote(msg, stats, results=None):
+                display.update_promote(msg, stats, results)
 
-                    def on_scan(msg, stats, results=None):
-                        display.update_scan(msg, stats, results)
+            def on_enrich(msg, stats, results=None):
+                display.update_enrich(msg, stats, results)
 
-                    def on_extract(msg, stats, results=None):
-                        display.update_extract(msg, stats, results)
+            def on_check(msg, stats, results=None):
+                display.update_check(msg, stats, results)
 
-                    def on_promote(msg, stats, results=None):
-                        display.update_promote(msg, stats, results)
+            def on_worker_status(worker_group):
+                display.update_worker_status(worker_group)
+        else:
 
-                    def on_enrich(msg, stats, results=None):
-                        display.update_enrich(msg, stats, results)
+            def on_scan(msg, stats, results=None):
+                if msg != "idle":
+                    sig_logger.info("SEED: %s", msg)
 
-                    def on_check(msg, stats, results=None):
-                        display.update_check(msg, stats, results)
+            def on_extract(msg, stats, results=None):
+                if msg != "idle":
+                    sig_logger.info("EXTRACT: %s", msg)
 
-                    def on_worker_status(worker_group):
-                        display.update_worker_status(worker_group)
+            def on_promote(msg, stats, results=None):
+                if msg != "idle":
+                    sig_logger.info("PROMOTE: %s", msg)
 
-                    try:
-                        return await run_parallel_data_discovery(
-                            facility=facility,
-                            ssh_host=ssh_host,
-                            scanner_types=scanner_types,
-                            reference_shot=reference_shot,
-                            cost_limit=cost_limit,
-                            signal_limit=signal_limit,
-                            focus=focus,
-                            discover_only=scan_only,
-                            enrich_only=enrich_only,
-                            deadline=deadline,
-                            num_enrich_workers=enrich_workers,
-                            num_check_workers=check_workers,
-                            on_discover_progress=on_scan,
-                            on_extract_progress=on_extract,
-                            on_promote_progress=on_promote,
-                            on_enrich_progress=on_enrich,
-                            on_check_progress=on_check,
-                            on_worker_status=on_worker_status,
-                            stop_event=stop_event,
-                        )
-                    finally:
-                        refresh_task.cancel()
-                        ticker_task.cancel()
-                        try:
-                            await refresh_task
-                        except asyncio.CancelledError:
-                            pass
-                        try:
-                            await ticker_task
-                        except asyncio.CancelledError:
-                            pass
-                        await service_monitor.__aexit__(None, None, None)
+            def on_enrich(msg, stats, results=None):
+                if msg != "idle":
+                    sig_logger.info("ENRICH: %s", msg)
 
-                from imas_codex.cli.shutdown import safe_asyncio_run
+            def on_check(msg, stats, results=None):
+                if msg != "idle":
+                    sig_logger.info("CHECK: %s", msg)
 
-                result = safe_asyncio_run(run_with_display())
+            on_worker_status = None
 
-                # Final graph refresh for accurate summary
+        async def async_main(stop_event, service_monitor):
+            return await run_parallel_data_discovery(
+                facility=facility,
+                ssh_host=ssh_host,
+                scanner_types=scanner_types,
+                reference_shot=reference_shot,
+                cost_limit=cost_limit,
+                signal_limit=signal_limit,
+                focus=focus,
+                discover_only=scan_only,
+                enrich_only=enrich_only,
+                deadline=deadline,
+                num_enrich_workers=enrich_workers,
+                num_check_workers=check_workers,
+                on_discover_progress=on_scan,
+                on_extract_progress=on_extract,
+                on_promote_progress=on_promote,
+                on_enrich_progress=on_enrich,
+                on_check_progress=on_check,
+                on_worker_status=on_worker_status,
+                stop_event=stop_event,
+            )
+
+        def on_complete(result):
+            if display:
                 try:
                     from imas_codex.discovery.signals.parallel import (
                         get_data_discovery_stats,
@@ -425,7 +339,7 @@ def signals(
                 except Exception:
                     pass
 
-                display.print_summary()
+        result = run_discovery(disc_config, async_main, on_complete=on_complete)
 
         # Final output
         scanned = result.get("scanned", 0)

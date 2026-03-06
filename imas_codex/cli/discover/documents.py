@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import re
 import time
 
 import click
-from rich.console import Console
 
 logger = logging.getLogger(__name__)
 
@@ -102,31 +99,16 @@ def documents(
       imas-codex discover documents tcv -c 1.0 --vlm-workers 2
       imas-codex discover documents tcv -f diagnostics
     """
-    from imas_codex.cli.logging import configure_cli_logging
-    from imas_codex.cli.rich_output import should_use_rich
+    from imas_codex.cli.discover.common import (
+        DiscoveryConfig,
+        make_log_print,
+        run_discovery,
+        setup_logging,
+    )
     from imas_codex.discovery.base.facility import get_facility
 
-    use_rich = should_use_rich()
-    configure_cli_logging("documents", facility=facility, verbose=verbose)
-
-    if use_rich:
-        console = Console()
-    else:
-        console = None
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(message)s",
-            datefmt="%H:%M:%S",
-        )
-
-    doc_logger = logging.getLogger("imas_codex.discovery.documents")
-
-    def log_print(msg: str) -> None:
-        clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
-        if console:
-            console.print(msg)
-        else:
-            doc_logger.info(clean_msg)
+    console = setup_logging("documents", facility, use_rich=False, verbose=verbose)
+    log_print = make_log_print("documents", console)
 
     try:
         config = get_facility(facility)
@@ -144,7 +126,7 @@ def documents(
         deadline = time.time() + (time_limit * 60)
 
     try:
-        # Step 1: Scan for document files
+        # Step 1: Scan for document files (synchronous)
         from imas_codex.discovery.documents.scanner import scan_facility_documents
 
         log_print(f"\n[bold]Document Discovery: {facility}[/bold]")
@@ -171,14 +153,20 @@ def documents(
             log_print("\n[green]Document scan complete (--scan-only).[/green]")
             return
 
-        # Step 2: Process images (fetch + VLM captioning)
+        # Step 2: Process images (fetch + VLM captioning) via harness
         from imas_codex.discovery.documents.pipeline import run_document_discovery
 
-        async def _run_documents():
-            from imas_codex.cli.shutdown import install_shutdown_handlers
+        disc_config = DiscoveryConfig(
+            domain="documents",
+            facility=facility,
+            facility_config=config,
+            check_graph=False,
+            check_embed=False,
+            check_ssh=False,
+            verbose=verbose,
+        )
 
-            stop_event = asyncio.Event()
-            install_shutdown_handlers(stop_event=stop_event)
+        async def async_main(stop_event, service_monitor):
             return await run_document_discovery(
                 facility=facility,
                 ssh_host=ssh_host,
@@ -192,9 +180,7 @@ def documents(
                 stop_event=stop_event,
             )
 
-        from imas_codex.cli.shutdown import safe_asyncio_run
-
-        result = safe_asyncio_run(_run_documents())
+        result = run_discovery(disc_config, async_main)
 
         fetched = result.get("images_fetched", 0)
         captioned = result.get("images_captioned", 0)

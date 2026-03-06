@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import re
 import time
 
 import click
-from rich.console import Console
 
 logger = logging.getLogger(__name__)
 
@@ -133,43 +130,30 @@ def code(
       imas-codex discover code tcv -f equilibrium --time 10
       imas-codex discover code tcv --rescan
     """
-    from imas_codex.cli.logging import configure_cli_logging
-    from imas_codex.cli.rich_output import should_use_rich
+    from imas_codex.cli.discover.common import (
+        DiscoveryConfig,
+        make_log_print,
+        run_discovery,
+        setup_logging,
+        use_rich_output,
+    )
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.settings import get_discovery_threshold
 
     if min_score is None:
         min_score = get_discovery_threshold()
 
-    use_rich = should_use_rich()
-    configure_cli_logging("code", facility=facility, verbose=verbose)
-
-    if use_rich:
-        console = Console()
-    else:
-        console = None
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(message)s",
-            datefmt="%H:%M:%S",
-        )
-
-    file_logger = logging.getLogger("imas_codex.discovery.code")
-
-    def log_print(msg: str) -> None:
-        clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
-        if console:
-            console.print(msg)
-        else:
-            file_logger.info(clean_msg)
+    use_rich = use_rich_output()
+    console = setup_logging("code", facility, use_rich, verbose=verbose)
+    log_print = make_log_print("code", console)
 
     try:
-        config = get_facility(facility)
+        facility_config = get_facility(facility)
     except Exception as e:
         log_print(f"[red]Error loading facility config: {e}[/red]")
         raise SystemExit(1) from e
 
-    ssh_host = config.get("ssh_host")
+    ssh_host = facility_config.get("ssh_host")
     if not ssh_host:
         log_print(f"[red]No SSH host configured for {facility}[/red]")
         raise SystemExit(1)
@@ -189,28 +173,60 @@ def code(
     try:
         from imas_codex.discovery.code.parallel import run_parallel_code_discovery
 
-        # Logging callbacks for non-rich mode
-        def log_scan(msg, stats, results=None):
-            if msg != "idle":
-                file_logger.info("SCAN: %s", msg)
+        # Build display (or None for plain mode)
+        display = None
+        if use_rich:
+            from imas_codex.discovery.code.progress import FileProgressDisplay
 
-        def log_score(msg, stats, results=None):
-            if msg != "idle":
-                file_logger.info("SCORE: %s", msg)
+            display = FileProgressDisplay(
+                facility=facility,
+                cost_limit=cost_limit,
+                focus=focus or "",
+                console=console,
+                scan_only=scan_only,
+                score_only=score_only,
+            )
 
-        def log_code_cb(msg, stats, results=None):
-            if msg != "idle":
-                file_logger.info("CODE: %s", msg)
+        disc_config = DiscoveryConfig(
+            domain="code",
+            facility=facility,
+            facility_config=facility_config,
+            display=display,
+            check_graph=True,
+            check_embed=not scan_only and not score_only,
+            check_model=not scan_only,
+            check_ssh=True,
+            check_auth=False,
+            suppress_loggers=[
+                "imas_codex.embeddings",
+                "imas_codex.discovery.code",
+            ],
+            verbose=verbose,
+        )
 
-        def log_triage(msg, stats, results=None):
-            if msg != "idle":
-                file_logger.info("TRIAGE: %s", msg)
+        # Callbacks — wire to display or logging
+        file_logger = logging.getLogger("imas_codex.discovery.code")
 
-        def log_enrich(msg, stats, results=None):
-            if msg != "idle":
-                file_logger.info("ENRICH: %s", msg)
+        if display:
 
-        if not use_rich:
+            def on_scan(msg, stats, results=None):
+                display.update_scan(msg, stats, results)
+
+            def on_triage(msg, stats, results=None):
+                display.update_triage(msg, stats, results)
+
+            def on_score(msg, stats, results=None):
+                display.update_score(msg, stats, results)
+
+            def on_code(msg, stats, results=None):
+                display.update_code(msg, stats, results)
+
+            def on_enrich(msg, stats, results=None):
+                display.update_enrich(msg, stats, results)
+
+            def on_worker_status(worker_group):
+                display.update_worker_status(worker_group)
+        else:
             log_print(f"\n[bold]Code Discovery: {facility}[/bold]")
             log_print(f"  SSH host: {ssh_host}")
             log_print(f"  Min score: {min_score}")
@@ -219,165 +235,54 @@ def code(
                 log_print(f"  Focus: {focus}")
             log_print("")
 
-            async def _run_non_rich():
-                from imas_codex.cli.shutdown import install_shutdown_handlers
+            def on_scan(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("SCAN: %s", msg)
 
-                stop_event = asyncio.Event()
-                install_shutdown_handlers(stop_event=stop_event)
-                return await run_parallel_code_discovery(
-                    facility=facility,
-                    ssh_host=ssh_host,
-                    cost_limit=cost_limit,
-                    min_score=min_score,
-                    max_paths=max_paths,
-                    focus=focus,
-                    num_scan_workers=scan_workers,
-                    num_triage_workers=triage_workers,
-                    num_enrich_workers=enrich_workers,
-                    num_score_workers=score_workers,
-                    num_code_workers=code_workers,
-                    scan_only=scan_only,
-                    score_only=score_only,
-                    deadline=deadline,
-                    on_scan_progress=log_scan,
-                    on_triage_progress=log_triage,
-                    on_score_progress=log_score,
-                    on_enrich_progress=log_enrich,
-                    on_code_progress=log_code_cb,
-                    stop_event=stop_event,
-                )
+            def on_triage(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("TRIAGE: %s", msg)
 
-            from imas_codex.cli.shutdown import safe_asyncio_run
+            def on_score(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("SCORE: %s", msg)
 
-            result = safe_asyncio_run(_run_non_rich())
-        else:
-            # Rich progress display
-            from imas_codex.cli.discover.common import create_discovery_monitor
-            from imas_codex.discovery.code.progress import FileProgressDisplay
+            def on_code(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("CODE: %s", msg)
 
-            service_monitor = create_discovery_monitor(
-                config,
-                check_graph=True,
-                check_embed=not scan_only and not score_only,
-                check_model=not scan_only,
-                check_ssh=True,
-                check_auth=False,
-            )
+            def on_enrich(msg, stats, results=None):
+                if msg != "idle":
+                    file_logger.info("ENRICH: %s", msg)
 
-            # Suppress noisy INFO during rich display
-            for mod in (
-                "imas_codex.embeddings",
-                "imas_codex.discovery.code",
-            ):
-                logging.getLogger(mod).setLevel(logging.WARNING)
+            on_worker_status = None
 
-            with FileProgressDisplay(
+        async def async_main(stop_event, service_monitor):
+            return await run_parallel_code_discovery(
                 facility=facility,
+                ssh_host=ssh_host,
                 cost_limit=cost_limit,
-                focus=focus or "",
-                console=console,
+                min_score=min_score,
+                max_paths=max_paths,
+                focus=focus,
+                num_scan_workers=scan_workers,
+                num_triage_workers=triage_workers,
+                num_enrich_workers=enrich_workers,
+                num_score_workers=score_workers,
+                num_code_workers=code_workers,
                 scan_only=scan_only,
                 score_only=score_only,
-            ) as display:
-                display.service_monitor = service_monitor
+                deadline=deadline,
+                on_scan_progress=on_scan,
+                on_triage_progress=on_triage,
+                on_score_progress=on_score,
+                on_enrich_progress=on_enrich,
+                on_code_progress=on_code,
+                on_worker_status=on_worker_status,
+                stop_event=stop_event,
+            )
 
-                async def run_with_display():
-                    from imas_codex.cli.shutdown import install_shutdown_handlers
-
-                    stop_event = asyncio.Event()
-                    await service_monitor.__aenter__()
-                    install_shutdown_handlers(stop_event=stop_event, display=display)
-
-                    async def refresh_graph_state():
-                        while True:
-                            try:
-                                display.refresh_from_graph(facility)
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception:
-                                pass
-                            await asyncio.sleep(0.5)
-
-                    async def queue_ticker():
-                        while True:
-                            try:
-                                display.tick()
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception:
-                                pass
-                            await asyncio.sleep(0.15)
-
-                    refresh_task = asyncio.create_task(refresh_graph_state())
-                    ticker_task = asyncio.create_task(queue_ticker())
-
-                    def on_scan(msg, stats, results=None):
-                        display.update_scan(msg, stats, results)
-
-                    def on_triage(msg, stats, results=None):
-                        display.update_triage(msg, stats, results)
-
-                    def on_score(msg, stats, results=None):
-                        display.update_score(msg, stats, results)
-
-                    def on_code(msg, stats, results=None):
-                        display.update_code(msg, stats, results)
-
-                    def on_enrich(msg, stats, results=None):
-                        display.update_enrich(msg, stats, results)
-
-                    def on_worker_status(worker_group):
-                        display.update_worker_status(worker_group)
-
-                    try:
-                        return await run_parallel_code_discovery(
-                            facility=facility,
-                            ssh_host=ssh_host,
-                            cost_limit=cost_limit,
-                            min_score=min_score,
-                            max_paths=max_paths,
-                            focus=focus,
-                            num_scan_workers=scan_workers,
-                            num_triage_workers=triage_workers,
-                            num_enrich_workers=enrich_workers,
-                            num_score_workers=score_workers,
-                            num_code_workers=code_workers,
-                            scan_only=scan_only,
-                            score_only=score_only,
-                            deadline=deadline,
-                            on_scan_progress=on_scan,
-                            on_triage_progress=on_triage,
-                            on_score_progress=on_score,
-                            on_enrich_progress=on_enrich,
-                            on_code_progress=on_code,
-                            on_worker_status=on_worker_status,
-                            service_monitor=service_monitor,
-                            stop_event=stop_event,
-                        )
-                    finally:
-                        refresh_task.cancel()
-                        ticker_task.cancel()
-                        try:
-                            await refresh_task
-                        except asyncio.CancelledError:
-                            pass
-                        try:
-                            await ticker_task
-                        except asyncio.CancelledError:
-                            pass
-                        await service_monitor.__aexit__(None, None, None)
-
-                from imas_codex.cli.shutdown import safe_asyncio_run
-
-                result = safe_asyncio_run(run_with_display())
-
-                # Final graph refresh for accurate summary
-                try:
-                    display.refresh_from_graph(facility)
-                except Exception:
-                    pass
-
-                display.print_summary()
+        result = run_discovery(disc_config, async_main)
 
         # Final output
         scanned = result.get("scanned", 0)
