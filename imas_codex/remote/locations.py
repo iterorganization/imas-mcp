@@ -223,7 +223,7 @@ def resolve_service_url(
         if not compute_node:
             # squeue found no running service job — try the configured
             # compute host (services may outlive the SLURM allocation).
-            compute_node = _resolve_compute_host(info)
+            compute_node = _resolve_compute_host(info, port)
         if compute_node:
             my_hostname = socket.gethostname().split(".")[0]
             if compute_node.split(".")[0] == my_hostname:
@@ -236,12 +236,16 @@ def resolve_service_url(
     return f"{protocol}://localhost:{port}"
 
 
-def _resolve_compute_host(info: LocationInfo) -> str | None:
+def _resolve_compute_host(info: LocationInfo, port: int = 7474) -> str | None:
     """Get the compute host for a SLURM location.
 
     Called when ``squeue`` finds no running service job.  Falls back to
     the last-known compute node recorded in ``allocation.log`` by the
     SLURM batch script, verifying it is still reachable before returning.
+
+    Args:
+        info: Location info for the SLURM location.
+        port: Service port to check for reachability.
     """
     logger.debug(
         "No SLURM job '%s' found for %s — trying allocation.log fallback",
@@ -251,7 +255,7 @@ def _resolve_compute_host(info: LocationInfo) -> str | None:
     host = _read_allocation_host()
     if not host:
         return None
-    if _host_reachable(host):
+    if _host_reachable(host, port):
         logger.info(
             "SLURM unavailable but compute host %s (from allocation.log) is reachable",
             host,
