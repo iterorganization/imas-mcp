@@ -164,19 +164,15 @@ classes:
         description: Geographic location
       ssh_host:
         description: SSH host alias for connection (configured in ~/.ssh/config)
-      data_systems:
-        description: >-
-          Data systems available. Can be list of strings ["mdsplus", "uda"]
-          or dict with details {mdsplus: {available: true, ...}}.
 
       # --- Nested config sections ---
       discovery_roots:
         description: >-
           Root paths for discovery pipeline seeding. Can be simple strings
           ["/home", "/work"] or structured [{path: "/home", category: "container"}].
-      data_sources:
-        description: Data source configuration for signal discovery
-        range: DataSourcesConfig
+      data_systems:
+        description: Data system configuration for signal discovery
+        range: DataSystemsConfig
       data_access_patterns:
         description: >-
           Data access patterns discovered during initial facility exploration.
@@ -358,11 +354,11 @@ classes:
         range: integer
         ifabsent: int(10)
 
-  DataSourceBase:
+  DataSystemBase:
     description: >-
-      Common fields shared by all data source configurations.
+      Common fields shared by all data system configurations.
       Provides environment setup for remote script execution.
-    class_uri: fc:DataSourceBase
+    class_uri: fc:DataSystemBase
     mixin: true
     attributes:
       setup_commands:
@@ -378,12 +374,12 @@ classes:
           command name or full path. Default: "python3".
           Example: "/common/software/micromamba/root/envs/python-3.12/bin/python3"
 
-  DataSourcesConfig:
+  DataSystemsConfig:
     description: >-
-      Data source configuration for signal discovery. Specifies how to
+      Data system configuration for signal discovery. Specifies how to
       enumerate signals from each data system. Each key maps to a scanner
-      plugin that knows how to extract signals from that data source type.
-    class_uri: fc:DataSourcesConfig
+      plugin that knows how to extract signals from that data system type.
+    class_uri: fc:DataSystemsConfig
     attributes:
       tdi:
         description: TDI function configuration (MDSplus TDI expression files)
@@ -411,7 +407,7 @@ classes:
       Facility-specific (e.g., TCV tcv_eq, tcv_get, tcv_ip).
     class_uri: fc:TDIConfig
     mixins:
-      - DataSourceBase
+      - DataSystemBase
     attributes:
       primary_path:
         description: Primary TDI directory path (e.g., /usr/local/CRPP/tdi/tcv)
@@ -436,7 +432,7 @@ classes:
       and what constitutes a physics-relevant signal.
     class_uri: fc:MDSplusConfig
     mixins:
-      - DataSourceBase
+      - DataSystemBase
     attributes:
       connection_tree:
         description: Default MDSplus tree for TDI context and data access
@@ -450,12 +446,12 @@ classes:
           MDSplus tree configurations. Each entry describes one tree with
           its extraction parameters: version/epoch strategy, subtrees,
           accessor function, and systems. Both versioned (machine-description)
-          trees and shot-scoped (dynamic) trees use the same TreeConfig
+          trees and shot-scoped (dynamic) trees use the same SourceConfig
           structure — the difference is in what fields are populated.
           Replaces the previous split between flat 'trees' list and
           'static_trees' structured list.
         multivalued: true
-        range: TreeConfig
+        range: SourceConfig
       reference_shot:
         description: Shot number for tree introspection and signal validation
         range: integer
@@ -477,20 +473,20 @@ classes:
           configuration parameters, AXIS nodes are time bases.
         multivalued: true
 
-  TreeConfig:
+  SourceConfig:
     description: >-
-      Unified configuration for an MDSplus tree. Covers both versioned
-      (machine-description) trees and shot-scoped (dynamic) trees.
-      Versioned trees have pre-configured versions; shot-scoped trees
-      use reference_shot for extraction. Trees may have subtrees that
-      are scanned as independent MDSplus trees.
-    class_uri: fc:TreeConfig
+      Unified configuration for a data source. Covers both versioned
+      (machine-description) sources and shot-scoped (dynamic) sources.
+      Versioned sources have pre-configured versions; shot-scoped sources
+      use reference_shot for extraction. Sources may have subtrees that
+      are scanned as independent data sources.
+    class_uri: fc:SourceConfig
     attributes:
-      tree_name:
+      source_name:
         description: >-
-          MDSplus tree name (e.g., "static", "results", "magnetics").
-          For versioned trees, opened by version number. For shot-scoped
-          trees, opened by experimental shot number.
+          Data source name (e.g., "static", "results", "magnetics").
+          For versioned sources, opened by version number. For shot-scoped
+          sources, opened by experimental shot number.
         required: true
       accessor_function:
         description: >-
@@ -505,15 +501,15 @@ classes:
           Used to enumerate all versions for complete extraction.
           If omitted, the tree is treated as shot-scoped.
         multivalued: true
-        range: TreeVersion
+        range: SourceVersion
       subtrees:
         description: >-
-          Subtrees that are scanned as independent MDSplus trees.
-          Each subtree is a TreeConfig nested under this parent tree.
+          Subtrees that are scanned as independent data sources.
+          Each subtree is a SourceConfig nested under this parent source.
           Subtrees inherit setup_commands and other settings from the
           parent MDSplusConfig.
         multivalued: true
-        range: TreeConfig
+        range: SourceConfig
       detect_epochs:
         description: >-
           Whether to detect structural epochs via batched SSH
@@ -543,13 +539,13 @@ classes:
           System symbols are used in tag construction: <parameter>_<system>.
           Only applicable to versioned/static trees.
         multivalued: true
-        range: TreeSystem
-  TreeVersion:
+        range: SourceSystem
+  SourceVersion:
     description: >-
-      A version of a tree, corresponding to a machine configuration or
+      A version of a data source, corresponding to a machine configuration or
       structural epoch. Used for both pre-configured versions and
       discovered epoch boundaries.
-    class_uri: fc:TreeVersion
+    class_uri: fc:SourceVersion
     attributes:
       version:
         description: Version number (1-based)
@@ -585,11 +581,11 @@ classes:
           Subtree path within the tree to fingerprint. If omitted,
           fingerprints the entire tree structure.
 
-  TreeSystem:
+  SourceSystem:
     description: >-
-      A named subsystem within a tree. Groups related mechanical
+      A named subsystem within a data source. Groups related mechanical
       or electromagnetic parameters.
-    class_uri: fc:TreeSystem
+    class_uri: fc:SourceSystem
     attributes:
       symbol:
         description: >-
@@ -618,7 +614,7 @@ classes:
       MATLAB ppfget, IDL ppfget, or getdat CLI.
     class_uri: fc:PPFConfig
     mixins:
-      - DataSourceBase
+      - DataSystemBase
     attributes:
       sal_endpoint:
         description: SAL REST API endpoint URL
@@ -638,7 +634,7 @@ classes:
       Signal definitions are in C header files and Python wrapper code.
     class_uri: fc:EDASConfig
     mixins:
-      - DataSourceBase
+      - DataSystemBase
     attributes:
       api_path:
         description: Path to EDAS API source files
@@ -652,7 +648,7 @@ classes:
     description: HDF5 file data source configuration
     class_uri: fc:HDF5Config
     mixins:
-      - DataSourceBase
+      - DataSystemBase
     attributes:
       paths:
         description: HDF5 file/directory paths to scan
@@ -664,7 +660,7 @@ classes:
       native IMAS backend support (ITER, JET post-migration, JT-60SA).
     class_uri: fc:IMASConfig
     mixins:
-      - DataSourceBase
+      - DataSystemBase
     attributes:
       backends:
         description: Available IMAS backends (e.g., mdsplus, hdf5, memory)

@@ -12,16 +12,9 @@ location: Naka, Japan
 # SSH connection (user configures ~/.ssh/config with this alias)
 ssh_host: jt-60sa
 
-# Data systems available at this facility
-data_systems:
-  - edas     # JT-60SA Experiment Data Access System (primary)
-  - imas     # IMAS available via modules
-  - mdsplus  # MDSplus available via modules
-  - uda      # UDA available via modules
-
-# Data source configuration for signal discovery
+# Data system configuration for signal discovery
 # Used by: imas-codex discover signals jt-60sa
-data_sources:
+data_systems:
   # EDAS is JT-60SA's primary experiment data access system.
   # Wraps proprietary data formats with C/Fortran/Python APIs.
   edas:

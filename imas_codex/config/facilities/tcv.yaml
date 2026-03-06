@@ -12,11 +12,6 @@ location: Lausanne, Switzerland
 # SSH connection (user configures ~/.ssh/config with this alias)
 ssh_host: tcv
 
-# Data systems available at this facility
-data_systems:
-  - mdsplus
-  - tdi
-
 # Discovery root paths for path discovery pipeline
 # These are seeded as starting points for directory scanning
 discovery_roots:
@@ -27,9 +22,9 @@ discovery_roots:
   - /videoanalysis                 # Video analysis code
   - /videodata                     # Video data
 
-# Data source configuration for signal discovery
+# Data system configuration for signal discovery
 # Used by: imas-codex discover signals tcv
-data_sources:
+data_systems:
   # TDI functions are the primary data access layer for TCV.
   # These .fun files define physics-level accessor functions that abstract
   # over raw MDSplus paths, handle versioning, and provide source selection.

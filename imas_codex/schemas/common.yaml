@@ -48,16 +48,16 @@ imports:
 enums:
   IngestionStatus:
     description: >-
-      Lifecycle status for MDSplus tree structure ingestion.
-      Tracks whether TreeNodes have been added to the graph.
+      Lifecycle status for data source structure ingestion.
+      Tracks whether DataNodes have been added to the graph.
       Progress is graph-derived: compare node_count_ingested vs node_count_total.
     permissible_values:
       discovered:
-        description: Tree found in facility, awaiting node ingestion
+        description: Data source found in facility, awaiting node ingestion
       ingested:
         description: All known nodes added to graph
       stale:
-        description: Tree may have new nodes, needs re-introspection
+        description: Data source may have new nodes, needs re-introspection
 
   PathStatus:
     description: >-
@@ -179,7 +179,7 @@ enums:
 
   EnrichmentStatus:
     description: >-
-      Lifecycle status for LLM metadata enrichment of TreeNodes.
+      Lifecycle status for LLM metadata enrichment of DataNodes.
       Progress is graph-derived: check for HAS_UNIT, MAPS_TO relationships.
     permissible_values:
       discovered:
@@ -648,7 +648,7 @@ classes:
   COCOSMixin:
     description: >-
       Mixin providing COCOS-related attributes for entities that handle
-      equilibrium data. Apply to AnalysisCode, TreeNode, or Dataset.
+      equilibrium data. Apply to AnalysisCode, DataNode, or Dataset.
       
       Based on Sauter & Medvedev, CPC 184 (2013) 293-302.
       COCOS values are integers 1-8 (ψ/2π) or 11-18 (full ψ).
@@ -686,15 +686,15 @@ classes:
 
   # NOTE: PhysicsDomain is now an ENUM imported from physics_domains.yaml
   # The class was removed to avoid conflict with the enum. Use the enum
-  # for categorizing FacilitySignal, IMASPath, TreeNode, etc.
+  # for categorizing FacilitySignal, IMASPath, DataNode, etc.
 
   Unit:
     description: >-
       A physical unit used in both IMAS Data Dictionary and facility-specific
       data. Units are deduplicated across all paths to enable unit-based queries
-      and cross-linking between IMAS paths and MDSplus TreeNodes.
+      and cross-linking between IMAS paths and facility DataNodes.
       
-      Both IMASPath and TreeNode link to Unit via HAS_UNIT relationships,
+      Both IMASPath and DataNode link to Unit via HAS_UNIT relationships,
       enabling queries like "find all paths (IMAS or facility) using Weber".
     class_uri: common:Unit
     attributes:
@@ -721,7 +721,7 @@ classes:
       entities link to the same COCOS node:
       - DDVersion -[:HAS_COCOS]-> COCOS (DD convention for that version)
       - AnalysisCode -[:NATIVE_COCOS]-> COCOS (future)
-      - TreeNode -[:HAS_COCOS]-> COCOS (future facility data)
+      - DataNode -[:HAS_COCOS]-> COCOS (future facility data)
 
       This enables graph queries like "find all entities using COCOS 11"
       or "what COCOS does DD 3.42.0 use?" and facilitates mapping operations
@@ -795,7 +795,7 @@ classes:
   SignConvention:
     description: >-
       A physics sign/orientation convention extracted from wiki documentation.
-      Links to TreeNodes and IMASPaths that follow this convention.
+      Links to DataNodes and IMASPaths that follow this convention.
       Critical for IMAS mapping correctness.
     class_uri: common:SignConvention
     attributes:
