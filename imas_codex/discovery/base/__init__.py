@@ -66,6 +66,16 @@ from imas_codex.discovery.base.progress import (
     make_gradient_bar,
     make_resource_gauge,
 )
+from imas_codex.discovery.base.scoring import (
+    CODE_SCORE_DIMENSIONS,
+    CONTENT_SCORE_DIMENSIONS,
+    PATH_EXTRA_DIMENSIONS,
+    PATH_SCORE_DIMENSIONS,
+    CodeScoreFields,
+    ContentScoreFields,
+    max_composite,
+    purpose_weighted_composite,
+)
 from imas_codex.discovery.base.supervision import (
     DEFAULT_INITIAL_BACKOFF,
     DEFAULT_MAX_BACKOFF,
@@ -150,6 +160,15 @@ __all__ = [
     "build_header",
     "build_pipeline_section",
     "build_resource_section",
+    # Scoring
+    "CodeScoreFields",
+    "ContentScoreFields",
+    "max_composite",
+    "purpose_weighted_composite",
+    "CODE_SCORE_DIMENSIONS",
+    "PATH_EXTRA_DIMENSIONS",
+    "PATH_SCORE_DIMENSIONS",
+    "CONTENT_SCORE_DIMENSIONS",
     # Supervision
     "supervised_worker",
     "is_infrastructure_error",

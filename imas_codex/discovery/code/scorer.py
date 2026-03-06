@@ -24,25 +24,20 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from imas_codex.discovery.base.scoring import (
+    CODE_SCORE_DIMENSIONS,
+    CodeScoreFields,
+    max_composite,
+)
 from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Score dimensions (same as paths minus data-only dimensions)
+# Score dimensions — canonical list from shared scoring module
 # ---------------------------------------------------------------------------
 
-SCORE_DIMENSION_NAMES = [
-    "score_modeling_code",
-    "score_analysis_code",
-    "score_operations_code",
-    "score_data_access",
-    "score_workflow",
-    "score_visualization",
-    "score_documentation",
-    "score_imas",
-    "score_convention",
-]
+SCORE_DIMENSION_NAMES = CODE_SCORE_DIMENSIONS
 
 TRIAGE_DIMENSION_NAMES = [d.replace("score_", "triage_") for d in SCORE_DIMENSION_NAMES]
 
@@ -173,8 +168,11 @@ def _fetch_code_dimension_calibration(
 # ---------------------------------------------------------------------------
 
 
-class FileTriageResult(BaseModel):
-    """Triage result for a single file -- per-dimension scores from minimal context."""
+class FileTriageResult(CodeScoreFields):
+    """Triage result for a single file -- per-dimension scores from minimal context.
+
+    Inherits 9 score dimensions from CodeScoreFields.
+    """
 
     path: str = Field(description="The file path (echo from input)")
     description: str = Field(
@@ -182,59 +180,10 @@ class FileTriageResult(BaseModel):
         description="Brief description of what the file likely contains (1 sentence)",
     )
 
-    # Per-dimension triage scores (0.0-1.0 each)
-    score_modeling_code: float = Field(
-        default=0.0,
-        description="Forward modeling/simulation code value (0.0-1.0)",
-    )
-    score_analysis_code: float = Field(
-        default=0.0,
-        description="Experimental analysis code value (0.0-1.0)",
-    )
-    score_operations_code: float = Field(
-        default=0.0,
-        description="Real-time operations code value (0.0-1.0)",
-    )
-    score_data_access: float = Field(
-        default=0.0,
-        description="Data access tools value (0.0-1.0)",
-    )
-    score_workflow: float = Field(
-        default=0.0,
-        description="Workflow/orchestration value (0.0-1.0)",
-    )
-    score_visualization: float = Field(
-        default=0.0,
-        description="Visualization tools value (0.0-1.0)",
-    )
-    score_documentation: float = Field(
-        default=0.0,
-        description="Documentation value (0.0-1.0)",
-    )
-    score_imas: float = Field(
-        default=0.0,
-        description="IMAS relevance (0.0-1.0)",
-    )
-    score_convention: float = Field(
-        default=0.0,
-        description="Convention handling value (0.0-1.0)",
-    )
-
     @property
     def triage_composite(self) -> float:
         """Composite = max of all dimension scores."""
-        scores = [
-            self.score_modeling_code,
-            self.score_analysis_code,
-            self.score_operations_code,
-            self.score_data_access,
-            self.score_workflow,
-            self.score_visualization,
-            self.score_documentation,
-            self.score_imas,
-            self.score_convention,
-        ]
-        return max(scores)
+        return max_composite(self.get_score_dict())
 
 
 class FileTriageBatch(BaseModel):
@@ -248,8 +197,11 @@ class FileTriageBatch(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class FileScoreResult(BaseModel):
-    """Full scoring result with enrichment evidence."""
+class FileScoreResult(CodeScoreFields):
+    """Full scoring result with enrichment evidence.
+
+    Inherits 9 score dimensions from CodeScoreFields.
+    """
 
     path: str = Field(description="The file path (echo from input)")
     file_category: str = Field(
@@ -261,59 +213,10 @@ class FileScoreResult(BaseModel):
     )
     skip: bool = Field(default=False, description="Whether to skip this file entirely")
 
-    # Per-dimension scores (0.0-1.0 each)
-    score_modeling_code: float = Field(
-        default=0.0,
-        description="Forward modeling/simulation code value (0.0-1.0)",
-    )
-    score_analysis_code: float = Field(
-        default=0.0,
-        description="Experimental analysis code value (0.0-1.0)",
-    )
-    score_operations_code: float = Field(
-        default=0.0,
-        description="Real-time operations code value (0.0-1.0)",
-    )
-    score_data_access: float = Field(
-        default=0.0,
-        description="Data access tools value (0.0-1.0)",
-    )
-    score_workflow: float = Field(
-        default=0.0,
-        description="Workflow/orchestration value (0.0-1.0)",
-    )
-    score_visualization: float = Field(
-        default=0.0,
-        description="Visualization tools value (0.0-1.0)",
-    )
-    score_documentation: float = Field(
-        default=0.0,
-        description="Documentation value (0.0-1.0)",
-    )
-    score_imas: float = Field(
-        default=0.0,
-        description="IMAS relevance (0.0-1.0)",
-    )
-    score_convention: float = Field(
-        default=0.0,
-        description="Convention handling value (0.0-1.0)",
-    )
-
     @property
     def score_composite(self) -> float:
         """Composite = max of all dimension scores."""
-        scores = [
-            self.score_modeling_code,
-            self.score_analysis_code,
-            self.score_operations_code,
-            self.score_data_access,
-            self.score_workflow,
-            self.score_visualization,
-            self.score_documentation,
-            self.score_imas,
-            self.score_convention,
-        ]
-        return max(scores)
+        return max_composite(self.get_score_dict())
 
 
 class FileScoreBatch(BaseModel):

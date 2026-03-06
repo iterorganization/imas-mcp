@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from imas_codex.discovery.base.llm import suppress_litellm_noise
+from imas_codex.discovery.base.scoring import PATH_SCORE_DIMENSIONS, max_composite
 from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
     ResourcePurpose,
@@ -37,19 +38,8 @@ logger = logging.getLogger(__name__)
 # Suppress litellm noise on import (print-based + logger-based)
 suppress_litellm_noise()
 
-# Per-purpose score names (for iteration)
-PURPOSE_SCORE_NAMES = [
-    "score_modeling_code",
-    "score_analysis_code",
-    "score_operations_code",
-    "score_modeling_data",
-    "score_experimental_data",
-    "score_data_access",
-    "score_workflow",
-    "score_visualization",
-    "score_documentation",
-    "score_imas",
-]
+# Per-purpose score names — canonical list from shared scoring module
+PURPOSE_SCORE_NAMES = PATH_SCORE_DIMENSIONS
 
 
 def combined_score(
@@ -59,6 +49,8 @@ def combined_score(
 ) -> float:
     """Compute combined score = max of per-dimension LLM scores.
 
+    Delegates to the shared ``max_composite`` function.
+
     Args:
         scores: Dict of per-dimension scores (score_modeling_code, score_imas, etc.)
         input_data: Directory info dict (available for future use)
@@ -67,9 +59,7 @@ def combined_score(
     Returns:
         Combined score (0.0-1.0)
     """
-    if not scores:
-        return 0.0
-    return min(1.0, max(scores.values()))
+    return max_composite(scores)
 
 
 @dataclass

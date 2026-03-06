@@ -17,48 +17,24 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from imas_codex.core.physics_domain import PhysicsDomain
+from imas_codex.discovery.base.scoring import (
+    ContentScoreFields,
+    purpose_weighted_composite,
+)
 from imas_codex.graph.models import ContentPurpose
-
-__all__ = [
-    "ContentPurpose",
-    "WikiScoreResult",
-    "WikiScoreBatch",
-    "ScoredWikiPage",
-    "ScoredWikiBatch",
-    # Document scoring
-    "DocumentScoreResult",
-    "DocumentScoreBatch",
-    "grounded_document_score",
-    "ScoredDocument",
-    # Image scoring
-    "ImageScoreResult",
-    "ImageScoreBatch",
-    "grounded_image_score",
-    "ScoredImage",
-]
-
-# Re-export for backwards compatibility
-WikiPagePurpose = ContentPurpose
-
 
 # ============================================================================
 # Pydantic Models for LLM Structured Output
 # ============================================================================
 
 
-class WikiScoreResult(BaseModel):
+class WikiScoreResult(ContentScoreFields):
     """LLM scoring result for a single wiki page.
+
+    Inherits 6 content score dimensions from ContentScoreFields.
 
     This Pydantic model is passed to LiteLLM's response_format parameter
     to ensure structured, parseable output from the LLM.
-
-    Scoring dimensions focus on content value, not graph metrics:
-    - Data documentation: Signal tables, node references, shot data
-    - Physics content: Physics explanations, methodology, theory
-    - Code documentation: Software docs, API references, usage guides
-    - Data access: MDSplus paths, TDI expressions, access methods
-    - Calibration: Calibration data, conversion factors, sensor specs
-    - IMAS relevance: IMAS integration, IDS references, mapping hints
     """
 
     id: str = Field(description="The page ID (echo from input)")
@@ -71,32 +47,6 @@ class WikiScoreResult(BaseModel):
 
     description: str = Field(
         description="Concise description of page contents (1-2 sentences)"
-    )
-
-    # Per-dimension scores (0.0-1.0 each)
-    score_data_documentation: float = Field(
-        default=0.0,
-        description="Signal tables, node lists, shot databases (0.0-1.0)",
-    )
-    score_physics_content: float = Field(
-        default=0.0,
-        description="Physics explanations, methodology, theory (0.0-1.0)",
-    )
-    score_code_documentation: float = Field(
-        default=0.0,
-        description="Software docs, API references, usage guides (0.0-1.0)",
-    )
-    score_data_access: float = Field(
-        default=0.0,
-        description="MDSplus paths, TDI expressions, access methods (0.0-1.0)",
-    )
-    score_calibration: float = Field(
-        default=0.0,
-        description="Calibration info, conversion factors, sensor specs (0.0-1.0)",
-    )
-    score_imas_relevance: float = Field(
-        default=0.0,
-        description="IMAS integration, IDS references, mapping hints (0.0-1.0)",
     )
 
     reasoning: str = Field(
@@ -147,13 +97,7 @@ def grounded_wiki_score(
 ) -> float:
     """Compute combined score from per-dimension scores.
 
-    Uses MAX of per-dimension scores (not weighted average) so that pages
-    excelling in a single dimension are not penalized.
-
-    Purpose-based multipliers:
-    - High-value (data_source, diagnostic, code, calibration, data_access): 1.0
-    - Medium-value (physics_analysis, experimental_procedure, tutorial, reference): 0.8
-    - Low-value (administrative, personal, other): 0.3
+    Delegates to the shared ``purpose_weighted_composite`` function.
 
     Args:
         scores: Dict of per-dimension scores
@@ -162,40 +106,7 @@ def grounded_wiki_score(
     Returns:
         Combined score (0.0-1.0)
     """
-    return _grounded_score(scores, purpose)
-
-
-def _grounded_score(
-    scores: dict[str, float],
-    purpose: ContentPurpose,
-) -> float:
-    """Shared grounded scoring logic for all content types."""
-    # Use max of all per-dimension scores
-    base_score = max(scores.values()) if scores else 0.0
-
-    # Purpose-based multipliers
-    high_value = {
-        ContentPurpose.data_source,
-        ContentPurpose.diagnostic,
-        ContentPurpose.code,
-        ContentPurpose.calibration,
-        ContentPurpose.data_access,
-    }
-    medium_value = {
-        ContentPurpose.physics_analysis,
-        ContentPurpose.experimental_procedure,
-        ContentPurpose.tutorial,
-        ContentPurpose.reference,
-    }
-
-    if purpose in high_value:
-        multiplier = 1.0
-    elif purpose in medium_value:
-        multiplier = 0.8
-    else:
-        multiplier = 0.3
-
-    return max(0.0, min(1.0, base_score * multiplier))
+    return purpose_weighted_composite(scores, purpose)
 
 
 @dataclass
@@ -250,16 +161,7 @@ class ScoredWikiPage:
         cost_per_page: float = 0.0,
     ) -> ScoredWikiPage:
         """Create from LLM structured output result."""
-        scores = {
-            "score_data_documentation": result.score_data_documentation,
-            "score_physics_content": result.score_physics_content,
-            "score_code_documentation": result.score_code_documentation,
-            "score_data_access": result.score_data_access,
-            "score_calibration": result.score_calibration,
-            "score_imas_relevance": result.score_imas_relevance,
-        }
-
-        combined = grounded_wiki_score(scores, result.page_purpose)
+        combined = grounded_wiki_score(result.get_score_dict(), result.page_purpose)
 
         return cls(
             id=result.id,
@@ -332,13 +234,13 @@ class ScoredWikiBatch:
 # ============================================================================
 
 
-class DocumentScoreResult(BaseModel):
+class DocumentScoreResult(ContentScoreFields):
     """LLM scoring result for a single wiki document.
+
+    Inherits 6 content score dimensions from ContentScoreFields.
 
     This Pydantic model is passed to LiteLLM's response_format parameter
     to ensure structured, parseable output from the LLM.
-
-    Uses same scoring dimensions as WikiScoreResult for consistency.
     """
 
     id: str = Field(description="The document ID (echo from input)")
@@ -351,32 +253,6 @@ class DocumentScoreResult(BaseModel):
 
     description: str = Field(
         description="Concise description of document contents (1-2 sentences)"
-    )
-
-    # Per-dimension scores (0.0-1.0 each) - same as WikiScoreResult
-    score_data_documentation: float = Field(
-        default=0.0,
-        description="Signal tables, node lists, shot databases (0.0-1.0)",
-    )
-    score_physics_content: float = Field(
-        default=0.0,
-        description="Physics explanations, methodology, theory (0.0-1.0)",
-    )
-    score_code_documentation: float = Field(
-        default=0.0,
-        description="Software docs, API references, usage guides (0.0-1.0)",
-    )
-    score_data_access: float = Field(
-        default=0.0,
-        description="MDSplus paths, TDI expressions, access methods (0.0-1.0)",
-    )
-    score_calibration: float = Field(
-        default=0.0,
-        description="Calibration info, conversion factors, sensor specs (0.0-1.0)",
-    )
-    score_imas_relevance: float = Field(
-        default=0.0,
-        description="IMAS integration, IDS references, mapping hints (0.0-1.0)",
     )
 
     reasoning: str = Field(
@@ -421,10 +297,9 @@ def grounded_document_score(
 ) -> float:
     """Compute combined score from per-dimension scores for documents.
 
-    Uses same logic as grounded_wiki_score for consistency.
-    MAX of per-dimension scores with purpose-based multipliers.
+    Delegates to the shared ``purpose_weighted_composite`` function.
     """
-    return _grounded_score(scores, purpose)
+    return purpose_weighted_composite(scores, purpose)
 
 
 @dataclass
@@ -479,16 +354,9 @@ class ScoredDocument:
         cost_per_document: float = 0.0,
     ) -> ScoredDocument:
         """Create from LLM structured output result."""
-        scores = {
-            "score_data_documentation": result.score_data_documentation,
-            "score_physics_content": result.score_physics_content,
-            "score_code_documentation": result.score_code_documentation,
-            "score_data_access": result.score_data_access,
-            "score_calibration": result.score_calibration,
-            "score_imas_relevance": result.score_imas_relevance,
-        }
-
-        combined = grounded_document_score(scores, result.document_purpose)
+        combined = grounded_document_score(
+            result.get_score_dict(), result.document_purpose
+        )
 
         return cls(
             id=result.id,
@@ -540,15 +408,14 @@ class ScoredDocument:
 # ============================================================================
 
 
-class ImageScoreResult(BaseModel):
+class ImageScoreResult(ContentScoreFields):
     """VLM scoring + captioning result for a single image.
+
+    Inherits 6 content score dimensions from ContentScoreFields.
 
     This Pydantic model is passed to LiteLLM's response_format parameter.
     The VLM receives image bytes + context (page_title, section,
     surrounding_text) and returns caption + scoring in a single pass.
-
-    Uses the same scoring dimensions as WikiScoreResult / DocumentScoreResult
-    so that scores are comparable across all content types.
     """
 
     id: str = Field(description="The image ID (echo from input)")
@@ -578,32 +445,6 @@ class ImageScoreResult(BaseModel):
         "Describe what the image shows in fusion physics terms, not visual appearance. "
         "Length scales with content richness: 1-2 sentences for simple images, "
         "full paragraph for complex schematics or multi-panel plots."
-    )
-
-    # Per-dimension scores (0.0-1.0 each)
-    score_data_documentation: float = Field(
-        default=0.0,
-        description="Signal tables, node lists, shot databases (0.0-1.0)",
-    )
-    score_physics_content: float = Field(
-        default=0.0,
-        description="Physics explanations, methodology, theory (0.0-1.0)",
-    )
-    score_code_documentation: float = Field(
-        default=0.0,
-        description="Software docs, API references, usage guides (0.0-1.0)",
-    )
-    score_data_access: float = Field(
-        default=0.0,
-        description="MDSplus paths, TDI expressions, access methods (0.0-1.0)",
-    )
-    score_calibration: float = Field(
-        default=0.0,
-        description="Calibration info, conversion factors, sensor specs (0.0-1.0)",
-    )
-    score_imas_relevance: float = Field(
-        default=0.0,
-        description="IMAS integration, IDS references, mapping hints (0.0-1.0)",
     )
 
     reasoning: str = Field(default="", description="Brief explanation for the score")
@@ -643,9 +484,9 @@ def grounded_image_score(
 ) -> float:
     """Compute combined score for an image.
 
-    Uses same grounded scoring logic as pages and documents.
+    Delegates to the shared ``purpose_weighted_composite`` function.
     """
-    return _grounded_score(scores, purpose)
+    return purpose_weighted_composite(scores, purpose)
 
 
 @dataclass
@@ -706,16 +547,7 @@ class ScoredImage:
         cost_per_image: float = 0.0,
     ) -> ScoredImage:
         """Create from VLM structured output result."""
-        scores = {
-            "score_data_documentation": result.score_data_documentation,
-            "score_physics_content": result.score_physics_content,
-            "score_code_documentation": result.score_code_documentation,
-            "score_data_access": result.score_data_access,
-            "score_calibration": result.score_calibration,
-            "score_imas_relevance": result.score_imas_relevance,
-        }
-
-        combined = grounded_image_score(scores, result.purpose)
+        combined = grounded_image_score(result.get_score_dict(), result.purpose)
 
         return cls(
             id=result.id,

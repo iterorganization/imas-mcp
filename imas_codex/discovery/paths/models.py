@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 # Import schema-derived enums from generated models
 from imas_codex.core.physics_domain import PhysicsDomain
+from imas_codex.discovery.base.scoring import CodeScoreFields
 from imas_codex.graph.models import ResourcePurpose, TerminalReason
 
 __all__ = [
@@ -54,8 +55,11 @@ __all__ = [
 # and the nested object definition from the schema sent to the LLM.
 
 
-class TriageResult(BaseModel):
+class TriageResult(CodeScoreFields):
     """LLM triage result for a single directory (first pass).
+
+    Inherits 9 code score dimensions from CodeScoreFields.
+    Adds 2 path-only dimensions (modeling_data, experimental_data).
 
     This Pydantic model is passed to LiteLLM's response_format parameter
     to ensure structured, parseable output from the LLM.
@@ -77,19 +81,7 @@ class TriageResult(BaseModel):
         "Describe the code, tools, or data — NOT the scoring rationale."
     )
 
-    # Per-purpose scores (0.0-1.0 each)
-    score_modeling_code: float = Field(
-        default=0.0,
-        description="Forward modeling/simulation code value (0.0-1.0)",
-    )
-    score_analysis_code: float = Field(
-        default=0.0,
-        description="Experimental analysis code value (0.0-1.0)",
-    )
-    score_operations_code: float = Field(
-        default=0.0,
-        description="Real-time operations code value (0.0-1.0)",
-    )
+    # Path-only extra dimensions (beyond inherited 9)
     score_modeling_data: float = Field(
         default=0.0,
         description="Modeling outputs value (0.0-1.0)",
@@ -97,30 +89,6 @@ class TriageResult(BaseModel):
     score_experimental_data: float = Field(
         default=0.0,
         description="Experimental shot data value (0.0-1.0)",
-    )
-    score_data_access: float = Field(
-        default=0.0,
-        description="Data access tools value (0.0-1.0)",
-    )
-    score_workflow: float = Field(
-        default=0.0,
-        description="Workflow/orchestration value (0.0-1.0)",
-    )
-    score_visualization: float = Field(
-        default=0.0,
-        description="Visualization tools value (0.0-1.0)",
-    )
-    score_documentation: float = Field(
-        default=0.0,
-        description="Documentation value (0.0-1.0)",
-    )
-    score_imas: float = Field(
-        default=0.0,
-        description="IMAS relevance (0.0-1.0)",
-    )
-    score_convention: float = Field(
-        default=0.0,
-        description="Convention handling value — COCOS, sign/coordinate conventions, unit conversion (0.0-1.0)",
     )
 
     should_expand: bool = Field(description="Whether to explore child directories")
@@ -168,8 +136,11 @@ class TriageBatch(BaseModel):
 # ============================================================================
 
 
-class ScoreResult(BaseModel):
+class ScoreResult(CodeScoreFields):
     """LLM scoring result for a single directory (second pass).
+
+    Inherits 9 code score dimensions from CodeScoreFields.
+    Adds 2 path-only dimensions (modeling_data, experimental_data).
 
     Independent evaluation using enrichment evidence (pattern matches,
     language breakdown, LOC, multiformat detection) plus triage context
@@ -191,35 +162,12 @@ class ScoreResult(BaseModel):
         "Example: 'Custom LIUQE equilibrium reconstruction interface with 2,500 lines of Python and MDSplus data readers'"
     )
 
-    # Per-dimension scores (0.0-1.0, required)
-    score_modeling_code: float = Field(
-        default=0.0, description="Modeling code score (0.0-1.0)"
-    )
-    score_analysis_code: float = Field(
-        default=0.0, description="Analysis code score (0.0-1.0)"
-    )
-    score_operations_code: float = Field(
-        default=0.0, description="Operations code score (0.0-1.0)"
-    )
+    # Path-only extra dimensions (beyond inherited 9)
     score_modeling_data: float = Field(
         default=0.0, description="Modeling data score (0.0-1.0)"
     )
     score_experimental_data: float = Field(
         default=0.0, description="Experimental data score (0.0-1.0)"
-    )
-    score_data_access: float = Field(
-        default=0.0, description="Data access score (0.0-1.0)"
-    )
-    score_workflow: float = Field(default=0.0, description="Workflow score (0.0-1.0)")
-    score_visualization: float = Field(
-        default=0.0, description="Visualization score (0.0-1.0)"
-    )
-    score_documentation: float = Field(
-        default=0.0, description="Documentation score (0.0-1.0)"
-    )
-    score_imas: float = Field(default=0.0, description="IMAS relevance score (0.0-1.0)")
-    score_convention: float = Field(
-        default=0.0, description="Convention handling score (0.0-1.0)"
     )
 
     # Combined score (max of dimension scores)
