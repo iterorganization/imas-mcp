@@ -14,11 +14,11 @@ The MDSplus scanner plugin (`discovery/signals/scanners/mdsplus.py`) currently
 joins two independent implementations behind a single `scan()` method:
 
 - **Static trees** go through `discovery/static/` — a rich pipeline with
-  TreeNode creation, version tracking, unit extraction, pattern detection,
+  DataNode creation, version tracking, unit extraction, pattern detection,
   and LLM enrichment with parent/sibling context.
 - **Dynamic trees** go through `enumerate_mdsplus.py` — a flat SSH script
   that returns raw JSON, converted directly to FacilitySignal objects with
-  no TreeNode intermediary, no graph structure, and no enrichment context.
+  no DataNode intermediary, no graph structure, and no enrichment context.
 
 This produces a two-class signal system where static signals are deeply
 characterized and dynamic signals are barely described. The infrastructure
@@ -28,7 +28,7 @@ Additionally, two parallel discovery channels operate independently:
 
 - **TDI function discovery** (`discovery/signals/tdi.py`) creates
   FacilitySignal nodes from TDI `.fun` file parsing, with no linkage to
-  the TreeNode structure those functions abstract over.
+  the DataNode structure those functions abstract over.
 - **Epoch detection** (`mdsplus/batch_discovery.py`) discovers structural
   version boundaries for dynamic trees via SSH, but this infrastructure is
   not accessible from the unified discovery pipeline.
@@ -36,12 +36,12 @@ Additionally, two parallel discovery channels operate independently:
 ### What we keep from each system
 
 **From the static pipeline (best features):**
-- TreeNode as the universal intermediary — all signals originate from tree nodes
+- DataNode as the universal intermediary — all signals originate from tree nodes
 - Graph-backed claim coordination via `claimed_at` timestamps
 - Pattern detection (indexed parameters, member-suffix grouping)
 - Unit extraction via SSH with pint normalization → canonical `Unit` nodes
 - Parent/sibling context injection into LLM enrichment prompts
-- Version/epoch tracking via TreeModelVersion nodes
+- Version/epoch tracking via StructuralEpoch nodes
 - Supervised async workers with orphan recovery
 
 **From the signals pipeline (best features):**
@@ -77,10 +77,10 @@ Additionally, two parallel discovery channels operate independently:
    optional fields. The code path chosen at runtime is a function of what's
    configured, not a type tag.
 
-2. **TreeNode is always the intermediary.**
+2. **DataNode is always the intermediary.**
    No signal is created directly from SSH output. The flow is always:
-   SSH extract → TreeNode in graph → promote to FacilitySignal.
-   This guarantees SOURCE_NODE provenance, parent/sibling context for
+   SSH extract → DataNode in graph → promote to FacilitySignal.
+   This guarantees HAS_DATA_SOURCE_NODE provenance, parent/sibling context for
    enrichment, and the ability to re-derive signals from tree structure.
 
 3. **Tree→subtree nesting in configuration.**
@@ -93,21 +93,21 @@ Additionally, two parallel discovery channels operate independently:
 4. **All trees are epoched — some just have more data.**
    The static tree has 8 *known* versions from facility documentation.
    Dynamic trees have *discoverable* epochs via structural fingerprinting.
-   The unified pipeline treats both the same: TreeModelVersion nodes with
+   The unified pipeline treats both the same: StructuralEpoch nodes with
    INTRODUCED_IN/REMOVED_IN relationships. The difference is only in
    discovery method (pre-configured vs runtime detection).
 
 5. **All context available to all signals.**
    Static signals currently never get wiki/code context. Dynamic signals
    never get parent/sibling context. The unified enrichment path provides
-   both: tree hierarchy context from SOURCE_NODE traversal, plus wiki/code
+   both: tree hierarchy context from HAS_DATA_SOURCE_NODE traversal, plus wiki/code
    context from semantic search. Signals can be re-enriched as the knowledge
    graph grows.
 
 6. **TDI as a higher-level access layer, not a separate discovery path.**
    TDI functions abstract over raw MDSplus tree paths. A TDI signal
-   (`tcv_eq('IP')`) resolves to one or more TreeNode paths at runtime.
-   The graph should capture this: TDIFunction → RESOLVES_TO → TreeNode(s).
+   (`tcv_eq('IP')`) resolves to one or more DataNode paths at runtime.
+   The graph should capture this: TDIFunction → RESOLVES_TO → DataNode(s).
    This enriches both sides: tree-sourced signals gain a preferred accessor
    expression, TDI-sourced signals gain structural context.
 
@@ -137,13 +137,13 @@ TreeConfig (YAML)
 │                                                                │
 │  ┌─ EPOCH DETECT ──────────────────────────────────────────┐   │
 │  │  (optional) batch fingerprint → binary search → epochs  │   │
-│  │  creates TreeModelVersion nodes with shot ranges        │   │
+│  │  creates StructuralEpoch nodes with shot ranges        │   │
 │  │  skipped if tree has pre-configured versions            │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │           │                                                    │
 │           ▼                                                    │
 │  ┌─ EXTRACT ───────────────────────────────────────────────┐   │
-│  │  SSH tree walk → TreeNode nodes (per version/epoch)     │   │
+│  │  SSH tree walk → DataNode nodes (per version/epoch)     │   │
 │  │  versioned: one extraction per version                  │   │
 │  │  epoched: one extraction per discovered epoch           │   │
 │  │  shot-scoped (no epochs): one extraction at ref_shot    │   │
@@ -157,13 +157,13 @@ TreeConfig (YAML)
 │           ▼                                                    │
 │  ┌─ PATTERNS ──────────────────────────────────────────────┐   │
 │  │  detect indexed and member-suffix groups                │   │
-│  │  create TreeNodePattern nodes                           │   │
+│  │  create DataNodePattern nodes                           │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │           │                                                    │
 │           ▼                                                    │
 │  ┌─ PROMOTE ──────────────────────────────────────────────┐    │
-│  │  TreeNode → FacilitySignal (status=discovered)         │    │
-│  │  + SOURCE_NODE + AT_FACILITY + DATA_ACCESS             │    │
+│  │  DataNode → FacilitySignal (status=discovered)         │    │
+│  │  + HAS_DATA_SOURCE_NODE + AT_FACILITY + DATA_ACCESS             │    │
 │  │  + INTRODUCED_IN (if versioned/epoched)                │    │
 │  └────────────────────────────────────────────────────────┘    │
 │                                                                │
@@ -173,8 +173,8 @@ TreeConfig (YAML)
 ┌─────────────────────────────────────────────────────────────────┐
 │  TDI Linkage (post-extraction, optional)                       │
 │                                                                │
-│  Match TDI function build_path() refs → TreeNode paths         │
-│  Create RESOLVES_TO edges: TDIFunction → TreeNode              │
+│  Match TDI function build_path() refs → DataNode paths         │
+│  Create RESOLVES_TO edges: TDIFunction → DataNode              │
 │  Set preferred_accessor on FacilitySignal from TDI expression  │
 │  Inject TDI source_code into enrichment context                │
 └─────────────────────────────────────────────────────────────────┘
@@ -185,7 +185,7 @@ TreeConfig (YAML)
 │                                                                │
 │  claim discovered FacilitySignals                              │
 │  fetch context:                                                │
-│    - tree hierarchy via SOURCE_NODE→TreeNode                   │
+│    - tree hierarchy via HAS_DATA_SOURCE_NODE→DataNode                   │
 │    - wiki chunks via semantic search                           │
 │    - code chunks via code_chunk_embedding                      │
 │    - TDI source code (via RESOLVES_TO→TDIFunction)             │
@@ -214,7 +214,7 @@ TreeConfig (YAML)
    automatically discover their structural versions.
 
 3. **TDI linkage as post-processing.** After tree extraction, TDI
-   `build_path()` references are matched to TreeNode paths. This creates
+   `build_path()` references are matched to DataNode paths. This creates
    bidirectional context: tree signals know their TDI accessor, TDI signals
    know their backing tree structure.
 
@@ -438,22 +438,22 @@ for tree_config in mdsplus_config["trees"]:
             yield subtree_name, tree_config  # subtree inherits parent config
     elif tree_config.get("versions"):
         # Versioned tree: extract per version
-        yield tree_config["tree_name"], tree_config
+        yield tree_config["data_source_name"], tree_config
     else:
         # Standalone tree: extract at reference_shot
-        yield tree_config["tree_name"], tree_config
+        yield tree_config["data_source_name"], tree_config
 ```
 
 ### Graph Schema (`facility.yaml`)
 
 Minimal changes — the graph schema is already mostly generic:
 
-- `TreeNode.is_static` → **remove**. Replace with `temporality` enum
-  (already on FacilitySignal, extend to TreeNode if needed for queries).
-- `TreeModelVersion` — works as-is for all tree types. Versioned trees
+- `DataNode.is_static` → **remove**. Replace with `temporality` enum
+  (already on FacilitySignal, extend to DataNode if needed for queries).
+- `StructuralEpoch` — works as-is for all tree types. Versioned trees
   have pre-configured versions, epoched trees have discovered versions,
   un-epoched trees get a single version at reference_shot.
-- Add `TDIFunction` → `RESOLVES_TO` → `TreeNode` relationship for
+- Add `TDIFunction` → `RESOLVES_TO` → `DataNode` relationship for
   TDI linkage.
 - FacilitySignal gains `preferred_accessor` field for TDI expression
   when available (distinct from `accessor` which is the raw tree path).
@@ -478,7 +478,7 @@ The `BatchDiscovery` class provides the core epoch detection algorithm:
    for interrupted runs.
 
 The CLI wrapper (`scripts/discover_mdsplus.py`) orchestrates:
-- Epoch discover → boundary refine → TreeModelVersion ingest →
+- Epoch discover → boundary refine → StructuralEpoch ingest →
   super tree build → metadata enrichment → legacy cleanup
 
 **Key data structures:**
@@ -486,7 +486,7 @@ The CLI wrapper (`scripts/discover_mdsplus.py`) orchestrates:
 # Epoch record (output of discover_epochs_optimized)
 {
     "id": "tcv:results:v3",
-    "tree_name": "results",
+    "data_source_name": "results",
     "facility_id": "tcv",
     "version": 3,
     "first_shot": 65000,
@@ -504,7 +504,7 @@ The CLI wrapper (`scripts/discover_mdsplus.py`) orchestrates:
 pipeline. `discover_epochs_optimized()` is called for trees with
 `detect_epochs: true`. Its output feeds directly into the existing
 `seed_versions` → `extract_worker` flow — discovered epochs become
-TreeModelVersion nodes, just like pre-configured versions.
+StructuralEpoch nodes, just like pre-configured versions.
 
 ### TDI Discovery (ready to integrate)
 
@@ -539,14 +539,14 @@ The TDI discovery pipeline:
 
 **Current gaps:**
 - TDI signals and tree-extracted signals exist independently in the graph
-- No `RESOLVES_TO` relationship links TDI functions to TreeNode paths
+- No `RESOLVES_TO` relationship links TDI functions to DataNode paths
 - TDI `build_path()` references contain the information needed to create
   this linkage, but it's not used
 - The TDI scanner plugin (`scanners/tdi.py`) wraps this as a separate
   scanner type — signals from TDI never get tree hierarchy context
 
-**Integration path:** After tree extraction creates TreeNode nodes, a
-TDI linkage phase matches `build_path()` references against TreeNode paths.
+**Integration path:** After tree extraction creates DataNode nodes, a
+TDI linkage phase matches `build_path()` references against DataNode paths.
 This creates bidirectional relationships and enriches both discovery channels.
 
 ### Legacy Sequential Discovery
@@ -580,7 +580,7 @@ discovery/
     tdi.py              # TDI discovery orchestration
 mdsplus/
   static.py             # SSH extraction (async_discover_static_tree_version)
-  ingestion.py          # TreeNode graph ingestion
+  ingestion.py          # DataNode graph ingestion
   enrichment.py         # LLM prompt building for static nodes
   discovery.py          # Legacy TreeDiscovery class (sequential)
   batch_discovery.py    # BatchDiscovery + epoch detection (optimized)
@@ -606,7 +606,7 @@ discovery/
     graph_ops.py           # Merged: seed, claim, mark, pattern detect, promote
     state.py               # TreeDiscoveryState (replaces StaticDiscoveryState)
     epochs.py              # Epoch detection integration (wraps BatchDiscovery)
-    tdi_linkage.py         # TDI→TreeNode linkage post-processing
+    tdi_linkage.py         # TDI→DataNode linkage post-processing
   signals/
     scanners/
       mdsplus.py           # Scanner plugin — thin, delegates to discovery/mdsplus/
@@ -615,7 +615,7 @@ discovery/
     tdi.py                 # TDI discovery (mostly unchanged)
 mdsplus/
   extraction.py            # SSH extraction (replaces static.py — any tree)
-  ingestion.py             # TreeNode graph ingestion (mostly unchanged)
+  ingestion.py             # DataNode graph ingestion (mostly unchanged)
   batch_discovery.py       # BatchDiscovery + epoch detection (unchanged)
   # REMOVED: enrichment.py, discovery.py, metadata.py
 remote/scripts/
@@ -686,10 +686,10 @@ def iter_extraction_targets(mdsplus_config, global_ref_shot):
         elif tree.get("versions"):
             # Versioned: yield tree for each version
             for v in tree["versions"]:
-                yield tree["tree_name"], v["version"], tree
+                yield tree["data_source_name"], v["version"], tree
         else:
             # Standalone: yield tree at reference_shot
-            yield tree["tree_name"], ref, tree
+            yield tree["data_source_name"], ref, tree
 ```
 
 ### Phase 2: Epoch Detection Integration ✅
@@ -723,7 +723,7 @@ trees with `detect_epochs: true`.
 
 2. Integrate into the extraction pipeline:
    - Before extraction, check `detect_epochs`:
-     - If true: run epoch detection, create TreeModelVersion nodes from results
+     - If true: run epoch detection, create StructuralEpoch nodes from results
      - If false and versions configured: seed from config (existing behavior)
      - If false and no versions: create single version at reference_shot
    - Extraction then iterates discovered epochs just like configured versions
@@ -785,7 +785,7 @@ filtering for dynamic trees.
 5. Remove `enrich_worker` from workers — enrichment moves to signals pipeline.
    Pipeline stops after EXTRACT → UNITS → PATTERNS → PROMOTE.
 6. Add `promote_worker` — creates FacilitySignal (status=discovered) from
-   leaf TreeNodes. No description yet — that comes from signals enrichment.
+   leaf DataNodes. No description yet — that comes from signals enrichment.
 7. Pattern detection runs after extraction, before promote.
 
 **Progressive async architecture:**
@@ -804,7 +804,7 @@ async def process_tree(facility, ssh_host, tree_config, state):
         for subtree in tree_config["subtrees"]:
             trees_to_extract.append((subtree, tree_config))
     else:
-        trees_to_extract.append((tree_config["tree_name"], tree_config))
+        trees_to_extract.append((tree_config["data_source_name"], tree_config))
 
     # Phase 1: Epoch detection (concurrent per subtree)
     async with anyio.create_task_group() as tg:
@@ -827,7 +827,7 @@ async def process_tree(facility, ssh_host, tree_config, state):
 
 ### Phase 5: TDI Linkage ✅
 
-**Goal:** Link TDI functions to TreeNode paths for bidirectional context.
+**Goal:** Link TDI functions to DataNode paths for bidirectional context.
 
 1. Create `discovery/mdsplus/tdi_linkage.py`:
    ```python
@@ -835,11 +835,11 @@ async def process_tree(facility, ssh_host, tree_config, state):
        gc: GraphClient,
        facility: str,
    ):
-       """Match TDI build_path() refs to TreeNode paths.
+       """Match TDI build_path() refs to DataNode paths.
 
        For each TDIFunction with build_path references:
-       1. Normalize the build_path to canonical TreeNode ID format
-       2. MATCH against existing TreeNode nodes
+       1. Normalize the build_path to canonical DataNode ID format
+       2. MATCH against existing DataNode nodes
        3. Create RESOLVES_TO edges
        4. Set preferred_accessor on matching FacilitySignals
        """
@@ -847,8 +847,8 @@ async def process_tree(facility, ssh_host, tree_config, state):
            MATCH (tf:TDIFunction {facility_id: $facility})
            WHERE tf.mdsplus_trees IS NOT NULL
            UNWIND tf.mdsplus_trees AS tree_name
-           MATCH (tn:TreeNode {facility_id: $facility})
-           WHERE tn.tree_name = tree_name
+           MATCH (tn:DataNode {facility_id: $facility})
+           WHERE tn.data_source_name = tree_name
              AND any(bp IN tf.build_paths WHERE tn.path ENDS WITH bp)
            MERGE (tf)-[:RESOLVES_TO]->(tn)
        ''', facility=facility)
@@ -891,13 +891,13 @@ remaining edges.
 **Goal:** Signals enrichment pipeline fetches all available context.
 
 1. Modify `claim_signals_for_enrichment()` to also return:
-   - SOURCE_NODE TreeNode data (path, parent, siblings)
-   - TreeNodePattern membership (for batch optimization)
+   - HAS_DATA_SOURCE_NODE DataNode data (path, parent, siblings)
+   - DataNodePattern membership (for batch optimization)
    - RESOLVES_TO TDIFunction data (source_code, signature)
    - Epoch/version applicability ranges
 
 2. Modify `enrich_worker` prompt construction:
-   - When `source_node` is set: traverse SOURCE_NODE→TreeNode for
+   - When `data_source_node` is set: traverse HAS_DATA_SOURCE_NODE→DataNode for
      parent structure, sibling nodes, pattern membership
    - When TDI linkage exists: include TDI function source_code and
      quantity-level comments from `.fun` file parsing
@@ -939,7 +939,7 @@ remaining edges.
 5. Delete `remote/scripts/extract_tdi_functions.py` — deferred (still used by `discovery/signals/tdi.py`)
 6. ~~Delete `scripts/discover_mdsplus.py` (absorbed into pipeline)~~ ✅
 7. `discovery/static/` converted to backward-compat re-export shims (graph_ops content moved to `discovery/mdsplus/graph_ops.py`)
-8. Remove `TreeNode.is_static` — deferred (schema changes are additive-only per AGENTS.md; used in 30+ Cypher queries)
+8. Remove `DataNode.is_static` — deferred (schema changes are additive-only per AGENTS.md; used in 30+ Cypher queries)
 9. ~~Update all imports across the codebase~~ ✅
 10. ~~Update tests: rename test files, add epoch detection tests~~ ✅
 
@@ -952,7 +952,7 @@ Currently, static and dynamic signals use different ID formats:
 - Dynamic: `{facility}:{tree}/{group}/{name}`
 
 Unify to: `{facility}:{tree}/{normalized_path}` where normalized_path
-is derived from the TreeNode path. The physics_domain is a property of
+is derived from the DataNode path. The physics_domain is a property of
 the FacilitySignal, not part of its ID. This prevents ID changes when
 the domain classification is corrected during enrichment.
 
@@ -966,15 +966,15 @@ tree (or per accessor pattern):
 
 ### Enrichment batch grouping
 
-With SOURCE_NODE available, grouping can be smarter than tree-level:
+With HAS_DATA_SOURCE_NODE available, grouping can be smarter than tree-level:
 - Group by parent STRUCTURE node (siblings enriched together)
-- Group by TreeNodePattern (pattern members enriched together)
+- Group by DataNodePattern (pattern members enriched together)
 - Group by TDI function (quantities from same function share context)
 - Fall back to tree-level grouping when no structure is available
 
-### TreeModelVersion for all tree types
+### StructuralEpoch for all tree types
 
-| Tree type | TreeModelVersion strategy |
+| Tree type | StructuralEpoch strategy |
 |-----------|--------------------------|
 | Versioned (static) | One per configured version, from YAML `versions` |
 | Epoched (detect_epochs) | One per discovered epoch, from `BatchDiscovery` |
@@ -982,7 +982,7 @@ With SOURCE_NODE available, grouping can be smarter than tree-level:
 
 All types use the same INTRODUCED_IN/REMOVED_IN relationship infrastructure.
 Epoch detection for a previously un-epoched tree just adds more
-TreeModelVersion nodes — no schema or pipeline changes needed.
+StructuralEpoch nodes — no schema or pipeline changes needed.
 
 ### TDI↔Tree signal deduplication
 
@@ -990,7 +990,7 @@ After TDI linkage, some signals may exist twice: once from tree extraction
 (path-based accessor) and once from TDI extraction (function-based accessor).
 These are **not** duplicates — they represent different access patterns for
 the same physical quantity. Both are kept. The TDI signal gets a
-`source_node` link to the same TreeNode. The tree signal gets a
+`data_source_node` link to the same DataNode. The tree signal gets a
 `preferred_accessor` pointing to the TDI expression. An agent choosing
 how to access a signal can see both options and pick the higher-level one.
 
@@ -1012,7 +1012,7 @@ This is expected and desired — no backwards compatibility required.
 
 | Risk | Mitigation |
 |------|------------|
-| Removing static enrich_worker loses tree context | Signals enrich_worker enhanced to fetch tree context via SOURCE_NODE |
+| Removing static enrich_worker loses tree context | Signals enrich_worker enhanced to fetch tree context via HAS_DATA_SOURCE_NODE |
 | Shot-scoped tree extraction much larger than versioned | `max_nodes_per_tree` limit + `node_usages` filtering already exist |
 | Epoch detection for all subtrees is slow | Epoch detection runs concurrently per subtree; coarse_step is configurable; incremental mode skips known epochs |
 | TDI linkage produces false matches | `build_path()` references are exact MDSplus paths — match is deterministic, not heuristic |
@@ -1024,15 +1024,15 @@ This is expected and desired — no backwards compatibility required.
 
 1. `imas-codex discover signals tcv -s mdsplus -n 50` discovers signals from
    both static and dynamic trees through the same pipeline
-2. All signals have SOURCE_NODE→TreeNode edges
+2. All signals have HAS_DATA_SOURCE_NODE→DataNode edges
 3. All signals' enrichment prompts include tree hierarchy context when available
 4. `TreeConfig` schema validated for TCV (and future JET, JT-60SA configs)
 5. No code references "static" as a tree type — only as a specific tree name
 6. `discovery/static/` directory no longer exists
-7. Dynamic trees with `detect_epochs: true` produce TreeModelVersion nodes
+7. Dynamic trees with `detect_epochs: true` produce StructuralEpoch nodes
    with shot ranges comparable to the standalone `discover-mdsplus` CLI
 8. TDI functions with `build_path()` references have RESOLVES_TO edges
-   to matching TreeNode nodes
+   to matching DataNode nodes
 9. Re-enrichment via `--enrich-only` produces improved descriptions when
    new context (wiki, code, TDI, epochs) is available
 10. No standalone CLI scripts for epoch detection — all integrated into

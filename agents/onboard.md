@@ -312,7 +312,7 @@ uv run imas-codex ingest run jet --limit 100
 ### Step 5.1: Enrich High-Value Nodes
 
 ```bash
-# Run enrichment agent on TreeNodes
+# Run enrichment agent on DataNodes
 uv run imas-codex enrich jet --filter "score > 0.7"
 ```
 

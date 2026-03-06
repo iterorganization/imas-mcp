@@ -53,7 +53,7 @@ ReAct agents loop autonomously with budget controls; VS Code chat requires human
    └── SSH access, tool availability, data system detection
 
 2. Tree Structure Ingestion (1-2 days)
-   └── MDSplus/PPF tree enumeration, TreeNode creation
+   └── MDSplus/PPF tree enumeration, DataNode creation
 
 3. Code Discovery (1 week)
    └── Map → Score → Ingest pipeline execution
@@ -111,7 +111,7 @@ ReAct agents loop autonomously with budget controls; VS Code chat requires human
 │  - Discover .fun files                                                  │
 │  - Parse with LlamaIndex (chunk, embed)                                 │
 │  - Create TDIFunction nodes                                             │
-│  - Link to TreeNodes                                                    │
+│  - Link to DataNodes                                                    │
 │  Output: TDIFunction nodes, CodeChunk embeddings                        │
 │                                                                         │
 │  Phase 5: Code Ingestion (hours-days)                                   │
@@ -120,7 +120,7 @@ ReAct agents loop autonomously with budget controls; VS Code chat requires human
 │  - Fetch queued SourceFiles                                             │
 │  - Chunk with LlamaIndex                                                │
 │  - Generate embeddings                                                  │
-│  - Extract DataReferences, link to TreeNodes                            │
+│  - Extract DataReferences, link to DataNodes                            │
 │  Output: CodeChunk nodes with embeddings                                │
 │                                                                         │
 │  Phase 6: Enrichment (hours-days)                                       │
@@ -129,7 +129,7 @@ ReAct agents loop autonomously with budget controls; VS Code chat requires human
 │  - LLM generates physics descriptions                                   │
 │  - Physics domain classification                                        │
 │  - Unit validation                                                      │
-│  Output: Enriched TreeNode metadata                                     │
+│  Output: Enriched DataNode metadata                                     │
 │                                                                         │
 │  Phase 7: Mapping Discovery (hours)                                     │
 │  ──────────────────────────────────                                     │
@@ -318,7 +318,7 @@ Map Agent ──► SourceFile nodes ──► Score Agent ──► Priority qu
     │  3. Chunk semantically (local)                              │
     │  4. Embed chunks (local, HuggingFace)                       │
     │  5. Create CodeChunk nodes                                   │
-    │  6. Link to TreeNode/IDS paths                              │
+    │  6. Link to DataNode/IDS paths                              │
     │  7. Update SourceFile status                                 │
     └─────────────────────────────────────────────────────────────┘
 ```
@@ -437,8 +437,8 @@ required_tools:
 
 | Metric | Target | Notes |
 |--------|--------|-------|
-| TDI functions per facility | >100 | Parsed and linked to TreeNodes |
-| TreeNodes per facility | >10,000 | From tree introspection |
+| TDI functions per facility | >100 | Parsed and linked to DataNodes |
+| DataNodes per facility | >10,000 | From tree introspection |
 | IMAS mappings per facility | >200 | With confidence scores |
 | Code files ingested | >1,000 | Per facility |
 | CodeChunks embedded | >5,000 | Per facility |

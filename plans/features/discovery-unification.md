@@ -130,7 +130,7 @@ The signals pipeline needs to support additional facility data access patterns (
 
 ### IMAS Mapping Tool
 
-This tool represents a qualitatively different discovery domain — it consumes the output of other domains (FacilitySignals, TreeNodes, IMASPaths) rather than discovering raw data. Its pipeline will be:
+This tool represents a qualitatively different discovery domain — it consumes the output of other domains (FacilitySignals, DataNodes, IMASPaths) rather than discovering raw data. Its pipeline will be:
 
 1. **Candidate generation** — graph queries joining signals to potential IMAS paths
 2. **LLM mapping proposal** — structured output with transformation details

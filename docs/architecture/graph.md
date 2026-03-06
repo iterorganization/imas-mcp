@@ -5,7 +5,7 @@
 ## Overview
 
 The imas-codex knowledge graph is a Neo4j-based store that unifies:
-- **Facility knowledge**: TreeNodes, CodeChunks, Diagnostics, Analysis Codes, Wiki content
+- **Facility knowledge**: DataNodes, CodeChunks, Diagnostics, Analysis Codes, Wiki content
 - **IMAS Data Dictionary**: IMASPath nodes with version tracking and embeddings
 - **Cross-facility data**: Shared IMAS mappings, semantic clusters
 
@@ -181,7 +181,7 @@ imas-codex graph start
 ```
 imas_codex/schemas/
 ├── common.yaml      # Shared enums, PhysicsDomain
-├── facility.yaml    # Facility nodes (TreeNode, CodeChunk, etc.)
+├── facility.yaml    # Facility nodes (DataNode, CodeChunk, etc.)
 └── imas_dd.yaml     # IMAS DD nodes (IMASPath, DDVersion, etc.)
 ```
 
@@ -200,7 +200,7 @@ uv run build-models --force
 | `wiki_chunk_embedding` | WikiChunk nodes |
 | `facility_signal_desc_embedding` | FacilitySignal descriptions |
 | `facility_path_desc_embedding` | FacilityPath descriptions |
-| `tree_node_desc_embedding` | TreeNode descriptions |
+| `data_node_desc_embedding` | DataNode descriptions |
 | `wiki_artifact_desc_embedding` | WikiArtifact descriptions |
 
 ## Docker Compose

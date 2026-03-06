@@ -45,7 +45,7 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
            └──────────────────┘
     ┌──────────────┐
     │  ENRICH      │  imas-codex enrich nodes
-    │  NODES       │  (TreeNode metadata)
+    │  NODES       │  (DataNode metadata)
     │  (agentic)   │  Uses code + graph context
     └──────────────┘
 ```
@@ -58,7 +58,7 @@ The pipelines form a **dependency graph** — some domains produce graph nodes a
 | `discover signals` (enrich) | `discover wiki` | WikiChunk nodes, `wiki_chunk_embedding` index | No wiki descriptions/units injected into signal enrichment prompts → more LLM hallucination |
 | `discover signals` (enrich) | `discover code` | `code_chunk_embedding` index | No source code usage patterns in enrichment prompts |
 | `discover documents` | `discover paths` | Scored FacilityPath nodes (≥0.5) | No paths to scan for documents/images |
-| `enrich nodes` | `discover code` + graph | CodeChunk, TreeNode siblings | Less context for TreeNode physics descriptions |
+| `enrich nodes` | `discover code` + graph | CodeChunk, DataNode siblings | Less context for DataNode physics descriptions |
 
 ## Optimal Discovery Sequence
 
@@ -77,7 +77,7 @@ These three pipelines have **no cross-dependencies** and can run simultaneously:
 ```bash
 imas-codex discover paths tcv       # Directory structure → FacilityPath nodes
 imas-codex discover wiki tcv        # Wiki pages → WikiPage, WikiChunk nodes
-imas-codex discover static tcv      # Static MDSplus trees → TreeNode nodes
+imas-codex discover static tcv      # Static MDSplus trees → DataNode nodes
 ```
 
 ### Phase 2: Dependent Pipelines (requires Phase 1)
@@ -101,11 +101,11 @@ imas-codex enrich nodes             # Benefits from code chunks in graph
 | 0 | `imas build` | Nothing | IMASPath, clusters, embeddings |
 | 1a | `discover paths` | Facility config | FacilityPath (scored) |
 | 1b | `discover wiki` | Wiki URLs in config | WikiPage, WikiChunk, WikiArtifact, Image |
-| 1c | `discover static` | MDSplus static_trees config | TreeModelVersion, TreeNode |
+| 1c | `discover static` | MDSplus static_trees config | StructuralEpoch, DataNode |
 | 2a | `discover code` | Scored FacilityPaths (≥0.7) | CodeFile, SourceFile, CodeChunk |
 | 2b | `discover documents` | Scored FacilityPaths (≥0.5) | Document, Image |
 | 3a | `discover signals` | Wiki + code + IMAS (optional but improves quality) | FacilitySignal, DataAccess |
-| 3b | `enrich nodes` | TreeNode + code context | Enriched TreeNode descriptions |
+| 3b | `enrich nodes` | DataNode + code context | Enriched DataNode descriptions |
 
 ---
 
@@ -197,14 +197,14 @@ imas-codex discover wiki tcv --store-images     # Keep image bytes in graph
 | Units | SSH + MDSplus | `extract_units.py` remote script | Batch unit extraction for NUMERIC/SIGNAL nodes |
 | Enrich | LLM | `discovery/static-enricher` prompt | Batch physics descriptions for enrichable nodes |
 
-**Graph coordination:** TreeModelVersion nodes use `status` + `claimed_at` for worker claim coordination, matching the pattern used by all other discovery domains. Workers claim versions/nodes atomically, and orphan recovery handles stale claims after 300s.
+**Graph coordination:** StructuralEpoch nodes use `status` + `claimed_at` for worker claim coordination, matching the pattern used by all other discovery domains. Workers claim versions/nodes atomically, and orphan recovery handles stale claims after 300s.
 
 **State machine:** `discovered → ingested | failed`
 
 **Prompt:** `discovery/static-enricher` with `schema_needs`:
 - `static_enrichment_schema` — StaticEnrichBatch Pydantic schema
 
-Rendered with `facility` and `tree_name` context variables.
+Rendered with `facility` and `data_source_name` context variables.
 
 ```bash
 imas-codex discover static tcv                    # Full pipeline
@@ -263,7 +263,7 @@ imas-codex discover code tcv -f equilibrium     # Focus on equilibrium code
 | Enrich | LLM | `discovery/signal-enrichment` prompt | Physics domain classification with multi-source context |
 | Check | SSH | MDSplus/PPF/EDAS queries | Validate signal accessibility with test shot |
 
-**Scanner plugin system:** Scanners are auto-detected from facility `data_sources` config:
+**Scanner plugin system:** Scanners are auto-detected from facility `data_systems` config:
 - `tdi` — TDI function enumeration (TCV)
 - `mdsplus` — MDSplus tree traversal
 - `ppf` — PPF DDA/Dtype enumeration (JET)
@@ -431,8 +431,8 @@ See [facility.yaml](../../imas_codex/schemas/facility.yaml) for complete schema 
 | `CodeChunk` | `discover code` (ingest) | Tree-sitter parsed code segment with embedding |
 | `FacilitySignal` | `discover signals` | Classified data signal with physics domain |
 | `DataAccess` | `discover signals` | Data access method template |
-| `TreeModelVersion` | `discover static` | Static tree version metadata |
-| `TreeNode` | `discover static` | MDSplus tree node with physics description |
+| `StructuralEpoch` | `discover static` | Static tree version metadata |
+| `DataNode` | `discover static` | MDSplus tree node with physics description |
 | `Document` | `discover documents` | Document file (PDF, etc.) |
 | `Evidence` | `discover paths` | LLM scoring rationale (content-addressed) |
 | `FacilityUser` | `discover paths` | User account (GECOS-parsed) |
@@ -454,8 +454,8 @@ SourceFile -[:HAS_CHUNK]-> CodeChunk
 FacilitySignal -[:AT_FACILITY]-> Facility
 FacilitySignal -[:DATA_ACCESS]-> DataAccess
 FacilitySignal -[:MAPS_TO_IMAS]-> IMASPath
-TreeNode -[:HAS_NODE]-> TreeNode
-TreeNode -[:IN_VERSION]-> TreeModelVersion
+DataNode -[:HAS_NODE]-> DataNode
+DataNode -[:IN_VERSION]-> StructuralEpoch
 ```
 
 ### Vector Indexes Used by Discovery

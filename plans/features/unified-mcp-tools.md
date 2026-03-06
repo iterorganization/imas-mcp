@@ -81,7 +81,7 @@ UNWIND $chunk_ids AS cid
 MATCH (c:WikiChunk {id: cid})
 OPTIONAL MATCH (p:WikiPage)-[:HAS_CHUNK]->(c)
 OPTIONAL MATCH (c)-[:DOCUMENTS]->(sig:FacilitySignal)
-OPTIONAL MATCH (c)-[:DOCUMENTS]->(tn:TreeNode)
+OPTIONAL MATCH (c)-[:DOCUMENTS]->(tn:DataNode)
 OPTIONAL MATCH (c)-[:MENTIONS_IMAS]->(ip:IMASPath)
 OPTIONAL MATCH (c)-[:NEXT_CHUNK]->(next:WikiChunk)
 RETURN c.id, c.text, c.section,
@@ -125,7 +125,7 @@ k: int = 10                      — results per index
 
 **Indexes**:
 - `facility_signal_desc_embedding` — signal descriptions
-- `tree_node_desc_embedding` — MDSplus tree node descriptions
+- `data_node_desc_embedding` — MDSplus tree node descriptions
 
 **Enrichment query**:
 ```cypher
@@ -133,7 +133,7 @@ UNWIND $signal_ids AS sid
 MATCH (s:FacilitySignal {id: sid})
 OPTIONAL MATCH (s)-[:DATA_ACCESS]->(da:DataAccess)
 OPTIONAL MATCH (s)-[:BELONGS_TO_DIAGNOSTIC]->(diag:Diagnostic)
-OPTIONAL MATCH (s)-[:SOURCE_NODE]->(tn:TreeNode)
+OPTIONAL MATCH (s)-[:HAS_DATA_SOURCE_NODE]->(tn:DataNode)
 OPTIONAL MATCH (da)-[:MAPS_TO_IMAS]->(ip:IMASPath)
 OPTIONAL MATCH (ip)-[:HAS_UNIT]->(u:Unit)
 RETURN s.id, s.name, s.description, s.physics_domain, s.unit,
@@ -141,7 +141,7 @@ RETURN s.id, s.name, s.description, s.physics_domain, s.unit,
        diag.name AS diagnostic_name, diag.category AS diagnostic_category,
        da.data_template AS access_template, da.access_type,
        da.imports_template, da.connection_template,
-       tn.path AS tree_path, tn.tree_name,
+       tn.path AS tree_path, tn.data_source_name,
        ip.id AS imas_path, ip.documentation AS imas_docs, u.symbol AS imas_unit
 ```
 
@@ -192,7 +192,7 @@ MATCH (cc:CodeChunk {id: cid})
 OPTIONAL MATCH (ce:CodeExample)-[:HAS_CHUNK]->(cc)
 OPTIONAL MATCH (cf:CodeFile {id: ce.source_file})
 OPTIONAL MATCH (cf)-[:CONTAINS_REF]->(dr:DataReference)
-OPTIONAL MATCH (dr)-[:RESOLVES_TO_TREE_NODE]->(tn:TreeNode)
+OPTIONAL MATCH (dr)-[:RESOLVES_TO_NODE]->(tn:DataNode)
 OPTIONAL MATCH (dr)-[:RESOLVES_TO_IMAS_PATH]->(ip:IMASPath)
 OPTIONAL MATCH (dr)-[:CALLS_TDI_FUNCTION]->(tdi:TDIFunction)
 OPTIONAL MATCH (cf)-[:IN_DIRECTORY]->(fp:FacilityPath)
@@ -384,7 +384,7 @@ Agents use `python()` with `wiki_page_chunks()`, `find_signals()`, etc. for full
 
 ### Phase 1: search_signals ✅
 
-Start here — signals have the richest graph connectivity (DataAccess, Diagnostic, TreeNode, IMASPath) and will validate the multi-index + traversal + format pattern.
+Start here — signals have the richest graph connectivity (DataAccess, Diagnostic, DataNode, IMASPath) and will validate the multi-index + traversal + format pattern.
 
 **Tests first**:
 - Mock GraphClient returning canned vector search + enrichment results
