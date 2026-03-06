@@ -12,14 +12,10 @@ All functions use the retry_on_deadlock decorator for Neo4j transient errors.
 
 from __future__ import annotations
 
-import functools
 import logging
-import random
-import time
 from typing import TYPE_CHECKING, Any
 
-from neo4j.exceptions import TransientError
-
+from imas_codex.discovery.base.claims import retry_on_deadlock
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import DocumentStatus, WikiPageStatus
 
@@ -378,65 +374,6 @@ def link_documents_from_page_refs(
     if on_progress:
         on_progress(f"linked {created} documents from page refs", None)
     return created
-
-
-# Retry configuration for Neo4j transient errors (deadlocks)
-MAX_RETRY_ATTEMPTS = 5
-RETRY_BASE_DELAY = 0.1  # seconds
-RETRY_MAX_DELAY = 2.0  # seconds
-
-
-def retry_on_deadlock(
-    max_attempts: int = MAX_RETRY_ATTEMPTS,
-    base_delay: float = RETRY_BASE_DELAY,
-    max_delay: float = RETRY_MAX_DELAY,
-):
-    """Decorator to retry functions on Neo4j transient errors (e.g., deadlocks).
-
-    Uses exponential backoff with jitter to reduce contention.
-
-    Args:
-        max_attempts: Maximum number of retry attempts
-        base_delay: Initial delay in seconds
-        max_delay: Maximum delay in seconds
-    """
-
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            for attempt in range(max_attempts):
-                try:
-                    return func(*args, **kwargs)
-                except TransientError as e:
-                    last_exception = e
-                    if attempt < max_attempts - 1:
-                        # Exponential backoff with jitter
-                        delay = min(base_delay * (2**attempt), max_delay)
-                        jitter = random.uniform(0, delay * 0.5)
-                        sleep_time = delay + jitter
-                        logger.debug(
-                            "%s: transient error (attempt %d/%d), "
-                            "retrying in %.2fs: %s",
-                            func.__name__,
-                            attempt + 1,
-                            max_attempts,
-                            sleep_time,
-                            e,
-                        )
-                        time.sleep(sleep_time)
-                    else:
-                        logger.warning(
-                            "%s: transient error after %d attempts: %s",
-                            func.__name__,
-                            max_attempts,
-                            e,
-                        )
-            raise last_exception  # type: ignore[misc]
-
-        return wrapper
-
-    return decorator
 
 
 def has_pending_document_work(facility: str, *, base_url: str | None = None) -> bool:

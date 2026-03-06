@@ -162,7 +162,7 @@ class TestClaimPaths:
 
         result = claim_paths_for_scanning("test", limit=50)
 
-        assert mock_gc.query.call_count == 1  # Only unscored query
+        assert mock_gc.query.call_count == 2  # Claim + verify queries
         assert len(result) == 1
         assert result[0]["path"] == "/path1"
         assert result[0]["is_expanding"] is False
@@ -186,7 +186,7 @@ class TestClaimPaths:
 
         result = claim_paths_for_expanding("test", limit=50)
 
-        assert mock_gc.query.call_count == 1
+        assert mock_gc.query.call_count == 2  # Claim + verify queries
         assert len(result) == 1
         assert result[0]["path"] == "/path2"
         assert result[0]["is_expanding"] is True

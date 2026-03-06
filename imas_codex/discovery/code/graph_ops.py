@@ -8,11 +8,17 @@ from the paths module's ``claimed_at``) to prevent duplicate SSH scans.
 
 Score phase: Claims CodeFile nodes via ``claimed_at`` to prevent
 duplicate LLM scoring calls.
+
+All claim functions use the anti-deadlock pattern:
+- ORDER BY rand() to avoid deterministic lock ordering collisions
+- claim_token two-step verify to handle race conditions between workers
+- @retry_on_deadlock decorator for transient Neo4j deadlock errors
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from imas_codex.discovery.base.claims import (
@@ -20,6 +26,7 @@ from imas_codex.discovery.base.claims import (
     release_claim,
     release_claims_batch,
     reset_stale_claims,
+    retry_on_deadlock,
 )
 from imas_codex.graph import GraphClient
 
@@ -83,6 +90,7 @@ def reset_orphaned_file_claims(
 # ---------------------------------------------------------------------------
 
 
+@retry_on_deadlock()
 def claim_paths_for_file_scan(
     facility: str,
     min_score: float = 0.5,
@@ -98,8 +106,8 @@ def claim_paths_for_file_scan(
     with remote_url containing github/gitlab/bitbucket), and paths where the
     VCS remote is known to be accessible externally.
 
-    Prioritizes paths with high scores on mapping-valuable dimensions
-    (data_access, imas, convention, analysis, modeling).
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks
+    when multiple workers claim concurrently.
 
     Args:
         facility: Facility ID
@@ -110,8 +118,10 @@ def claim_paths_for_file_scan(
         List of dicts with ``id``, ``path``, ``score``, ``purpose``, ``files_scanned``
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        # Step 1: Claim with random ordering and unique token
+        gc.query(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
             WHERE p.status IN ['scored', 'explored']
@@ -130,30 +140,35 @@ def claim_paths_for_file_scan(
                OR (f.files_scan_after IS NOT NULL
                    AND p.last_file_scan_at < f.files_scan_after)
             WITH p
-            ORDER BY (
-                coalesce(p.score_data_access, 0) * 3
-                + coalesce(p.score_imas, 0) * 3
-                + coalesce(p.score_convention, 0) * 2
-                + coalesce(p.score_analysis_code, 0)
-                + coalesce(p.score_modeling_code, 0)
-            ) DESC, p.score_composite DESC
+            ORDER BY rand()
             LIMIT $limit
-            SET p.files_claimed_at = datetime()
-            RETURN p.id AS id, p.path AS path, p.score_composite AS score,
-                   p.purpose AS purpose,
-                   coalesce(p.files_scanned, 0) AS files_scanned
+            SET p.files_claimed_at = datetime(), p.files_claim_token = $token
             """,
             facility=facility,
             min_score=min_score,
             limit=limit,
             cutoff=cutoff,
+            token=claim_token,
+        )
+
+        # Step 2: Read back only paths WE successfully claimed
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath {facility_id: $facility, files_claim_token: $token})
+            RETURN p.id AS id, p.path AS path, p.score_composite AS score,
+                   p.purpose AS purpose,
+                   coalesce(p.files_scanned, 0) AS files_scanned
+            """,
+            facility=facility,
+            token=claim_token,
         )
         paths = list(result)
         if paths:
             logger.debug(
-                "Claimed %d FacilityPaths for file scanning (facility=%s)",
+                "Claimed %d FacilityPaths for file scanning (facility=%s, token=%s)",
                 len(paths),
                 facility,
+                claim_token[:8],
             )
         return paths
 
@@ -242,6 +257,7 @@ def set_files_scan_after(facility: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@retry_on_deadlock()
 def claim_files_for_triage(
     facility: str,
     limit: int = 500,
@@ -253,8 +269,8 @@ def claim_files_for_triage(
     description.  NO numeric scores from the parent — the triage LLM
     should assess from filename and directory context alone.
 
-    Files are ordered by parent path score descending so files from
-    the highest-value directories are triaged first.
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks
+    when multiple workers claim concurrently.
 
     Args:
         facility: Facility ID
@@ -264,34 +280,47 @@ def claim_files_for_triage(
         List of dicts with file info + parent path/description
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        # Step 1: Claim with random ordering and unique token
+        gc.query(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'discovered'
               AND sf.triage_composite IS NULL
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
-            OPTIONAL MATCH (sf)-[:IN_DIRECTORY]->(p:FacilityPath)
-            WITH sf, p
-            ORDER BY coalesce(p.score_composite, 0) DESC, sf.discovered_at ASC
+            WITH sf
+            ORDER BY rand()
             LIMIT $limit
-            SET sf.claimed_at = datetime()
+            SET sf.claimed_at = datetime(), sf.claim_token = $token
+            """,
+            facility=facility,
+            limit=limit,
+            cutoff=cutoff,
+            token=claim_token,
+        )
+
+        # Step 2: Read back only files WE successfully claimed
+        result = gc.query(
+            """
+            MATCH (sf:CodeFile {claim_token: $token})-[:AT_FACILITY]->(f:Facility {id: $facility})
+            OPTIONAL MATCH (sf)-[:IN_DIRECTORY]->(p:FacilityPath)
             RETURN sf.id AS id, sf.path AS path,
                    sf.language AS language,
                    p.id AS parent_path_id, p.path AS parent_path,
                    p.description AS parent_description
             """,
             facility=facility,
-            limit=limit,
-            cutoff=cutoff,
+            token=claim_token,
         )
         files = list(result)
         if files:
             logger.debug(
-                "Claimed %d CodeFiles for triage (facility=%s)",
+                "Claimed %d CodeFiles for triage (facility=%s, token=%s)",
                 len(files),
                 facility,
+                claim_token[:8],
             )
         return files
 
@@ -311,6 +340,7 @@ def release_file_triage_claims(file_ids: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+@retry_on_deadlock()
 def claim_files_for_enrichment(
     facility: str,
     limit: int = 200,
@@ -322,7 +352,8 @@ def claim_files_for_enrichment(
     above the threshold.  Enrichment runs rg pattern matching and
     extracts preview text for the subsequent scoring pass.
 
-    Prioritizes files with high triage composite scores.
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks
+    when multiple workers claim concurrently.
 
     Args:
         facility: Facility ID
@@ -333,8 +364,10 @@ def claim_files_for_enrichment(
         List of dicts with id, path, language, triage_composite
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        # Step 1: Claim with random ordering and unique token
+        gc.query(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'triaged'
@@ -342,23 +375,36 @@ def claim_files_for_enrichment(
               AND coalesce(sf.is_enriched, false) = false
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
-            WITH sf ORDER BY sf.triage_composite DESC LIMIT $limit
-            SET sf.claimed_at = datetime()
-            RETURN sf.id AS id, sf.path AS path,
-                   sf.language AS language,
-                   sf.triage_composite AS triage_composite
+            WITH sf
+            ORDER BY rand()
+            LIMIT $limit
+            SET sf.claimed_at = datetime(), sf.claim_token = $token
             """,
             facility=facility,
             limit=limit,
             cutoff=cutoff,
             min_triage=min_triage_composite,
+            token=claim_token,
+        )
+
+        # Step 2: Read back only files WE successfully claimed
+        result = gc.query(
+            """
+            MATCH (sf:CodeFile {claim_token: $token})-[:AT_FACILITY]->(f:Facility {id: $facility})
+            RETURN sf.id AS id, sf.path AS path,
+                   sf.language AS language,
+                   sf.triage_composite AS triage_composite
+            """,
+            facility=facility,
+            token=claim_token,
         )
         files = list(result)
         if files:
             logger.debug(
-                "Claimed %d CodeFiles for enrichment (facility=%s)",
+                "Claimed %d CodeFiles for enrichment (facility=%s, token=%s)",
                 len(files),
                 facility,
+                claim_token[:8],
             )
         return files
 
@@ -373,6 +419,7 @@ def release_file_enrich_claims(file_ids: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+@retry_on_deadlock()
 def claim_files_for_scoring(
     facility: str,
     limit: int = 100,
@@ -384,6 +431,9 @@ def claim_files_for_scoring(
     only, NO triage numeric scores) plus enrichment evidence (pattern
     categories, line count) and parent directory context.
 
+    Uses claim_token pattern with ORDER BY rand() to prevent deadlocks
+    when multiple workers claim concurrently.
+
     Args:
         facility: Facility ID
         limit: Maximum files to claim
@@ -394,19 +444,32 @@ def claim_files_for_scoring(
     import json as _json
 
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(uuid.uuid4())
     with GraphClient() as gc:
-        result = gc.query(
+        # Step 1: Claim with random ordering and unique token
+        gc.query(
             """
             MATCH (sf:CodeFile)-[:AT_FACILITY]->(f:Facility {id: $facility})
             WHERE sf.status = 'triaged'
               AND sf.is_enriched = true
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
-            OPTIONAL MATCH (sf)-[:IN_DIRECTORY]->(p:FacilityPath)
-            WITH sf, p
-            ORDER BY sf.triage_composite DESC, sf.triaged_at ASC
+            WITH sf
+            ORDER BY rand()
             LIMIT $limit
-            SET sf.claimed_at = datetime()
+            SET sf.claimed_at = datetime(), sf.claim_token = $token
+            """,
+            facility=facility,
+            limit=limit,
+            cutoff=cutoff,
+            token=claim_token,
+        )
+
+        # Step 2: Read back only files WE successfully claimed
+        result = gc.query(
+            """
+            MATCH (sf:CodeFile {claim_token: $token})-[:AT_FACILITY]->(f:Facility {id: $facility})
+            OPTIONAL MATCH (sf)-[:IN_DIRECTORY]->(p:FacilityPath)
             RETURN sf.id AS id, sf.path AS path,
                    sf.language AS language,
                    sf.triage_description AS triage_description,
@@ -418,8 +481,7 @@ def claim_files_for_scoring(
                    p.description AS parent_description
             """,
             facility=facility,
-            limit=limit,
-            cutoff=cutoff,
+            token=claim_token,
         )
         files = []
         for row in result:
@@ -438,9 +500,10 @@ def claim_files_for_scoring(
             files.append(f)
         if files:
             logger.debug(
-                "Claimed %d CodeFiles for scoring (facility=%s)",
+                "Claimed %d CodeFiles for scoring (facility=%s, token=%s)",
                 len(files),
                 facility,
+                claim_token[:8],
             )
         return files
 
