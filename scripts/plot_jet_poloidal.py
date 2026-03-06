@@ -1,14 +1,21 @@
 """Plot JET poloidal cross-section geometry from graph-persisted data.
 
 Queries Neo4j for magnetic probes, PF coils, passive structures, and limiter
-contours ingested by the DeviceXMLScanner, and renders a publication-quality
-poloidal cross-section plot.
+contours ingested by the DeviceXMLScanner, and renders publication-quality
+poloidal cross-section plots for each distinct geometrical era.
+
+The script identifies which limiter contour is active for each epoch by
+overlapping the epoch shot range with the limiter shot validity windows,
+and only produces plots for epochs with significantly different geometry.
 
 Usage:
-    uv run python scripts/plot_jet_poloidal.py
+    uv run python scripts/plot_jet_poloidal.py            # all significant eras
+    uv run python scripts/plot_jet_poloidal.py p89440     # single epoch
 """
 
 from __future__ import annotations
+
+import sys
 
 import numpy as np
 
@@ -21,7 +28,6 @@ def _parse_multi_value(raw: str | float | int | None) -> list[float]:
         return []
     if isinstance(raw, int | float):
         return [float(raw)]
-    # String of space/newline separated values
     vals = []
     for token in str(raw).split():
         try:
@@ -31,13 +37,24 @@ def _parse_multi_value(raw: str | float | int | None) -> list[float]:
     return vals
 
 
+def _active_limiter(limiters: list[dict], epoch_first_shot: int) -> dict | None:
+    """Return the limiter contour whose shot range covers epoch_first_shot."""
+    for lim in limiters:
+        fs = lim.get("first_shot")
+        ls = lim.get("last_shot")
+        if fs is None:
+            continue
+        if epoch_first_shot >= fs and (ls is None or epoch_first_shot <= ls):
+            return lim
+    return None
+
+
 def query_geometry(epoch: str = "p89440") -> dict:
     """Query all geometry data from the graph for a given epoch."""
     facility = "jet"
     prefix = f"{facility}:device_xml:{epoch}"
 
     with GraphClient() as gc:
-        # Magnetic probes — scalar r, z, angle
         magprobes = gc.query(
             """
             MATCH (dn:DataNode)
@@ -50,7 +67,6 @@ def query_geometry(epoch: str = "p89440") -> dict:
             prefix=prefix,
         )
 
-        # PF coils — may have multi-element r/z/dr/dz strings
         pfcoils = gc.query(
             """
             MATCH (dn:DataNode)
@@ -63,7 +79,6 @@ def query_geometry(epoch: str = "p89440") -> dict:
             prefix=prefix,
         )
 
-        # Passive structures — scalar r, z, dr, dz
         passives = gc.query(
             """
             MATCH (dn:DataNode)
@@ -77,19 +92,19 @@ def query_geometry(epoch: str = "p89440") -> dict:
             prefix=prefix,
         )
 
-        # Limiter contours — R,Z arrays on DataNode
         limiters = gc.query(
             """
             MATCH (dn:DataNode)
             WHERE dn.path STARTS WITH 'jet:device_xml:limiter:'
             RETURN dn.path AS path,
                    dn.r_contour AS r, dn.z_contour AS z,
-                   dn.n_points AS n_points
-            ORDER BY dn.path
+                   dn.n_points AS n_points,
+                   dn.first_shot AS first_shot,
+                   dn.last_shot AS last_shot
+            ORDER BY dn.first_shot
             """,
         )
 
-        # Epoch metadata
         epoch_info = gc.query(
             """
             MATCH (se:StructuralEpoch {id: $id})
@@ -109,6 +124,53 @@ def query_geometry(epoch: str = "p89440") -> dict:
     }
 
 
+def get_significant_epochs() -> list[dict]:
+    """Return representative epochs for each distinct geometry era.
+
+    Groups epochs by their active limiter contour and selects one
+    representative per group (the first epoch in each limiter era).
+    """
+    with GraphClient() as gc:
+        epochs = gc.query("""
+            MATCH (se:StructuralEpoch)
+            WHERE se.facility_id = 'jet'
+            RETURN se.id AS id,
+                   se.first_shot AS first_shot,
+                   se.last_shot AS last_shot,
+                   se.description AS description
+            ORDER BY toInteger(se.first_shot)
+        """)
+
+        limiters = gc.query("""
+            MATCH (dn:DataNode)
+            WHERE dn.path STARTS WITH 'jet:device_xml:limiter:'
+            RETURN dn.path AS path,
+                   dn.first_shot AS first_shot,
+                   dn.last_shot AS last_shot
+            ORDER BY dn.first_shot
+        """)
+
+    # Group epochs by their active limiter
+    seen_limiters: dict[str, dict] = {}
+    for ep in epochs:
+        fs = ep["first_shot"]
+        if fs is None:
+            continue
+        active = _active_limiter(limiters, fs)
+        lim_name = active["path"].split(":")[-1] if active else "unknown"
+        if lim_name not in seen_limiters:
+            epoch_name = ep["id"].split(":")[-1]
+            seen_limiters[lim_name] = {
+                "epoch": epoch_name,
+                "limiter": lim_name,
+                "first_shot": ep["first_shot"],
+                "last_shot": ep["last_shot"],
+                "description": ep["description"],
+            }
+
+    return list(seen_limiters.values())
+
+
 def plot_poloidal(data: dict, epoch: str = "p89440") -> None:
     """Create a poloidal cross-section plot from graph data."""
     import matplotlib.patches as mpatches
@@ -118,19 +180,21 @@ def plot_poloidal(data: dict, epoch: str = "p89440") -> None:
     fig, ax = plt.subplots(1, 1, figsize=(10, 14))
 
     # --- Limiter contour (active for this epoch) ---
-    for lim in data["limiters"]:
-        name = lim["path"].split(":")[-1]
-        if name != "Mk2ILW":
-            continue
-        r = np.array(lim["r"], dtype=float)
-        z = np.array(lim["z"], dtype=float)
+    epoch_info = data.get("epoch", {})
+    epoch_first_shot = epoch_info.get("first_shot", 0)
+    active_lim = _active_limiter(data["limiters"], epoch_first_shot)
+
+    if active_lim:
+        name = active_lim["path"].split(":")[-1]
+        r = np.array(active_lim["r"], dtype=float)
+        z = np.array(active_lim["z"], dtype=float)
         ax.plot(
             r,
             z,
             "-",
             color="#2c3e50",
             linewidth=2,
-            label=f"Limiter: {name} ({lim['n_points']} pts)",
+            label=f"Limiter: {name} ({active_lim['n_points']} pts)",
             zorder=1,
         )
 
@@ -298,11 +362,12 @@ def plot_poloidal(data: dict, epoch: str = "p89440") -> None:
     ax.set_ylim(ymin - pad, ymax + pad)
 
     # Add data source annotation
+    lim_name = active_lim["path"].split(":")[-1] if active_lim else "none"
     ax.annotate(
         "Data source: Neo4j graph (device_xml scanner)\n"
         f"Probes: {len(mp_r)} | Coils: {len(pf_patches)} | "
         f"Passive: {len(passive_patches)} | "
-        f"Limiters: {len(data['limiters'])}",
+        f"Limiter: {lim_name}",
         xy=(0.02, 0.02),
         xycoords="axes fraction",
         fontsize=7,
@@ -318,19 +383,32 @@ def plot_poloidal(data: dict, epoch: str = "p89440") -> None:
 
 
 def main():
-    epoch = "p89440"
-    print(f"Querying graph for JET epoch {epoch}...")
-    data = query_geometry(epoch)
+    # Accept an optional epoch argument, otherwise plot all significant eras
+    if len(sys.argv) > 1:
+        epochs_to_plot = [sys.argv[1]]
+    else:
+        sig = get_significant_epochs()
+        print(f"Found {len(sig)} significant geometry eras:")
+        for s in sig:
+            print(
+                f"  {s['epoch']}: {s['limiter']} limiter, "
+                f"shots {s['first_shot']}–{s['last_shot'] or 'end'}"
+            )
+        epochs_to_plot = [s["epoch"] for s in sig]
 
-    print(
-        f"  Magnetic probes: {len(data['magprobes'])}\n"
-        f"  PF coils: {len(data['pfcoils'])}\n"
-        f"  Passive structures: {len(data['passives'])}\n"
-        f"  Limiters: {len(data['limiters'])}\n"
-        f"  Epoch: {data['epoch']}"
-    )
+    for epoch in epochs_to_plot:
+        print(f"\nQuerying graph for JET epoch {epoch}...")
+        data = query_geometry(epoch)
 
-    plot_poloidal(data, epoch)
+        print(
+            f"  Magnetic probes: {len(data['magprobes'])}\n"
+            f"  PF coils: {len(data['pfcoils'])}\n"
+            f"  Passive structures: {len(data['passives'])}\n"
+            f"  Limiters available: {len(data['limiters'])}\n"
+            f"  Epoch: {data['epoch']}"
+        )
+
+        plot_poloidal(data, epoch)
 
 
 if __name__ == "__main__":
