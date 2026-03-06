@@ -89,18 +89,12 @@ def _has_pending_image_scores(facility: str) -> bool:
 
 
 async def run_document_discovery(
-    facility: str,
-    ssh_host: str,
+    state: DocumentDiscoveryState,
     *,
-    cost_limit: float = 2.0,
-    min_score: float = 0.5,
     num_image_workers: int = 2,
     num_vlm_workers: int = 1,
-    store_images: bool = False,
-    scan_only: bool = False,
-    focus: str | None = None,
-    deadline: float | None = None,
     stop_event: asyncio.Event | None = None,
+    on_worker_status: Any = None,
 ) -> dict[str, Any]:
     """Run document discovery pipeline.
 
@@ -109,32 +103,17 @@ async def run_document_discovery(
     2. VLM workers: Caption images and score relevance
 
     Args:
-        facility: Facility ID
-        ssh_host: SSH host alias
-        cost_limit: Maximum VLM spend in USD
-        min_score: Minimum document interest score
-        num_image_workers: Number of fetch/process workers
-        num_vlm_workers: Number of VLM captioning workers
-        store_images: Keep image bytes in graph
-        scan_only: Only fetch, skip VLM captioning
-        focus: Natural language focus for VLM scoring
-        deadline: Absolute time when discovery should stop
+        state: Pre-built discovery state.
+        num_image_workers: Number of fetch/process workers.
+        num_vlm_workers: Number of VLM captioning workers.
+        stop_event: Shutdown signal.
+        on_worker_status: Callback for worker group status updates.
 
     Returns:
-        Dict with discovery statistics
+        Dict with discovery statistics.
     """
     start_time = time.time()
-
-    state = DocumentDiscoveryState(
-        facility=facility,
-        ssh_host=ssh_host,
-        cost_limit=cost_limit,
-        min_score=min_score,
-        deadline=deadline,
-        store_images=store_images,
-        scan_only=scan_only,
-        focus=focus,
-    )
+    facility = state.facility
 
     state.image_phase.set_has_work_fn(lambda: _has_pending_image_documents(facility))
     state.image_score_phase.set_has_work_fn(
@@ -153,7 +132,7 @@ async def run_document_discovery(
             "image_score_phase",
             image_score_worker,
             count=num_vlm_workers,
-            enabled=not scan_only,
+            enabled=not state.scan_only,
         ),
     ]
 
@@ -161,6 +140,7 @@ async def run_document_discovery(
         state,
         workers,
         stop_event=stop_event,
+        on_worker_status=on_worker_status,
     )
 
     elapsed = time.time() - start_time

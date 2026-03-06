@@ -670,3 +670,170 @@ class TestWikiDisplayTransient:
         assert display._live is not None
         assert display._live.transient is False
         display.__exit__(None, None, None)
+
+
+# =============================================================================
+# DataDrivenProgressDisplay
+# =============================================================================
+
+
+class TestStageDisplaySpec:
+    """Tests for StageDisplaySpec dataclass."""
+
+    def test_defaults(self):
+        from imas_codex.discovery.base.progress import StageDisplaySpec
+
+        spec = StageDisplaySpec("SCAN", "bold blue", "scan", "scan_stats")
+        assert spec.name == "SCAN"
+        assert spec.style == "bold blue"
+        assert spec.group == "scan"
+        assert spec.stats_attr == "scan_stats"
+        assert spec.phase_attr == ""
+        assert not spec.disabled
+        assert spec.disabled_msg == "disabled"
+
+    def test_with_phase(self):
+        from imas_codex.discovery.base.progress import StageDisplaySpec
+
+        spec = StageDisplaySpec(
+            "VLM", "bold magenta", "vlm", "vlm_stats", "vlm_phase", disabled=True
+        )
+        assert spec.phase_attr == "vlm_phase"
+        assert spec.disabled
+
+
+class TestDataDrivenProgressDisplay:
+    """Tests for the data-driven progress display."""
+
+    def _make_display(self, stages=None, **kwargs):
+        from imas_codex.discovery.base.progress import (
+            DataDrivenProgressDisplay,
+            StageDisplaySpec,
+        )
+
+        if stages is None:
+            stages = [
+                StageDisplaySpec("FETCH", "bold blue", "image", "image_stats"),
+                StageDisplaySpec("VLM", "bold magenta", "vlm", "vlm_stats"),
+            ]
+        return DataDrivenProgressDisplay(
+            facility="test",
+            cost_limit=5.0,
+            stages=stages,
+            **kwargs,
+        )
+
+    def test_instantiation(self):
+        display = self._make_display()
+        assert display.facility == "test"
+        assert display.cost_limit == 5.0
+        assert len(display.stages) == 2
+
+    def test_header_mode_label(self):
+        display = self._make_display(mode_label="SCAN ONLY")
+        assert display._header_mode_label() == "SCAN ONLY"
+
+    def test_header_no_mode(self):
+        display = self._make_display()
+        assert display._header_mode_label() is None
+
+    def test_pipeline_section_no_state(self):
+        """Pipeline renders without engine state (all zeros)."""
+        display = self._make_display()
+        section = display._build_pipeline_section()
+        assert isinstance(section, Text)
+        plain = section.plain
+        assert "FETCH" in plain
+        assert "VLM" in plain
+
+    def test_pipeline_section_with_state(self):
+        """Pipeline renders stats from engine state."""
+        from dataclasses import dataclass, field
+
+        from imas_codex.discovery.base.progress import WorkerStats
+
+        @dataclass
+        class MockState:
+            image_stats: WorkerStats = field(default_factory=WorkerStats)
+            vlm_stats: WorkerStats = field(default_factory=WorkerStats)
+
+        display = self._make_display()
+        state = MockState()
+        state.image_stats.processed = 42
+        display.set_engine_state(state)
+
+        section = display._build_pipeline_section()
+        assert "42" in section.plain
+
+    def test_pipeline_disabled_stage(self):
+        """Disabled stages are excluded from rendered pipeline."""
+        from imas_codex.discovery.base.progress import StageDisplaySpec
+
+        stages = [
+            StageDisplaySpec("FETCH", "bold blue", "image", "image_stats"),
+            StageDisplaySpec("VLM", "bold magenta", "vlm", "vlm_stats", disabled=True),
+        ]
+        display = self._make_display(stages=stages)
+        section = display._build_pipeline_section()
+        assert "FETCH" in section.plain
+        # Disabled stages are skipped by build_pipeline_section
+        assert "VLM" not in section.plain
+
+    def test_resources_section_no_state(self):
+        display = self._make_display()
+        section = display._build_resources_section()
+        assert isinstance(section, Text)
+        assert "TIME" in section.plain
+
+    def test_resources_section_with_cost(self):
+        from dataclasses import dataclass, field
+
+        from imas_codex.discovery.base.progress import WorkerStats
+
+        @dataclass
+        class MockState:
+            image_stats: WorkerStats = field(default_factory=WorkerStats)
+            vlm_stats: WorkerStats = field(default_factory=WorkerStats)
+
+            def all_stats(self):
+                return {"image": self.image_stats, "vlm": self.vlm_stats}
+
+        display = self._make_display()
+        state = MockState()
+        state.vlm_stats.cost = 1.50
+        # all_stats is a property on DiscoveryStateBase but our mock
+        # provides a method — set it as a dict attribute instead
+        state.all_stats = {"image": state.image_stats, "vlm": state.vlm_stats}
+        display.set_engine_state(state)
+
+        section = display._build_resources_section()
+        assert "$1.50" in section.plain
+
+    def test_build_display_creates_panel(self):
+        from rich.panel import Panel
+
+        display = self._make_display()
+        panel = display._build_display()
+        assert isinstance(panel, Panel)
+
+    def test_refresh_from_graph_calls_fn(self):
+        called = []
+        display = self._make_display(graph_refresh_fn=lambda f: called.append(f))
+        display.refresh_from_graph("tcv")
+        assert called == ["tcv"]
+
+    def test_print_summary_no_state(self):
+        """print_summary is a no-op without engine state."""
+        display = self._make_display()
+        display.print_summary()  # Should not raise
+
+    def test_context_manager(self):
+        """Display can be used as context manager."""
+        display = self._make_display()
+        display.__enter__()
+        assert display._live is not None
+        display.__exit__(None, None, None)
+
+    def test_title_suffix(self):
+        display = self._make_display(title_suffix="Document Discovery")
+        assert display._title_suffix == "Document Discovery"

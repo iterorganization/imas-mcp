@@ -14,7 +14,7 @@ Uses claim coordination via ``claimed_at`` timestamps for parallel-safe
 execution across CLI instances.
 """
 
-from .pipeline import run_document_discovery
+from .pipeline import DocumentDiscoveryState, run_document_discovery
 from .scanner import (
     clear_facility_documents,
     get_document_discovery_stats,
@@ -22,6 +22,7 @@ from .scanner import (
 )
 
 __all__ = [
+    "DocumentDiscoveryState",
     "clear_facility_documents",
     "get_document_discovery_stats",
     "run_document_discovery",
