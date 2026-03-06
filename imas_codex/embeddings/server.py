@@ -54,6 +54,16 @@ _total_texts: int = 0  # Total texts embedded
 _total_elapsed_ms: float = 0.0  # Total encoding time in ms
 
 
+# Server-side text length ceiling (characters).
+# At ~4 chars/token, 40K chars ≈ 10K tokens.  Self-attention memory
+# scales O(n²): 10K tokens needs ~11 GiB peak on Qwen3-0.6B, fitting
+# comfortably in the 15.5 GiB available (95% of P100-16GB).  At 16K
+# tokens it jumps to ~21 GiB, exceeding the GPU.
+# The pipeline already chunks to 10K chars; this only fires for direct
+# API callers bypassing the chunking pipeline.
+_MAX_TEXT_CHARS = 40_000
+
+
 class EmbedRequest(BaseModel):
     """Request body for embedding texts."""
 
@@ -307,6 +317,10 @@ def _encode_texts_sync(
     (especially NX desktop sessions on the shared login node T4).
     """
     import numpy as np
+
+    # Truncate oversized texts to prevent O(n²) attention OOM.
+    # The pipeline already chunks to 10K chars; this catches direct API calls.
+    texts = [t[:_MAX_TEXT_CHARS] if len(t) > _MAX_TEXT_CHARS else t for t in texts]
 
     model = _encoder.get_model()
 
