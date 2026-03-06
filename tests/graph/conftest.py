@@ -184,16 +184,18 @@ def graph_stats(graph_client) -> dict[str, int]:
 
 @pytest.fixture(scope="session")
 def graph_labels(graph_client) -> set[str]:
-    """Labels actually present in the graph."""
-    results = graph_client.query("CALL db.labels() YIELD label RETURN label")
+    """Labels actually present in the graph (excludes stale token-store labels)."""
+    results = graph_client.query(
+        "MATCH (n) UNWIND labels(n) AS l RETURN DISTINCT l AS label"
+    )
     return {r["label"] for r in results}
 
 
 @pytest.fixture(scope="session")
 def graph_relationship_types(graph_client) -> set[str]:
-    """Relationship types actually present in the graph."""
+    """Relationship types actually present in the graph (excludes stale types)."""
     results = graph_client.query(
-        "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType"
+        "MATCH ()-[r]->() RETURN DISTINCT type(r) AS relationshipType"
     )
     return {r["relationshipType"] for r in results}
 

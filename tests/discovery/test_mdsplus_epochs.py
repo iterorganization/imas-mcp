@@ -46,7 +46,7 @@ class TestDetectEpochsForTree:
             {},
         )
 
-        config = {"tree_name": "results", "detect_epochs": True}
+        config = {"source_name": "results", "detect_epochs": True}
         result = detect_epochs_for_tree("tcv", "results", config)
 
         assert len(result) == 2
@@ -58,7 +58,7 @@ class TestDetectEpochsForTree:
     def test_empty_when_no_epochs(self, mock_discover):
         mock_discover.return_value = ([], {})
 
-        config = {"tree_name": "magnetics", "detect_epochs": True}
+        config = {"source_name": "magnetics", "detect_epochs": True}
         result = detect_epochs_for_tree("tcv", "magnetics", config)
 
         assert result == []
@@ -86,7 +86,7 @@ class TestDetectEpochsForTree:
         mock_discover.return_value = ([], {})
         mock_client = MagicMock()
 
-        config = {"tree_name": "results", "detect_epochs": True}
+        config = {"source_name": "results", "detect_epochs": True}
         detect_epochs_for_tree("tcv", "results", config, client=mock_client)
 
         call_kwargs = mock_discover.call_args
@@ -96,7 +96,7 @@ class TestDetectEpochsForTree:
     def test_default_step_size(self, mock_discover):
         mock_discover.return_value = ([], {})
 
-        config = {"tree_name": "results", "detect_epochs": True}
+        config = {"source_name": "results", "detect_epochs": True}
         detect_epochs_for_tree("tcv", "results", config)
 
         call_kwargs = mock_discover.call_args
@@ -111,9 +111,9 @@ class TestDetectEpochsForSubtrees:
         mock_detect.return_value = [{"version": 1, "first_shot": 3000}]
 
         subtrees = [
-            {"tree_name": "results", "detect_epochs": True},
-            {"tree_name": "magnetics"},  # No detect_epochs
-            {"tree_name": "diagz", "detect_epochs": False},
+            {"source_name": "results", "detect_epochs": True},
+            {"source_name": "magnetics"},  # No detect_epochs
+            {"source_name": "diagz", "detect_epochs": False},
         ]
 
         result = detect_epochs_for_subtrees("tcv", "tcv_shot", subtrees)
@@ -126,8 +126,8 @@ class TestDetectEpochsForSubtrees:
     @patch("imas_codex.discovery.mdsplus.epochs.detect_epochs_for_tree")
     def test_returns_empty_for_no_epoched_subtrees(self, mock_detect):
         subtrees = [
-            {"tree_name": "results"},
-            {"tree_name": "magnetics"},
+            {"source_name": "results"},
+            {"source_name": "magnetics"},
         ]
 
         result = detect_epochs_for_subtrees("tcv", "tcv_shot", subtrees)

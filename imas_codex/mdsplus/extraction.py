@@ -172,14 +172,14 @@ def _resolve_shots(
     all_trees = mdsplus.get("trees", [])
 
     for cfg in all_trees:
-        if cfg.get("tree_name") == data_source_name:
+        if cfg.get("source_name") == data_source_name:
             ver_list = cfg.get("versions", [])
             if ver_list:
                 return [v["version"] for v in ver_list]
             break
         # Check subtrees
         for sub in cfg.get("subtrees", []):
-            if sub.get("tree_name") == data_source_name:
+            if sub.get("source_name") == data_source_name:
                 ref = cfg.get("reference_shot") or mdsplus.get("reference_shot")
                 if ref:
                     return [ref]
@@ -716,7 +716,7 @@ def ingest_static_tree(
     if version_config is None:
         configs = get_static_tree_config(facility)
         for cfg in configs:
-            if cfg.get("tree_name") == data_source_name:
+            if cfg.get("source_name") == data_source_name:
                 version_config = cfg.get("versions", [])
                 break
     if version_config is None:

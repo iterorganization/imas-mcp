@@ -76,7 +76,7 @@ data_systems:
     # TreeConfig structure. Dynamic trees are nested as subtrees of tcv_shot.
     trees:
       # Versioned machine-description tree (vessel geometry, coil positions, etc.)
-      - tree_name: static
+      - source_name: static
         accessor_function: static
         versions:
           - version: 1
@@ -156,18 +156,18 @@ data_systems:
             size: 512
             parameters: [R, Z, S, DIM]
       # Shot-scoped dynamic trees (subtrees of tcv_shot)
-      - tree_name: tcv_shot
+      - source_name: tcv_shot
         subtrees:
-          - tree_name: results      # Equilibrium, analysis outputs (~1500 signals w/ data)
-          - tree_name: magnetics    # Magnetic field measurements (~215 signals)
-          - tree_name: diagz        # Diagnostic measurements (~220 signals)
-          - tree_name: base         # Core plasma parameters (~287 signals)
-          - tree_name: ecrh         # Electron cyclotron heating (~416 signals)
-          - tree_name: power        # Power supply data
-          - tree_name: diag_act     # Diagnostic actions
-          - tree_name: manual       # Manually-populated signals
-          - tree_name: vsystem      # Vista control parameters
-          - tree_name: hybrid       # Hybrid heating scenarios (16k nodes but physics-relevant)
+          - source_name: results      # Equilibrium, analysis outputs (~1500 signals w/ data)
+          - source_name: magnetics    # Magnetic field measurements (~215 signals)
+          - source_name: diagz        # Diagnostic measurements (~220 signals)
+          - source_name: base         # Core plasma parameters (~287 signals)
+          - source_name: ecrh         # Electron cyclotron heating (~416 signals)
+          - source_name: power        # Power supply data
+          - source_name: diag_act     # Diagnostic actions
+          - source_name: manual       # Manually-populated signals
+          - source_name: vsystem      # Vista control parameters
+          - source_name: hybrid       # Hybrid heating scenarios (16k nodes but physics-relevant)
     # Node usage types to include. SIGNAL is physics measurements,
     # NUMERIC includes computed/processed values and calibration data.
     # Many diagnostic trees store real data under NUMERIC usage.

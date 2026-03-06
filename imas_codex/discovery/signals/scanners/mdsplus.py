@@ -72,7 +72,7 @@ class MDSplusScanner:
 
         # Process each tree through the unified pipeline
         for tree_config in config.get("trees", []):
-            data_source_name = tree_config.get("tree_name")
+            data_source_name = tree_config.get("source_name")
             if not data_source_name:
                 continue
 
@@ -85,9 +85,9 @@ class MDSplusScanner:
             subtrees = tree_config.get("subtrees", [])
             trees_to_process = (
                 [
-                    (st["tree_name"], {**merged_config, **st})
+                    (st["source_name"], {**merged_config, **st})
                     for st in subtrees
-                    if st.get("tree_name")
+                    if st.get("source_name")
                 ]
                 if subtrees
                 else [(data_source_name, merged_config)]
@@ -148,7 +148,7 @@ class MDSplusScanner:
         # Build DataAccess node for the connection tree
         data_access = None
         first_tree = next(
-            (t["tree_name"] for t in config.get("trees", []) if t.get("tree_name")),
+            (t["source_name"] for t in config.get("trees", []) if t.get("source_name")),
             None,
         )
         primary_tree = connection_tree or first_tree

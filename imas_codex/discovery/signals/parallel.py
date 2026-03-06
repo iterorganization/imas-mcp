@@ -1770,7 +1770,7 @@ async def seed_worker(
                 continue
 
             for tree_config in mdsplus_config.get("trees", []):
-                data_source_name = tree_config.get("tree_name")
+                data_source_name = tree_config.get("source_name")
                 if not data_source_name:
                     continue
 
@@ -1778,9 +1778,9 @@ async def seed_worker(
                 subtrees = tree_config.get("subtrees", [])
                 trees_to_process = (
                     [
-                        (st["tree_name"], {**tree_config, **st})
+                        (st["source_name"], {**tree_config, **st})
                         for st in subtrees
-                        if st.get("tree_name")
+                        if st.get("source_name")
                     ]
                     if subtrees
                     else [(data_source_name, tree_config)]
@@ -1825,9 +1825,9 @@ async def seed_worker(
             connection_tree = mdsplus_config.get("connection_tree")
             first_tree = next(
                 (
-                    t["tree_name"]
+                    t["source_name"]
                     for t in mdsplus_config.get("trees", [])
-                    if t.get("tree_name")
+                    if t.get("source_name")
                 ),
                 None,
             )
@@ -1999,7 +1999,7 @@ async def epoch_worker(
 
     trees_with_epochs = []
     for tree_config in mdsplus_config.get("trees", []):
-        data_source_name = tree_config.get("tree_name")
+        data_source_name = tree_config.get("source_name")
         if not data_source_name:
             continue
         # Only detect epochs for trees without static versions
@@ -3244,7 +3244,7 @@ async def check_worker(
         all_trees = mdsplus_config.get("trees", [])
         for st in all_trees:
             if isinstance(st, dict):
-                data_source_name = st.get("tree_name", "")
+                data_source_name = st.get("source_name", "")
                 versions = st.get("versions", [])
                 if versions:
                     # Collect all version shots for this tree
