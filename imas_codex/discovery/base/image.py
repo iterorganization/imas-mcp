@@ -30,7 +30,10 @@ from typing import Any
 
 from PIL import Image
 
-from imas_codex.discovery.base.claims import DEFAULT_CLAIM_TIMEOUT_SECONDS
+from imas_codex.discovery.base.claims import (
+    DEFAULT_CLAIM_TIMEOUT_SECONDS,
+    retry_on_deadlock,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +372,7 @@ def has_pending_image_work(facility: str) -> bool:
         return False
 
 
+@retry_on_deadlock()
 def claim_images_for_scoring(
     facility: str,
     limit: int = 10,

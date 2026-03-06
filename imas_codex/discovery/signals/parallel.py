@@ -3,17 +3,17 @@ Parallel data signal discovery engine with async workers.
 
 Architecture:
 - Independent async workers, each claiming batches from the graph:
-  - seed: Seeds TreeModelVersion nodes from config (fast, exits immediately)
+  - seed: Seeds StructuralEpoch nodes from config (fast, exits immediately)
   - epoch: Detects structural epochs for dynamic trees (runs independently)
-  - extract: Claims TreeModelVersion, SSH extract + ingest TreeNodes
+  - extract: Claims StructuralEpoch, SSH extract + ingest DataNodes
   - units: Extracts units for trees with ingested versions
-  - promote: Creates FacilitySignal from leaf TreeNodes
+  - promote: Creates FacilitySignal from leaf DataNodes
   - enrich: LLM classification of physics_domain, description generation
   - check: Test data access with example_shot, verify units/sign
   - embed: Embeds FacilitySignal descriptions for vector search
 - Graph + claimed_at timestamp for coordination (same pattern as wiki/paths)
 - Status transitions:
-  - TreeModelVersion: discovered → ingested
+  - StructuralEpoch: discovered → ingested
   - FacilitySignal: discovered → enriched → checked
 - Workers claim items by setting claimed_at, release by clearing it
 - Orphan recovery: items claimed longer than 5 min are reclaimed
@@ -372,7 +372,7 @@ def clear_facility_signals(
 ) -> dict[str, int]:
     """Clear all signal discovery data for a facility.
 
-    Deletes FacilitySignal nodes, DataAccess nodes, TreeModelVersion
+    Deletes FacilitySignal nodes, DataAccess nodes, StructuralEpoch
     (epoch) nodes, and clears epoch checkpoint files. Always cascades.
 
     Args:
@@ -421,11 +421,11 @@ def clear_facility_signals(
             )
             results["data_access_deleted"] = result[0]["deleted"] if result else 0
 
-            # Delete TreeModelVersion (epoch) nodes in batches
+            # Delete StructuralEpoch (epoch) nodes in batches
             while True:
                 result = gc.query(
                     """
-                    MATCH (v:TreeModelVersion {facility_id: $facility})
+                    MATCH (v:StructuralEpoch {facility_id: $facility})
                     WITH v LIMIT $batch_size
                     DETACH DELETE v
                     RETURN count(v) AS deleted
@@ -529,12 +529,12 @@ def claim_signals_for_enrichment(
             result = gc.query(
                 """
                 MATCH (s:FacilitySignal {facility_id: $facility, claim_token: $token})
-                RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
-                       s.node_path AS node_path, s.unit AS unit, s.name AS name,
+                RETURN s.id AS id, s.accessor AS accessor, s.data_source_name AS data_source_name,
+                       s.data_source_path AS data_source_path, s.unit AS unit, s.name AS name,
                        s.tdi_function AS tdi_function,
                        s.discovery_source AS discovery_source,
                        s.description AS description,
-                       s.source_node AS source_node
+                       s.data_source_node AS data_source_node
                 """,
                 facility=facility,
                 token=claim_token,
@@ -548,13 +548,13 @@ def claim_signals_for_enrichment(
 def fetch_tree_context(
     signal_ids: list[str],
 ) -> dict[str, dict]:
-    """Fetch TreeNode context for signals with SOURCE_NODE edges.
+    """Fetch DataNode context for signals with HAS_DATA_SOURCE_NODE edges.
 
-    For each signal that has a SOURCE_NODE→TreeNode edge, returns:
-    - tree_path: Full MDSplus path of the TreeNode
+    For each signal that has a HAS_DATA_SOURCE_NODE→DataNode edge, returns:
+    - tree_path: Full MDSplus path of the DataNode
     - parent_path: Parent node's path (one level up)
     - sibling_paths: List of sibling node paths (same parent, same type)
-    - tdi_source: TDI function source_code if linked via RESOLVES_TO_TREE_NODE
+    - tdi_source: TDI function source_code if linked via RESOLVES_TO_NODE
     - tdi_name: TDI function name
     - epoch_range: Dict with first_shot/last_shot if versioned
 
@@ -572,14 +572,14 @@ def fetch_tree_context(
             result = gc.query(
                 """
                 UNWIND $ids AS sid
-                MATCH (s:FacilitySignal {id: sid})-[:SOURCE_NODE]->(n:TreeNode)
-                OPTIONAL MATCH (n)-[:CHILD_OF]->(parent:TreeNode)
-                OPTIONAL MATCH (parent)<-[:CHILD_OF]-(sibling:TreeNode)
+                MATCH (s:FacilitySignal {id: sid})-[:HAS_DATA_SOURCE_NODE]->(n:DataNode)
+                OPTIONAL MATCH (n)-[:CHILD_OF]->(parent:DataNode)
+                OPTIONAL MATCH (parent)<-[:CHILD_OF]-(sibling:DataNode)
                 WHERE sibling.id <> n.id
                   AND sibling.node_type IN ['NUMERIC', 'SIGNAL']
-                OPTIONAL MATCH (tdi:TDIFunction)-[:RESOLVES_TO_TREE_NODE]->(n)
-                OPTIONAL MATCH (v:TreeModelVersion {
-                    facility_id: n.facility_id, tree_name: n.tree_name
+                OPTIONAL MATCH (tdi:TDIFunction)-[:RESOLVES_TO_NODE]->(n)
+                OPTIONAL MATCH (v:StructuralEpoch {
+                    facility_id: n.facility_id, data_source_name: n.data_source_name
                 })
                 WITH s.id AS signal_id,
                      n.path AS tree_path,
@@ -658,11 +658,11 @@ def claim_signals_for_check(
                 WITH s,
                      CASE WHEN s.tdi_function IS NOT NULL
                           THEN $facility + ':tdi:functions'
-                          WHEN s.tree_name IS NOT NULL
+                          WHEN s.data_source_name IS NOT NULL
                           THEN $facility + ':mdsplus:tree_tdi'
                           ELSE null END AS derived_data_access
-                RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
-                       s.node_path AS node_path,
+                RETURN s.id AS id, s.accessor AS accessor, s.data_source_name AS data_source_name,
+                       s.data_source_path AS data_source_path,
                        s.physics_domain AS physics_domain, s.tdi_function AS tdi_function,
                        s.discovery_source AS discovery_source, s.name AS name,
                        COALESCE(s.data_access, derived_data_access) AS data_access
@@ -768,6 +768,7 @@ def mark_signals_enriched(
         return 0
 
 
+@retry_on_deadlock()
 def mark_signals_checked(
     signals: list[dict],
 ) -> int:
@@ -776,8 +777,6 @@ def mark_signals_checked(
     Creates a CHECKED_WITH relationship from each FacilitySignal to its DataAccess
     node, carrying outcome metadata (success, shot, shape, dtype, error).
     Created for BOTH successful and failed data access checks.
-
-    Retries on Neo4j deadlock (DeadlockDetected) up to 3 times.
 
     Expected signal dict keys:
     - id: signal ID
@@ -792,48 +791,35 @@ def mark_signals_checked(
     if not signals:
         return 0
 
-    import time
-
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            with GraphClient() as gc:
-                gc.query(
-                    """
-                    UNWIND $signals AS sig
-                    MATCH (s:FacilitySignal {id: sig.id})
-                    SET s.status = $checked,
-                        s.checked = true,
-                        s.checked_at = datetime(),
-                        s.claimed_at = null
-                    WITH s, sig
-                    WHERE sig.data_access IS NOT NULL
-                    MATCH (da:DataAccess {id: sig.data_access})
-                    MERGE (s)-[c:CHECKED_WITH]->(da)
-                    SET c.success = sig.success,
-                        c.shot = sig.shot,
-                        c.checked_at = datetime(),
-                        c.shape = sig.shape,
-                        c.dtype = sig.dtype,
-                        c.error = sig.error,
-                        c.error_type = sig.error_type
-                    """,
-                    signals=signals,
-                    checked=FacilitySignalStatus.checked.value,
-                )
-            return len(signals)
-        except Exception as e:
-            if "DeadlockDetected" in str(e) and attempt < max_retries - 1:
-                logger.warning(
-                    "Deadlock on mark_signals_checked (attempt %d/%d), retrying...",
-                    attempt + 1,
-                    max_retries,
-                )
-                time.sleep(0.5 * (attempt + 1))
-                continue
-            logger.warning("Could not mark signals checked: %s", e)
-            return 0
-    return 0
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $signals AS sig
+                MATCH (s:FacilitySignal {id: sig.id})
+                SET s.status = $checked,
+                    s.checked = true,
+                    s.checked_at = datetime(),
+                    s.claimed_at = null
+                WITH s, sig
+                WHERE sig.data_access IS NOT NULL
+                MATCH (da:DataAccess {id: sig.data_access})
+                MERGE (s)-[c:CHECKED_WITH]->(da)
+                SET c.success = sig.success,
+                    c.shot = sig.shot,
+                    c.checked_at = datetime(),
+                    c.shape = sig.shape,
+                    c.dtype = sig.dtype,
+                    c.error = sig.error,
+                    c.error_type = sig.error_type
+                """,
+                signals=signals,
+                checked=FacilitySignalStatus.checked.value,
+            )
+        return len(signals)
+    except Exception as e:
+        logger.warning("Could not mark signals checked: %s", e)
+        return 0
 
 
 def mark_signal_skipped(signal_id: str, reason: str) -> None:
@@ -1181,7 +1167,7 @@ def propagate_pattern_enrichment(
 # =============================================================================
 
 
-def get_tree_epochs(facility: str, tree_name: str) -> list[dict]:
+def get_tree_epochs(facility: str, data_source_name: str) -> list[dict]:
     """Get existing epochs for a tree from the graph.
 
     Returns list of epoch dicts with id, version, first_shot, last_shot.
@@ -1191,32 +1177,34 @@ def get_tree_epochs(facility: str, tree_name: str) -> list[dict]:
         with GraphClient() as gc:
             result = gc.query(
                 """
-                MATCH (v:TreeModelVersion {facility_id: $facility, tree_name: $tree})
+                MATCH (v:StructuralEpoch {facility_id: $facility, data_source_name: $tree})
                 RETURN v.id AS id, v.version AS version,
                        v.first_shot AS first_shot, v.last_shot AS last_shot,
                        v.node_count AS node_count
                 ORDER BY v.version
                 """,
                 facility=facility,
-                tree=tree_name,
+                tree=data_source_name,
             )
             return list(result) if result else []
     except Exception as e:
-        logger.warning("Could not get epochs for %s:%s: %s", facility, tree_name, e)
+        logger.warning(
+            "Could not get epochs for %s:%s: %s", facility, data_source_name, e
+        )
         return []
 
 
-def get_latest_epoch_shot(facility: str, tree_name: str) -> int | None:
+def get_latest_epoch_shot(facility: str, data_source_name: str) -> int | None:
     """Get the first_shot of the latest epoch for incremental scanning."""
     try:
         with GraphClient() as gc:
             result = gc.query(
                 """
-                MATCH (v:TreeModelVersion {facility_id: $facility, tree_name: $tree})
+                MATCH (v:StructuralEpoch {facility_id: $facility, data_source_name: $tree})
                 RETURN max(v.first_shot) AS latest_shot
                 """,
                 facility=facility,
-                tree=tree_name,
+                tree=data_source_name,
             )
             return (
                 result[0]["latest_shot"]
@@ -1235,7 +1223,7 @@ def ingest_epochs(
 ) -> dict[str, int]:
     """Ingest epochs with symmetric signal lifecycle tracking.
 
-    Creates TreeModelVersion nodes and FacilitySignal nodes with proper
+    Creates StructuralEpoch nodes and FacilitySignal nodes with proper
     INTRODUCED_IN/REMOVED_IN relationships. Processes epochs in version order
     to maintain temporal consistency.
 
@@ -1271,12 +1259,12 @@ def ingest_epochs(
 
     try:
         with GraphClient() as gc:
-            # Phase 1: Create all TreeModelVersion nodes
+            # Phase 1: Create all StructuralEpoch nodes
             clean_epochs = []
             for e in sorted_epochs:
                 clean = {
                     "id": e["id"],
-                    "tree_name": e["tree_name"],
+                    "data_source_name": e["data_source_name"],
                     "facility_id": e["facility_id"],
                     "version": e["version"],
                     "first_shot": e["first_shot"],
@@ -1294,7 +1282,7 @@ def ingest_epochs(
             gc.query(
                 """
                 UNWIND $epochs AS ep
-                MERGE (v:TreeModelVersion {id: ep.id})
+                MERGE (v:StructuralEpoch {id: ep.id})
                 ON CREATE SET v += ep,
                               v.discovery_date = datetime()
                 ON MATCH SET v.node_count = ep.node_count,
@@ -1307,9 +1295,9 @@ def ingest_epochs(
                 MATCH (f:Facility {id: ep.facility_id})
                 MERGE (v)-[:AT_FACILITY]->(f)
                 WITH v, ep
-                MERGE (t:MDSplusTree {name: ep.tree_name})
+                MERGE (t:DataSource {name: ep.data_source_name})
                 ON CREATE SET t.facility_id = ep.facility_id
-                MERGE (v)-[:IN_TREE]->(t)
+                MERGE (v)-[:IN_DATA_SOURCE]->(t)
                 """,
                 epochs=clean_epochs,
             )
@@ -1320,8 +1308,8 @@ def ingest_epochs(
                 """
                 UNWIND $epochs AS ep
                 WITH ep WHERE ep.predecessor IS NOT NULL
-                MATCH (v:TreeModelVersion {id: ep.id})
-                MATCH (pred:TreeModelVersion {id: ep.predecessor})
+                MATCH (v:StructuralEpoch {id: ep.id})
+                MATCH (pred:StructuralEpoch {id: ep.predecessor})
                 MERGE (v)-[:HAS_PREDECESSOR]->(pred)
                 """,
                 epochs=clean_epochs,
@@ -1331,7 +1319,7 @@ def ingest_epochs(
             for epoch in sorted_epochs:
                 epoch_id = epoch["id"]
                 facility_id = epoch["facility_id"]
-                tree_name = epoch["tree_name"]
+                data_source_name = epoch["data_source_name"]
                 added_paths = epoch.get("added_paths", [])
                 removed_paths = epoch.get("removed_paths", [])
 
@@ -1340,7 +1328,9 @@ def ingest_epochs(
                     signals = []
                     for path in added_paths:
                         name = path.split(":")[-1].split(".")[-1]
-                        signal_id = f"{facility_id}:general/{tree_name}/{name.lower()}"
+                        signal_id = (
+                            f"{facility_id}:general/{data_source_name}/{name.lower()}"
+                        )
                         signals.append(
                             {
                                 "id": signal_id,
@@ -1350,8 +1340,8 @@ def ingest_epochs(
                                 "accessor": f"data({path})",
                                 "data_access": data_access_id
                                 or f"{facility_id}:mdsplus:tree_tdi",
-                                "tree_name": tree_name,
-                                "node_path": path,
+                                "data_source_name": data_source_name,
+                                "data_source_path": path,
                                 "unit": "",
                                 "status": FacilitySignalStatus.discovered.value,
                                 "discovery_source": "epoch_detection",
@@ -1380,7 +1370,7 @@ def ingest_epochs(
                         """
                         UNWIND $signals AS sig
                         MATCH (s:FacilitySignal {id: sig.id})
-                        MATCH (v:TreeModelVersion {id: sig.epoch_id})
+                        MATCH (v:StructuralEpoch {id: sig.epoch_id})
                         MERGE (s)-[:INTRODUCED_IN]->(v)
                         RETURN count(s) AS created
                         """,
@@ -1395,9 +1385,9 @@ def ingest_epochs(
                         """
                         UNWIND $paths AS path
                         MATCH (s:FacilitySignal {facility_id: $facility_id})
-                        WHERE s.node_path = path
-                        MATCH (v:TreeModelVersion {id: $epoch_id})
-                        WHERE NOT (s)-[:REMOVED_IN]->(:TreeModelVersion)
+                        WHERE s.data_source_path = path
+                        MATCH (v:StructuralEpoch {id: $epoch_id})
+                        WHERE NOT (s)-[:REMOVED_IN]->(:StructuralEpoch)
                         MERGE (s)-[:REMOVED_IN]->(v)
                         RETURN count(*) AS removed
                         """,
@@ -1429,7 +1419,7 @@ def ingest_epochs(
 def discover_mdsplus_signals(
     facility: str,
     ssh_host: str,
-    tree_name: str,
+    data_source_name: str,
     shot: int,
     data_access_id: str,
 ) -> list[dict]:
@@ -1438,7 +1428,7 @@ def discover_mdsplus_signals(
     Args:
         facility: Facility ID
         ssh_host: SSH host for remote access
-        tree_name: MDSplus tree name
+        data_source_name: MDSplus tree name
         shot: Reference shot number
         data_access_id: ID of DataAccess for this tree
 
@@ -1450,7 +1440,7 @@ def discover_mdsplus_signals(
 import json
 import MDSplus
 
-tree = MDSplus.Tree("{tree_name}", {shot}, "readonly")
+tree = MDSplus.Tree("{data_source_name}", {shot}, "readonly")
 nodes = list(tree.getNodeWild("***"))
 
 signals = []
@@ -1498,7 +1488,7 @@ print(json.dumps(signals))
         )
         raw_signals = json.loads(result.stdout)
     except subprocess.TimeoutExpired:
-        logger.error("SSH timeout discovering %s on %s", tree_name, facility)
+        logger.error("SSH timeout discovering %s on %s", data_source_name, facility)
         return []
     except subprocess.CalledProcessError as e:
         logger.error("SSH failed: %s", e.stderr[:200] if e.stderr else str(e))
@@ -1515,7 +1505,7 @@ print(json.dumps(signals))
 
         # Generate signal ID: facility:general/signal_name
         # Physics domain will be classified during enrichment
-        signal_id = f"{facility}:general/{tree_name}/{name.lower()}"
+        signal_id = f"{facility}:general/{data_source_name}/{name.lower()}"
 
         signals.append(
             {
@@ -1525,8 +1515,8 @@ print(json.dumps(signals))
                 "name": name,
                 "accessor": f"data({path})",
                 "data_access": data_access_id,
-                "tree_name": tree_name,
-                "node_path": path,
+                "data_source_name": data_source_name,
+                "data_source_path": path,
                 "unit": raw.get("units", ""),
                 "status": FacilitySignalStatus.discovered.value,
                 "discovery_source": "tree_traversal",
@@ -1534,7 +1524,9 @@ print(json.dumps(signals))
             }
         )
 
-    logger.info("Discovered %d signals from %s:%s", len(signals), facility, tree_name)
+    logger.info(
+        "Discovered %d signals from %s:%s", len(signals), facility, data_source_name
+    )
     return signals
 
 
@@ -1647,60 +1639,78 @@ def discover_tdi_signals(
     return signals
 
 
-def ingest_discovered_signals(signals: list[dict]) -> int:
+def ingest_discovered_signals(signals: list[dict], *, batch_size: int = 500) -> int:
     """Ingest discovered signals to graph with epoch relationships.
 
     Creates FacilitySignal nodes with AT_FACILITY and DATA_ACCESS edges.
-    Optionally creates INTRODUCED_IN relationships to TreeModelVersion
+    Optionally creates INTRODUCED_IN relationships to StructuralEpoch
     epoch (if epoch_id is present).
+
+    Large signal lists (e.g., 5000+ from PPF) are batched to avoid
+    transaction timeouts from a single massive UNWIND MERGE.
     """
     if not signals:
         return 0
 
+    ingested = 0
     try:
         with GraphClient() as gc:
-            # Phase 1: Create/update signal nodes + AT_FACILITY edge (always)
-            gc.query(
-                """
-                UNWIND $signals AS sig
-                MERGE (s:FacilitySignal {id: sig.id})
-                ON CREATE SET s += sig,
-                              s.discovered_at = datetime()
-                ON MATCH SET s.claimed_at = null
-                WITH s, sig
-                MATCH (f:Facility {id: sig.facility_id})
-                MERGE (s)-[:AT_FACILITY]->(f)
-                """,
-                signals=signals,
-            )
+            for i in range(0, len(signals), batch_size):
+                batch = signals[i : i + batch_size]
 
-            # Phase 2: Create DATA_ACCESS edges for signals with data_access
-            gc.query(
-                """
-                UNWIND $signals AS sig
-                WITH sig WHERE sig.data_access IS NOT NULL
-                MATCH (s:FacilitySignal {id: sig.id})
-                MATCH (da:DataAccess {id: sig.data_access})
-                MERGE (s)-[:DATA_ACCESS]->(da)
-                """,
-                signals=signals,
-            )
+                # Phase 1: Create/update signal nodes + AT_FACILITY edge
+                gc.query(
+                    """
+                    UNWIND $signals AS sig
+                    MERGE (s:FacilitySignal {id: sig.id})
+                    ON CREATE SET s += sig,
+                                  s.discovered_at = datetime()
+                    ON MATCH SET s.claimed_at = null
+                    WITH s, sig
+                    MATCH (f:Facility {id: sig.facility_id})
+                    MERGE (s)-[:AT_FACILITY]->(f)
+                    """,
+                    signals=batch,
+                )
 
-            # Phase 3: Create INTRODUCED_IN edges for epoch-tracked signals
-            gc.query(
-                """
-                UNWIND $signals AS sig
-                WITH sig WHERE sig.epoch_id IS NOT NULL
-                MATCH (s:FacilitySignal {id: sig.id})
-                MATCH (v:TreeModelVersion {id: sig.epoch_id})
-                MERGE (s)-[:INTRODUCED_IN]->(v)
-                """,
-                signals=signals,
-            )
-        return len(signals)
+                # Phase 2: Create DATA_ACCESS edges for signals with data_access
+                gc.query(
+                    """
+                    UNWIND $signals AS sig
+                    WITH sig WHERE sig.data_access IS NOT NULL
+                    MATCH (s:FacilitySignal {id: sig.id})
+                    MATCH (da:DataAccess {id: sig.data_access})
+                    MERGE (s)-[:DATA_ACCESS]->(da)
+                    """,
+                    signals=batch,
+                )
+
+                # Phase 3: Create INTRODUCED_IN edges for epoch-tracked signals
+                gc.query(
+                    """
+                    UNWIND $signals AS sig
+                    WITH sig WHERE sig.epoch_id IS NOT NULL
+                    MATCH (s:FacilitySignal {id: sig.id})
+                    MATCH (v:StructuralEpoch {id: sig.epoch_id})
+                    MERGE (s)-[:INTRODUCED_IN]->(v)
+                    """,
+                    signals=batch,
+                )
+
+                ingested += len(batch)
+
+            if len(signals) > batch_size:
+                logger.info(
+                    "Ingested %d signals in %d batches",
+                    ingested,
+                    (len(signals) + batch_size - 1) // batch_size,
+                )
+        return ingested
     except Exception as e:
-        logger.error("Failed to ingest signals: %s", e)
-        return 0
+        logger.error(
+            "Failed to ingest signals (ingested %d/%d): %s", ingested, len(signals), e
+        )
+        return ingested
 
 
 # =============================================================================
@@ -1715,7 +1725,7 @@ async def seed_worker(
 ) -> None:
     """Worker that seeds discovery work into the graph.
 
-    For MDSplus: creates TreeModelVersion nodes from config (fast).
+    For MDSplus: creates StructuralEpoch nodes from config (fast).
     For other scanners (TDI, PPF, EDAS, wiki): runs scanner.scan() and
     ingests signals directly to graph.
 
@@ -1729,7 +1739,7 @@ async def seed_worker(
     from imas_codex.discovery.signals.scanners.base import get_scanner
 
     facility_config = state.facility_config
-    data_sources = facility_config.get("data_sources", {})
+    data_systems = facility_config.get("data_systems", {})
     ssh_host = state.ssh_host or facility_config.get("ssh_host", state.facility)
 
     # Use pre-fetched graph state to report resumed progress
@@ -1754,14 +1764,14 @@ async def seed_worker(
             break
 
         if scanner_type == "mdsplus":
-            # MDSplus: seed TreeModelVersion nodes for each tree
-            mdsplus_config = data_sources.get("mdsplus", {})
+            # MDSplus: seed StructuralEpoch nodes for each tree
+            mdsplus_config = data_systems.get("mdsplus", {})
             if not isinstance(mdsplus_config, dict):
                 continue
 
             for tree_config in mdsplus_config.get("trees", []):
-                tree_name = tree_config.get("tree_name")
-                if not tree_name:
+                data_source_name = tree_config.get("tree_name")
+                if not data_source_name:
                     continue
 
                 # Expand subtrees
@@ -1773,7 +1783,7 @@ async def seed_worker(
                         if st.get("tree_name")
                     ]
                     if subtrees
-                    else [(tree_name, tree_config)]
+                    else [(data_source_name, tree_config)]
                 )
 
                 for sub_name, sub_config in trees_to_process:
@@ -1799,7 +1809,7 @@ async def seed_worker(
                                 [
                                     {
                                         "id": f"{state.facility}:{sub_name}",
-                                        "tree_name": sub_name,
+                                        "data_source_name": sub_name,
                                         "signals_in_tree": seeded,
                                     }
                                 ],
@@ -1847,8 +1857,8 @@ async def seed_worker(
                 except Exception as e:
                     logger.warning("Failed to create MDSplus DataAccess: %s", e)
 
-            # Backfill IN_TREE edges for TreeNodes ingested before
-            # MDSplusTree relationships were added to the schema
+            # Backfill IN_DATA_SOURCE edges for DataNodes ingested before
+            # DataSource relationships were added to the schema
             await asyncio.to_thread(backfill_tree_relationships, state.facility)
 
             continue
@@ -1863,7 +1873,7 @@ async def seed_worker(
             logger.warning("Scanner '%s' not registered, skipping", scanner_type)
             continue
 
-        scanner_config = data_sources.get(scanner_type, {})
+        scanner_config = data_systems.get(scanner_type, {})
         if not isinstance(scanner_config, dict):
             scanner_config = {}
 
@@ -1930,8 +1940,8 @@ async def seed_worker(
                         [
                             {
                                 "id": s.id,
-                                "tree_name": scanner_type,
-                                "node_path": s.accessor,
+                                "data_source_name": scanner_type,
+                                "data_source_path": s.accessor,
                                 "signals_in_tree": count,
                             }
                             for s in result.signals[:20]
@@ -1969,14 +1979,14 @@ async def epoch_worker(
     """Worker that detects structural epochs for dynamic MDSplus trees.
 
     Runs independently from seed — can take 15+ minutes for large trees.
-    Seeds additional TreeModelVersion nodes as epochs are detected.
+    Seeds additional StructuralEpoch nodes as epochs are detected.
     """
     from imas_codex.discovery.mdsplus.epochs import detect_epochs_for_tree
     from imas_codex.discovery.mdsplus.graph_ops import seed_versions
 
     facility_config = state.facility_config
-    data_sources = facility_config.get("data_sources", {})
-    mdsplus_config = data_sources.get("mdsplus", {})
+    data_systems = facility_config.get("data_systems", {})
+    mdsplus_config = data_systems.get("mdsplus", {})
     if not isinstance(mdsplus_config, dict):
         state.epoch_phase.mark_done()
         return
@@ -1989,13 +1999,13 @@ async def epoch_worker(
 
     trees_with_epochs = []
     for tree_config in mdsplus_config.get("trees", []):
-        tree_name = tree_config.get("tree_name")
-        if not tree_name:
+        data_source_name = tree_config.get("tree_name")
+        if not data_source_name:
             continue
         # Only detect epochs for trees without static versions
         versions = tree_config.get("versions", [])
         if not versions and state.reference_shot:
-            trees_with_epochs.append((tree_name, tree_config))
+            trees_with_epochs.append((data_source_name, tree_config))
 
     if not trees_with_epochs:
         state.epoch_phase.mark_done()
@@ -2003,15 +2013,20 @@ async def epoch_worker(
             on_progress("no dynamic trees", state.discover_stats)
         return
 
-    for tree_name, tree_config in trees_with_epochs:
+    for data_source_name, tree_config in trees_with_epochs:
         if state.stop_requested or state.deadline_expired:
             break
 
         if on_progress:
             on_progress(
-                f"detecting epochs for {tree_name}",
+                f"detecting epochs for {data_source_name}",
                 state.discover_stats,
-                [{"tree_name": tree_name, "epoch_progress": {"phase": "coarse"}}],
+                [
+                    {
+                        "data_source_name": data_source_name,
+                        "epoch_progress": {"phase": "coarse"},
+                    }
+                ],
             )
 
         try:
@@ -2027,7 +2042,7 @@ async def epoch_worker(
             coro = asyncio.to_thread(
                 detect_epochs_for_tree,
                 facility=state.ssh_host or state.facility,
-                tree_name=tree_name,
+                data_source_name=data_source_name,
                 tree_config=tree_config,
             )
             if timeout is not None:
@@ -2036,7 +2051,7 @@ async def epoch_worker(
                 epochs = await coro
 
             if epochs:
-                # Ingest epoch TreeModelVersion nodes
+                # Ingest epoch StructuralEpoch nodes
                 await asyncio.to_thread(
                     ingest_epochs,
                     epochs,
@@ -2049,18 +2064,18 @@ async def epoch_worker(
                     await asyncio.to_thread(
                         seed_versions,
                         state.facility,
-                        tree_name,
+                        data_source_name,
                         epoch_versions,
                         [],
                     )
 
                 if on_progress:
                     on_progress(
-                        f"{tree_name}: {len(epochs)} epochs detected",
+                        f"{data_source_name}: {len(epochs)} epochs detected",
                         state.discover_stats,
                         [
                             {
-                                "tree_name": tree_name,
+                                "data_source_name": data_source_name,
                                 "epoch_progress": {
                                     "phase": "complete",
                                     "boundaries_found": len(epochs),
@@ -2070,24 +2085,24 @@ async def epoch_worker(
                     )
             else:
                 if on_progress:
-                    on_progress(f"{tree_name}: no epochs", state.discover_stats)
+                    on_progress(f"{data_source_name}: no epochs", state.discover_stats)
 
         except TimeoutError:
             logger.info(
-                "Epoch detection for %s timed out (deadline reached)", tree_name
+                "Epoch detection for %s timed out (deadline reached)", data_source_name
             )
             if on_progress:
                 on_progress(
-                    f"{tree_name}: epoch detection skipped (deadline)",
+                    f"{data_source_name}: epoch detection skipped (deadline)",
                     state.discover_stats,
                 )
             break
 
         except Exception as e:
-            logger.error("Epoch detection failed for %s: %s", tree_name, e)
+            logger.error("Epoch detection failed for %s: %s", data_source_name, e)
             if on_progress:
                 on_progress(
-                    f"{tree_name}: epoch detection failed - {e}",
+                    f"{data_source_name}: epoch detection failed - {e}",
                     state.discover_stats,
                 )
 
@@ -2103,8 +2118,8 @@ async def mdsplus_extract_worker(
 ) -> None:
     """Worker that extracts MDSplus tree versions via SSH (facility-wide).
 
-    Claims TreeModelVersion nodes with status=discovered across ALL trees,
-    runs SSH extraction, and ingests TreeNodes into the graph.
+    Claims StructuralEpoch nodes with status=discovered across ALL trees,
+    runs SSH extraction, and ingests DataNodes into the graph.
     """
     from imas_codex.discovery.mdsplus.graph_ops import (
         claim_version_for_extraction_facility,
@@ -2118,8 +2133,8 @@ async def mdsplus_extract_worker(
     )
 
     facility_config = state.facility_config
-    data_sources = facility_config.get("data_sources", {})
-    mdsplus_config = data_sources.get("mdsplus", {})
+    data_systems = facility_config.get("data_systems", {})
+    mdsplus_config = data_systems.get("mdsplus", {})
     node_usages = None
     if isinstance(mdsplus_config, dict):
         # Find node_usages from first tree config
@@ -2165,17 +2180,17 @@ async def mdsplus_extract_worker(
         state.extract_phase.record_activity(1)
         version = claimed["version"]
         version_id = claimed["id"]
-        tree_name = claimed["tree_name"]
+        data_source_name = claimed["data_source_name"]
 
         if on_progress:
             on_progress(
-                f"extracting v{version} {state.facility}:{tree_name}",
+                f"extracting v{version} {state.facility}:{data_source_name}",
                 state.extract_stats,
                 [
                     {
                         "id": version_id,
-                        "tree_name": tree_name,
-                        "node_path": f"v{version}",
+                        "data_source_name": data_source_name,
+                        "data_source_path": f"v{version}",
                         "signals_in_tree": 0,
                     }
                 ],
@@ -2184,7 +2199,7 @@ async def mdsplus_extract_worker(
         try:
             data = await async_extract_tree_version(
                 facility=state.facility,
-                tree_name=tree_name,
+                data_source_name=data_source_name,
                 shot=version,
                 timeout=600,
                 node_usages=node_usages,
@@ -2196,7 +2211,7 @@ async def mdsplus_extract_worker(
                 logger.warning(
                     "Extraction error for v%d %s: %s",
                     version,
-                    tree_name,
+                    data_source_name,
                     ver_data["error"][:100],
                 )
                 await asyncio.to_thread(release_version_claim, version_id)
@@ -2221,13 +2236,13 @@ async def mdsplus_extract_worker(
 
             if on_progress:
                 on_progress(
-                    f"v{version} {tree_name} — {node_count:,} nodes",
+                    f"v{version} {data_source_name} — {node_count:,} nodes",
                     state.extract_stats,
                     [
                         {
                             "id": version_id,
-                            "tree_name": tree_name,
-                            "node_path": f"v{version}",
+                            "data_source_name": data_source_name,
+                            "data_source_path": f"v{version}",
                             "signals_in_tree": node_count,
                         }
                     ],
@@ -2238,7 +2253,7 @@ async def mdsplus_extract_worker(
             logger.warning(
                 "Extract v%d %s failed (%d/%d): %s",
                 version,
-                tree_name,
+                data_source_name,
                 ssh_retry_count,
                 max_ssh_retries,
                 e,
@@ -2307,19 +2322,19 @@ async def mdsplus_units_worker(
             continue
 
         state.units_phase.record_activity(1)
-        tree_name = claimed["tree_name"]
+        data_source_name = claimed["data_source_name"]
         latest_version = claimed["latest_version"]
 
         if on_progress:
             on_progress(
-                f"extracting units for {tree_name} v{latest_version}",
+                f"extracting units for {data_source_name} v{latest_version}",
                 state.units_stats,
             )
 
         try:
             units = await async_extract_units_for_version(
                 state.facility,
-                tree_name,
+                data_source_name,
                 latest_version,
                 timeout=600,
                 batch_size=500,
@@ -2327,24 +2342,24 @@ async def mdsplus_units_worker(
 
             if units:
                 await asyncio.to_thread(
-                    merge_units_to_graph, state.facility, tree_name, units
+                    merge_units_to_graph, state.facility, data_source_name, units
                 )
                 state.units_stats.processed += 1
                 if on_progress:
                     on_progress(
-                        f"{tree_name}: {len(units)} paths with units",
+                        f"{data_source_name}: {len(units)} paths with units",
                         state.units_stats,
                     )
 
             await asyncio.to_thread(
                 mark_all_versions_units_extracted,
                 state.facility,
-                tree_name,
+                data_source_name,
                 len(units) if units else 0,
             )
 
         except Exception as e:
-            logger.error("Units extraction failed for %s: %s", tree_name, e)
+            logger.error("Units extraction failed for %s: %s", data_source_name, e)
             state.units_stats.errors += 1
 
     state.units_phase.mark_done()
@@ -2355,7 +2370,7 @@ async def mdsplus_promote_worker(
     on_progress: Callable | None = None,
     **_kwargs,
 ) -> None:
-    """Worker that creates FacilitySignals from leaf TreeNodes (facility-wide).
+    """Worker that creates FacilitySignals from leaf DataNodes (facility-wide).
 
     Claims trees with un-promoted leaf nodes and runs promote_leaf_nodes_to_signals.
     """
@@ -2393,12 +2408,12 @@ async def mdsplus_promote_worker(
         return
 
     while not state.stop_requested:
-        tree_name = await asyncio.to_thread(
+        data_source_name = await asyncio.to_thread(
             claim_tree_for_promote,
             state.facility,
         )
 
-        if not tree_name:
+        if not data_source_name:
             state.promote_phase.record_idle()
             # Wait for extract and units to finish before declaring done
             if state.extract_phase.done and state.units_phase.done:
@@ -2411,7 +2426,7 @@ async def mdsplus_promote_worker(
 
         if on_progress:
             on_progress(
-                f"promoting {tree_name}",
+                f"promoting {data_source_name}",
                 state.promote_stats,
             )
 
@@ -2419,19 +2434,19 @@ async def mdsplus_promote_worker(
             promoted = await asyncio.to_thread(
                 promote_leaf_nodes_to_signals,
                 state.facility,
-                tree_name,
+                data_source_name,
             )
             state.promote_stats.processed += promoted
             state.promote_stats.record_batch(promoted)
 
             if on_progress:
                 on_progress(
-                    f"{tree_name}: {promoted} signals promoted",
+                    f"{data_source_name}: {promoted} signals promoted",
                     state.promote_stats,
                     [
                         {
-                            "id": f"{state.facility}:{tree_name}",
-                            "tree_name": tree_name,
+                            "id": f"{state.facility}:{data_source_name}",
+                            "data_source_name": data_source_name,
                             "signals_in_tree": promoted,
                         }
                     ],
@@ -2445,12 +2460,14 @@ async def mdsplus_promote_worker(
 
                 tdi_links = link_tdi_to_tree_nodes(state.facility)
                 if tdi_links:
-                    logger.info("TDI linkage: %d edges for %s", tdi_links, tree_name)
+                    logger.info(
+                        "TDI linkage: %d edges for %s", tdi_links, data_source_name
+                    )
             except Exception as e:
                 logger.warning("TDI linkage failed: %s", e)
 
         except Exception as e:
-            logger.error("Promote failed for %s: %s", tree_name, e)
+            logger.error("Promote failed for %s: %s", data_source_name, e)
             state.promote_stats.errors += 1
 
     state.promote_phase.mark_done()
@@ -2526,7 +2543,7 @@ async def enrich_worker(
         """Find wiki context matching a signal's path or accessor.
 
         Tries multiple matching strategies to maximize cross-reference hits:
-        1. Exact node_path match (uppercase-normalized)
+        1. Exact data_source_path match (uppercase-normalized)
         2. Accessor path extraction (data(...) pattern)
         3. Normalized path (strip leading backslashes, collapse separators)
         4. PPF-style DDA/DTYPE matching for JET signals
@@ -2534,10 +2551,10 @@ async def enrich_worker(
         if not state.wiki_context:
             return None
 
-        # Try node_path (uppercase for matching)
-        node_path = signal.get("node_path")
-        if node_path:
-            normalized = node_path.upper().lstrip("\\")
+        # Try data_source_path (uppercase for matching)
+        data_source_path = signal.get("data_source_path")
+        if data_source_path:
+            normalized = data_source_path.upper().lstrip("\\")
             # Try with single backslash prefix (wiki format)
             ctx = state.wiki_context.get(f"\\{normalized}")
             if ctx:
@@ -2547,7 +2564,7 @@ async def enrich_worker(
             if ctx:
                 return ctx
             # Try raw
-            ctx = state.wiki_context.get(node_path.upper())
+            ctx = state.wiki_context.get(data_source_path.upper())
             if ctx:
                 return ctx
 
@@ -2593,7 +2610,7 @@ async def enrich_worker(
             return f"edas:{cat}"
 
         # MDSplus tree traversal: group by tree
-        tree = signal.get("tree_name")
+        tree = signal.get("data_source_name")
         if tree:
             return f"tree:{tree}"
 
@@ -2809,8 +2826,8 @@ async def enrich_worker(
         if on_progress:
             on_progress("enriching batch", state.enrich_stats)
 
-        # Fetch tree context for signals with SOURCE_NODE edges
-        tree_signal_ids = [s["id"] for s in signals if s.get("source_node")]
+        # Fetch tree context for signals with HAS_DATA_SOURCE_NODE edges
+        tree_signal_ids = [s["id"] for s in signals if s.get("data_source_node")]
         tree_context = {}
         if tree_signal_ids:
             tree_context = await asyncio.to_thread(fetch_tree_context, tree_signal_ids)
@@ -2918,16 +2935,16 @@ async def enrich_worker(
                 user_lines.append(f"name: {signal.get('name', 'unknown')}")
                 if signal.get("unit"):
                     user_lines.append(f"units: {signal['unit']}")
-                if signal.get("tree_name"):
-                    user_lines.append(f"tree_name: {signal['tree_name']}")
-                if signal.get("node_path"):
-                    user_lines.append(f"node_path: {signal['node_path']}")
+                if signal.get("data_source_name"):
+                    user_lines.append(f"data_source_name: {signal['data_source_name']}")
+                if signal.get("data_source_path"):
+                    user_lines.append(f"data_source_path: {signal['data_source_path']}")
 
                 # Inject existing description from scanner (e.g., EDAS Japanese desc)
                 if signal.get("description"):
                     user_lines.append(f"existing_description: {signal['description']}")
 
-                # Inject tree context if available (SOURCE_NODE traversal)
+                # Inject tree context if available (HAS_DATA_SOURCE_NODE traversal)
                 sig_tree_ctx = tree_context.get(signal["id"])
                 if sig_tree_ctx:
                     if sig_tree_ctx.get("parent_path"):
@@ -3138,7 +3155,7 @@ def _resolve_check_tree(
     tree_shots: dict[str, list[int]],
     reference_shot: int,
 ) -> tuple[str, str, list[int]]:
-    """Determine the correct tree_name, accessor, and check_shots for a signal.
+    """Determine the correct data_source_name, accessor, and check_shots for a signal.
 
     Routes signals based on whether their tree is independent (opened directly)
     or a subtree of the connection tree (opened via the connection tree).
@@ -3148,34 +3165,34 @@ def _resolve_check_tree(
     plus any connection tree version shots as check_shots.
 
     Args:
-        signal: Signal dict with tree_name, node_path, accessor, etc.
+        signal: Signal dict with data_source_name, data_source_path, accessor, etc.
         connection_tree: Parent tree name (e.g., "tcv_shot")
         independent_trees: Set of tree names that are NOT subtrees
-        tree_shots: Map of tree_name -> list of version/epoch shots
+        tree_shots: Map of data_source_name -> list of version/epoch shots
         reference_shot: Default shot for subtree checking
 
     Returns:
-        Tuple of (tree_name, accessor, check_shots) where check_shots
+        Tuple of (data_source_name, accessor, check_shots) where check_shots
         is a list of shots to try in order.
     """
-    tree_name = signal.get("tree_name")
-    node_path = signal.get("node_path")
+    data_source_name = signal.get("data_source_name")
+    data_source_path = signal.get("data_source_path")
     accessor = signal.get("accessor", "")
 
     # TDI functions use the connection tree
-    if signal.get("tdi_function") and not tree_name:
+    if signal.get("tdi_function") and not data_source_name:
         return connection_tree, accessor, [reference_shot]
 
-    # For tree_traversal signals, use full node_path as accessor
-    if node_path and signal.get("discovery_source") == "tree_traversal":
-        accessor = node_path
+    # For tree_traversal signals, use full data_source_path as accessor
+    if data_source_path and signal.get("discovery_source") == "tree_traversal":
+        accessor = data_source_path
 
     # Independent trees are opened directly with their own shots
-    if tree_name and tree_name in independent_trees:
-        versions = tree_shots.get(tree_name, [])
+    if data_source_name and data_source_name in independent_trees:
+        versions = tree_shots.get(data_source_name, [])
         if versions:
-            return tree_name, accessor, versions
-        return tree_name, accessor, [reference_shot]
+            return data_source_name, accessor, versions
+        return data_source_name, accessor, [reference_shot]
 
     # Subtree signals go through the connection tree
     # Include connection tree version shots as additional check_shots
@@ -3207,10 +3224,10 @@ async def check_worker(
     from imas_codex.graph.models import FacilitySignal as FacilitySignalModel
 
     facility_config = state.facility_config
-    data_sources = facility_config.get("data_sources", {})
+    data_systems = facility_config.get("data_systems", {})
 
     # Build tree configuration from facility config
-    mdsplus_config = data_sources.get("mdsplus", {})
+    mdsplus_config = data_systems.get("mdsplus", {})
     connection_tree = "tcv_shot"
     independent_trees: set[str] = set()
     tree_shots: dict[str, list[int]] = {}
@@ -3227,7 +3244,7 @@ async def check_worker(
         all_trees = mdsplus_config.get("trees", [])
         for st in all_trees:
             if isinstance(st, dict):
-                tree_name = st.get("tree_name", "")
+                data_source_name = st.get("data_source_name", "")
                 versions = st.get("versions", [])
                 if versions:
                     # Collect all version shots for this tree
@@ -3237,11 +3254,11 @@ async def check_worker(
                         if v.get("first_shot") or v.get("version")
                     ]
                     if shots:
-                        tree_shots[tree_name] = sorted(shots)
+                        tree_shots[data_source_name] = sorted(shots)
 
     # Keep batch size moderate — MDSplus segfaults (core dumps) when
     # too many signals from the same tree are checked in a single process.
-    # The remote script groups signals by (tree_name, shot) so 100 signals
+    # The remote script groups signals by (data_source_name, shot) so 100 signals
     # from the same tree all land in one group, overloading MDSplus.
     BATCH_SIZE = 20
 
@@ -3297,7 +3314,7 @@ async def check_worker(
 
             try:
                 scanner = get_scanner(scanner_type)
-                scanner_config = data_sources.get(scanner_type, {})
+                scanner_config = data_systems.get(scanner_type, {})
                 if not isinstance(scanner_config, dict):
                     scanner_config = {}
 
@@ -3310,7 +3327,7 @@ async def check_worker(
                         accessor=s.get("accessor", ""),
                         physics_domain=s.get("physics_domain", "general"),
                         data_access=s.get("data_access", ""),
-                        tree_name=s.get("tree_name"),
+                        data_source_name=s.get("data_source_name"),
                     )
                     for s in group
                 ]
@@ -3391,7 +3408,7 @@ async def check_worker(
                     {
                         "id": signal["id"],
                         "accessor": resolved_accessor,
-                        "tree_name": resolved_tree,
+                        "data_source_name": resolved_tree,
                         "check_shots": check_shots,
                     }
                 )
@@ -3596,11 +3613,11 @@ async def run_parallel_data_discovery(
     """Run parallel data discovery with independent async workers.
 
     All workers start simultaneously and claim work from the graph:
-    - seed: Seeds TreeModelVersion nodes from config (exits fast)
+    - seed: Seeds StructuralEpoch nodes from config (exits fast)
     - epoch: Detects structural epochs independently
-    - extract: Claims TreeModelVersion, SSH extract TreeNodes
+    - extract: Claims StructuralEpoch, SSH extract DataNodes
     - units: Extracts units for ingested tree versions
-    - promote: Creates FacilitySignal from leaf TreeNodes
+    - promote: Creates FacilitySignal from leaf DataNodes
     - enrich: LLM classification (claims discovered FacilitySignals)
     - check: Test data access (claims enriched FacilitySignals)
     - embed: Embed descriptions for vector search
@@ -3672,7 +3689,7 @@ async def run_parallel_data_discovery(
 
     orphan_specs = [
         OrphanRecoverySpec("FacilitySignal", timeout_seconds=CLAIM_TIMEOUT_SECONDS),
-        OrphanRecoverySpec("TreeModelVersion"),
+        OrphanRecoverySpec("StructuralEpoch"),
     ]
 
     # Build worker specs

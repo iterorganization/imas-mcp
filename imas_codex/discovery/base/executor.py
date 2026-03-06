@@ -204,34 +204,40 @@ class BranchExecutor:
 
         Returns None if the branch is already claimed by another session.
         Uses atomic graph update to prevent race conditions.
+        Retries on Neo4j deadlocks.
         """
+        from imas_codex.discovery.base.claims import retry_on_deadlock
         from imas_codex.graph import GraphClient
 
         branch_id = f"{self.facility}:{root_path}"
 
-        with GraphClient() as gc:
-            # Atomic claim: only succeeds if not already claimed
-            result = gc.query(
-                """
-                MATCH (p:FacilityPath {id: $branch_id})
-                WHERE p.claimed_by IS NULL OR p.claimed_by = $session_id
-                SET p.claimed_by = $session_id,
-                    p.claimed_at = datetime()
-                RETURN p.id AS id, p.path AS path
-                """,
-                branch_id=branch_id,
-                session_id=self.session_id,
-            )
-
-            if result:
-                claim = BranchClaim(
-                    facility=self.facility,
-                    root_path=root_path,
+        @retry_on_deadlock()
+        def _do_claim():
+            with GraphClient() as gc:
+                result = gc.query(
+                    """
+                    MATCH (p:FacilityPath {id: $branch_id})
+                    WHERE p.claimed_by IS NULL OR p.claimed_by = $session_id
+                    SET p.claimed_by = $session_id,
+                        p.claimed_at = datetime()
+                    RETURN p.id AS id, p.path AS path
+                    """,
+                    branch_id=branch_id,
                     session_id=self.session_id,
                 )
-                self._claimed_branches.append(claim)
-                logger.debug(f"Claimed branch: {root_path}")
-                return claim
+                return list(result)
+
+        result = _do_claim()
+
+        if result:
+            claim = BranchClaim(
+                facility=self.facility,
+                root_path=root_path,
+                session_id=self.session_id,
+            )
+            self._claimed_branches.append(claim)
+            logger.debug(f"Claimed branch: {root_path}")
+            return claim
 
         logger.debug(f"Branch already claimed: {root_path}")
         return None
