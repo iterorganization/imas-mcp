@@ -1106,7 +1106,12 @@ def run_python_script(
         # Use -S (no site) to prevent venv Python from hanging during site
         # initialization when PYTHONPATH is set on slow GPFS filesystems.
         # site-packages and PYTHONPATH are restored inside the remote_runner.
-        python_cmd = f"{python_command} -S -c '{remote_runner}'"
+        # Skip -S for custom python_commands (e.g., micromamba envs) that
+        # need their own site-packages for dependencies like numpy.
+        if python_command == "python3":
+            python_cmd = f"{python_command} -S -c '{remote_runner}'"
+        else:
+            python_cmd = f"{python_command} -c '{runner}'"
 
         # Wrap Python command with nice if configured for this host
         nice_level = _get_host_nice_level(ssh_host)
@@ -1237,7 +1242,11 @@ async def async_run_python_script(
         _ensure_ssh_healthy_once(ssh_host)
         # Build remote command: PATH prefix + optional setup + python
         # Use -S to prevent venv Python startup hang (see run_python_script).
-        python_cmd = f"{python_command} -S -c '{remote_runner}'"
+        # Skip -S for custom python_commands (see run_python_script).
+        if python_command == "python3":
+            python_cmd = f"{python_command} -S -c '{remote_runner}'"
+        else:
+            python_cmd = f"{python_command} -c '{runner}'"
 
         # Wrap Python command with nice if configured for this host
         nice_level = _get_host_nice_level(ssh_host)
