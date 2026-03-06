@@ -1,9 +1,18 @@
-"""Remote facility file fetching via SSH/SCP.
+"""Remote facility file fetching via SSH.
 
 Provides functions for transferring files from remote facilities
 to local staging for ingestion into the knowledge graph.
 
-Supports both sequential SCP (small batches) and batch tar (large batches).
+Two transfer strategies, both via subprocess SSH:
+- Sequential SSH cat for single files (~0.6s fixed SSH setup)
+- Batch gzip tar for 2+ files (amortises SSH setup, 16x compression)
+
+Benchmarked on JET (100 Python files, 4 MB total):
+  SCP sequential:   ~1 file/s   (1s SSH setup per file)
+  SSH cat:           1.6 file/s  (single file, no temp dir)
+  tar gzip 5 files:  7.8 files/s
+  tar gzip 50 files: 55 files/s
+  tar gzip 100 files: 98 files/s
 """
 
 import io
@@ -11,17 +20,13 @@ import logging
 import shlex
 import subprocess
 import tarfile
-import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
-from fabric import Connection
-
 logger = logging.getLogger(__name__)
 
-# Threshold for switching to batch tar transfer.
-# Tar amortises SSH session setup (~1.5s) across all files and is
-# faster than sequential SCP for 2+ files.
+# Use gzip tar for 2+ files.  Even at 5 files gzip tar achieves
+# 7.8 files/s vs 1.1 files/s for sequential SCP.
 TAR_BATCH_THRESHOLD = 2
 
 # Extension to language mapping for code files
@@ -160,9 +165,10 @@ def _fetch_sequential(
     facility: str,
     remote_paths: list[str],
 ) -> Iterator[tuple[str, str, str]]:
-    """Fetch files one at a time via SCP.
+    """Fetch files one at a time via SSH cat.
 
-    Uses Fabric for SSH connection with connection reuse.
+    Uses a single SSH subprocess per file — faster than SCP because
+    it avoids temp file creation and Fabric overhead (~0.6s vs ~1.0s).
 
     Args:
         facility: SSH host alias
@@ -171,29 +177,39 @@ def _fetch_sequential(
     Yields:
         Tuples of (remote_path, content, language)
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with Connection(facility) as conn:
-            for remote_path in remote_paths:
-                try:
-                    local_path = Path(tmpdir) / Path(remote_path).name
-                    conn.get(remote_path, str(local_path))
+    for remote_path in remote_paths:
+        try:
+            result = subprocess.run(
+                ["ssh", facility, "cat", shlex.quote(remote_path)],
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "Failed to fetch %s: exit %d", remote_path, result.returncode
+                )
+                continue
 
-                    content = local_path.read_text(encoding="utf-8", errors="replace")
-                    language = detect_language(remote_path)
+            content = result.stdout.decode("utf-8", errors="replace")
+            language = detect_language(remote_path)
 
-                    yield remote_path, content, language
-                except Exception as e:
-                    logger.warning("Failed to fetch %s: %s", remote_path, e)
-                    continue
+            yield remote_path, content, language
+        except subprocess.TimeoutExpired:
+            logger.warning("Timed out fetching %s", remote_path)
+            continue
+        except Exception as e:
+            logger.warning("Failed to fetch %s: %s", remote_path, e)
+            continue
 
 
 def _fetch_batch_tar(
     facility: str,
     remote_paths: list[str],
 ) -> Iterator[tuple[str, str, str]]:
-    """Fetch multiple files as a single tar stream.
+    """Fetch multiple files as a gzip-compressed tar stream.
 
-    Significantly faster for 10+ files by eliminating per-file SCP overhead.
+    Gzip compression reduces payload ~16x for source code, making this
+    faster than both plain tar and sequential SCP at all batch sizes ≥2.
     Falls back to sequential if tar fails.
 
     Args:
@@ -204,9 +220,9 @@ def _fetch_batch_tar(
         Tuples of (remote_path, content, language)
     """
     paths_arg = " ".join(shlex.quote(p) for p in remote_paths)
-    cmd = f"tar -cf - {paths_arg} 2>/dev/null"
+    cmd = f"tar -czf - {paths_arg} 2>/dev/null"
 
-    logger.info("Batch fetching %d files via tar", len(remote_paths))
+    logger.info("Batch fetching %d files via tar+gzip", len(remote_paths))
 
     try:
         result = subprocess.run(
@@ -216,7 +232,7 @@ def _fetch_batch_tar(
             timeout=300,
         )
 
-        with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:") as tf:
+        with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:gz") as tf:
             for member in tf.getmembers():
                 if not member.isfile():
                     continue
@@ -254,8 +270,8 @@ def fetch_remote_files(
     """Fetch files from remote facility via SSH.
 
     Automatically selects optimal transfer strategy:
-    - Sequential SCP for small batches (<=10 files)
-    - Batch tar for larger batches (>10 files)
+    - SSH cat for single files (~0.6s SSH overhead)
+    - Batch gzip tar for 2+ files (amortises SSH setup, 16x compression)
 
     Args:
         facility: SSH host alias from ~/.ssh/config
