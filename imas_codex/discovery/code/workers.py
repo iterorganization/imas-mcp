@@ -511,10 +511,22 @@ def _claim_code_files_for_ingestion(
               AND coalesce(sf.line_count, 0) <= $max_line_count
               AND (sf.claimed_at IS NULL
                    OR sf.claimed_at < datetime() - duration($cutoff))
-            WITH sf ORDER BY sf.score_composite DESC LIMIT $limit
-            SET sf.claimed_at = datetime()
+              // Hash gate: skip files whose content is already ingested
+              AND (sf.content_hash IS NULL
+                   OR NOT EXISTS {
+                     MATCH (dup:CodeFile {content_hash: sf.content_hash})
+                     WHERE dup.status = 'ingested' AND dup.id <> sf.id
+                   })
+            // Popularity boost: files copied across many repos are more valuable
+            WITH sf
+            OPTIONAL MATCH (sib:CodeFile {content_hash: sf.content_hash})
+            WHERE sf.content_hash IS NOT NULL
+            WITH sf, count(sib) AS copies
+            ORDER BY copies DESC, sf.score_composite DESC
+            LIMIT $limit
+            SET sf.claimed_at = datetime(), sf.copy_count = copies
             RETURN sf.id AS id, sf.path AS path, sf.language AS language,
-                   sf.score_composite AS score_composite
+                   sf.score_composite AS score_composite, copies AS copy_count
             """,
             facility=facility,
             min_score=min_score,
@@ -526,7 +538,11 @@ def _claim_code_files_for_ingestion(
 
 
 def _mark_files_ingested(file_ids: list[str]) -> int:
-    """Mark CodeFiles as ingested after successful processing."""
+    """Mark CodeFiles as ingested after successful processing.
+
+    Also marks content-identical duplicates (same content_hash) as
+    skipped, since their content is now represented by the ingested copy.
+    """
     from imas_codex.graph import GraphClient
 
     if not file_ids:
@@ -543,6 +559,23 @@ def _mark_files_ingested(file_ids: list[str]) -> int:
             """,
             ids=file_ids,
         )
+
+        # Mark content-identical duplicates as skipped
+        gc.query(
+            """
+            UNWIND $ids AS fid
+            MATCH (sf:CodeFile {id: fid})
+            WHERE sf.content_hash IS NOT NULL
+            WITH sf
+            MATCH (dup:CodeFile {content_hash: sf.content_hash})
+            WHERE dup.id <> sf.id AND dup.status IN ['scored', 'triaged']
+            SET dup.status = 'skipped',
+                dup.skip_reason = 'duplicate of ' + sf.id,
+                dup.claimed_at = null
+            """,
+            ids=file_ids,
+        )
+
         return result[0]["updated"] if result else 0
 
 
